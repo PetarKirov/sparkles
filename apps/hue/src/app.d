@@ -984,6 +984,17 @@ int main(string[] args)
     foreach (w; gConfig.warnings)
         warning(i"$(w)");
 
+    // CFG6: publish the merged binding table before any backend starts, so
+    // resolution, the guide and `bindingsAt` all read the user's keys.
+    if (gConfig.effective.keys.length)
+    {
+        import keymap : hueBindings, installBindings;
+        import keymap_config : applyKeysOverlay;
+
+        installBindings(applyKeysOverlay(hueBindings, gConfig.effective.keys,
+            (string w) @safe { warning(i"$(w)"); }));
+    }
+
     return runParsedCli(parsed.value);
 }
 

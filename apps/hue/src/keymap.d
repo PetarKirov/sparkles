@@ -46,6 +46,7 @@ door and no site can pass a different table by accident.
 module keymap;
 
 import sparkles.input.events : Key, KeyEvent;
+import sparkles.wired.policy : WireName;
 
 import ui_keymap = sparkles.ui.keymap;
 public import sparkles.ui.keymap : acceptsTyped, Chord, chord, chordRange,
@@ -323,7 +324,10 @@ enum Scope_ : ubyte
     @terminalScope ctrl,
     tree,    /// the explorer pane, while focused and shown
     viewer,  /// the document viewer (i.e. not the above)
-    shared_, /// available from either pane
+    /// available from either pane (`@WireName`: the config file's `keys`
+    /// section spells contexts by these members, and the keyword dodge must
+    /// not leak its underscore into user files — `CFG6`)
+    @WireName("shared") shared_,
 }
 
 /// Which $(LREF KeyContext) facts a binding may require or forbid, as bits so a
@@ -725,29 +729,54 @@ immutable Binding[] hueBindings = [
 ];
 
 // ---------------------------------------------------------------------------
-// Resolution — the framework's algorithms bound to hue's table.
+// The active table — hueBindings until a user overlay is installed (CFG6).
 // ---------------------------------------------------------------------------
 
-/// $(REF resolve, sparkles,ui,keymap) over $(LREF hueBindings).
+/// The table every resolution door below reads. Thread-local on purpose:
+/// installation happens once in `main` before any backend starts, and every
+/// key ever resolves on that thread.
+private immutable(Binding)[] activeTable_ = hueBindings;
+
+/// The effective binding table: `hueBindings` with the user's `keys` overlay
+/// applied (`CFG6`). Everything — resolution, the guide, `bindingsAt` —
+/// reads this one slice, which is what keeps them agreeing (`KEY12`).
+immutable(Binding)[] activeBindings() @safe nothrow @nogc => activeTable_;
+
+/// Publishes a merged table (`keymap_config.applyKeysOverlay`'s result).
+/// Called once at startup; tests that install must restore in `scope (exit)`.
+void installBindings(immutable(Binding)[] merged) @safe nothrow @nogc
+{
+    activeTable_ = merged;
+}
+
+// ---------------------------------------------------------------------------
+// Resolution — the framework's algorithms bound to hue's table.
+//
+// Not `pure` since the CFG6 seam: the wrappers read the installed table (a
+// mutable module-level reference). The unittest oracle keeps its purity by
+// calling the framework entry points with `hueBindings` explicitly.
+// ---------------------------------------------------------------------------
+
+/// $(REF resolve, sparkles,ui,keymap) over $(LREF activeBindings).
 Resolution resolve(scope const Chord[] prefix, in KeyEvent raw,
-    in KeyContext ctx) @safe pure nothrow @nogc
-    => ui_keymap.resolve(hueBindings, prefix, raw, ctx);
+    in KeyContext ctx) @safe nothrow @nogc
+    => ui_keymap.resolve(activeBindings, prefix, raw, ctx);
 
-/// $(REF commandFor, sparkles,ui,keymap) over $(LREF hueBindings).
+/// $(REF commandFor, sparkles,ui,keymap) over $(LREF activeBindings).
 KeyCommand commandFor(in KeyEvent raw, in KeyContext ctx)
-    @safe pure nothrow @nogc
-    => ui_keymap.commandFor(hueBindings, raw, ctx);
+    @safe nothrow @nogc
+    => ui_keymap.commandFor(activeBindings, raw, ctx);
 
-/// $(REF resolveAlways, sparkles,ui,keymap) over $(LREF hueBindings).
+/// $(REF resolveAlways, sparkles,ui,keymap) over $(LREF activeBindings).
 Resolution resolveAlways(in KeyEvent raw, in KeyContext ctx)
-    @safe pure nothrow @nogc
-    => ui_keymap.resolveAlways(hueBindings, raw, ctx);
+    @safe nothrow @nogc
+    => ui_keymap.resolveAlways(activeBindings, raw, ctx);
 
-/// $(REF bindingsAt, sparkles,ui,keymap) over $(LREF hueBindings).
+/// $(REF bindingsAt, sparkles,ui,keymap) over $(LREF activeBindings).
 void bindingsAt(Sink)(ref Sink sink, in KeyContext ctx,
     scope const Chord[] prefix = null)
 {
-    ui_keymap.bindingsAt(sink, hueBindings, ctx, prefix);
+    ui_keymap.bindingsAt(sink, activeBindings, ctx, prefix);
 }
 
 // ---------------------------------------------------------------------------
@@ -758,12 +787,21 @@ version (unittest)
 {
     import sparkles.input.events : Mods;
 
+    // Explicit-table framework calls, NOT the wrappers: the oracle pins the
+    // compiled policy and must stay `pure` and independent of whatever
+    // overlay a sibling test installed.
     KeyCommand ch(dchar c, KeyContext ctx = KeyContext.init, Mods m = Mods())
         @safe pure nothrow @nogc
-        => commandFor(KeyEvent(Key.char_, c, m), ctx);
+        => ui_keymap.commandFor(hueBindings, KeyEvent(Key.char_, c, m), ctx);
     KeyCommand nk(Key k, KeyContext ctx = KeyContext.init, Mods m = Mods())
         @safe pure nothrow @nogc
-        => commandFor(KeyEvent(k, 0, m), ctx);
+        => ui_keymap.commandFor(hueBindings, KeyEvent(k, 0, m), ctx);
+    Resolution resolveH(scope const Chord[] prefix, in KeyEvent raw,
+        in KeyContext ctx) @safe pure nothrow @nogc
+        => ui_keymap.resolve(hueBindings, prefix, raw, ctx);
+    KeyCommand commandForH(in KeyEvent raw, in KeyContext ctx)
+        @safe pure nothrow @nogc
+        => ui_keymap.commandFor(hueBindings, raw, ctx);
 }
 
 @("keymap.tableIsSpelledInNormalisedForm")
@@ -803,7 +841,7 @@ unittest
         int depthLeft)
     {
         SmallBuffer!(Binding, 128) listed;
-        bindingsAt(listed, ctx, prefix);
+        ui_keymap.bindingsAt(listed, hueBindings, ctx, prefix);
 
         foreach (ref b; listed[])
         {
@@ -812,7 +850,7 @@ unittest
             const c = b.path[prefix.length];
             const ev = KeyEvent(c.key, c.ch, Mods(ctrl: c.ctrl, alt: c.alt,
                 shift: c.shift == ShiftReq.yes));
-            const r = resolve(prefix, ev, ctx);
+            const r = resolveH(prefix, ev, ctx);
 
             const isLeaf = b.depth == prefix.length + 1 && b.group.length == 0;
             if (isLeaf)
@@ -980,18 +1018,18 @@ unittest
     // only knows commands — the sequence lives in `lantern`, and
     // `lantern.foldLevelsCarryTheirArgument` and friends assert the same
     // outcomes the flag produced.
-    assert(resolve(null, KeyEvent(Key.char_, 'z'), KeyContext.init).kind
+    assert(resolveH(null, KeyEvent(Key.char_, 'z'), KeyContext.init).kind
         == ResolveKind.group);
     assert(ch('z').cmd == Command.none, "…and so is not a command to a flat caller");
 
     // What the prefix leads to is still resolvable directly, which is what
     // lets the guide list it without simulating keystrokes.
     const Chord[1] z = [chord('z')];
-    assert(resolve(z, KeyEvent(Key.char_, 'c'), KeyContext.init)
+    assert(resolveH(z, KeyEvent(Key.char_, 'c'), KeyContext.init)
         == Resolution(ResolveKind.command, Command.foldClose));
-    assert(resolve(z, KeyEvent(Key.char_, '3'), KeyContext.init)
+    assert(resolveH(z, KeyEvent(Key.char_, '3'), KeyContext.init)
         == Resolution(ResolveKind.command, Command.foldLevel, 3));
-    assert(resolve(z, KeyEvent(Key.char_, '0'), KeyContext.init).kind
+    assert(resolveH(z, KeyEvent(Key.char_, '0'), KeyContext.init).kind
         == ResolveKind.none, "no level 0");
 
     // And `c` outside the sequence still means what it always did — the
@@ -1008,14 +1046,14 @@ unittest
     // `shared_` rows.
     const Chord[1] l = [chord(leader)];
     const Chord[2] lf = [chord(leader), chord('f')];
-    assert(resolve(null, KeyEvent(Key.char_, leader), KeyContext.init).kind
+    assert(resolveH(null, KeyEvent(Key.char_, leader), KeyContext.init).kind
         == ResolveKind.group);
-    assert(resolve(l, KeyEvent(Key.char_, 'f'), KeyContext.init).kind
+    assert(resolveH(l, KeyEvent(Key.char_, 'f'), KeyContext.init).kind
         == ResolveKind.group);
-    assert(resolve(lf, KeyEvent(Key.char_, 'f'), KeyContext.init)
+    assert(resolveH(lf, KeyEvent(Key.char_, 'f'), KeyContext.init)
         == Resolution(ResolveKind.command, Command.pickerFiles));
     const tree = KeyContext(treeFocused: true, treeVisible: true);
-    assert(resolve(lf, KeyEvent(Key.char_, 'f'), tree)
+    assert(resolveH(lf, KeyEvent(Key.char_, 'f'), tree)
         == Resolution(ResolveKind.command, Command.pickerFiles));
 }
 
@@ -1062,23 +1100,23 @@ unittest
     // `DVG3`: the `z` family folds files, not syntax ranges — the diff view
     // has no CST fold ranges for the other meaning to act on.
     const Chord[1] z = [chord('z')];
-    assert(resolve(z, KeyEvent(Key.char_, 'a'), diff).cmd == Command.diffToggleFile);
-    assert(resolve(z, KeyEvent(Key.char_, 'c'), diff).cmd == Command.diffToggleFile);
-    assert(resolve(z, KeyEvent(Key.char_, 'm'), diff).cmd == Command.diffCollapseAll);
-    assert(resolve(z, KeyEvent(Key.char_, 'r'), diff).cmd == Command.diffExpandAll);
+    assert(resolveH(z, KeyEvent(Key.char_, 'a'), diff).cmd == Command.diffToggleFile);
+    assert(resolveH(z, KeyEvent(Key.char_, 'c'), diff).cmd == Command.diffToggleFile);
+    assert(resolveH(z, KeyEvent(Key.char_, 'm'), diff).cmd == Command.diffCollapseAll);
+    assert(resolveH(z, KeyEvent(Key.char_, 'r'), diff).cmd == Command.diffExpandAll);
     // `DVN2`'s noise fold and `DVG2`'s context join the same family.
-    assert(resolve(z, KeyEvent(Key.char_, 'n'), diff).cmd
+    assert(resolveH(z, KeyEvent(Key.char_, 'n'), diff).cmd
         == Command.diffToggleFormatting);
-    assert(resolve(z, KeyEvent(Key.char_, 'x'), diff).cmd
+    assert(resolveH(z, KeyEvent(Key.char_, 'x'), diff).cmd
         == Command.diffToggleContext);
-    assert(resolve(z, KeyEvent(Key.char_, 'n'), KeyContext.init).kind
+    assert(resolveH(z, KeyEvent(Key.char_, 'n'), KeyContext.init).kind
         == ResolveKind.none, "no session, no noise to fold");
-    assert(resolve(z, KeyEvent(Key.char_, 'x'), KeyContext.init).kind
+    assert(resolveH(z, KeyEvent(Key.char_, 'x'), KeyContext.init).kind
         == ResolveKind.none);
     // Levels are meaningless over a flat file list, so they stay unbound.
-    assert(resolve(z, KeyEvent(Key.char_, '3'), diff).kind == ResolveKind.none);
+    assert(resolveH(z, KeyEvent(Key.char_, '3'), diff).kind == ResolveKind.none);
     // Without a session the same keys keep their syntax-fold meanings.
-    assert(resolve(z, KeyEvent(Key.char_, 'm'), KeyContext.init).cmd
+    assert(resolveH(z, KeyEvent(Key.char_, 'm'), KeyContext.init).cmd
         == Command.foldCloseAll);
 
     // Hunk motions exist only over a session — there is nothing to step
@@ -1140,7 +1178,7 @@ unittest
     assert(ch('!').cmd == Command.none);
     assert(nk(Key.f5).cmd == Command.none);
     assert(nk(Key.none).cmd == Command.none);
-    assert(commandFor(KeyEvent.init, KeyContext.init).cmd == Command.none);
+    assert(commandForH(KeyEvent.init, KeyContext.init).cmd == Command.none);
 }
 
 @("keymap.pickerScopesAreModalAndFocusRouted")
@@ -1209,11 +1247,11 @@ unittest
     // the fold letters without a session, the file letters with one.
     static immutable Chord[1] zPrefix = [chord('z')];
     const z = zPrefix[];
-    assert(resolve(z, KeyEvent(Key.char_, 'h'), view).cmd
+    assert(resolveH(z, KeyEvent(Key.char_, 'h'), view).cmd
         == Command.viewScrollLeft);
-    assert(resolve(z, KeyEvent(Key.char_, 'l'), view).cmd
+    assert(resolveH(z, KeyEvent(Key.char_, 'l'), view).cmd
         == Command.viewScrollRight);
-    assert(resolve(z, KeyEvent(Key.char_, 'h'), diff).cmd
+    assert(resolveH(z, KeyEvent(Key.char_, 'h'), diff).cmd
         == Command.viewScrollLeft, "a diff scrolls sideways too — its tables "
         ~ "are the widest content hue renders");
 
