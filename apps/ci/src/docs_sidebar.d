@@ -1,6 +1,6 @@
 /++
 Verify the VitePress sidebar — `docs/.vitepress/sidebar.json`, the data file
-`config.mts` imports (see `docs_config`) — is consistent with the published
+`config.mts` imports (see `sparkles.docs.sidebar`) — is consistent with the published
 markdown pages under `docs/`:
 
 $(LIST
@@ -13,7 +13,7 @@ file is excluded from the auto-generated test runner).
 +/
 module docs_sidebar;
 
-import docs_config : SidebarItem, sidebarLinks;
+import sparkles.docs.sidebar : SidebarItem, sidebarLinks;
 
 import std.algorithm : canFind, sort;
 import std.array : appender;
@@ -266,7 +266,7 @@ unittest
 }
 
 // `@system`: wired's decode of the recursive `SidebarItem` tree infers
-// `@system` (see docs_config); the link collection itself is `@safe pure`.
+// `@system` (see sparkles.docs.sidebar); the link collection itself is `@safe pure`.
 @("docs_sidebar.sidebarJsonLinks")
 @system
 unittest

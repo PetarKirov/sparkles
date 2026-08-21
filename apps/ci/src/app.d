@@ -136,7 +136,7 @@ import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 import blob_paths :
     BlobPathReport, BlobRef, BlobResult, BlobStatus,
     parseBlobRefs, resolveClone;
-import docs_config : loadDocsConfig, loadSidebar, sidebarDataPath;
+import sparkles.docs.sidebar : loadDocsConfig, loadSidebar, sidebarDataPath;
 import docs_sidebar : checkDocsSidebar;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
@@ -1694,7 +1694,7 @@ private int runCheckDocsSidebar()
     const repoRoot = detectRepoRoot();
 
     // The sidebar tree and srcExclude list are data files `config.mts` imports;
-    // see docs_config. A malformed or missing file is a hard error — never an
+    // see sparkles.docs.sidebar. A malformed or missing file is a hard error — never an
     // empty link set that would flag every page as unlinked.
     auto sidebar = loadSidebar(repoRoot);
     if (sidebar.hasError)
