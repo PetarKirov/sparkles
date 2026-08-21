@@ -17,6 +17,7 @@ chmod 700 "$work"
 echo ">> building sparkles:wsi Wayland keys smoke ..."
 ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/src" \
+  -I"$repo/libs/wsi/examples" \
   -I"$repo/libs/event-horizon/src" \
   -I"$repo/libs/input/src" \
   -I"$repo/libs/math/src" \
@@ -32,6 +33,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
 echo ">> building the XTEST key injector ..."
 ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/src" \
+  -I"$repo/libs/wsi/examples" \
   "$repo/libs/wsi/examples/x11-key-injector.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
   -L-lxcb -L-lxcb-xkb -L-lxcb-xtest \
