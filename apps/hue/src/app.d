@@ -898,16 +898,71 @@ int executeOverlay(in HueCli root, in OverlayCmd cmd)
 int executeConfig(in HueCli root, in ConfigCmd cmd)
 {
     initLogger(root.logLevel);
+    import std.array : appender;
     import std.stdio : writeln;
 
-    writeln("Hue Configuration:");
-    writeln("  Theme:       ", root.theme);
-    writeln("  Background:  ", root.background);
-    writeln("  Log Level:   ", root.logLevel);
-    writeln("  GUI Font:    ", root.gui.font);
-    writeln("  Font Size:   ", root.gui.fontSize);
-    writeln("  Display:     ", displayAvailable() ? "present" : "absent");
-    return 0;
+    const action = cmd.show ? "show" : cmd.action;
+    switch (action)
+    {
+        case "show":
+        {
+            // CFG10: every effective setting with the origin that supplied
+            // it — the five layers made observable.
+            import settings_io : renderConfigShow;
+
+            auto w = appender!string;
+            renderConfigShow(w, loadedConfig(), changedOnly: cmd.changed);
+            write(w[]);
+            return 0;
+        }
+        case "write":
+        {
+            // CFG13: the commented starting file, from the same reflection
+            // `show` renders — the two cannot disagree.
+            import std.file : exists, mkdirRecurse, fileWrite = write;
+            import std.path : dirName;
+            import settings_io : renderStarterConfig;
+
+            const path = loadedConfig().userFilePath;
+            if (!path.length)
+            {
+                stderr.writeln("hue: no writable config location (no config dir; pass --config)");
+                return 1;
+            }
+            if (path.exists && !cmd.force)
+            {
+                stderr.writeln("hue: ", path,
+                    " already exists — pass --force to overwrite");
+                return 1;
+            }
+            auto w = appender!string;
+            renderStarterConfig(w);
+            try
+            {
+                const dir = path.dirName;
+                if (dir.length && dir != ".")
+                    mkdirRecurse(dir);
+                fileWrite(path, w[]);
+            }
+            catch (Exception e)
+            {
+                stderr.writeln("hue: ", e.msg);
+                return 1;
+            }
+            writeln("wrote ", path);
+            return 0;
+        }
+        case "save":
+            // CFG11's machinery lands with the settings pane: a bare CLI
+            // process has no session toggles to persist.
+            stderr.writeln("hue: `config save` persists a session's runtime " ~
+                "toggles — run it from inside hue, not the bare CLI");
+            return 1;
+        default:
+            stderr.writeln("hue: unknown config action '", action,
+                "' (show | write | save)");
+            return 1;
+    }
 }
 
 private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Document doc,
