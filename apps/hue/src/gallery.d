@@ -386,6 +386,20 @@ struct GalleryOptions
     one href per depth.
     */
     string stylesheetHref;
+
+    /**
+    Blob base for the forge links in the breadcrumb trail (`GAL14`) — e.g.
+    `https://github.com/PetarKirov/sparkles/blob/main`.
+
+    Unset renders the trail without forge links rather than guessing a remote:
+    a gallery of a directory that is not in a repository has nowhere to point.
+    */
+    string repoUrl;
+
+    /// The gallery root's path inside that repository, when the two differ —
+    /// `hue gallery libs/base` from the repo root makes the pages' `src/x.d`
+    /// the repo's `libs/base/src/x.d`.
+    string repoPrefix;
 }
 
 /**
@@ -413,8 +427,15 @@ to whichever directory index sits beside the page, at any depth.
 */
 string pageShell(scope const(char)[] name, scope const(char)[] summary, string fragment,
     scope const(char)[] prev, scope const(char)[] next,
-    in GalleryOptions opt = GalleryOptions.init) @safe pure
+    in GalleryOptions opt = GalleryOptions.init,
+    scope const(char)[] relPath = null) @safe pure
 {
+    import breadcrumbs : breadcrumbCss, breadcrumbScript, breadcrumbsFor,
+        renderBreadcrumbs;
+
+    const crumbs = relPath.length
+        ? breadcrumbsFor(relPath, opt.repoUrl, opt.repoPrefix) : null;
+
     int gutter;
     const body_ = withLineNumbers(fragment, gutter);
     const c = opt.chrome;
@@ -508,6 +529,11 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "    -webkit-user-select: none; user-select: none; }\n";
     w ~= "  body.sel-anno .sel-active, body.sel-anno .sel-active * {\n";
     w ~= "    -webkit-user-select: text; user-select: text; }\n";
+    if (crumbs.length)
+    {
+        w ~= "  .crumbs { flex: none; padding: 0.55em 1em 0; }\n";
+        w ~= breadcrumbCss(c, opt.hasDarkChrome ? opt.darkChrome : ChromePalette.init);
+    }
     w ~= "</style></head><body>\n<header>";
     navLink(w, prev, "← prev", "prev");
     w ~= "<b>";
@@ -518,7 +544,14 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     navLink(w, next, "next →", "next");
     if (opt.hasDarkChrome)
         w ~= themeToggleButton;
-    w ~= "</header>\n<main>";
+    w ~= "</header>\n";
+    if (crumbs.length)
+    {
+        w ~= "<div class=\"crumbs\">";
+        renderBreadcrumbs(w, crumbs);
+        w ~= "</div>\n";
+    }
+    w ~= "<main>";
     w ~= body_;
     w ~= "</main>\n";
     // Confine each drag to the domain it started in: mark the annotation the
@@ -536,6 +569,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "});\n";
     if (opt.hasDarkChrome)
         w ~= themeToggleScript;
+    if (crumbs.length)
+        w ~= breadcrumbScript;
     w ~= "</script>\n</body></html>\n";
     return w[];
 }
@@ -906,7 +941,8 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
         const destDir = dest.dirName;
         if (destDir != outDir)
             mkdirRecurse(destDir);
-        write(dest, pageShell(e.name, e.summary, fragment, prev, next, pageOpt));
+        write(dest, pageShell(e.name, e.summary, fragment, prev, next, pageOpt,
+            e.relPath));
         written ~= e;
     }
 
