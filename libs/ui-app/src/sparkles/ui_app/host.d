@@ -50,13 +50,14 @@ enum size_t frameOpCapacity = 2048;
 /**
 What a host that draws nowhere reserves instead.
 
-A quarter-megabyte of inline storage is the right trade for a host that paints
-a real surface once per frame, and the wrong one for a host that is $(B created
+Inline storage for a full screen is the right trade for a host that paints a
+real surface once per frame, and the wrong one for a host that is $(B created
 per test), often several deep, on a thread whose stack the platform sizes
-rather than the application: macOS gives a non-main thread 512 KiB, so two
-recorders alone exhaust it and the frame that then runs walks off the guard
-page. The recorder copies each frame's operations to the heap the moment it has
-them, so the inline buffer bought it nothing to begin with.
+rather than the application: macOS gives a non-main thread 512 KiB. When an
+operation was 656 bytes, two recorders alone exhausted that and the frame that
+then ran walked off the guard page; at 64 the margin is wide, but the reason
+stands — the recorder copies each frame's operations to the heap the moment it
+has them, so the inline buffer bought it nothing to begin with.
 */
 enum size_t recordedOpCapacity = 16;
 
