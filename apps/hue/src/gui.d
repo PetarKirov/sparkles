@@ -125,7 +125,7 @@ import live_types : applyTip, LiveTypesSession;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
-import source_set : SourceEntry, SourceSet;
+import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
@@ -180,7 +180,7 @@ alias LoadedDoc = Document;
 
 /// Loads a document by path. Supplied by `app.d`, which owns the grammar registry
 /// and cache, so the GUI navigates a set (`GNV1`) without duplicating that
-/// pipeline — the same delegate seam `gallery.writeGallery` uses.
+/// pipeline — the same delegate seam `sparkles.docs.page_shell.writeGallery` uses.
 alias DocLoader = LoadedDoc delegate(string path) @system;
 
 /**

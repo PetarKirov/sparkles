@@ -50,7 +50,7 @@ import forge : CommentThread, PullRequest, ThreadSide;
 import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
-import source_set : SourceEntry, SourceSet;
+import sparkles.docs.source_set : SourceEntry, SourceSet;
 import table_select : TableCopyFormat;
 import dsv_view : resolveTableCopy;
 
@@ -548,7 +548,7 @@ private GuiOptions copyGui(in GuiOptions g)
 
 private int executeView(in HueCli root, in View view)
 {
-    import source_set : collectSources, SourceEntry, SourceSet;
+    import sparkles.docs.source_set : collectSources, SourceEntry, SourceSet;
 
     initLogger(root.logLevel);
 
@@ -875,7 +875,7 @@ the body.
 private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set,
     uint jobs) @system
 {
-    import source_set : SourceEntry, isDSource, isTwoslashPayload, twoslashTally;
+    import sparkles.docs.source_set : SourceEntry, isDSource, isTwoslashPayload, twoslashTally;
 
     TwoslashReturn[string] payloads;
     version (Posix)
@@ -1010,11 +1010,12 @@ private TwoslashReturn twoslashPayloadFor(in SourceEntry e,
 private int executeGallery(in HueCli root, in Gallery gallery)
 {
     initLogger(root.logLevel);
-    import gallery : ChromePalette, FragmentOptions, GalleryOptions, plainFragment, themeChrome,
-        twoslashFragment, writeGallery;
-    import source_set : collectSources, SourceEntry;
+    import sparkles.docs.fragment : FragmentOptions, plainFragment, twoslashFragment;
+    import sparkles.docs.options : ChromePalette, GalleryOptions, themeChrome;
+    import sparkles.docs.page_shell : writeGallery;
+    import sparkles.docs.source_set : collectSources, SourceEntry;
     import std.path : buildPath;
-    import web_assets : stylesheetAssetPath, StylesheetContent, themeStylesheet,
+    import sparkles.docs.assets : stylesheetAssetPath, StylesheetContent, themeStylesheet,
         writeStylesheetAsset, writeStylesheetFile;
 
     string dir = gallery.dir.length ? gallery.dir : ".";
@@ -1233,8 +1234,10 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
     import std.path : buildPath;
     import std.stdio : writeln;
 
-    import gallery : GalleryOptions, plainFragment, themeChrome, twoslashFragment, writeGallery;
-    import source_set : collectSources, SourceEntry;
+    import sparkles.docs.fragment : plainFragment, twoslashFragment;
+    import sparkles.docs.options : GalleryOptions, themeChrome;
+    import sparkles.docs.page_shell : writeGallery;
+    import sparkles.docs.source_set : collectSources, SourceEntry;
 
     auto set = collectSources(dir, twoslash);
     TwoslashReturn[string] payloads;
@@ -1701,7 +1704,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     final switch (doc.kind) with (ContentKind)
     {
         case twoslash:
-            import gallery : twoslashFragment;
+            import sparkles.docs.fragment : twoslashFragment;
             write(twoslashFragment(doc.twoslash, doc.events, theme, cache));
             return 0;
         case markdown:
@@ -1803,7 +1806,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
     in ResolvedTheme theme, ref TsConfigCache cache,
     scope SourceSet* docSet, scope DocumentPipeline* pipeline = null) @system
 {
-    import source_set : SourceSet;
+    import sparkles.docs.source_set : SourceSet;
 
     if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
         return 0;
@@ -1863,7 +1866,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
     scope SourceSet* docSet, scope DocumentPipeline* pipeline,
     string treeRoot = null) @system
 {
-    import source_set : SourceSet;
+    import sparkles.docs.source_set : SourceSet;
 
     version (HueGui)
     {
@@ -2133,7 +2136,7 @@ stdout and returns the exit code.
 int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache) @system
 {
-    import web_assets : markdownPreviewCss;
+    import sparkles.docs.assets : markdownPreviewCss;
 
     auto doc = extractMarkdown(registry, source);
     if (doc.root.children.length == 0 && source.length)

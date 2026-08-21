@@ -1,8 +1,8 @@
 /**
 hue's **shared web assets**: the one stylesheet a whole set of pre-rendered
 pages links instead of each embedding its own copy
-([`HTM1`](../../../docs/specs/hue/feature-requirements.md),
-[`DEF5`](../../../docs/specs/hue/feature-requirements.md)).
+([`HTM1`](../../../../../docs/specs/hue/feature-requirements.md),
+[`DEF5`](../../../../../docs/specs/hue/feature-requirements.md)).
 
 A single `--html` document is self-contained — it carries a `<style>` block
 (`FragmentOptions.embedStyles`). Hundreds of them must not: the theme sheet is
@@ -23,7 +23,7 @@ Structure: $(B one pure string builder + one I/O seam) — $(LREF themeStyleshee
 builds the text, $(LREF writeStylesheetAsset) is the only thing that touches
 disk.
 */
-module web_assets;
+module sparkles.docs.assets;
 
 import std.array : appender;
 
@@ -215,7 +215,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import gallery : gutterProperty;
+    import sparkles.docs.fragment : gutterProperty;
 
     const full = themeStylesheet(testTheme("light", 0xaa), ResolvedTheme.init,
         StylesheetContent(twoslash: true));
@@ -236,7 +236,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import gallery : FragmentOptions, gutterProperty;
+    import sparkles.docs.fragment : FragmentOptions, gutterProperty;
 
     // `gutterProperty` is `--hue-gutter:` (declaration form); the sheet reads
     // the same name back through `var()`.

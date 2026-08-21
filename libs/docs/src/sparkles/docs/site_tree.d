@@ -1,26 +1,26 @@
 /**
-The gallery's **output tree** ([`gallery.md` `GAL12`](../../../docs/specs/hue/gallery.md)):
+The gallery's **output tree** ([`gallery.md` `GAL12`](../../../../../docs/specs/hue/gallery.md)):
 a document set's paths turned into a directory structure, and one directory's
 `index.html`.
 
 A flat gallery writes `<out>/<name>.html` and a single `index.html`. That does not
 survive a source tree — `foo/app.d` and `bar/app.d` are one page — so a recursive
-set ([`SRC9`](../../../docs/specs/hue/feature-requirements.md)) mirrors instead:
+set ([`SRC9`](../../../../../docs/specs/hue/feature-requirements.md)) mirrors instead:
 `<out>/<rel-path>.html` per document plus an `index.html` per directory. This
 module is the shape of that tree, and it is $(B pure): $(LREF buildSiteTree) is a
 transformation of a `SourceEntry[]`, $(LREF directoryIndex) is a string builder
-over one node. Writing them is [`gallery.writeGallery`](./gallery.d)'s job.
+over one node. Writing them is [`page_shell.writeGallery`](./page_shell.d)'s job.
 
 The flat layout is the depth-0 case, not a separate path:
 `gallery.galleryIndex` is $(LREF directoryIndex) over the root node of a set whose
 entries all sit at the root, and it emits the same bytes it always did.
 */
-module site_tree;
+module sparkles.docs.site_tree;
 
 import std.array : appender;
 
-import gallery : escapeInto, SiteOptions;
-import source_set : SourceEntry;
+import sparkles.docs.options : escapeInto, SiteOptions;
+import sparkles.docs.source_set : SourceEntry;
 
 /// One row of a directory index: a link, its text, and its summary.
 struct IndexRow
@@ -319,7 +319,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import gallery : ChromePalette;
+    import sparkles.docs.options : ChromePalette;
 
     // A directory index used to be a fixed dark palette, so a light-theme
     // gallery had light file pages and dark indexes between them.
