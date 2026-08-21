@@ -739,7 +739,7 @@ struct PropertyTree(T)
 
         // Discovery ignores the opened set and descends every eligible
         // composite within the automatic-walk budgets (PRT29).
-        DiscoverVisitor dv;
+        DiscoverVisitor!() dv;
         dv.parts = parts;
         dv.ws = _ws;
         dv.heap = _heap;
@@ -1069,8 +1069,8 @@ capacity (4,096 bytes — refused as `candidateTooLong`, never truncated) is
 analyzed as source-offset-preserving UTF-8-boundary chunks with a
 one-query-span overlap; the best chunk wins (`PRT30`).
 */
-private FieldTry tryField(ref PartMatcher pm, string fieldText,
-    scope MatcherWorkspace!()* ws) @safe
+private FieldTry tryField(Caps = DefaultFuzzyCaps)(ref PartMatcher pm,
+    string fieldText, scope MatcherWorkspace!Caps* ws) @safe
 {
     FieldTry none;
     if (fieldText.length == 0 || pm.text.length == 0)
@@ -1140,7 +1140,7 @@ private string snippetOf(string doc, ByteSpan[] spans) @safe pure nothrow
 
 /// The discovery driver (`PRT29`–`PRT31`): scores every eligible row during
 /// the walk, retaining the best direct matches in the ranked heap.
-private struct DiscoverVisitor
+private struct DiscoverVisitor(Caps = DefaultFuzzyCaps)
 {
     PartMatcher[] parts;
     MatcherWorkspace!()* ws;
