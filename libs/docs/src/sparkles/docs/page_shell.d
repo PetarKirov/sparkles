@@ -767,7 +767,9 @@ unittest
     import std.algorithm.searching : canFind;
 
     // A name/summary carrying HTML metacharacters must not break the markup.
-    const idx = galleryIndex([SourceEntry(name: "a<b>", summary: "x & \"y\"")]);
+    const idx = galleryIndex([SourceEntry(name: "a<b>", summary: "x & \"y's\"")]);
     assert(idx.canFind("a&lt;b&gt;"), idx);
-    assert(idx.canFind("x &amp; &quot;y&quot;"), idx);
+    // The apostrophe escapes too (`DOC10`): one five-entity implementation,
+    // shared with every HTML writer in the repository.
+    assert(idx.canFind("x &amp; &quot;y&#39;s&quot;"), idx);
 }
