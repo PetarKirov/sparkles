@@ -18,6 +18,7 @@ import core.time : Duration, seconds;
 import std.stdio : writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
+import sparkles.input.pointer : PointerShape;
 import sparkles.wsi;
 
 private extern (C) nothrow @nogc
@@ -79,6 +80,12 @@ private extern class NSApplication : NSObject
 {
     static NSApplication sharedApplication() @selector("sharedApplication");
     void postEvent(NSEvent event, bool atStart) @selector("postEvent:atStart:");
+}
+
+private extern class NSCursor : NSObject
+{
+    static NSCursor IBeamCursor() @selector("IBeamCursor");
+    static NSCursor currentCursor() @selector("currentCursor");
 }
 
 extern (D):
@@ -152,6 +159,13 @@ private struct AppKitHooks
         post(keyDownType, shiftFlag, upper, lower, chordKeyCode);
         post(keyUpType, shiftFlag, upper, lower, chordKeyCode);
         post(flagsChangedType, 0, lower, lower, chordShiftCode);
+    }
+
+    void checkCursorApplied(PointerShape shape)
+    {
+        assert(shape == PointerShape.text);
+        assert(NSCursor.currentCursor() is NSCursor.IBeamCursor(),
+            "NSCursor.set did not make the shape current");
     }
 
     /*

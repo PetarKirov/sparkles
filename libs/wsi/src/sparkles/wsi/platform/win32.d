@@ -22,6 +22,7 @@ import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
+import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.loop : EventQueue;
@@ -78,7 +79,9 @@ struct Win32Wsi
         bool ready;
         bool composing;
         bool pointerInside;
+        bool cursorVisible = true;
         wchar pendingHighSurrogate;
+        HCURSOR cursor;
         SurfaceMetrics metrics;
         PhysicalPosition lastPointer;
     }
@@ -656,6 +659,53 @@ struct Win32Wsi
         emitCommittedText(id, scalar[]);
     }
 
+    /**
+    Stores the window's standard cursor and applies it on `WM_SETCURSOR`
+    (the correct Win32 pattern — setting it eagerly is undone by the next
+    mouse message). CSS `grab`/`grabbing` have no stock cursor and use
+    `IDC_SIZEALL` as the documented nearest shape; custom images are a
+    later slice.
+    */
+    WsiResult!void setCursor(WindowId id, PointerShape shape)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        auto cursor = LoadCursorW(null, win32CursorId(shape));
+        if (cursor is null)
+            return win32Failure!void(WsiOperation.command, GetLastError(),
+                "LoadCursorW failed for a stock cursor");
+        windows_[checked.value].cursor = cursor;
+        return wsiOk();
+    }
+
+    /// Visibility is per-window here, applied by the same WM_SETCURSOR
+    /// path rather than the thread-global ShowCursor counter.
+    WsiResult!void setCursorVisible(WindowId id, bool visible)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        windows_[checked.value].cursorVisible = visible;
+        return wsiOk();
+    }
+
+    /// Stock cursor ids (IDC_*).
+    package static const(wchar)* win32CursorId(PointerShape shape)
+        @trusted pure nothrow @nogc
+    {
+        final switch (shape)
+        {
+            case PointerShape.default_: return IDC_ARROW;
+            case PointerShape.text: return IDC_IBEAM;
+            case PointerShape.pointer: return IDC_HAND;
+            case PointerShape.ewResize: return IDC_SIZEWE;
+            case PointerShape.nsResize: return IDC_SIZENS;
+            case PointerShape.grab: return IDC_SIZEALL; // nearest stock
+            case PointerShape.grabbing: return IDC_SIZEALL; // nearest stock
+        }
+    }
+
     /// One pointer per User32 message queue.
     private enum queuePointer = PointerId(1, 1);
 
@@ -893,6 +943,17 @@ struct Win32Wsi
                 // GCS_RESULTSTR is the single commit source. DefWindowProc
                 // would turn this into WM_CHAR and duplicate the text.
                 return 0;
+            case WM_SETCURSOR:
+                if ((lParam & 0xFFFF) == HTCLIENT)
+                {
+                    SetCursor(slot.cursorVisible
+                        ? (slot.cursor !is null
+                            ? slot.cursor
+                            : LoadCursorW(null, IDC_ARROW))
+                        : null);
+                    return TRUE;
+                }
+                return DefWindowProcW(hwnd, message, wParam, lParam);
             case WM_MOUSEMOVE:
                 owner.handleMouseMove(*slot, id, lParam);
                 return 0;
