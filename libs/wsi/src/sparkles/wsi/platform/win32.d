@@ -80,6 +80,7 @@ struct Win32Wsi
         bool composing;
         bool pointerInside;
         bool cursorVisible = true;
+        ubyte buttonsDown;
         wchar pendingHighSurrogate;
         HCURSOR cursor;
         SurfaceMetrics metrics;
@@ -732,6 +733,32 @@ struct Win32Wsi
         emitPointer(slot, id, PointerPhase.moved, at);
     }
 
+    /*
+    User32 delivers no client messages outside the window unless captured,
+    so a drag would silently lose its motion and release the moment the
+    pointer crosses the border. Implicit capture spans the first press to
+    the last release, exactly the toolkit drag contract.
+    */
+    private void emitButton(ref Slot slot, WindowId id, bool pressed,
+        PhysicalPosition at, PointerButton button) nothrow
+    {
+        if (pressed)
+        {
+            if (slot.buttonsDown == 0)
+                SetCapture(slot.hwnd);
+            ++slot.buttonsDown;
+        }
+        else if (slot.buttonsDown != 0)
+        {
+            --slot.buttonsDown;
+            if (slot.buttonsDown == 0)
+                ReleaseCapture();
+        }
+        emitPointer(slot, id,
+            pressed ? PointerPhase.pressed : PointerPhase.released, at,
+            button);
+    }
+
     private void emitPointer(ref Slot slot, WindowId id, PointerPhase phase,
         PhysicalPosition at,
         PointerButton button = PointerButton.none) nothrow
@@ -967,34 +994,31 @@ struct Win32Wsi
                 return 0;
             case WM_LBUTTONDOWN:
             case WM_LBUTTONUP:
-                owner.emitPointer(*slot, id,
-                    message == WM_LBUTTONDOWN
-                        ? PointerPhase.pressed : PointerPhase.released,
+                owner.emitButton(*slot, id, message == WM_LBUTTONDOWN,
                     pointFrom(lParam), PointerButton.left);
                 return 0;
             case WM_MBUTTONDOWN:
             case WM_MBUTTONUP:
-                owner.emitPointer(*slot, id,
-                    message == WM_MBUTTONDOWN
-                        ? PointerPhase.pressed : PointerPhase.released,
+                owner.emitButton(*slot, id, message == WM_MBUTTONDOWN,
                     pointFrom(lParam), PointerButton.middle);
                 return 0;
             case WM_RBUTTONDOWN:
             case WM_RBUTTONUP:
-                owner.emitPointer(*slot, id,
-                    message == WM_RBUTTONDOWN
-                        ? PointerPhase.pressed : PointerPhase.released,
+                owner.emitButton(*slot, id, message == WM_RBUTTONDOWN,
                     pointFrom(lParam), PointerButton.right);
                 return 0;
             case WM_XBUTTONDOWN:
             case WM_XBUTTONUP:
-                owner.emitPointer(*slot, id,
-                    message == WM_XBUTTONDOWN
-                        ? PointerPhase.pressed : PointerPhase.released,
+                owner.emitButton(*slot, id, message == WM_XBUTTONDOWN,
                     pointFrom(lParam),
                     ((wParam >> 16) & 0xFFFF) == 1
                         ? PointerButton.back : PointerButton.forward);
                 return TRUE;
+            case WM_CAPTURECHANGED:
+                // Capture was taken elsewhere; forget the held buttons so a
+                // later press starts a fresh implicit capture.
+                slot.buttonsDown = 0;
+                return 0;
             case WM_MOUSEWHEEL:
             case WM_MOUSEHWHEEL:
                 owner.handleWheel(*slot, id, message == WM_MOUSEWHEEL,

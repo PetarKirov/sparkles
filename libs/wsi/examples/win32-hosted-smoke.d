@@ -101,6 +101,28 @@ private struct Win32Hooks
         SendMessageW(hwnd, WM_LBUTTONUP, 0, at);
     }
 
+    /*
+    A captured window receives client-space messages with negative or
+    beyond-size coordinates while dragging outside; this simulates that
+    delivery and asserts the implicit capture itself through GetCapture —
+    engaged by the press, released by the release.
+    */
+    void injectDragOutside()
+    {
+        enum LPARAM inside = (80 << 16) | 120;
+        SendMessageW(hwnd, WM_MOUSEMOVE, 0, inside);
+        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, inside);
+        assert(GetCapture() == hwnd,
+            "the press did not engage implicit capture");
+        const LPARAM outside = cast(LPARAM)(
+            (cast(uint) cast(ushort) cast(short) -40 << 16)
+            | cast(ushort) cast(short) -30);
+        SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, outside);
+        SendMessageW(hwnd, WM_LBUTTONUP, 0, outside);
+        assert(GetCapture() is null,
+            "the release did not drop implicit capture");
+    }
+
     void checkCursorApplied(PointerShape shape)
     {
         assert(shape == PointerShape.text);

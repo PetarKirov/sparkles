@@ -27,6 +27,6 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -of="$work/wsi-x11-smoke"
 
 echo ">> running under Xvfb ..."
-xvfb-run -a "$work/wsi-x11-smoke" | tee "$work/output.log"
+xvfb-run -a -s "-screen 0 1024x768x24" "$work/wsi-x11-smoke" | tee "$work/output.log"
 grep -q '^ok: X11 WSI conformance' "$work/output.log"
 echo ">> sparkles:wsi X11 foreign-fd smoke verified under Xvfb."

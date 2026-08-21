@@ -161,6 +161,28 @@ private struct AppKitHooks
         post(flagsChangedType, 0, lower, lower, chordShiftCode);
     }
 
+    // NSWindow keeps routing the drag to the mouseDown view, so the
+    // outside release must come back through the same path.
+    void injectDragOutside()
+    {
+        enum ulong leftDownType = 1;
+        enum ulong leftUpType = 2;
+        enum ulong draggedType = 6; // NSEventTypeLeftMouseDragged
+        auto application = NSApplication.sharedApplication();
+        const number = nativeWindow.windowNumber();
+        void post(ulong type, NSPoint at)
+        {
+            auto event = NSEvent.mouseEventWithType(type, at, 0, 0, number,
+                null, 0, 1, 0);
+            assert(event !is null);
+            application.postEvent(event, false);
+        }
+
+        post(leftDownType, NSPoint(120, 400));
+        post(draggedType, NSPoint(700, -50));
+        post(leftUpType, NSPoint(700, -50));
+    }
+
     void checkCursorApplied(PointerShape shape)
     {
         assert(shape == PointerShape.text);

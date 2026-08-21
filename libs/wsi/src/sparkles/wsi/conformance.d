@@ -48,6 +48,10 @@ $(LIST
     * `void checkCursorApplied(PointerShape shape)` — platform-observable
         confirmation that a successful `setCursor` took effect (the cursor
         property itself runs whenever the backend has `setCursor`).
+    * `void injectDragOutside()` — a left press inside the window followed
+        by motion and release beyond its bounds; the property requires the
+        release to arrive with outside coordinates rather than being
+        dropped at the border. Shares the pointer runtime gate.
     * `enum expectFocusEvent = true` — the chord property additionally
         requires a `FocusChangedEvent(true)` before the keys.
     * `void checkHandles(in NativeHandles handles)` — backend-specific handle
@@ -112,6 +116,8 @@ private struct Observed
     bool leftReleased;
     bool scrolledDown;
     ScrollSource scrollSource;
+    bool dragPressed;
+    bool outsideRelease;
 }
 
 /**
@@ -407,6 +413,29 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     else
         ++outcome.skipped;
 
+    // Property: a drag that leaves the window keeps reporting — the press
+    // lands inside, and its release still arrives with coordinates outside
+    // the window bounds instead of being silently dropped at the border.
+    static if (is(typeof(hooks.injectDragOutside())))
+    {
+        bool runDrag = true;
+        static if (is(typeof(hooks.pointerEnabled)))
+            runDrag = hooks.pointerEnabled;
+        if (runDrag)
+        {
+            seen.dragPressed = false;
+            seen.outsideRelease = false;
+            hooks.injectDragOutside();
+            driveUntil(() => seen.outsideRelease,
+                "the outside release never arrived");
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
     // Property: a standard cursor shape applies through the shared
     // PointerShape or fails with a typed unsupported — never silently —
     // and cursor visibility round-trips.
@@ -493,10 +522,9 @@ private void observePointer(ref Observed seen, in PointerEvent event)
         case PointerPhase.pressed:
             if (event.button == PointerButton.left)
             {
-                assert(!seen.leftReleased,
-                    "a release was observed before its press");
                 seen.leftPressed = true;
                 seen.pressPosition = event.physicalPosition;
+                seen.dragPressed = true;
             }
             break;
         case PointerPhase.released:
@@ -504,6 +532,13 @@ private void observePointer(ref Observed seen, in PointerEvent event)
             {
                 assert(seen.leftPressed, "a release arrived without a press");
                 seen.leftReleased = true;
+                const bounds = seen.lastMetrics.logicalSize;
+                if (seen.dragPressed
+                    && (event.logicalPosition.x < 0
+                        || event.logicalPosition.y < 0
+                        || event.logicalPosition.x >= bounds.width
+                        || event.logicalPosition.y >= bounds.height))
+                    seen.outsideRelease = true;
             }
             break;
         case PointerPhase.left:
@@ -580,5 +615,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 8);
+    assert(outcome.checked == 6 && outcome.skipped == 9);
 }

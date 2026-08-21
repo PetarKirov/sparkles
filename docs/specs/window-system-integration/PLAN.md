@@ -186,9 +186,15 @@ requires a standard shape to apply or fail with typed `unsupported`, plus
 platform-observable confirmation where one exists (`GetCursor` after
 `WM_SETCURSOR` under Wine, `NSCursor.currentCursor` on macOS). The
 cursor-shape protocol is vendored beside xdg-shell with its single unused
-tablet request stubbed rather than pulling in the tablet-v2 tables. X11 scale
-detection, custom cursor images, full output enumeration/hotplug, pointer
-capture, and native-Windows evidence remain.
+tablet request stubbed rather than pulling in the tablet-v2 tables. The drag slice
+delivers F10's release-preservation half: Win32 gains implicit capture —
+User32 stops delivering client messages at the border without it — spanning
+the first press to the last release and unwound on `WM_CAPTURECHANGED`, while
+X11's automatic core grab and AppKit's window drag routing are verified
+rather than assumed; the conformance drag property requires the release to
+arrive with outside coordinates. X11 scale detection, custom cursor images,
+full output enumeration/hotplug, explicit capture/confinement, raw relative
+motion, and native-Windows evidence remain.
 
 Required platform paths:
 
