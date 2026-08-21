@@ -138,7 +138,7 @@ struct VulkanContext
         if (device.device !is null && device.destroyDevice !is null)
         {
             if (device.deviceWaitIdle !is null)
-                cast(void) device.deviceWaitIdle(device.device);
+                device.deviceWaitIdle(device.device);
             device.destroyDevice(device.device, null);
             device = DeviceCommands.init;
         }

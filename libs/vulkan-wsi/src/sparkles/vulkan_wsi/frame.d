@@ -477,7 +477,7 @@ struct FrameSync
             return;
 
         if (vk.device.queueWaitIdle !is null && vk.queue !is null)
-            cast(void) vk.device.queueWaitIdle(vk.queue);
+            vk.device.queueWaitIdle(vk.queue);
 
         if (vk.device.destroySemaphore !is null)
         {

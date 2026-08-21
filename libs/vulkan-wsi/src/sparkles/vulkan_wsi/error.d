@@ -80,6 +80,11 @@ VulkanWsiError vulkanWsiError(VulkanWsiErrorKind kind,
 {
     VulkanWsiError error = VulkanWsiError(kind, operation, backend, result);
     if (!error.diagnostic.assign(diagnostic))
-        cast(void) error.diagnostic.assign("diagnostic exceeds inline capacity");
+    {
+        // The fallback text fits the inline capacity by construction.
+        const assigned =
+            error.diagnostic.assign("diagnostic exceeds inline capacity");
+        assert(assigned);
+    }
     return error;
 }
