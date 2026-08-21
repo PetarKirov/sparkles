@@ -106,7 +106,16 @@
         libName:
         fs.unions (
           map
-            (dir: fs.fileFilter (file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i") (fromRoot dir))
+            (
+              dir:
+              fs.fileFilter (
+                # `.h`: libs/wsi's ImportC bridges include vendored protocol
+                # headers (`wayland_xdg_shell_client_protocol.h`) from src/.
+                # `.spv`: libs/vulkan-wsi string-imports its triangle shaders
+                # from `src/shaders/`.
+                file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i" || file.hasExt "h" || file.hasExt "spv"
+              ) (fromRoot dir)
+            )
             (
               libsClosure (
                 [ libName ] ++ lib.concatMap (p: refsIn (builtins.readFile p)) (exampleFilesIn libName)
@@ -276,6 +285,16 @@
           # `sdl3.pc`, `.lib` is what the built example loads at runtime.
           pkgs.sdl3
           pkgs.sdl3.dev
+        ]
+        ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+          # `libs "wayland-client" "xcb" ... "xkbcommon-x11"` in libs/wsi
+          # (Linux-only, like the dev shell's copies of the same packages).
+          pkgs.wayland
+          pkgs.wayland.dev
+          pkgs.libxkbcommon
+          pkgs.libxkbcommon.dev
+          pkgs.libxcb
+          pkgs.libxcb.dev
         ];
       };
 

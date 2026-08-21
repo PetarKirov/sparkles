@@ -222,7 +222,7 @@
         pkgs.lychee
 
         # GLSL → SPIR-V, for regenerating the shaders under
-        # `libs/ui-sdl3/examples/shaders/` (each `.vert`/`.frag` carries its
+        # `libs/vulkan-wsi/src/shaders/` (each `.vert`/`.frag` carries its
         # own `glslangValidator` line). Deliberately *not* in `ciPackages`:
         # the compiled `.spv` is committed beside its source, so no CI job
         # needs a shader compiler to build an example that uses one.

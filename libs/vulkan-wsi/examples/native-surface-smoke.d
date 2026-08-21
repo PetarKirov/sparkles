@@ -4,6 +4,10 @@
     dependency "sparkles:vulkan-wsi" path="../../.."
     dependency "sparkles:event-horizon" path="../../.."
     targetPath "build"
+    platforms "linux"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
 +/
 /** Native Wayland handle to present-capable Vulkan device smoke test. */
 module native_surface_smoke;

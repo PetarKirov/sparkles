@@ -6,6 +6,7 @@
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
     dependency "expected" version="~>0.4.1"
+    stringImportPaths "../../vulkan-wsi/src/shaders"
     targetPath "build"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
