@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <xcb/xcb.h>
+#include <xcb/xkb.h>
+#include <xcb/xtest.h>
 
 struct wsi_xcb_bootstrap
 {
@@ -33,6 +35,8 @@ enum wsi_xcb_event_kind
     WSI_XCB_EVENT_FOCUS_IN,
     WSI_XCB_EVENT_FOCUS_OUT,
     WSI_XCB_EVENT_DESTROYED,
+    WSI_XCB_EVENT_KEY_PRESS,
+    WSI_XCB_EVENT_KEY_RELEASE,
     WSI_XCB_EVENT_ERROR
 };
 
@@ -45,6 +49,7 @@ struct wsi_xcb_event
     uint32_t width;
     uint32_t height;
     int32_t native_code;
+    uint32_t state;
 };
 
 static xcb_atom_t wsi_xcb_atom(xcb_connection_t *connection,
@@ -139,6 +144,7 @@ int wsi_xcb_create_window(void *opaque,
         bootstrap->black_pixel,
         XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
             | XCB_EVENT_MASK_FOCUS_CHANGE
+            | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
     };
     xcb_create_window(connection,
         XCB_COPY_FROM_PARENT, window, bootstrap->root, 0, 0, width, height, 0,
@@ -250,6 +256,24 @@ int wsi_xcb_poll_event(void *opaque,
         }
         break;
     }
+    case XCB_KEY_PRESS:
+    {
+        xcb_key_press_event_t *event = (xcb_key_press_event_t *) generic;
+        out->kind = WSI_XCB_EVENT_KEY_PRESS;
+        out->window = event->event;
+        out->native_code = event->detail;
+        out->state = event->state;
+        break;
+    }
+    case XCB_KEY_RELEASE:
+    {
+        xcb_key_release_event_t *event = (xcb_key_release_event_t *) generic;
+        out->kind = WSI_XCB_EVENT_KEY_RELEASE;
+        out->window = event->event;
+        out->native_code = event->detail;
+        out->state = event->state;
+        break;
+    }
     case XCB_FOCUS_IN:
         out->kind = WSI_XCB_EVENT_FOCUS_IN;
         out->window = ((xcb_focus_in_event_t *) generic)->event;
@@ -272,6 +296,75 @@ int wsi_xcb_poll_event(void *opaque,
 int wsi_xcb_connection_error(void *opaque)
 {
     return xcb_connection_has_error((xcb_connection_t *) opaque);
+}
+
+/*
+ * Without detectable auto-repeat the server synthesizes a release before
+ * every repeated press, so a held key is indistinguishable from typing.
+ * With the per-client flag a repeat is a second press with no release in
+ * between, which the D side turns into KeyAction.repeat. Best-effort: a
+ * server without XKB simply keeps the synthesized releases.
+ */
+int wsi_xcb_enable_detectable_autorepeat(void *opaque)
+{
+    xcb_connection_t *connection = (xcb_connection_t *) opaque;
+    xcb_xkb_use_extension_reply_t *use = xcb_xkb_use_extension_reply(
+        connection,
+        xcb_xkb_use_extension(connection, XCB_XKB_MAJOR_VERSION,
+            XCB_XKB_MINOR_VERSION),
+        NULL);
+    if (!use)
+        return -1;
+    int supported = use->supported;
+    free(use);
+    if (!supported)
+        return -1;
+    xcb_xkb_per_client_flags_reply_t *flags =
+        xcb_xkb_per_client_flags_reply(connection,
+            xcb_xkb_per_client_flags(connection, XCB_XKB_ID_USE_CORE_KBD,
+                XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT,
+                XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT, 0, 0, 0),
+            NULL);
+    if (!flags)
+        return -1;
+    int enabled =
+        (flags->value & XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT) != 0;
+    free(flags);
+    return enabled ? 0 : -1;
+}
+
+/* Test helpers: give a window input focus, then inject XTEST key events. */
+int wsi_xcb_focus_window(void *opaque, uint32_t window)
+{
+    xcb_connection_t *connection = (xcb_connection_t *) opaque;
+    int error = wsi_xcb_check(connection,
+        xcb_set_input_focus_checked(connection,
+            XCB_INPUT_FOCUS_POINTER_ROOT, window, XCB_CURRENT_TIME));
+    if (error)
+        return error;
+    return xcb_flush(connection) > 0
+        ? 0 : xcb_connection_has_error(connection);
+}
+
+int wsi_xcb_send_key(void *opaque, uint8_t keycode, int press)
+{
+    xcb_connection_t *connection = (xcb_connection_t *) opaque;
+    xcb_test_get_version_reply_t *version = xcb_test_get_version_reply(
+        connection,
+        xcb_test_get_version(connection, XCB_TEST_MAJOR_VERSION,
+            XCB_TEST_MINOR_VERSION),
+        NULL);
+    if (!version)
+        return -1;
+    free(version);
+    int error = wsi_xcb_check(connection,
+        xcb_test_fake_input_checked(connection,
+            press ? XCB_KEY_PRESS : XCB_KEY_RELEASE, keycode,
+            XCB_CURRENT_TIME, XCB_NONE, 0, 0, 0));
+    if (error)
+        return error;
+    return xcb_flush(connection) > 0
+        ? 0 : xcb_connection_has_error(connection);
 }
 
 #pragma attribute(pop)

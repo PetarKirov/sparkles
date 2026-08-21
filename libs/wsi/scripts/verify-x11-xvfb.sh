@@ -22,10 +22,10 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$during_src" \
   "$repo/libs/wsi/examples/x11-hosted-smoke.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest \
   -of="$work/wsi-x11-smoke"
 
 echo ">> running under Xvfb ..."
 xvfb-run -a "$work/wsi-x11-smoke" | tee "$work/output.log"
-grep -q '^ok: XCB window + Event Horizon timer/waker' "$work/output.log"
+grep -q '^ok: XCB window + keys + Event Horizon timer/waker' "$work/output.log"
 echo ">> sparkles:wsi X11 foreign-fd smoke verified under Xvfb."

@@ -19,6 +19,7 @@ import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
+import sparkles.input.events : KeyAction, Mods;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.loop : EventQueue;
@@ -60,6 +61,7 @@ struct X11Wsi
     private bool pollCompleted_;
     private int pollResult_;
     private bool detaching_;
+    private ulong[4] pressedKeys_;
 
     /** Connects to the process' selected X display on the calling UI thread. */
     static WsiResult!void open(out X11Wsi wsi)
@@ -76,6 +78,9 @@ struct X11Wsi
             return x11Failure!void(WsiOperation.open, 0,
                 "XCB connection has no pollable descriptor");
         }
+        // Best effort: without XKB the server keeps synthesizing a release
+        // before each repeated press, and held keys read as typing.
+        cast(void) wsi_xcb_enable_detectable_autorepeat(wsi.connection_);
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         return wsiOk();
@@ -407,6 +412,21 @@ struct X11Wsi
             case WSI_XCB_EVENT_CLOSE:
                 cast(void) emit(id, CloseRequestedEvent());
                 break;
+            case WSI_XCB_EVENT_KEY_PRESS:
+            case WSI_XCB_EVENT_KEY_RELEASE:
+                const pressed = native.kind == WSI_XCB_EVENT_KEY_PRESS;
+                const keycode = cast(uint) native.native_code & 0xFF;
+                const repeated = pressed && keyIsDown(keycode);
+                setKeyDown(keycode, pressed);
+                KeyboardEvent event;
+                event.physical = PhysicalKey(keycode, 0);
+                event.location = x11KeyLocation(keycode);
+                event.action = pressed
+                    ? (repeated ? KeyAction.repeat : KeyAction.press)
+                    : KeyAction.release;
+                event.modifiers = x11Mods(native.state);
+                cast(void) emit(id, event);
+                break;
             case WSI_XCB_EVENT_FOCUS_IN:
                 cast(void) emit(id, FocusChangedEvent(true));
                 break;
@@ -423,6 +443,55 @@ struct X11Wsi
                 break;
         }
     }
+
+    private bool keyIsDown(uint keycode) const @safe pure nothrow @nogc
+        => (pressedKeys_[(keycode >> 6) & 3] & (1UL << (keycode & 63))) != 0;
+
+    private void setKeyDown(uint keycode, bool down) @safe pure nothrow @nogc
+    {
+        if (down)
+            pressedKeys_[(keycode >> 6) & 3] |= 1UL << (keycode & 63);
+        else
+            pressedKeys_[(keycode >> 6) & 3] &= ~(1UL << (keycode & 63));
+    }
+
+    /*
+    Location from the evdev-standard keycode map (X keycode = evdev + 8) that
+    every current server exposes through xkeyboard-config. A server with a
+    different map degrades to `standard`, never to a wrong modifier pairing,
+    because left/right identity also lives in the keycode itself there.
+    */
+    package static KeyLocation x11KeyLocation(uint keycode) @safe pure nothrow @nogc
+    {
+        switch (keycode)
+        {
+            case 50: // KEY_LEFTSHIFT + 8
+            case 37: // KEY_LEFTCTRL + 8
+            case 64: // KEY_LEFTALT + 8
+            case 133: // KEY_LEFTMETA + 8
+                return KeyLocation.left;
+            case 62: // KEY_RIGHTSHIFT + 8
+            case 105: // KEY_RIGHTCTRL + 8
+            case 108: // KEY_RIGHTALT + 8
+            case 134: // KEY_RIGHTMETA + 8
+                return KeyLocation.right;
+            case 63: // KEY_KPASTERISK + 8
+            case 79: .. case 91: // KEY_KP7 .. KEY_KPDOT + 8
+            case 104: // KEY_KPENTER + 8
+            case 106: // KEY_KPSLASH + 8
+                return KeyLocation.numpad;
+            default:
+                return KeyLocation.standard;
+        }
+    }
+
+    /// Core-protocol state mask: Shift, Control, Mod1 (Alt), Mod4 (Super).
+    package static Mods x11Mods(uint state) @safe pure nothrow @nogc
+        => Mods(
+            ctrl: (state & 0x4) != 0,
+            alt: (state & 0x8) != 0,
+            shift: (state & 0x1) != 0,
+            super_: (state & 0x40) != 0);
 
     private size_t indexOfWindow(uint window) const pure nothrow @nogc
     {
@@ -498,4 +567,54 @@ private WsiResult!T x11Failure(T)(WsiOperation operation, long nativeCode,
 {
     return wsiErr!T(wsiError(kind, operation, BackendKind.x11,
         nativeCode, diagnostic));
+}
+
+@("wsi.x11.keyLocationFollowsTheEvdevMap")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(X11Wsi.x11KeyLocation(50) == KeyLocation.left);
+    assert(X11Wsi.x11KeyLocation(62) == KeyLocation.right);
+    assert(X11Wsi.x11KeyLocation(37) == KeyLocation.left);
+    assert(X11Wsi.x11KeyLocation(105) == KeyLocation.right);
+    assert(X11Wsi.x11KeyLocation(64) == KeyLocation.left);
+    assert(X11Wsi.x11KeyLocation(108) == KeyLocation.right);
+    assert(X11Wsi.x11KeyLocation(79) == KeyLocation.numpad);
+    assert(X11Wsi.x11KeyLocation(91) == KeyLocation.numpad);
+    assert(X11Wsi.x11KeyLocation(104) == KeyLocation.numpad);
+    assert(X11Wsi.x11KeyLocation(106) == KeyLocation.numpad);
+    assert(X11Wsi.x11KeyLocation(38) == KeyLocation.standard);
+    assert(X11Wsi.x11KeyLocation(9) == KeyLocation.standard);
+}
+
+@("wsi.x11.modifiersComeFromTheCoreStateMask")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(X11Wsi.x11Mods(0) == Mods());
+    assert(X11Wsi.x11Mods(0x1) == Mods(shift: true));
+    assert(X11Wsi.x11Mods(0x4) == Mods(ctrl: true));
+    assert(X11Wsi.x11Mods(0x8) == Mods(alt: true));
+    assert(X11Wsi.x11Mods(0x40) == Mods(super_: true));
+    assert(X11Wsi.x11Mods(0x4 | 0x1) == Mods(ctrl: true, shift: true));
+    // Lock (caps) and Mod2 (num lock) are latched states, not chord
+    // modifiers, and must not leak into Mods.
+    assert(X11Wsi.x11Mods(0x2 | 0x10) == Mods());
+}
+
+@("wsi.x11.heldKeysRepeatOnlyWithoutAnInterveningRelease")
+@safe pure nothrow @nogc
+unittest
+{
+    X11Wsi wsi;
+    assert(!wsi.keyIsDown(38));
+    wsi.setKeyDown(38, true);
+    assert(wsi.keyIsDown(38));
+    wsi.setKeyDown(200, true);
+    assert(wsi.keyIsDown(200));
+    wsi.setKeyDown(38, false);
+    assert(!wsi.keyIsDown(38));
+    assert(wsi.keyIsDown(200));
+    wsi.setKeyDown(200, false);
+    assert(!wsi.keyIsDown(200));
 }
