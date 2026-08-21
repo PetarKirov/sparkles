@@ -60,431 +60,9 @@ import sparkles.ui_app.backend : Backend, BackendPolicy,
     hostPickBackend = pickBackend, platformForcedBackend;
 import sparkles.ui_app.display : displayAvailable;
 
-// ── Option Groupings & Subcommands ──────────────────────────────────────────
-
-/// Standalone overlay configuration.
-struct OverlayOptions
-{
-    @(Option("twoslash", description: "Render a TypeScript twoslash JSON payload as type-annotated overlay (compatibility alias for --overlay twoslash=<path>)."))
-    string twoslash;
-
-    @(Option("overlay", description: "Attach an overlay: <kind>[=<artifact>] (e.g. twoslash=nodes.json, coverage=cov.json). Can be specified multiple times."))
-    string[] overlays;
-
-    @(Option("cov", description: "Attach a code coverage artifact (.lst, .gcov, .info, .json) to the document (compatibility alias for --overlay coverage=<artifact>)."))
-    string cov;
-
-    @(Option("no-auto-cov", description: "Do not look for a coverage artifact in build/coverage when none is named."))
-    bool noAutoCov;
-
-    @(Option("list-overlays", description: "List registered overlay kinds."))
-    bool listOverlays;
-}
-
-/// Standalone diff configuration.
-struct DiffOptions
-{
-    @(Option("diff-ignore-whitespace", description: "Whitespace difference mode: exact | trailing | change | all."))
-    string diffIgnoreWhitespace = "exact";
-
-    @(Option("diff-preview", description: "Diff rendered Markdown documents instead of raw source."))
-    bool diffPreview;
-
-    @(Option("diff-structural", description: "Grammar-aware structural diff: auto | on | off."))
-    string diffStructural = "auto";
-
-    @(Option("diff-commutative", description: "Containers whose child order carries no meaning (e.g. D imports)."))
-    string diffCommutative = "default";
-
-    @(Option("diff-layout", description: "Diff layout: unified (default) or split."))
-    string diffLayout = "unified";
-}
-
-/// Output rendering sink options (mutually exclusive choices for document rendering).
-struct RenderSinkOptions
-{
-    @(Option("backend|sink", description: "Target rendering backend: gui | tui | html | ansi (default: auto-detected)."))
-    string backend = "auto";
-
-    @(Option("html", description: "Output formatted HTML instead of ANSI escapes (shorthand for --backend=html)."))
-    bool html;
-
-    @(Option("tui", description: "Force terminal output (alias for --no-gui / --backend=tui)."))
-    bool tui;
-
-    @(Option("ansi", description: "Output formatted ANSI escapes (shorthand for --backend=ansi)."))
-    bool ansi;
-
-    Backend resolveBackend(in GuiOptions guiOpt) const
-    {
-        Backend forced;
-        if (platformForcedBackend(forced))
-            return forced; // Android: the surface IS the app
-
-        if (backend == "gui") return Backend.gui;
-        if (backend == "tui") return Backend.tui;
-        if (backend == "html" || html) return Backend.html;
-        if (backend == "ansi" || ansi) return Backend.ansi;
-
-        bool guiCompiledIn = false;
-        version (HueGui) guiCompiledIn = true;
-
-        const wantGui = (backend == "gui") || guiOpt.gui;
-        const wantNoGui = tui || guiOpt.tui || guiOpt.noGui;
-
-        return hostPickBackend(BackendPolicy(
-            forceGui: wantGui,
-            forceNoGui: wantNoGui,
-            forceTui: tui || guiOpt.tui,
-            forceHtml: html,
-            guiCompiledIn: guiCompiledIn,
-            stdinTty: isTerminal(StdStream.stdin),
-            stdoutTty: isTerminal(StdStream.stdout),
-            displayPresent: displayAvailable(),
-        ));
-    }
-}
-
-/// Render settings passed down to active sinks.
-struct ViewRenderOptions
-{
-    string theme;
-    string background = "full";
-    bool groupThemes = true;
-    int treeWidth = 32;
-    int tabWidth = 4;
-    bool listWhitespace = false;
-    bool lineNumbers = true;
-    string gutter = "all";
-    bool codeLineNumbers = true;
-    string codeOverflow = "scroll";
-    int codeMaxLines = -1;
-    string tableOverflow = "scroll";
-    int tableMaxLines = -1;
-    string ansiCopy = "raw";
-    string tableCopy = "auto";
-    string[] include;
-    string[] exclude;
-    bool noLiveTypes = false;
-    string diffLayout = "unified";
-    GuiOptions gui;
-    bool formatPreview = false;  /// `FMV8`: start in the format preview
-    int formatWidth = 0;         /// ruler column (0 = discover)
-    string formatter;            /// preferred formatter name
-    string scrollAnchor = "segment"; /// `NAV5`: what a re-layout pins
-}
-
-// ── Subcommands ─────────────────────────────────────────────────────────────
-
-@(Command("view", isDefault: true,
-    shortDescription: "View and syntax-highlight a file, directory, or twoslash overlay",
-))
-struct View
-{
-    @(Argument("paths", description: "File or directory to view (default: hue's own source).", optional: true))
-    string[] paths;
-
-    @Flatten("Output Sinks")
-    RenderSinkOptions sink;
-
-    @(Option("markdown", description: "Treat the input as Markdown and render the decorated preview."))
-    bool markdown;
-
-    @(Option("language|lang", description: "Override syntax language (e.g. 'd', 'rust', 'markdown', 'json')."))
-    string language;
-
-    @(Option("raw", description: "Render highlighted source instead of markdown preview."))
-    bool raw;
-
-    @(Option("patch", description: "Treat the input as a unified diff."))
-    bool patch;
-
-    @(Option("dsv", description: "Treat the input as delimiter-separated values and render the grid preview."))
-    bool dsv;
-
-    @(Option("dsv-delimiter", description: "Force the DSV delimiter (a char, tab, or \\t; default: sniffed from the content)."))
-    string dsvDelimiter;
-
-    @(Option("dsv-quote", description: "Force the DSV quote character (default: sniffed)."))
-    string dsvQuote;
-
-    @(Option("dsv-header", description: "Whether the first DSV record is a header: auto, yes or no."))
-    string dsvHeader = "auto";
-
-    @(Option("tree-width", description: "Explorer pane width in cells (default 32)."))
-    int treeWidth = 32;
-
-    @(Option("tab-width", description: "Tab stops in the raw source view: a tab advances to the next multiple of this many columns."))
-    int tabWidth = 4;
-
-    @(Option("list-whitespace", description: "Render whitespace visibly in the raw view, vim's 'list' style."))
-    bool listWhitespace;
-
-    @(Option("line-numbers", description: "Show the file line-number gutter (default on). Shorthand for dropping it from --gutter."))
-    bool lineNumbers = true;
-
-    @(Option("gutter", description: "Which gutter channels to show: 'all', 'none', or a comma-separated list of numbers, icons, coverage."))
-    string gutter = "all";
-
-    @(Option("code-line-numbers", description: "--gui: number the lines inside each code block (default on)."))
-    bool codeLineNumbers = true;
-
-    @(Option("code-overflow", description: "How a code-block line longer than its panel behaves: 'scroll', 'wrap', or 'wrap-at:N' (wrap to N cells total, then scroll)."))
-    string codeOverflow = "scroll";
-
-    @(Option("code-max-lines", description: "A code block taller than this many lines shows a fixed-height vertical viewport (-1 auto, 0 disables)."))
-    int codeMaxLines = -1;
-
-    @(Option("table-overflow", description: "How a table wider than its panel behaves: 'scroll', 'wrap', or 'wrap-at:N' (wrap to N cells total, then scroll)."))
-    string tableOverflow = "scroll";
-
-    @(Option("table-max-lines", description: "A table taller than this many interior lines shows a fixed-height vertical viewport (-1 auto, 0 disables)."))
-    int tableMaxLines = -1;
-
-    @(Option("group-themes", description: "Group the theme cycle by light/dark (default on)."))
-    bool groupThemes = true;
-
-    @(Option("ansi-copy", description: "--gui: how a selection over a ```ansi block copies: 'raw' or 'strip'."))
-    string ansiCopy = "raw";
-
-    @(Option("table-copy", description: "How a table grid selection copies: 'auto' (source for DSV, else tsv), 'tsv', 'markdown' or 'source' (the DSV dialect)."))
-    string tableCopy = "auto";
-
-    @(Option("include", description: "Explorer glob(s) to always show. Repeatable."))
-    string[] include;
-
-    @(Option("exclude", description: "Explorer glob(s) to hide. Repeatable."))
-    string[] exclude;
-
-    @(Option("no-live-types", description: "Disable live D types in the interactive views."))
-    bool noLiveTypes;
-
-    @(Option("format-preview", description: "Start in the in-memory format preview: the buffer reformats through the language's formatter; the file is never written."))
-    bool formatPreview;
-
-    @(Option("format-width", description: "Ruler column for the format preview (default: discover from .editorconfig)."))
-    int formatWidth = 0;
-
-    @(Option("formatter", description: "Formatter for the format preview; a miss lists the candidates."))
-    string formatter;
-
-    @(Option("scroll-anchor", description: "What a resize or font change keeps at the top: segment (the exact wrapped segment, default) or line (the source line's first segment)."))
-    string scrollAnchor = "segment";
-
-    @Flatten
-    DiffOptions diffOptions;
-
-    int run(Program)(in Program program)
-    {
-        return executeView(program.value, this);
-    }
-}
-
-@(Command("diff",
-    shortDescription: "Diff two files or git revisions with syntax highlighting and structural awareness",
-))
-struct Diff
-{
-    @(Argument("targets", description: "Old and new files to diff, or git revspec and path filters.", optional: true))
-    string[] targets;
-
-    @(Option("staged", description: "Diff the index (staged changes) against HEAD or the given revision."))
-    bool staged;
-
-    @Flatten("Diff Options")
-    DiffOptions diff;
-
-    @Flatten("Output Sinks")
-    RenderSinkOptions sink;
-
-    @(Option("line-numbers", description: "--gui: show line-number gutter."))
-    bool lineNumbers = true;
-
-    @(Option("code-overflow", description: "How code-block lines behave: 'scroll', 'wrap', or 'wrap-at:N'."))
-    string codeOverflow = "scroll";
-
-    @(Option("code-max-lines", description: "Max code block lines before vertical scrollbar."))
-    int codeMaxLines = -1;
-
-    @(Option("table-overflow", description: "How a wide table behaves: 'scroll', 'wrap', or 'wrap-at:N'."))
-    string tableOverflow = "scroll";
-
-    @(Option("table-max-lines", description: "Max table interior lines before vertical scrollbar."))
-    int tableMaxLines = -1;
-
-    int run(Program)(in Program program)
-    {
-        return executeDiff(program.value, this);
-    }
-}
-
-@(Command("pr",
-    shortDescription: "Open a GitHub/GitLab pull request as a diff session with review comments",
-))
-struct Pr
-{
-    @(Argument("pr", description: "Pull request identifier (e.g. 123, owner/repo#123, or forge URL)."))
-    string pr;
-
-    @Flatten("Diff Options")
-    DiffOptions diff;
-
-    @Flatten("Output Sinks")
-    RenderSinkOptions sink;
-
-    @(Option("line-numbers", description: "--gui: show line-number gutter."))
-    bool lineNumbers = true;
-
-    @(Option("code-overflow", description: "How code-block lines behave: 'scroll', 'wrap', or 'wrap-at:N'."))
-    string codeOverflow = "scroll";
-
-    @(Option("code-max-lines", description: "Max code block lines before vertical scrollbar."))
-    int codeMaxLines = -1;
-
-    @(Option("table-overflow", description: "How a wide table behaves: 'scroll', 'wrap', or 'wrap-at:N'."))
-    string tableOverflow = "scroll";
-
-    @(Option("table-max-lines", description: "Max table interior lines before vertical scrollbar."))
-    int tableMaxLines = -1;
-
-    int run(Program)(in Program program)
-    {
-        return executePr(program.value, this);
-    }
-}
-
-@(Command("gallery",
-    shortDescription: "Batch render a directory into a static HTML syntax/theme gallery",
-))
-struct Gallery
-{
-    @(Argument("dir", description: "Directory to render as a gallery (default: current directory).", optional: true))
-    string dir = ".";
-
-    @(Option("out|o", description: "Output directory for the static HTML gallery (defaults to <dir>/html)."))
-    string outDir;
-
-    @(Option("twoslash", description: "Render twoslash overlays: committed *.twoslash.json payloads, and .d sources extracted via twoslash-extract --dub."))
-    bool twoslash;
-
-    @(Option("jobs|j", description: "Extractor processes to run at once for --twoslash (0 = one per usable CPU)."))
-    uint jobs;
-
-    @(Option("repo-url", description: "Blob base for the breadcrumb forge links, e.g. https://github.com/owner/repo/blob/main."))
-    string repoUrl;
-
-    @(Option("repo-prefix", description: "The gallery root's path inside that repository, when it is not the repo root."))
-    string repoPrefix;
-
-    @(Option("markdown", description: "Treat input files as Markdown."))
-    bool markdown;
-
-    @(Option("raw", description: "Render raw source without markdown preview."))
-    bool raw;
-
-    @(Option("dark-theme", description: "Second theme for dark mode: --theme becomes the light theme and this one's rules are emitted under an html.dark scope in the shared stylesheet, so one page serves both. Implies a shared stylesheet, so the pages carry no style block; pair with --stylesheet or --emit-stylesheet."))
-    string darkTheme;
-
-    @(Option("stylesheet", description: "Link this href from the emitted pages instead of embedding the theme stylesheet in a style block. Write the file itself with --emit-stylesheet."))
-    string stylesheet;
-
-    @(Option("emit-stylesheet", description: "Also write the stylesheet the pages need (both themes when --dark-theme is set) to this file."))
-    string emitStylesheet;
-
-    @(Option("recursive|r", description: "Render the whole subtree, mirroring its directory structure in the output, with an index per directory. Git-ignored files are skipped."))
-    bool recursive;
-
-    @(Option("root", description: "Directory the mirrored output paths are relative to (default: the gallery target). Also the base for view-on-GitHub links."))
-    string root;
-
-    @(Option("sidebar", description: "Render the docs-site sidebar on every page: path to a VitePress-shaped sidebar.json (e.g. docs/.vitepress/sidebar.json)."))
-    string sidebar;
-
-    @(Option("site-base", description: "Base URL the sidebar's site-absolute routes resolve against, e.g. https://docs.example (default: none, links stay root-absolute)."))
-    string siteBase;
-
-    int run(Program)(in Program program)
-    {
-        return executeGallery(program.value, this);
-    }
-}
-
-@(Command("theme",
-    shortDescription: "Inspect, list, and preview built-in color themes",
-))
-struct ThemeCmd
-{
-    @(Option("list|l", description: "List all built-in themes."))
-    bool list;
-
-    @(Argument("name", description: "Theme name to inspect.", optional: true))
-    string name;
-
-    int run(Program)(in Program program)
-    {
-        return executeTheme(program.value, this);
-    }
-}
-
-@(Command("overlay",
-    shortDescription: "Inspect available document overlays (twoslash, code coverage, trace)",
-))
-struct OverlayCmd
-{
-    @(Option("list|l", description: "List registered overlay kinds."))
-    bool list;
-
-    @(Argument("kind", description: "Overlay kind to inspect.", optional: true))
-    string kind;
-
-    int run(Program)(in Program program)
-    {
-        return executeOverlay(program.value, this);
-    }
-}
-
-@(Command("config",
-    shortDescription: "Display resolved configuration, fonts, and theme settings",
-))
-struct ConfigCmd
-{
-    @(Argument("action", description: "Config action: show | write | save (default: show).", optional: true))
-    string action = "show";
-
-    @(Option("show", description: "Show resolved configuration."))
-    bool show;
-
-    int run(Program)(in Program program)
-    {
-        return executeConfig(program.value, this);
-    }
-}
-
-// ── Root Command ────────────────────────────────────────────────────────────
-
-@(Command("hue",
-    shortDescription: "Interactive syntax-highlighting file viewer, twoslash overlay renderer, and diff inspector",
-))
-struct HueCli
-{
-    @(Option("log-level", description: "Log level: trace | info | warning | error | critical | off (default: warning)."))
-    LogLevel logLevel = LogLevel.warning;
-
-    @(Option("theme", description: "Colour theme, by name (see sparkles.ui.themes for the built-in set)."))
-    string theme = defaultTheme;
-
-    @(Option("background", description: "Terminal background mode: no-background, spans, or full."))
-    string background = "full";
-
-    @Flatten("Overlay Options")
-    OverlayOptions overlay;
-
-    @Flatten("GUI Options")
-    GuiOptions gui;
-
-    @Subcommands
-    SumType!(View, Diff, Pr, Gallery, ThemeCmd, OverlayCmd, ConfigCmd) command;
-}
+import cli;
+import settings : HueConfig;
+import settings_load : LoadedConfig;
 
 // ── Subcommand Handlers ─────────────────────────────────────────────────────
 
@@ -533,26 +111,7 @@ private bool resolveOverlayTarget(in HueCli root, ref bool forceTwoslash,
     return true;
 }
 
-private GuiOptions copyGui(in GuiOptions g)
-{
-    GuiOptions res;
-    res.font = g.font;
-    res.fontSize = g.fontSize;
-    res.fontBold = g.fontBold;
-    res.fontItalic = g.fontItalic;
-    res.fontBoldItalic = g.fontBoldItalic;
-    res.fontCodepointMap = g.fontCodepointMap.dup;
-    res.fontDir = g.fontDir.dup;
-    res.theme = g.theme;
-    res.windowWidth = g.windowWidth;
-    res.windowHeight = g.windowHeight;
-    res.noGui = g.noGui;
-    res.gui = g.gui;
-    res.tui = g.tui;
-    return res;
-}
-
-private int executeView(in HueCli root, in View view)
+int executeView(in HueCli root, in View view)
 {
     import sparkles.docs.source_set : collectSources, SourceEntry, SourceSet;
 
@@ -574,13 +133,13 @@ private int executeView(in HueCli root, in View view)
     if (!resolveOverlayTarget(root, forceTwoslash, target, coverageArtifact))
         return 1;
 
+    ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
-    const theme = resolveNamedTheme(root.theme, labels);
+    const theme = resolveNamedTheme(eff.appearance.theme, labels);
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, view.markdown, view.raw,
-        view.patch, parseWhitespaceMode(view.diffOptions.diffIgnoreWhitespace),
-        parseStructural(view.diffOptions.diffStructural),
+        view.patch, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(view.diffOptions.diffCommutative));
     pipeline.forceDsv = view.dsv;
     pipeline.dsvDelimiter = view.dsvDelimiter;
@@ -602,31 +161,9 @@ private int executeView(in HueCli root, in View view)
             cast(void) startFormatForkServer();
         }
 
-    ViewRenderOptions opt;
-    opt.theme = root.theme;
-    opt.background = root.background;
-    opt.groupThemes = view.groupThemes;
-    opt.treeWidth = view.treeWidth;
-    opt.tabWidth = view.tabWidth;
-    opt.listWhitespace = view.listWhitespace;
-    opt.lineNumbers = view.lineNumbers;
-    opt.gutter = view.gutter;
-    opt.codeLineNumbers = view.codeLineNumbers;
-    opt.codeOverflow = view.codeOverflow;
-    opt.codeMaxLines = view.codeMaxLines;
-    opt.tableOverflow = view.tableOverflow;
-    opt.tableMaxLines = view.tableMaxLines;
-    opt.ansiCopy = view.ansiCopy;
-    opt.tableCopy = view.tableCopy;
-    opt.include = view.include.dup;
-    opt.exclude = view.exclude.dup;
-    opt.noLiveTypes = view.noLiveTypes;
-    opt.diffLayout = view.diffOptions.diffLayout;
-    opt.gui = copyGui(root.gui);
-    opt.scrollAnchor = view.scrollAnchor;
-    opt.formatPreview = view.formatPreview;
-    opt.formatWidth = view.formatWidth;
-    opt.formatter = view.formatter;
+    // The CLI is already merged into the effective config as its highest
+    // layer, so this projection carries every flag AND the file layers.
+    auto opt = viewRenderOptionsOf(eff);
 
     SourceSet docSet;
     bool haveSet;
@@ -639,24 +176,24 @@ private int executeView(in HueCli root, in View view)
             {
                 import workspace : runWorkspace, WorkspaceDoc;
 
-                auto themeSet = sortedThemes(root.theme, view.groupThemes);
+                auto themeSet = sortedThemes(opt.theme, opt.groupThemes);
                 auto pl = &pipeline;
                 return runWorkspace(target, isDir: true, WorkspaceDoc.init,
                     delegate WorkspaceDoc(string path) @system
                         => pl.load(path),
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
-                    &cache, view.include.dup, view.exclude.dup, view.treeWidth,
-                    view.tabWidth, view.listWhitespace, liveTypes: !view.noLiveTypes,
-                    codeOverflow: parseOverflow(view.codeOverflow, "--code-overflow"),
-                    codeMaxLines: view.codeMaxLines,
-                    tableOverflow: parseOverflow(view.tableOverflow, "--table-overflow"),
-                    tableMaxLines: view.tableMaxLines,
-                    tableCopyFlag: view.tableCopy);
+                    &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
+                    opt.tabWidth, opt.listWhitespace, liveTypes: !opt.noLiveTypes,
+                    codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
+                    codeMaxLines: opt.codeMaxLines,
+                    tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
+                    tableMaxLines: opt.tableMaxLines,
+                    tableCopyFlag: opt.tableCopy);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
         if (!openSet)
-            return runDirectoryTarget(target, forceTwoslash, root.theme, view.sink.html, "");
+            return runDirectoryTarget(target, forceTwoslash, opt.theme, view.sink.html, "");
         docSet = collectSources(target, twoslash: forceTwoslash);
         if (docSet.empty)
         {
@@ -718,32 +255,23 @@ private int executeView(in HueCli root, in View view)
         haveSet ? &docSet : null, &pipeline, dirTarget);
 }
 
-private int executeDiff(in HueCli root, in Diff diff)
+int executeDiff(in HueCli root, in Diff diff)
 {
     initLogger(root.logLevel);
 
+    ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
-    const theme = resolveNamedTheme(root.theme, labels);
+    const theme = resolveNamedTheme(eff.appearance.theme, labels);
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, false, false,
-        false, parseWhitespaceMode(diff.diff.diffIgnoreWhitespace),
-        parseStructural(diff.diff.diffStructural),
+        false, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(diff.diff.diffCommutative));
 
     const backend = diff.sink.resolveBackend(root.gui);
 
-    ViewRenderOptions opt;
-    opt.theme = root.theme;
-    opt.background = root.background;
-    opt.lineNumbers = diff.lineNumbers;
-    opt.codeOverflow = diff.codeOverflow;
-    opt.codeMaxLines = diff.codeMaxLines;
-    opt.tableOverflow = diff.tableOverflow;
-    opt.tableMaxLines = diff.tableMaxLines;
-    opt.diffLayout = diff.diff.diffLayout;
-    opt.gui = copyGui(root.gui);
+    auto opt = viewRenderOptionsOf(eff);
 
     Document doc;
     try
@@ -788,35 +316,26 @@ private int executeDiff(in HueCli root, in Diff diff)
         null, &pipeline, null);
 }
 
-private int executePr(in HueCli root, in Pr pr)
+int executePr(in HueCli root, in Pr pr)
 {
     initLogger(root.logLevel);
 
+    ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(root.theme, {
-            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+    const theme = resolveTheme(builtinThemes.get(eff.appearance.theme, {
+            warning(i"theme '$(eff.appearance.theme)' not found; falling back to the default dark theme");
             return builtinDark;
         }()), labels);
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
     auto pipeline = DocumentPipeline(&registry, &cache, false, false,
-        false, parseWhitespaceMode(pr.diff.diffIgnoreWhitespace),
-        parseStructural(pr.diff.diffStructural),
+        false, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(pr.diff.diffCommutative));
 
     const backend = pr.sink.resolveBackend(root.gui);
 
-    ViewRenderOptions opt;
-    opt.theme = root.theme;
-    opt.background = root.background;
-    opt.lineNumbers = pr.lineNumbers;
-    opt.codeOverflow = pr.codeOverflow;
-    opt.codeMaxLines = pr.codeMaxLines;
-    opt.tableOverflow = pr.tableOverflow;
-    opt.tableMaxLines = pr.tableMaxLines;
-    opt.diffLayout = pr.diff.diffLayout;
-    opt.gui = copyGui(root.gui);
+    auto opt = viewRenderOptionsOf(eff);
 
     Document doc;
     try
@@ -1013,7 +532,7 @@ private TwoslashReturn twoslashPayloadFor(in SourceEntry e,
     return twRes.value;
 }
 
-private int executeGallery(in HueCli root, in Gallery gallery)
+int executeGallery(in HueCli root, in Gallery gallery)
 {
     initLogger(root.logLevel);
     import sparkles.docs.fragment : FragmentOptions, plainFragment, twoslashFragment;
@@ -1033,9 +552,10 @@ private int executeGallery(in HueCli root, in Gallery gallery)
     if (set.empty)
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
+    const themeName = effectiveConfig().appearance.theme;
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(root.theme, {
-            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+    const theme = resolveTheme(builtinThemes.get(themeName, {
+            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
             return builtinDark;
         }()), labels);
 
@@ -1136,7 +656,7 @@ private int executeGallery(in HueCli root, in Gallery gallery)
     return 0;
 }
 
-private int executeTheme(in HueCli root, in ThemeCmd cmd)
+int executeTheme(in HueCli root, in ThemeCmd cmd)
 {
     initLogger(root.logLevel);
     import std.stdio : writeln;
@@ -1161,7 +681,7 @@ private int executeTheme(in HueCli root, in ThemeCmd cmd)
     return 1;
 }
 
-private int executeOverlay(in HueCli root, in OverlayCmd cmd)
+int executeOverlay(in HueCli root, in OverlayCmd cmd)
 {
     initLogger(root.logLevel);
     import std.stdio : writeln;
@@ -1172,7 +692,7 @@ private int executeOverlay(in HueCli root, in OverlayCmd cmd)
     return 0;
 }
 
-private int executeConfig(in HueCli root, in ConfigCmd cmd)
+int executeConfig(in HueCli root, in ConfigCmd cmd)
 {
     initLogger(root.logLevel);
     import std.stdio : writeln;
@@ -1210,50 +730,9 @@ private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Docume
 
 // ── Helper Utilities ────────────────────────────────────────────────────────
 
-/// Parses a `--code-overflow`/`--table-overflow` value into the shared
-/// `OverflowPolicy`: `scroll`, `wrap`, or `wrap-at:N` (N > 0); anything else
-/// warns and falls back to `scroll`.
-private OverflowPolicy parseOverflow(string name, string flag)
-{
-    import std.algorithm.searching : startsWith;
-    import std.conv : ConvException, to;
-
-    switch (name)
-    {
-        case "wrap":   return OverflowPolicy(WrapOverflow());
-        case "scroll": return OverflowPolicy(ScrollOverflow());
-        default:
-            if (name.startsWith("wrap-at:"))
-            {
-                try
-                {
-                    const n = name["wrap-at:".length .. $].to!int;
-                    if (n > 0)
-                        return OverflowPolicy(WrapAtOverflow(n));
-                }
-                catch (ConvException)
-                {
-                }
-            }
-            warning(i"unknown $(flag) '$(name)'; using 'scroll'");
-            return OverflowPolicy(ScrollOverflow());
-    }
-}
 
 
 
-/// `true` iff `path` names an existing directory — the multi-document target
-/// (`SRC4`). A missing or unreadable path is not a directory (the file paths
-/// below then report it).
-private bool isDirectoryPath(string path) @trusted nothrow
-{
-    import std.file : exists, isDir;
-
-    try
-        return path.length != 0 && path.exists && path.isDir;
-    catch (Exception)
-        return false;
-}
 
 private int runDirectoryTarget(string dir, bool twoslash, string themeName,
     bool isHtml, string outDirParam) @system
@@ -1341,18 +820,6 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
 
 /// Parses the `--background` value (`CLI8`) into a `BackgroundMode`; an unknown
 /// name warns and falls back to `full` (mirrors the `--theme` fallback).
-private BackgroundMode parseBackgroundMode(string name)
-{
-    switch (name)
-    {
-        case "no-background": return BackgroundMode.noBackground;
-        case "spans":         return BackgroundMode.spans;
-        case "full":          return BackgroundMode.full;
-        default:
-            warning(i"unknown --background '$(name)'; using 'full'");
-            return BackgroundMode.full;
-    }
-}
 
 private DiffViewOptions htmlDiffOptions(DiffLayout layout) @safe pure nothrow @nogc
 {
@@ -1361,46 +828,8 @@ private DiffViewOptions htmlDiffOptions(DiffLayout layout) @safe pure nothrow @n
     return opt;
 }
 
-private DiffLayout parseDiffLayout(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "unified": return DiffLayout.unified;
-        case "split":   return DiffLayout.split;
-        default:
-            warning(i"unknown --diff-layout '$(spelling)'; using unified");
-            return DiffLayout.unified;
-    }
-}
 
-/// `NAV5`: the anchor mode named on the command line.
-private auto parseScrollAnchor(string spelling) @safe
-{
-    import viewer_model : ScrollAnchorMode;
 
-    switch (spelling)
-    {
-        case "segment": return ScrollAnchorMode.segment;
-        case "line":    return ScrollAnchorMode.line;
-        default:
-            warning(i"unknown --scroll-anchor '$(spelling)'; using segment");
-            return ScrollAnchorMode.segment;
-    }
-}
-
-private WhitespaceMode parseWhitespaceMode(string spelling) @safe
-{
-    switch (spelling)
-    {
-        case "exact":    return WhitespaceMode.exact;
-        case "trailing": return WhitespaceMode.trailing;
-        case "change":   return WhitespaceMode.change;
-        case "all":      return WhitespaceMode.all;
-        default:
-            warning(i"unknown --diff-ignore-whitespace '$(spelling)'; using exact");
-            return WhitespaceMode.exact;
-    }
-}
 
 private SessionHeader prHeader(ref GrammarRegistry reg, in PullRequest pr) @system
 {
@@ -1445,27 +874,7 @@ private AnchoredThread[] prThreads(ref GrammarRegistry reg,
 private string shortDate(string iso) @safe pure nothrow
     => iso.length >= 10 ? iso[0 .. 10] : iso;
 
-private StructuralPolicy parseStructural(string spelling) @safe
-{
-    import diff_structural : parseStructuralPolicy;
 
-    bool ok;
-    const p = parseStructuralPolicy(spelling, ok);
-    if (!ok)
-        warning(i"unknown --diff-structural '$(spelling)'; using auto");
-    return p;
-}
-
-private CommutativeKind[] parseCommutative(string spelling) @safe
-{
-    import diff_commutative : parseCommutativeKinds;
-
-    bool ok;
-    auto kinds = parseCommutativeKinds(spelling, ok);
-    if (!ok)
-        warning(i"--diff-commutative wants language:node entries; ignoring the malformed ones in '$(spelling)'");
-    return kinds;
-}
 
 private bool isMarkdownPath(string path) @safe
     => canonicalLanguage(path.extension.chompPrefix(".")) == "markdown";
@@ -1483,6 +892,18 @@ private GrammarRegistry defaultRegistry() @safe
         return GrammarRegistry.fromEnvironment();
 }
 
+// The configuration resolved once in `main` for this invocation. A module
+// global rather than a field threaded through every `executeX(in HueCli, …)`
+// signature: every reader lives in this module, and the interactive shells
+// will get their own explicitly-threaded handle (the settings pane's store).
+private LoadedConfig gConfig;
+
+/// The effective five-layer configuration for this invocation (`CFG2`).
+ref const(LoadedConfig) loadedConfig() @safe nothrow @nogc => gConfig;
+
+/// ditto
+ref const(HueConfig) effectiveConfig() @safe nothrow @nogc => gConfig.effective;
+
 int main(string[] args)
 {
     initLogger(LogLevel.warning);
@@ -1498,7 +919,17 @@ int main(string[] args)
             warning(i"hue: asset bundle missing — plain text, built-in document only");
     }
 
-    return runCli!HueCli(args);
+    auto parsed = parseCli!HueCli(args);
+    if (!parsed)
+        return reportCliError(parsed.error);
+
+    // Resolve defaults → user file → project file → env → CLI before any
+    // subcommand runs; load failures degrade to located warnings (CFG8).
+    gConfig = loadConfigFor(parsed.value);
+    foreach (w; gConfig.warnings)
+        warning(i"$(w)");
+
+    return runParsedCli(parsed.value);
 }
 
 // ── The four sinks — each a `final switch` over the document's kind ─────────
@@ -1921,7 +1352,10 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             => pipeline.load(path);
 
         auto themeSet = sortedThemes(opt.theme, opt.groupThemes);
-        GuiOptions gui = copyGui(opt.gui);
+        // Rebuilt from the effective config rather than dup-copied from the
+        // `in` view: identical value (that is where `opt.gui` came from),
+        // and the Android arm below needs it mutable.
+        GuiOptions gui = guiOptionsOf(effectiveConfig());
         version (Android)
         {
             gui.font = defaultGuiFont;
