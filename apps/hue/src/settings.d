@@ -30,7 +30,7 @@ stay free to infer.
 */
 module settings;
 
-import sparkles.ui.property_tree : Doc, Label, Range;
+import sparkles.ui.property_tree : Doc, hidden, Label, Range;
 
 import ansi_model : BackgroundMode;
 import keymap_config : KeysConfig;
@@ -554,7 +554,11 @@ struct HueConfig
     layer-scalar in the merge: a higher layer's `keys` map replaces a
     lower's.
     */
+    /// `@hidden` from the settings pane in v1: a chord-keyed map needs
+    /// structural edits and a chord-capture editor the property tree does
+    /// not have yet — the file (and `config show`) is the editing surface.
     @Doc("Keybinding overlay: context → chord → command (null unbinds).")
+    @hidden
     KeysConfig keys;
 }
 
