@@ -370,6 +370,12 @@ struct Gallery
     @(Option("jobs|j", description: "Extractor processes to run at once for --twoslash (0 = one per usable CPU)."))
     uint jobs;
 
+    @(Option("repo-url", description: "Blob base for the breadcrumb forge links, e.g. https://github.com/owner/repo/blob/main."))
+    string repoUrl;
+
+    @(Option("repo-prefix", description: "The gallery root's path inside that repository, when it is not the repo root."))
+    string repoPrefix;
+
     @(Option("markdown", description: "Treat input files as Markdown."))
     bool markdown;
 
@@ -1088,12 +1094,14 @@ private int executeGallery(in HueCli root, in Gallery gallery)
             indexTitle: "twoslash examples",
             blurb: "Rendered by <code>hue gallery --twoslash</code>. Open one and " ~
                 "hover the underlined tokens to see the popups.",
-            chrome: chrome, darkChrome: darkChrome, stylesheetHref: href)
+            chrome: chrome, darkChrome: darkChrome, stylesheetHref: href,
+            repoUrl: gallery.repoUrl, repoPrefix: gallery.repoPrefix)
         : GalleryOptions(
             titlePrefix: "hue",
             heading: "hue gallery",
             blurb: "Rendered by <code>hue gallery</code>.",
-            chrome: chrome, darkChrome: darkChrome, stylesheetHref: href);
+            chrome: chrome, darkChrome: darkChrome, stylesheetHref: href,
+            repoUrl: gallery.repoUrl, repoPrefix: gallery.repoPrefix);
 
     const n = writeGallery(set, outDir, gopt, &renderOne);
     stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
