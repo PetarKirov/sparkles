@@ -61,6 +61,11 @@ private extern class NSString : NSObject
 
 private extern class NSEvent : NSObject
 {
+    static NSEvent mouseEventWithType(ulong type, NSPoint location,
+        ulong modifierFlags, double timestamp, long windowNumber,
+        NSObject context, long eventNumber, long clickCount, float pressure)
+        @selector("mouseEventWithType:location:modifierFlags:timestamp:"
+            ~ "windowNumber:context:eventNumber:clickCount:pressure:");
     static NSEvent keyEventWithType(ulong type, NSPoint location,
         ulong modifierFlags, double timestamp, long windowNumber,
         NSObject context, NSString characters,
@@ -89,6 +94,7 @@ private struct AppKitHooks
     // Layout-derived unshifted spelling the chorded key must carry.
     enum dchar chordKeyCharacter = 'a';
     enum bool resizeExact = false; // physical size scales with the backing
+    enum bool expectPointerMotion = true; // position scales with the backing
 
     void step(Duration timeout)
     {
@@ -147,6 +153,37 @@ private struct AppKitHooks
         post(keyUpType, shiftFlag, upper, lower, chordKeyCode);
         post(flagsChangedType, 0, lower, lower, chordShiftCode);
     }
+
+    /*
+    Synthetic mouse events route through NSWindow.sendEvent's hit test by
+    windowNumber and location. Window coordinates are bottom-left; the
+    resize property has set the content to 640x480 by now, so window
+    (120, 400) is the view's (120, 80). No exact position is declared —
+    the physical position scales with the backing store.
+    */
+    void injectClick()
+    {
+        enum ulong movedType = 5; // NSEventTypeMouseMoved
+        enum ulong leftDownType = 1;
+        enum ulong leftUpType = 2;
+        auto application = NSApplication.sharedApplication();
+        const number = nativeWindow.windowNumber();
+        const at = NSPoint(120, 400);
+        void post(ulong type)
+        {
+            auto event = NSEvent.mouseEventWithType(type, at, 0, 0, number,
+                null, 0, type == movedType ? 0 : 1, 0);
+            assert(event !is null);
+            application.postEvent(event, false);
+        }
+
+        post(movedType);
+        post(leftDownType);
+        post(leftUpType);
+    }
+
+    // Synthetic scrollWheel events cannot carry scrolling deltas through
+    // the public NSEvent factories, so the scroll property stays skipped.
 }
 
 int main()

@@ -16,7 +16,8 @@ import std.stdio : writeln;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.wsi;
 import xcb_native : xcb_connection_t;
-import xcb_test_input : focusWindow, resizeWindow, sendClose, sendKey;
+import xcb_test_input : focusWindow, resizeWindow, sendButton, sendClose,
+    sendKey, warpPointerOnScreen;
 
 private struct X11Hooks
 {
@@ -27,6 +28,8 @@ private struct X11Hooks
 
     enum uint chordShiftCode = 50; // X keycode: KEY_LEFTSHIFT + 8
     enum uint chordKeyCode = 38; // X keycode: KEY_A + 8
+    enum clickPosition = PhysicalPosition(120, 80);
+    enum bool expectPointerMotion = true;
     // Layout-derived unshifted spelling the chorded key must carry.
     enum dchar chordKeyCharacter = 'a';
     enum bool expectFocusEvent = true;
@@ -76,6 +79,21 @@ private struct X11Hooks
         assert(sendKey(connection, chordKeyCode, true) == 0);
         assert(sendKey(connection, chordKeyCode, false) == 0);
         assert(sendKey(connection, chordShiftCode, false) == 0);
+    }
+
+    void injectClick()
+    {
+        // No window manager: the window sits at the root origin, so root
+        // and window coordinates coincide.
+        assert(warpPointerOnScreen(connection, 120, 80) == 0);
+        assert(sendButton(connection, 1, true) == 0);
+        assert(sendButton(connection, 1, false) == 0);
+    }
+
+    void injectScroll()
+    {
+        assert(sendButton(connection, 5, true) == 0);
+        assert(sendButton(connection, 5, false) == 0);
     }
 }
 

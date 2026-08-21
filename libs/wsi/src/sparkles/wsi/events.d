@@ -161,6 +161,13 @@ enum ScrollPhase : ubyte
     momentum,
 }
 
+/*
+Sign convention (Wayland's axis convention, every backend translates to it):
+positive `dy`/`discreteY` scrolls the content view down, positive
+`dx`/`discreteX` scrolls right; a mouse wheel rolled away from the user is
+negative `dy`. `inverted` reports the platform's natural-scrolling flag
+without changing the deltas.
+*/
 struct ScrollEvent
 {
     LogicalPosition logicalPosition;

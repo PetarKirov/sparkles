@@ -49,6 +49,8 @@ private struct Win32Hooks
     enum dchar chordKeyCharacter = 'A';
     enum bool chordModifierObserved = false;
     enum bool resizeExact = false;
+    enum clickPosition = PhysicalPosition(120, 80);
+    enum bool expectPointerMotion = true;
 
     void step(Duration timeout)
     {
@@ -87,6 +89,26 @@ private struct Win32Hooks
         SendMessageW(hwnd, WM_KEYDOWN, 'A', 0x001E_0001);
         SendMessageW(hwnd, WM_KEYUP, 'A', 0xC01E_0001);
         SendMessageW(hwnd, WM_KEYUP, VK_SHIFT, 0xC02A_0001);
+    }
+
+    void injectClick()
+    {
+        enum LPARAM at = (80 << 16) | 120; // client (120, 80)
+        SendMessageW(hwnd, WM_MOUSEMOVE, 0, at);
+        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, at);
+        SendMessageW(hwnd, WM_LBUTTONUP, 0, at);
+    }
+
+    void injectScroll()
+    {
+        // Wheel messages carry screen coordinates.
+        POINT at = POINT(120, 80);
+        ClientToScreen(hwnd, &at);
+        const position = cast(LPARAM)(
+            (cast(uint) cast(ushort) at.y << 16) | cast(ushort) at.x);
+        // -120: one detent toward the user, positive-down in WSI terms.
+        SendMessageW(hwnd, WM_MOUSEWHEEL,
+            cast(WPARAM)(cast(uint) cast(ushort) -120 << 16), position);
     }
 }
 

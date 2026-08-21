@@ -104,6 +104,9 @@ private struct WaylandHooks
     DefaultLoop* loop;
     WindowId id;
     bool chordEnabled;
+    bool pointerEnabled;
+    bool resizeEnabled = true;
+    bool readySizeExact = true;
 
     enum uint chordShiftCode = 42; // evdev KEY_LEFTSHIFT
     enum uint chordKeyCode = 30; // evdev KEY_A
@@ -111,6 +114,7 @@ private struct WaylandHooks
     enum dchar chordKeyCharacter = 'a';
     enum bool expectFocusEvent = true;
     enum bool resizeExact = false;
+    enum bool expectPointerMotion = true;
     enum chordDeadline = 20.seconds;
 
     void step(Duration timeout)
@@ -158,6 +162,29 @@ private struct WaylandHooks
         // External: the verify script's XTEST injector chords repeatedly
         // through Weston until the property observes it.
     }
+
+    /*
+    The external injector clicks and scrolls at the output's center, but
+    only once this signal file exists: Weston's click-to-activate binding
+    crashes on a click over the bare desktop (its background helper never
+    maps here), and by the time this property runs the resize property has
+    maximized the surface across the output, so the center is ours.
+    */
+    void injectClick()
+    {
+        import core.stdc.stdlib : getenv;
+        import std.string : fromStringz;
+        import std.file : write;
+
+        auto path = getenv("WSI_POINTER_GO");
+        if (path !is null)
+            write(path.fromStringz, "go");
+    }
+
+    void injectScroll()
+    {
+        injectClick();
+    }
 }
 
 int main()
@@ -183,8 +210,19 @@ int main()
     }
     assert(wsi.canCreateWindows);
 
+    // The injection lane runs under Weston's kiosk shell: the compositor
+    // owns the initial (fullscreen) size and a maximize request changes
+    // nothing, so those two properties adapt; in exchange every click and
+    // scroll lands on our surface, and this Weston's desktop-shell
+    // click-to-activate binding — which crashes in this headless
+    // environment — is never registered.
+    const externalInjection = getenv("WSI_CONFORMANCE_KEYS") !is null;
+    const kiosk = getenv("WSI_CONFORMANCE_KIOSK") !is null;
     auto hooks = WaylandHooks(&wsi, &loop,
-        chordEnabled: getenv("WSI_CONFORMANCE_KEYS") !is null);
+        chordEnabled: externalInjection,
+        pointerEnabled: externalInjection && kiosk,
+        resizeEnabled: !kiosk,
+        readySizeExact: !kiosk);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi Wayland conformance");
     writeln("ok: Wayland WSI conformance (", outcome.checked, " checked, ",

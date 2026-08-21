@@ -21,7 +21,7 @@ import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
-import sparkles.input.events : KeyAction, Mods;
+import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.loop : EventQueue;
@@ -268,7 +268,10 @@ struct X11Wsi
             bootstrap_.blackPixel,
             XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
                 | XCB_EVENT_MASK_FOCUS_CHANGE
-                | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE,
+                | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
+                | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE
+                | XCB_EVENT_MASK_POINTER_MOTION
+                | XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW,
         ];
         xcb_create_window(connection_, XCB_COPY_FROM_PARENT, window,
             bootstrap_.root, 0, 0, width, height, 0,
@@ -565,6 +568,36 @@ struct X11Wsi
         return true;
     }
 
+    /// The core protocol exposes one pointer per connection.
+    private enum corePointer = PointerId(1, 1);
+
+    private void emitPointerAt(size_t index, PointerPhase phase, int x,
+        int y, uint state) nothrow
+    {
+        PointerEvent pointer;
+        pointer.pointer = corePointer;
+        pointer.phase = phase;
+        pointer.logicalPosition = LogicalPosition(x, y);
+        pointer.physicalPosition = PhysicalPosition(x, y);
+        pointer.modifiers = x11Mods(state);
+        emit(idAt(index), pointer);
+    }
+
+    /// Core buttons: 1/2/3 are left/middle/right, 8/9 the thumb pair.
+    package static PointerButton x11PointerButton(uint detail)
+        @safe pure nothrow @nogc
+    {
+        switch (detail)
+        {
+            case 1: return PointerButton.left;
+            case 2: return PointerButton.middle;
+            case 3: return PointerButton.right;
+            case 8: return PointerButton.back;
+            case 9: return PointerButton.forward;
+            default: return PointerButton.none;
+        }
+    }
+
     private int destroyNative(uint window)
     {
         xcb_destroy_window(connection_, window);
@@ -637,6 +670,68 @@ struct X11Wsi
                     : KeyAction.release;
                 keyboard.modifiers = x11Mods(event.state);
                 emit(idAt(index), keyboard);
+                break;
+            case XCB_BUTTON_PRESS:
+            case XCB_BUTTON_RELEASE:
+                auto event = cast(const xcb_button_press_event_t*) generic;
+                const index = indexOfWindow(event.event);
+                if (index == size_t.max)
+                    return;
+                const pressed = responseType == XCB_BUTTON_PRESS;
+                // Core buttons 4–7 are the legacy wheel: one discrete step
+                // per press (down/up/right/left), nothing on the release.
+                if (event.detail >= 4 && event.detail <= 7)
+                {
+                    if (!pressed)
+                        return;
+                    ScrollEvent scroll;
+                    scroll.logicalPosition =
+                        LogicalPosition(event.event_x, event.event_y);
+                    scroll.physicalPosition =
+                        PhysicalPosition(event.event_x, event.event_y);
+                    switch (event.detail)
+                    {
+                        case 4: scroll.dy = -1; scroll.discreteY = -1; break;
+                        case 5: scroll.dy = 1; scroll.discreteY = 1; break;
+                        case 6: scroll.dx = -1; scroll.discreteX = -1; break;
+                        default: scroll.dx = 1; scroll.discreteX = 1; break;
+                    }
+                    scroll.source = ScrollSource.wheel;
+                    scroll.unit = ScrollUnit.logical;
+                    scroll.modifiers = x11Mods(event.state);
+                    emit(idAt(index), scroll);
+                    return;
+                }
+                PointerEvent pointer;
+                pointer.pointer = corePointer;
+                pointer.phase = pressed
+                    ? PointerPhase.pressed : PointerPhase.released;
+                pointer.button = x11PointerButton(event.detail);
+                pointer.logicalPosition =
+                    LogicalPosition(event.event_x, event.event_y);
+                pointer.physicalPosition =
+                    PhysicalPosition(event.event_x, event.event_y);
+                pointer.modifiers = x11Mods(event.state);
+                emit(idAt(index), pointer);
+                break;
+            case XCB_MOTION_NOTIFY:
+                auto event = cast(const xcb_motion_notify_event_t*) generic;
+                const index = indexOfWindow(event.event);
+                if (index == size_t.max)
+                    return;
+                emitPointerAt(index, PointerPhase.moved, event.event_x,
+                    event.event_y, event.state);
+                break;
+            case XCB_ENTER_NOTIFY:
+            case XCB_LEAVE_NOTIFY:
+                auto event = cast(const xcb_enter_notify_event_t*) generic;
+                const index = indexOfWindow(event.event);
+                if (index == size_t.max)
+                    return;
+                emitPointerAt(index,
+                    responseType == XCB_ENTER_NOTIFY
+                        ? PointerPhase.entered : PointerPhase.left,
+                    event.event_x, event.event_y, event.state);
                 break;
             case XCB_FOCUS_IN:
             case XCB_FOCUS_OUT:
