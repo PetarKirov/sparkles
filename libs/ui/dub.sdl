@@ -14,7 +14,17 @@ targetPath "build"
 // the edge counts even though only math's *test* build needs the runner.
 // `../test-runner/src` is here for the same reason: see the unittest
 // configuration below. This is the recipe `sparkles:core-cli` documents.
-importPaths "src" "../test-runner/src" "../math/src"
+// `../fuzzy/src` is SOURCE-INCLUDED (the base/core-cli cycle-safe pattern,
+// not math's import-only one): a `dependency "sparkles:fuzzy"` would close
+// `ui -> fuzzy -> (unittest) test-runner -> impl -> core-cli -> ui` (dub
+// unions across configs), and import-only fails at link time — dub orders
+// static archives so `libsparkles_fuzzy.a` precedes `libsparkles_ui.a`, and
+// `property_tree`'s fuzzy template instantiations in ui.a then cannot resolve
+// fuzzy's non-template private helpers. Embedding the sources makes ui.a
+// self-contained; a consumer that also depends on `sparkles:fuzzy` directly
+// is fine (identical archive members resolve first-wins).
+importPaths "src" "../test-runner/src" "../math/src" "../fuzzy/src"
+sourcePaths "src" "../fuzzy/src"
 
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
@@ -45,7 +55,7 @@ configuration "unittest" {
     // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
     // do for the same reason.
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src" "../fuzzy/src"
 
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.
