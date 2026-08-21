@@ -14,6 +14,7 @@ import core.attribute : selector;
 import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
+import sparkles.input.events : KeyAction, Mods;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.wsi.events;
@@ -125,6 +126,10 @@ private extern class NSDate : NSObject
 
 private extern class NSEvent : NSObject
 {
+    ulong type() @selector("type");
+    ushort keyCode() @selector("keyCode");
+    ulong modifierFlags() @selector("modifierFlags");
+    bool isARepeat() @selector("isARepeat");
 }
 
 private extern class NSResponder : NSObject
@@ -161,6 +166,8 @@ private extern class NSWindow : NSResponder
         @selector("setReleasedWhenClosed:");
     void makeKeyAndOrderFront(NSObject sender)
         @selector("makeKeyAndOrderFront:");
+    bool makeFirstResponder(NSResponder responder)
+        @selector("makeFirstResponder:");
     void orderOut(NSObject sender) @selector("orderOut:");
     void close() @selector("close");
     double backingScaleFactor() @selector("backingScaleFactor");
@@ -183,6 +190,27 @@ private class SparklesWsiView : NSView
     {
         if (activeOwner !is null)
             activeOwner.onViewDraw(this);
+    }
+
+    bool acceptsFirstResponder() @selector("acceptsFirstResponder")
+        => true;
+
+    void keyDown(NSEvent event) @selector("keyDown:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onKey(this, event, true);
+    }
+
+    void keyUp(NSEvent event) @selector("keyUp:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onKey(this, event, false);
+    }
+
+    void flagsChanged(NSEvent event) @selector("flagsChanged:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onFlagsChanged(this, event);
     }
 }
 
@@ -417,6 +445,9 @@ struct AppKitWsi
 
         if (config.visible)
             window.makeKeyAndOrderFront(null);
+        // NSView refuses first-responder status by default; without it the
+        // responder chain never delivers keyDown/keyUp to the view.
+        cast(void) window.makeFirstResponder(view);
         view.setNeedsDisplay(true);
         return wsiOk(id);
     }
@@ -647,6 +678,99 @@ struct AppKitWsi
         slot.metrics = metrics;
     }
 
+    private void onKey(SparklesWsiView view, NSEvent event, bool pressed)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        KeyboardEvent keyboard;
+        keyboard.physical = PhysicalKey(event.keyCode, 0);
+        keyboard.location = appKitKeyLocation(event.keyCode);
+        keyboard.action = pressed
+            ? (event.isARepeat ? KeyAction.repeat : KeyAction.press)
+            : KeyAction.release;
+        keyboard.modifiers = appKitMods(event.modifierFlags);
+        cast(void) emit(idAt(index), keyboard);
+    }
+
+    // Modifier keys never reach keyDown/keyUp; AppKit reports them through
+    // flagsChanged, and press versus release is whether that key's flag is
+    // set in the event's own modifier state.
+    private void onFlagsChanged(SparklesWsiView view, NSEvent event)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        const flag = appKitModifierFlagFor(event.keyCode);
+        if (flag == 0)
+            return;
+        KeyboardEvent keyboard;
+        keyboard.physical = PhysicalKey(event.keyCode, 0);
+        keyboard.location = appKitKeyLocation(event.keyCode);
+        keyboard.action = (event.modifierFlags & flag) != 0
+            ? KeyAction.press : KeyAction.release;
+        keyboard.modifiers = appKitMods(event.modifierFlags);
+        cast(void) emit(idAt(index), keyboard);
+    }
+
+    /*
+    Carbon virtual keycodes are layout-independent hardware identity, the
+    same level the Win32 scan-code and Linux evdev slices report. Location
+    falls back to `standard` on unknown codes, never to a wrong pairing.
+    */
+    package static KeyLocation appKitKeyLocation(uint keyCode)
+        @safe pure nothrow @nogc
+    {
+        switch (keyCode)
+        {
+            case 0x38: // kVK_Shift
+            case 0x3B: // kVK_Control
+            case 0x3A: // kVK_Option
+            case 0x37: // kVK_Command
+                return KeyLocation.left;
+            case 0x3C: // kVK_RightShift
+            case 0x3E: // kVK_RightControl
+            case 0x3D: // kVK_RightOption
+            case 0x36: // kVK_RightCommand
+                return KeyLocation.right;
+            case 0x41: // kVK_ANSI_KeypadDecimal
+            case 0x43: // kVK_ANSI_KeypadMultiply
+            case 0x45: // kVK_ANSI_KeypadPlus
+            case 0x47: // kVK_ANSI_KeypadClear
+            case 0x4B: // kVK_ANSI_KeypadDivide
+            case 0x4C: // kVK_ANSI_KeypadEnter
+            case 0x4E: // kVK_ANSI_KeypadMinus
+            case 0x51: // kVK_ANSI_KeypadEquals
+            case 0x52: .. case 0x59: // kVK_ANSI_Keypad0 .. Keypad7
+            case 0x5B: // kVK_ANSI_Keypad8
+            case 0x5C: // kVK_ANSI_Keypad9
+                return KeyLocation.numpad;
+            default:
+                return KeyLocation.standard;
+        }
+    }
+
+    /// Chord modifiers only; caps lock (1 << 16) is a latched state.
+    package static Mods appKitMods(ulong flags) @safe pure nothrow @nogc
+        => Mods(
+            ctrl: (flags & (1UL << 18)) != 0,
+            alt: (flags & (1UL << 19)) != 0,
+            shift: (flags & (1UL << 17)) != 0,
+            super_: (flags & (1UL << 20)) != 0);
+
+    package static ulong appKitModifierFlagFor(uint keyCode)
+        @safe pure nothrow @nogc
+    {
+        switch (keyCode)
+        {
+            case 0x38: case 0x3C: return 1UL << 17;
+            case 0x3B: case 0x3E: return 1UL << 18;
+            case 0x3A: case 0x3D: return 1UL << 19;
+            case 0x37: case 0x36: return 1UL << 20;
+            default: return 0;
+        }
+    }
+
     private void onViewDraw(SparklesWsiView view)
     {
         const index = indexOfView(view);
@@ -752,4 +876,33 @@ private WsiResult!T appKitFailure(T)(WsiOperation operation, long nativeCode,
 {
     return wsiErr!T(wsiError(kind, operation, BackendKind.appkit,
         nativeCode, diagnostic));
+}
+
+@("wsi.appkit.keyLocationFollowsCarbonVirtualCodes")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(AppKitWsi.appKitKeyLocation(0x38) == KeyLocation.left);
+    assert(AppKitWsi.appKitKeyLocation(0x3C) == KeyLocation.right);
+    assert(AppKitWsi.appKitKeyLocation(0x37) == KeyLocation.left);
+    assert(AppKitWsi.appKitKeyLocation(0x36) == KeyLocation.right);
+    assert(AppKitWsi.appKitKeyLocation(0x4C) == KeyLocation.numpad);
+    assert(AppKitWsi.appKitKeyLocation(0x52) == KeyLocation.numpad);
+    assert(AppKitWsi.appKitKeyLocation(0x5C) == KeyLocation.numpad);
+    assert(AppKitWsi.appKitKeyLocation(0x00) == KeyLocation.standard);
+}
+
+@("wsi.appkit.modifiersComeFromNSEventFlags")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(AppKitWsi.appKitMods(0) == Mods());
+    assert(AppKitWsi.appKitMods(1UL << 17) == Mods(shift: true));
+    assert(AppKitWsi.appKitMods(1UL << 18) == Mods(ctrl: true));
+    assert(AppKitWsi.appKitMods(1UL << 19) == Mods(alt: true));
+    assert(AppKitWsi.appKitMods(1UL << 20) == Mods(super_: true));
+    // Caps lock is a latched state, not a chord modifier.
+    assert(AppKitWsi.appKitMods(1UL << 16) == Mods());
+    assert(AppKitWsi.appKitModifierFlagFor(0x3C) == 1UL << 17);
+    assert(AppKitWsi.appKitModifierFlagFor(0x00) == 0);
 }

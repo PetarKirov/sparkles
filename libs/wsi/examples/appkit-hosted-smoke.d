@@ -17,6 +17,7 @@ import std.stdio : writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op : Completion;
+import sparkles.input.events : KeyAction;
 import sparkles.wsi;
 
 private extern (C) nothrow @nogc
@@ -32,6 +33,12 @@ private extern (C) struct NSSize
     double height;
 }
 
+private extern (C) struct NSPoint
+{
+    double x;
+    double y;
+}
+
 extern (Objective-C):
 
 private extern class NSObject
@@ -42,6 +49,31 @@ private extern class NSWindow : NSObject
 {
     void setContentSize(NSSize size) @selector("setContentSize:");
     void performClose(NSObject sender) @selector("performClose:");
+    long windowNumber() @selector("windowNumber");
+}
+
+private extern class NSString : NSObject
+{
+    static NSString alloc() @selector("alloc");
+    NSString initWithUTF8String(const(char)* text)
+        @selector("initWithUTF8String:");
+}
+
+private extern class NSEvent : NSObject
+{
+    static NSEvent keyEventWithType(ulong type, NSPoint location,
+        ulong modifierFlags, double timestamp, long windowNumber,
+        NSObject context, NSString characters,
+        NSString charactersIgnoringModifiers, bool isARepeat, ushort keyCode)
+        @selector("keyEventWithType:location:modifierFlags:timestamp:"
+            ~ "windowNumber:context:characters:charactersIgnoringModifiers:"
+            ~ "isARepeat:keyCode:");
+}
+
+private extern class NSApplication : NSObject
+{
+    static NSApplication sharedApplication() @selector("sharedApplication");
+    void postEvent(NSEvent event, bool atStart) @selector("postEvent:atStart:");
 }
 
 extern (D):
@@ -164,6 +196,67 @@ int main()
     worker.join();
     assert(exposed && MonoTime.currTime - started < 2.seconds);
 
+    // Synthetic responder-chain keys: a left-shift chord around 'a'. The
+    // modifier travels as flagsChanged, the letter as keyDown/keyUp, and the
+    // view is first responder, so the events come back as KeyboardEvents.
+    enum ulong keyDownType = 10;
+    enum ulong keyUpType = 11;
+    enum ulong flagsChangedType = 12;
+    enum ulong shiftFlag = 1UL << 17;
+    enum ushort vkShift = 0x38;
+    enum ushort vkA = 0x00;
+    auto application = NSApplication.sharedApplication();
+    auto lower = NSString.alloc().initWithUTF8String("a");
+    auto upper = NSString.alloc().initWithUTF8String("A");
+    const windowNumber = nativeWindow.windowNumber();
+    auto postKey = (ulong type, ulong flags, NSString chars, ushort keyCode) {
+        auto event = NSEvent.keyEventWithType(type, NSPoint(0, 0), flags, 0,
+            windowNumber, null, chars, chars, false, keyCode);
+        assert(event !is null);
+        application.postEvent(event, false);
+    };
+    postKey(flagsChangedType, shiftFlag, lower, vkShift);
+    postKey(keyDownType, shiftFlag, upper, vkA);
+    postKey(keyUpType, shiftFlag, upper, vkA);
+    postKey(flagsChangedType, 0, lower, vkShift);
+
+    bool shiftLeft;
+    bool chordedPress;
+    bool releaseSeen;
+    bool shiftReleased;
+    const keysStart = MonoTime.currTime;
+    while (!(shiftLeft && chordedPress && releaseSeen && shiftReleased))
+    {
+        assert(wsi.pumpEvents().hasValue);
+        auto keysDrain = wsi.drain((WindowEvent event) {
+            assert(event.sequence > lastSequence);
+            lastSequence = event.sequence;
+            event.payload.match!(
+                (in KeyboardEvent value) {
+                    if (value.physical.nativeCode == vkShift)
+                    {
+                        if (value.action == KeyAction.press)
+                            shiftLeft = value.location == KeyLocation.left
+                                && value.modifiers.shift;
+                        else if (value.action == KeyAction.release)
+                            shiftReleased = !value.modifiers.shift;
+                    }
+                    if (value.physical.nativeCode == vkA)
+                    {
+                        assert(value.location == KeyLocation.standard);
+                        if (value.action == KeyAction.press)
+                            chordedPress = value.modifiers.shift;
+                        else if (value.action == KeyAction.release)
+                            releaseSeen = true;
+                    }
+                },
+                (_) {});
+        });
+        assert(keysDrain.hasValue);
+        assert(MonoTime.currTime - keysStart < 2.seconds,
+            "synthetic key chord never came back through the responder chain");
+    }
+
     nativeWindow.performClose(null);
     bool closeRequested;
     auto closeDrain = wsi.drain((WindowEvent event) {
@@ -186,6 +279,6 @@ int main()
     });
     assert(destroyedDrain.hasValue && destroyed);
 
-    writeln("ok: AppKit NSWindow + kqueue timer/waker shared one CFRunLoop wait");
+    writeln("ok: AppKit NSWindow + keys + kqueue timer/waker on one CFRunLoop");
     return 0;
 }
