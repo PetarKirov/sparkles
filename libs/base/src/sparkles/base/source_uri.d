@@ -42,67 +42,67 @@ string resolveSourcePath(
 struct EditorScheme
 {
     string name;
-    string function(string, size_t, size_t) pure uriFun;
+    string function(string, size_t, size_t) @safe pure uriFun;
     immutable(string)[] aliases;
 }
 
 // ── URI format functions (IES-based, CTFE-evaluable) ────────────────────
 
-private string fileUri(string path, size_t line, size_t col) pure
+private string fileUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"file://$(path)#L$(line)".text;
 }
 
-private string vsCodeUri(string path, size_t line, size_t col) pure
+private string vsCodeUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"vscode://file$(path):$(line):$(col)".text;
 }
 
-private string vsCodeInsidersUri(string path, size_t line, size_t col) pure
+private string vsCodeInsidersUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"vscode-insiders://file$(path):$(line):$(col)".text;
 }
 
-private string cursorUri(string path, size_t line, size_t col) pure
+private string cursorUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"cursor://file$(path):$(line):$(col)".text;
 }
 
-private string zedUri(string path, size_t line, size_t col) pure
+private string zedUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"zed://file$(path):$(line):$(col)".text;
 }
 
-private string jetBrainsUri(string path, size_t line, size_t col) pure
+private string jetBrainsUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"jetbrains://open?file=$(path)&line=$(line)&column=$(col)".text;
 }
 
-private string sublimeUri(string path, size_t line, size_t col) pure
+private string sublimeUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"subl://open?url=file://$(path)&line=$(line)&column=$(col)".text;
 }
 
-private string emacsUri(string path, size_t line, size_t col) pure
+private string emacsUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"org-protocol://open-file?url=file://$(path)&line=$(line)&column=$(col)".text;
 }
 
-private string atomUri(string path, size_t line, size_t col) pure
+private string atomUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"atom://core/open/file?filename=$(path)&line=$(line)&column=$(col)".text;
 }
 
-private string lapceUri(string path, size_t line, size_t col) pure
+private string lapceUri(string path, size_t line, size_t col) @safe pure
 {
     import std.conv : text;
     return i"lapce://open?path=$(path)&line=$(line)&column=$(col)".text;
@@ -221,20 +221,31 @@ struct EditorDetectHook
         // Thread-local lazy cache
         static string cached = null;
         if (cached is null)
-        {
-            import std.path : baseName;
-            import std.process : environment;
-            cached = environment.get("VISUAL", environment.get("EDITOR", "")).baseName;
-        }
+            cached = detectedEditorName();
         return cached;
     }
+}
+
+/**
+Builds a source URI for a runtime location using `$VISUAL`, then `$EDITOR`.
+
+Unlike `writeSourceUri`, whose location arguments are compile-time values, this
+helper accepts the runtime paths carried by exceptions and stack frames. The
+path is resolved to an absolute compiler-root-relative path before the editor
+scheme is selected. Unknown and terminal editors use the portable `file://`
+fallback.
+*/
+string editorSourceUri(string path, size_t line = 0, size_t col = 0) @safe
+{
+    const absolute = resolveSourcePath(path);
+    return editorSourceUriFor(absolute, line, col, detectedEditorName());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-private EditorScheme findScheme(string editorAlias) pure
+private EditorScheme findScheme(string editorAlias) @safe pure
 {
     foreach (scheme; editorSchemes)
         foreach (a; scheme.aliases)
@@ -242,6 +253,58 @@ private EditorScheme findScheme(string editorAlias) pure
                 return scheme;
     return EditorScheme("Default", &fileUri, []);
 }
+
+/// The executable name from an editor command such as `code --wait`.
+private string detectedEditorName() @safe
+{
+    import std.process : environment;
+
+    const visual = editorCommandName(environment.get("VISUAL", ""));
+    return visual.length
+        ? visual
+        : editorCommandName(environment.get("EDITOR", ""));
+}
+
+private string editorCommandName(scope const(char)[] command) @safe pure nothrow
+{
+    import std.ascii : toLower;
+    import std.path : baseName, stripExtension;
+    import std.string : strip;
+
+    auto rest = command.strip;
+    if (!rest.length)
+        return null;
+
+    size_t end;
+    if (rest[0] == '"' || rest[0] == '\'')
+    {
+        const quote = rest[0];
+        end = 1;
+        while (end < rest.length && rest[end] != quote)
+            end++;
+        rest = rest[1 .. end];
+    }
+    else
+    {
+        while (end < rest.length && rest[end] != ' ' && rest[end] != '\t')
+            end++;
+        rest = rest[0 .. end];
+    }
+
+    const name = rest.baseName.stripExtension;
+    string lowered;
+    foreach (c; name)
+        lowered ~= c.toLower;
+    return lowered;
+}
+
+private string editorSourceUriFor(
+    string absolutePath,
+    size_t line,
+    size_t col,
+    string editor,
+) @safe pure
+    => findScheme(editor).uriFun(absolutePath, line, col);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unit Tests
@@ -316,6 +379,28 @@ unittest
 
     enum jetBrains = findScheme("idea").uriFun("/src/main.d", 10, 5);
     static assert(jetBrains == "jetbrains://open?file=/src/main.d&line=10&column=5");
+}
+
+/// Runtime editor commands select the same schemes as the compile-time hooks.
+@("sourceUri.editorSourceUri.editorCommands")
+@safe pure
+unittest
+{
+    assert(editorCommandName("code --wait") == "code");
+    assert(editorCommandName("/usr/bin/cursor -w") == "cursor");
+    assert(editorCommandName("\"/opt/VS Code/code\" --wait") == "code");
+    assert(editorCommandName("nvim") == "nvim");
+
+    assert(editorSourceUriFor("/src/main.d", 12, 3, "code")
+        == "vscode://file/src/main.d:12:3");
+    assert(editorSourceUriFor("/src/main.d", 12, 3, "cursor")
+        == "cursor://file/src/main.d:12:3");
+    assert(editorSourceUriFor("/src/main.d", 12, 3, "zed")
+        == "zed://file/src/main.d:12:3");
+    assert(editorSourceUriFor("/src/main.d", 12, 3, "nvim")
+        == "file:///src/main.d#L12");
+    assert(editorSourceUriFor("/src/main.d", 12, 3, "unknown")
+        == "file:///src/main.d#L12");
 }
 
 /// hasWriteSourceUri detects hooks with the protocol.
