@@ -320,7 +320,7 @@ fi
 if [ "$skip_docs" -eq 0 ]; then
   if ci_have npm && [ -f "${repo_root}/package.json" ]; then
     run_stage "Documentation site build" \
-      npm run docs:build
+      env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}" npm run docs:build
   else
     ci_notice "Skipping documentation build (npm not found on PATH or package.json absent)"
   fi
