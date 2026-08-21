@@ -246,11 +246,13 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 
     frame(); // an application draws before anything happens to it
 
-    // The event-horizon arm (its SPEC §15.3): fibers need UI-sized stacks —
-    // a frame runs arbitrary application paint code, and one FrameOps
-    // operation can cost a quarter-megabyte stack temporary in a debug
-    // build; the 64 KiB I/O-sized default blows instantly. Virtual memory
-    // is lazily paged, so 1 MiB × few fibers costs what it touches.
+    // The event-horizon arm (its SPEC §15.3): fibers need UI-sized stacks.
+    // The original reason was a `FrameOps` temporary costing a quarter of a
+    // megabyte in a debug build — gone now that an operation is 64 bytes and
+    // its text lives in an arena — but a frame still runs arbitrary
+    // application paint code (widget arenas, layout passes), and the 64 KiB
+    // I/O-sized default is not a UI budget. Virtual memory is lazily paged,
+    // so 1 MiB × few fibers costs what it touches.
     import sparkles.event_horizon.sched : Sched, SchedOptions;
 
     SchedOptions schedOpts;

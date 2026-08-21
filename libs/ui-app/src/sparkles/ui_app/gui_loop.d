@@ -247,8 +247,9 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     // The event-horizon arm (its SPEC §15.3, the GUI shape): the Ticker owns
     // the cadence; between frames the thread parks in the ring, where the
     // application's async fibers run. UI-sized fiber stacks — frames run
-    // arbitrary paint code, and FrameOps-sized stack temporaries appear in
-    // debug builds.
+    // arbitrary paint code. (The `FrameOps`-sized stack temporaries that first
+    // forced this are gone: an operation is 64 bytes now, and its text lives
+    // in an arena. A UI budget is still not an I/O one.)
     import sparkles.event_horizon.sched : Sched, SchedOptions;
 
     SchedOptions schedOpts;

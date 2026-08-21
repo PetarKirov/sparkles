@@ -50,10 +50,10 @@ Satisfies $(REF isHost, sparkles,ui_app,host), so an application's `present` and
 struct RecordingHost
 {
     // A recorder is the one host a test puts on the stack — by the dozen, and
-    // on whatever thread the runner picked. `recordedOpCapacity` keeps it a few
-    // hundred bytes instead of a quarter-megabyte; every frame's operations are
-    // `dup`ed to the heap on the line below anyway, so nothing here was ever
-    // served by inline storage.
+    // on whatever thread the runner picked. `recordedOpCapacity` keeps it a
+    // kilobyte rather than a screenful; every frame's operations are `dup`ed to
+    // the heap on the line below anyway, so nothing here was ever served by
+    // inline storage.
     // The recorder's frames outlive the frame that drew them (that is what a
     // recorder is for), so its operations' text must too — the collector's
     // arena, not the per-frame one. See `FrameOpsOf`.

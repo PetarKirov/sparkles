@@ -139,6 +139,23 @@ sweep. The `@nogc` path being additive is what makes that possible: a new consum
 (the application host, the diagram app) takes it immediately, while a retained one
 moves when its ownership is settled.
 
-Close this issue when the widget arena and every retained display list are
-allocation-free in steady state, the ownership policy is written on the types, and
-no consumer holds operations past their buffer.
+**The policy is now written on a type** (`acee886df`). `sparkles.ui.cmd_buffer`
+pairs a frame's operations with the arena their text and box chrome live in, and
+says what the comment used to: _an operation is valid while the buffer that built
+it is alive and unreset._ Pairing them is what makes the rule enforceable rather
+than advisory — the buffer is move-only, so a copy cannot hand out a second set
+of live pointers into one set of bytes, and a retained consumer has to hold the
+buffer because holding a slice of one no longer keeps the text alive.
+
+The lifetime question that made this hard also got smaller. An operation is
+64 bytes rather than 656, because `DrawOp` became a sum type whose payloads
+carry only what their primitive paints (`sparkles.ui.canvas`); the text is a
+slice into the arena instead of a 512-byte inline copy, so the `@nogc` path is
+now allocation-free _including_ text, which it never was before. And the
+convenience path did not have to move: `buildDisplayList` builds through a
+`GcArena`, so the `DrawOp[]` it returns is self-sufficient and every retained
+consumer that holds one still works untouched.
+
+What is left of this issue is `UI-O1`'s half: the widget arena. Close it when
+`WidgetTree.nodes` and its siblings have the same answer, and no consumer holds
+operations past their buffer.
