@@ -177,8 +177,15 @@ flag. The conformance click and scroll properties inject through XTEST,
 `SendMessageW`, posted `NSEvent`s, and the external Weston lane — which
 moved to the kiosk shell, because this Weston's desktop-shell
 click-to-activate binding crashes on a null pointer focus in the headless
-environment. Keymap-change events, Wayland client-side repeat synthesis,
-XIM, candidate-window placement, and raw input remain. The scale slice makes
+environment. The key-repeat slice closes Wayland's repeat gap: repeats never
+travel on the wire, so the backend synthesizes `KeyAction.repeat` from the
+compositor's `repeat_info` schedule with a single Event Horizon timer op in
+flight (retarget and teardown reap it deterministically), and a shared
+hold-a-repeating-key conformance property verifies the platform repeat
+channel on X11 (detectable auto-repeat under Xvfb) and the synthesized one
+through the kiosk-Weston lane, where Weston filters the X server's own
+repeat so every observed repeat is the client's. Keymap-change events, XIM,
+candidate-window placement, and raw input remain. The scale slice makes
 `SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
 window's scale is the maximum of its entered outputs, a change requests the
 matching buffer scale and reports one atomic metrics transition — verified at

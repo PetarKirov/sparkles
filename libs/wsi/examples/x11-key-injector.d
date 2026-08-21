@@ -34,6 +34,42 @@ int main()
     if (warpPointer(connection, screens.data.root, 200, 200) != 0)
         return 3;
 
+    // Hold leg, gated on the driver's signal files: once the hold gate
+    // exists (and the lifecycle has not already run), press the key, keep
+    // it down until the release gate appears — the client observed its
+    // synthesized repeats — then release. The whole lifecycle lives inside
+    // one injector run so the outer re-injection loop's chord replays
+    // (skipped while the key is held) can never cancel the repeat.
+    {
+        import core.stdc.stdlib : getenv;
+        import core.thread : Thread;
+        import core.time : msecs;
+        import std.file : exists, write;
+        import std.string : fromStringz;
+
+        auto holdGate = getenv("WSI_HOLD_GO");
+        auto releaseGate = getenv("WSI_HOLD_RELEASE_GO");
+        if (holdGate !is null && releaseGate !is null
+            && exists(holdGate.fromStringz))
+        {
+            auto done = holdGate.fromStringz.idup ~ ".done";
+            if (!exists(done))
+            {
+                if (sendKey(connection, 38, true) != 0)
+                    return 7;
+                scope (exit) sendKey(connection, 38, false);
+                foreach (_; 0 .. 600)
+                {
+                    if (exists(releaseGate.fromStringz))
+                        break;
+                    Thread.sleep(25.msecs);
+                }
+                write(done, "done");
+                return 0;
+            }
+        }
+    }
+
     // X keycodes are evdev + 8: 50 = KEY_LEFTSHIFT (42), 38 = KEY_A (30).
     static immutable ubyte[2][4] chord = [[50, 1], [38, 1], [38, 0], [50, 0]];
     foreach (step; chord)

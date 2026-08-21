@@ -37,6 +37,11 @@ $(LIST
         wait where injection is external to the process. An
         `enum dchar chordKeyCharacter` additionally requires the chorded key
         to carry that layout-derived unshifted `LogicalKey` character.
+    * `void holdKey()` / `void releaseHold()` plus `enum uint holdKeyCode`
+        — press a repeating key and hold it. The property requires a
+        `KeyAction.repeat` for that physical key between its press and its
+        release (the release is injected only after a repeat arrived).
+        Shares the chord's `chordEnabled` runtime gate and `chordDeadline`.
     * `void onWindowReady(WindowId id)` — post-ready driver setup (e.g.
         mapping a buffer so a compositor will grant keyboard focus); the
         two-argument form also receives the ready metrics, so the buffer
@@ -109,6 +114,9 @@ private struct Observed
     bool chordedPress;
     bool chordedPressAnyMods;
     bool chordReleased;
+    bool heldPress;
+    bool heldRepeat;
+    bool heldRelease;
     bool pointerEntered;
     bool pointerMoved;
     bool leftPressed;
@@ -355,6 +363,43 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     else
         ++outcome.skipped;
 
+    // Property: a held repeating key auto-repeats — between its press and
+    // its release the backend delivers KeyAction.repeat for the same
+    // physical key. X11 surfaces the server's detectable auto-repeat,
+    // Win32 the system repeat bit, AppKit isARepeat; Wayland synthesizes
+    // repeats client-side from the compositor's repeat_info schedule.
+    static if (is(typeof(hooks.holdKey())) && is(typeof(hooks.releaseHold())))
+    {
+        bool runHold = true;
+        static if (is(typeof(hooks.chordEnabled)))
+            runHold = hooks.chordEnabled;
+        if (runHold)
+        {
+            static if (is(typeof(Hooks.chordDeadline)))
+                const holdLimit = Hooks.chordDeadline;
+            else
+                const holdLimit = 5.seconds;
+            // The chord property may already have exercised this key; the
+            // hold lifecycle starts fresh at its own injection.
+            seen.heldPress = false;
+            seen.heldRepeat = false;
+            seen.heldRelease = false;
+            hooks.holdKey();
+            driveUntil(() => seen.heldPress && seen.heldRepeat,
+                "the held key never auto-repeated", holdLimit);
+            assert(!seen.heldRelease,
+                "the held key released before any repeat");
+            hooks.releaseHold();
+            driveUntil(() => seen.heldRelease,
+                "the held key's release never arrived", holdLimit);
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
     // Property: an injected left click arrives in order — optionally after
     // an enter/motion event — as a press at the declared position and its
     // release, never a release first.
@@ -582,6 +627,18 @@ private void observeKey(Hooks)(ref Hooks hooks, ref Observed seen,
                 seen.chordReleased = true;
         }
     }
+    static if (is(typeof(Hooks.holdKeyCode)))
+    {
+        if (event.physical.nativeCode == Hooks.holdKeyCode)
+        {
+            if (event.action == KeyAction.press)
+                seen.heldPress = true;
+            else if (event.action == KeyAction.repeat)
+                seen.heldRepeat |= seen.heldPress;
+            else if (event.action == KeyAction.release)
+                seen.heldRelease = true;
+        }
+    }
 }
 
 @("wsi.conformance.recordingBackendPassesTheValueContract")
@@ -615,5 +672,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 9);
+    assert(outcome.checked == 6 && outcome.skipped == 10);
 }

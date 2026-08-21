@@ -16,7 +16,7 @@ import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
 import core.sys.posix.unistd : posixClose = close;
-import core.time : Duration;
+import core.time : Duration, msecs;
 import std.math : isFinite;
 import std.traits : Parameters;
 
@@ -105,6 +105,10 @@ struct WaylandWsi
     private Mods keyboardMods_;
     private int keyRepeatRate_;
     private int keyRepeatDelayMs_;
+    private OpHandle repeatTimer_;
+    private bool repeatInFlight_;
+    private bool repeatFirstFire_;
+    private uint repeatKey_ = noRepeatKey;
     private wl_callback* bootstrapSync_;
     private pthread_t ownerThread_;
     private Slot[maxWindows] windows_;
@@ -426,6 +430,18 @@ struct WaylandWsi
         if (loop_ is null)
             return wsiOk();
         detaching_ = true;
+        // The repeat timer's completion borrows this struct; reap it before
+        // the loop reference goes away, like the display poll below.
+        repeatKey_ = noRepeatKey;
+        if (repeatInFlight_)
+        {
+            auto reaped = loop_.cancelAndWait(repeatTimer_);
+            repeatInFlight_ = false;
+            if (reaped.hasError)
+                return waylandFailure!void(WsiOperation.attach,
+                    reaped.error.errnoValue,
+                    "failed to cancel and reap the key-repeat timer");
+        }
         auto paused = pausePoll();
         if (paused.hasError)
             return paused;
@@ -1064,6 +1080,7 @@ struct WaylandWsi
             owner.keyboard_ = null;
             owner.keyboardFocus_ = null;
             owner.keyboardMods_ = Mods();
+            owner.cancelRepeat();
         }
     }
 
@@ -1418,7 +1435,10 @@ struct WaylandWsi
     {
         auto owner = cast(WaylandWsi*) data;
         if (owner.keyboardFocus_ is surface)
+        {
             owner.keyboardFocus_ = null;
+            owner.cancelRepeat();
+        }
         const index = owner.indexOfSurface(surface);
         if (index != size_t.max)
             owner.emit(owner.idAt(index), FocusChangedEvent(false));
@@ -1438,6 +1458,16 @@ struct WaylandWsi
         event.action = state != 0 ? KeyAction.press : KeyAction.release;
         event.modifiers = owner.keyboardMods_;
         owner.emit(owner.idAt(index), event);
+        if (state != 0)
+        {
+            // Wayland never repeats on the wire (wl_keyboard.key is one
+            // press); the client synthesizes repeats for the most recently
+            // pressed repeating key, per the compositor's repeat_info.
+            if (owner.shouldRepeatKey(key))
+                owner.scheduleRepeat(key, first: true);
+        }
+        else if (key == owner.repeatKey_)
+            owner.cancelRepeat();
     }
 
     private extern (C) static void onKeyboardModifiers(void* data,
@@ -1457,6 +1487,93 @@ struct WaylandWsi
         auto owner = cast(WaylandWsi*) data;
         owner.keyRepeatRate_ = rate;
         owner.keyRepeatDelayMs_ = delay;
+    }
+
+    private enum uint noRepeatKey = uint.max;
+
+    private bool shouldRepeatKey(uint key) nothrow @nogc
+        => repeatsEnabled(keyRepeatRate_, keyRepeatDelayMs_)
+            && xkbKeymap_ !is null
+            && xkb_keymap_key_repeats(xkbKeymap_, key + 8) != 0;
+
+    /*
+    Repeat synthesis keeps at most one timer op in flight. Retargeting (a
+    new repeating press) or stopping (release/leave) cancels the in-flight
+    op; its terminal completion either re-arms for the new schedule or goes
+    quiet, so a stale completion can never masquerade as a live timer and
+    teardown has exactly one op to reap.
+    */
+
+    private void scheduleRepeat(uint key, bool first) nothrow @nogc
+    {
+        repeatKey_ = key;
+        repeatFirstFire_ = first;
+        if (repeatInFlight_)
+        {
+            if (loop_ !is null)
+                loop_.cancel(repeatTimer_);
+            return;
+        }
+        armRepeatOp();
+    }
+
+    private void cancelRepeat() nothrow @nogc
+    {
+        repeatKey_ = noRepeatKey;
+        if (repeatInFlight_ && loop_ !is null)
+            loop_.cancel(repeatTimer_);
+    }
+
+    private void armRepeatOp() nothrow @nogc
+    {
+        if (loop_ is null || detaching_ || repeatKey_ == noRepeatKey)
+            return;
+        const rel = repeatFirstFire_
+            ? msecs(keyRepeatDelayMs_) : repeatInterval(keyRepeatRate_);
+        auto armed = loop_.submitAfter(rel, &onRepeatTimer, &this);
+        if (armed.hasError)
+        {
+            // Repeat is an enhancement: degrade to no synthesis rather
+            // than poisoning the connection with a sticky error.
+            repeatKey_ = noRepeatKey;
+            return;
+        }
+        repeatTimer_ = armed.value;
+        repeatInFlight_ = true;
+    }
+
+    private static void onRepeatTimer(void* ctx, ref Completion done)
+        nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) ctx;
+        owner.repeatInFlight_ = false;
+        if (owner.repeatKey_ == noRepeatKey)
+            return; // released or left while the op was in flight
+        if (done.res != 0)
+        {
+            owner.armRepeatOp(); // retargeted: arm the new schedule
+            return;
+        }
+        owner.fireRepeat();
+    }
+
+    private void fireRepeat() nothrow @nogc
+    {
+        const index = indexOfSurface(keyboardFocus_);
+        if (index == size_t.max)
+        {
+            repeatKey_ = noRepeatKey;
+            return;
+        }
+        KeyboardEvent event;
+        event.physical = PhysicalKey(repeatKey_, 0);
+        event.logical = logicalForKey(repeatKey_);
+        event.location = evdevKeyLocation(repeatKey_);
+        event.action = KeyAction.repeat;
+        event.modifiers = keyboardMods_;
+        emit(idAt(index), event);
+        repeatFirstFire_ = false;
+        armRepeatOp();
     }
 
     private extern (C) static void onBootstrapDone(void* data,
@@ -1629,6 +1746,35 @@ private immutable wl_keyboard_listener keyboardListener = {
     &WaylandWsi.onKeyboardLeave, &WaylandWsi.onKeyboardKey,
     &WaylandWsi.onKeyboardModifiers, &WaylandWsi.onKeyboardRepeatInfo
 };
+
+/**
+Whether `wl_keyboard.repeat_info` enables client-side repeat: `rate` is
+repeats per second and zero disables repeat entirely; a negative delay is
+not a schedule.
+*/
+bool repeatsEnabled(int rate, int delayMs) @safe pure nothrow @nogc
+    => rate > 0 && delayMs >= 0;
+
+/// The steady interval between synthesized repeats; never rounds to zero.
+Duration repeatInterval(int rate) @safe pure nothrow @nogc
+in (rate > 0)
+    => msecs(1000 / rate > 0 ? 1000 / rate : 1);
+
+@("wsi.wayland.repeatSchedule.repeatInfoGatesAndNeverZero")
+@safe pure nothrow @nogc
+unittest
+{
+    // Weston's defaults: 40 repeats/s after 400 ms.
+    assert(repeatsEnabled(40, 400));
+    assert(repeatInterval(40) == msecs(25));
+    // rate 0 is the protocol's "repeat disabled"; negative delay is bogus.
+    assert(!repeatsEnabled(0, 400));
+    assert(!repeatsEnabled(-1, 400));
+    assert(!repeatsEnabled(40, -1));
+    // An immediate-delay schedule is legal, and a >1000/s rate still ticks.
+    assert(repeatsEnabled(40, 0));
+    assert(repeatInterval(2000) == msecs(1));
+}
 
 private WsiResult!T waylandFailure(T)(WsiOperation operation,
     long nativeCode, scope const(char)[] diagnostic,

@@ -167,6 +167,37 @@ private struct WaylandHooks
         // through Weston until the property observes it.
     }
 
+    enum uint holdKeyCode = chordKeyCode;
+
+    /*
+    The hold lifecycle is signal-file choreography with the external
+    injector: `holdKey` raises the hold gate (the injector presses and
+    keeps the key down, skipping its chord replays meanwhile), and
+    `releaseHold` raises the release gate once the property has observed
+    a synthesized repeat. Weston filters the X server's own auto-repeat,
+    so every repeat seen here is this client's repeat_info synthesis.
+    */
+    void holdKey()
+    {
+        signalFile("WSI_HOLD_GO");
+    }
+
+    void releaseHold()
+    {
+        signalFile("WSI_HOLD_RELEASE_GO");
+    }
+
+    private void signalFile(scope const(char)* name)
+    {
+        import core.stdc.stdlib : getenv;
+        import std.string : fromStringz;
+        import std.file : write;
+
+        auto path = getenv(name);
+        if (path !is null)
+            write(path.fromStringz, "go");
+    }
+
     /*
     The external injector clicks and scrolls at the output's center, but
     only once this signal file exists: Weston's click-to-activate binding
