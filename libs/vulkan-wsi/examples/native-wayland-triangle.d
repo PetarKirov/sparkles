@@ -134,9 +134,6 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     auto loopOpened = DefaultLoop.create(loop, LoopConfig());
     if (loopOpened.hasError)
         return err!void("Event Horizon open failed: " ~ describe(loopOpened.error));
-    scope (exit)
-        loop.destroy();
-
     WaylandWsi wsi;
     auto wsiOpened = WaylandWsi.open(wsi, loop);
     if (wsiOpened.hasError)
@@ -148,9 +145,6 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
         }
         return err!void(describe(wsiOpened.error));
     }
-    scope (exit)
-        cast(void) wsi.close();
-
     const startupDeadline = MonoTime.currTime + 5.seconds;
     while (!wsi.bootstrapComplete)
     {
@@ -236,8 +230,6 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     if (returned.hasError)
         return err!void(describe(returned.error));
     trace(i"Vulkan context ready");
-    scope (exit)
-        vk.destroy();
 
     Swapchain swapchain;
     RenderTarget target;
@@ -247,7 +239,7 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     scope (exit)
     {
         if (vk.device.device !is null)
-            cast(void) vk.device.deviceWaitIdle(vk.device.device);
+            vk.device.deviceWaitIdle(vk.device.device);
         pipeline.destroy(vk);
         commands.destroy(vk);
         sync.destroy(vk);
