@@ -64,6 +64,7 @@
         "Have_sparkles_syntax"
         "Have_sparkles_tree_sitter"
         "Have_sparkles_twoslash"
+        "Have_sparkles_docs"
         "Have_sparkles_core_cli"
         "Have_sparkles_raylib_text"
         "Have_expected"

@@ -10,7 +10,7 @@
 # Reproducible build artifact, NOT committed to git (see .gitignore). Rebuilt
 # automatically before `docs:dev` / `docs:build` (see package.json); regenerate by
 # hand with this script (needs Nix on PATH — no Node: this used to shell out to
-# `libs/twoslash/examples/render-html.mjs`, now retired into `apps/hue/src/gallery.d`).
+# `libs/twoslash/examples/render-html.mjs`, now retired into `sparkles.docs.page_shell`).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
