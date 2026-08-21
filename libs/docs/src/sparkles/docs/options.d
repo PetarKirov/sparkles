@@ -13,6 +13,7 @@ module sparkles.docs.options;
 
 import std.array : appender, Appender;
 
+import sparkles.base.text.html : writeHtmlEscaped;
 import sparkles.syntax;
 
 /// Presentation knobs for a gallery — the page-title prefix and the index copy.
@@ -205,22 +206,14 @@ string themeBackground(in ResolvedTheme theme) @safe pure
     return w[];
 }
 
-/// Escapes `&`, `<`, `>`, `"` into `w`. Public (not `private`) because
-/// [`site_tree`](./site_tree.d) renders directory indices with the same escaping —
-/// one implementation, or the two would drift. (These are root-level modules with
-/// no enclosing package, so `package` would not reach it.)
+/// Escapes `&`, `<`, `>`, `"`, `'` into `w` — the package's shared spelling of
+/// `sparkles.base.text.html.writeHtmlEscaped`, so the repository has exactly
+/// one HTML-escaping implementation
+/// ([`DOC10`](../../../../../docs/specs/docs/site.md)). The fifth entity
+/// (`'` → `&#39;`) is the deliberate byte change that row records: this module
+/// once carried its own four-entity copy.
 void escapeInto(ref Appender!string w, scope const(char)[] s) @safe pure
-{
-    foreach (char c; s)
-        switch (c)
-        {
-            case '&': w ~= "&amp;"; break;
-            case '<': w ~= "&lt;"; break;
-            case '>': w ~= "&gt;"; break;
-            case '"': w ~= "&quot;"; break;
-            default: w ~= c; break;
-        }
-}
+    => writeHtmlEscaped(w, s);
 
 // ---------------------------------------------------------------------------
 

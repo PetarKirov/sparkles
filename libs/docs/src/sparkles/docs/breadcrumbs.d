@@ -443,9 +443,11 @@ unittest
         "with Home dropped there is one segment left, so no separator");
 
     // Both the text and the data attribute are escaped — `copyText` lands in an
-    // HTML attribute, so an unescaped quote would end it.
+    // HTML attribute, so an unescaped quote would end it. The apostrophe
+    // escapes too since `DOC10` unified this onto the repository's five-entity
+    // `writeHtmlEscaped`.
     assert(html.canFind("a&amp;b"), html);
-    assert(html.canFind(`data-copy="a&amp;b&lt;&quot;'"`), html);
+    assert(html.canFind(`data-copy="a&amp;b&lt;&quot;&#39;"`), html);
 }
 
 @("breadcrumbs.breadcrumbCss.followsTheChromeAndItsDarkHalf")
