@@ -455,6 +455,12 @@ struct ConfigCmd
     @(Option("show", description: "Show resolved configuration."))
     bool show;
 
+    @(Option("changed", description: "config show: only settings whose value did not come from the compiled default."))
+    bool changed;
+
+    @(Option("force", description: "config write: overwrite an existing file."))
+    bool force;
+
     int run(Program)(in Program program)
     {
         import app : executeConfig;
