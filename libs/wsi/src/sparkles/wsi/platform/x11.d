@@ -10,6 +10,8 @@ module sparkles.wsi.platform.x11;
 
 version (linux):
 
+import core.stdc.stdlib : free;
+import core.stdc.string : strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.time : Duration;
 import std.math : isFinite;
@@ -44,8 +46,19 @@ struct X11Wsi
         SurfaceMetrics metrics;
     }
 
-    private void* connection_;
-    private wsi_xcb_bootstrap bootstrap_;
+    private struct Bootstrap
+    {
+        int screenIndex;
+        int fd = -1;
+        uint root;
+        uint rootVisual;
+        uint blackPixel;
+        uint wmProtocols;
+        uint wmDeleteWindow;
+    }
+
+    private xcb_connection_t* connection_;
+    private Bootstrap bootstrap_;
     private pthread_t ownerThread_;
     private Slot[maxWindows] windows_;
     private EventQueue!maxEvents events_;
@@ -66,24 +79,95 @@ struct X11Wsi
     /** Connects to the process' selected X display on the calling UI thread. */
     static WsiResult!void open(out X11Wsi wsi)
     {
-        int nativeError;
-        wsi.connection_ = wsi_xcb_connect(&wsi.bootstrap_, &nativeError);
-        if (wsi.connection_ is null)
-            return x11Failure!void(WsiOperation.open, nativeError,
-                "xcb_connect failed", WsiErrorKind.unavailable);
-        if (wsi.bootstrap_.fd < 0)
+        int screenIndex;
+        auto connection = xcb_connect(null, &screenIndex);
+        const connectError = connection is null
+            ? -1 : xcb_connection_has_error(connection);
+        if (connectError != 0)
         {
-            wsi_xcb_disconnect(wsi.connection_);
-            wsi.connection_ = null;
-            return x11Failure!void(WsiOperation.open, 0,
-                "XCB connection has no pollable descriptor");
+            if (connection !is null)
+                xcb_disconnect(connection);
+            return x11Failure!void(WsiOperation.open, connectError,
+                "xcb_connect failed", WsiErrorKind.unavailable);
         }
+
+        auto screens = xcb_setup_roots_iterator(xcb_get_setup(connection));
+        foreach (_; 0 .. screenIndex)
+        {
+            if (screens.rem == 0)
+                break;
+            xcb_screen_next(&screens);
+        }
+        if (screens.rem == 0)
+        {
+            xcb_disconnect(connection);
+            return x11Failure!void(WsiOperation.open, 0,
+                "selected X screen does not exist");
+        }
+
+        wsi.bootstrap_ = Bootstrap(
+            screenIndex: screenIndex,
+            fd: xcb_get_file_descriptor(connection),
+            root: screens.data.root,
+            rootVisual: screens.data.root_visual,
+            blackPixel: screens.data.black_pixel,
+            wmProtocols: internAtom(connection, "WM_PROTOCOLS"),
+            wmDeleteWindow: internAtom(connection, "WM_DELETE_WINDOW"));
+        if (wsi.bootstrap_.fd < 0 || wsi.bootstrap_.wmProtocols == 0
+            || wsi.bootstrap_.wmDeleteWindow == 0)
+        {
+            xcb_disconnect(connection);
+            return x11Failure!void(WsiOperation.open, 0,
+                "XCB bootstrap lacks a descriptor or the WM atoms");
+        }
+        wsi.connection_ = connection;
         // Best effort: without XKB the server keeps synthesizing a release
         // before each repeated press, and held keys read as typing.
-        wsi_xcb_enable_detectable_autorepeat(wsi.connection_);
+        enableDetectableAutorepeat(connection);
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         return wsiOk();
+    }
+
+    private static uint internAtom(xcb_connection_t* connection,
+        const(char)* name)
+    {
+        auto reply = xcb_intern_atom_reply(connection,
+            xcb_intern_atom(connection, 0,
+                cast(ushort) strlen(name), name), null);
+        if (reply is null)
+            return 0;
+        const atom = reply.atom;
+        free(reply);
+        return atom;
+    }
+
+    /*
+    Without detectable auto-repeat the server synthesizes a release before
+    every repeated press, so a held key is indistinguishable from typing.
+    With the per-client flag a repeat is a second press with no release in
+    between, which becomes KeyAction.repeat. Best-effort: a server without
+    XKB simply keeps the synthesized releases.
+    */
+    private static void enableDetectableAutorepeat(
+        xcb_connection_t* connection)
+    {
+        auto use = xcb_xkb_use_extension_reply(connection,
+            xcb_xkb_use_extension(connection, XCB_XKB_MAJOR_VERSION,
+                XCB_XKB_MINOR_VERSION), null);
+        if (use is null)
+            return;
+        const supported = use.supported != 0;
+        free(use);
+        if (!supported)
+            return;
+        auto flags = xcb_xkb_per_client_flags_reply(connection,
+            xcb_xkb_per_client_flags(connection, XCB_XKB_ID_USE_CORE_KBD,
+                XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT,
+                XCB_XKB_PER_CLIENT_FLAG_DETECTABLE_AUTO_REPEAT, 0, 0, 0),
+            null);
+        if (flags !is null)
+            free(flags);
     }
 
     WsiResult!WindowId createWindow(in WindowConfig config)
@@ -123,16 +207,33 @@ struct X11Wsi
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
                 "X11 window capacity reached", WsiErrorKind.capacity);
 
-        const window = wsi_xcb_generate_id(connection_);
+        const window = xcb_generate_id(connection_);
         if (window == 0)
             return x11Failure!WindowId(WsiOperation.createWindow,
-                wsi_xcb_connection_error(connection_),
+                xcb_connection_has_error(connection_),
                 "xcb_generate_id failed");
         const width = cast(ushort) config.logicalSize.width;
         const height = cast(ushort) config.logicalSize.height;
-        const error = wsi_xcb_create_window(connection_, &bootstrap_, window,
-            width, height, config.title.value.ptr,
-            cast(ushort) config.title.length, config.visible);
+        const uint[2] values = [
+            bootstrap_.blackPixel,
+            XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY
+                | XCB_EVENT_MASK_FOCUS_CHANGE
+                | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE,
+        ];
+        xcb_create_window(connection_, XCB_COPY_FROM_PARENT, window,
+            bootstrap_.root, 0, 0, width, height, 0,
+            XCB_WINDOW_CLASS_INPUT_OUTPUT, bootstrap_.rootVisual,
+            XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK, values.ptr);
+        xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
+            bootstrap_.wmProtocols, XCB_ATOM_ATOM, 32, 1,
+            &bootstrap_.wmDeleteWindow);
+        xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
+            XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8,
+            cast(uint) config.title.length, config.title.value.ptr);
+        if (config.visible)
+            xcb_map_window(connection_, window);
+        const error = xcb_flush(connection_) > 0
+            ? 0 : xcb_connection_has_error(connection_);
         if (error != 0)
             return x11Failure!WindowId(WsiOperation.createWindow, error,
                 "XCB window request batch failed to flush");
@@ -152,7 +253,7 @@ struct X11Wsi
         emit(id, ReadyEvent(slot.metrics));
         if (!hadSticky && hasStickyError_)
         {
-            wsi_xcb_destroy_window(connection_, window);
+            destroyNative(window);
             slot.live = false;
             slot.ready = false;
             slot.window = 0;
@@ -167,7 +268,7 @@ struct X11Wsi
         if (checked.hasError)
             return wsiErr!void(checked.error);
         ref slot = windows_[checked.value];
-        const error = wsi_xcb_destroy_window(connection_, slot.window);
+        const error = destroyNative(slot.window);
         if (error != 0)
             return x11Failure!void(WsiOperation.close, error,
                 "xcb_destroy_window failed");
@@ -187,9 +288,9 @@ struct X11Wsi
 
         NativeHandles handles;
         handles.display = DisplayHandle(X11DisplayHandle(connection_, null,
-            bootstrap_.screen_index));
+            bootstrap_.screenIndex));
         handles.window = WindowHandle(X11WindowHandle(slot.window,
-            bootstrap_.root_visual));
+            bootstrap_.rootVisual));
         return wsiOk(handles);
     }
 
@@ -200,13 +301,16 @@ struct X11Wsi
         if (owner.hasError)
             return owner;
         size_t count;
-        wsi_xcb_event native;
-        while (wsi_xcb_poll_event(connection_, &bootstrap_, &native) != 0)
+        while (true)
         {
+            auto generic = xcb_poll_for_event(connection_);
+            if (generic is null)
+                break;
             ++count;
-            handleNative(native);
+            handleNative(generic);
+            free(generic);
         }
-        const connectionError = wsi_xcb_connection_error(connection_);
+        const connectionError = xcb_connection_has_error(connection_);
         if (connectionError != 0)
             remember(wsiError(WsiErrorKind.nativeFailure,
                 WsiOperation.dispatch, BackendKind.x11, connectionError,
@@ -321,14 +425,14 @@ struct X11Wsi
         foreach (i; 0 .. windows_.length)
             if (windows_[i].live)
             {
-                wsi_xcb_destroy_window(connection_, windows_[i].window);
+                destroyNative(windows_[i].window);
                 windows_[i].live = false;
                 windows_[i].ready = false;
                 windows_[i].window = 0;
             }
         if (connection_ !is null)
         {
-            wsi_xcb_disconnect(connection_);
+            xcb_disconnect(connection_);
             connection_ = null;
         }
         closed_ = true;
@@ -396,61 +500,93 @@ struct X11Wsi
         return true;
     }
 
-    private void handleNative(in wsi_xcb_event native)
+    private int destroyNative(uint window)
     {
-        if (native.kind == WSI_XCB_EVENT_ERROR)
+        xcb_destroy_window(connection_, window);
+        return xcb_flush(connection_) > 0
+            ? 0 : xcb_connection_has_error(connection_);
+    }
+
+    private void handleNative(const xcb_generic_event_t* generic)
+    {
+        const responseType = generic.response_type & 0x7F;
+        if (responseType == 0)
         {
+            auto error = cast(const xcb_generic_error_t*) generic;
             remember(wsiError(WsiErrorKind.nativeFailure,
                 WsiOperation.dispatch, BackendKind.x11,
-                native.native_code, "X11 protocol request failed"));
+                error.error_code, "X11 protocol request failed"));
             return;
         }
-        const index = indexOfWindow(native.window);
-        if (index == size_t.max)
-            return;
-        ref slot = windows_[index];
-        auto id = idAt(index);
-        switch (native.kind)
+        switch (responseType)
         {
-            case WSI_XCB_EVENT_EXPOSE:
-                emit(id, ExposedEvent());
-                emit(id, FrameReadyEvent());
+            case XCB_EXPOSE:
+                auto event = cast(const xcb_expose_event_t*) generic;
+                const index = indexOfWindow(event.window);
+                if (index == size_t.max)
+                    return;
+                emit(idAt(index), ExposedEvent());
+                emit(idAt(index), FrameReadyEvent());
                 break;
-            case WSI_XCB_EVENT_CONFIGURE:
+            case XCB_CONFIGURE_NOTIFY:
+                auto event =
+                    cast(const xcb_configure_notify_event_t*) generic;
+                const index = indexOfWindow(event.window);
+                if (index == size_t.max)
+                    return;
+                ref slot = windows_[index];
                 auto metrics = SurfaceMetrics(
-                    LogicalSize(native.width, native.height),
-                    PhysicalSize(native.width, native.height), ScaleFactor(1));
+                    LogicalSize(event.width, event.height),
+                    PhysicalSize(event.width, event.height), ScaleFactor(1));
                 if (metrics != slot.metrics)
-                    emit(id, SurfaceMetricsChangedEvent(metrics));
+                    emit(idAt(index), SurfaceMetricsChangedEvent(metrics));
                 slot.metrics = metrics;
-                emit(id,
-                    MovedEvent(PhysicalPosition(native.x, native.y)));
+                emit(idAt(index),
+                    MovedEvent(PhysicalPosition(event.x, event.y)));
                 break;
-            case WSI_XCB_EVENT_CLOSE:
-                emit(id, CloseRequestedEvent());
+            case XCB_CLIENT_MESSAGE:
+                auto event = cast(const xcb_client_message_event_t*) generic;
+                if (event.type != bootstrap_.wmProtocols
+                    || event.data.data32[0] != bootstrap_.wmDeleteWindow)
+                    return;
+                const index = indexOfWindow(event.window);
+                if (index != size_t.max)
+                    emit(idAt(index), CloseRequestedEvent());
                 break;
-            case WSI_XCB_EVENT_KEY_PRESS:
-            case WSI_XCB_EVENT_KEY_RELEASE:
-                const pressed = native.kind == WSI_XCB_EVENT_KEY_PRESS;
-                const keycode = cast(uint) native.native_code & 0xFF;
+            case XCB_KEY_PRESS:
+            case XCB_KEY_RELEASE:
+                auto event = cast(const xcb_key_press_event_t*) generic;
+                const index = indexOfWindow(event.event);
+                if (index == size_t.max)
+                    return;
+                const pressed = responseType == XCB_KEY_PRESS;
+                const keycode = cast(uint) event.detail;
                 const repeated = pressed && keyIsDown(keycode);
                 setKeyDown(keycode, pressed);
-                KeyboardEvent event;
-                event.physical = PhysicalKey(keycode, 0);
-                event.location = x11KeyLocation(keycode);
-                event.action = pressed
+                KeyboardEvent keyboard;
+                keyboard.physical = PhysicalKey(keycode, 0);
+                keyboard.location = x11KeyLocation(keycode);
+                keyboard.action = pressed
                     ? (repeated ? KeyAction.repeat : KeyAction.press)
                     : KeyAction.release;
-                event.modifiers = x11Mods(native.state);
-                emit(id, event);
+                keyboard.modifiers = x11Mods(event.state);
+                emit(idAt(index), keyboard);
                 break;
-            case WSI_XCB_EVENT_FOCUS_IN:
-                emit(id, FocusChangedEvent(true));
+            case XCB_FOCUS_IN:
+            case XCB_FOCUS_OUT:
+                auto event = cast(const xcb_focus_in_event_t*) generic;
+                const index = indexOfWindow(event.event);
+                if (index != size_t.max)
+                    emit(idAt(index),
+                        FocusChangedEvent(responseType == XCB_FOCUS_IN));
                 break;
-            case WSI_XCB_EVENT_FOCUS_OUT:
-                emit(id, FocusChangedEvent(false));
-                break;
-            case WSI_XCB_EVENT_DESTROYED:
+            case XCB_DESTROY_NOTIFY:
+                auto event = cast(const xcb_destroy_notify_event_t*) generic;
+                const index = indexOfWindow(event.window);
+                if (index == size_t.max)
+                    return;
+                ref slot = windows_[index];
+                auto id = idAt(index);
                 slot.live = false;
                 slot.ready = false;
                 slot.window = 0;

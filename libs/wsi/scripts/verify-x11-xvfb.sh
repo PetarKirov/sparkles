@@ -13,6 +13,7 @@ trap 'rm -rf "$work"' EXIT
 echo ">> building sparkles:wsi X11 foreign-fd smoke ..."
 ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/src" \
+  -I"$repo/libs/wsi/examples" \
   -I"$repo/libs/event-horizon/src" \
   -I"$repo/libs/input/src" \
   -I"$repo/libs/math/src" \

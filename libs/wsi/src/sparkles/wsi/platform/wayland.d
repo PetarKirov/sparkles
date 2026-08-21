@@ -111,18 +111,18 @@ struct WaylandWsi
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         wsi.loop_ = &loop;
-        wsi.registry_ = wsi_wayland_display_get_registry(wsi.display_);
+        wsi.registry_ = wl_display_get_registry(wsi.display_);
         if (wsi.registry_ is null
-            || wsi_wayland_registry_add_listener(wsi.registry_,
+            || wl_registry_add_listener(wsi.registry_,
                 listenerPtr(registryListener), &wsi) != 0)
         {
             wsi.closeConnectionOnly();
             return waylandFailure!void(WsiOperation.open, 0,
                 "failed to install Wayland registry listener");
         }
-        wsi.bootstrapSync_ = wsi_wayland_display_sync(wsi.display_);
+        wsi.bootstrapSync_ = wl_display_sync(wsi.display_);
         if (wsi.bootstrapSync_ is null
-            || wsi_wayland_callback_add_listener(wsi.bootstrapSync_,
+            || wl_callback_add_listener(wsi.bootstrapSync_,
                 listenerPtr(bootstrapListener), &wsi) != 0)
         {
             wsi.closeConnectionOnly();
@@ -204,18 +204,18 @@ struct WaylandWsi
         slot.live = true;
         slot.ready = false;
         slot.requestedSize = config.logicalSize;
-        slot.surface = wsi_wayland_compositor_create_surface(compositor_);
+        slot.surface = wl_compositor_create_surface(compositor_);
         if (slot.surface !is null)
-            slot.xdgSurface = wsi_wayland_wm_base_get_xdg_surface(
+            slot.xdgSurface = xdg_wm_base_get_xdg_surface(
                 wmBase_, slot.surface);
         if (slot.xdgSurface !is null)
-            slot.toplevel = wsi_wayland_xdg_surface_get_toplevel(
+            slot.toplevel = xdg_surface_get_toplevel(
                 slot.xdgSurface);
         if (slot.surface is null || slot.xdgSurface is null
             || slot.toplevel is null
-            || wsi_wayland_xdg_surface_add_listener(slot.xdgSurface,
+            || xdg_surface_add_listener(slot.xdgSurface,
                 listenerPtr(xdgSurfaceListener), &slot) != 0
-            || wsi_wayland_toplevel_add_listener(slot.toplevel,
+            || xdg_toplevel_add_listener(slot.toplevel,
                 listenerPtr(toplevelListener), &slot) != 0)
         {
             destroyNative(slot);
@@ -232,23 +232,23 @@ struct WaylandWsi
         char[257] title;
         title[0 .. config.title.length] = config.title.value;
         title[config.title.length] = '\0';
-        wsi_wayland_toplevel_set_title(slot.toplevel, title.ptr);
-        wsi_wayland_toplevel_set_app_id(slot.toplevel, "sparkles-wsi");
+        xdg_toplevel_set_title(slot.toplevel, title.ptr);
+        xdg_toplevel_set_app_id(slot.toplevel, "sparkles-wsi");
         if (!config.resizable)
         {
             const width = cast(int) config.logicalSize.width;
             const height = cast(int) config.logicalSize.height;
-            wsi_wayland_toplevel_set_min_size(slot.toplevel, width, height);
-            wsi_wayland_toplevel_set_max_size(slot.toplevel, width, height);
+            xdg_toplevel_set_min_size(slot.toplevel, width, height);
+            xdg_toplevel_set_max_size(slot.toplevel, width, height);
         }
         if (config.state == WindowStartupState.maximized)
-            wsi_wayland_toplevel_set_maximized(slot.toplevel);
+            xdg_toplevel_set_maximized(slot.toplevel);
         else if (config.state == WindowStartupState.fullscreen)
-            wsi_wayland_toplevel_set_fullscreen(slot.toplevel);
+            xdg_toplevel_set_fullscreen(slot.toplevel, null);
 
         // Mandatory no-buffer initial commit. The configure listener acks
         // immediately; only then does the renderer receive the wl_surface.
-        wsi_wayland_surface_commit(slot.surface);
+        wl_surface_commit(slot.surface);
         auto rearmed = prepareAndArm();
         if (rearmed.hasError)
         {
@@ -268,9 +268,9 @@ struct WaylandWsi
             return paused;
         ref slot = windows_[checked.value];
         if (maximized)
-            wsi_wayland_toplevel_set_maximized(slot.toplevel);
+            xdg_toplevel_set_maximized(slot.toplevel);
         else
-            wsi_wayland_toplevel_unset_maximized(slot.toplevel);
+            xdg_toplevel_unset_maximized(slot.toplevel);
         return prepareAndArm();
     }
 
@@ -575,23 +575,29 @@ struct WaylandWsi
     {
         if (bootstrapSync_ !is null)
         {
-            wsi_wayland_callback_destroy(bootstrapSync_);
+            wl_callback_destroy(bootstrapSync_);
             bootstrapSync_ = null;
         }
         if (keyboard_ !is null)
         {
-            wsi_wayland_keyboard_destroy(keyboard_, seatVersion_);
+            if (seatVersion_ >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
+                wl_keyboard_release(keyboard_);
+            else
+                wl_keyboard_destroy(keyboard_);
             keyboard_ = null;
             keyboardFocus_ = null;
         }
         if (seat_ !is null)
         {
-            wsi_wayland_seat_destroy(seat_, seatVersion_);
+            if (seatVersion_ >= WL_SEAT_RELEASE_SINCE_VERSION)
+                wl_seat_release(seat_);
+            else
+                wl_seat_destroy(seat_);
             seat_ = null;
         }
         if (wmBase_ !is null)
         {
-            wsi_wayland_wm_base_destroy(wmBase_);
+            xdg_wm_base_destroy(wmBase_);
             wmBase_ = null;
         }
         if (compositor_ !is null)
@@ -614,13 +620,13 @@ struct WaylandWsi
     private static void destroyNative(ref Slot slot) nothrow @nogc
     {
         if (slot.frameCallback !is null)
-            wsi_wayland_callback_destroy(slot.frameCallback);
+            wl_callback_destroy(slot.frameCallback);
         if (slot.toplevel !is null)
-            wsi_wayland_toplevel_destroy(slot.toplevel);
+            xdg_toplevel_destroy(slot.toplevel);
         if (slot.xdgSurface !is null)
-            wsi_wayland_xdg_surface_destroy(slot.xdgSurface);
+            xdg_surface_destroy(slot.xdgSurface);
         if (slot.surface !is null)
-            wsi_wayland_surface_destroy(slot.surface);
+            wl_surface_destroy(slot.surface);
         const generation = slot.generation;
         slot = Slot.init;
         slot.generation = generation;
@@ -730,16 +736,16 @@ struct WaylandWsi
         {
             const version_ = advertisedVersion < 4 ? advertisedVersion : 4;
             owner.compositor_ = cast(wl_compositor*)
-                wsi_wayland_registry_bind(registry, name,
+                wl_registry_bind(registry, name,
                     &wl_compositor_interface, version_);
         }
         else if (strcmp(interfaceName, xdg_wm_base_interface.name) == 0
             && owner.wmBase_ is null)
         {
-            owner.wmBase_ = cast(xdg_wm_base*) wsi_wayland_registry_bind(
+            owner.wmBase_ = cast(xdg_wm_base*) wl_registry_bind(
                 registry, name, &xdg_wm_base_interface, 1);
             if (owner.wmBase_ !is null
-                && wsi_wayland_wm_base_add_listener(owner.wmBase_,
+                && xdg_wm_base_add_listener(owner.wmBase_,
                     listenerPtr(wmBaseListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
@@ -749,11 +755,11 @@ struct WaylandWsi
             && owner.seat_ is null)
         {
             const version_ = advertisedVersion < 5 ? advertisedVersion : 5;
-            owner.seat_ = cast(wl_seat*) wsi_wayland_registry_bind(
+            owner.seat_ = cast(wl_seat*) wl_registry_bind(
                 registry, name, &wl_seat_interface, version_);
             owner.seatVersion_ = version_;
             if (owner.seat_ !is null
-                && wsi_wayland_seat_add_listener(owner.seat_,
+                && wl_seat_add_listener(owner.seat_,
                     listenerPtr(seatListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
@@ -774,9 +780,9 @@ struct WaylandWsi
         const hasKeyboard = (capabilities & keyboardCapability) != 0;
         if (hasKeyboard && owner.keyboard_ is null)
         {
-            owner.keyboard_ = wsi_wayland_seat_get_keyboard(seat);
+            owner.keyboard_ = wl_seat_get_keyboard(seat);
             if (owner.keyboard_ !is null
-                && wsi_wayland_keyboard_add_listener(owner.keyboard_,
+                && wl_keyboard_add_listener(owner.keyboard_,
                     listenerPtr(keyboardListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.dispatch, BackendKind.wayland, 0,
@@ -784,8 +790,10 @@ struct WaylandWsi
         }
         else if (!hasKeyboard && owner.keyboard_ !is null)
         {
-            wsi_wayland_keyboard_destroy(owner.keyboard_,
-                owner.seatVersion_);
+            if (owner.seatVersion_ >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
+                wl_keyboard_release(owner.keyboard_);
+            else
+                wl_keyboard_destroy(owner.keyboard_);
             owner.keyboard_ = null;
             owner.keyboardFocus_ = null;
             owner.keyboardMods_ = Mods();
@@ -862,7 +870,7 @@ struct WaylandWsi
         wl_callback* callback, uint) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
-        wsi_wayland_callback_destroy(callback);
+        wl_callback_destroy(callback);
         owner.bootstrapSync_ = null;
         owner.bootstrapComplete_ = true;
     }
@@ -872,7 +880,7 @@ struct WaylandWsi
     {
         // This synchronous protocol reply is the only work performed inside
         // the native callback; application code remains deferred to drain().
-        wsi_wayland_wm_base_pong(base, serial);
+        xdg_wm_base_pong(base, serial);
     }
 
     private extern (C) static void onXdgSurfaceConfigure(void* data,
@@ -883,7 +891,7 @@ struct WaylandWsi
 
         // The resize handoff's load-bearing rule: acknowledge before event
         // allocation, renderer notification, or any potentially deferred work.
-        wsi_wayland_xdg_surface_ack_configure(surface, serial);
+        xdg_surface_ack_configure(surface, serial);
 
         const width = slot.pendingWidth > 0
             ? cast(uint) slot.pendingWidth
@@ -953,7 +961,7 @@ struct WaylandWsi
     {
         auto slot = cast(Slot*) data;
         auto owner = slot.owner;
-        wsi_wayland_callback_destroy(callback);
+        wl_callback_destroy(callback);
         slot.frameCallback = null;
         const index = owner.indexOfSlot(slot);
         if (index == size_t.max || !slot.live)
@@ -968,13 +976,13 @@ struct WaylandWsi
         if (!slot.live || slot.surface is null
             || slot.frameCallback !is null)
             return;
-        slot.frameCallback = wsi_wayland_surface_frame(slot.surface);
+        slot.frameCallback = wl_surface_frame(slot.surface);
         if (slot.frameCallback is null
-            || wsi_wayland_callback_add_listener(slot.frameCallback,
+            || wl_callback_add_listener(slot.frameCallback,
                 listenerPtr(frameListener), &slot) != 0)
         {
             if (slot.frameCallback !is null)
-                wsi_wayland_callback_destroy(slot.frameCallback);
+                wl_callback_destroy(slot.frameCallback);
             slot.frameCallback = null;
             remember(wsiError(WsiErrorKind.nativeFailure,
                 WsiOperation.dispatch, BackendKind.wayland, 0,

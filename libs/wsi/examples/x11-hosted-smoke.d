@@ -15,14 +15,14 @@ import std.stdio : writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.wsi;
-import xcb_native : wsi_xcb_focus_window, wsi_xcb_resize_window,
-    wsi_xcb_send_close, wsi_xcb_send_key;
+import xcb_native : xcb_connection_t;
+import xcb_test_input : focusWindow, resizeWindow, sendClose, sendKey;
 
 private struct X11Hooks
 {
     X11Wsi* wsi;
     DefaultLoop* loop;
-    void* connection;
+    xcb_connection_t* connection;
     uint window;
 
     enum uint chordShiftCode = 50; // X keycode: KEY_LEFTSHIFT + 8
@@ -38,7 +38,8 @@ private struct X11Hooks
     {
         auto handles = wsi.nativeHandles(id).value;
         connection = handles.display.match!(
-            (in X11DisplayHandle handle) => cast(void*) handle.connection,
+            (in X11DisplayHandle handle)
+                => cast(xcb_connection_t*) handle.connection,
             (_) => null);
         window = handles.window.match!(
             (in X11WindowHandle handle) => handle.window,
@@ -58,21 +59,21 @@ private struct X11Hooks
 
     void requestResize(uint width, uint height)
     {
-        assert(wsi_xcb_resize_window(connection, window, width, height) == 0);
+        assert(resizeWindow(connection, window, width, height) == 0);
     }
 
     void requestClose()
     {
-        assert(wsi_xcb_send_close(connection, window) == 0);
+        assert(sendClose(connection, window) == 0);
     }
 
     void injectChord()
     {
-        assert(wsi_xcb_focus_window(connection, window) == 0);
-        assert(wsi_xcb_send_key(connection, chordShiftCode, 1) == 0);
-        assert(wsi_xcb_send_key(connection, chordKeyCode, 1) == 0);
-        assert(wsi_xcb_send_key(connection, chordKeyCode, 0) == 0);
-        assert(wsi_xcb_send_key(connection, chordShiftCode, 0) == 0);
+        assert(focusWindow(connection, window) == 0);
+        assert(sendKey(connection, chordShiftCode, true) == 0);
+        assert(sendKey(connection, chordKeyCode, true) == 0);
+        assert(sendKey(connection, chordKeyCode, false) == 0);
+        assert(sendKey(connection, chordShiftCode, false) == 0);
     }
 }
 
