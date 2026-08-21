@@ -699,7 +699,9 @@ struct ViewerModel
     /// Cells a keystroke scrolls sideways. Bigger than one: a table column is
     /// wider than a character, and a reviewer stepping past one wants to
     /// arrive somewhere, not to hold the key down.
-    enum long hScrollStep = 8;
+    /// Horizontal cells per keystroke scroll (`scroll.hScrollStep`); a
+    /// field since the config owns it, seeded with the historical 8.
+    long hScrollStep = 8;
 
     /// Out to the right edge. The pair to $(LREF scrollHomeHorizontal), and
     /// not just for symmetry: a wide table's last columns are usually the

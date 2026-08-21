@@ -144,6 +144,9 @@ int executeView(in HueCli root, in View view)
     auto pipeline = DocumentPipeline(&registry, &cache, view.markdown, view.raw,
         view.patch, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(view.diffOptions.diffCommutative));
+    pipeline.diffContext = eff.diff.context;
+    pipeline.minPairSimilarity = eff.diff.minPairSimilarity;
+    pipeline.maxEditDistance = eff.diff.maxEditDistance;
     pipeline.forceDsv = view.dsv;
     pipeline.dsvDelimiter = view.dsvDelimiter;
     pipeline.dsvQuote = view.dsvQuote;
@@ -272,6 +275,9 @@ int executeDiff(in HueCli root, in Diff diff)
     auto pipeline = DocumentPipeline(&registry, &cache, false, false,
         false, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(diff.diff.diffCommutative));
+    pipeline.diffContext = eff.diff.context;
+    pipeline.minPairSimilarity = eff.diff.minPairSimilarity;
+    pipeline.maxEditDistance = eff.diff.maxEditDistance;
 
     const backend = diff.sink.resolveBackend(root.gui);
 
@@ -336,6 +342,9 @@ int executePr(in HueCli root, in Pr pr)
     auto pipeline = DocumentPipeline(&registry, &cache, false, false,
         false, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(pr.diff.diffCommutative));
+    pipeline.diffContext = eff.diff.context;
+    pipeline.minPairSimilarity = eff.diff.minPairSimilarity;
+    pipeline.maxEditDistance = eff.diff.maxEditDistance;
 
     const backend = pr.sink.resolveBackend(root.gui);
 

@@ -40,7 +40,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerPreviewRect;
 import sparkles.ui_tui : Cell, Grid;
-import lantern : LanternState, ltnStep = step, ltnTick = tick,
+import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
@@ -442,6 +442,8 @@ int runGui(GuiArgs guiArgs) @system
     vm.codeLineNumbers = codeLineNumbers;
     vm.codeOverflow = codeOverflow;
     vm.codeMaxLines = codeMaxLines;
+    if (configStore !is null)
+        vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
     vm.tableOverflow = tableOverflow;
     vm.tableMaxLines = tableMaxLines;
     vm.fenceHotGlyphs = true; // resolves the semantic bar's hot thumb color
@@ -864,6 +866,37 @@ int runGui(GuiArgs guiArgs) @system
 
     SettingsGeometry lastSettingsG;
 
+    // The guide's taste settings (`CFG18`), read live so a settings-pane
+    // commit applies on the very next frame.
+    Duration guiLanternDelay() @system
+        => configStore is null ? defaultDelay
+            : configStore.resolved.lantern.enabled
+                ? dur!"msecs"(configStore.resolved.lantern.delayMs)
+                : Duration.max;
+
+    Placement guiLanternPlacement() @system
+        => configStore is null ? Placement.classic
+            : configStore.resolved.lantern.placement;
+
+    // The tier-2 knobs the models cache; synced at startup, after a settings
+    // commit, and when the picker first exists.
+    void syncConfigDerived() @system
+    {
+        if (configStore is null)
+            return;
+        vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
+        if (!filePicker.empty)
+            filePicker.get.stepBudget =
+                dur!"msecs"(configStore.resolved.picker.stepBudgetMs);
+        if (filePickerDoc !is null)
+        {
+            filePickerDoc.loadDelay =
+                dur!"msecs"(configStore.resolved.picker.loadDelayMs);
+            filePickerDoc.overlayDelay =
+                dur!"msecs"(configStore.resolved.picker.overlayDelayMs);
+        }
+    }
+
     // The live-apply half: the window resolves a theme name into its cycle;
     // a live font reload needs the pt→px setup path and stays a next-launch
     // note in v1; a panes commit re-widths the tree dock.
@@ -896,6 +929,7 @@ int runGui(GuiArgs guiArgs) @system
                 arrangePanes();
             }
         }
+        syncConfigDerived();
     }
 
 
@@ -912,6 +946,7 @@ int runGui(GuiArgs guiArgs) @system
         filePickerDoc.pane.vm.cache = tsCache;
         filePickerDoc.pane.vm.decodeAnsi = (const(char)[] b) => decodeAnsi(b);
         filePickerDoc.syncTheme(vm.themeIdx);
+        syncConfigDerived(); // the picker knobs exist only once it does
         filePicker.get.open(pn.tree.root.length ? pn.tree.root : ".",
             pn.tree.includeGlobs, pn.tree.excludeGlobs);
     }
@@ -1776,7 +1811,7 @@ int runGui(GuiArgs guiArgs) @system
                 BoxLayout ltnBox;
                 const ltnRoot = viewLantern(ltnBuilder, ltnLabels, listed[],
                     pn.lantern.pending.length, screenW / cellW, ltnBox,
-                    Placement.classic, LanternStyle.init, 0,
+                    guiLanternPlacement(), LanternStyle.init, 0,
                     pn.lantern.scroll);
                 auto ltnTree = ltnBuilder.finish(ltnRoot);
                 // Bounded to the window, so a `classic` panel actually
@@ -2234,6 +2269,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             filePickerDoc.select(filePicker.get.selectedPath);
             filePickerDoc.syncTheme(vm.themeIdx);
+        syncConfigDerived(); // the picker knobs exist only once it does
             filePickerDoc.caps = caps; // the same profile the dock eases with
             cast(void) filePickerDoc.tick();
         }
@@ -2465,7 +2501,8 @@ int runGui(GuiArgs guiArgs) @system
             // The key sequence's delay runs on wall time, not a frame count:
             // `lantern` owns the pending path, and the panel's appearance must
             // not depend on how fast this machine renders.
-            ltnTick(pn.lantern, dur!"msecs"(frameMs(window.frameSeconds)));
+            ltnTick(pn.lantern, dur!"msecs"(frameMs(window.frameSeconds)),
+                guiLanternDelay());
 
             foreach (kev; keyBuf)
             {
@@ -2655,10 +2692,10 @@ int runGui(GuiArgs guiArgs) @system
                     vm.diffToggleGapNearCursor();
                     break;
                 case Command.viewScrollLeft:
-                    vm.scrollHorizontal(-ViewerModel.hScrollStep);
+                    vm.scrollHorizontal(-vm.hScrollStep);
                     break;
                 case Command.viewScrollRight:
-                    vm.scrollHorizontal(ViewerModel.hScrollStep);
+                    vm.scrollHorizontal(vm.hScrollStep);
                     break;
                 case Command.viewScrollHome:
                     vm.scrollHomeHorizontal();
