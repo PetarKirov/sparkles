@@ -95,6 +95,16 @@ private struct X11Hooks
         assert(sendButton(connection, 5, true) == 0);
         assert(sendButton(connection, 5, false) == 0);
     }
+
+    void injectDragOutside()
+    {
+        // Press inside; the core protocol's automatic press–release grab
+        // must keep routing after the warp beyond the 640x480 window.
+        assert(warpPointerOnScreen(connection, 120, 80) == 0);
+        assert(sendButton(connection, 1, true) == 0);
+        assert(warpPointerOnScreen(connection, 700, 500) == 0);
+        assert(sendButton(connection, 1, false) == 0);
+    }
 }
 
 int main()
