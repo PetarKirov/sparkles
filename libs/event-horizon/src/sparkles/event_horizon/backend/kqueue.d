@@ -1431,51 +1431,28 @@ unittest
 @system
 unittest
 {
-    import core.sys.posix.arpa.inet : htonl, htons;
-    import core.sys.posix.netinet.in_ : in_addr, INADDR_LOOPBACK, sockaddr_in;
-    import core.sys.posix.sys.socket : accept, AF_INET, bind, connect, getsockname,
-        listen, sockaddr, socket, socklen_t, SOCK_STREAM;
+    import core.sys.posix.sys.socket : AF_UNIX, recv, send, socketpair, SOCK_STREAM;
     import core.sys.posix.unistd : close_ = close;
 
     KqueueBackend b;
-    if (b.open(BackendConfig()).hasError)
-        skipTest("kqueue unavailable");
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
 
-    const listener = socket(AF_INET, SOCK_STREAM, 0);
-    assert(listener >= 0);
-    sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = 0;
-    addr.sin_addr = in_addr(htonl(INADDR_LOOPBACK));
-    assert(bind(listener, cast(sockaddr*) &addr, sockaddr_in.sizeof) == 0);
-    assert(listen(listener, 1) == 0);
-    sockaddr_in bound;
-    socklen_t blen = sockaddr_in.sizeof;
-    assert(getsockname(listener, cast(sockaddr*) &bound, &blen) == 0);
-    const port = bound.sin_port;
+    int[2] fds;
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, fds.ptr) == 0);
+    scope (exit)
+    {
+        close_(fds[0]);
+        close_(fds[1]);
+    }
+    const server = fds[0];
+    const client = fds[1];
 
-    __gshared int clientSock;
-    __gshared bool clientGotEcho;
-    auto client = new Thread({
-        import core.sys.posix.sys.socket : recv, send;
-
-        clientSock = socket(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in to;
-        to.sin_family = AF_INET;
-        to.sin_port = port;
-        to.sin_addr = in_addr(htonl(INADDR_LOOPBACK));
-        if (connect(clientSock, cast(sockaddr*) &to, sockaddr_in.sizeof) != 0)
-            return;
-        immutable(char)[5] hello = "hello";
-        send(clientSock, hello.ptr, 5, 0);
-        char[16] rbuf;
-        const got = recv(clientSock, rbuf.ptr, 16, 0);
-        clientGotEcho = got == 5 && rbuf[0 .. 5] == "hello";
-    });
-    client.start();
-
-    const server = accept(listener, null, null);
-    assert(server >= 0);
+    // Client sends the greeting
+    immutable(char)[5] hello = "hello";
+    assert(send(client, hello.ptr, 5, 0) == 5);
 
     // Server: recv the greeting via kqueue readiness synthesis.
     ubyte[64] rxStore;
@@ -1485,9 +1462,10 @@ unittest
     rxSlot.pinned = () @trusted { import core.lifetime : move; return move(rxBuf); }();
     assert(b.trySubmit(OpRecv(server), OpToken.pack(1, 1, OpClass.user), rxSlot));
     uint recvBytes;
+    auto dl = KernelTimespec(0, 100_000_000); // 100 ms
     for (int spins = 0; spins < 100 && recvBytes == 0; ++spins)
     {
-        cast(void) b.submitAndWait(1, null);
+        cast(void) b.submitAndWait(1, &dl);
         b.reap((ref const RawCompletion c) { if (c.res > 0) recvBytes = cast(uint) c.res; });
     }
     assert(recvBytes == 5, "server received the greeting via kqueue");
@@ -1503,18 +1481,14 @@ unittest
     uint sentBytes;
     for (int spins = 0; spins < 100 && sentBytes == 0; ++spins)
     {
-        cast(void) b.submitAndWait(1, null);
+        cast(void) b.submitAndWait(1, &dl);
         b.reap((ref const RawCompletion c) { if (c.res > 0) sentBytes = cast(uint) c.res; });
     }
     assert(sentBytes == 5, "server echoed via kqueue");
 
-    client.join();
-    assert(clientGotEcho, "client received the echo");
-
-    close_(server);
-    close_(listener);
-    close_(clientSock);
-    b.close();
+    char[16] rbuf;
+    const got = recv(client, rbuf.ptr, 16, 0);
+    assert(got == 5 && rbuf[0 .. 5] == "hello", "client received the echo");
 }
 
 // ── O29: EVFILT_USER wake ───────────────────────────────────────────────────
