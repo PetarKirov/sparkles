@@ -130,9 +130,13 @@ breaking change.
 The first Win32 input slice is delivered: scan-code/VK key transitions, UTF-16
 `WM_CHAR` commits, and allocation-bounded IMM32 pre-edit attributes/cursor/result
 translation. Wine/Xvfb exercises a real `SCS_SETSTR` → `GCS_COMPSTR` →
-`CPS_COMPLETE`/`GCS_RESULTSTR` round trip. Logical key translation, candidate-window
-placement, raw input, pointer/cursor/DPI/output work, the other three platform input
-adapters, and native-Windows evidence remain.
+`CPS_COMPLETE`/`GCS_RESULTSTR` round trip. The matching X11 slice queues
+evdev-keycode identity, left/right/numpad location, core-state-mask modifiers and
+press/repeat/release, with XKB detectable auto-repeat requested so a held key
+repeats without synthesized releases; an XTEST-injected shift-chorded key runs
+through the real server under Xvfb. Logical key translation (xkbcommon), XIM,
+candidate-window placement, raw input, pointer/cursor/DPI/output work, the
+Wayland and AppKit input adapters, and native-Windows evidence remain.
 
 Required platform paths:
 

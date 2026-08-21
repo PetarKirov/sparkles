@@ -9,8 +9,10 @@ import std.stdio : writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op : Completion;
+import sparkles.input.events : KeyAction;
 import sparkles.wsi;
-import xcb_native : wsi_xcb_resize_window, wsi_xcb_send_close;
+import xcb_native : wsi_xcb_focus_window, wsi_xcb_resize_window,
+    wsi_xcb_send_close, wsi_xcb_send_key;
 
 private __gshared X11Wsi* wrongThreadWsi;
 private __gshared WsiErrorKind wrongThreadKind;
@@ -116,6 +118,50 @@ int main()
         assert(MonoTime.currTime - resizeStart < 2.seconds);
     }
 
+    // A shift-chorded key press through the real server: XTEST delivers to
+    // the focused window, the state mask is pre-event, and left/right
+    // identity comes from the evdev keycode itself.
+    assert(wsi_xcb_focus_window(connection, window) == 0);
+    enum leftShift = 50;
+    enum keyA = 38;
+    assert(wsi_xcb_send_key(connection, leftShift, 1) == 0);
+    assert(wsi_xcb_send_key(connection, keyA, 1) == 0);
+    assert(wsi_xcb_send_key(connection, keyA, 0) == 0);
+    assert(wsi_xcb_send_key(connection, leftShift, 0) == 0);
+    uint keyEvents;
+    bool shiftedPress;
+    bool releaseSeen;
+    bool shiftLeft;
+    const keysStart = MonoTime.currTime;
+    while (keyEvents < 4)
+    {
+        auto step = wsi.runIntegratedOnce(loop, 2.seconds);
+        assert(step.hasValue && step.value == RunStatus.dispatched);
+        auto result = wsi.drain((WindowEvent event) {
+            assert(event.sequence > lastSequence);
+            lastSequence = event.sequence;
+            event.payload.match!(
+                (in KeyboardEvent value) {
+                    ++keyEvents;
+                    if (value.physical.nativeCode == leftShift
+                        && value.action == KeyAction.press)
+                        shiftLeft = value.location == KeyLocation.left;
+                    if (value.physical.nativeCode == keyA)
+                    {
+                        assert(value.location == KeyLocation.standard);
+                        if (value.action == KeyAction.press)
+                            shiftedPress = value.modifiers.shift;
+                        else if (value.action == KeyAction.release)
+                            releaseSeen = true;
+                    }
+                },
+                (_) {});
+        });
+        assert(result.hasValue);
+        assert(MonoTime.currTime - keysStart < 2.seconds);
+    }
+    assert(shiftLeft && shiftedPress && releaseSeen);
+
     bool timerFired;
     auto timer = loop.submitAfter(25.msecs, &timerComplete, &timerFired);
     assert(timer.hasValue);
@@ -161,6 +207,6 @@ int main()
     });
     assert(destroyedDrain.hasValue && destroyed);
 
-    writeln("ok: XCB window + Event Horizon timer/waker shared one fd loop");
+    writeln("ok: XCB window + keys + Event Horizon timer/waker on one fd loop");
     return 0;
 }
