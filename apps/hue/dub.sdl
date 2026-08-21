@@ -52,6 +52,15 @@ dependency "sparkles:input" path="../.."
 // GPU arm; the GUI-loop migration flips the application config to `full`.
 dependency "sparkles:ui-app" path="../.."
 subConfiguration "sparkles:ui-app" "tui"
+// The configuration schema (`CFG1`): `HueConfig` is a D aggregate reflected
+// to/from JSON by sparkles:wired — the config file, `config show/write/save`,
+// and the settings pane all read one declaration. Top level so all four
+// configurations (Android included, `CFG12`) share it.
+dependency "sparkles:wired" path="../.."
+// Declared rather than inherited through sparkles:ui-tui/-app (`PKG2`): the
+// schema carries the property-tree metadata vocabulary (`@Label`/`@Doc`/
+// `@Range`) and the settings pane embeds `PropertyTree!HueConfig`.
+dependency "sparkles:ui" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
 // the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
