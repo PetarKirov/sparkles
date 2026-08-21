@@ -171,8 +171,16 @@ flag. The conformance click and scroll properties inject through XTEST,
 moved to the kiosk shell, because this Weston's desktop-shell
 click-to-activate binding crashes on a null pointer focus in the headless
 environment. Keymap-change events, Wayland client-side repeat synthesis,
-XIM, candidate-window placement, raw input, pointer capture,
-cursor/DPI/output work, and native-Windows evidence remain.
+XIM, candidate-window placement, and raw input remain. The scale slice makes
+`SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
+window's scale is the maximum of its entered outputs, a change requests the
+matching buffer scale and reports one atomic metrics transition — verified at
+scale 2 through the kiosk-Weston lane, where the chord, click, and scroll
+properties also still pass. Win32's existing `GetDpiForWindow` path keeps its
+Wine caveat: a per-monitor-V2-aware window under Wine always sees a 96-DPI
+monitor whatever `LogPixels` says, so that column's scale evidence is owed to
+native Windows CI. X11 scale detection, cursor work, full output
+enumeration/hotplug, pointer capture, and native-Windows evidence remain.
 
 Required platform paths:
 

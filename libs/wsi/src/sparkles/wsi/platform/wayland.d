@@ -62,6 +62,8 @@ struct WaylandWsi
         int pendingHeight;
         LogicalSize requestedSize;
         SurfaceMetrics metrics;
+        ubyte enteredOutputs;
+        int scale = 1;
     }
 
     private wl_display* display_;
@@ -74,6 +76,15 @@ struct WaylandWsi
     private xkb_context* xkbContext_;
     private xkb_keymap* xkbKeymap_;
     private xkb_state* xkbState_;
+    private struct Output
+    {
+        uint registryName;
+        wl_output* output;
+        int scale = 1;
+        int pendingScale = 1;
+    }
+
+    private Output[8] outputs_;
     private wl_pointer* pointer_;
     private const(wl_surface)* pointerFocus_;
     private LogicalPosition pointerPosition_;
@@ -219,6 +230,13 @@ struct WaylandWsi
         slot.ready = false;
         slot.requestedSize = config.logicalSize;
         slot.surface = wl_compositor_create_surface(compositor_);
+        if (slot.surface !is null
+            && wl_surface_add_listener(slot.surface,
+                listenerPtr(surfaceListener), &slot) != 0)
+        {
+            wl_surface_destroy(slot.surface);
+            slot.surface = null;
+        }
         if (slot.surface !is null)
             slot.xdgSurface = xdg_wm_base_get_xdg_surface(
                 wmBase_, slot.surface);
@@ -625,6 +643,12 @@ struct WaylandWsi
             xkb_context_unref(xkbContext_);
             xkbContext_ = null;
         }
+        foreach (ref output; outputs_)
+            if (output.output !is null)
+            {
+                wl_output_destroy(output.output);
+                output = Output.init;
+            }
         if (wmBase_ !is null)
         {
             xdg_wm_base_destroy(wmBase_);
@@ -781,6 +805,28 @@ struct WaylandWsi
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install xdg_wm_base listener"));
         }
+        else if (strcmp(interfaceName, wl_output_interface.name) == 0)
+        {
+            foreach (ref slot; owner.outputs_)
+            {
+                if (slot.output !is null)
+                    continue;
+                const version_ = advertisedVersion < 2
+                    ? advertisedVersion : 2;
+                slot.output = cast(wl_output*) wl_registry_bind(registry,
+                    name, &wl_output_interface, version_);
+                slot.registryName = name;
+                slot.scale = 1;
+                slot.pendingScale = 1;
+                if (slot.output !is null
+                    && wl_output_add_listener(slot.output,
+                        listenerPtr(outputListener), owner) != 0)
+                    owner.remember(wsiError(WsiErrorKind.nativeFailure,
+                        WsiOperation.open, BackendKind.wayland, 0,
+                        "failed to install wl_output listener"));
+                break;
+            }
+        }
         else if (strcmp(interfaceName, wl_seat_interface.name) == 0
             && owner.seat_ is null)
         {
@@ -797,10 +843,154 @@ struct WaylandWsi
         }
     }
 
-    private extern (C) static void onRegistryGlobalRemove(void*,
-        wl_registry*, uint) nothrow @nogc
+    private extern (C) static void onRegistryGlobalRemove(void* data,
+        wl_registry*, uint name) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        foreach (i, ref slot; owner.outputs_)
+        {
+            if (slot.output is null || slot.registryName != name)
+                continue;
+            wl_output_destroy(slot.output);
+            slot = Output.init;
+            foreach (windowIndex, ref window; owner.windows_)
+                if (window.live && (window.enteredOutputs & (1 << i)) != 0)
+                {
+                    window.enteredOutputs &= ~cast(ubyte)(1 << i);
+                    owner.refreshWindowScale(windowIndex);
+                }
+            break;
+        }
+    }
+
+    private extern (C) static void onOutputGeometry(void*, wl_output*, int,
+        int, int, int, int, const(char)*, const(char)*, int) nothrow @nogc
     {
     }
+
+    private extern (C) static void onOutputMode(void*, wl_output*, uint,
+        int, int, int) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onOutputScale(void* data,
+        wl_output* output, int factor) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        foreach (ref slot; owner.outputs_)
+            if (slot.output is output)
+            {
+                slot.pendingScale = factor > 0 ? factor : 1;
+                break;
+            }
+    }
+
+    private extern (C) static void onOutputDone(void* data,
+        wl_output* output) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        foreach (i, ref slot; owner.outputs_)
+            if (slot.output is output)
+            {
+                if (slot.scale != slot.pendingScale)
+                {
+                    slot.scale = slot.pendingScale;
+                    foreach (windowIndex, ref window; owner.windows_)
+                        if (window.live
+                            && (window.enteredOutputs & (1 << i)) != 0)
+                            owner.refreshWindowScale(windowIndex);
+                }
+                break;
+            }
+    }
+
+    private extern (C) static void onOutputName(void*, wl_output*,
+        const(char)*) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onOutputDescription(void*, wl_output*,
+        const(char)*) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onSurfaceEnter(void* data,
+        wl_surface*, wl_output* output) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        slot.owner.trackSurfaceOutput(slot, output, true);
+    }
+
+    private extern (C) static void onSurfaceLeave(void* data,
+        wl_surface*, wl_output* output) nothrow @nogc
+    {
+        auto slot = cast(Slot*) data;
+        slot.owner.trackSurfaceOutput(slot, output, false);
+    }
+
+    private extern (C) static void onSurfacePreferredBufferScale(void*,
+        wl_surface*, int) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onSurfacePreferredBufferTransform(void*,
+        wl_surface*, uint) nothrow @nogc
+    {
+    }
+
+    private void trackSurfaceOutput(Slot* slot, wl_output* output,
+        bool entered) nothrow @nogc
+    {
+        const windowIndex = indexOfSlot(slot);
+        if (windowIndex == size_t.max)
+            return;
+        foreach (i, ref candidate; outputs_)
+        {
+            if (candidate.output !is output)
+                continue;
+            const bit = cast(ubyte)(1 << i);
+            if (entered)
+                slot.enteredOutputs |= bit;
+            else
+                slot.enteredOutputs &= ~bit;
+            emit(idAt(windowIndex), OutputEnteredEvent(
+                OutputId(cast(uint) i + 1, 1), entered));
+            refreshWindowScale(windowIndex);
+            return;
+        }
+    }
+
+    /*
+    The window's scale is the maximum of its entered outputs (the common
+    sharpness-first policy). A change re-derives the physical size from the
+    logical one, requests the matching buffer scale, and reports one atomic
+    metrics transition.
+    */
+    private void refreshWindowScale(size_t windowIndex) nothrow @nogc
+    {
+        ref slot = windows_[windowIndex];
+        int scale = 1;
+        foreach (i, const ref output; outputs_)
+            if ((slot.enteredOutputs & (1 << i)) != 0
+                && output.output !is null && output.scale > scale)
+                scale = output.scale;
+        if (scale == slot.scale)
+            return;
+        slot.scale = scale;
+        if (slot.surface !is null)
+            wl_surface_set_buffer_scale(slot.surface, scale);
+        const metrics = metricsFor(slot, slot.metrics.logicalSize);
+        if (slot.ready && metrics != slot.metrics)
+            emit(idAt(windowIndex), SurfaceMetricsChangedEvent(metrics));
+        slot.metrics = metrics;
+    }
+
+    private static SurfaceMetrics metricsFor(ref const Slot slot,
+        LogicalSize logical) nothrow @nogc
+        => SurfaceMetrics(logical,
+            PhysicalSize(cast(int)(logical.width * slot.scale),
+                cast(int)(logical.height * slot.scale)),
+            ScaleFactor(slot.scale));
 
     private extern (C) static void onSeatCapabilities(void* data,
         wl_seat* seat, uint capabilities) nothrow @nogc
@@ -1181,8 +1371,7 @@ struct WaylandWsi
         const height = slot.pendingHeight > 0
             ? cast(uint) slot.pendingHeight
             : cast(uint) slot.requestedSize.height;
-        const metrics = SurfaceMetrics(LogicalSize(width, height),
-            PhysicalSize(width, height), ScaleFactor(1));
+        const metrics = metricsFor(*slot, LogicalSize(width, height));
         const index = owner.indexOfSlot(slot);
         if (index == size_t.max)
             return;
@@ -1295,6 +1484,16 @@ private immutable wl_callback_listener frameListener = {
 };
 private immutable wl_seat_listener seatListener = {
     &WaylandWsi.onSeatCapabilities, &WaylandWsi.onSeatName
+};
+private immutable wl_output_listener outputListener = {
+    &WaylandWsi.onOutputGeometry, &WaylandWsi.onOutputMode,
+    &WaylandWsi.onOutputDone, &WaylandWsi.onOutputScale,
+    &WaylandWsi.onOutputName, &WaylandWsi.onOutputDescription
+};
+private immutable wl_surface_listener surfaceListener = {
+    &WaylandWsi.onSurfaceEnter, &WaylandWsi.onSurfaceLeave,
+    &WaylandWsi.onSurfacePreferredBufferScale,
+    &WaylandWsi.onSurfacePreferredBufferTransform
 };
 private immutable wl_pointer_listener pointerListener = {
     &WaylandWsi.onPointerEnter, &WaylandWsi.onPointerLeave,

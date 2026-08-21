@@ -107,6 +107,7 @@ private struct WaylandHooks
     bool pointerEnabled;
     bool resizeEnabled = true;
     bool readySizeExact = true;
+    double expectedScale = 0;
 
     enum uint chordShiftCode = 42; // evdev KEY_LEFTSHIFT
     enum uint chordKeyCode = 30; // evdev KEY_A
@@ -124,7 +125,7 @@ private struct WaylandHooks
         wsi.runIntegratedOnce(*loop, timeout).value;
     }
 
-    void onWindowReady(WindowId ready)
+    void onWindowReady(WindowId ready, in SurfaceMetrics metrics)
     {
         id = ready;
         if (!chordEnabled)
@@ -137,8 +138,11 @@ private struct WaylandHooks
             (in WaylandWindowHandle handle) => cast(wl_surface*) handle.surface,
             (_) => null);
         assert(display !is null && surface !is null);
+        // The buffer matches the compositor-imposed size (the kiosk shell
+        // fullscreens the surface), so the mapped commit is protocol-clean.
         assert(!wsi.beginNativeIo().hasError);
-        assert(attachShmBuffer(display, surface, 480, 320));
+        assert(attachShmBuffer(display, surface,
+            metrics.physicalSize.width, metrics.physicalSize.height));
         assert(!wsi.endNativeIo().hasError);
     }
 
@@ -218,11 +222,15 @@ int main()
     // environment — is never registered.
     const externalInjection = getenv("WSI_CONFORMANCE_KEYS") !is null;
     const kiosk = getenv("WSI_CONFORMANCE_KIOSK") !is null;
+    const scaleText = getenv("WSI_EXPECT_SCALE");
+    import core.stdc.stdlib : atof;
+
     auto hooks = WaylandHooks(&wsi, &loop,
         chordEnabled: externalInjection,
         pointerEnabled: externalInjection && kiosk,
         resizeEnabled: !kiosk,
-        readySizeExact: !kiosk);
+        readySizeExact: !kiosk,
+        expectedScale: scaleText !is null ? atof(scaleText) : 0);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi Wayland conformance");
     writeln("ok: Wayland WSI conformance (", outcome.checked, " checked, ",

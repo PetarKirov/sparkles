@@ -45,7 +45,7 @@ rt="\$(mktemp -d /tmp/swl.XXXXXX)"
 chmod 700 "\$rt"
 export XDG_RUNTIME_DIR="\$rt"
 weston --backend=x11 --shell=kiosk-shell.so --socket=wsi-keys \
-  --width=960 --height=600 \
+  --width=960 --height=600 --scale=2 \
   --idle-time=0 --log="$work/weston.log" &
 weston_pid=\$!
 smoke_pid=""
@@ -63,7 +63,7 @@ done
 test -S "\$rt/wsi-keys"
 
 WSI_POINTER_GO="\$rt/pointer-go" WSI_CONFORMANCE_KEYS=1 \\
-  WSI_CONFORMANCE_KIOSK=1 WAYLAND_DISPLAY=wsi-keys \\
+  WSI_CONFORMANCE_KIOSK=1 WSI_EXPECT_SCALE=2 WAYLAND_DISPLAY=wsi-keys \\
   "$work/wsi-wayland-keys-smoke" \
   >"$work/smoke.log" 2>&1 &
 smoke_pid=\$!
@@ -85,5 +85,5 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
   bash "$work/lane.sh" || lane_status=$?
 cat "$work/smoke.log" 2>/dev/null || true
 test "$lane_status" -eq 0
-grep -q '^ok: Wayland WSI conformance (10 checked, 2 skipped)' "$work/smoke.log"
+grep -q '^ok: Wayland WSI conformance (11 checked, 2 skipped)' "$work/smoke.log"
 echo ">> sparkles:wsi Wayland keyboard verified through Weston."
