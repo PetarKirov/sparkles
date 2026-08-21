@@ -61,6 +61,8 @@ docs/public/spk-table.wasm
 # Twoslash showcase: rendered `hue --twoslash --html` gallery, rebuilt by
 # docs:dev / docs:build via docs/scripts/build-twoslash-showcase.sh
 docs/public/apps/hue/twoslash/
+# Source-code listings rendered by `hue site` (docs/scripts/build-source-listings.sh)
+docs/public/src/
 
 # `hue gallery <dir>` with no `--out` writes to `<dir>/html`, so running it on
 # the repo root — the natural way to try `--twoslash` over the whole tree —

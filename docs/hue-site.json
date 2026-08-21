@@ -1,0 +1,5 @@
+{
+  "excludeGlobs": [],
+  "linkRoots": ["docs"],
+  "maxFileSize": 40960
+}

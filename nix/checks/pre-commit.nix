@@ -28,6 +28,10 @@ let
   keyOrderedJsonFiles = [
     "docs/.vitepress/sidebar.json"
     "docs/.vitepress/docs-config.json"
+    # Not key-ordered, but the same docs-data-file class: prettier owns its
+    # shape, and the sorter's multiline-array style fights prettier's inline
+    # one — the two can never both pass on a short array.
+    "docs/hue-site.json"
   ];
 
   filesToExcludeRegex =
