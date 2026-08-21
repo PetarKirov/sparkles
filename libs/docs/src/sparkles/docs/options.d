@@ -79,6 +79,17 @@ struct GalleryOptions
     /// `hue gallery libs/base` from the repo root makes the pages' `src/x.d`
     /// the repo's `libs/base/src/x.d`.
     string repoPrefix;
+
+    /**
+    Pre-rendered site-sidebar markup (`DOC8`) — `sidebar.sidebarNav` of the
+    docs site's `sidebar.json` — spliced into every page and directory index
+    when set, so a listing carries the same navigation as the site around it.
+
+    A $(I string), not the tree: this module stays at the bottom of the
+    package's import graph, and the caller resolves the links (site base URL)
+    once rather than every page resolving them again.
+    */
+    string sidebarHtml;
 }
 
 /**

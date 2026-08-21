@@ -22,9 +22,13 @@ silently empty link set.
 +/
 module sparkles.docs.sidebar;
 
+import std.array : Appender, appender;
+
 import expected : Expected;
 import sparkles.wired.json : JsonError, readJSONFile;
 import sparkles.wired.policy : WireOptional;
+
+import sparkles.docs.options : ChromePalette, escapeInto;
 
 /// Path of the sidebar data file, relative to the repository root.
 enum sidebarDataPath = "docs/.vitepress/sidebar.json";
@@ -68,12 +72,18 @@ struct DocsConfig
 /// describing the I/O, parse, or decode failure (wired never throws).
 alias LoadResult(T) = Expected!(T, JsonError);
 
+/// Loads a sidebar tree from an explicit `sidebar.json` path (the shape of
+/// `docs/.vitepress/sidebar.json`, wherever it lives — `hue gallery --sidebar`
+/// takes the file, not a repository).
+LoadResult!(SidebarItem[]) loadSidebarFile(string path)
+    => readJSONFile!(SidebarItem[])(path);
+
 /// Loads the sidebar tree from `<repoRoot>/docs/.vitepress/sidebar.json`.
 LoadResult!(SidebarItem[]) loadSidebar(string repoRoot)
 {
     import std.path : buildPath;
 
-    return readJSONFile!(SidebarItem[])(repoRoot.buildPath(sidebarDataPath));
+    return loadSidebarFile(repoRoot.buildPath(sidebarDataPath));
 }
 
 /// Loads `<repoRoot>/docs/.vitepress/docs-config.json`.
@@ -110,10 +120,152 @@ string[] sidebarLinks(in SidebarItem[] items)
     return result[];
 }
 
+// ── the sidebar on generated pages (DOC8) ─────────────────────────────────
+
+/++
+Renders a sidebar tree as the `<aside class="site-sidebar">` a generated page
+splices in ([`DOC8`](../../../../../docs/specs/docs/site.md)): groups as
+pure-CSS `<details>` (open unless the data says `collapsed`), leaves as links.
+
+`siteBase` is what the site-absolute routes resolve against — the docs site's
+base URL (`https://…`, no trailing slash) or empty to leave them root-absolute
+(right when the listings are deployed under the same origin, useless from
+`file://`). An external (`http…`) link is passed through untouched.
+
+Returns markup only; the caller carries it into pages via
+`GalleryOptions.sidebarHtml`, which is a $(I string) so the options vocabulary
+stays plain data at the bottom of the package's import graph.
++/
+string sidebarNav(in SidebarItem[] items, scope const(char)[] siteBase = null) @safe pure
+{
+    auto w = appender!string;
+    w ~= "<aside class=\"site-sidebar\"><nav aria-label=\"Docs navigation\">\n";
+    writeSidebarItems(w, items, siteBase);
+    w ~= "</nav></aside>";
+    return w[];
+}
+
+private void writeSidebarItems(ref Appender!string w, in SidebarItem[] items,
+    scope const(char)[] base) @safe pure
+{
+    foreach (const ref it; items)
+    {
+        if (it.items.length)
+        {
+            w ~= "<details class=\"sb-group\"";
+            if (!it.collapsed)
+                w ~= " open";
+            w ~= "><summary>";
+            if (it.link.length)
+                writeSidebarLink(w, it.text, it.link, base);
+            else
+                escapeInto(w, it.text);
+            w ~= "</summary><div class=\"sb-items\">\n";
+            writeSidebarItems(w, it.items, base);
+            w ~= "</div></details>\n";
+        }
+        else if (it.link.length)
+        {
+            writeSidebarLink(w, it.text, it.link, base);
+            w ~= "\n";
+        }
+        else
+        {
+            w ~= "<span class=\"sb-text\">";
+            escapeInto(w, it.text);
+            w ~= "</span>\n";
+        }
+    }
+}
+
+private void writeSidebarLink(ref Appender!string w, scope const(char)[] text,
+    scope const(char)[] link, scope const(char)[] base) @safe pure
+{
+    import std.algorithm.searching : startsWith;
+
+    w ~= "<a class=\"sb-link\" href=\"";
+    if (!link.startsWith("http://", "https://") && base.length)
+        escapeInto(w, base);
+    escapeInto(w, link);
+    w ~= "\">";
+    escapeInto(w, text);
+    w ~= "</a>";
+}
+
+/++
+The sidebar's chrome, from the same $(D ChromePalette) the page uses — plus the
+`html.dark` half when `dark` is set, exactly like the rest of the shell.
+
+Only the aside's own rules: the `.shell`/`.content` flex row that places it
+belongs to the page (`page_shell.pageShell` / `site_tree.directoryIndex`),
+which each own their layout.
++/
+string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init) @safe pure
+{
+    import std.conv : text;
+
+    auto w = appender!string;
+    w ~= "  .site-sidebar { flex: none; width: 16.5em; overflow-y: auto;\n";
+    w ~= text("                  padding: 0.9em 1.1em 1.5em; box-sizing: border-box;\n");
+    w ~= text("                  background: ", c.surface, "; border-right: 1px solid ",
+        c.border, "; font-size: 0.92em; }\n");
+    w ~= text("  .site-sidebar a.sb-link { color: ", c.text,
+        "; text-decoration: none; display: inline-block; padding: 0.12em 0; }\n");
+    w ~= text("  .site-sidebar a.sb-link:hover { color: ", c.link, "; }\n");
+    w ~= "  .site-sidebar .sb-group { margin: 0 0 0.4em; }\n";
+    w ~= "  .site-sidebar summary { cursor: pointer; font-weight: 600; padding: 0.25em 0; }\n";
+    w ~= text("  .site-sidebar .sb-items { padding-left: 0.9em; margin-left: 0.15em;\n");
+    w ~= text("                            border-left: 1px solid ", c.border, "; }\n");
+    w ~= text("  .site-sidebar .sb-text { color: ", c.muted, "; }\n");
+    if (dark.background.length)
+    {
+        w ~= text("  html.dark .site-sidebar { background: ", dark.surface,
+            "; border-right-color: ", dark.border, "; }\n");
+        w ~= text("  html.dark .site-sidebar a.sb-link { color: ", dark.text, "; }\n");
+        w ~= text("  html.dark .site-sidebar a.sb-link:hover { color: ", dark.link, "; }\n");
+        w ~= text("  html.dark .site-sidebar .sb-items { border-left-color: ",
+            dark.border, "; }\n");
+        w ~= text("  html.dark .site-sidebar .sb-text { color: ", dark.muted, "; }\n");
+    }
+    return w[];
+}
+
 // ── unittests ──────────────────────────────────────────────────────────────
 
 // `@system`: wired's native decode walk infers `@system` for a recursive
 // aggregate (the arena view is pointer-based).
+@("sidebar.sidebarNav.groupsLinksBaseAndEscaping")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const items = [
+        SidebarItem(text: "Overview", link: "/overview"),
+        SidebarItem(text: "Specs <1>", collapsed: true, items: [
+            SidebarItem(text: "Hue", link: "/specs/hue/"),
+        ]),
+        SidebarItem(text: "Libraries", link: "/libs/", items: [
+            SidebarItem(text: "External", link: "https://example.org/x"),
+        ]),
+    ];
+    const html = sidebarNav(items, "https://docs.example");
+
+    // Site-absolute routes resolve against the base; external links pass through.
+    assert(html.canFind(`href="https://docs.example/overview"`), html);
+    assert(html.canFind(`href="https://docs.example/specs/hue/"`), html);
+    assert(html.canFind(`href="https://example.org/x"`), html);
+    assert(!html.canFind("https://docs.examplehttps://"), html);
+
+    // A collapsed group renders closed, an expanded one open, and a group with
+    // its own route links from the summary.
+    assert(html.canFind(`<details class="sb-group"><summary>Specs &lt;1&gt;</summary>`), html);
+    assert(html.canFind(`<details class="sb-group" open><summary><a class="sb-link" href="https://docs.example/libs/"`), html);
+
+    // No base: routes stay root-absolute.
+    assert(sidebarNav(items).canFind(`href="/overview"`));
+}
+
 @("docs_config.SidebarItem.decode.nested")
 @system
 unittest

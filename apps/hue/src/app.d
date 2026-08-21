@@ -397,6 +397,12 @@ struct Gallery
     @(Option("root", description: "Directory the mirrored output paths are relative to (default: the gallery target). Also the base for view-on-GitHub links."))
     string root;
 
+    @(Option("sidebar", description: "Render the docs-site sidebar on every page: path to a VitePress-shaped sidebar.json (e.g. docs/.vitepress/sidebar.json)."))
+    string sidebar;
+
+    @(Option("site-base", description: "Base URL the sidebar's site-absolute routes resolve against, e.g. https://docs.example (default: none, links stay root-absolute)."))
+    string siteBase;
+
     int run(Program)(in Program program)
     {
         return executeGallery(program.value, this);
@@ -1088,6 +1094,25 @@ private int executeGallery(in HueCli root, in Gallery gallery)
     if (gallery.emitStylesheet.length)
         writeStylesheetFile(gallery.emitStylesheet, css);
 
+    // The docs-site sidebar on every page (`DOC8`): load the tree once, render
+    // it once, and every page splices the same markup. A missing or malformed
+    // file is a hard error — a silently absent sidebar would ship as a visual
+    // regression no exit code reports.
+    string sidebarHtml;
+    if (gallery.sidebar.length)
+    {
+        import sparkles.docs.sidebar : loadSidebarFile, sidebarNav;
+
+        auto loaded = loadSidebarFile(gallery.sidebar);
+        if (loaded.hasError)
+        {
+            stderr.writeln("hue: cannot load sidebar ", gallery.sidebar, ": ",
+                loaded.error);
+            return 1;
+        }
+        sidebarHtml = sidebarNav(loaded.value, gallery.siteBase);
+    }
+
     const gopt = twoslash
         ? GalleryOptions(
             titlePrefix: "twoslash",
@@ -1096,13 +1121,15 @@ private int executeGallery(in HueCli root, in Gallery gallery)
             blurb: "Rendered by <code>hue gallery --twoslash</code>. Open one and " ~
                 "hover the underlined tokens to see the popups.",
             chrome: chrome, darkChrome: darkChrome, stylesheetHref: href,
-            repoUrl: gallery.repoUrl, repoPrefix: gallery.repoPrefix)
+            repoUrl: gallery.repoUrl, repoPrefix: gallery.repoPrefix,
+            sidebarHtml: sidebarHtml)
         : GalleryOptions(
             titlePrefix: "hue",
             heading: "hue gallery",
             blurb: "Rendered by <code>hue gallery</code>.",
             chrome: chrome, darkChrome: darkChrome, stylesheetHref: href,
-            repoUrl: gallery.repoUrl, repoPrefix: gallery.repoPrefix);
+            repoUrl: gallery.repoUrl, repoPrefix: gallery.repoPrefix,
+            sidebarHtml: sidebarHtml);
 
     const n = writeGallery(set, outDir, gopt, &renderOne);
     stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);

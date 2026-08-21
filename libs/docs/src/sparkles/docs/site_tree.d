@@ -19,7 +19,7 @@ module sparkles.docs.site_tree;
 
 import std.array : appender;
 
-import sparkles.docs.options : escapeInto, SiteOptions;
+import sparkles.docs.options : ChromePalette, escapeInto, SiteOptions;
 import sparkles.docs.source_set : SourceEntry;
 
 /// One row of a directory index: a link, its text, and its summary.
@@ -161,6 +161,7 @@ one-directory set has none of.
 string directoryIndex(in DirNode dir, in SiteOptions opt = SiteOptions.init) @safe pure
 {
     const nested = dir.relPath.length != 0;
+    const sidebar = opt.sidebarHtml.length != 0;
 
     auto w = appender!string;
     w ~= "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n";
@@ -177,7 +178,13 @@ string directoryIndex(in DirNode dir, in SiteOptions opt = SiteOptions.init) @sa
         escapeInto(w, opt.indexTitle.length ? opt.indexTitle : opt.heading);
     w ~= "</title>\n<style>\n";
     w ~= indexCss(opt);
-    w ~= "</style></head><body>\n<h1>";
+    w ~= "</style></head><body>\n";
+    if (sidebar)
+    {
+        w ~= opt.sidebarHtml;
+        w ~= "\n<div class=\"content\"><div class=\"content-inner\">\n";
+    }
+    w ~= "<h1>";
     if (nested)
     {
         escapeInto(w, dir.relPath);
@@ -194,7 +201,10 @@ string directoryIndex(in DirNode dir, in SiteOptions opt = SiteOptions.init) @sa
 
     if (dir.dirs.length == 0 && dir.files.length == 0)
     {
-        w ~= "<p><em>No documents to show.</em></p>\n</body></html>\n";
+        w ~= "<p><em>No documents to show.</em></p>\n";
+        if (sidebar)
+            w ~= "</div></div>\n";
+        w ~= "</body></html>\n";
         return w[];
     }
 
@@ -215,7 +225,10 @@ string directoryIndex(in DirNode dir, in SiteOptions opt = SiteOptions.init) @sa
             }
             w ~= "</li>\n";
         }
-    w ~= "</ul>\n</body></html>\n";
+    w ~= "</ul>\n";
+    if (sidebar)
+        w ~= "</div></div>\n";
+    w ~= "</body></html>\n";
     return w[];
 }
 
@@ -247,9 +260,25 @@ private string indexCss(in SiteOptions opt) @safe pure
 
     const c = opt.chrome;
     auto w = appender!string;
-    w ~= "  body { margin: 0 auto; max-width: 48em; padding: 2em 1.5em;\n";
-    w ~= text("         background: ", c.background, "; color: ", c.text,
-        "; font: 15px/1.6 system-ui, sans-serif; }\n");
+    if (opt.sidebarHtml.length)
+    {
+        // The sidebar turns the page into a flex row; the centered column the
+        // body alone used to be moves into `.content-inner`.
+        import sparkles.docs.sidebar : sidebarCss;
+
+        w ~= "  html, body { height: 100%; }\n";
+        w ~= text("  body { margin: 0; display: flex; background: ", c.background,
+            "; color: ", c.text, "; font: 15px/1.6 system-ui, sans-serif; }\n");
+        w ~= "  .content { flex: 1; min-width: 0; overflow-y: auto; }\n";
+        w ~= "  .content-inner { max-width: 48em; margin: 0 auto; padding: 2em 1.5em; }\n";
+        w ~= sidebarCss(c, opt.hasDarkChrome ? opt.darkChrome : ChromePalette.init);
+    }
+    else
+    {
+        w ~= "  body { margin: 0 auto; max-width: 48em; padding: 2em 1.5em;\n";
+        w ~= text("         background: ", c.background, "; color: ", c.text,
+            "; font: 15px/1.6 system-ui, sans-serif; }\n");
+    }
     w ~= text("  h1 { font-size: 1.4em; } p { color: ", c.muted, "; }\n");
     w ~= "  ul { list-style: none; padding: 0; }\n";
     w ~= text("  li { padding: 0.5em 0; border-bottom: 1px solid ", c.border, "; }\n");
@@ -269,6 +298,35 @@ private string indexCss(in SiteOptions opt) @safe pure
 }
 
 // ---------------------------------------------------------------------------
+
+@("site_tree.directoryIndex.sidebarWrapsTheContent")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const aside = "<aside class=\"site-sidebar\"><nav aria-label=\"Docs navigation\">"
+        ~ "\n</nav></aside>";
+    auto opt = SiteOptions(sidebarHtml: aside);
+
+    // The index becomes a flex row: aside + the centered column, which moves
+    // into `.content-inner`.
+    const idx = directoryIndex(DirNode(files: [IndexRow(label: "a.d", href: "a.d.html")]), opt);
+    assert(idx.canFind(aside), idx);
+    assert(idx.canFind("<div class=\"content\"><div class=\"content-inner\">"), idx);
+    assert(idx.canFind(".content-inner { max-width: 48em;"), idx);
+    assert(idx.canFind("</ul>\n</div></div>\n</body>"), idx);
+
+    // The empty-set page closes the same wrappers.
+    const empty = directoryIndex(DirNode.init, opt);
+    assert(empty.canFind("No documents to show"), empty);
+    assert(empty.canFind("</p>\n</div></div>\n</body>"), empty);
+
+    // Without a sidebar the index is untouched (the centered body of old).
+    const plain = directoryIndex(DirNode.init);
+    assert(!plain.canFind("site-sidebar"), plain);
+    assert(plain.canFind("body { margin: 0 auto; max-width: 48em;"), plain);
+}
 
 @("site_tree.buildSiteTree.mirrorsDirectoriesAndFillsGaps")
 @safe pure

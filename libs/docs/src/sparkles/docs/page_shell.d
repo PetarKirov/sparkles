@@ -52,6 +52,7 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     int gutter;
     const body_ = withLineNumbers(fragment, gutter);
     const c = opt.chrome;
+    const sidebar = opt.sidebarHtml.length != 0;
 
     auto w = appender!string;
     w ~= "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n";
@@ -96,6 +97,16 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     // only ONE scrollbar ever appears (no nested body + pre scrollbars).
     w ~= text("  main { flex: 1; min-height: 0; overflow: auto; background: ",
         c.background, "; }\n");
+    // The sidebar splits the area under the header into a flex row: the aside
+    // scrolls on its own, `.content` re-creates the column `body` alone was.
+    if (sidebar)
+    {
+        import sparkles.docs.sidebar : sidebarCss;
+
+        w ~= "  .shell { flex: 1; min-height: 0; display: flex; }\n";
+        w ~= "  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }\n";
+        w ~= sidebarCss(c, opt.hasDarkChrome ? opt.darkChrome : ChromePalette.init);
+    }
     if (opt.hasDarkChrome)
     {
         const d = opt.darkChrome;
@@ -158,6 +169,12 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     if (opt.hasDarkChrome)
         w ~= themeToggleButton;
     w ~= "</header>\n";
+    if (sidebar)
+    {
+        w ~= "<div class=\"shell\">\n";
+        w ~= opt.sidebarHtml;
+        w ~= "\n<div class=\"content\">\n";
+    }
     if (crumbs.length)
     {
         w ~= "<div class=\"crumbs\">";
@@ -167,6 +184,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "<main>";
     w ~= body_;
     w ~= "</main>\n";
+    if (sidebar)
+        w ~= "</div></div>\n";
     // Confine each drag to the domain it started in: mark the annotation the
     // mousedown landed in (if any) and flag the body so the CSS above restricts the
     // other domain. Runs before the drag extends, so the restriction applies to the
@@ -758,6 +777,33 @@ unittest
 
     // An empty set says so rather than rendering an empty list.
     assert(galleryIndex([]).canFind("No documents to show"));
+}
+
+@("gallery.pageShell.sidebarSplitsTheShellOnlyWhenSet")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const aside = "<aside class=\"site-sidebar\"><nav aria-label=\"Docs navigation\">"
+        ~ "\n<a class=\"sb-link\" href=\"/overview\">Overview</a>\n</nav></aside>";
+    const page = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>",
+        "", "", GalleryOptions(sidebarHtml: aside));
+
+    // The aside lands inside a flex `.shell` row, with the old column re-created
+    // by `.content` so the single-scroll-container rule (`GAL6`) still holds.
+    assert(page.canFind("<div class=\"shell\">"), page);
+    assert(page.canFind(aside), page);
+    assert(page.canFind("<div class=\"content\">"), page);
+    assert(page.canFind(".site-sidebar { flex: none;"), page);
+    assert(page.canFind("</main>\n</div></div>\n"), page);
+
+    // Without a sidebar, none of it appears — the shell is byte-for-byte the
+    // page it always was.
+    const plain = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>", "", "");
+    assert(!plain.canFind("site-sidebar"), plain);
+    assert(!plain.canFind("\"shell\""), plain);
+    assert(!plain.canFind(".content"), plain);
 }
 
 @("gallery.escaping.namesAndSummaries")
