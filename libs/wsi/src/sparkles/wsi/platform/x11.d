@@ -59,6 +59,9 @@ struct X11Wsi
 
     private xcb_connection_t* connection_;
     private Bootstrap bootstrap_;
+    private xkb_context* xkbContext_;
+    private xkb_keymap* xkbKeymap_;
+    private xkb_state* xkbState_;
     private pthread_t ownerThread_;
     private Slot[maxWindows] windows_;
     private EventQueue!maxEvents events_;
@@ -124,9 +127,56 @@ struct X11Wsi
         // Best effort: without XKB the server keeps synthesizing a release
         // before each repeated press, and held keys read as typing.
         enableDetectableAutorepeat(connection);
+        wsi.openKeymap();
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         return wsiOk();
+    }
+
+    /*
+    Best-effort xkbcommon-x11 layout behind logical keys: a server without
+    the extension leaves logical identity unknown while physical identity
+    keeps flowing. Keymap-change events are a later slice.
+    */
+    private void openKeymap()
+    {
+        if (xkb_x11_setup_xkb_extension(connection_,
+                XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION,
+                XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS,
+                null, null, null, null) == 0)
+            return;
+        const device = xkb_x11_get_core_keyboard_device_id(connection_);
+        if (device < 0)
+            return;
+        xkbContext_ = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+        if (xkbContext_ is null)
+            return;
+        xkbKeymap_ = xkb_x11_keymap_new_from_device(xkbContext_, connection_,
+            device, XKB_KEYMAP_COMPILE_NO_FLAGS);
+        if (xkbKeymap_ !is null)
+            xkbState_ = xkb_x11_state_new_from_device(xkbKeymap_,
+                connection_, device);
+    }
+
+    /// Unshifted base-level identity under the current layout; X keycodes
+    /// are already xkb keycodes.
+    private LogicalKey logicalForKey(uint keycode, uint coreState)
+        nothrow @nogc
+    {
+        if (xkbKeymap_ is null || xkbState_ is null)
+            return LogicalKey.init;
+        // The core state mask shares xkb's real-modifier positions and
+        // carries the group in bits 13–14.
+        xkb_state_update_mask(xkbState_, coreState & 0xFF, 0, 0, 0, 0,
+            (coreState >> 13) & 3);
+        const layout = xkb_state_key_get_layout(xkbState_, keycode);
+        const(uint)* keysyms;
+        const count = xkb_keymap_key_get_syms_by_level(xkbKeymap_, keycode,
+            layout, 0, &keysyms);
+        if (count < 1)
+            return LogicalKey.init;
+        return logicalFromKeysym(keysyms[0],
+            xkb_keysym_to_utf32(keysyms[0]));
     }
 
     private static uint internAtom(xcb_connection_t* connection,
@@ -430,6 +480,21 @@ struct X11Wsi
                 windows_[i].ready = false;
                 windows_[i].window = 0;
             }
+        if (xkbState_ !is null)
+        {
+            xkb_state_unref(xkbState_);
+            xkbState_ = null;
+        }
+        if (xkbKeymap_ !is null)
+        {
+            xkb_keymap_unref(xkbKeymap_);
+            xkbKeymap_ = null;
+        }
+        if (xkbContext_ !is null)
+        {
+            xkb_context_unref(xkbContext_);
+            xkbContext_ = null;
+        }
         if (connection_ !is null)
         {
             xcb_disconnect(connection_);
@@ -565,6 +630,7 @@ struct X11Wsi
                 setKeyDown(keycode, pressed);
                 KeyboardEvent keyboard;
                 keyboard.physical = PhysicalKey(keycode, 0);
+                keyboard.logical = logicalForKey(keycode, event.state);
                 keyboard.location = x11KeyLocation(keycode);
                 keyboard.action = pressed
                     ? (repeated ? KeyAction.repeat : KeyAction.press)

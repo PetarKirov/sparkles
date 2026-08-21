@@ -45,6 +45,8 @@ private struct Win32Hooks
 
     enum uint chordShiftCode = 0x2A; // scan code: left shift
     enum uint chordKeyCode = 0x1E; // scan code: A
+    // Layout-derived unshifted spelling the chorded key must carry.
+    enum dchar chordKeyCharacter = 'A';
     enum bool chordModifierObserved = false;
     enum bool resizeExact = false;
 

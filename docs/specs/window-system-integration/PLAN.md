@@ -151,10 +151,15 @@ contract: the content view accepts first-responder status, `keyDown`/`keyUp`
 carry Carbon virtual keycodes with repeat identity, and modifier keys arrive
 through `flagsChanged` with press/release derived from the event's own flag
 state; a synthetic shift-chorded key posted through the real responder chain
-verifies it on macOS. Logical key translation (xkbcommon and the platform
-equivalents), Wayland client-side repeat synthesis, XIM, candidate-window
-placement, raw input, pointer/cursor/DPI/output work, and native-Windows
-evidence remain.
+verifies it on macOS. Logical keys are delivered on all four backends at the
+layout's unshifted base level, matching `sparkles:input`'s `unshifted`
+convention: xkbcommon compiles the Wayland keymap fd (previously just closed)
+and the X11 core device's map, Win32 asks the layout via `MAPVK_VK_TO_CHAR`,
+and AppKit reads `charactersIgnoringModifiers` with function keys kept as
+named private-range scalars; the conformance chord now asserts the
+layout-derived spelling on every platform. Keymap-change events, Wayland
+client-side repeat synthesis, XIM, candidate-window placement, raw input,
+pointer/cursor/DPI/output work, and native-Windows evidence remain.
 
 Required platform paths:
 

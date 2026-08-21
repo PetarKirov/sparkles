@@ -34,7 +34,9 @@ $(LIST
         press, and the release; `enum chordModifierObserved = false` relaxes the
         modifier assertion where the injection path cannot populate real
         modifier state (Wine `SendMessage`), and `chordDeadline` extends the
-        wait where injection is external to the process.
+        wait where injection is external to the process. An
+        `enum dchar chordKeyCharacter` additionally requires the chorded key
+        to carry that layout-derived unshifted `LogicalKey` character.
     * `void onWindowReady(WindowId id)` — post-ready driver setup (e.g.
         mapping a buffer so a compositor will grant keyboard focus).
     * `enum expectFocusEvent = true` — the chord property additionally
@@ -334,6 +336,13 @@ private void observeKey(Hooks)(ref Hooks hooks, ref Observed seen,
         {
             assert(event.location == KeyLocation.standard,
                 "a plain key did not report KeyLocation.standard");
+            static if (is(typeof(Hooks.chordKeyCharacter)))
+            {
+                assert(event.logical.kind == LogicalKeyKind.character,
+                    "the chorded key carried no layout-derived character");
+                assert(event.logical.character == Hooks.chordKeyCharacter,
+                    "the chorded key spelled the wrong unshifted character");
+            }
             if (event.action == KeyAction.press)
             {
                 seen.chordedPressAnyMods = true;
