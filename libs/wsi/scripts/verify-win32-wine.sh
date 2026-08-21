@@ -30,6 +30,12 @@ env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$work/runtime" \
   WINEPREFIX="$work/wine" WINEDEBUG=-all \
   xvfb-run -a wine64 "$work/wsi-win32-smoke.exe" \
   | tee "$work/output.log"
-grep -q '^ok: Win32 WSI conformance (12 checked, 0 skipped)' "$work/output.log"
+grep -q '^ok: Win32 WSI conformance (12 checked, 1 skipped)' "$work/output.log"
 grep -q '^ok: Win32 text commit + IMM32 composition round trip' "$work/output.log"
+
+# No 192-DPI phase: a per-monitor-V2-aware window under Wine always sees a
+# 96-DPI monitor (GetDpiForWindow ignores LogPixels, which only feeds the
+# system DPI), so the scale property stays runtime-skipped here and its
+# Win32 evidence is owed to native Windows CI. The driver already honours
+# WSI_EXPECT_SCALE when that lane exists.
 echo ">> sparkles:wsi Win32 hosted-loop smoke verified under Wine."

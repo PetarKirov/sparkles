@@ -38,7 +38,13 @@ $(LIST
         `enum dchar chordKeyCharacter` additionally requires the chorded key
         to carry that layout-derived unshifted `LogicalKey` character.
     * `void onWindowReady(WindowId id)` — post-ready driver setup (e.g.
-        mapping a buffer so a compositor will grant keyboard focus).
+        mapping a buffer so a compositor will grant keyboard focus); the
+        two-argument form also receives the ready metrics, so the buffer
+        can match a compositor-imposed size.
+    * `hooks.expectedScale` (a runtime `double`; `0` skips) — the
+        environment's known scale factor: metrics must reach it with
+        `physical == logical × scale`, waiting past ready because a
+        compositor reports scale only once the surface maps.
     * `enum expectFocusEvent = true` — the chord property additionally
         requires a `FocusChangedEvent(true)` before the keys.
     * `void checkHandles(in NativeHandles handles)` — backend-specific handle
@@ -198,7 +204,9 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
         "ready physical size is empty");
     ++outcome.checked;
 
-    static if (is(typeof(hooks.onWindowReady(id))))
+    static if (is(typeof(hooks.onWindowReady(id, SurfaceMetrics.init))))
+        hooks.onWindowReady(id, seen.readyMetrics);
+    else static if (is(typeof(hooks.onWindowReady(id))))
         hooks.onWindowReady(id);
 
     // Property: after ready every backend eventually offers an expose and a
@@ -208,6 +216,35 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
         driveUntil(() => seen.exposed && seen.frameReady,
             "no expose/frame opportunity after ready");
         ++outcome.checked;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: the environment's declared scale becomes one atomic metrics
+    // observation — the scale factor matches and the physical size is the
+    // logical size times it. The scale may arrive only after the surface
+    // maps (Wayland output enter), so this waits rather than reads.
+    static if (is(typeof(hooks.expectedScale)))
+    {
+        if (hooks.expectedScale > 0)
+        {
+            const wantScale = hooks.expectedScale;
+            bool scaleReached()
+            {
+                const metrics = seen.lastMetrics;
+                return metrics.scale.value == wantScale
+                    && metrics.physicalSize.width
+                        == cast(int)(metrics.logicalSize.width * wantScale)
+                    && metrics.physicalSize.height
+                        == cast(int)(metrics.logicalSize.height * wantScale);
+            }
+
+            driveUntil(&scaleReached,
+                "metrics never reached the environment's scale");
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
     }
     else
         ++outcome.skipped;
@@ -518,5 +555,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 6);
+    assert(outcome.checked == 6 && outcome.skipped == 7);
 }

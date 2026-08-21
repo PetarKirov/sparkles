@@ -42,6 +42,7 @@ private struct Win32Hooks
     Win32Wsi* wsi;
     DefaultLoop* loop;
     HWND hwnd;
+    double expectedScale = 0;
 
     enum uint chordShiftCode = 0x2A; // scan code: left shift
     enum uint chordKeyCode = 0x1E; // scan code: A
@@ -124,7 +125,11 @@ int main()
     Win32Wsi wsi;
     assert(!Win32Wsi.open(wsi).hasError);
 
-    auto hooks = Win32Hooks(&wsi, &loop);
+    import core.stdc.stdlib : atof, getenv;
+
+    const scaleText = getenv("WSI_EXPECT_SCALE");
+    auto hooks = Win32Hooks(&wsi, &loop,
+        expectedScale: scaleText !is null ? atof(scaleText) : 0);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi Win32 conformance");
     writeln("ok: Win32 WSI conformance (", outcome.checked, " checked, ",
