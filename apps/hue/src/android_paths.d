@@ -30,6 +30,10 @@ string assetsReadyPath(string dataDir) @safe pure nothrow => buildPath(dataDir, 
 /// The on-device debug-environment file (see `parseDebugEnv`).
 string debugEnvPath(string dataDir) @safe pure nothrow => buildPath(dataDir, "hue-debug.env");
 
+/// The configuration file (`CFG12`): Android has no command line, so this
+/// path is the only route to every preference.
+string configPath(string dataDir) @safe pure nothrow => buildPath(dataDir, "config.json");
+
 @("android_paths.layout")
 @safe pure unittest
 {
@@ -38,6 +42,7 @@ string debugEnvPath(string dataDir) @safe pure nothrow => buildPath(dataDir, "hu
     assert(docsDir("/data/app") == "/data/app/docs");
     assert(assetsReadyPath("/data/app") == "/data/app/assets-ready");
     assert(debugEnvPath("/data/app") == "/data/app/hue-debug.env");
+    assert(configPath("/data/app") == "/data/app/config.json");
 }
 
 /// One parsed `KEY=VALUE` line of the debug-environment file.
