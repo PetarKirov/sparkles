@@ -48,7 +48,7 @@ end_of_line = unset
 insert_final_newline = unset
 
 # Compiled SPIR-V, checked in beside the GLSL it was generated from so no CI
-# job needs a shader compiler (see libs/ui-sdl3/examples/shaders/). Binary, and
+# job needs a shader compiler (see libs/vulkan-wsi/src/shaders/). Binary, and
 # a stream of 32-bit words rather than lines.
 [*.spv]
 charset = unset

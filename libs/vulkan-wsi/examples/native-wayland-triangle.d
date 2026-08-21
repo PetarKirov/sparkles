@@ -8,6 +8,7 @@
     dependency "sparkles:wired" path="../../.."
     dependency "expected" version="~>0.4.1"
     targetPath "build"
+    platforms "linux"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
