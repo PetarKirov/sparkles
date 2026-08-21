@@ -1699,6 +1699,7 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             initialCoverage: doc.coverage,
             initialHasCoverage: doc.hasCoverage,
             capture: capture,
+            configStore: &gStore,
         ));
     }
     else
