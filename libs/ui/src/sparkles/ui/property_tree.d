@@ -2375,18 +2375,18 @@ struct PropertyEditState
     size_t maxHistoryBytes = 1_048_576;
 
     /// Availability queries for the host's binding table (`PRT23`).
-    bool canUndo() const @safe pure nothrow @nogc
+    bool canUndo() const scope @safe pure nothrow @nogc
         => !pendingActive && undo.length > 0;
     /// ditto
-    bool canRedo() const @safe pure nothrow @nogc
+    bool canRedo() const scope @safe pure nothrow @nogc
         => !pendingActive && redo.length > 0;
 
     /// The current refusal addressed to `path`, or an empty value.
-    Refusal refusalFor(scope const(char)[] path) const @safe pure nothrow @nogc
+    Refusal refusalFor(scope const(char)[] path) const scope @safe pure nothrow
     {
         foreach (ref const r; refusals)
             if (r.path == path)
-                return r;
+                return Refusal(r.kind, r.path.idup, r.detail.idup);
         return Refusal.init;
     }
 
