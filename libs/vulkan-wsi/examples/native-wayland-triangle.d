@@ -108,7 +108,11 @@ struct RunReport
     uint resizeEvents;
     uint swapchainsBuilt;
     uint outOfDate;
+    uint framesOver50ms;
+    uint framesOver100ms;
+    uint reaps;
     double maxFrameMs = 0;
+    double maxDispatchMs = 0;
     string extent;
     string rendering;
     string exitedBecause;
@@ -321,7 +325,11 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     uint framesPresented;
     uint resizeEvents;
     uint outOfDate;
+    uint framesOver50ms;
+    uint framesOver100ms;
+    uint reaps;
     double maxFrameMs = 0;
+    double maxDispatchMs = 0;
     string exitedBecause = "frame budget reached";
     bool maximized;
     uint lastStressFrame = uint.max;
@@ -411,6 +419,9 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     {
         if (!frameReady && !sizeChanged && !exposed)
         {
+            // This wait spans compositor pacing, so a long dispatch while
+            // dragging is a stall, but a long dispatch while idle is not.
+            const dispatchStarted = MonoTime.currTime;
             auto tick = wsi.runIntegratedOnce(loop, 2.seconds);
             if (tick.hasError)
                 return err!void("Event Horizon/Wayland dispatch failed: "
@@ -418,6 +429,13 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
             auto drained = drainEvents();
             if (drained.hasError)
                 return err!void(describe(drained.error));
+            const dispatchMs =
+                (MonoTime.currTime - dispatchStarted).total!"usecs" / 1_000.0;
+            if (dispatchMs > maxDispatchMs)
+                maxDispatchMs = dispatchMs;
+            if (options.traceMs > 0 && dispatchMs >= options.traceMs)
+                trace(i"dispatch {yellow $(dispatchMs)ms} events=$(
+                    sizeChanged ? "resize" : frameReady ? "frame" : "other")");
         }
 
         if (closeRequested)
@@ -425,6 +443,7 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
             exitedBecause = "window closed";
             break;
         }
+        const workStarted = MonoTime.currTime;
         if (sizeChanged)
         {
             ++resizeEvents;
@@ -443,13 +462,18 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
         if (!shouldPresent)
             continue;
 
-        const frameStarted = MonoTime.currTime;
         auto presented = presentOnce();
         if (presented.hasError)
             return presented;
-        const frameMs = (MonoTime.currTime - frameStarted).total!"usecs" / 1_000.0;
+        // Active work only: swapchain rebuild plus the present, never the
+        // compositor-paced dispatch wait above.
+        const frameMs = (MonoTime.currTime - workStarted).total!"usecs" / 1_000.0;
         if (frameMs > maxFrameMs)
             maxFrameMs = frameMs;
+        if (frameMs >= 50)
+            ++framesOver50ms;
+        if (frameMs >= 100)
+            ++framesOver100ms;
         if (options.traceMs > 0 && frameMs >= options.traceMs)
             trace(i"frame $(framesPresented) {yellow $(frameMs)ms} window=$(
                 metrics.physicalSize.width)x$(metrics.physicalSize.height) swapchain=$(
@@ -460,6 +484,7 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
         {
             sync.reap(vk, 8);
             swapchain.reap(vk, 1);
+            ++reaps;
         }
 
         if (options.resizeStress && framesPresented > 0
@@ -480,7 +505,11 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
         resizeEvents: resizeEvents,
         swapchainsBuilt: swapchainsBuilt,
         outOfDate: outOfDate,
+        framesOver50ms: framesOver50ms,
+        framesOver100ms: framesOver100ms,
+        reaps: reaps,
         maxFrameMs: maxFrameMs,
+        maxDispatchMs: maxDispatchMs,
         extent: text(swapchain.extent.width, "x", swapchain.extent.height),
         rendering: target.dynamicRendering ? "dynamic" : "render-pass",
         exitedBecause: exitedBecause,
