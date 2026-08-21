@@ -30,7 +30,7 @@ import sparkles.diff : DiffDoc, DiffOptions, diffText, emitPatch, FileEntry,
 import sparkles.syntax : canonicalLanguage, canonicalLanguageOfPath,
     GrammarRegistry, HighlightEvent, isPlainTextLabel,
     highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
-import sparkles.syntax.render.widgets : TintedRange;
+import sparkles.source_view.code : TintedRange;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel;
 import sparkles.ui.state : DocRow;
@@ -1331,7 +1331,7 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
     RgbColor pageFg) @system
 {
     import gui_preview : stripSgr;
-    import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+    import sparkles.source_view.markdown : highlightedFenceRenderer;
     import sparkles.ui.widget : TextSpan;
 
     auto highlight = highlightedFenceRenderer(cache, theme, pageFg);

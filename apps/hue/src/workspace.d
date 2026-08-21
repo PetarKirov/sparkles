@@ -22,9 +22,11 @@ import format_preview : formatPreviewPump, formatPreviewRulerDragging,
 import sparkles.base.logger : warning;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
-import sparkles.syntax.md.render_widgets : OverflowPolicy;
+import sparkles.source_view.markdown : OverflowPolicy;
 import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
-    Theme, toRgb;
+    toRgb;
+import sparkles.ui.theme : Theme;
+version (unittest) import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.ui_tui : CellStyle, Color, Grid;
 import sparkles.ui_app.backend : Backend, BackendPolicy;
@@ -1831,7 +1833,7 @@ version (unittest)
     {
         import std.file : mkdirRecurse, tempDir, write;
         import std.path : baseName, buildPath;
-        import sparkles.syntax : builtinDark, LabelSet;
+        import sparkles.syntax : LabelSet;
 
         static immutable(Theme)[1] themes = [builtinDark];
         static immutable string[1] names = ["dark"];
@@ -2071,7 +2073,7 @@ unittest
     import std.algorithm.searching : canFind;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     // tmp/{alpha.d, beta.d} and a stub loader (no grammar registry needed).
     const root = buildPath(tempDir(), "hue-workspace-test");
@@ -2163,7 +2165,7 @@ unittest
 {
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     const root = buildPath(tempDir(), "hue-workspace-split-test");
     mkdirRecurse(root);
@@ -2372,7 +2374,7 @@ unittest
     import std.conv : text;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     // Enough files that the tree overflows its pane (its scrollbar is live)
     // and a long document in the viewer.
@@ -2446,7 +2448,7 @@ unittest
 {
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     const root = buildPath(tempDir(), "hue-workspace-chrome-test");
     mkdirRecurse(root);
@@ -2581,7 +2583,7 @@ unittest
     import std.algorithm.searching : canFind;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     const root = buildPath(tempDir(), "hue-workspace-wheel-test");
     mkdirRecurse(root);
@@ -2655,7 +2657,7 @@ unittest
     import std.path : buildPath;
 
     import sparkles.core_cli.process_utils : isInPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
     import sparkles.test_runner.skip : skipTest;
     import live_types : LiveTypesSession;
 
@@ -2785,7 +2787,7 @@ unittest
 
     import document : DocumentPipeline;
     import live_types : liveTypesBinary;
-    import sparkles.syntax : builtinDark, GrammarRegistry, LabelSet,
+    import sparkles.syntax : GrammarRegistry, LabelSet,
         resolveTheme;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.test_runner.skip : skipTest;
@@ -2865,7 +2867,7 @@ unittest
 unittest
 {
     import std.process : environment;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax : HighlightEvent, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.syntax.ts.registry : GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
@@ -2949,7 +2951,7 @@ unittest
 {
     import std.algorithm.searching : canFind;
     import std.process : environment;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax : HighlightEvent, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.syntax.ts.registry : GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
@@ -3022,7 +3024,7 @@ unittest
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import std.process : environment;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax : HighlightEvent, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.syntax.ts.registry : GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
@@ -3094,7 +3096,7 @@ unittest
 {
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     // Issue #299 through the whole terminal workspace, not just the pane:
     // `arrange` re-lays the panes out AND round-trips every offset through

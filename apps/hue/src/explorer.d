@@ -25,7 +25,9 @@ import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
 import sparkles.base.term_color : mix;
 import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
-    Theme, toRgb;
+    toRgb;
+import sparkles.ui.theme : Theme;
+import sparkles.ui.themes : builtinDark;
 import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, Point, PointerAction, PointerButton, PointerEvent, ResizeEvent,
     WheelEvent;
@@ -985,7 +987,7 @@ unittest
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import std.algorithm.searching : canFind;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     // tmp/{notes.md, src/{app.d}} — a dir with a nested renderable file.
     const root = buildPath(tempDir(), "hue-explorer-test");
@@ -1062,7 +1064,7 @@ unittest
     import std.conv : text;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     // Enough files to overflow the pane, so the scrollbar exists.
     const root = buildPath(tempDir(), "hue-explorer-sb-test");
@@ -1128,7 +1130,7 @@ unittest
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.input : linesPerNotch, WheelEvent;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     const root = buildPath(tempDir(), "hue-explorer-wheel-test");
     mkdirRecurse(root);
@@ -1166,7 +1168,7 @@ unittest
     import std.conv : text;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     const root = buildPath(tempDir(), "hue-explorer-hbar-test");
     mkdirRecurse(root);
@@ -1204,7 +1206,7 @@ unittest
 {
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     // XPL3: with the cursor on ANOTHER row, the open document still shows an
     // unmistakable indicator — the theme-tinted row band + the accent label.
@@ -1252,7 +1254,7 @@ unittest
     import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import std.process : execute;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
     import sparkles.test_runner.skip : skipTest;
     import git_status : GitStatus;
 
@@ -1344,7 +1346,7 @@ unittest
     import std.algorithm.searching : canFind, startsWith;
     import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
     import git_status : GitStatus, GitStatusMap;
 
     // No git needed: the ignored toggle is driven by a hand-built snapshot.
@@ -1427,7 +1429,7 @@ unittest
 {
     import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
     import git_status : GitStatus, GitStatusMap;
 
     const root = buildPath(tempDir(), "hue-explorer-globs-test");

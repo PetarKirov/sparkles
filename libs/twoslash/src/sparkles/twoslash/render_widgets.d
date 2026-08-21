@@ -28,28 +28,25 @@ signature text under $(D Slot.code).
 module sparkles.twoslash.render_widgets;
 
 import sparkles.base.term_color : RgbColor, toRgb;
+import sparkles.base.term_style : UnderlineStyle;
+import sparkles.source_view.code : applyTints, CodeViewOptions;
+import sparkles.source_view.markdown : MdViewTheme;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
-import sparkles.syntax.render.widgets : applyTints, CodeViewOptions;
+import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
+    MdInline, MdInlineKind, Span;
 import sparkles.syntax.theme : ResolvedTheme;
-import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
-import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
-import sparkles.ui.wrap : TextWrap;
-import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
-import sparkles.ui.wrap : TextWrap;
-
+import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.syntax.ts.registry : GrammarRegistry;
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning,
     highlightSignature, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
-
-import sparkles.syntax.md.render_widgets : MdViewTheme;
-import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
-    MdInline, MdInlineKind, Span;
-import sparkles.syntax.ts.injection : TsConfigCache;
-import sparkles.syntax.ts.registry : GrammarRegistry;
-import sparkles.base.term_style : UnderlineStyle;
+import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
+import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.wrap : TextWrap;
 
 @safe:
 
@@ -902,7 +899,7 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
     const(char)[] docs, size_t hit, int maxWidth,
     HoverViewOptions opts = HoverViewOptions.init) @system
 {
-    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.source_view.markdown : MdViewOptions, viewMarkdownInto;
 
     MdDoc doc = extractMarkdown(registry, docs);
     if (doc.root.children.length == 0)
@@ -1010,7 +1007,7 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
 
     if (tag.length > 1 && tag[1].length)
     {
-        import sparkles.syntax.md.render_widgets : inlinesToSpans, pushProse;
+        import sparkles.source_view.markdown : inlinesToSpans, pushProse;
 
         // The gap belongs to the row, not to the text: a leading space span is
         // the first thing greedy wrapping drops, which ran `@returns` straight
@@ -1663,7 +1660,7 @@ version (unittest)
 {
     import sparkles.base.term_style : TextAttr;
 
-    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.source_view.markdown : MdViewOptions, viewMarkdownInto;
 
     // A hand-built paragraph "x b c" where "b" is strong and "c" is a code
     // span — the SHARED markdown view under the popup's docs options ("JSDoc
@@ -1724,7 +1721,7 @@ version (unittest)
 @safe unittest
 {
     import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
-    import sparkles.syntax.render.widgets : TintedRange;
+    import sparkles.source_view.code : TintedRange;
     import sparkles.ui.style : Slot;
 
     // The inline channel is still this view's business: a byte range of the

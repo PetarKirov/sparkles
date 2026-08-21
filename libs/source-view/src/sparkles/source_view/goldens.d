@@ -5,7 +5,7 @@ through the production pipeline (`extractMarkdown` → $(REF viewMarkdown,
 sparkles,syntax,md,render_widgets) → `layout` → `CellGrid`) at a fixed width
 and compared as a plain glyph grid.
 
-Fixtures and goldens live side by side under `libs/syntax/test/data/md/goldens/`
+Fixtures and goldens live side by side under `libs/source-view/test/data/md/goldens/`
 (`<name>.md` + `<name>.txt`). The glyph grid ignores color on purpose: it is the
 $(B layout) oracle — indentation, borders, wrapping, panel geometry — and reads
 well in a diff; color/style assertions stay with the `RecordingCanvas` tests in
@@ -14,11 +14,11 @@ $(MREF sparkles,syntax,md,render_widgets).
 To regenerate after an intended rendering change:
 
 ```
-SPARKLES_UPDATE_GOLDENS=1 dub test :syntax -- -i md.goldens
-git diff libs/syntax/test/data   # review the visual delta
+SPARKLES_UPDATE_GOLDENS=1 dub test :source-view -- -i md.goldens
+git diff libs/source-view/test/data   # review the visual delta
 ```
 */
-module sparkles.syntax.md.goldens;
+module sparkles.source_view.goldens;
 
 version (unittest):
 
@@ -27,12 +27,11 @@ import std.path : buildNormalizedPath, dirName;
 import std.process : environment;
 
 import sparkles.base.term_color : RgbColor, toRgb;
+import sparkles.source_view.markdown : MdViewOptions, MdViewTheme,
+    OverflowPolicy, viewMarkdown, WrapOverflow;
 import sparkles.syntax.label : LabelSet;
 import sparkles.syntax.md.model : extractMarkdown;
-import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme,
-    OverflowPolicy, viewMarkdown, WrapOverflow;
 import sparkles.syntax.theme : resolveTheme;
-import sparkles.syntax.themes : builtinThemes;
 import sparkles.syntax.ts.registry : GrammarRegistry;
 import sparkles.test_runner.skip : skipTest;
 import sparkles.ui.display_list : buildDisplayList;
@@ -41,6 +40,7 @@ import sparkles.ui.interp.cells : CellGrid;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui.layout : layout;
 import sparkles.ui.style : defaultTwoslashPalette;
+import sparkles.ui.themes : builtinThemes;
 
 /// The fixture corpus: individual features first, then the composition.
 private static immutable fixtureNames = [
@@ -62,7 +62,7 @@ private enum goldenWidth = 80;
 
 private string goldenDir()
     => __FILE_FULL_PATH__.dirName
-        .buildNormalizedPath("../../../../test/data/md/goldens");
+        .buildNormalizedPath("../../../test/data/md/goldens");
 
 /// Renders `source` exactly as the fixture tests see it: themed, line-numbered
 /// fences, width-bounded — no fence renderer (highlighting changes only

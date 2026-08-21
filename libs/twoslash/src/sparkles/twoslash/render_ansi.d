@@ -365,11 +365,11 @@ private void sortUnique(ref SmallBuffer!size_t buf) @safe
 version (unittest)
 {
     import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : resolveTheme, Theme;
+    import sparkles.syntax.theme : resolveTheme, SyntaxTheme;
     import sparkles.syntax.ts.registry : GrammarRegistry;
 
     private ResolvedTheme emptyTheme() @safe pure nothrow
-        => resolveTheme(Theme(name: "t"), LabelSet.standard());
+        => resolveTheme(SyntaxTheme(name: "t"), LabelSet.standard());
 
     private string renderTw(in TwoslashReturn tw, const(HighlightEvent)[] events,
         TwoslashAnsiOptions opts) @system

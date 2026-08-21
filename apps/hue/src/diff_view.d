@@ -524,7 +524,7 @@ line rather than to the file.
 private uint threadBlock(ref Builder b, in AnchoredThread t,
     const(GutterChannel)[] chans, in DiffViewOptions opt) @safe
 {
-    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.source_view.markdown : MdViewOptions, viewMarkdownInto;
     import sparkles.ui.geometry : Insets;
     import sparkles.ui.style : TextStyle;
 
@@ -652,7 +652,7 @@ highlights the diff below it.
 private uint sessionHeader(ref Builder b, const SessionHeader h,
     SideRenderer render, in DiffViewOptions opt) @safe
 {
-    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+    import sparkles.source_view.markdown : MdViewOptions, viewMarkdownInto;
     import sparkles.ui.geometry : Insets;
     import sparkles.ui.style : TextStyle;
 

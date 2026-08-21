@@ -336,7 +336,9 @@ private:
 unittest
 {
     import core.time : Duration;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.ui.theme : Theme;
+    import sparkles.ui.themes : builtinDark;
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -387,7 +389,9 @@ unittest
 {
     import core.time : Duration;
     import sparkles.input.events : PointerButton;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, Theme;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+    import sparkles.ui.theme : Theme;
+    import sparkles.ui.themes : builtinDark;
     import sparkles.ui.geometry : Point;
 
     static immutable(Theme)[1] themes = [builtinDark];

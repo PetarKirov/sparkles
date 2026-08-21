@@ -32,10 +32,12 @@ import std.sumtype : match, SumType;
 
 import sparkles.syntax;
 import sparkles.syntax.md.model : MdDoc;
-import sparkles.syntax.md.render_widgets : OverflowPolicy, ScrollOverflow,
+import sparkles.source_view.markdown : OverflowPolicy, ScrollOverflow,
     WrapAtOverflow, WrapOverflow;
 import sparkles.twoslash;
 import sparkles.core_cli.args;
+import sparkles.ui.theme : Theme;
+import sparkles.ui.themes : builtinDark, builtinThemes;
 
 import sparkles.base.logger : initLogger, LogLevel, warning;
 import sparkles.base.smallbuffer : SmallBuffer;
@@ -1769,7 +1771,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             break;
         case markdown:
         case dsv:
-            import sparkles.syntax.md.render_widgets : MdViewOptions,
+            import sparkles.source_view.markdown : MdViewOptions,
                 MdViewTheme, viewMarkdown;
             import sparkles.ui.display_list : buildDisplayList;
             import sparkles.ui.geometry : Constraints;
@@ -1823,7 +1825,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             // rows to the grid width, as markdown and diff always have.
             {
                 import document : coverageTintedRanges;
-                import sparkles.syntax.render.widgets : CodeViewOptions,
+                import sparkles.source_view.code : CodeViewOptions,
                     viewCodeDocumentInto;
                 import sparkles.ui.widget : Builder;
                 import sparkles.ui.display_list : buildDisplayList;
@@ -1874,7 +1876,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             import sparkles.ui.style : defaultTwoslashPalette;
 
             import diff_view : DiffViewOptions;
-            import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+            import sparkles.source_view.markdown : highlightedFenceRenderer;
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
@@ -1989,7 +1991,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             // already did. The gallery keeps its own fragment writer.
             {
                 import document : coverageTintedRanges;
-                import sparkles.syntax.render.widgets : CodeViewOptions,
+                import sparkles.source_view.code : CodeViewOptions,
                     viewCodeDocumentInto;
                 import sparkles.ui.widget : Builder;
                 import sparkles.ui.interp.html : writeWidgetHtmlPage;
@@ -2046,7 +2048,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             import sparkles.ui.style : defaultTwoslashPalette;
 
             import diff_view : DiffViewOptions;
-            import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+            import sparkles.source_view.markdown : highlightedFenceRenderer;
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);

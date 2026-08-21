@@ -1,0 +1,36 @@
+name "source-view"
+description "Interactive code and markdown document widget views on sparkles:ui and sparkles:syntax"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:syntax" path="../.."
+dependency "sparkles:ui" path="../.."
+dependency "sparkles:diff" path="../.."
+
+configuration "library" {
+    // sourceLibrary: sparkles:syntax is a sourceLibrary (ImportC types in its
+    // signatures), so source-view must compile inside each dependent too — see
+    // docs/guidelines/importc-c-libraries.md.
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

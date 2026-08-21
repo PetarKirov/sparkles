@@ -14,7 +14,7 @@ Prose wraps as $(B rich runs) — the engine breaks styled spans, inline-`code`
 pills are unbreakable spans, and the wrap width is the node's width maximum
 (`LAY10`: the view owns no packing loop).
 */
-module sparkles.syntax.md.render_widgets;
+module sparkles.source_view.markdown;
 
 import sparkles.base.term_color : mix, RgbColor, toRgb;
 import sparkles.base.text.width : CellAlign = Align;

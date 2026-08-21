@@ -522,7 +522,7 @@ version (unittest)
 {
     import sparkles.syntax.event : LabelId;
     import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : Theme, ThemeRule, StyleSpec, resolveTheme;
+    import sparkles.syntax.theme : SyntaxTheme, ThemeRule, StyleSpec, resolveTheme;
     import sparkles.syntax.color : Color;
     import sparkles.syntax.ts.registry : GrammarRegistry;
 
@@ -532,7 +532,7 @@ version (unittest)
     // $SPARKLES_TS_GRAMMAR_PATH is set.
     private ResolvedTheme testTheme() @safe pure nothrow
     {
-        const t = Theme(name: "t", rules: [
+        const t = SyntaxTheme(name: "t", rules: [
             ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(0xcb, 0xa6, 0xf7))),
         ]);
         return resolveTheme(t, LabelSet.standard());

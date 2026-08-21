@@ -162,7 +162,7 @@ version (unittest)
 {
     private ResolvedTheme testTheme(string name, ubyte r) @safe pure nothrow
     {
-        return resolveTheme(Theme(
+        return resolveTheme(SyntaxTheme(
             name: name,
             defaultFg: Color.fromRgb(r, 0x10, 0x10),
             defaultBg: Color.fromRgb(r, 0x20, 0x20),

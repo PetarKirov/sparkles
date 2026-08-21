@@ -249,7 +249,7 @@ unittest
 {
     // `link` is the one colour a mix cannot produce, so it comes from the
     // theme's own `function` style.
-    auto theme = Theme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
+    auto theme = SyntaxTheme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
         defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e));
     theme.rules ~= ThemeRule("function", StyleSpec(fg: Color.fromRgb(0x89, 0xb4, 0xfa)));
     const c = themeChrome(resolveTheme(theme, LabelSet.fromNames(["function"])));
@@ -258,7 +258,7 @@ unittest
     // A theme that styles no functions falls back to the body text, which is
     // legible on `surface` by construction — never to a hardcoded blue.
     const bare = themeChrome(resolveTheme(
-        Theme(name: "b", defaultFg: Color.fromRgb(0x11, 0x22, 0x33),
+        SyntaxTheme(name: "b", defaultFg: Color.fromRgb(0x11, 0x22, 0x33),
             defaultBg: Color.fromRgb(0xee, 0xee, 0xee)),
         LabelSet.fromNames(["keyword"])));
     assert(bare.link == bare.text, bare.link);
@@ -272,7 +272,7 @@ unittest
 
     // The colour must be the one the stylesheet actually writes on `.syn-root`
     // — the invariant the old fragment-scraping `synRootBackground` stood for.
-    const theme = Theme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
+    const theme = SyntaxTheme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
         defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e));
     const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
     auto sheet = appender!string;
@@ -281,11 +281,11 @@ unittest
 
     // A theme with no background of its own falls back rather than inventing one
     // (its stylesheet declares no `background-color` to match).
-    const bare = resolveTheme(Theme(name: "b"), LabelSet.fromNames(["keyword"]));
+    const bare = resolveTheme(SyntaxTheme(name: "b"), LabelSet.fromNames(["keyword"]));
     assert(themeBackground(bare) == defaultBackground);
 
     // A palette colour concretizes exactly as the CSS does.
-    const pal = resolveTheme(Theme(name: "p", defaultBg: Color.fromPalette(8)),
+    const pal = resolveTheme(SyntaxTheme(name: "p", defaultBg: Color.fromPalette(8)),
         LabelSet.fromNames(["keyword"]));
     auto palSheet = appender!string;
     writeThemeStylesheet(pal, palSheet);

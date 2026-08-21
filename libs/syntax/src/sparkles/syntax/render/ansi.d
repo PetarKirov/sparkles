@@ -168,7 +168,7 @@ version (unittest)
     import sparkles.base.smallbuffer : SmallBuffer, checkWriter;
     import sparkles.syntax.event : HighlightEvent, LabelId;
     import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : Theme, ThemeRule, resolveTheme;
+    import sparkles.syntax.theme : SyntaxTheme, ThemeRule, resolveTheme;
 
     // Named test palette — so the theme rules and the expected-output SGR below
     // read as intent instead of bare magic hex/indices.
@@ -191,7 +191,7 @@ version (unittest)
     // A tiny fixed vocabulary/theme pair shared by the renderer tests.
     private ResolvedTheme testTheme() @safe pure nothrow
     {
-        const theme = Theme(
+        const theme = SyntaxTheme(
             name: "test",
             defaultBg: pageBg, // only consulted with emitBackground
             rules: [

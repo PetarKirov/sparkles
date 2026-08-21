@@ -237,7 +237,10 @@ in
                 # suite, not runnable examples — a fixture may hold any code
                 # (a deliberately huge dub script, a fence with fake paths)
                 # purely for how it renders.
-                excludes = [ "^libs/syntax/test/data/" ];
+                excludes = [
+                  "^libs/syntax/test/data/"
+                  "^libs/source-view/test/data/"
+                ];
                 language = "system";
                 name = "verify-md-examples";
                 # Hand every matched *.md to ONE `ci` invocation instead of letting

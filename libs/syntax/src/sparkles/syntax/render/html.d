@@ -353,11 +353,11 @@ version (unittest)
 {
     import sparkles.base.smallbuffer : checkWriter;
     import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : Theme, ThemeRule, resolveTheme;
+    import sparkles.syntax.theme : SyntaxTheme, ThemeRule, resolveTheme;
 
     private ResolvedTheme testTheme() @safe pure nothrow
     {
-        const theme = Theme(
+        const theme = SyntaxTheme(
             name: "test",
             rules: [
                 ThemeRule("keyword", StyleSpec(
@@ -406,10 +406,10 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.syntax.theme : Theme, ThemeRule, resolveTheme;
+    import sparkles.syntax.theme : SyntaxTheme, ThemeRule, resolveTheme;
 
     alias E = HighlightEvent;
-    const theme = Theme(name: "t", rules: [
+    const theme = SyntaxTheme(name: "t", rules: [
         ThemeRule("keyword", StyleSpec(
             underlineColor: Color.fromRgb(0xff, 0x55, 0x55),
             underline: UnderlineStyle.curly)),
@@ -555,7 +555,7 @@ unittest
         return parseHexColor(t).value;
     }
 
-    const theme = Theme(
+    const theme = SyntaxTheme(
         name: "test",
         defaultFg: hex("#cdd6f4"),
         defaultBg: hex("#1e1e2e"),
@@ -586,7 +586,7 @@ unittest
 @safe pure nothrow
 unittest
 {
-    const theme = Theme(
+    const theme = SyntaxTheme(
         name: "dark",
         defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
         rules: [ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(0xcb, 0xa6, 0xf7)))]);
@@ -629,7 +629,7 @@ unittest
 
     // A theme whose default bg is the terminal default emits no
     // `background-color` — so a caller must not read one out of the sheet.
-    const theme = Theme(name: "t", defaultFg: Color.fromRgb(1, 2, 3),
+    const theme = SyntaxTheme(name: "t", defaultFg: Color.fromRgb(1, 2, 3),
         defaultBg: Color.defaultColor);
     const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
     SmallBuffer!(char, 256) buf;

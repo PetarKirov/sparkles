@@ -344,7 +344,9 @@ struct InspectorPane
 
 version (unittest)
 {
-    import sparkles.syntax : builtinDark, LabelSet, resolveTheme, Theme;
+    import sparkles.syntax : LabelSet, resolveTheme;
+    import sparkles.ui.theme : Theme;
+    import sparkles.ui.themes : builtinDark;
 
     private ViewerModel vmForTest(string lang, string source) @system
     {

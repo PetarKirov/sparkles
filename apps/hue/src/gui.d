@@ -78,15 +78,16 @@ import dsv_view : DsvCopy, DsvInfo, resolveTableCopy, serializeGridCopy;
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
 // through StyleSpec.fg/bg (never named here).
-import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
+import sparkles.syntax : HighlightEvent, LabelId, LabelSet, StyleSpec, TextAttr, UnderlineStyle,
     ResolvedTheme, RgbColor, toRgb;
+import sparkles.ui.theme : Theme;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.logger : warning;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
 import sparkles.base.unique : makeUnique;
 
-import sparkles.syntax.md.render_widgets : FenceScroll, OverflowPolicy,
+import sparkles.source_view.markdown : FenceScroll, OverflowPolicy,
     TableScroll;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
@@ -3517,7 +3518,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     // The docs are markdown, and the theme + fence highlighter are the ones
     // the preview uses — so a fence in a tooltip gets the same chrome as one
     // in the document, including the `unittest` label on a runnable example.
-    import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+    import sparkles.source_view.markdown : highlightedFenceRenderer,
         MdViewTheme;
 
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,

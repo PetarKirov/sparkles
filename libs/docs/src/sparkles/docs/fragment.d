@@ -335,7 +335,7 @@ unittest
 {
     import std.algorithm.searching : canFind, startsWith;
 
-    const theme = resolveTheme(Theme(name: "t",
+    const theme = resolveTheme(SyntaxTheme(name: "t",
         defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e),
         rules: [ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(0xcb, 0xa6, 0xf7)))]),
         LabelSet.standard());

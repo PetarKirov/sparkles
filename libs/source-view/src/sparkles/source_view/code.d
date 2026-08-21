@@ -8,7 +8,7 @@ sparkles,ui,state)), search tints ($(REF selectionRects, sparkles,ui,state)),
 and source-derived gutter numbers ($(REF documentRows, sparkles,ui,state))
 with no per-backend line model.
 */
-module sparkles.syntax.render.widgets;
+module sparkles.source_view.code;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : TextAttr;

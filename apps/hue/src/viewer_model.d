@@ -14,14 +14,16 @@ import sparkles.base.term_style : UnderlineStyle;
 import sparkles.code_instrumentation : CoverageGutterItem, CoveragePlan, LineState;
 import sparkles.diff.model : DiffDoc;
 import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
-    RgbColor, Theme, toRgb;
+    RgbColor, toRgb;
+import sparkles.ui.theme : Theme;
+version (unittest) import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
     MdBlockKind, Span;
-import sparkles.syntax.md.render_widgets : FenceScroll, isWrap, OverflowPolicy,
+import sparkles.source_view.code : CodeViewOptions, viewCodeDocumentInto;
+import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
     foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
     viewMarkdownInto;
-import sparkles.syntax.render.widgets : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, gutterWidth, withGutterColumns, withinBudget;
 import sparkles.code_instrumentation : maxCountWidth;
@@ -2166,7 +2168,6 @@ struct ViewerModel
 @("viewer_model.plainViewRendersTheSource")
 @system unittest
 {
-    import sparkles.syntax : builtinDark;
     import sparkles.ui.widget : WidgetKind;
 
     // VIW4: the plain view is the raw view with highlighting OFF — the
@@ -2203,7 +2204,6 @@ struct ViewerModel
     import std.conv : text;
 
     import sparkles.diff : diffText;
-    import sparkles.syntax : builtinDark;
     import sparkles.ui.style : Slot;
     import sparkles.ui.widget : WidgetKind;
 
@@ -2254,7 +2254,6 @@ struct ViewerModel
 {
     import diff_session : buildDiffSession;
     import sparkles.diff : parsePatch;
-    import sparkles.syntax : builtinDark;
 
     ViewerModel vm;
     vm.names = ["dark"];
@@ -2306,7 +2305,6 @@ struct ViewerModel
 {
     import diff_session : buildDiffSession;
     import sparkles.diff : parsePatch;
-    import sparkles.syntax : builtinDark;
 
     ViewerModel vm;
     vm.names = ["dark"];
@@ -2362,7 +2360,6 @@ struct ViewerModel
 @system unittest
 {
     import std.process : environment;
-    import sparkles.syntax : builtinDark;
     import sparkles.test_runner.skip : skipTest;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
@@ -2409,7 +2406,7 @@ struct ViewerModel
 {
     import std.algorithm.searching : canFind;
     import std.process : environment;
-    import sparkles.syntax : builtinDark, GrammarRegistry;
+    import sparkles.syntax : GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
@@ -2493,7 +2490,6 @@ struct ViewerModel
 
     import diff_session : buildDiffSession;
     import sparkles.diff : diffText;
-    import sparkles.syntax : builtinDark;
 
     ViewerModel vm;
     vm.names = ["dark"];
@@ -2553,7 +2549,7 @@ struct ViewerModel
 @system unittest
 {
     import std.process : environment;
-    import sparkles.syntax : builtinDark, extractMarkdown, GrammarRegistry;
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
@@ -2609,7 +2605,7 @@ struct ViewerModel
 @("viewer_model.scrollHorizontal.movesAndClamps")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, MdDoc, MdInline, MdInlineKind;
+    import sparkles.syntax : MdDoc, MdInline, MdInlineKind;
 
     ViewerModel vm;
     vm.themes = [builtinDark];
@@ -2668,8 +2664,8 @@ struct ViewerModel
 @("viewer_model.setTableScroll.clampsRemovesAndRefusesInWrap")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, MdDoc, MdInline, MdInlineKind;
-    import sparkles.syntax.md.render_widgets : WrapOverflow;
+    import sparkles.syntax : MdDoc, MdInline, MdInlineKind;
+    import sparkles.source_view.markdown : WrapOverflow;
 
     ViewerModel vm;
     vm.themes = [builtinDark];
@@ -2727,7 +2723,6 @@ struct ViewerModel
 @system unittest
 {
     import sparkles.diff : diffText, parsePatch;
-    import sparkles.syntax : builtinDark;
     import diff_session : buildDiffSession;
     import std.algorithm.searching : canFind;
 
@@ -2779,7 +2774,6 @@ version (unittest)
     /// anchor tests reflow.
     private ViewerModel anchorFixture(string src, int width)
     {
-        import sparkles.syntax : builtinDark;
 
         ViewerModel vm;
         vm.names = ["dark"];
