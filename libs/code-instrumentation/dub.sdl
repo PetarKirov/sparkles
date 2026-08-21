@@ -26,7 +26,6 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    targetType "library"
     // Fast path: depend on the runner shim (which pulls the prebuilt impl
     // library), so `dub test` recompiles only this package rather than the
     // runner's sources on top of it. This package is not in the impl's

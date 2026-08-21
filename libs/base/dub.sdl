@@ -11,6 +11,7 @@ targetPath "build"
 importPaths "src" "../test-runner/src"
 
 dflags "-preview=in" "-preview=dip1000"
+dflags "-linkonce-templates" platform="ldc"
 
 dependency "expected" version="~>0.4.1"
 
