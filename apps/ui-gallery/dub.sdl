@@ -15,6 +15,10 @@ stringImportPaths "test/data"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:ui" path="../.."
+// The Property page uses the ui property tree's fuzzy search projection;
+// sparkles:ui reaches fuzzy import-only (see libs/ui/dub.sdl), so the
+// consumer supplies the linked library.
+dependency "sparkles:fuzzy" path="../.."
 dependency "sparkles:ui-app" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:core-cli" path="../.."
