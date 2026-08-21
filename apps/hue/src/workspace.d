@@ -444,6 +444,29 @@ struct WorkspaceTui
     package SettingsGeometry settingsGeometry() const @safe pure nothrow @nogc
         => settingsGeometryFor(width, height);
 
+    /// The config-owned knobs the panes cache (tier 2): synced at startup
+    /// and after every settings commit, so a pane never reads the store.
+    void syncConfigDerived() @safe
+    {
+        if (cfg is null)
+            return;
+        import core.time : msecs;
+
+        const l = cfg.resolved.lantern;
+        const delay = l.enabled ? l.delayMs.msecs : Duration.max;
+        viewer.lanternDelay = delay;
+        tree.lanternDelay = delay;
+        viewer.lanternPlacement = l.placement;
+        viewer.vm.hScrollStep = cfg.resolved.scroll.hScrollStep;
+        if (!picker.empty)
+            picker.get.stepBudget = cfg.resolved.picker.stepBudgetMs.msecs;
+        if (pickerDoc !is null)
+        {
+            pickerDoc.loadDelay = cfg.resolved.picker.loadDelayMs.msecs;
+            pickerDoc.overlayDelay = cfg.resolved.picker.overlayDelayMs.msecs;
+        }
+    }
+
     /// Opens the settings pane over the shared store (`,` / `<leader>us`).
     void openSettings() @system
     {
@@ -485,6 +508,9 @@ struct WorkspaceTui
             if (cols >= minTreeCols)
                 treeCols(cols);
         }
+        // The cached tier-2 knobs (lantern, scroll, picker) re-sync on any
+        // commit — cheap, and it makes every one of them live.
+        syncConfigDerived();
     }
 
     /// The settings pane, over everything — the same widget-tree → display
@@ -1044,6 +1070,7 @@ struct WorkspaceTui
         pickerDoc.syncTheme(viewer.themeIndex);
         picker.get.open(tree.root.length ? tree.root : ".",
             tree.includeGlobs, tree.excludeGlobs);
+        syncConfigDerived(); // the picker knobs exist only once it does
         dirty = true;
     }
 
@@ -1622,6 +1649,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
 {
     WorkspaceTui w;
     w.cfg = configStore;
+    w.syncConfigDerived();
     // The picker's worker pool and the preview's oracle must stop before the
     // process exits.
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
@@ -1885,7 +1913,11 @@ private void refreshGitStatus(H)(ref WorkspaceTui w, ref H h, string root,
 
 /// How long the loop waits for input before ticking the live oracle again
 /// (~30 Hz — imperceptible for a ~0.6 ms tip answer, idle when no session).
-private enum liveTick = 33.msecs;
+private enum liveTickDefault = 33.msecs;
+
+/// ditto — the config's cadence when a store is wired (`timing.liveTickMs`).
+private Duration liveTick(ref WorkspaceTui w) @safe pure nothrow @nogc
+    => w.cfg !is null ? w.cfg.resolved.timing.liveTickMs.msecs : liveTickDefault;
 
 /// The wait deadline both loop arms compute identically: the lantern
 /// panel's remainder (`LTN4`), capped by the live oracle's tick while an
@@ -1898,8 +1930,9 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
     @system
 {
     const untilPanel = w.untilLanternShown();
+    const tick = liveTick(w);
     Duration deadline = (w.liveActive && !eventDriven)
-        ? (untilPanel < liveTick ? untilPanel : liveTick)
+        ? (untilPanel < tick ? untilPanel : tick)
         : untilPanel;
     if (w.tree.git.refreshing && !w.tree.git.asyncMode
         && deadline > 150.msecs)

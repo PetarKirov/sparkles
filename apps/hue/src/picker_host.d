@@ -111,8 +111,9 @@ struct PickerHost
 
     private enum size_t maxRowRanges = 8;
 
-    /// One duration-bounded search step per request/poll (`PIK5`).
-    private enum stepBudget = 4.msecs;
+    /// One duration-bounded search step per request/poll (`PIK5`);
+    /// config-owned (`picker.stepBudgetMs`), seeded with the historical 4.
+    Duration stepBudget = 4.msecs;
 
     /**
     Re-walk `root` (fresh corpus — the picker must see files created since
