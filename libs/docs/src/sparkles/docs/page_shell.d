@@ -22,6 +22,7 @@ import sparkles.syntax;
 
 import sparkles.docs.fragment : withLineNumbers;
 import sparkles.docs.options;
+import sparkles.docs.site_tree : DirNode;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 
 // ── the page shell (GAL3, GAL6, GAL7) ──────────────────────────────────────
@@ -41,13 +42,14 @@ to whichever directory index sits beside the page, at any depth.
 string pageShell(scope const(char)[] name, scope const(char)[] summary, string fragment,
     scope const(char)[] prev, scope const(char)[] next,
     in GalleryOptions opt = GalleryOptions.init,
-    scope const(char)[] relPath = null) @safe pure
+    scope const(char)[] relPath = null, bool relPathIsDirectory = false) @safe pure
 {
     import sparkles.docs.breadcrumbs : breadcrumbCss, breadcrumbScript, breadcrumbsFor,
         renderBreadcrumbs;
 
     const crumbs = relPath.length
-        ? breadcrumbsFor(relPath, opt.repoUrl, opt.repoPrefix) : null;
+        ? breadcrumbsFor(relPath, opt.repoUrl, opt.repoPrefix, relPathIsDirectory)
+        : null;
 
     int gutter;
     const body_ = withLineNumbers(fragment, gutter);
@@ -386,6 +388,142 @@ private const(char)[][] segments(const(char)[] path) @safe pure nothrow
     return outp;
 }
 
+// ── the explorer sidebar + directory pages (DOC11) ─────────────────────────
+
+/**
+The site's own file tree as the sidebar aside, built $(B per page): every
+directory a `<details>` (open along the current page's path), its name a link
+to that directory's page inside the `<summary>` (the marker toggles, the name
+navigates), every page a link $(B relative to the current page) — the
+`file://` discipline of `GAL12`/`GAL14` — with the current one highlighted.
+The docs-site nav (`opt.docsNavHtml`) nests under the `docs/` node, so the
+site's two navigation worlds meet where the reader expects them to.
+
+`currentOut` is the current page's output path (`a/b/c.d.html`, or a
+directory's `a/b/index.html`); `entries` are the pages that exist — pass what
+was actually written, so the explorer never links a hole.
+*/
+string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
+    string docsNavHtml = null) @safe pure
+{
+    import std.algorithm.searching : startsWith;
+
+    import sparkles.docs.site_tree : buildSiteTree, DirNode;
+
+    auto tree = buildSiteTree(entries);
+    size_t[string] at;
+    foreach (idx, ref const n; tree.nodes)
+        at[n.relPath] = idx;
+
+    // The directory chain the current page sits in — every node on it renders
+    // open, so the tree is already unfolded to where the reader is.
+    const currentDir = currentOut.length
+        ? currentOut[0 .. currentOut.length - baseNameLength(currentOut)] : null;
+
+    auto w = appender!string;
+    w ~= "<aside class=\"site-sidebar site-explorer\"><nav aria-label=\"Files\">\n";
+
+    // Explicit `@safe`: a self-recursive nested function gets no inference.
+    void walk(ref const DirNode node) @safe pure
+    {
+        if (node.relPath == "docs" && docsNavHtml.length)
+        {
+            w ~= "<details class=\"sb-group sb-docs\"><summary>site pages</summary>"
+                ~ "<div class=\"sb-items\">\n";
+            w ~= docsNavHtml;
+            w ~= "</div></details>\n";
+        }
+        foreach (ref const d; node.dirs)
+        {
+            const bare = d.label[0 .. $ - 1]; // "name/" → "name"
+            const childRel = node.relPath.length
+                ? node.relPath ~ "/" ~ bare : bare.idup;
+            const childOut = childRel ~ "/index.html";
+            const open = currentDir.startsWith(childRel ~ "/");
+            const active = childOut == currentOut;
+            w ~= "<details class=\"sb-group\"";
+            if (open)
+                w ~= " open";
+            w ~= "><summary><a class=\"sb-link sb-dir";
+            if (active)
+                w ~= " active";
+            w ~= "\" href=\"";
+            escapeInto(w, pageHref(currentOut, childOut));
+            w ~= "\"";
+            if (active)
+                w ~= " aria-current=\"page\"";
+            w ~= ">";
+            escapeInto(w, d.label);
+            w ~= "</a></summary><div class=\"sb-items\">\n";
+            if (auto idx = childRel in at)
+                walk(tree.nodes[*idx]);
+            w ~= "</div></details>\n";
+        }
+        foreach (ref const f; node.files)
+        {
+            const fileOut = node.relPath.length
+                ? node.relPath ~ "/" ~ f.href : f.href;
+            const active = fileOut == currentOut;
+            w ~= "<a class=\"sb-link";
+            if (active)
+                w ~= " active";
+            w ~= "\" href=\"";
+            escapeInto(w, pageHref(currentOut, fileOut));
+            w ~= "\"";
+            if (active)
+                w ~= " aria-current=\"page\"";
+            w ~= ">";
+            escapeInto(w, f.label);
+            w ~= "</a>\n";
+        }
+    }
+
+    if (auto root = "" in at)
+        walk(tree.nodes[*root]);
+    w ~= "</nav></aside>";
+    return w[];
+}
+
+/// The length of `outPath`'s base name (the part after the last `/`; the
+/// whole path when it has none).
+private size_t baseNameLength(scope const(char)[] outPath) @safe pure nothrow @nogc
+{
+    size_t n;
+    foreach_reverse (char c; outPath)
+    {
+        if (c == '/')
+            break;
+        ++n;
+    }
+    return n;
+}
+
+/**
+A directory's page in explorer mode (`DOC11`): the $(B same shell) as a file
+page — title, header, appearance toggle, breadcrumbs for the directory itself
+(`isDirectory`, so each segment opens its own index), the explorer with this
+directory expanded — around an intentionally empty pane. The explorer $(I is)
+the directory listing, so the pane is the VSCode "no file open" state rather
+than a second copy of the list.
+*/
+string directoryPage(in DirNode node, in GalleryOptions opt) @safe pure
+{
+    import std.string : lastIndexOf;
+
+    const nested = node.relPath.length != 0;
+    const slash = node.relPath.lastIndexOf('/');
+    const name = nested
+        ? node.relPath[slash < 0 ? 0 : cast(size_t) slash + 1 .. $] ~ "/"
+        : opt.heading;
+    const summary = text(
+        node.files.length, node.files.length == 1 ? " file" : " files",
+        " · ",
+        node.dirs.length, node.dirs.length == 1 ? " directory" : " directories");
+    enum emptyPane = "<div class=\"dir-empty\"></div>";
+    return pageShell(name, summary, emptyPane, "", "", opt, node.relPath,
+        relPathIsDirectory: true);
+}
+
 // ── the I/O seam ───────────────────────────────────────────────────────────
 
 /**
@@ -410,6 +548,9 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
     import sparkles.docs.site_tree : buildSiteTree, directoryIndex;
 
     mkdirRecurse(outDir);
+
+    if (opt.explorerSidebar)
+        return writeExplorerGallery(set, outDir, opt, renderOne);
 
     SourceEntry[] written;
     foreach (i, ref const e; set.entries)
@@ -461,6 +602,93 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
         write(dest, directoryIndex(node, opt));
     }
     return written.length;
+}
+
+/**
+The explorer-mode arm of $(LREF writeGallery) (`DOC11`). Two passes on
+purpose: the explorer on every page lists exactly the pages that exist, so
+every fragment renders first, and the tree of what succeeded drives both the
+per-page explorer and the directory pages — a failed render (`GAL9`) is a
+missing entry, never a dead link in every sidebar.
+*/
+private size_t writeExplorerGallery(in SourceSet set, string outDir,
+    in GalleryOptions opt, scope string delegate(in SourceEntry) renderOne) @system
+{
+    import std.file : mkdirRecurse, write;
+    import std.path : buildPath, dirName;
+    import std.stdio : stderr;
+
+    import sparkles.docs.site_tree : buildSiteTree;
+
+    static struct Rendered
+    {
+        SourceEntry entry;
+        string fragment;
+    }
+
+    Rendered[] ok;
+    foreach (ref const e; set.entries)
+    {
+        string fragment;
+        try
+            fragment = renderOne(e);
+        catch (Exception ex)
+        {
+            stderr.writeln("hue: skipping '", e.path, "': ", ex.msg);
+            continue;
+        }
+        if (fragment.length == 0)
+        {
+            stderr.writeln("hue: skipping '", e.path, "': nothing rendered");
+            continue;
+        }
+        ok ~= Rendered(e, fragment);
+    }
+
+    SourceEntry[] written;
+    foreach (ref r; ok)
+        written ~= r.entry;
+    auto tree = buildSiteTree(written);
+
+    foreach (i, ref r; ok)
+    {
+        const e = r.entry;
+        const prev = i > 0 ? pageHref(e.outPath, ok[i - 1].entry.outPath) : "";
+        const next = i + 1 < ok.length
+            ? pageHref(e.outPath, ok[i + 1].entry.outPath) : "";
+
+        GalleryOptions pageOpt = opt;
+        pageOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(e.outPath));
+        pageOpt.sidebarHtml = explorerNav(written, e.outPath, opt.docsNavHtml);
+
+        const dest = buildPath(outDir, e.outPath);
+        const destDir = dest.dirName;
+        if (destDir != outDir)
+            mkdirRecurse(destDir);
+        write(dest, pageShell(e.name, e.summary, r.fragment, prev, next, pageOpt,
+            e.relPath));
+    }
+
+    // An empty set still gets a root index (`GAL9`) — the legacy list renders
+    // its explicit "no documents" note.
+    if (tree.nodes.length == 0)
+    {
+        write(buildPath(outDir, "index.html"), galleryIndex(null, opt));
+        return 0;
+    }
+    foreach (ref const node; tree.nodes)
+    {
+        const dirOut = node.relPath.length
+            ? node.relPath ~ "/index.html" : "index.html";
+        GalleryOptions dirOpt = opt;
+        dirOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(dirOut));
+        dirOpt.sidebarHtml = explorerNav(written, dirOut, opt.docsNavHtml);
+
+        const dest = buildPath(outDir, dirOut);
+        mkdirRecurse(dest.dirName);
+        write(dest, directoryPage(node, dirOpt));
+    }
+    return ok.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -804,6 +1032,110 @@ unittest
     assert(!plain.canFind("site-sidebar"), plain);
     assert(!plain.canFind("\"shell\""), plain);
     assert(!plain.canFind(".content"), plain);
+}
+
+@("page_shell.explorerNav.treeRelativeHrefsActiveAndDocsNesting")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const entries = [
+        SourceEntry(name: "x.d", relPath: "libs/a/x.d", outPath: "libs/a/x.d.html"),
+        SourceEntry(name: "y.d", relPath: "libs/b/y.d", outPath: "libs/b/y.d.html"),
+        SourceEntry(name: "e.d", relPath: "docs/ex/e.d", outPath: "docs/ex/e.d.html"),
+    ];
+
+    // Seen from libs/a/x.d.html: its own chain is open, the sibling closed,
+    // every href page-relative, and the current page highlighted.
+    const fromX = explorerNav(entries, "libs/a/x.d.html", "<a href=\"/overview\">Overview</a>");
+    assert(fromX.canFind(`<a class="sb-link active" href="x.d.html" aria-current="page">x.d</a>`), fromX);
+    assert(fromX.canFind(`href="../b/y.d.html"`), fromX);
+    assert(fromX.canFind(`href="../../docs/ex/e.d.html"`), fromX);
+    // Open along the current path only — `libs/` and `a/` open, `b/` closed —
+    // with each directory's name a link to ITS index inside the summary (the
+    // page sits in `a/`, so `a/`'s index is right beside it).
+    assert(fromX.canFind(`<details class="sb-group" open><summary><a class="sb-link sb-dir" href="../index.html">libs/</a>`), fromX);
+    assert(fromX.canFind(`<details class="sb-group" open><summary><a class="sb-link sb-dir" href="index.html">a/</a>`), fromX);
+    assert(fromX.canFind(`<details class="sb-group"><summary><a class="sb-link sb-dir" href="../b/index.html">b/</a>`), fromX);
+    // The docs-site nav nests under docs/.
+    assert(fromX.canFind(`<details class="sb-group sb-docs"><summary>site pages</summary>`), fromX);
+    assert(fromX.canFind(`<a href="/overview">Overview</a>`), fromX);
+
+    // A directory page is the active node of its own explorer.
+    const fromDir = explorerNav(entries, "libs/a/index.html");
+    assert(fromDir.canFind(`<a class="sb-link sb-dir active" href="index.html" aria-current="page">a/</a>`), fromDir);
+}
+
+@("page_shell.directoryPage.sameShellEmptyPane")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const node = DirNode(relPath: "libs/a",
+        files: [IndexRowFor("x.d.html", "x.d")]);
+    auto opt = GalleryOptions(darkChrome: GalleryOptions.init.chrome);
+    opt.sidebarHtml = "<aside class=\"site-sidebar site-explorer\"><nav></nav></aside>";
+    const page = directoryPage(node, opt);
+
+    // The full shell: title, appearance toggle, breadcrumbs for the directory
+    // itself (its own segment unlinked, its parent one level up), the aside —
+    // and an empty pane instead of a second copy of the listing.
+    assert(page.canFind("<title>hue · a/</title>"), page);
+    assert(page.canFind("hue-appearance"), page);
+    assert(page.canFind("breadcrumbs-container"), page);
+    assert(page.canFind(`href="../index.html"`), page);
+    assert(page.canFind("site-explorer"), page);
+    assert(page.canFind(`<div class="dir-empty"></div>`), page);
+    assert(page.canFind("1 file · 0 directories"), page);
+    assert(!page.canFind("<ul>"), "the legacy index list must not render here");
+}
+
+/// Builds the `IndexRow` a `DirNode` carries for a page, by field name — the
+/// struct lives in `site_tree`.
+private auto IndexRowFor(string href, string label) @safe pure
+{
+    import sparkles.docs.site_tree : IndexRow;
+
+    return IndexRow(href: href, label: label);
+}
+
+@("page_shell.writeGallery.explorerModeUnifiesPagesAndIndexes")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, readText, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const outDir = buildPath(tempDir(), "hue-explorer-" ~ randomUUID.toString);
+    scope (exit)
+        rmdirRecurse(outDir);
+
+    const set = SourceSet(entries: [
+        SourceEntry(name: "x.d", summary: "d · 1 line",
+            relPath: "a/x.d", outPath: "a/x.d.html"),
+        SourceEntry(name: "y.d", summary: "d · 1 line",
+            relPath: "b/y.d", outPath: "b/y.d.html"),
+    ]);
+    auto opt = GalleryOptions(explorerSidebar: true);
+    const n = writeGallery(set, outDir, opt,
+        (in SourceEntry e) => "<pre class=\"syn-root\"><code>x</code></pre>");
+    assert(n == 2);
+
+    // Every page carries its own explorer with itself highlighted…
+    const px = readText(buildPath(outDir, "a", "x.d.html"));
+    assert(px.canFind("site-explorer"), px);
+    assert(px.canFind(`aria-current="page">x.d</a>`), px);
+    // …and the directory pages are shell pages, not the legacy list.
+    const ia = readText(buildPath(outDir, "a", "index.html"));
+    assert(ia.canFind("site-explorer"), ia);
+    assert(ia.canFind(`<div class="dir-empty"></div>`), ia);
+    assert(!ia.canFind("<ul>"), ia);
+    const root = readText(buildPath(outDir, "index.html"));
+    assert(root.canFind("site-explorer"), root);
 }
 
 @("gallery.escaping.namesAndSummaries")

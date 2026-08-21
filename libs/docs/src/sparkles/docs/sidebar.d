@@ -206,8 +206,18 @@ string sidebarNav(in SidebarItem[] items, scope const(char)[] siteBase = null) @
 {
     auto w = appender!string;
     w ~= "<aside class=\"site-sidebar\"><nav aria-label=\"Docs navigation\">\n";
-    writeSidebarItems(w, items, siteBase);
+    w ~= sidebarItemsHtml(items, siteBase);
     w ~= "</nav></aside>";
+    return w[];
+}
+
+/// The tree's items alone — no `<aside>`/`<nav>` wrapper — for embedding
+/// inside another nav: the explorer sidebar nests this under its `docs/`
+/// node (`page_shell.explorerNav`, `DOC11`).
+string sidebarItemsHtml(in SidebarItem[] items, scope const(char)[] siteBase = null) @safe pure
+{
+    auto w = appender!string;
+    writeSidebarItems(w, items, siteBase);
     return w[];
 }
 
@@ -283,6 +293,12 @@ string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init
     w ~= text("  .site-sidebar .sb-items { padding-left: 0.9em; margin-left: 0.15em;\n");
     w ~= text("                            border-left: 1px solid ", c.border, "; }\n");
     w ~= text("  .site-sidebar .sb-text { color: ", c.muted, "; }\n");
+    // Explorer extras (`DOC11`): a directory's name is a link inside its
+    // `<summary>` (the marker toggles, the name navigates), and the current
+    // page is highlighted.
+    w ~= "  .site-sidebar summary a.sb-link { display: inline; padding: 0; }\n";
+    w ~= text("  .site-sidebar a.sb-link.active { color: ", c.link,
+        "; font-weight: 600; }\n");
     if (dark.background.length)
     {
         w ~= text("  html.dark .site-sidebar { background: ", dark.surface,
@@ -292,6 +308,7 @@ string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init
         w ~= text("  html.dark .site-sidebar .sb-items { border-left-color: ",
             dark.border, "; }\n");
         w ~= text("  html.dark .site-sidebar .sb-text { color: ", dark.muted, "; }\n");
+        w ~= text("  html.dark .site-sidebar a.sb-link.active { color: ", dark.link, "; }\n");
     }
     return w[];
 }

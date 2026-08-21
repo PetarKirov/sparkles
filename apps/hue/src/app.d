@@ -1196,7 +1196,7 @@ private int executeSite(in HueCli root, in Site cmd)
     import sparkles.docs.options : ChromePalette, GalleryOptions, themeChrome;
     import sparkles.docs.page_shell : writeGallery;
     import sparkles.docs.sidebar : docsConfigPath, loadDocsConfig, loadSidebarFile,
-        sidebarNav;
+        sidebarItemsHtml;
     import sparkles.docs.site : loadSiteConfig, manifestJson, SiteConfig,
         siteConfigPath;
     import sparkles.docs.site_tree : buildSiteTree;
@@ -1313,15 +1313,16 @@ private int executeSite(in HueCli root, in Site cmd)
     cast(void) writeStylesheetAsset(outDir,
         themeStylesheet(theme, dark, StylesheetContent(twoslash: twoslash)));
 
-    // The docs-site sidebar on every page (`DOC8`): the repository's own by
-    // default, when it has one.
+    // The sidebar is the site's own file **explorer** (`DOC11`), with the
+    // docs-site nav — the repository's sidebar.json, by default — nested
+    // under its `docs/` node (`DOC8`).
     string sidebarPath = cmd.sidebar;
     if (sidebarPath == "auto")
     {
         const def = buildPath(repoRoot, "docs", ".vitepress", "sidebar.json");
         sidebarPath = def.exists ? def : null;
     }
-    string sidebarHtml;
+    string docsNavHtml;
     if (sidebarPath.length)
     {
         auto loaded = loadSidebarFile(sidebarPath);
@@ -1330,7 +1331,7 @@ private int executeSite(in HueCli root, in Site cmd)
             stderr.writeln("hue: cannot load sidebar ", sidebarPath, ": ", loaded.error);
             return 1;
         }
-        sidebarHtml = sidebarNav(loaded.value, cmd.siteBase);
+        docsNavHtml = sidebarItemsHtml(loaded.value, cmd.siteBase);
     }
 
     const gopt = GalleryOptions(
@@ -1338,7 +1339,7 @@ private int executeSite(in HueCli root, in Site cmd)
         heading: "source listings",
         blurb: "Source listings rendered by <code>hue site</code>.",
         chrome: chrome, darkChrome: darkChrome, stylesheetHref: stylesheetAssetPath,
-        repoUrl: cmd.repoUrl, sidebarHtml: sidebarHtml);
+        repoUrl: cmd.repoUrl, explorerSidebar: true, docsNavHtml: docsNavHtml);
 
     const n = writeGallery(set, outDir, gopt, &renderOne);
 
