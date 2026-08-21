@@ -172,7 +172,7 @@ struct TreeViewState(Key)
     bool searching() const pure nothrow @nogc => filter.active;
 
     /// The live-filter query (for a host that paints its own input line).
-    const(char)[] filterQuery() const return pure nothrow @nogc
+    const(char)[] filterQuery() const return scope pure nothrow @nogc
         => filter.text;
 
     /// Moves the cursor by `dy` visible rows (`±1` step, `±bodyRows` page),

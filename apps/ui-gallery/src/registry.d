@@ -42,6 +42,9 @@ import pages.tree_page : treeOnActivate = handleActivate,
 import pages.layout_page : layoutOnCommand = handleCommand,
     layoutView = view;
 import pages.primitives : primitivesView = view;
+import pages.property_page : propertyOnActivate = handleActivate,
+    propertyOnCommand = handleCommand, propertyStep = step,
+    propertyView_ = view;
 import pages.slots_page : slotsView = view;
 import pages.themes_page : themesOnActivate = handleActivate,
     themesView = view;
@@ -133,6 +136,8 @@ static immutable Page[] pages = [
         &componentsOnActivate, &componentsOnPointer),
     Page("Tree", "data, interaction, view", &treeView_,
         GalleryScope.pageTree, &treeOnCommand, &treeOnActivate),
+    Page("Property tree", "one value, reflected", &propertyView_,
+        GalleryScope.pageProperty, &propertyOnCommand, &propertyOnActivate),
     Page("Table", "one grid, two views", &tableView,
         GalleryScope.pageTable, &tableOnCommand),
     Page("Scrolling", "one thumb formula", &scrollingView,
@@ -149,6 +154,15 @@ static immutable Page[] pages = [
         &terminalOnPointer),
 ];
 
+/// The Property page's index — the shell needs it by name: its live filter
+/// consumes typed text, and the seam is checked before command resolution.
+enum size_t propertyPageIndex = () {
+    foreach (i, ref p; pages)
+        if (p.title == "Property tree")
+            return i;
+    assert(0, "the Property page left the catalog");
+}();
+
 /// The Terminal page's index — the shell needs it by name: keyboard capture
 /// applies only while that page shows, and no other page is special.
 enum size_t terminalPageIndex = () {
@@ -162,6 +176,7 @@ enum size_t terminalPageIndex = () {
 /// another frame. The shell owns the clock, so a page cannot read one.
 bool stepPage(ref GalleryState s, int dtMs)
 {
+    propertyStep(s, dtMs);
     machinesStep(s, dtMs);
     scrollingStep(s, dtMs);
     componentsStep(s, dtMs);

@@ -39,6 +39,7 @@ module sparkles.ui.property_tree;
 
 import std.conv : text, to;
 import std.traits : EnumMembers, FieldNameTuple, getUDAs, hasUDA,
+    moduleName,
     isAggregateType, isArray, isBoolean, isFloatingPoint, isIntegral,
     isSomeString;
 
@@ -51,6 +52,7 @@ import sparkles.fuzzy.rank : RankedResult, TopK;
 
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData;
+import sparkles.ui.property_tree_showif : showIfHolds;
 import sparkles.ui.state : DisclosureState;
 
 // Templates infer their attributes (a caller-supplied sink or subject decides
@@ -551,10 +553,11 @@ struct PropertyTree(T)
     private TopK!searchHeapCapacity* _heap;
 
     /// Whether the last rebuild hit `maxDepth`/`maxNodes` (`PRT4`).
-    bool wasCapped() const @safe pure nothrow @nogc => _capped;
+    bool wasCapped() const scope @safe pure nothrow @nogc => _capped;
 
     /// Whether a search projection (a non-empty query) is showing.
-    bool searching() const @safe pure nothrow @nogc => _lastQuery.length > 0;
+    bool searching() const scope @safe pure nothrow @nogc
+        => _lastQuery.length > 0;
 
     /**
     Rebuilds rows from the subject and the host's state (`PRT8`, `PRT25`).
@@ -1407,11 +1410,12 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                 bool visible = true;
                 static if (hasUDA!(M, ShowIf))
                 {
-                    // The condition is a compile-time-checked expression over
-                    // the enclosing value — a typed predicate, no cast, no
-                    // callback (`PRT10`).
-                    enum cond = getUDAs!(M, ShowIf)[0].cond;
-                    visible = mixin("v." ~ cond);
+                    // A typed predicate over the enclosing value — no cast,
+                    // no callback (`PRT10`) — evaluated in the ShowIf
+                    // sandbox module so its names resolve in the SUBJECT's
+                    // scope, exactly as they read at the field.
+                    visible = showIfHolds!(moduleName!U,
+                        getUDAs!(M, ShowIf)[0].cond)(v);
                 }
                 if (visible && !halted)
                 {
@@ -1544,9 +1548,9 @@ private string renderLeaf(U)(ref U v) @safe
 // Tests — the read core.
 // ─────────────────────────────────────────────────────────────────────────────
 
-version (unittest)
+version (UiPropertyFixtures)
 {
-    private enum FillKind : ubyte { solid, gradient, texture }
+    enum FillKind : ubyte { solid, gradient, texture }
 
     @opaqueValue private struct Handle
     {
@@ -2010,7 +2014,7 @@ struct EditValue
             && doubleBits(f) == doubleBits(o.f) && s == o.s;
 
     /// The presented text of this value.
-    string toText() const @safe pure
+    string toText() const scope @safe pure
     {
         final switch (kind)
         {
@@ -2019,7 +2023,7 @@ struct EditValue
             case Kind.integral: return i.to!string;
             case Kind.floating: return f.to!string;
             case Kind.text: return text('"', s, '"');
-            case Kind.enumeration: return s;
+            case Kind.enumeration: return s.idup; // `this` may be scope
         }
     }
 
@@ -2867,7 +2871,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
 // Tests — the search projection.
 // ─────────────────────────────────────────────────────────────────────────────
 
-version (unittest)
+version (UiPropertyFixtures)
 {
     private string[] rowPaths(ref PropertyTree!Layer pt,
         ref TreeViewState!string tv) @safe

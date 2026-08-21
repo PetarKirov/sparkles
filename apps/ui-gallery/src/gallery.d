@@ -37,7 +37,7 @@ import keymap : acceptsTyped, bindingsAt, Binding, Chord, commandFor,
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
-import registry : pages, stepPage, terminalPageIndex;
+import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
 import state;
 import term_store : TerminalStore;
@@ -438,6 +438,18 @@ struct Gallery
         if (!s.hasFrameClock && s.toast.visible)
             s.toast = s.toast.dismissed(toastConfigFor(false));
 
+        // The Property page's live filter consumes typed text (its `/`
+        // search is a line editor, not a chord): the editor's keys go to the
+        // machine first, and anything it declines resolves normally below —
+        // so Down still moves the cursor while a query is being typed.
+        if (s.page == propertyPageIndex && s.prop.built && s.prop.tv.searching)
+        {
+            import pages.property_page : propertyFilterKey = handleFilterKey;
+
+            if (propertyFilterKey(s, k))
+                return;
+        }
+
         // The ONE table: the help overlay is a modal scope, the showing
         // page's scope gets first refusal in the content region (which is
         // what lets a tree own the arrow keys without the page list losing
@@ -499,6 +511,16 @@ struct Gallery
             case GalleryCommand.treeExpand: case GalleryCommand.treeCollapse:
             case GalleryCommand.treeActivate: case GalleryCommand.treeOpenAll:
             case GalleryCommand.treeCloseAll:
+            case GalleryCommand.propDown: case GalleryCommand.propUp:
+            case GalleryCommand.propExpand: case GalleryCommand.propCollapse:
+            case GalleryCommand.propActivate: case GalleryCommand.propInc:
+            case GalleryCommand.propDec: case GalleryCommand.propPreview:
+            case GalleryCommand.propUndo: case GalleryCommand.propRedo:
+            case GalleryCommand.propFilter: case GalleryCommand.propMatchNext:
+            case GalleryCommand.propMatchPrev: case GalleryCommand.propReveal:
+            case GalleryCommand.propPolicy: case GalleryCommand.propExternal:
+            case GalleryCommand.propOpenAll: case GalleryCommand.propCloseAll:
+            case GalleryCommand.propReset:
             case GalleryCommand.tablePreset: case GalleryCommand.tableRowRules:
             case GalleryCommand.tableStubCol:
             case GalleryCommand.tableScrollLeft:
