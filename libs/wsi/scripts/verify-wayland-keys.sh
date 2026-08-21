@@ -62,7 +62,8 @@ for _ in \$(seq 1 150); do
 done
 test -S "\$rt/wsi-keys"
 
-WSI_POINTER_GO="\$rt/pointer-go" WSI_CONFORMANCE_KEYS=1 \\
+WSI_POINTER_GO="\$rt/pointer-go" WSI_HOLD_GO="\$rt/hold-go" \\
+  WSI_HOLD_RELEASE_GO="\$rt/hold-release-go" WSI_CONFORMANCE_KEYS=1 \\
   WSI_CONFORMANCE_KIOSK=1 WSI_EXPECT_SCALE=2 WAYLAND_DISPLAY=wsi-keys \\
   "$work/wsi-wayland-keys-smoke" \
   >"$work/smoke.log" 2>&1 &
@@ -73,7 +74,9 @@ for _ in \$(seq 1 60); do
   if ! kill -0 "\$smoke_pid" 2>/dev/null; then
     break
   fi
-  WSI_POINTER_GO="\$rt/pointer-go" "$work/x11-key-injector" || true
+  WSI_POINTER_GO="\$rt/pointer-go" WSI_HOLD_GO="\$rt/hold-go" \\
+    WSI_HOLD_RELEASE_GO="\$rt/hold-release-go" \\
+    "$work/x11-key-injector" || true
   sleep 0.3
 done
 wait "\$smoke_pid"
@@ -85,5 +88,5 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
   bash "$work/lane.sh" || lane_status=$?
 cat "$work/smoke.log" 2>/dev/null || true
 test "$lane_status" -eq 0
-grep -q '^ok: Wayland WSI conformance (12 checked, 3 skipped)' "$work/smoke.log"
+grep -q '^ok: Wayland WSI conformance (13 checked, 3 skipped)' "$work/smoke.log"
 echo ">> sparkles:wsi Wayland keyboard verified through Weston."

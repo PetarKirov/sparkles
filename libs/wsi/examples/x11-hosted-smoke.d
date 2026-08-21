@@ -72,6 +72,18 @@ private struct X11Hooks
         assert(sendClose(connection, window) == 0);
     }
 
+    enum uint holdKeyCode = chordKeyCode;
+
+    void holdKey()
+    {
+        assert(sendKey(connection, holdKeyCode, true) == 0);
+    }
+
+    void releaseHold()
+    {
+        assert(sendKey(connection, holdKeyCode, false) == 0);
+    }
+
     void injectChord()
     {
         assert(focusWindow(connection, window) == 0);
