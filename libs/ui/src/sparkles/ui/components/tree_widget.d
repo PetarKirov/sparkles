@@ -74,6 +74,22 @@ struct TreeData(T)
         => nodes[idx].firstChild != uint.max;
 }
 
+/**
+The one shared expandability projection (`PRT12`): a node value exposing an
+`expandable` capability answers for itself — a closed lazy composite whose
+children were never materialised is still expandable — and structure decides
+otherwise. `activate`, `treeView`, `writeTreeText` and `collapseOrUp` all ask
+this question here, so no surface can disagree about what a closed lazy node
+is.
+*/
+bool nodeExpandable(T)(in TreeData!T data, uint idx)
+{
+    static if (__traits(compiles, { bool e = data.nodes[idx].value.expandable; }))
+        return data.nodes[idx].value.expandable;
+    else
+        return data.hasChildren(idx);
+}
+
 /// The four-state guide model (`VMD4`): what to draw at one depth level of a row.
 enum Guide : ubyte
 {
@@ -180,7 +196,7 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             }
         }
         const node = row.node;
-        spans ~= TextSpan(data.hasChildren(node)
+        spans ~= TextSpan(nodeExpandable(data, node)
             ? (isOpen(node) ? glyphs.open : glyphs.closed) : glyphs.leaf,
             Slot.gutter);
 
@@ -401,4 +417,40 @@ version (unittest)
     const spans = wt.nodes[wt.nodes[tree].children[0]].spans;
     assert(spans[$ - 2].text == " " && spans[$ - 2].slot == Slot.info);
     assert(spans[$ - 1].text == "README.md" && spans[$ - 1].slot == Slot.info);
+}
+
+@("ui.tree_widget.nodeExpandableIsTheSharedProjection")
+@safe unittest
+{
+    // A lazy adapter's node: expandable says "I have children you cannot see
+    // yet". The projection prefers it; structure answers for plain values.
+    static struct Lazy
+    {
+        string label;
+        bool expandable;
+    }
+
+    TreeData!Lazy t;
+    t.add(Lazy("closed composite", true)); // no materialised children
+    t.add(Lazy("leaf", false));
+
+    assert(!t.hasChildren(0), "structurally childless…");
+    assert(nodeExpandable(t, 0), "…but the capability wins");
+    assert(!nodeExpandable(t, 1));
+
+    auto plain = sample();
+    assert(nodeExpandable(plain, 0) == plain.hasChildren(0),
+        "no capability: structural fallback");
+
+    // The view paints the CLOSED marker for a childless-but-expandable node
+    // rather than the leaf glyph — the defect PRT12 names.
+    auto rows = flatten(t, (uint) => false);
+    auto b = Builder();
+    const tree = treeView(b, t, rows, (uint) => false);
+    auto wt = b.finish(tree);
+    const spans = wt.nodes[wt.nodes[tree].children[0]].spans;
+    assert(spans[$ - 2].text == "▸ ",
+        "a closed lazy composite must not paint as a leaf");
+    const leafSpans = wt.nodes[wt.nodes[tree].children[1]].spans;
+    assert(leafSpans[$ - 2].text == "");
 }
