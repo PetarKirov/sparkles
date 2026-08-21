@@ -35,7 +35,7 @@ import std.array : appender, array, join;
 import std.conv : to;
 import std.string : lineSplitter, strip, stripRight;
 
-import docs_config : docsConfigPath, loadDocsConfig;
+import sparkles.docs.sidebar : docsConfigPath, loadDocsConfig;
 
 import sparkles.syntax.ts.registry : canonicalLanguage, GrammarRegistry, isPlainTextLabel;
 
@@ -798,7 +798,7 @@ unittest
 `true` when the docs site excludes `path` from the built site.
 
 `patterns` comes from `docs/.vitepress/docs-config.json` — the same list
-`config.mts` passes to VitePress as `srcExclude` (see `docs_config`). It used to
+`config.mts` passes to VitePress as `srcExclude` (see `sparkles.docs.sidebar`). It used to
 be a hand-maintained mirror of nine expanded globs in this file, which could
 drift from the site silently.
 +/

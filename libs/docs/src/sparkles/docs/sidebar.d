@@ -8,9 +8,9 @@ of truth for both the site and the repo tooling:
 $(LIST
     $(ITEM `docs/.vitepress/config.mts` imports them and passes them straight
         to `themeConfig.sidebar` / `srcExclude`)
-    $(ITEM `ci --check-docs-sidebar` (see `docs_sidebar`) checks the sidebar
+    $(ITEM `ci --check-docs-sidebar` (`apps/ci/src/docs_sidebar.d`) checks the sidebar
         against the published pages in both directions)
-    $(ITEM `ci --audit-fences` (see `fence_audit`) uses the same `srcExclude`
+    $(ITEM `ci --audit-fences` (`apps/ci/src/fence_audit.d`) uses the same `srcExclude`
         to decide which files the site builds)
 )
 
@@ -20,7 +20,7 @@ comment, a template literal, or a renamed field. Reading JSON removes the
 guessing: the data is data, and a malformed file is a hard error rather than a
 silently empty link set.
 +/
-module docs_config;
+module sparkles.docs.sidebar;
 
 import expected : Expected;
 import sparkles.wired.json : JsonError, readJSONFile;

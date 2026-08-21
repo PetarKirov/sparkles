@@ -15,5 +15,6 @@ public import sparkles.docs.breadcrumbs;
 public import sparkles.docs.fragment;
 public import sparkles.docs.options;
 public import sparkles.docs.page_shell;
+public import sparkles.docs.sidebar;
 public import sparkles.docs.site_tree;
 public import sparkles.docs.source_set;

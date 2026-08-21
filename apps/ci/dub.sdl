@@ -21,6 +21,11 @@ dependency "sparkles:wired" path="../.."
 // enumerates the grammar bundle through `GrammarRegistry`, rather than
 // duplicating the alias table here.
 dependency "sparkles:syntax" path="../.."
+// The docs-site sidebar/srcExclude data schema (sidebar.json /
+// docs-config.json) moved into the doc-site library; `--check-docs-sidebar`
+// and `--audit-fences` read it from there. Pure D, but note it is a
+// sourceLibrary whose closure includes sparkles:twoslash and sparkles:ui.
+dependency "sparkles:docs" path="../.."
 
 // Optimised, assertions live, `debug {}` blocks out — the build every nix
 // artifact uses. Neither `debug` (which compiles those blocks in) nor
