@@ -35,7 +35,9 @@ import core.time : Duration;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, Mods;
-import sparkles.ui.canvas : DrawOp;
+import sparkles.ui.arena : FrameArena;
+import sparkles.ui.canvas : DrawOp, fillRectOp;
+import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_options : GuiOptions;
@@ -58,9 +60,21 @@ them, so the inline buffer bought it nothing to begin with.
 */
 enum size_t recordedOpCapacity = 16;
 
-/// The per-frame display-list buffer a host owns and reuses (`HST4`), at a
-/// given inline capacity.
-alias FrameOpsOf(size_t capacity) = SmallBuffer!(DrawOp, capacity);
+/**
+The per-frame display-list buffer a host owns and reuses (`HST4`), at a given
+inline capacity — the operations $(I and) the arena their text and box chrome
+live in, which is why it is one type and not two
+($(MREF sparkles,ui,cmd_buffer)).
+
+$(B The arena is a parameter) because one host needs a different answer. A live
+host resets its buffer every frame, and its operations are painted before that
+happens; the recorder $(I keeps) each frame's operations for a test to read
+afterwards, so its text must outlive the frame that produced it. Giving it
+$(REF GcArena, sparkles,ui,arena) is what makes a recorded frame a value the
+collector owns rather than a window onto bytes the next frame overwrote.
+*/
+alias FrameOpsOf(size_t capacity, Arena = FrameArena!()) =
+    CmdBufferT!(Arena, capacity);
 
 /// ditto, at the capacity a host painting a real surface wants.
 alias FrameOps = FrameOpsOf!frameOpCapacity;
@@ -164,7 +178,8 @@ import the spelling of a member it never names — with a `static import` of
 this module travelling alongside, since qualification on its own has not
 reached an unimported module since DIP22.
 */
-mixin template HostState(size_t opCapacity = frameOpCapacity)
+mixin template HostState(size_t opCapacity = frameOpCapacity,
+    Arena = FrameArena!())
 {
     // A mixin template resolves names at its instantiation site, so the
     // imports must travel with it rather than rely on this module's.
@@ -180,7 +195,7 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
     private static import sparkles.ui_app.host;
 
     /// The per-frame buffer's type at this host's inline capacity.
-    private alias HostOps = sparkles.ui_app.host.FrameOpsOf!opCapacity;
+    private alias HostOps = sparkles.ui_app.host.FrameOpsOf!(opCapacity, Arena);
 
     private bool _quit;
     private bool _frameRequested;
@@ -266,7 +281,9 @@ mixin template HostState(size_t opCapacity = frameOpCapacity)
         _frameRequested = false;
         _skipFrame = false;
         _wakeIn = Duration.max;
-        _ops.clear();
+        // Drops last frame's operations and the bytes they pointed at, keeping
+        // both capacities — a host never re-sizes its buffer.
+        _ops.reset();
     }
 }
 
@@ -459,7 +476,7 @@ unittest
 
     Fake h;
     foreach (i; 0 .. 10)
-        h.ops() ~= DrawOp(kind: OpKind.fillRect, rect: Rect(i, 0, 1, 1));
+        h.ops().fillRect(Rect(i, 0, 1, 1));
     assert(h.ops().length == 10);
 
     // The next frame starts empty but keeps the buffer — an application never

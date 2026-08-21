@@ -21,7 +21,8 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge;
+import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
+    visualOf;
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.state : scrollbarThumb;
@@ -56,17 +57,17 @@ Resolves a semantic scrollbar operation into pixel track/thumb geometry. The
 op keeps content units and an expansion percentage; this backend alone chooses
 pixel rail thickness and the 24px minimum grabbable thumb.
 */
-ScrollbarRail scrollbarRail(in DrawOp op, int cellW, int cellH,
+ScrollbarRail scrollbarRail(in Scrollbar op, int cellW, int cellH,
     int originX = 0, int originY = 0,
     int minExtent = scrollbarMinExtentPx)
     @safe pure nothrow @nogc
 {
     ScrollbarRail r;
-    if (op.barContent <= op.barViewport || op.barContent <= 0)
+    if (op.content <= op.viewport || op.content <= 0)
         return r;
 
     bool vertical;
-    final switch (op.ruleEdge) with (RuleEdge)
+    final switch (op.edge) with (RuleEdge)
     {
         case left: case right: case centerX:
             vertical = true;
@@ -85,7 +86,7 @@ ScrollbarRail scrollbarRail(in DrawOp op, int cellW, int cellH,
     const thickness = idle
         + (expanded - idle) * cast(int) op.expandPercent / 100;
 
-    final switch (op.ruleEdge) with (RuleEdge)
+    final switch (op.edge) with (RuleEdge)
     {
         case left:
             r.track = Rect(x, y, thickness, h);
@@ -110,8 +111,8 @@ ScrollbarRail scrollbarRail(in DrawOp op, int cellW, int cellH,
     const track = vertical ? h : w;
     if (track <= 0 || thickness <= 0)
         return ScrollbarRail.init;
-    const thumb = scrollbarThumb(op.barContent, op.barViewport,
-        op.barOffset, track, minExtent);
+    const thumb = scrollbarThumb(op.content, op.viewport,
+        op.offset, track, minExtent);
     r.thumb = vertical
         ? Rect(r.track.x, y + thumb.start, thickness, thumb.extent)
         : Rect(x + thumb.start, r.track.y, thumb.extent, thickness);
@@ -329,18 +330,17 @@ struct RaylibCanvas
     }
 
     /// Draws the semantic scrollbar op with the backend's continuous px rail.
-    void scrollbar(in DrawOp op) @system
+    void scrollbar(in Scrollbar op) @system
     {
         const r = scrollbarRail(op, cellW, cellH,
             cast(int) originX, cast(int) originY);
         if (!r.live)
             return;
-        if (op.barTrackLit)
+        if (op.trackLit)
             DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
-                Color(op.barTrackColor.r, op.barTrackColor.g,
-                    op.barTrackColor.b, 255));
+                Color(op.trackColor.r, op.trackColor.g, op.trackColor.b, 255));
         DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
-            rlFg(op.visual));
+            rlFg(visualOf(op)));
     }
 
     void line(in Point from, in Point to, in Visual v, LineStyle style) @system
@@ -494,12 +494,12 @@ unittest
     assert(railExpandedPx(5) == 7);  // not cast(int)(5 * 1.5f) by accident
     assert(railExpandedPx(21) == 31);
 
-    DrawOp op = {
+    Scrollbar op = {
         rect: Rect(2, 1, 10, 20),
-        ruleEdge: RuleEdge.right,
-        barContent: 400,
-        barViewport: 100,
+        content: 400,
+        viewport: 100,
         expandPercent: 0,
+        edge: RuleEdge.right,
     };
     const idle = scrollbarRail(op, 5, 7);
     assert(idle.live && idle.track == Rect(58, 7, 2, 140));
@@ -513,16 +513,16 @@ unittest
     assert(middle.track.width >= idle.track.width);
     assert(middle.track.width <= expanded.track.width);
 
-    op.barOffset = 300;
+    op.offset = 300;
     const bottom = scrollbarRail(op, 5, 7);
     assert(bottom.thumb.y + bottom.thumb.height
         == bottom.track.y + bottom.track.height);
 
-    op.ruleEdge = RuleEdge.bottom;
+    op.edge = RuleEdge.bottom;
     op.rect = Rect(1, 2, 20, 3);
-    op.barContent = 200;
-    op.barViewport = 100;
-    op.barOffset = 100;
+    op.content = 200;
+    op.viewport = 100;
+    op.offset = 100;
     op.expandPercent = 100;
     const horizontal = scrollbarRail(op, 5, 7);
     assert(horizontal.track.height == railExpandedPx(5));

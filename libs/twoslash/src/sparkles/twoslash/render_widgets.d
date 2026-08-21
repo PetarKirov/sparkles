@@ -1630,7 +1630,7 @@ version (unittest)
     assert(c.ops[0].visual.border.color == RgbColor(0x88, 0x88, 0x88));
 
     bool sawSig, sawDocs, sawTag;
-    foreach (ref op; c.ops)
+    foreach (i, ref op; c.ops)
     {
         // Signature: the code face at 1em.
         if (op.text == "function wrap<T>(value: T): Box<T>")
@@ -1639,10 +1639,19 @@ version (unittest)
         if (op.text == "Wraps a value in a Box." && op.visual.fg == RgbColor(0x88, 0x88, 0x88))
             sawDocs = op.visual.fontRole == FontRole.docs && op.visual.fontScale == 80;
         // The `@param` chip: a rounded grey pill in the code face at 0.92em.
+        // The pill is the fill emitted just before the run — that is the op a
+        // backend rounds and fills, while the run carries the face. (They used
+        // to be asserted on one op because every op carried a whole `Visual`;
+        // a run's radius was never painted from.)
         if (op.text == "@param" && op.visual.fg == RgbColor(0x88, 0x88, 0x88)
-            && op.visual.hasBg && op.visual.borderRadius == 4
+            && op.visual.hasBg
             && op.visual.fontRole == FontRole.code && op.visual.fontScale == 92)
-            sawTag = true;
+        {
+            const pill = c.ops[i - 1];
+            sawTag = pill.kind == OpKind.fillRect && pill.visual.hasBg
+                && pill.visual.borderRadius == 4
+                && pill.visual.bg == op.visual.bg;
+        }
     }
     assert(sawSig && sawDocs && sawTag);
 }

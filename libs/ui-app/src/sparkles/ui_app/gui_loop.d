@@ -307,12 +307,12 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
 @system
 unittest
 {
-    static assert(__traits(compiles, {
-        RunConfig cfg;
-        GuiRequest req;
-        runGui!((ref GuiHost h) { h.ops() ~= DrawOp.init; },
-                (ref GuiHost h, in Event e) { h.quit(); })(cfg, req);
-    }), "the GPU arm must compile against the host contract");
+    // Not inside `__traits(compiles)`: a failure there reports only that the
+    // arm broke, and the reason — which is the useful half — is swallowed.
+    RunConfig cfg;
+    GuiRequest req;
+    cast(void) &runGui!((ref GuiHost h) { h.ops() ~= DrawOp.init; },
+            (ref GuiHost h, in Event e) { h.quit(); });
 
     static assert(__traits(compiles, (ref GuiHost h) {
         h.pointerShape(PointerShape.grab);

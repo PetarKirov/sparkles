@@ -24,8 +24,9 @@ import sparkles.tui.cell : CellStyle, Grid;
 
 import sparkles.base.text.width : codepointWidth;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind,
-    ruleEndpoints, RuleEdge, scrollbarCell, scrollbarCellCount, textRunOp;
+import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, OpKind,
+    ruleEndpoints, RuleEdge, Scrollbar, scrollbarCell, scrollbarCellCount,
+    textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
 // canvases each choosing their own box-drawing runs is how they came to
@@ -577,9 +578,9 @@ static assert(isCanvas!GridCanvas);
 
     const surface = RgbColor(0xf8, 0xf8, 0xf8);
     DrawOp[] ops = [
-        DrawOp(kind: OpKind.fillRect, rect: Rect(2, 0, 6, 1),
+        fillRectOp(Rect(2, 0, 6, 1),
             visual: Visual(bg: surface, hasBg: true)),
-        DrawOp(kind: OpKind.fillRect, rect: Rect(2, 1, 6, 1),
+        fillRectOp(Rect(2, 1, 6, 1),
             visual: Visual(bg: surface, hasBg: true, bgAlpha: 0x40)),
     ];
     paintGrid(g, RgbColor(0x1e, 0x1e, 0x2e), ops);
@@ -798,20 +799,19 @@ static assert(isCanvas!GridCanvas);
             foreach (trackLit; [false, true])
             {
                 const vertical = edge == RuleEdge.right;
-                DrawOp op = {
-                    kind: OpKind.scrollbar,
+                const op = DrawOp(Scrollbar(
                     rect: vertical ? Rect(1, 1, 2, 8) : Rect(1, 1, 8, 2),
-                    ruleEdge: edge,
-                    barContent: 40,
-                    barViewport: 10,
-                    barOffset: 15,
+                    content: 40,
+                    viewport: 10,
+                    offset: 15,
+                    trackColor: grey,
+                    trackLit: trackLit,
                     expandPercent: cast(ubyte) expand,
-                    barTrackLit: trackLit,
-                    barTrackColor: grey,
-                    barTrackGlyph: vertical ? '│' : '─',
-                    barThumbGlyph: vertical ? '█' : '━',
-                    visual: Visual(fg: white),
-                };
+                    edge: edge,
+                    trackGlyph: vertical ? '│' : '─',
+                    thumbGlyph: vertical ? '█' : '━',
+                    fg: white,
+                ));
 
                 Grid grid;
                 grid.resize(10, 10);

@@ -9,8 +9,9 @@ interpreters are later siblings under `interp/`.
 */
 module sparkles.ui.interp.immediate;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind, RuleEdge,
-    ruleEndpoints, scrollbarCell, scrollbarCellCount;
+import sparkles.ui.canvas : DrawOp, FillRect, Glyph, isCanvas, Line, LineStyle,
+    match, OpKind, PopClip, PushClip, Rule, RuleEdge, ruleEndpoints, Scrollbar,
+    scrollbarCell, scrollbarCellCount, TextRun, visualOf;
 import sparkles.ui.geometry : Point;
 import sparkles.ui.style : Visual;
 
@@ -29,66 +30,63 @@ void paint(Canvas)(auto ref Canvas canvas, in DrawOp[] ops)
 if (isCanvas!Canvas)
 {
     foreach (ref op; ops)
-    {
-        final switch (op.kind) with (OpKind)
-        {
-            case fillRect:
-                canvas.fillRect(op.rect, op.visual);
-                break;
-            case textRun:
-                // op.text is a slice of the op's owned buffer; valid for this
-                // call. Backends take `scope const(char)[]`.
-                canvas.textRun(op.rect.origin, op.text, op.visual);
-                break;
-            case glyph:
-                canvas.glyph(op.rect.origin, op.glyph, op.visual);
-                break;
-            case line:
-                canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
-                break;
-            case rule:
+        op.payload.match!(
+            (in FillRect f) { canvas.fillRect(f.rect, visualOf(f)); },
+            (in TextRun t)
+            {
+                // `t.text` borrows the arena that interned it — valid for as
+                // long as the buffer holding these operations is, which is
+                // longer than this call. Backends take `scope const(char)[]`.
+                canvas.textRun(t.rect.origin, t.text, visualOf(t.ink));
+            },
+            (in Glyph g) { canvas.glyph(g.at, g.glyph, visualOf(g.ink)); },
+            (in Line l) { canvas.line(l.from, l.to, visualOf(l.ink), l.style); },
+            (in Rule r)
+            {
                 // Sub-cell chrome is an OPTIONAL primitive (UIA2): a pixel
                 // canvas draws the hairline where it belongs, and a canvas
-                // without one gets the cell-aligned line along the same
-                // edge rather than nothing.
-                static if (__traits(compiles,
-                    canvas.rule(op.rect, op.ruleEdge, op.visual)))
-                    canvas.rule(op.rect, op.ruleEdge, op.visual);
+                // without one gets the cell-aligned line along the same edge
+                // rather than nothing.
+                const vis = visualOf(r.ink);
+                static if (__traits(compiles, canvas.rule(r.rect, r.edge, vis)))
+                    canvas.rule(r.rect, r.edge, vis);
                 else
                 {
                     Point rf, rt;
-                    ruleEndpoints(op.rect, op.ruleEdge, rf, rt);
-                    canvas.line(rf, rt, op.visual, LineStyle.solid);
+                    ruleEndpoints(r.rect, r.edge, rf, rt);
+                    canvas.line(rf, rt, vis, LineStyle.solid);
                 }
-                break;
-            case scrollbar:
+            },
+            (in Scrollbar s)
+            {
                 // A semantic sub-cell band is optional like `rule`. Pixel
                 // canvases resolve it continuously; cell canvases get the
                 // shared one/two-cell degradation with STM2's thumb.
-                static if (__traits(compiles, canvas.scrollbar(op)))
-                    canvas.scrollbar(op);
+                static if (__traits(compiles, canvas.scrollbar(s)))
+                    canvas.scrollbar(s);
                 else
-                    paintScrollbarCells(canvas, op);
-                break;
-            case pushClip:
+                    paintScrollbarCells(canvas, s);
+            },
+            (in PushClip c)
+            {
                 // The clipping pair is an optional canvas capability: forward
                 // when present, else paint unclipped (the display list already
                 // culled fully-hidden subtrees).
-                static if (__traits(compiles, canvas.pushClip(op.rect)))
-                    canvas.pushClip(op.rect);
-                break;
-            case popClip:
+                static if (__traits(compiles, canvas.pushClip(c.rect)))
+                    canvas.pushClip(c.rect);
+            },
+            (in PopClip _)
+            {
                 static if (__traits(compiles, canvas.popClip()))
                     canvas.popClip();
-                break;
-        }
-    }
+            },
+        );
 }
 
-private void paintScrollbarCells(Canvas)(ref Canvas canvas, in DrawOp op)
+private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
 {
     bool vertical;
-    final switch (op.ruleEdge) with (RuleEdge)
+    final switch (bar.edge) with (RuleEdge)
     {
         case left: case right: case centerX:
             vertical = true;
@@ -98,48 +96,47 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in DrawOp op)
             break;
     }
 
-    const track = vertical ? op.rect.height : op.rect.width;
-    const available = vertical ? op.rect.width : op.rect.height;
-    int breadth = scrollbarCellCount(op.expandPercent);
+    const track = vertical ? bar.rect.height : bar.rect.width;
+    const available = vertical ? bar.rect.width : bar.rect.height;
+    int breadth = scrollbarCellCount(bar.expandPercent);
     if (breadth > available)
         breadth = available;
     if (track <= 0 || breadth <= 0)
         return;
 
     int cross;
-    final switch (op.ruleEdge) with (RuleEdge)
+    final switch (bar.edge) with (RuleEdge)
     {
         case left: case top:
-            cross = vertical ? op.rect.x : op.rect.y;
+            cross = vertical ? bar.rect.x : bar.rect.y;
             break;
         case right:
-            cross = op.rect.x + op.rect.width - breadth;
+            cross = bar.rect.x + bar.rect.width - breadth;
             break;
         case bottom:
-            cross = op.rect.y + op.rect.height - breadth;
+            cross = bar.rect.y + bar.rect.height - breadth;
             break;
         case centerX:
-            cross = op.rect.x + (op.rect.width - breadth) / 2;
+            cross = bar.rect.x + (bar.rect.width - breadth) / 2;
             break;
         case centerY:
-            cross = op.rect.y + (op.rect.height - breadth) / 2;
+            cross = bar.rect.y + (bar.rect.height - breadth) / 2;
             break;
     }
 
     foreach (at; 0 .. track)
     {
-        const thumb = scrollbarCell(op.barContent, op.barViewport,
-            op.barOffset, track, at);
-        Visual visual = op.visual;
+        const thumb = scrollbarCell(bar.content, bar.viewport, bar.offset,
+            track, at);
+        Visual visual = visualOf(bar);
         if (!thumb)
-            visual.fg = op.barTrackColor;
+            visual.fg = bar.trackColor;
         foreach (across; 0 .. breadth)
         {
             const p = vertical
-                ? Point(cross + across, op.rect.y + at)
-                : Point(op.rect.x + at, cross + across);
-            canvas.glyph(p, thumb ? op.barThumbGlyph : op.barTrackGlyph,
-                visual);
+                ? Point(cross + across, bar.rect.y + at)
+                : Point(bar.rect.x + at, cross + across);
+            canvas.glyph(p, thumb ? bar.thumbGlyph : bar.trackGlyph, visual);
         }
     }
 }
@@ -180,15 +177,15 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in DrawOp op)
 @("ui.interp.immediate.ruleFallsBackToTheCellAlignedLine")
 @safe unittest
 {
-    import sparkles.ui.canvas : DrawOp, OpKind, RecordingCanvas, RuleEdge;
+    import sparkles.ui.canvas : DrawOp, OpKind, RecordingCanvas, ruleOp,
+        RuleEdge;
     import sparkles.ui.geometry : Rect;
 
     // A canvas with no sub-cell primitive still shows the hairline, at the
     // coarsest honest resolution: the line along the very same edge (UIA2).
     // Silence would be the wrong degradation — the chrome would vanish.
     auto rec = RecordingCanvas();
-    DrawOp op = {kind: OpKind.rule, rect: Rect(2, 3, 10, 4),
-        ruleEdge: RuleEdge.bottom};
+    const op = ruleOp(Rect(2, 3, 10, 4), RuleEdge.bottom);
     paint(rec, [op]);
     assert(rec.ops.length == 1);
     assert(rec.ops[0].kind == OpKind.line);
@@ -199,24 +196,22 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in DrawOp op)
 @("ui.interp.immediate.scrollbarFallsBackToCells")
 @safe unittest
 {
-    import sparkles.ui.canvas : DrawOp, OpKind, RecordingCanvas, RuleEdge;
+    import sparkles.ui.canvas : DrawOp, RecordingCanvas, RuleEdge, Scrollbar;
     import sparkles.ui.geometry : Rect;
-    import sparkles.ui.style : Visual;
     import sparkles.base.term_color : RgbColor;
 
     auto rec = RecordingCanvas();
-    DrawOp op = {
-        kind: OpKind.scrollbar,
+    const op = DrawOp(Scrollbar(
         rect: Rect(2, 3, 2, 4),
-        ruleEdge: RuleEdge.right,
-        barContent: 8,
-        barViewport: 4,
+        content: 8,
+        viewport: 4,
+        fg: RgbColor(4, 5, 6),
+        trackColor: RgbColor(1, 2, 3),
         expandPercent: 50,
-        barTrackColor: RgbColor(1, 2, 3),
-        barTrackGlyph: '│',
-        barThumbGlyph: '█',
-        visual: Visual(fg: RgbColor(4, 5, 6)),
-    };
+        edge: RuleEdge.right,
+        trackGlyph: '│',
+        thumbGlyph: '█',
+    ));
     paint(rec, [op]);
     assert(rec.ops.length == 8); // four rows × two expanded columns
     assert(rec.ops[0].rect.origin == Point(2, 3));

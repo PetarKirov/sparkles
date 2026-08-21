@@ -27,7 +27,9 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.writers : writeInteger;
 import sparkles.base.unique : makeUnique;
-import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge, textRunOp;
+import sparkles.ui.arena : FrameArena;
+import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
+import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.components.grid_backdrop : appendGridBackdrop, GridView;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette,
@@ -46,8 +48,14 @@ import world : Capture, Entity, GroupId, liveBounds, noEntity, Tool, World,
 /// path asserts it stays under.
 enum size_t frameOpCap = 4096;
 
+/// How many of those the buffer holds inline before it reaches for the heap.
+/// Deliberately not `frameOpCap`: the two used to be one number, which put
+/// every operation of a full frame in the buffer's own storage — 2.6 MB of it,
+/// back when an operation was 656 bytes. A warm start is all this needs to be.
+enum size_t frameOpInline = 64;
+
 /// The frame buffer type — one reuse per component (`RND1`, `DIA5`).
-alias FrameOps = SmallBuffer!(DrawOp, frameOpCap);
+alias FrameOps = CmdBufferT!(FrameArena!(), frameOpInline);
 
 /**
 Emits the whole frame into `ops`: board, then minimap, then chrome.
@@ -59,7 +67,7 @@ void systemRender(ref const World w, ref const Camera cam, in Size viewport,
     in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref FrameOps ops)
     @safe pure nothrow @nogc
 {
-    ops.length = 0;
+    ops.reset();
     const board = boardArea(viewport);
     if (!board.empty)
     {
@@ -601,7 +609,7 @@ private void fill(ref FrameOps ops, in Rect r, Slot slot, in Visual vis)
 {
     if (r.empty || ops.length >= frameOpCap)
         return;
-    ops ~= DrawOp(kind: OpKind.fillRect, rect: r, slot: slot, visual: vis);
+    ops.fillRect(r, slot, vis);
 }
 
 private void outline(ref FrameOps ops, in Rect r, Slot slot, in Visual vis)
@@ -620,8 +628,7 @@ private void ruleEdge(ref FrameOps ops, in Rect r, RuleEdge edge, Slot slot,
 {
     if (ops.length >= frameOpCap)
         return;
-    ops ~= DrawOp(kind: OpKind.rule, rect: r, ruleEdge: edge, slot: slot,
-        visual: vis);
+    ops.rule(r, edge, slot, vis);
 }
 
 /// `text` is borrowed into the op — the caller must keep it alive for the
@@ -631,8 +638,7 @@ private void glyphAt(ref FrameOps ops, in Point at, dchar g, Slot slot,
 {
     if (ops.length >= frameOpCap)
         return;
-    ops ~= DrawOp(kind: OpKind.glyph, rect: Rect(at.x, at.y, 1, 1),
-        glyph: g, slot: slot, visual: vis);
+    ops.glyph(at, g, slot, vis);
 }
 
 /**
@@ -671,21 +677,21 @@ private void textAt(ref FrameOps ops, in Point at, scope const(char)[] s,
     if (cells <= 0 || byteEnd == 0)
         return;
 
-    ops ~= textRunOp(Rect(at.x, at.y, cells, 1), s[0 .. byteEnd], slot, vis);
+    ops.textRun(Rect(at.x, at.y, cells, 1), s[0 .. byteEnd], slot, vis);
 }
 
 private void pushClip(ref FrameOps ops, in Rect r) @safe pure nothrow @nogc
 {
     if (ops.length >= frameOpCap)
         return;
-    ops ~= DrawOp(kind: OpKind.pushClip, rect: r);
+    ops.pushClip(r);
 }
 
 private void popClip(ref FrameOps ops) @safe pure nothrow @nogc
 {
     if (ops.length >= frameOpCap)
         return;
-    ops ~= DrawOp(kind: OpKind.popClip);
+    ops.popClip();
 }
 
 private Visual withBg(Visual v, bool on) @safe pure nothrow @nogc
