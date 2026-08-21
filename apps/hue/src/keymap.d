@@ -68,6 +68,8 @@ enum InputMode : ubyte
     normal,
     search,
     gotoLine,
+    /// the settings pane's string-leaf line editor owns the keyboard
+    settingsText,
 }
 
 /**
@@ -107,6 +109,10 @@ struct KeyContext
     /// The tree-sitter inspector pane holds the keyboard (its hosts route
     /// by pane, so only the inspector's own resolution sets this).
     bool inspectorFocused;
+    /// The settings pane is open (`SET*`): modal, expressed as context
+    /// gating exactly like the picker — while set, only `always`, `input`
+    /// (its line editor) and the `settings` scope are reachable.
+    bool settingsActive;
 
 @safe pure nothrow @nogc const:
 
@@ -124,6 +130,7 @@ struct KeyContext
         if (formatPreviewActive) b |= CtxFlag.formatPreviewActive;
         if (hasDsvGrid)     b |= CtxFlag.hasDsvGrid;
         if (pickerActive)   b |= CtxFlag.pickerActive;
+        if (settingsActive) b |= CtxFlag.settingsActive;
         return b;
     }
 
@@ -148,13 +155,16 @@ struct KeyContext
             case Scope_.pickerPreview:
                 return pickerActive && pickerFocus == Scope_.pickerPreview;
             case Scope_.picker:  return pickerActive;
-            case Scope_.inspector: return inspectorFocused;
-            case Scope_.ctrl:    return !pickerActive && !inspectorFocused;
+            case Scope_.inspector: return inspectorFocused && !settingsActive;
+            case Scope_.settings: return settingsActive;
+            case Scope_.ctrl:    return !pickerActive && !inspectorFocused
+                && !settingsActive;
             case Scope_.tree:    return !pickerActive && !inspectorFocused
-                && treeFocused && treeVisible;
+                && !settingsActive && treeFocused && treeVisible;
             case Scope_.viewer:  return !pickerActive && !inspectorFocused
-                && !(treeFocused && treeVisible);
-            case Scope_.shared_: return !pickerActive && !inspectorFocused;
+                && !settingsActive && !(treeFocused && treeVisible);
+            case Scope_.shared_: return !pickerActive && !inspectorFocused
+                && !settingsActive;
         }
     }
 
@@ -162,7 +172,7 @@ struct KeyContext
     /// before entering each of its blocks.
     bool scopeActive(Scope_ s, in KeyEvent k)
         => s == Scope_.ctrl
-            ? (!pickerActive && !inspectorFocused
+            ? (!pickerActive && !inspectorFocused && !settingsActive
                 && k.mods.ctrl && k.key == Key.char_)
             : reachable(s);
 }
@@ -287,6 +297,26 @@ enum Command : ubyte
     inspClose,           /// `q` / `Escape` — close and return the focus
     inspToggleAnonymous, /// `a` — show/hide anonymous nodes
     inspTogglePick,      /// `s` — DevTools' pick-from-source mode
+
+    // The settings pane's modal surface (`SET*`): PropertyTree!HueConfig
+    // over the running configuration, live-apply with undo/redo, an explicit
+    // save. Same pattern as the picker: table rows in a hiding scope, one
+    // pane dispatch; every other dispatch carries empty arms (`KEY11`).
+    settingsOpen,        /// `,` or `<leader>us` — open the pane
+    settingsClose,       /// `Escape` / `q` — close (runtime state kept)
+    settingsDown, settingsUp, settingsPageDown, settingsPageUp,
+    settingsHome, settingsEnd,
+    settingsExpand, settingsCollapse,
+    settingsActivate,    /// Enter — toggle a bool / edit a string leaf
+    settingsInc, settingsDec, /// `+`/`=` / `-` — step the selected leaf
+    settingsPreview,     /// `v` — a preview drag: one undo entry on commit
+    settingsUndo, settingsRedo, /// `u` / `Shift-U`
+    settingsFilter,      /// `/` — the fuzzy filter
+    settingsMatchNext, settingsMatchPrev, /// `n` / `Shift-N`
+    settingsReveal,      /// `b` — reveal the match in the base tree
+    settingsOpenAll, settingsCloseAll,    /// `Shift-O` / `Shift-C`
+    settingsSave,        /// `s` / `Ctrl-S` — persist to the user file
+    settingsReset,       /// `r` — the selected leaf back to its default
 }
 
 /**
@@ -320,6 +350,10 @@ enum Scope_ : ubyte
     /// every key it is routed (its hosts route by pane), so it is terminal
     /// and hides the scopes below from the guide
     @terminalScope @hidesLaterScopes inspector,
+    /// the settings pane, while open: modal like the picker — terminal AND
+    /// hiding, so an unmatched key is swallowed, never a command below, and
+    /// the guide lists only what can fire
+    @terminalScope @hidesLaterScopes settings,
     /// a Ctrl chord, before the plain letter is considered
     @terminalScope ctrl,
     tree,    /// the explorer pane, while focused and shown
@@ -341,6 +375,9 @@ enum CtxFlag : ubyte
     formatPreviewActive = 1 << 4,
     hasDsvGrid     = 1 << 5,
     pickerActive   = 1 << 6,
+    /// NOTE: the ubyte's last bit — the next flag widens `CtxFlag`, `bits()`
+    /// and the framework `Binding.require`/`forbid` to `ushort`.
+    settingsActive = 1 << 7,
 }
 
 /// The framework's row builders, with hue's command type pinned so the table
@@ -635,6 +672,9 @@ immutable Binding[] hueBindings = [
         Command.themeNext, "next theme"),
     bind(Scope_.shared_, chord(leader), chord('u'), chord('t', ShiftReq.yes),
         Command.themePrev, "prev theme"),
+    bind(Scope_.shared_, chord(','), Command.settingsOpen, "settings"),
+    bind(Scope_.shared_, chord(leader), chord('u'), chord('s'),
+        Command.settingsOpen, "settings"),
     bind(Scope_.shared_, chord(leader), chord('u'), chord('y'),
         Command.toggleAnsiCopy, "ansi copy mode"),
     bind(Scope_.shared_, chord(leader), chord('u'), chord('b'),
@@ -726,6 +766,59 @@ immutable Binding[] hueBindings = [
         "anonymous nodes"),
     bind(Scope_.inspector, chord('s'), Command.inspTogglePick,
         "pick from source"),
+
+    // ── settings (terminal + hiding: the pane is modal — SET*) ───────────
+    bind(Scope_.settings, chord(Key.down), Command.settingsDown, "down"),
+    bind(Scope_.settings, chord('j'), Command.settingsDown, "down"),
+    bind(Scope_.settings, chord(Key.up), Command.settingsUp, "up"),
+    bind(Scope_.settings, chord('k'), Command.settingsUp, "up"),
+    bind(Scope_.settings, chord(Key.pageDown), Command.settingsPageDown,
+        "page down"),
+    bind(Scope_.settings, chord(Key.pageUp), Command.settingsPageUp,
+        "page up"),
+    bind(Scope_.settings, chord(Key.home), Command.settingsHome, "first row"),
+    bind(Scope_.settings, chord('g', ShiftReq.no), Command.settingsHome,
+        "first row"),
+    bind(Scope_.settings, chord(Key.end), Command.settingsEnd, "last row"),
+    bind(Scope_.settings, chord('g', ShiftReq.yes), Command.settingsEnd,
+        "last row"),
+    bind(Scope_.settings, chord(Key.right), Command.settingsExpand, "expand"),
+    bind(Scope_.settings, chord('l'), Command.settingsExpand, "expand"),
+    bind(Scope_.settings, chord(Key.left), Command.settingsCollapse,
+        "collapse / up"),
+    bind(Scope_.settings, chord('h'), Command.settingsCollapse,
+        "collapse / up"),
+    bind(Scope_.settings, chord(Key.enter), Command.settingsActivate,
+        "toggle / edit"),
+    bind(Scope_.settings, chord('+'), Command.settingsInc, "increase"),
+    bind(Scope_.settings, chord('='), Command.settingsInc, "increase"),
+    bind(Scope_.settings, chord('-'), Command.settingsDec, "decrease"),
+    bind(Scope_.settings, chord('v'), Command.settingsPreview,
+        "preview drag"),
+    bind(Scope_.settings, chord('u', ShiftReq.no), Command.settingsUndo,
+        "undo"),
+    bind(Scope_.settings, chord('u', ShiftReq.yes), Command.settingsRedo,
+        "redo"),
+    bind(Scope_.settings, chord('/'), Command.settingsFilter, "filter"),
+    bind(Scope_.settings, chord('n', ShiftReq.no), Command.settingsMatchNext,
+        "next match"),
+    bind(Scope_.settings, chord('n', ShiftReq.yes), Command.settingsMatchPrev,
+        "prev match"),
+    bind(Scope_.settings, chord('b'), Command.settingsReveal,
+        "reveal in tree"),
+    bind(Scope_.settings, chord('o', ShiftReq.yes), Command.settingsOpenAll,
+        "open all"),
+    bind(Scope_.settings, chord('c', ShiftReq.yes), Command.settingsCloseAll,
+        "close all"),
+    bind(Scope_.settings, chord('r'), Command.settingsReset,
+        "reset to default"),
+    bind(Scope_.settings, chord('s', ShiftReq.no), Command.settingsSave,
+        "save"),
+    bind(Scope_.settings, Chord(key: Key.char_, ch: 's', ctrl: true),
+        Command.settingsSave, "save"),
+    bind(Scope_.settings, chord(Key.escape), Command.settingsClose, "close"),
+    bind(Scope_.settings, chord('q'), Command.settingsClose, "close"),
+    bind(Scope_.settings, chord(Key.back), Command.settingsClose, "close"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -802,6 +895,35 @@ version (unittest)
     KeyCommand commandForH(in KeyEvent raw, in KeyContext ctx)
         @safe pure nothrow @nogc
         => ui_keymap.commandFor(hueBindings, raw, ctx);
+}
+
+@("keymap.settingsScopeIsModal")
+@safe pure nothrow @nogc
+unittest
+{
+    // The pane open: its rows fire, the panes beneath are unreachable, and
+    // an unmatched key is swallowed (terminal) rather than a command below.
+    const set = KeyContext(settingsActive: true);
+    assert(ch('j', set).cmd == Command.settingsDown);
+    assert(ch('q', set).cmd == Command.settingsClose, "close, never quit");
+    assert(nk(Key.escape, set).cmd == Command.settingsClose);
+    assert(ch('s', set).cmd == Command.settingsSave);
+    assert(ch('s', set, Mods(ctrl: true)).cmd == Command.settingsSave);
+    assert(ch('e', set).cmd == Command.none, "swallowed, not toggleExplorer");
+    assert(ch('u', set).cmd == Command.settingsUndo);
+    assert(ch('u', set, Mods(shift: true)).cmd == Command.settingsRedo);
+
+    // The string-leaf line editor: input scope owns the keys, printables
+    // stay text (Escape resolves through the always scope's editing row).
+    const editing = KeyContext(settingsActive: true,
+        mode: InputMode.settingsText);
+    assert(nk(Key.enter, editing).cmd == Command.inputAccept);
+    assert(nk(Key.escape, editing).cmd == Command.inputCancel);
+    assert(ch('j', editing).cmd == Command.none, "a letter is text");
+
+    // At rest, `,` opens; while the picker is up it must not.
+    assert(ch(',').cmd == Command.settingsOpen);
+    assert(ch(',', KeyContext(pickerActive: true)).cmd != Command.settingsOpen);
 }
 
 @("keymap.tableIsSpelledInNormalisedForm")

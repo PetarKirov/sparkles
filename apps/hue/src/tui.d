@@ -1449,6 +1449,25 @@ struct PreviewTui
             case Command.pickerPreviewDown: case Command.pickerPreviewUp:
                 break;
 
+            // The settings pane's dispatch answers these; its scope is
+            // unreachable while a pane dispatches (KEY11).
+            case Command.settingsOpen: case Command.settingsClose:
+            case Command.settingsDown: case Command.settingsUp:
+            case Command.settingsPageDown: case Command.settingsPageUp:
+            case Command.settingsHome: case Command.settingsEnd:
+            case Command.settingsExpand: case Command.settingsCollapse:
+            case Command.settingsActivate:
+            case Command.settingsInc: case Command.settingsDec:
+            case Command.settingsPreview:
+            case Command.settingsUndo: case Command.settingsRedo:
+            case Command.settingsFilter:
+            case Command.settingsMatchNext: case Command.settingsMatchPrev:
+            case Command.settingsReveal:
+            case Command.settingsOpenAll: case Command.settingsCloseAll:
+            case Command.settingsSave: case Command.settingsReset:
+                break;
+
+
             // The inspector pane answers these; its scope is unreachable
             // while a pane dispatches.
             case Command.inspDown: case Command.inspUp:
