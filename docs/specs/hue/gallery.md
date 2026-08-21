@@ -8,6 +8,12 @@ view, a name+summary header). Replaced the branch-only JS preview harness
 (`render-html.mjs`), which is deleted._
 
 > [!NOTE]
+> Since the `sparkles:docs` extraction, the **static-gallery** rows here are
+> owned by the [docs (SSG) spec](../docs/site.md) — each `DOC*` row cites the
+> `GAL*`/`HTM*` rows it absorbs, and these IDs remain valid citations. The
+> interactive half (`GAL5`, `GNV*`) stays hue's.
+
+> [!NOTE]
 > Shipped end to end: the static gallery (`GAL1`–`GAL4`, `GAL6`–`GAL9`, `GAL11`, `GAL12`) and the
 > interactive half (`GAL5`, `GNV*`). Status
 > legend and IDs: see the [overview](./index.md). The **document set** itself is
