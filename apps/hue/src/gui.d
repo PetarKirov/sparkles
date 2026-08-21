@@ -128,6 +128,10 @@ import live_types : applyTip, LiveTypesSession;
 // the two entry points a navigation reload needs.
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
+import settings : HueConfig;
+import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
+    SettingsResult;
+import settings_store : ConfigStore, hueApplyRules, SettingsPane;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 
@@ -247,6 +251,7 @@ struct GuiArgs
     CoveragePlan initialCoverage = CoveragePlan.init; // gutter overlay (COV2)
     bool initialHasCoverage = false;     // ditto
     GuiCapture capture = GuiCapture.init; // deterministic-capture hooks (CLI6)
+    ConfigStore* configStore = null;     // the shared runtime config (SET*)
 }
 /// The GUI run's whole mutable state (`P2.B4` second slice): every
 /// loop-carried group as one value — the fields the component will own when
@@ -838,6 +843,62 @@ int runGui(GuiArgs guiArgs) @system
     // loader, themes, grammar cache and ANSI decoder as the main view.
     OwnedPicker filePicker;
     PickerDocPane* filePickerDoc;
+
+    // The modal settings pane (`SET*`) — the same component the workspace
+    // mounts, over the same shared store.
+    SettingsPane settingsPane;
+
+    void openSettingsPane() @system
+    {
+        if (configStore is null || settingsPane.active)
+            return;
+        auto store = configStore;
+        settingsPane.applyRules = hueApplyRules.dup;
+        settingsPane.doSave = (ref const HueConfig d, const(string)[] t)
+            => store.save(d, t);
+        settingsPane.originOf = (string p) @safe => store.shadowOrigin(p);
+        // Geometry is the frame's (it needs the live cell metrics): the
+        // first frame's `ensureSettingsGeometry` sizes the rows.
+        settingsPane.open(&store.resolved, store.fileValue);
+    }
+
+    SettingsGeometry lastSettingsG;
+
+    // The live-apply half: the window resolves a theme name into its cycle;
+    // a live font reload needs the pt→px setup path and stays a next-launch
+    // note in v1; a panes commit re-widths the tree dock.
+    void applySettingsResult(in SettingsResult r) @system
+    {
+        if (r.apply & ApplyMask.theme)
+        {
+            const name = configStore.resolved.appearance.theme;
+            bool found;
+            foreach (i, n; names)
+                if (n == name)
+                {
+                    applyTheme(i);
+                    found = true;
+                    break;
+                }
+            if (!found)
+                settingsPane.status = "theme '" ~ name
+                    ~ "' is not in the cycle";
+        }
+        if (r.apply & ApplyMask.font)
+            settingsPane.status = "font changes apply at next launch";
+        if (r.apply & ApplyMask.layout)
+        {
+            const cols = configStore.resolved.panes.tree.width;
+            if (cols >= 12)
+            {
+                pn.dock.layout.nodes[pn.dock.layout.nodeOf(treePane)]
+                    .extent = cols;
+                arrangePanes();
+            }
+        }
+    }
+
+
     void openFilePicker()
     {
         if (filePicker.empty)
@@ -1795,6 +1856,31 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
+        // The settings pane, over everything — the same widget tree the
+        // terminal paints, centred both ways (`SET*`).
+        if (settingsPane.active)
+        {
+            const cellsW = screenW / cellW;
+            const cellsH = screenH / cellH;
+            // Same function of the screen size the input path keeps rows
+            // sized to; paint itself never resizes.
+            const sg = settingsGeometryFor(cellsW, cellsH);
+            auto sTree = settingsPane.buildView(sg);
+            auto sFrames = layout(sTree, Constraints(maxW: sg.panelCols));
+            const sPanel = sFrames[sTree.root].rect;
+            const sX = (cellsW - sPanel.width) / 2;
+            const sY = (cellsH - sPanel.height) / 2;
+            window.resetClip();
+            ltnOps.clear();
+            buildDisplayListInto(sTree, sFrames,
+                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
+                ltnOps);
+            auto sCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
+                cast(float)((sX > 0 ? sX : 0) * cellW),
+                cast(float)((sY > 0 ? sY : 0) * cellH));
+            paint(sCanvas, ltnOps[]);
+        }
+
         window.resetClip(); // never let a scissor survive the frame
         }
         painted = true;
@@ -2185,6 +2271,49 @@ int runGui(GuiArgs guiArgs) @system
         // overlay). Pixel positions become overlay-local cells against the
         // same centered-at-row-1 arithmetic the paint pass uses — the panel
         // is frame-stable, so both derive one origin.
+        // Rows re-window only when the frame's cell metrics actually
+        // changed — resize() rebuilds, so it must not run per frame.
+        SettingsGeometry currentSettingsGeometry() @system
+        {
+            const cellsW = screenW / cellW;
+            const cellsH = screenH / cellH;
+            const sg = settingsGeometryFor(cellsW, cellsH);
+            if (sg != lastSettingsG)
+            {
+                lastSettingsG = sg;
+                settingsPane.resize(sg);
+            }
+            return sg;
+        }
+
+        void routeSettingsOverlay(in Event ev) @system
+        {
+            const cellsW = screenW / cellW;
+            const cellsH = screenH / cellH;
+            const sg = currentSettingsGeometry();
+            const sx = (cellsW - sg.panelCols) / 2;
+            const sy = (cellsH - sg.panelRows) / 2;
+            const ox = sx > 0 ? sx : 0;
+            const oy = sy > 0 ? sy : 0;
+            ev.match!(
+                (in PointerEvent p) {
+                    PointerEvent local = p;
+                    local.pos = Point(cast(int)(p.pos.x / cellW) - ox,
+                        cast(int)(p.pos.y / cellH) - oy);
+                    applySettingsResult(
+                        settingsPane.handleOverlay(Event(local), sg));
+                },
+                (in WheelEvent w) {
+                    WheelEvent local = w;
+                    local.pos = Point(cast(int)(w.pos.x / cellW) - ox,
+                        cast(int)(w.pos.y / cellH) - oy);
+                    applySettingsResult(
+                        settingsPane.handleOverlay(Event(local), sg));
+                },
+                (_) {},
+            );
+        }
+
         void routePickerOverlay(in Event ev) @system
         {
             const cellsW = screenW / cellW;
@@ -2213,7 +2342,14 @@ int runGui(GuiArgs guiArgs) @system
             );
         }
 
-        if (!filePicker.empty && filePicker.get.state.active)
+        if (settingsPane.active)
+        {
+            // The settings pane is modal exactly like the picker (`SET*`).
+            cast(void) currentSettingsGeometry();
+            foreach (k; keyBuf)
+                applySettingsResult(settingsPane.handleKey(k));
+        }
+        else if (!filePicker.empty && filePicker.get.state.active)
         {
             // The fuzzy picker is a modal surface (`PIK1`): while it is
             // open it owns the whole keyboard.
@@ -2552,7 +2688,10 @@ int runGui(GuiArgs guiArgs) @system
 
             // The settings pane's dispatch answers these; its scope is
             // unreachable while a pane dispatches (KEY11).
-            case Command.settingsOpen: case Command.settingsClose:
+            case Command.settingsOpen:
+                openSettingsPane();
+                break;
+            case Command.settingsClose:
             case Command.settingsDown: case Command.settingsUp:
             case Command.settingsPageDown: case Command.settingsPageUp:
             case Command.settingsHome: case Command.settingsEnd:
@@ -2755,6 +2894,20 @@ int runGui(GuiArgs guiArgs) @system
         PaneId dockPressPane;
         foreach (e; evBuf)
         {
+            // The settings pane is modal: its overlay owns every pointer
+            // and wheel event before the dock can route one beneath it.
+            if (settingsPane.active)
+            {
+                const settingsBound = e.match!(
+                    (in PointerEvent p) => true,
+                    (in WheelEvent w) => true,
+                    (_) => false);
+                if (settingsBound)
+                {
+                    routeSettingsOverlay(e);
+                    continue;
+                }
+            }
             // The picker is modal (`PIK1`): its overlay owns every pointer
             // and wheel event before the dock can route one to a pane
             // beneath it.
