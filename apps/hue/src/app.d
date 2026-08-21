@@ -63,6 +63,7 @@ import sparkles.ui_app.display : displayAvailable;
 import cli;
 import settings : HueConfig;
 import settings_load : LoadedConfig;
+import settings_store : ConfigStore;
 
 // ── Subcommand Handlers ─────────────────────────────────────────────────────
 
@@ -188,7 +189,8 @@ int executeView(in HueCli root, in View view)
                     codeMaxLines: opt.codeMaxLines,
                     tableOverflow: parseOverflow(opt.tableOverflow, "--table-overflow"),
                     tableMaxLines: opt.tableMaxLines,
-                    tableCopyFlag: opt.tableCopy);
+                    tableCopyFlag: opt.tableCopy,
+                    configStore: &gStore);
             }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
@@ -1154,6 +1156,10 @@ private GrammarRegistry defaultRegistry() @safe
 // will get their own explicitly-threaded handle (the settings pane's store).
 private LoadedConfig gConfig;
 
+/// The runtime store the interactive shells share: the settings pane
+/// mutates `gStore.resolved`, saves rewrite the user overlay (`SET*`).
+private ConfigStore gStore;
+
 /// The effective five-layer configuration for this invocation (`CFG2`).
 ref const(LoadedConfig) loadedConfig() @safe nothrow @nogc => gConfig;
 
@@ -1182,6 +1188,7 @@ int main(string[] args)
     // Resolve defaults → user file → project file → env → CLI before any
     // subcommand runs; load failures degrade to located warnings (CFG8).
     gConfig = loadConfigFor(parsed.value);
+    gStore = ConfigStore.from(gConfig);
     foreach (w; gConfig.warnings)
         warning(i"$(w)");
 
@@ -1576,7 +1583,8 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             formatterName: opt.formatter,
             tableCopyFlag: opt.tableCopy,
             scrollAnchor: parseScrollAnchor(opt.scrollAnchor),
-            gutter: opt.gutter, lineNumbers: opt.lineNumbers);
+            gutter: opt.gutter, lineNumbers: opt.lineNumbers,
+            configStore: &gStore);
     }
     else
     {
