@@ -409,6 +409,47 @@ struct Gallery
     }
 }
 
+@(Command("site",
+    shortDescription: "Render the docs site's source listings: link-driven discovery, mirrored pages, manifest.json",
+))
+struct Site
+{
+    @(Option("out|o", description: "Output directory for the listing pages + manifest.json (default: <repo-root>/docs/public/src)."))
+    string outDir;
+
+    @(Option("repo-root", description: "Repository root the discovery and the mirrored paths are relative to (default: the current directory)."))
+    string repoRoot;
+
+    @(Option("config", description: "Site knobs file (default: <repo-root>/docs/hue-site.json; absent means all defaults)."))
+    string config;
+
+    @(Option("dark-theme", description: "Second theme for dark mode, emitted under an html.dark scope in the shared stylesheet (see hue gallery --dark-theme)."))
+    string darkTheme;
+
+    @(Option("no-twoslash", description: "Render .d sources as plain listings instead of batch-extracting twoslash overlays (they are on by default)."))
+    bool noTwoslash;
+
+    @(Option("jobs|j", description: "Extractor processes to run at once for twoslash (0 = one per usable CPU)."))
+    uint jobs;
+
+    @(Option("sidebar", description: "sidebar.json rendered as a site sidebar on every page (default: <repo-root>/docs/.vitepress/sidebar.json when present; pass an empty value to disable)."))
+    string sidebar = "auto";
+
+    @(Option("site-base", description: "Base URL the sidebar's site-absolute routes resolve against (default: none, links stay root-absolute)."))
+    string siteBase;
+
+    @(Option("repo-url", description: "Blob base for the breadcrumb forge links, e.g. https://github.com/owner/repo/blob/main."))
+    string repoUrl;
+
+    @(Option("title-prefix", description: "The <title> prefix every listing page carries (default: sparkles)."))
+    string titlePrefix = "sparkles";
+
+    int run(Program)(in Program program)
+    {
+        return executeSite(program.value, this);
+    }
+}
+
 @(Command("theme",
     shortDescription: "Inspect, list, and preview built-in color themes",
 ))
@@ -483,7 +524,7 @@ struct HueCli
     GuiOptions gui;
 
     @Subcommands
-    SumType!(View, Diff, Pr, Gallery, ThemeCmd, OverlayCmd, ConfigCmd) command;
+    SumType!(View, Diff, Pr, Gallery, Site, ThemeCmd, OverlayCmd, ConfigCmd) command;
 }
 
 // ── Subcommand Handlers ─────────────────────────────────────────────────────
@@ -1133,6 +1174,190 @@ private int executeGallery(in HueCli root, in Gallery gallery)
 
     const n = writeGallery(set, outDir, gopt, &renderOne);
     stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
+    return 0;
+}
+
+/**
+`hue site` (`DSC1`–`DSC3`, `DSC6`): discovery over the docs' published
+markdown, the mirrored listing pages under `--out`, and `manifest.json` — the
+contract the VitePress build reads (`DSC4`). The rendering is the gallery
+pipeline with two site-specific turns: the stylesheet is always shared and
+self-hosted (hundreds of pages), and a failed twoslash extraction degrades
+that `.d` file to a plain listing rather than dropping the page — a hole in
+the site is worse than a plain page.
+*/
+private int executeSite(in HueCli root, in Site cmd)
+{
+    initLogger(root.logLevel);
+    import site : discoverSite;
+    import sparkles.docs.assets : stylesheetAssetPath, StylesheetContent,
+        themeStylesheet, writeStylesheetAsset;
+    import sparkles.docs.fragment : FragmentOptions, plainFragment, twoslashFragment;
+    import sparkles.docs.options : ChromePalette, GalleryOptions, themeChrome;
+    import sparkles.docs.page_shell : writeGallery;
+    import sparkles.docs.sidebar : docsConfigPath, loadDocsConfig, loadSidebarFile,
+        sidebarNav;
+    import sparkles.docs.site : loadSiteConfig, manifestJson, SiteConfig,
+        siteConfigPath;
+    import sparkles.docs.site_tree : buildSiteTree;
+    import sparkles.docs.source_set : isDSource, isTwoslashPayload, SourceEntry,
+        SourceSet;
+    import std.file : exists, mkdirRecurse, write;
+    import std.path : absolutePath, buildNormalizedPath, buildPath;
+
+    const repoRoot = (cmd.repoRoot.length ? cmd.repoRoot : ".")
+        .absolutePath.buildNormalizedPath;
+
+    SiteConfig cfg;
+    const cfgPath = cmd.config.length ? cmd.config : buildPath(repoRoot, siteConfigPath);
+    if (cfgPath.exists)
+    {
+        auto loaded = loadSiteConfig(cfgPath);
+        if (loaded.hasError)
+        {
+            stderr.writeln("hue: cannot load site config ", cfgPath, ": ", loaded.error);
+            return 1;
+        }
+        cfg = loaded.value;
+    }
+    else if (cmd.config.length)
+    {
+        stderr.writeln("hue: site config not found: ", cfgPath);
+        return 1;
+    }
+    cfg = cfg.withDefaults;
+
+    string[] srcExclude;
+    if (buildPath(repoRoot, docsConfigPath).exists)
+    {
+        auto dc = loadDocsConfig(repoRoot);
+        if (dc.hasError)
+        {
+            stderr.writeln("hue: cannot load ", docsConfigPath, ": ", dc.error);
+            return 1;
+        }
+        srcExclude = dc.value.srcExclude;
+    }
+
+    auto disc = discoverSite(repoRoot, cfg, srcExclude);
+    auto set = disc.set;
+    if (set.empty)
+        warning(i"no source files discovered from the docs under '$(repoRoot)'");
+
+    // `DSC6`: twoslash is on for `.d` listings. Extraction runs over the `.d`
+    // subset; success folds the node tally back, failure leaves the entry a
+    // plain listing (the gallery drops it instead — `GAL9` — but a site page
+    // linked from prose must exist).
+    const twoslash = !cmd.noTwoslash;
+    TwoslashReturn[string] payloads;
+    if (twoslash)
+    {
+        SourceSet dSet;
+        foreach (ref e; set.entries)
+            if (isDSource(e.path))
+                dSet.entries ~= e;
+        payloads = extractTwoslashSources(dSet, cmd.jobs);
+        string[string] tallies;
+        foreach (ref e; dSet.entries)
+            tallies[e.path] = e.summary;
+        foreach (ref e; set.entries)
+            if (auto t = e.path in tallies)
+                e.summary = *t;
+    }
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(root.theme, {
+            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+    const dark = cmd.darkTheme.length
+        ? resolveNamedTheme(cmd.darkTheme, labels) : ResolvedTheme.init;
+
+    // A site always leaves the rules to one shared, self-hosted stylesheet.
+    const fragOpt = FragmentOptions(embedStyles: false);
+
+    auto registry = defaultRegistry();
+    auto cache = TsConfigCache.create(&registry, labels);
+
+    bool[string] written;
+    string renderOne(in SourceEntry e)
+    {
+        SmallBuffer!HighlightEvent ev;
+        string html;
+        if (twoslash && (isTwoslashPayload(e.path) || (e.path in payloads) !is null))
+        {
+            const tw = twoslashPayloadFor(e, payloads);
+            if (highlightInjected(cache, tw.effectiveLanguage, tw.code, ev).hasError)
+                ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
+            html = twoslashFragment(tw, ev[], theme, cache, fragOpt);
+        }
+        else
+        {
+            const src = readText(e.path);
+            const lang = canonicalLanguageOfPath(e.path);
+            if (highlightInjected(cache, lang, src, ev).hasError)
+                ev ~= HighlightEvent.sourceSpan(0, src.length);
+            html = plainFragment(src, ev[], theme, fragOpt);
+        }
+        // Success mark for the manifest: only pages that actually rendered are
+        // routes (`DSC2`); a failure is already on stderr via writeGallery.
+        written[e.relPath] = true;
+        return html;
+    }
+
+    const outDir = cmd.outDir.length
+        ? cmd.outDir : buildPath(repoRoot, "docs", "public", "src");
+    const chrome = themeChrome(theme);
+    const darkChrome = cmd.darkTheme.length ? themeChrome(dark) : ChromePalette.init;
+    mkdirRecurse(outDir);
+    cast(void) writeStylesheetAsset(outDir,
+        themeStylesheet(theme, dark, StylesheetContent(twoslash: twoslash)));
+
+    // The docs-site sidebar on every page (`DOC8`): the repository's own by
+    // default, when it has one.
+    string sidebarPath = cmd.sidebar;
+    if (sidebarPath == "auto")
+    {
+        const def = buildPath(repoRoot, "docs", ".vitepress", "sidebar.json");
+        sidebarPath = def.exists ? def : null;
+    }
+    string sidebarHtml;
+    if (sidebarPath.length)
+    {
+        auto loaded = loadSidebarFile(sidebarPath);
+        if (loaded.hasError)
+        {
+            stderr.writeln("hue: cannot load sidebar ", sidebarPath, ": ", loaded.error);
+            return 1;
+        }
+        sidebarHtml = sidebarNav(loaded.value, cmd.siteBase);
+    }
+
+    const gopt = GalleryOptions(
+        titlePrefix: cmd.titlePrefix,
+        heading: "source listings",
+        blurb: "Source listings rendered by <code>hue site</code>.",
+        chrome: chrome, darkChrome: darkChrome, stylesheetHref: stylesheetAssetPath,
+        repoUrl: cmd.repoUrl, sidebarHtml: sidebarHtml);
+
+    const n = writeGallery(set, outDir, gopt, &renderOne);
+
+    // `manifest.json` (`DSC2`): only pages that rendered are routes; the dirs
+    // are the written tree's — the same one the index pages were written for.
+    SourceEntry[] wrote;
+    foreach (ref e; set.entries)
+        if (e.relPath in written)
+            wrote ~= e;
+    string[] files;
+    foreach (ref e; wrote)
+        files ~= e.relPath;
+    string[] dirs;
+    foreach (ref node; buildSiteTree(wrote).nodes)
+        dirs ~= node.relPath;
+    write(buildPath(outDir, "manifest.json"), manifestJson(files, dirs, disc.skipped));
+
+    stderr.writeln("hue: wrote ", n, " page(s), ", dirs.length,
+        " index(es) + manifest.json to ", outDir);
     return 0;
 }
 
