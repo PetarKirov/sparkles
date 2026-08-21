@@ -40,10 +40,18 @@
       # reads (with their `fixtures/` payloads beside them), and globbing
       # recursively had `.#all` trying to `dub --single` all 36 of them — each
       # failing, since they are not single-file dub scripts.
+      #
+      # The recipe test keeps out `.d` files that sit directly in `examples/`
+      # but are not single-file dub programs: conformance drivers built by a
+      # lib's `scripts/verify-*.sh` with a bare compiler invocation, and the
+      # helper modules they import (`libs/wsi/examples/`). `dub --single`
+      # requires the inline `/+ dub.sdl:` comment, so a file without one can
+      # never build here — skip it instead of failing the whole example set.
       exampleFilesIn =
         libName:
         let
           top = fromRoot "libs/${libName}/examples";
+          hasInlineRecipe = file: lib.hasInfix "dub.sdl:" (builtins.readFile file);
           # `nested` is false only at the `examples/` root, where a `.d` child
           # needs no directory to match.
           walk =
@@ -57,6 +65,7 @@
                   type == "regular"
                   && lib.hasSuffix ".d" entry
                   && (!nested || lib.removeSuffix ".d" entry == baseNameOf dir)
+                  && hasInlineRecipe (dir + "/${entry}")
                 then
                   [ (dir + "/${entry}") ]
                 else
