@@ -22,7 +22,9 @@ silently empty link set.
 +/
 module sparkles.docs.sidebar;
 
+import std.algorithm.searching : canFind;
 import std.array : Appender, appender;
+import std.regex : matchFirst, regex;
 
 import expected : Expected;
 import sparkles.wired.json : JsonError, readJSONFile;
@@ -118,6 +120,70 @@ string[] sidebarLinks(in SidebarItem[] items)
 
     walk(items);
     return result[];
+}
+
+// ── the srcExclude visibility rule ─────────────────────────────────────────
+
+/// Convert a VitePress/micromatch-style glob (`**`, `*`, `?`) to a D regex
+/// pattern that matches a path relative to the docs root.
+@safe pure
+string globToRegexPattern(string pattern)
+{
+    auto r = appender!string;
+    r.put('^');
+    size_t i = 0;
+    while (i < pattern.length)
+    {
+        if (i + 1 < pattern.length && pattern[i] == '*' && pattern[i + 1] == '*')
+        {
+            if (i + 2 < pattern.length && pattern[i + 2] == '/')
+            {
+                // **/ — zero or more path segments plus a trailing slash
+                r.put("(?:.*/)?");
+                i += 3;
+            }
+            else
+            {
+                r.put(".*");
+                i += 2;
+            }
+        }
+        else if (pattern[i] == '*')
+        {
+            r.put("[^/]*");
+            i++;
+        }
+        else if (pattern[i] == '?')
+        {
+            r.put("[^/]");
+            i++;
+        }
+        else
+        {
+            // Escape regex metacharacters.
+            const c = pattern[i];
+            if ("\\.^$+()[]{}|".canFind(c))
+                r.put('\\');
+            r.put(c);
+            i++;
+        }
+    }
+    r.put('$');
+    return r[];
+}
+
+/// True when `path` (relative to the docs root, e.g. `research/foo/bar.md`)
+/// matches any of the VitePress `srcExclude` globs.
+@safe
+bool isSrcExcluded(string path, string[] patterns)
+{
+    foreach (pattern; patterns)
+    {
+        auto re = regex(globToRegexPattern(pattern));
+        if (!matchFirst(path, re).empty)
+            return true;
+    }
+    return false;
 }
 
 // ── the sidebar on generated pages (DOC8) ─────────────────────────────────
@@ -355,4 +421,30 @@ unittest
 {
     auto res = loadSidebar("/nonexistent-repo-root");
     assert(res.hasError);
+}
+
+@("sidebar.globToRegexPattern / isSrcExcluded")
+@safe
+unittest
+{
+    assert(isSrcExcluded(
+        "research/parsing/grounding/foo.md",
+        ["**/research/parsing/grounding/**"],
+    ));
+    assert(isSrcExcluded(
+        "research/iroh/prompt.md",
+        ["**/research/iroh/prompt.md"],
+    ));
+    assert(!isSrcExcluded(
+        "research/iroh/index.md",
+        ["**/research/iroh/prompt.md"],
+    ));
+    assert(!isSrcExcluded(
+        "research/parsing/concepts.md",
+        ["**/research/parsing/grounding/**"],
+    ));
+    assert(isSrcExcluded(
+        "research/application-packaging/PLAN.md",
+        ["**/research/application-packaging/PLAN.md"],
+    ));
 }
