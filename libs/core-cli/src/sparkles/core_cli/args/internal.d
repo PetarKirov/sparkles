@@ -51,6 +51,18 @@ struct CommandNode(Command_)
     // and every other direct read of a top-level option — compiling.
     alias value this;
 
+    /**
+     * Which fields of `value` an argv token explicitly set at this level.
+     *
+     * Keys are dotted D field paths as the parser spells them internally
+     * (`"treeWidth"`, and `"sink.backend"` for a `@Flatten`ed group), covering
+     * named options and positionals alike. A field absent from the map kept
+     * its initializer. This is what lets a caller layer the CLI as a sparse
+     * overlay over configuration files: only the options the user actually
+     * typed may override lower layers.
+     */
+    bool[string] seenOptions;
+
     static if (allChildren!Command.length > 0)
     {
         SumType!(staticMap!(CommandNode, allChildren!Command)) command;
@@ -243,6 +255,14 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     string[] unknown;
     string[] positionals;
     bool namedArgsEnded;
+
+    // Published on every exit path, not just the tail returns: the subcommand
+    // dispatch returns from inside the loop, and the hand-off closure keeps
+    // recording root options into this map while the *child* parses — both
+    // would be lost by an assignment at the end. Error paths publish too,
+    // harmlessly (a failed parse's receiver is discarded).
+    static if (isCommandNode!Receiver)
+        scope (exit) receiver.seenOptions = seen;
 
     size_t index;
     while (index < args.length)
@@ -1368,6 +1388,78 @@ unittest
     auto parsed = parseCli!Cli(["tool", "init", "--force"]);
     assert(parsed);
     assert(runParsedCli(parsed.value) == 7);
+}
+
+@("args.parseCli.seenOptions")
+@system
+unittest
+{
+    struct Sink
+    {
+        @(Option("backend"))
+        string backend = "detect";
+    }
+
+    @(Command("view"))
+    static struct View
+    {
+        @(Option("tree-width"))
+        int treeWidth = 32;
+
+        @(Option("tab-width"))
+        int tabWidth = 4;
+
+        @Flatten
+        Sink sink;
+
+        @(Argument("PATH", optional: true))
+        string path;
+    }
+
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("theme"))
+        string theme = "tokyo-night";
+
+        @(Option("log-level"))
+        string logLevel = "warning";
+
+        @Subcommands
+        SumType!View command;
+    }
+
+    auto parsed = parseCli!Cli([
+        "tool", "--theme", "x", "view", "--tree-width", "40",
+        "--backend", "tui", "README.md",
+    ]);
+    assert(parsed, parsed.error.message);
+
+    // Each level records only what argv supplied to it: `logLevel` kept its
+    // initializer and stays absent — the sparsity a config layering needs to
+    // tell "flag passed" from "flag at its default".
+    assert(parsed.value.seenOptions.get("theme", false));
+    assert("logLevel" !in parsed.value.seenOptions);
+
+    parsed.value.command.match!((in CommandNode!View v) {
+        assert(v.seenOptions.get("treeWidth", false));
+        assert("tabWidth" !in v.seenOptions);
+        // A flattened group's field is recorded under its dotted path.
+        assert(v.seenOptions.get("sink.backend", false));
+        // Positionals count as explicitly supplied too.
+        assert(v.seenOptions.get("path", false));
+        assert("theme" !in v.seenOptions);
+    });
+
+    // A root option typed after the subcommand reaches the ROOT's map via the
+    // parent hand-off — recorded at the level that owns the field, which is
+    // what keeps the overlay attribution honest.
+    auto after = parseCli!Cli(["tool", "view", "--theme", "x"]);
+    assert(after, after.error.message);
+    assert(after.value.seenOptions.get("theme", false));
+    after.value.command.match!((in CommandNode!View v) {
+        assert("theme" !in v.seenOptions);
+    });
 }
 
 @("args.parseCli.help")
