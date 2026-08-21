@@ -1,6 +1,6 @@
 # `hue` configuration — Feature Requirements (`CFG`)
 
-_**Status:** design · **Date:** 2026-08-03 · **Scope:** a persistent,
+_**Status:** in progress (C1–C5 core shipped) · **Date:** 2026-08-03, updated 2026-08-21 · **Scope:** a persistent,
 user-editable configuration for the whole of `apps/hue` — appearance, panes,
 behaviour, overlays and keybindings — its file format and layering, and how it
 relates to the ~28 CLI options and the runtime toggles that exist today._
@@ -108,25 +108,40 @@ assumed exists now does. Configuration overlays it:
 ```json
 {
   "keys": {
-    "normal": { "j": "viewDown", "k": "viewUp", "ctrl+c": "copySelection" },
+    "viewer": { "j": "viewDown", "k": "viewUp" },
+    "ctrl": { "ctrl+c": "copySelection" },
     "tree": { "l": "treeActivate", "shift+r": "treeReroot" },
-    "foldArmed": { "1-9": "foldLevel" }
+    "shared": { "z 1-9": "foldLevel" }
   }
 }
 ```
 
 - **Commands are named by effect**, matching the `Command` enum — `viewDown`,
-  not `KEY_J`. `@WireRepr(Repr.name)` gives the enum's spelling for free, so the
-  accepted set is exactly the enum and an unknown name is a _decode_ error with a
-  position, not a silent no-op.
-- **Contexts are the map keys** (`normal`, `tree`, `input`, `foldArmed`),
-  mirroring `KeyContext` rather than inventing a second vocabulary.
-- **Chords parse to `Key` + `Mods`** (`ctrl+c`, `shift+r`) through
-  `@WireConvert`, so the wire form stays human-writable while the in-memory form
-  stays the `sparkles:input` vocabulary.
+  not `KEY_J`. Wired's enum-by-name decode gives the enum's spelling for
+  free, so the accepted set is exactly the enum and an unknown name is a
+  _decode_ error with a `$`-path, not a silent no-op.
+- **Contexts are the `Scope_` member names** (`always`, `input`, `picker`,
+  `inspector`, `ctrl`, `tree`, `viewer`, `shared` — the keyword-dodging
+  `shared_` spells as `shared` via `@WireName`), mirroring the keymap's own
+  vocabulary rather than inventing a second one. (The `normal`/`foldArmed`
+  names an earlier draft used predate the scope enum; the fold family is a
+  `z`-prefixed path now, not a mode.)
+- **Chords parse to the keymap's `Chord[]`** (`ctrl+c`, `shift+r`,
+  `"z 1-9"` for a ranged row, `"leader u s"` for a leader path) through a
+  type-level `@WireConvert` on the AA key, so the wire form stays
+  human-writable, the in-memory form stays the keymap vocabulary, and a typo
+  reports `$.keys.viewer["ctlr+x"]` with the parser's own reason. Uppercase
+  folds to `shift+`lowercase exactly as event normalisation does;
+  `ShiftReq.no` has no v1 spelling (`unshift+` is reserved), so rebinding a
+  bare letter replaces both its shifted and unshifted rows — restoring one is
+  one more line, and the guide shows the honest result.
 - **A user table is an overlay, not a replacement.** Rebinding `j` leaves the
-  other 44 bindings alone; `"j": null` unbinds. Replacing wholesale is the
+  other bindings alone; `"j": null` unbinds, and a path claims its subtree
+  (`"z": null` removes the whole fold family). Replacing wholesale is the
   common way a config format strands users after an upgrade adds a command.
+- The overlay is applied once at startup (`installBindings`), and
+  resolution, the lantern guide, and `bindingsAt` all read the merged table —
+  `KEY12` by construction.
 
 ### Grammar search paths compose, they do not override (`CFG14`)
 
@@ -252,27 +267,65 @@ not merely a line number.
 
 | ID      | Requirement                                                                                                                                                                                                                                                                                                                                                                                      | Status      |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- |
-| `CFG1`  | The schema is a D aggregate reflected by `sparkles:wired`; JSON is its surface. No hand-written parser and no second declaration of any field.                                                                                                                                                                                                                                                   | not started |
-| `CFG2`  | Layering defaults → user file → project file → environment → CLI, each layer a **sparse overlay** where absence means inherit.                                                                                                                                                                                                                                                                   | not started |
-| `CFG3`  | `appearance`: theme, background mode, the four font faces, font size, window size.                                                                                                                                                                                                                                                                                                               | not started |
-| `CFG4`  | `panes`: tree width/visibility filters/globs; viewer line numbers, code line numbers, tab width, whitespace rendering.                                                                                                                                                                                                                                                                           | not started |
-| `CFG5`  | `behaviour`: default view, ansi-copy and table-copy modes, overlay defaults, gallery output dir.                                                                                                                                                                                                                                                                                                 | not started |
-| `CFG6`  | `keys`: per-context binding tables over the `Command` enum, applied as an **overlay** on `hueBindings` ([lantern](./lantern.md) `KEY12`); `null` unbinds. The guide enumerates the same table, so a rebinding is described correctly without a second declaration.                                                                                                                               | not started |
-| `CFG7`  | Per-invocation concerns (output format, target, backend choice, test hooks) are **not** configurable.                                                                                                                                                                                                                                                                                            | not started |
-| `CFG8`  | A malformed config reports file/line/column and hue continues with defaults.                                                                                                                                                                                                                                                                                                                     | not started |
+| `CFG1`  | The schema is a D aggregate reflected by `sparkles:wired`; JSON is its surface. No hand-written parser and no second declaration of any field.                                                                                                                                                                                                                                                   | full        |
+| `CFG2`  | Layering defaults → user file → project file → environment → CLI, each layer a **sparse overlay** where absence means inherit.                                                                                                                                                                                                                                                                   | full        |
+| `CFG3`  | `appearance`: theme, background mode, the four font faces, font size, window size.                                                                                                                                                                                                                                                                                                               | full        |
+| `CFG4`  | `panes`: tree width/visibility filters/globs; viewer line numbers, code line numbers, tab width, whitespace rendering.                                                                                                                                                                                                                                                                           | full        |
+| `CFG5`  | `behaviour`: default view, ansi-copy and table-copy modes, overlay defaults, gallery output dir.                                                                                                                                                                                                                                                                                                 | full        |
+| `CFG6`  | `keys`: per-context binding tables over the `Command` enum, applied as an **overlay** on `hueBindings` ([lantern](./lantern.md) `KEY12`); `null` unbinds. The guide enumerates the same table, so a rebinding is described correctly without a second declaration.                                                                                                                               | full        |
+| `CFG7`  | Per-invocation concerns (output format, target, backend choice, test hooks) are **not** configurable.                                                                                                                                                                                                                                                                                            | full        |
+| `CFG8`  | A malformed config reports file/line/column and hue continues with defaults.                                                                                                                                                                                                                                                                                                                     | full        |
 | `CFG9`  | A JSON Schema is **generated** from the same reflection for editor completion — never hand-maintained.                                                                                                                                                                                                                                                                                           | not started |
-| `CFG10` | `hue config show` (or `hue config --show`) lists every effective setting **with the origin that supplied it** (`default`, a file path, an env var, or the CLI flag) — the layering made observable, after `git config --show-origin --list`. Reports only; writes nothing.                                                                                                                       | not started |
-| `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue config save`), so an experiment can become a setting without hand-editing.                                                                                                                                                                                                                          | not started |
-| `CFG12` | Android reads the same file from the app's data dir, which is the only way those preferences are reachable there at all.                                                                                                                                                                                                                                                                         | not started |
-| `CFG13` | `hue config write` emits a **commented starting file** — every setting with its default and a one-line description drawn from the same reflection as the schema (`CFG9`). Renders from the same resolved value as `CFG10`, so the two cannot disagree.                                                                                                                                           | not started |
-| `CFG14` | `behaviour.grammarPaths[]` adds tree-sitter grammar directories. Search paths **compose** rather than override — configured, then `SPARKLES_TS_GRAMMAR_PATH`, then the built-in default — the one documented exception to `CFG2`'s scalar layering.                                                                                                                                              | not started |
-| `CFG15` | `diff`: default layout, whitespace/noise toggles, structural engagement, preview-diff default, diff-copy mode — the persistent home of the [diff-view.md](./diff-view.md) runtime toggles (`DVL3`/`DVL8`/`DVN1`/`DVN3`); the review-command family joins the `Command` enum under `keys` (`CFG6`).                                                                                               | not started |
+| `CFG10` | `hue config show` (or `hue config --show`) lists every effective setting **with the origin that supplied it** (`default`, a file path, an env var, or the CLI flag) — the layering made observable, after `git config --show-origin --list`. Reports only; writes nothing.                                                                                                                       | full        |
+| `CFG11` | Runtime toggles (`l`, `c`, `y`, `t`, theme, font size) may be **persisted on request** (`hue config save`), so an experiment can become a setting without hand-editing.                                                                                                                                                                                                                          | partial     |
+| `CFG12` | Android reads the same file from the app's data dir, which is the only way those preferences are reachable there at all.                                                                                                                                                                                                                                                                         | partial     |
+| `CFG13` | `hue config write` emits a **commented starting file** — every setting with its default and a one-line description drawn from the same reflection as the schema (`CFG9`). Renders from the same resolved value as `CFG10`, so the two cannot disagree.                                                                                                                                           | full        |
+| `CFG14` | `behaviour.grammarPaths[]` adds tree-sitter grammar directories. Search paths **compose** rather than override — configured, then `SPARKLES_TS_GRAMMAR_PATH`, then the built-in default — the one documented exception to `CFG2`'s scalar layering.                                                                                                                                              | partial     |
+| `CFG15` | `diff`: default layout, whitespace/noise toggles, structural engagement, preview-diff default, diff-copy mode — the persistent home of the [diff-view.md](./diff-view.md) runtime toggles (`DVL3`/`DVL8`/`DVN1`/`DVN3`); the review-command family joins the `Command` enum under `keys` (`CFG6`).                                                                                               | partial     |
 | `CFG16` | `forges`: the **host → adapter map** (self-hosted GitLab/Gitea/Forgejo/Codeberg instances have arbitrary hosts — [`DPR7`](./diff-view.md) requires it user-extendable) plus per-forge token sources. On Android this file is the **only** route ([`CFG12`], [`AND11`](./android.md)) — token storage there is plain-text, documented as such.                                                    | not started |
-| `CFG18` | `lantern`: the key guide's `enabled`, `delayMs`, `placement` (`classic`/`helix`) and `leader` key ([lantern](./lantern.md) `LTN14`/`LTN15`). The delay in particular is a taste setting — it is the whole difference between a guide that teaches and one that interrupts.                                                                                                                       | not started |
-| `CFG19` | `picker`: the default layout, the grep mode, and the **frecency store's** location. The store is machine-managed state rather than a preference ([picker](./picker.md) `PKR5`), and the setting exists so it can be moved off a small or network-mounted `$XDG_STATE_HOME`.                                                                                                                      | not started |
+| `CFG18` | `lantern`: the key guide's `enabled`, `delayMs`, `placement` (`classic`/`helix`) and `leader` key ([lantern](./lantern.md) `LTN14`/`LTN15`). The delay in particular is a taste setting — it is the whole difference between a guide that teaches and one that interrupts.                                                                                                                       | partial     |
+| `CFG19` | `picker`: the default layout, the grep mode, and the **frecency store's** location. The store is machine-managed state rather than a preference ([picker](./picker.md) `PKR5`), and the setting exists so it can be moved off a small or network-mounted `$XDG_STATE_HOME`.                                                                                                                      | partial     |
 | `CFG17` | `diff.types`: the type overlay ([`DVT`](./diff-view.md)) — `auto`/`off`, the bound on concurrently live analyzer processes, and the **worktree cache root** where old revisions are materialized (`DVT2`). The cache is machine-managed state, not preferences: hue prunes its own worktrees, and the setting exists so a user can relocate it off a small or network-mounted `$XDG_CACHE_HOME`. | not started |
-| `CFG20` | `format`: the [format preview](./format-preview.md)'s persistent home — `preview` default (off), the ruler `width` default (0 ⇒ `.editorconfig` discovery, `FPR7`), the preferred `formatter` per language (`FPR6`), and the **opt-in external formatter table** (`name → { languages, argv }`, the `FPR4` trust boundary). The table is list-valued and **composes** across layers per `CFG14`. | not started |
-| `CFG21` | `behaviour.scroll_anchor`: what a re-layout keeps at the top of the pane ([`gui.md` `NAV5`](./gui.md)) — `segment` (the default: the exact wrapped segment) or `line` (the source line's first segment). It exists on the command line as `--scroll-anchor` today; this is a preference a reader sets once, which is precisely what the file is for.                                             | not started |
+| `CFG20` | `format`: the [format preview](./format-preview.md)'s persistent home — `preview` default (off), the ruler `width` default (0 ⇒ `.editorconfig` discovery, `FPR7`), the preferred `formatter` per language (`FPR6`), and the **opt-in external formatter table** (`name → { languages, argv }`, the `FPR4` trust boundary). The table is list-valued and **composes** across layers per `CFG14`. | partial     |
+| `CFG21` | `behaviour.scroll_anchor`: what a re-layout keeps at the top of the pane ([`gui.md` `NAV5`](./gui.md)) — `segment` (the default: the exact wrapped segment) or `line` (the source line's first segment). It exists on the command line as `--scroll-anchor` today; this is a preference a reader sets once, which is precisely what the file is for.                                             | full        |
+
+### Implementation notes (2026-08-21)
+
+The core shipped as `apps/hue/src/{settings,settings_overlay,settings_load,
+settings_io,keymap_config,cli}.d`, with two library enablers
+(`CommandNode.seenOptions` in `sparkles:core-cli`; AA keys through a
+type-level `@WireConvert` in `sparkles:wired`). Facts that deviate from or
+sharpen the text above:
+
+- **JSONC read is a pre-pass, not a reader flag.** wired's `JsonReadOptions`
+  declares `allowComments`/`allowTrailingCommas` but its parser still rejects
+  them at compile time ("not implemented yet", wired SPEC §11.3) — the open
+  question 1 note predates that check standing. `settings_io.stripJsonc`
+  blanks comments and trailing commas with spaces **in place**, so every byte
+  offset (and therefore every located error) matches the file the user sees.
+- **Open question 1 is settled** the recommended way, with the rewrite rule:
+  a file that parses under strict RFC 8259 is machine-owned and `config save`
+  rewrites it atomically; a file that only parses as JSONC is a human's and
+  the save is **refused** with the exact strict-JSON delta snippet to paste
+  (`force` overwrites explicitly).
+- **Open question 3 is settled by deriving**: `settings_overlay.Mapped`
+  rewrites the schema's leaves through `Nullable` (`Sparse!T`) and through
+  `Origin` (`Origins!T`) — one declaration, both shapes.
+- **Open question 4 is settled structurally**: `saveUserConfig` takes the
+  session deltas as a sparse overlay the _caller_ computes, so an untouched
+  CLI-supplied value is absent by construction and can never be baked in.
+- **The partial rows**: `CFG11` has the machinery but no in-app trigger yet
+  (it lands with the settings pane); `CFG12` resolves the Android path
+  (`android_paths.configPath`) but on-device validation is owed; `CFG14`
+  merges `grammarPaths` composed, but the grammar registry does not consume
+  the configured paths yet; `CFG15`/`CFG18`/`CFG19`/`CFG20` have their
+  sections in the schema with the CLI-backed fields wired — the engine
+  extras, lantern/picker knobs and the external-formatter table await the
+  tier-2/3 consumption pass.
+- The five-layer resolution happens once in `main` (`cli.loadConfigFor`);
+  `ViewRenderOptions`/`GuiOptions` are **projections** of the effective
+  config (`cli.viewRenderOptionsOf`/`guiOptionsOf`), which deleted the
+  drift-prone `copyGui` and collapsed the duplicate `--theme` declaration.
 
 ## Milestones
 
