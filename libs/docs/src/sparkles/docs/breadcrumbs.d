@@ -44,9 +44,12 @@ The trail for a page at `relPath` (a gallery-root-relative path such as
 `libs/base/src/x.d`).
 
 Every segment but the last links to that directory's `index.html`, resolved
-$(B relative to the page) — a page three deep reaches its grandparent through
-`../../index.html` — so the tree is navigable from a `file://` URL, with no
-base href and no server.
+$(B relative to the page): the page's own directory's index is `index.html`
+(it sits beside the page), its parent `../index.html`, and so on — so the tree
+is navigable from a `file://` URL, with no base href and no server. With
+`isDirectory`, `relPath` names a directory and the page $(B is) its
+`index.html`: the last segment is the current page, and every ancestor is one
+level closer than it would be for a file.
 
 `repoUrl` is a blob base like
 `https://github.com/PetarKirov/sparkles/blob/main`; empty leaves `gitHubUrl`
@@ -54,7 +57,8 @@ unset and the forge links unrendered, since a gallery of a directory that is
 not in a repository has nowhere to point.
 */
 Breadcrumb[] breadcrumbsFor(scope const(char)[] relPath,
-    scope const(char)[] repoUrl = null, scope const(char)[] repoPrefix = null) @safe pure
+    scope const(char)[] repoUrl = null, scope const(char)[] repoPrefix = null,
+    bool isDirectory = false) @safe pure
 {
     import std.string : indexOf;
 
@@ -68,6 +72,12 @@ Breadcrumb[] breadcrumbsFor(scope const(char)[] relPath,
         if (ch == '/')
             ++total;
 
+    // How many path segments the page's *directory* has: all of them for a
+    // directory page (the page is that directory's index), all but the file
+    // name otherwise. Segment `i`'s index sits `dirDepth - 1 - i` levels up
+    // from the page.
+    const dirDepth = isDirectory ? total : total - 1;
+
     size_t i;
     while (start <= relPath.length)
     {
@@ -80,7 +90,7 @@ Breadcrumb[] breadcrumbsFor(scope const(char)[] relPath,
             const isLast = i + 1 == total;
             crumbs ~= Breadcrumb(
                 text: seg.idup,
-                href: isLast ? null : upTo(total - 1 - i),
+                href: isLast ? null : upTo(dirDepth - 1 - i),
                 copyText: relPath[0 .. end].idup,
                 gitHubUrl: repoUrl.length
                     ? joinUrl(repoUrl, repoPrefix, relPath[0 .. end]) : null,
@@ -350,14 +360,24 @@ unittest
     const c = breadcrumbsFor("libs/base/src/x.d");
     assert(c.map!(b => b.text).array == ["libs", "base", "src", "x.d"]);
 
-    // Hrefs are relative to the PAGE, which sits three directories deep — so
-    // `libs` is three `../` up. Anything root-relative would break on a
-    // `file://` URL and under a docs site served from a subpath.
-    assert(c[0].href == "../../../index.html", c[0].href);
-    assert(c[1].href == "../../index.html", c[1].href);
-    assert(c[2].href == "../index.html", c[2].href);
+    // Hrefs are relative to the PAGE, which sits inside `libs/base/src` — so
+    // that directory's own index is right beside it, and `libs` is two `../`
+    // up, not three (clicking a segment must open THAT directory's index,
+    // never its parent's). Anything root-relative would break on a `file://`
+    // URL and under a docs site served from a subpath.
+    assert(c[0].href == "../../index.html", c[0].href);
+    assert(c[1].href == "../index.html", c[1].href);
+    assert(c[2].href == "index.html", c[2].href);
     // The page itself is where you already are.
     assert(c[3].href == "", c[3].href);
+
+    // A directory page IS its index.html, so every ancestor is one level
+    // closer, and the directory itself is the unlinked current page.
+    const d = breadcrumbsFor("libs/base/src", null, null, isDirectory: true);
+    assert(d.map!(b => b.text).array == ["libs", "base", "src"]);
+    assert(d[0].href == "../../index.html", d[0].href);
+    assert(d[1].href == "../index.html", d[1].href);
+    assert(d[2].href == "", d[2].href);
 
     // Copying a segment yields the path up to it, not the segment alone.
     assert(c.map!(b => b.copyText).array
