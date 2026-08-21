@@ -19,7 +19,7 @@ import std.path : baseName, buildPath, dirName;
 import diff_session : FileChange, SessionEntry;
 import core.time : Duration;
 import keymap : Command, KeyContext;
-import lantern : LanternState, ltnStep = step, ltnTick = tick,
+import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
 import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
@@ -195,16 +195,20 @@ struct ExplorerTui
     /// this pane too — the same machine the viewer uses, not a copy.
     private LanternState lantern;
 
+    /// The guide's reveal delay (`CFG18`), config-owned; `Duration.max`
+    /// disables the panel without unbinding the sequences.
+    Duration lanternDelay = defaultDelay;
+
     /// How long until the guide's panel appears (`LTN4`); `Duration.max` when
     /// nothing is pending. The host uses it as its poll timeout, so the panel
     /// opens on time with no keystroke to wake it.
     Duration untilLanternShown() const @safe pure nothrow @nogc
-        => .untilShown(lantern);
+        => .untilShown(lantern, lanternDelay);
 
     /// ditto — advances the clock when that wait expires.
     void tickLantern(Duration elapsed) @safe pure nothrow @nogc
     {
-        ltnTick(lantern, elapsed);
+        ltnTick(lantern, elapsed, lanternDelay);
     }
 
     /// Whether a key sequence is in flight (`LTN1`): the workspace must not

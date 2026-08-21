@@ -371,6 +371,15 @@ struct DocumentPipeline
     string dsvDelimiter; /// `--dsv-delimiter` ("" = sniff)
     string dsvQuote;     /// `--dsv-quote` ("" = sniff)
     string dsvHeader = "auto"; /// `--dsv-header` `auto|yes|no`
+    /// The engine knobs the config owns (`CFG15`), defaults = the engine's:
+    /// context lines per hunk, the pairing similarity floor, and the Myers
+    /// scale guard. Set by field assignment (after the positional tail, like
+    /// the `--dsv` family, so construction sites stay valid).
+    uint diffContext = 3;
+    /// ditto
+    double minPairSimilarity = 0.4;
+    /// ditto
+    uint maxEditDistance = 1024;
     string coverageArtifact; /// `--cov` / `--overlay coverage=<path>`
     /// `COV4`: with no artifact named, look for one `ci --test` left behind.
     /// On by default, like live types — the reader should not have to ask for
@@ -593,6 +602,9 @@ struct DocumentPipeline
     {
         DiffOptions opt;
         opt.ignoreWhitespace = ignoreWhitespace;
+        opt.context = diffContext;
+        opt.minPairSimilarity = minPairSimilarity;
+        opt.maxEditDistance = maxEditDistance;
         return opt;
     }
 

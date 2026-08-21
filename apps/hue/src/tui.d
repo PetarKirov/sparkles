@@ -22,7 +22,7 @@ import table_select : serializeTable, TableCopyFormat, TableRegion;
 import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
-import lantern : LanternState, ltnStep = step, ltnTick = tick,
+import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
@@ -224,16 +224,23 @@ struct PreviewTui
     /// follows.
     private LanternState lantern;
 
+    /// The guide's taste settings (`CFG18`), config-owned: the reveal delay
+    /// (`Duration.max` = disabled — sequences still resolve, the panel just
+    /// never opens) and where the panel sits.
+    Duration lanternDelay = defaultDelay;
+    /// ditto
+    Placement lanternPlacement = Placement.classic;
+
     /// How long until the guide's panel appears (`LTN4`); `Duration.max` when
     /// nothing is pending. The host uses it as its poll timeout, so the panel
     /// opens on time with no keystroke to wake it.
     Duration untilLanternShown() const @safe pure nothrow @nogc
-        => .untilShown(lantern);
+        => .untilShown(lantern, lanternDelay);
 
     /// ditto — advances the clock when that wait expires.
     void tickLantern(Duration elapsed) @safe pure nothrow @nogc
     {
-        ltnTick(lantern, elapsed);
+        ltnTick(lantern, elapsed, lanternDelay);
     }
 
     /// Whether a key sequence is in flight (`LTN1`): the workspace must not
@@ -666,7 +673,7 @@ struct PreviewTui
         Builder b;
         BoxLayout box;
         const root = viewLantern(b, ltnLabels, listed[],
-            lantern.pending.length, width, box, Placement.classic,
+            lantern.pending.length, width, box, lanternPlacement,
             LanternStyle.init, 0, lantern.scroll);
         auto tree = b.finish(root);
         auto frames = layout(tree, Constraints(maxW: width));
@@ -1490,8 +1497,8 @@ struct PreviewTui
                 break;
             case Command.formatWidthNarrower: formatPreviewNudge(vm, -2); break;
             case Command.formatWidthWider:    formatPreviewNudge(vm, +2); break;
-            case Command.viewScrollLeft:  vm.scrollHorizontal(-ViewerModel.hScrollStep); break;
-            case Command.viewScrollRight: vm.scrollHorizontal(ViewerModel.hScrollStep); break;
+            case Command.viewScrollLeft:  vm.scrollHorizontal(-vm.hScrollStep); break;
+            case Command.viewScrollRight: vm.scrollHorizontal(vm.hScrollStep); break;
             case Command.viewScrollHome:  vm.scrollHomeHorizontal(); break;
             case Command.viewScrollEnd:   vm.scrollEndHorizontal(); break;
             case Command.diffPrevFile: moveDiffFile(-1); break;
