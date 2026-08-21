@@ -27,6 +27,8 @@ private struct X11Hooks
 
     enum uint chordShiftCode = 50; // X keycode: KEY_LEFTSHIFT + 8
     enum uint chordKeyCode = 38; // X keycode: KEY_A + 8
+    // Layout-derived unshifted spelling the chorded key must carry.
+    enum dchar chordKeyCharacter = 'a';
     enum bool expectFocusEvent = true;
 
     void step(Duration timeout)

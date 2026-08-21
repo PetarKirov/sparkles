@@ -13,6 +13,8 @@ version (linux):
 import core.stdc.errno : EAGAIN, errno;
 import core.stdc.string : strcmp;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
+import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
+    munmap;
 import core.sys.posix.unistd : posixClose = close;
 import core.time : Duration;
 import std.math : isFinite;
@@ -69,6 +71,9 @@ struct WaylandWsi
     private wl_seat* seat_;
     private uint seatVersion_;
     private wl_keyboard* keyboard_;
+    private xkb_context* xkbContext_;
+    private xkb_keymap* xkbKeymap_;
+    private xkb_state* xkbState_;
     private const(wl_surface)* keyboardFocus_;
     private Mods keyboardMods_;
     private int keyRepeatRate_;
@@ -595,6 +600,21 @@ struct WaylandWsi
                 wl_seat_destroy(seat_);
             seat_ = null;
         }
+        if (xkbState_ !is null)
+        {
+            xkb_state_unref(xkbState_);
+            xkbState_ = null;
+        }
+        if (xkbKeymap_ !is null)
+        {
+            xkb_keymap_unref(xkbKeymap_);
+            xkbKeymap_ = null;
+        }
+        if (xkbContext_ !is null)
+        {
+            xkb_context_unref(xkbContext_);
+            xkbContext_ = null;
+        }
         if (wmBase_ !is null)
         {
             xdg_wm_base_destroy(wmBase_);
@@ -807,11 +827,67 @@ struct WaylandWsi
 
     // The keymap fd must be consumed; mapping it through xkbcommon is the
     // logical-key slice, so until then close it immediately.
-    private extern (C) static void onKeyboardKeymap(void*, wl_keyboard*,
-        uint, int fd, uint) nothrow @nogc
+    // The compositor's keymap becomes the xkbcommon layout behind logical
+    // keys. Best-effort: a failed compile leaves logical identity unknown
+    // while physical identity keeps flowing. The fd is always consumed.
+    private extern (C) static void onKeyboardKeymap(void* data, wl_keyboard*,
+        uint format, int fd, uint size) nothrow @nogc
     {
-        if (fd >= 0)
-            posixClose(fd);
+        if (fd < 0)
+            return;
+        auto owner = cast(WaylandWsi*) data;
+        enum xkbV1Format = 1; // WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1
+        if (format == xkbV1Format && size > 0)
+        {
+            auto mapped = mmap(null, size, PROT_READ, MAP_PRIVATE, fd, 0);
+            if (mapped !is MAP_FAILED)
+            {
+                owner.replaceKeymap(cast(const(char)*) mapped);
+                munmap(mapped, size);
+            }
+        }
+        posixClose(fd);
+    }
+
+    private void replaceKeymap(const(char)* text) nothrow @nogc
+    {
+        if (xkbContext_ is null)
+            xkbContext_ = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+        if (xkbContext_ is null)
+            return;
+        auto keymap = xkb_keymap_new_from_string(xkbContext_, text,
+            XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
+        if (keymap is null)
+            return;
+        auto state = xkb_state_new(keymap);
+        if (state is null)
+        {
+            xkb_keymap_unref(keymap);
+            return;
+        }
+        if (xkbState_ !is null)
+            xkb_state_unref(xkbState_);
+        if (xkbKeymap_ !is null)
+            xkb_keymap_unref(xkbKeymap_);
+        xkbKeymap_ = keymap;
+        xkbState_ = state;
+    }
+
+    /// Unshifted base-level identity under the current layout; Wayland key
+    /// codes are evdev, and xkb keycodes are evdev + 8.
+    private LogicalKey logicalForKey(uint key) nothrow @nogc
+    {
+        if (xkbKeymap_ is null || xkbState_ is null)
+            return LogicalKey.init;
+        const keycode = key + 8;
+        const layout = xkb_state_key_get_layout(xkbState_, keycode);
+        const(uint)* keysyms;
+        const count = xkb_keymap_key_get_syms_by_level(xkbKeymap_, keycode,
+            layout, 0, &keysyms);
+        if (count < 1)
+            return LogicalKey.init;
+        return logicalFromKeysym(keysyms[0],
+            xkb_keysym_to_utf32(keysyms[0]));
     }
 
     private extern (C) static void onKeyboardEnter(void* data,
@@ -844,6 +920,7 @@ struct WaylandWsi
             return;
         KeyboardEvent event;
         event.physical = PhysicalKey(key, 0);
+        event.logical = owner.logicalForKey(key);
         event.location = evdevKeyLocation(key);
         event.action = state != 0 ? KeyAction.press : KeyAction.release;
         event.modifiers = owner.keyboardMods_;
@@ -851,11 +928,14 @@ struct WaylandWsi
     }
 
     private extern (C) static void onKeyboardModifiers(void* data,
-        wl_keyboard*, uint, uint depressed, uint latched, uint,
-        uint) nothrow @nogc
+        wl_keyboard*, uint, uint depressed, uint latched, uint locked,
+        uint group) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
         owner.keyboardMods_ = xkbRealMods(depressed | latched);
+        if (owner.xkbState_ !is null)
+            xkb_state_update_mask(owner.xkbState_, depressed, latched,
+                locked, 0, 0, group);
     }
 
     private extern (C) static void onKeyboardRepeatInfo(void* data,

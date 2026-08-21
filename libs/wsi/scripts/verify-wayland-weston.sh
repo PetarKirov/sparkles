@@ -31,7 +31,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$during_src" \
   "$repo/libs/wsi/examples/wayland-hosted-smoke.d" \
   "$repo/libs/wsi/src/wayland_native.c" \
-  -L-lwayland-client \
+  -L-lwayland-client -L-lxkbcommon \
   -of="$work/wsi-wayland-smoke"
 
 echo ">> checking the no-compositor capability gate ..."

@@ -23,7 +23,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$during_src" \
   "$repo/libs/wsi/examples/x11-hosted-smoke.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxkbcommon -L-lxkbcommon-x11 \
   -of="$work/wsi-x11-smoke"
 
 echo ">> running under Xvfb ..."

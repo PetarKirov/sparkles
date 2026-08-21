@@ -6,9 +6,17 @@
  * the D adapter with no wrapper bodies here.
  */
 #undef _FORTIFY_SOURCE
+/*
+ * xkbcommon.h pulls in stdio.h; without this, glibc's extern-inline
+ * getchar/putchar/vprintf are emitted in every ImportC bridge that
+ * includes it, and the duplicate definitions across bridges turn into
+ * errors under -w in single-invocation unittest builds.
+ */
+#define __NO_INLINE__ 1
 
 #pragma attribute(push, nogc, nothrow)
 #include <xcb/xcb.h>
 #include <xcb/xkb.h>
 #include <xcb/xtest.h>
+#include <xkbcommon/xkbcommon-x11.h>
 #pragma attribute(pop)

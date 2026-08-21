@@ -117,6 +117,7 @@ private extern class NSString : NSObject
     static NSString alloc() @selector("alloc");
     NSString initWithUTF8String(const(char)* text)
         @selector("initWithUTF8String:");
+    const(char)* UTF8String() @selector("UTF8String");
 }
 
 private extern class NSDate : NSObject
@@ -130,6 +131,8 @@ private extern class NSEvent : NSObject
     ushort keyCode() @selector("keyCode");
     ulong modifierFlags() @selector("modifierFlags");
     bool isARepeat() @selector("isARepeat");
+    NSString charactersIgnoringModifiers()
+        @selector("charactersIgnoringModifiers");
 }
 
 private extern class NSResponder : NSObject
@@ -698,12 +701,77 @@ struct AppKitWsi
             return;
         KeyboardEvent keyboard;
         keyboard.physical = PhysicalKey(event.keyCode, 0);
+        keyboard.logical = appKitLogical(event.charactersIgnoringModifiers());
         keyboard.location = appKitKeyLocation(event.keyCode);
         keyboard.action = pressed
             ? (event.isARepeat ? KeyAction.repeat : KeyAction.press)
             : KeyAction.release;
         keyboard.modifiers = appKitMods(event.modifierFlags);
         emit(idAt(index), keyboard);
+    }
+
+    /*
+    Unshifted layout identity: charactersIgnoringModifiers is the layout's
+    base spelling, and AppKit spells function keys as scalars in the Unicode
+    private range 0xF700–0xF8FF (NSUpArrowFunctionKey and friends) — those
+    are macOS's named identity.
+    */
+    private static LogicalKey appKitLogical(NSString text)
+    {
+        if (text is null)
+            return LogicalKey.init;
+        auto utf8 = text.UTF8String();
+        if (utf8 is null)
+            return LogicalKey.init;
+        import core.stdc.string : strlen;
+
+        const scalar = firstScalar(utf8[0 .. strlen(utf8)]);
+        if (scalar >= 0xF700 && scalar <= 0xF8FF)
+            return LogicalKey(LogicalKeyKind.named, dchar.init, scalar);
+        if (scalar >= 0x20 && scalar != 0x7F)
+            return LogicalKey(LogicalKeyKind.character, scalar, scalar);
+        return LogicalKey.init;
+    }
+
+    /// First Unicode scalar of a UTF-8 string; `dchar.init` when empty or
+    /// malformed.
+    package static dchar firstScalar(scope const(char)[] text)
+        @safe pure nothrow @nogc
+    {
+        if (text.length == 0)
+            return dchar.init;
+        const first = text[0];
+        if (first < 0x80)
+            return first;
+        uint continuations;
+        uint value;
+        if ((first & 0xE0) == 0xC0)
+        {
+            continuations = 1;
+            value = first & 0x1F;
+        }
+        else if ((first & 0xF0) == 0xE0)
+        {
+            continuations = 2;
+            value = first & 0x0F;
+        }
+        else if ((first & 0xF8) == 0xF0)
+        {
+            continuations = 3;
+            value = first & 0x07;
+        }
+        else
+            return dchar.init;
+        if (text.length < 1 + continuations)
+            return dchar.init;
+        foreach (i; 0 .. continuations)
+        {
+            const unit = text[1 + i];
+            if ((unit & 0xC0) != 0x80)
+                return dchar.init;
+            value = (value << 6) | (unit & 0x3F);
+        }
+        return cast(dchar) value;
     }
 
     // Modifier keys never reach keyDown/keyUp; AppKit reports them through
@@ -918,4 +986,16 @@ unittest
     assert(AppKitWsi.appKitMods(1UL << 16) == Mods());
     assert(AppKitWsi.appKitModifierFlagFor(0x3C) == 1UL << 17);
     assert(AppKitWsi.appKitModifierFlagFor(0x00) == 0);
+}
+
+@("wsi.appkit.firstScalarDecodesTheLeadingCodePoint")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(AppKitWsi.firstScalar("a") == 'a');
+    assert(AppKitWsi.firstScalar("λx") == 'λ');
+    assert(AppKitWsi.firstScalar("\uF700") == 0xF700);
+    assert(AppKitWsi.firstScalar("") == dchar.init);
+    assert(AppKitWsi.firstScalar("\xC3") == dchar.init);
+    assert(AppKitWsi.firstScalar("\xFF") == dchar.init);
 }

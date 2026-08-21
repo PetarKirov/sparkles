@@ -664,8 +664,7 @@ struct Win32Wsi
 
         KeyboardEvent event;
         event.physical = PhysicalKey(scanCode | (extended ? 0x100 : 0), 0);
-        event.logical = LogicalKey(LogicalKeyKind.named, dchar.init,
-            cast(uint) wParam);
+        event.logical = win32Logical(cast(uint) wParam);
         event.location = keyLocation(cast(uint) wParam, scanCode, extended);
         event.action = pressed
             ? (repeated ? KeyAction.repeat : KeyAction.press)
@@ -673,6 +672,23 @@ struct Win32Wsi
         event.modifiers = currentModifiers();
         event.composing = slot.composing;
         emit(id, event);
+    }
+
+    /*
+    Unshifted layout identity: MAPVK_VK_TO_CHAR is the layout's base
+    spelling for the virtual key (dead keys flagged in the top bit are not
+    a committed spelling); keys without one keep the VK as named identity.
+    */
+    private static LogicalKey win32Logical(uint virtualKey) nothrow @nogc
+    {
+        enum uint mapVkToChar = 2; // MAPVK_VK_TO_CHAR
+        const mapped = MapVirtualKeyW(virtualKey, mapVkToChar);
+        const deadKey = (mapped & 0x8000_0000) != 0;
+        const character = mapped & 0xFFFF;
+        if (!deadKey && character >= 0x20)
+            return LogicalKey(LogicalKeyKind.character,
+                cast(dchar) character, virtualKey);
+        return LogicalKey(LogicalKeyKind.named, dchar.init, virtualKey);
     }
 
     private static KeyLocation keyLocation(uint virtualKey, uint scanCode,

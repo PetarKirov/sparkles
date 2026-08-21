@@ -86,6 +86,8 @@ private struct AppKitHooks
 
     enum uint chordShiftCode = 0x38; // kVK_Shift
     enum uint chordKeyCode = 0x00; // kVK_ANSI_A
+    // Layout-derived unshifted spelling the chorded key must carry.
+    enum dchar chordKeyCharacter = 'a';
     enum bool resizeExact = false; // physical size scales with the backing
 
     void step(Duration timeout)
@@ -129,19 +131,21 @@ private struct AppKitHooks
         auto lower = NSString.alloc().initWithUTF8String("a");
         auto upper = NSString.alloc().initWithUTF8String("A");
         const number = nativeWindow.windowNumber();
+        // characters is the effective spelling, charactersIgnoringModifiers
+        // the unshifted one the LogicalKey property asserts.
         void post(ulong type, ulong flags, NSString characters,
-            ushort keyCode)
+            NSString unshifted, ushort keyCode)
         {
             auto event = NSEvent.keyEventWithType(type, NSPoint(0, 0), flags,
-                0, number, null, characters, characters, false, keyCode);
+                0, number, null, characters, unshifted, false, keyCode);
             assert(event !is null);
             application.postEvent(event, false);
         }
 
-        post(flagsChangedType, shiftFlag, lower, chordShiftCode);
-        post(keyDownType, shiftFlag, upper, chordKeyCode);
-        post(keyUpType, shiftFlag, upper, chordKeyCode);
-        post(flagsChangedType, 0, lower, chordShiftCode);
+        post(flagsChangedType, shiftFlag, lower, lower, chordShiftCode);
+        post(keyDownType, shiftFlag, upper, lower, chordKeyCode);
+        post(keyUpType, shiftFlag, upper, lower, chordKeyCode);
+        post(flagsChangedType, 0, lower, lower, chordShiftCode);
     }
 }
 

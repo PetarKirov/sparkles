@@ -59,6 +59,13 @@ struct PhysicalKey
     uint usbUsage;
 }
 
+/*
+Layout-derived identity at the key's unshifted base level (matching
+`sparkles.input`'s `unshifted` convention): `character` is the base
+spelling under the current layout, and `nativeCode` carries the platform's
+logical code — an xkb keysym, a Win32 virtual key, or a macOS function-key
+scalar — which is all a key without a printable base spelling has.
+*/
 struct LogicalKey
 {
     LogicalKeyKind kind;
@@ -307,6 +314,32 @@ package KeyLocation evdevKeyLocation(uint evdevCode) @safe pure nothrow @nogc
         default:
             return KeyLocation.standard;
     }
+}
+
+/// Shared xkb classifier: a printable base-level spelling is a character
+/// key; anything else keeps its keysym as the named identity.
+package LogicalKey logicalFromKeysym(uint keysym, uint utf32)
+    @safe pure nothrow @nogc
+{
+    if (utf32 >= 0x20 && utf32 != 0x7F)
+        return LogicalKey(LogicalKeyKind.character, cast(dchar) utf32, keysym);
+    return keysym != 0
+        ? LogicalKey(LogicalKeyKind.named, dchar.init, keysym)
+        : LogicalKey.init;
+}
+
+@("wsi.events.keysymClassifierSeparatesTextFromNamedKeys")
+@safe pure nothrow @nogc
+unittest
+{
+    const a = logicalFromKeysym(0x61, 'a');
+    assert(a.kind == LogicalKeyKind.character && a.character == 'a'
+        && a.nativeCode == 0x61);
+    const escape = logicalFromKeysym(0xFF1B, 0x1B);
+    assert(escape.kind == LogicalKeyKind.named && escape.nativeCode == 0xFF1B);
+    const shift = logicalFromKeysym(0xFFE1, 0);
+    assert(shift.kind == LogicalKeyKind.named && shift.nativeCode == 0xFFE1);
+    assert(logicalFromKeysym(0, 0).kind == LogicalKeyKind.unknown);
 }
 
 /// Chord modifiers only: Lock (caps) and Mod2 (num lock) are latched states.
