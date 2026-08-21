@@ -157,9 +157,22 @@ convention: xkbcommon compiles the Wayland keymap fd (previously just closed)
 and the X11 core device's map, Win32 asks the layout via `MAPVK_VK_TO_CHAR`,
 and AppKit reads `charactersIgnoringModifiers` with function keys kept as
 named private-range scalars; the conformance chord now asserts the
-layout-derived spelling on every platform. Keymap-change events, Wayland
-client-side repeat synthesis, XIM, candidate-window placement, raw input,
-pointer/cursor/DPI/output work, and native-Windows evidence remain.
+layout-derived spelling on every platform. The pointer slice delivers
+button/motion/enter/leave and scroll on all four backends under one sign
+convention (positive scrolls down/right): Wayland accumulates axis events
+per frame with `axis_source`/`axis_discrete` and acquires/releases the seat
+pointer with the keyboard; X11 translates core buttons with the legacy
+wheel mapping; Win32 pairs `WM_MOUSEMOVE` entry with `TrackMouseEvent`
+leave and flips wheel deltas; AppKit hit-tests through the real responder
+path (with `acceptsFirstMouse` so an inactive window's activating click is
+still delivered) and reports precise deltas with the natural-direction
+flag. The conformance click and scroll properties inject through XTEST,
+`SendMessageW`, posted `NSEvent`s, and the external Weston lane — which
+moved to the kiosk shell, because this Weston's desktop-shell
+click-to-activate binding crashes on a null pointer focus in the headless
+environment. Keymap-change events, Wayland client-side repeat synthesis,
+XIM, candidate-window placement, raw input, pointer capture,
+cursor/DPI/output work, and native-Windows evidence remain.
 
 Required platform paths:
 

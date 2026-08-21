@@ -43,6 +43,15 @@ $(LIST
         requires a `FocusChangedEvent(true)` before the keys.
     * `void checkHandles(in NativeHandles handles)` — backend-specific handle
         validation beyond "the query succeeds".
+    * `void injectClick()` — a left-button press/release at the pointer
+        position the driver controls; `enum clickPosition` (a
+        `PhysicalPosition`) additionally pins the press position, and
+        `enum expectPointerMotion = true` requires an enter or motion event
+        first. `void injectScroll()` — a downward wheel step; the property
+        requires a `ScrollEvent` with positive vertical movement and a
+        declared source. Both share the chord's `pointerEnabled`-style
+        runtime gate (`chordEnabled` gates keys, `pointerEnabled` gates
+        clicks and scrolls) and `chordDeadline`.
 )
 */
 module sparkles.wsi.conformance;
@@ -52,7 +61,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 
 import sparkles.event_horizon.loop : DefaultLoop;
 import sparkles.event_horizon.op : Completion;
-import sparkles.input.events : KeyAction;
+import sparkles.input.events : KeyAction, PointerButton;
 import sparkles.wsi.events;
 import sparkles.wsi.types;
 
@@ -86,6 +95,13 @@ private struct Observed
     bool chordedPress;
     bool chordedPressAnyMods;
     bool chordReleased;
+    bool pointerEntered;
+    bool pointerMoved;
+    bool leftPressed;
+    PhysicalPosition pressPosition;
+    bool leftReleased;
+    bool scrolledDown;
+    ScrollSource scrollSource;
 }
 
 /**
@@ -127,6 +143,14 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
                 (in CloseRequestedEvent _) { seen.closeRequested = true; },
                 (in DestroyedEvent _) { seen.destroyed = true; },
                 (in KeyboardEvent value) { observeKey(hooks, seen, value); },
+                (in PointerEvent value) { observePointer(seen, value); },
+                (in ScrollEvent value) {
+                    if (value.discreteY > 0 || value.dy > 0)
+                    {
+                        seen.scrolledDown = true;
+                        seen.scrollSource = value.source;
+                    }
+                },
                 (_) {});
         });
         assert(!drained.hasError, "draining the event queue failed");
@@ -160,8 +184,15 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     const id = wsi.createWindow(config).value;
     ++outcome.checked;
     driveUntil(() => seen.ready, "no ReadyEvent after createWindow");
-    assert(seen.readyMetrics.logicalSize == config.logicalSize,
-        "ready metrics do not match the requested logical size");
+    // A compositor that owns the initial size (a kiosk shell) reports its
+    // own dimensions; `readySizeExact = false` keeps the positive-size
+    // requirement while dropping the equality.
+    bool readySizeExact = true;
+    static if (is(typeof(hooks.readySizeExact)))
+        readySizeExact = hooks.readySizeExact;
+    if (readySizeExact)
+        assert(seen.readyMetrics.logicalSize == config.logicalSize,
+            "ready metrics do not match the requested logical size");
     assert(seen.readyMetrics.physicalSize.width > 0
         && seen.readyMetrics.physicalSize.height > 0,
         "ready physical size is empty");
@@ -223,18 +254,26 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     // SurfaceMetricsChangedEvent, never silently absorbed.
     static if (is(typeof(hooks.requestResize(0, 0))))
     {
-        const before = seen.lastMetrics;
-        seen.metricsChanged = false;
-        hooks.requestResize(640, 480);
-        static if (is(typeof(Hooks.resizeExact)) && !Hooks.resizeExact)
-            driveUntil(() => seen.metricsChanged
-                && seen.lastMetrics != before,
-                "no metrics change after the resize request");
+        bool runResize = true;
+        static if (is(typeof(hooks.resizeEnabled)))
+            runResize = hooks.resizeEnabled;
+        if (runResize)
+        {
+            const before = seen.lastMetrics;
+            seen.metricsChanged = false;
+            hooks.requestResize(640, 480);
+            static if (is(typeof(Hooks.resizeExact)) && !Hooks.resizeExact)
+                driveUntil(() => seen.metricsChanged
+                    && seen.lastMetrics != before,
+                    "no metrics change after the resize request");
+            else
+                driveUntil(() => seen.metricsChanged
+                    && seen.lastMetrics.physicalSize == PhysicalSize(640, 480),
+                    "no metrics change to the requested size");
+            ++outcome.checked;
+        }
         else
-            driveUntil(() => seen.metricsChanged
-                && seen.lastMetrics.physicalSize == PhysicalSize(640, 480),
-                "no metrics change to the requested size");
-        ++outcome.checked;
+            ++outcome.skipped;
     }
     else
         ++outcome.skipped;
@@ -261,6 +300,64 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
             static if (is(typeof(Hooks.expectFocusEvent))
                 && Hooks.expectFocusEvent)
                 assert(seen.focusGained, "keyboard focus was never reported");
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: an injected left click arrives in order — optionally after
+    // an enter/motion event — as a press at the declared position and its
+    // release, never a release first.
+    static if (is(typeof(hooks.injectClick())))
+    {
+        bool runClick = true;
+        static if (is(typeof(hooks.pointerEnabled)))
+            runClick = hooks.pointerEnabled;
+        if (runClick)
+        {
+            static if (is(typeof(Hooks.chordDeadline)))
+                const clickLimit = Hooks.chordDeadline;
+            else
+                const clickLimit = 5.seconds;
+            hooks.injectClick();
+            driveUntil(() => seen.leftPressed && seen.leftReleased,
+                "the injected click never arrived", clickLimit);
+            static if (is(typeof(Hooks.clickPosition)))
+                assert(seen.pressPosition == Hooks.clickPosition,
+                    "the press landed at the wrong position");
+            static if (is(typeof(Hooks.expectPointerMotion))
+                && Hooks.expectPointerMotion)
+                assert(seen.pointerEntered || seen.pointerMoved,
+                    "no pointer enter/motion before the click");
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: an injected downward wheel step arrives as a ScrollEvent
+    // with positive vertical movement and a declared source.
+    static if (is(typeof(hooks.injectScroll())))
+    {
+        bool runScroll = true;
+        static if (is(typeof(hooks.pointerEnabled)))
+            runScroll = hooks.pointerEnabled;
+        if (runScroll)
+        {
+            static if (is(typeof(Hooks.chordDeadline)))
+                const scrollLimit = Hooks.chordDeadline;
+            else
+                const scrollLimit = 5.seconds;
+            hooks.injectScroll();
+            driveUntil(() => seen.scrolledDown,
+                "the injected scroll never arrived", scrollLimit);
+            assert(seen.scrollSource != ScrollSource.unknown,
+                "the scroll arrived without a source");
             ++outcome.checked;
         }
         else
@@ -318,6 +415,38 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     }
 
     return outcome;
+}
+
+private void observePointer(ref Observed seen, in PointerEvent event)
+    @safe pure nothrow @nogc
+{
+    final switch (event.phase)
+    {
+        case PointerPhase.entered:
+            seen.pointerEntered = true;
+            break;
+        case PointerPhase.moved:
+            seen.pointerMoved = true;
+            break;
+        case PointerPhase.pressed:
+            if (event.button == PointerButton.left)
+            {
+                assert(!seen.leftReleased,
+                    "a release was observed before its press");
+                seen.leftPressed = true;
+                seen.pressPosition = event.physicalPosition;
+            }
+            break;
+        case PointerPhase.released:
+            if (event.button == PointerButton.left)
+            {
+                assert(seen.leftPressed, "a release arrived without a press");
+                seen.leftReleased = true;
+            }
+            break;
+        case PointerPhase.left:
+            break;
+    }
 }
 
 private void observeKey(Hooks)(ref Hooks hooks, ref Observed seen,
@@ -389,5 +518,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 4);
+    assert(outcome.checked == 6 && outcome.skipped == 6);
 }

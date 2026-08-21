@@ -21,7 +21,7 @@ import std.math : isFinite;
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
-import sparkles.input.events : KeyAction, Mods;
+import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.loop : EventQueue;
@@ -77,8 +77,10 @@ struct Win32Wsi
         bool live;
         bool ready;
         bool composing;
+        bool pointerInside;
         wchar pendingHighSurrogate;
         SurfaceMetrics metrics;
+        PhysicalPosition lastPointer;
     }
 
     private HINSTANCE instance_;
@@ -654,6 +656,77 @@ struct Win32Wsi
         emitCommittedText(id, scalar[]);
     }
 
+    /// One pointer per User32 message queue.
+    private enum queuePointer = PointerId(1, 1);
+
+    private static PhysicalPosition pointFrom(LPARAM lParam)
+        pure nothrow @nogc
+        => PhysicalPosition(cast(short)(lParam & 0xFFFF),
+            cast(short)((lParam >> 16) & 0xFFFF));
+
+    private void handleMouseMove(ref Slot slot, WindowId id,
+        LPARAM lParam) nothrow
+    {
+        const at = pointFrom(lParam);
+        if (!slot.pointerInside)
+        {
+            slot.pointerInside = true;
+            // Ask for the WM_MOUSELEAVE that completes the pair.
+            TRACKMOUSEEVENT track;
+            track.cbSize = TRACKMOUSEEVENT.sizeof;
+            track.dwFlags = TME_LEAVE;
+            track.hwndTrack = slot.hwnd;
+            TrackMouseEvent(&track);
+            emitPointer(slot, id, PointerPhase.entered, at);
+        }
+        emitPointer(slot, id, PointerPhase.moved, at);
+    }
+
+    private void emitPointer(ref Slot slot, WindowId id, PointerPhase phase,
+        PhysicalPosition at,
+        PointerButton button = PointerButton.none) nothrow
+    {
+        slot.lastPointer = at;
+        PointerEvent event;
+        event.pointer = queuePointer;
+        event.phase = phase;
+        event.button = button;
+        event.logicalPosition = LogicalPosition(at.x, at.y);
+        event.physicalPosition = at;
+        event.modifiers = currentModifiers();
+        emit(id, event);
+    }
+
+    // Wheel deltas are multiples of 120 with away-from-user positive;
+    // the shared convention is positive-down, so vertical flips sign.
+    private void handleWheel(ref Slot slot, WindowId id, bool vertical,
+        WPARAM wParam, LPARAM lParam) nothrow
+    {
+        const delta = cast(short)((wParam >> 16) & 0xFFFF);
+        // Wheel coordinates are screen coordinates, unlike button messages.
+        POINT at = POINT(cast(short)(lParam & 0xFFFF),
+            cast(short)((lParam >> 16) & 0xFFFF));
+        ScreenToClient(slot.hwnd, &at);
+        ScrollEvent scroll;
+        scroll.logicalPosition = LogicalPosition(at.x, at.y);
+        scroll.physicalPosition = PhysicalPosition(at.x, at.y);
+        const steps = -delta / 120.0;
+        if (vertical)
+        {
+            scroll.dy = steps;
+            scroll.discreteY = cast(int) steps;
+        }
+        else
+        {
+            scroll.dx = steps;
+            scroll.discreteX = cast(int) steps;
+        }
+        scroll.source = ScrollSource.wheel;
+        scroll.unit = ScrollUnit.logical;
+        scroll.modifiers = currentModifiers();
+        emit(id, scroll);
+    }
+
     private void emitKeyboard(ref Slot slot, WindowId id, WPARAM wParam,
         LPARAM lParam, bool pressed) nothrow
     {
@@ -819,6 +892,52 @@ struct Win32Wsi
             case WM_IME_CHAR:
                 // GCS_RESULTSTR is the single commit source. DefWindowProc
                 // would turn this into WM_CHAR and duplicate the text.
+                return 0;
+            case WM_MOUSEMOVE:
+                owner.handleMouseMove(*slot, id, lParam);
+                return 0;
+            case WM_MOUSELEAVE:
+                if (slot.pointerInside)
+                {
+                    slot.pointerInside = false;
+                    owner.emitPointer(*slot, id, PointerPhase.left,
+                        slot.lastPointer);
+                }
+                return 0;
+            case WM_LBUTTONDOWN:
+            case WM_LBUTTONUP:
+                owner.emitPointer(*slot, id,
+                    message == WM_LBUTTONDOWN
+                        ? PointerPhase.pressed : PointerPhase.released,
+                    pointFrom(lParam), PointerButton.left);
+                return 0;
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+                owner.emitPointer(*slot, id,
+                    message == WM_MBUTTONDOWN
+                        ? PointerPhase.pressed : PointerPhase.released,
+                    pointFrom(lParam), PointerButton.middle);
+                return 0;
+            case WM_RBUTTONDOWN:
+            case WM_RBUTTONUP:
+                owner.emitPointer(*slot, id,
+                    message == WM_RBUTTONDOWN
+                        ? PointerPhase.pressed : PointerPhase.released,
+                    pointFrom(lParam), PointerButton.right);
+                return 0;
+            case WM_XBUTTONDOWN:
+            case WM_XBUTTONUP:
+                owner.emitPointer(*slot, id,
+                    message == WM_XBUTTONDOWN
+                        ? PointerPhase.pressed : PointerPhase.released,
+                    pointFrom(lParam),
+                    ((wParam >> 16) & 0xFFFF) == 1
+                        ? PointerButton.back : PointerButton.forward);
+                return TRUE;
+            case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
+                owner.handleWheel(*slot, id, message == WM_MOUSEWHEEL,
+                    wParam, lParam);
                 return 0;
             case WM_SIZE:
                 const metrics = metricsOf(hwnd);

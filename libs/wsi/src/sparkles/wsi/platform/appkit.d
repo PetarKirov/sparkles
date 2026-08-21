@@ -14,7 +14,7 @@ import core.attribute : selector;
 import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
-import sparkles.input.events : KeyAction, Mods;
+import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.wsi.events;
@@ -133,6 +133,14 @@ private extern class NSEvent : NSObject
     bool isARepeat() @selector("isARepeat");
     NSString charactersIgnoringModifiers()
         @selector("charactersIgnoringModifiers");
+    NSPoint locationInWindow() @selector("locationInWindow");
+    long buttonNumber() @selector("buttonNumber");
+    double scrollingDeltaX() @selector("scrollingDeltaX");
+    double scrollingDeltaY() @selector("scrollingDeltaY");
+    bool hasPreciseScrollingDeltas()
+        @selector("hasPreciseScrollingDeltas");
+    bool isDirectionInvertedFromDevice()
+        @selector("isDirectionInvertedFromDevice");
 }
 
 private extern class NSResponder : NSObject
@@ -153,6 +161,8 @@ private extern class NSApplication : NSResponder
 private extern class NSView : NSResponder
 {
     NSRect bounds() @selector("bounds");
+    NSPoint convertPoint(NSPoint point, NSView view)
+        @selector("convertPoint:fromView:");
     void setFrameSize(NSSize size) @selector("setFrameSize:");
     void setNeedsDisplay(bool value) @selector("setNeedsDisplay:");
 }
@@ -171,6 +181,8 @@ private extern class NSWindow : NSResponder
         @selector("makeKeyAndOrderFront:");
     bool makeFirstResponder(NSResponder responder)
         @selector("makeFirstResponder:");
+    void setAcceptsMouseMovedEvents(bool value)
+        @selector("setAcceptsMouseMovedEvents:");
     void orderOut(NSObject sender) @selector("orderOut:");
     void close() @selector("close");
     double backingScaleFactor() @selector("backingScaleFactor");
@@ -198,6 +210,11 @@ private class SparklesWsiView : NSView
     bool acceptsFirstResponder() @selector("acceptsFirstResponder")
         => true;
 
+    // Deliver the activating click too; without this an inactive window
+    // swallows the first mouseDown as click-through activation.
+    bool acceptsFirstMouse(NSEvent event) @selector("acceptsFirstMouse:")
+        => true;
+
     void keyDown(NSEvent event) @selector("keyDown:")
     {
         if (activeOwner !is null)
@@ -214,6 +231,72 @@ private class SparklesWsiView : NSView
     {
         if (activeOwner !is null)
             activeOwner.onFlagsChanged(this, event);
+    }
+
+    void mouseDown(NSEvent event) @selector("mouseDown:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.pressed);
+    }
+
+    void mouseUp(NSEvent event) @selector("mouseUp:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.released);
+    }
+
+    void rightMouseDown(NSEvent event) @selector("rightMouseDown:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.pressed);
+    }
+
+    void rightMouseUp(NSEvent event) @selector("rightMouseUp:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.released);
+    }
+
+    void otherMouseDown(NSEvent event) @selector("otherMouseDown:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.pressed);
+    }
+
+    void otherMouseUp(NSEvent event) @selector("otherMouseUp:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.released);
+    }
+
+    void mouseMoved(NSEvent event) @selector("mouseMoved:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.moved);
+    }
+
+    void mouseDragged(NSEvent event) @selector("mouseDragged:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.moved);
+    }
+
+    void mouseEntered(NSEvent event) @selector("mouseEntered:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.entered);
+    }
+
+    void mouseExited(NSEvent event) @selector("mouseExited:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onMouse(this, event, PointerPhase.left);
+    }
+
+    void scrollWheel(NSEvent event) @selector("scrollWheel:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onScrollWheel(this, event);
     }
 }
 
@@ -454,6 +537,7 @@ struct AppKitWsi
         // NSView refuses first-responder status by default; without it the
         // responder chain never delivers keyDown/keyUp to the view.
         window.makeFirstResponder(view);
+        window.setAcceptsMouseMovedEvents(true);
         view.setNeedsDisplay(true);
         return wsiOk(id);
     }
@@ -772,6 +856,88 @@ struct AppKitWsi
             value = (value << 6) | (unit & 0x3F);
         }
         return cast(dchar) value;
+    }
+
+    /// One pointer per NSApplication event stream.
+    private enum viewPointer = PointerId(1, 1);
+
+    /// Window coordinates are bottom-left; the toolkit contract is
+    /// top-left, so the view's own coordinate space flips y.
+    private LogicalPosition pointerPositionOf(ref Slot slot, NSEvent event)
+    {
+        const inView = slot.view.convertPoint(event.locationInWindow(), null);
+        const bounds = slot.view.bounds();
+        return LogicalPosition(inView.x, bounds.size.height - inView.y);
+    }
+
+    private void onMouse(SparklesWsiView view, NSEvent event,
+        PointerPhase phase)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        ref slot = windows_[index];
+        const at = pointerPositionOf(slot, event);
+        double scale = slot.window.backingScaleFactor();
+        if (scale <= 0)
+            scale = 1;
+        PointerEvent pointer;
+        pointer.pointer = viewPointer;
+        pointer.phase = phase;
+        if (phase == PointerPhase.pressed || phase == PointerPhase.released)
+            pointer.button = appKitPointerButton(event.buttonNumber());
+        pointer.logicalPosition = at;
+        pointer.physicalPosition = PhysicalPosition(
+            cast(int)(at.x * scale + 0.5), cast(int)(at.y * scale + 0.5));
+        pointer.modifiers = appKitMods(event.modifierFlags());
+        emit(idAt(index), pointer);
+    }
+
+    // AppKit's scrollingDelta is positive when content moves down toward
+    // natural scrolling; the shared convention is positive-down of the
+    // viewport, so both axes flip sign.
+    private void onScrollWheel(SparklesWsiView view, NSEvent event)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        ref slot = windows_[index];
+        const at = pointerPositionOf(slot, event);
+        double scale = slot.window.backingScaleFactor();
+        if (scale <= 0)
+            scale = 1;
+        ScrollEvent scroll;
+        scroll.logicalPosition = at;
+        scroll.physicalPosition = PhysicalPosition(
+            cast(int)(at.x * scale + 0.5), cast(int)(at.y * scale + 0.5));
+        scroll.dx = -event.scrollingDeltaX();
+        scroll.dy = -event.scrollingDeltaY();
+        const precise = event.hasPreciseScrollingDeltas();
+        if (!precise)
+        {
+            scroll.discreteX = cast(int) scroll.dx;
+            scroll.discreteY = cast(int) scroll.dy;
+        }
+        scroll.source = precise ? ScrollSource.continuous : ScrollSource.wheel;
+        scroll.unit = precise ? ScrollUnit.pixel : ScrollUnit.logical;
+        scroll.inverted = event.isDirectionInvertedFromDevice();
+        scroll.modifiers = appKitMods(event.modifierFlags());
+        emit(idAt(index), scroll);
+    }
+
+    /// AppKit button numbers: 0/1/2 are left/right/middle, 3/4 the thumbs.
+    package static PointerButton appKitPointerButton(long number)
+        @safe pure nothrow @nogc
+    {
+        switch (number)
+        {
+            case 0: return PointerButton.left;
+            case 1: return PointerButton.right;
+            case 2: return PointerButton.middle;
+            case 3: return PointerButton.back;
+            case 4: return PointerButton.forward;
+            default: return PointerButton.none;
+        }
     }
 
     // Modifier keys never reach keyDown/keyUp; AppKit reports them through

@@ -12,7 +12,7 @@ module x11_key_injector;
 version (linux):
 
 import xcb_native;
-import xcb_test_input : sendKey, warpPointer;
+import xcb_test_input : sendButton, sendKey, warpPointer;
 
 int main()
 {
@@ -39,5 +39,29 @@ int main()
     foreach (step; chord)
         if (sendKey(connection, step[0], step[1] != 0) != 0)
             return 4;
+
+    // Pointer leg, gated on the driver's signal file: Weston's
+    // click-to-activate binding crashes on a click over the bare desktop,
+    // so clicks start only once the conformance click property is running —
+    // after the resize property maximized the client surface across the
+    // output. Two warps force motion even when the position repeats.
+    {
+        import core.stdc.stdlib : getenv;
+        import std.string : fromStringz;
+        import std.file : exists;
+
+        auto gate = getenv("WSI_POINTER_GO");
+        if (gate is null || !exists(gate.fromStringz))
+            return 0;
+    }
+    const root = screens.data.root;
+    if (warpPointer(connection, root, 470, 290) != 0
+        || warpPointer(connection, root, 480, 300) != 0)
+        return 5;
+    static immutable ubyte[2][4] clicks =
+        [[1, 1], [1, 0], [5, 1], [5, 0]];
+    foreach (step; clicks)
+        if (sendButton(connection, step[0], step[1] != 0) != 0)
+            return 6;
     return 0;
 }

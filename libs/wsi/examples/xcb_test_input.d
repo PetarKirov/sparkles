@@ -86,6 +86,25 @@ int warpPointer(xcb_connection_t* connection, uint root, short x, short y)
     return error != 0 ? error : flushOrError(connection);
 }
 
+/// Warp to root coordinates on the first screen (no-WM lanes place the
+/// probe window at the origin, so root and window coordinates coincide).
+int warpPointerOnScreen(xcb_connection_t* connection, short x, short y)
+{
+    auto screens = xcb_setup_roots_iterator(xcb_get_setup(connection));
+    if (screens.rem == 0)
+        return -1;
+    return warpPointer(connection, screens.data.root, x, y);
+}
+
+int sendButton(xcb_connection_t* connection, ubyte button, bool press)
+{
+    const error = checkedRequest(connection,
+        xcb_test_fake_input_checked(connection,
+            press ? XCB_BUTTON_PRESS : XCB_BUTTON_RELEASE, button,
+            XCB_CURRENT_TIME, XCB_NONE, 0, 0, 0));
+    return error != 0 ? error : flushOrError(connection);
+}
+
 int sendKey(xcb_connection_t* connection, ubyte keycode, bool press)
 {
     auto queried = xcb_test_get_version_reply(connection,

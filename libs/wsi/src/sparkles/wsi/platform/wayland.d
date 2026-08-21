@@ -20,7 +20,7 @@ import core.time : Duration;
 import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
-import sparkles.input.events : KeyAction, Mods;
+import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
@@ -74,6 +74,15 @@ struct WaylandWsi
     private xkb_context* xkbContext_;
     private xkb_keymap* xkbKeymap_;
     private xkb_state* xkbState_;
+    private wl_pointer* pointer_;
+    private const(wl_surface)* pointerFocus_;
+    private LogicalPosition pointerPosition_;
+    private double pendingScrollDx_ = 0;
+    private double pendingScrollDy_ = 0;
+    private int pendingDiscreteX_;
+    private int pendingDiscreteY_;
+    private ScrollSource pendingScrollSource_ = ScrollSource.unknown;
+    private bool pendingScroll_;
     private const(wl_surface)* keyboardFocus_;
     private Mods keyboardMods_;
     private int keyRepeatRate_;
@@ -583,6 +592,7 @@ struct WaylandWsi
             wl_callback_destroy(bootstrapSync_);
             bootstrapSync_ = null;
         }
+        releasePointer();
         if (keyboard_ !is null)
         {
             if (seatVersion_ >= WL_KEYBOARD_RELEASE_SINCE_VERSION)
@@ -795,8 +805,24 @@ struct WaylandWsi
     private extern (C) static void onSeatCapabilities(void* data,
         wl_seat* seat, uint capabilities) nothrow @nogc
     {
+        enum pointerCapability = 1;
         enum keyboardCapability = 2;
         auto owner = cast(WaylandWsi*) data;
+        const hasPointer = (capabilities & pointerCapability) != 0;
+        if (hasPointer && owner.pointer_ is null)
+        {
+            owner.pointer_ = wl_seat_get_pointer(seat);
+            if (owner.pointer_ !is null
+                && wl_pointer_add_listener(owner.pointer_,
+                    listenerPtr(pointerListener), owner) != 0)
+                owner.remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.dispatch, BackendKind.wayland, 0,
+                    "failed to install wl_pointer listener"));
+        }
+        else if (!hasPointer && owner.pointer_ !is null)
+        {
+            owner.releasePointer();
+        }
         const hasKeyboard = (capabilities & keyboardCapability) != 0;
         if (hasKeyboard && owner.keyboard_ is null)
         {
@@ -827,6 +853,182 @@ struct WaylandWsi
 
     // The keymap fd must be consumed; mapping it through xkbcommon is the
     // logical-key slice, so until then close it immediately.
+    private void releasePointer() nothrow @nogc
+    {
+        if (pointer_ is null)
+            return;
+        if (seatVersion_ >= WL_POINTER_RELEASE_SINCE_VERSION)
+            wl_pointer_release(pointer_);
+        else
+            wl_pointer_destroy(pointer_);
+        pointer_ = null;
+        pointerFocus_ = null;
+    }
+
+    /// The seat exposes one pointer.
+    private enum seatPointer = PointerId(1, 1);
+
+    private void emitPointer(PointerPhase phase,
+        PointerButton button = PointerButton.none) nothrow @nogc
+    {
+        const index = indexOfSurface(pointerFocus_);
+        if (index == size_t.max)
+            return;
+        PointerEvent event;
+        event.pointer = seatPointer;
+        event.phase = phase;
+        event.button = button;
+        event.logicalPosition = pointerPosition_;
+        event.physicalPosition = PhysicalPosition(
+            cast(int) pointerPosition_.x, cast(int) pointerPosition_.y);
+        event.modifiers = keyboardMods_;
+        emit(idAt(index), event);
+    }
+
+    private extern (C) static void onPointerEnter(void* data, wl_pointer*,
+        uint, wl_surface* surface, wl_fixed_t sx, wl_fixed_t sy) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.pointerFocus_ = surface;
+        owner.pointerPosition_ =
+            LogicalPosition(wl_fixed_to_double(sx), wl_fixed_to_double(sy));
+        owner.emitPointer(PointerPhase.entered);
+    }
+
+    private extern (C) static void onPointerLeave(void* data, wl_pointer*,
+        uint, wl_surface* surface) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.emitPointer(PointerPhase.left);
+        if (owner.pointerFocus_ is surface)
+            owner.pointerFocus_ = null;
+    }
+
+    private extern (C) static void onPointerMotion(void* data, wl_pointer*,
+        uint, wl_fixed_t sx, wl_fixed_t sy) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.pointerPosition_ =
+            LogicalPosition(wl_fixed_to_double(sx), wl_fixed_to_double(sy));
+        owner.emitPointer(PointerPhase.moved);
+    }
+
+    private extern (C) static void onPointerButton(void* data, wl_pointer*,
+        uint, uint, uint button, uint state) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.emitPointer(state != 0
+            ? PointerPhase.pressed : PointerPhase.released,
+            waylandPointerButton(button));
+    }
+
+    private extern (C) static void onPointerAxis(void* data, wl_pointer*,
+        uint, uint axis, wl_fixed_t value) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        const amount = wl_fixed_to_double(value);
+        if (axis == 0)
+            owner.pendingScrollDy_ += amount;
+        else
+            owner.pendingScrollDx_ += amount;
+        owner.pendingScroll_ = true;
+    }
+
+    private extern (C) static void onPointerAxisSource(void* data,
+        wl_pointer*, uint source) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        switch (source)
+        {
+            case 0: owner.pendingScrollSource_ = ScrollSource.wheel; break;
+            case 1: owner.pendingScrollSource_ = ScrollSource.finger; break;
+            case 2:
+                owner.pendingScrollSource_ = ScrollSource.continuous;
+                break;
+            default: owner.pendingScrollSource_ = ScrollSource.wheel; break;
+        }
+    }
+
+    private extern (C) static void onPointerAxisStop(void*, wl_pointer*,
+        uint, uint) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onPointerAxisDiscrete(void* data,
+        wl_pointer*, uint axis, int discrete) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (axis == 0)
+            owner.pendingDiscreteY_ += discrete;
+        else
+            owner.pendingDiscreteX_ += discrete;
+        owner.pendingScroll_ = true;
+    }
+
+    private extern (C) static void onPointerAxisValue120(void*, wl_pointer*,
+        uint, int) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onPointerAxisRelativeDirection(void*,
+        wl_pointer*, uint, uint) nothrow @nogc
+    {
+    }
+
+    private extern (C) static void onPointerWarp(void*, wl_pointer*,
+        wl_fixed_t, wl_fixed_t) nothrow @nogc
+    {
+    }
+
+    // Axis events accumulate within one frame; the frame boundary flushes a
+    // single ScrollEvent so a diagonal two-axis frame stays one gesture.
+    private extern (C) static void onPointerFrame(void* data,
+        wl_pointer*) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (!owner.pendingScroll_)
+            return;
+        const index = owner.indexOfSurface(owner.pointerFocus_);
+        if (index != size_t.max)
+        {
+            ScrollEvent scroll;
+            scroll.logicalPosition = owner.pointerPosition_;
+            scroll.physicalPosition = PhysicalPosition(
+                cast(int) owner.pointerPosition_.x,
+                cast(int) owner.pointerPosition_.y);
+            scroll.dx = owner.pendingScrollDx_;
+            scroll.dy = owner.pendingScrollDy_;
+            scroll.discreteX = owner.pendingDiscreteX_;
+            scroll.discreteY = owner.pendingDiscreteY_;
+            scroll.source = owner.pendingScrollSource_ == ScrollSource.unknown
+                ? ScrollSource.wheel : owner.pendingScrollSource_;
+            scroll.unit = ScrollUnit.logical;
+            scroll.modifiers = owner.keyboardMods_;
+            owner.emit(owner.idAt(index), scroll);
+        }
+        owner.pendingScrollDx_ = 0;
+        owner.pendingScrollDy_ = 0;
+        owner.pendingDiscreteX_ = 0;
+        owner.pendingDiscreteY_ = 0;
+        owner.pendingScrollSource_ = ScrollSource.unknown;
+        owner.pendingScroll_ = false;
+    }
+
+    /// evdev button codes: BTN_LEFT through BTN_EXTRA.
+    package static PointerButton waylandPointerButton(uint button)
+        @safe pure nothrow @nogc
+    {
+        switch (button)
+        {
+            case 0x110: return PointerButton.left;
+            case 0x111: return PointerButton.right;
+            case 0x112: return PointerButton.middle;
+            case 0x113: return PointerButton.back;
+            case 0x114: return PointerButton.forward;
+            default: return PointerButton.none;
+        }
+    }
+
     // The compositor's keymap becomes the xkbcommon layout behind logical
     // keys. Best-effort: a failed compile leaves logical identity unknown
     // while physical identity keeps flowing. The fd is always consumed.
@@ -1093,6 +1295,14 @@ private immutable wl_callback_listener frameListener = {
 };
 private immutable wl_seat_listener seatListener = {
     &WaylandWsi.onSeatCapabilities, &WaylandWsi.onSeatName
+};
+private immutable wl_pointer_listener pointerListener = {
+    &WaylandWsi.onPointerEnter, &WaylandWsi.onPointerLeave,
+    &WaylandWsi.onPointerMotion, &WaylandWsi.onPointerButton,
+    &WaylandWsi.onPointerAxis, &WaylandWsi.onPointerFrame,
+    &WaylandWsi.onPointerAxisSource, &WaylandWsi.onPointerAxisStop,
+    &WaylandWsi.onPointerAxisDiscrete, &WaylandWsi.onPointerAxisValue120,
+    &WaylandWsi.onPointerAxisRelativeDirection, &WaylandWsi.onPointerWarp
 };
 private immutable wl_keyboard_listener keyboardListener = {
     &WaylandWsi.onKeyboardKeymap, &WaylandWsi.onKeyboardEnter,
