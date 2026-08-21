@@ -202,7 +202,10 @@ Expected!(T, JsonError) readJsoncFile(T)(string path)
     import settings : HueConfig;
     import settings_overlay : Sparse;
 
-    const dir = buildPath(tempDir, "hue-settings-io-test");
+    import std.conv : text;
+    import std.process : thisProcessID;
+
+    const dir = buildPath(tempDir, text("hue-settings-io-", thisProcessID));
     mkdirRecurse(dir);
     scope (exit) rmdirRecurse(dir);
 
