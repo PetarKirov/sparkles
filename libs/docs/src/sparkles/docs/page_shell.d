@@ -1,417 +1,30 @@
 /**
-hue's **HTML sink**: the content fragment for one document, and the multi-document
-**gallery** that wraps it ([`HTM4`](../../../docs/specs/hue/feature-requirements.md),
-[`HTM6`–`HTM8`](../../../docs/specs/hue/feature-requirements.md),
-[`gallery.md` `GAL2`–`GAL7`](../../../docs/specs/hue/gallery.md)).
+hue's HTML sink, part two — the multi-document **gallery** around the content
+fragments ([`HTM6`–`HTM8`](../../../../../docs/specs/hue/feature-requirements.md),
+[`gallery.md` `GAL2`–`GAL7`](../../../../../docs/specs/hue/gallery.md)).
 
-hue emits a $(I content) fragment — a `<style>` block plus one
-`<pre class="syn-root"><code>` — and everything needed to present it as a page
-(a header with prev/next nav, a line-number gutter, a single scroll container,
-selection domains) used to live in a node script that shelled out to hue once per
-file. That page shell is hue's own output, so it lives here, in D, where it is
-unit-testable.
+Everything needed to present a fragment as a page — a header with prev/next
+nav, breadcrumbs, a line-number gutter, a single scroll container, selection
+domains, the appearance toggle — used to live in a node script that shelled out
+to hue once per file. That page shell is the library's own output, so it lives
+here, in D, where it is unit-testable.
 
-Structure: $(B pure string builders + one I/O seam). $(LREF plainFragment) /
-$(LREF twoslashFragment) render one document (also the single-file `--html` path);
-$(LREF relayoutGutter), $(LREF pageShell) and $(LREF galleryIndex) build the page
-text; only $(LREF writeGallery) touches disk.
+Structure: $(B pure string builders + one I/O seam). $(LREF pageShell) and
+$(LREF galleryIndex) build the page text; only $(LREF writeGallery) touches
+disk.
 */
-module gallery;
+module sparkles.docs.page_shell;
 
 import std.array : appender, Appender;
 import std.conv : text;
-import std.string : indexOf, lastIndexOf;
 
-import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax;
-import sparkles.twoslash;
 
-import source_set : SourceEntry, SourceSet;
-
-// ── one document → a content fragment ──────────────────────────────────────
-
-/**
-How a content fragment is built.
-
-The defaults are the self-contained single-file `--html` document: a `<style>`
-block carrying the whole theme, and no gutter (the page shell adds one). A
-$(I set) of pages — hundreds of pre-rendered listings — turns both off: the
-rules move to one shared stylesheet ([`web_assets`](./web_assets.d)) and the
-gutter is baked into the fragment because there is no shell to add it.
-*/
-struct FragmentOptions
-{
-    /// embed the theme stylesheet in a `<style>` block
-    bool embedStyles = true;
-
-    /// number the physical lines in place (the `<span class="ln">` gutter),
-    /// recording the gutter width on the `<pre>` as `--hue-gutter`
-    bool gutter;
-}
-
-/// The custom property a gutter-carrying fragment records its width in, so the
-/// shared stylesheet can lay the numbers out without a per-page `<style>`.
-enum gutterProperty = "--hue-gutter:";
-
-/**
-The plain-highlight fragment: (optionally) a `<style>` block plus
-`<pre class="syn-root">` with CSS-class highlighting (`HTM1`). Shared by the
-single-file `--html` path and the gallery, so both emit byte-identical content.
-*/
-string plainFragment(scope const(char)[] source, scope const(HighlightEvent)[] events,
-    in ResolvedTheme theme, in FragmentOptions opt = FragmentOptions.init) @system
-{
-    SmallBuffer!char styles;
-    if (opt.embedStyles)
-    {
-        styles ~= "pre { padding: 1em; }\n";
-        writeThemeStylesheet(theme, styles);
-    }
-    SmallBuffer!char code;
-    renderHtml(source, events, theme, code, HtmlOptions(mode: HtmlMode.cssClasses));
-    return assembleFragment(styles[], "syn-root", code[], opt);
-}
-
-/**
-The twoslash-overlay fragment: the theme stylesheet plus the `.twoslash-*` overlay
-stylesheet, then `<pre class="syn-root twoslash">` with the decorated code
-(`TWM2`).
-*/
-string twoslashFragment(in TwoslashReturn tw, scope const(HighlightEvent)[] events,
-    in ResolvedTheme theme, ref TsConfigCache cache,
-    in FragmentOptions opt = FragmentOptions.init) @system
-{
-    SmallBuffer!char styles;
-    if (opt.embedStyles)
-    {
-        writeThemeStylesheet(theme, styles);
-        writeTwoslashStyles(styles);
-    }
-    SmallBuffer!char code;
-    renderTwoslashHtml(tw, events, theme, cache, code);
-    return assembleFragment(styles[], "syn-root twoslash", code[], opt);
-}
-
-/// Wraps rendered `code` in the fragment's `<style>` + `<pre class="…"><code>`
-/// shell. With `opt.gutter` the lines are numbered here and the width is
-/// recorded inline, since a fragment used outside $(LREF pageShell) has no
-/// stylesheet of its own to put it in.
-private string assembleFragment(scope const(char)[] styles, string preClass,
-    scope const(char)[] code, in FragmentOptions opt) @safe pure
-{
-    auto w = appender!string;
-    if (styles.length)
-    {
-        w ~= "<style>\n";
-        w ~= styles;
-        w ~= "</style>\n";
-    }
-    w ~= "<pre class=\"";
-    w ~= preClass;
-    w ~= "\"";
-    if (!opt.gutter)
-    {
-        w ~= "><code>";
-        w ~= code;
-    }
-    else
-    {
-        size_t lines;
-        const inner = relayoutGutter(code, lines);
-        w ~= text(" style=\"", gutterProperty, gutterWidth(lines), "ch\"><code>");
-        w ~= inner;
-    }
-    w ~= "</code></pre>\n";
-    return w[];
-}
-
-// ── the physical-line gutter (GAL4) ────────────────────────────────────────
-
-/// HTML elements that never nest, so they must not change the tag depth.
-private immutable string[] voidElements = [
-    "br", "hr", "img", "input", "wbr", "col", "area", "base", "link", "meta",
-    "source", "track",
-];
-
-/// The below-line overlay blocks: emitted verbatim, unnumbered, and they must not
-/// advance the line counter (`GAL4`).
-private immutable string[] annotationClasses = [
-    "twoslash-meta-line", "twoslash-completion-list", "twoslash-tag-line",
-];
-
-/**
-Splits the inner `<code>` HTML into $(B physical lines) and below-line annotations:
-each physical line's content is wrapped in an inline `<span class="ln">` (which
-carries the CSS line counter) and annotations pass through untouched (no number).
-
-Physical-line boundaries are the `'\n'`s at $(B tag depth 0) — hue balances every
-tag at each line seam, and popup markup (with its own newlines) stays nested at
-depth > 0, so those newlines never split a line. The `'\n'` is $(B kept) (a literal
-text node after the span), so `white-space: pre` draws the breaks and a copied
-selection preserves every line — including blank ones, which would vanish if each
-line were a self-collapsing block.
-
-`lines` receives the physical line count (the gutter width comes from it).
-*/
-string relayoutGutter(scope const(char)[] code, out size_t lines) @safe pure
-{
-    auto outp = appender!string;
-    // Plain strings (not appenders): each holds at most one line / one annotation,
-    // and both are reset repeatedly — which `Appender!string` cannot do.
-    string line;
-    string anno;
-    int depth;
-    bool inAnno;
-
-    // `nl` appends the physical newline after the line span (omitted only for a
-    // final line the source did not newline-terminate, or a defensive mid-line flush).
-    void emitLine(bool nl)
-    {
-        outp ~= "<span class=\"ln\">";
-        outp ~= line;
-        outp ~= "</span>";
-        if (nl)
-            outp ~= "\n";
-        line = null;
-        ++lines;
-    }
-
-    size_t i;
-    while (i < code.length)
-    {
-        const ch = code[i];
-        if (ch == '<')
-        {
-            const gt = code[i .. $].indexOf('>');
-            if (gt < 0)
-            {
-                // Unterminated tag — treat the remainder as text rather than looping.
-                if (inAnno) anno ~= code[i .. $]; else line ~= code[i .. $];
-                break;
-            }
-            const raw = code[i .. i + cast(size_t) gt + 1];
-            const closing = raw.length > 1 && raw[1] == '/';
-            const isVoid = isVoidTag(raw);
-
-            // A below-line block opens at depth 0 (the query/error/tag `<div>` or
-            // the completion `<ul>`). Everything until it balances back to depth 0
-            // is one annotation, emitted verbatim with no line number.
-            if (!inAnno && depth == 0 && !closing && isAnnotationTag(raw))
-            {
-                if (line.length)
-                    emitLine(false); // defensive; a '\n' already flushed it
-                inAnno = true;
-                anno = null;
-            }
-
-            if (inAnno) anno ~= raw; else line ~= raw;
-            if (!isVoid)
-                depth += closing ? -1 : 1;
-            if (inAnno && depth == 0)
-            {
-                outp ~= anno;
-                anno = null;
-                inAnno = false;
-            }
-            i += cast(size_t) gt + 1;
-        }
-        else if (ch == '\n')
-        {
-            if (inAnno)
-                anno ~= "\n";
-            else if (depth == 0)
-                emitLine(true); // a physical line boundary — keep the newline
-            else
-                line ~= "\n"; // a newline nested in popup markup — keep verbatim
-            ++i;
-        }
-        else
-        {
-            size_t j = i;
-            while (j < code.length && code[j] != '<' && code[j] != '\n')
-                ++j;
-            if (inAnno) anno ~= code[i .. j]; else line ~= code[i .. j];
-            i = j;
-        }
-    }
-    if (line.length)
-        emitLine(false);
-    return outp[];
-}
-
-/// `true` iff `raw` is a void element or a self-closing tag (neither nests).
-private bool isVoidTag(scope const(char)[] raw) @safe pure nothrow
-{
-    import std.algorithm.searching : canFind, endsWith;
-    import std.ascii : isAlphaNum, toLower;
-
-    if (raw.endsWith("/>"))
-        return true;
-    size_t s = 1;
-    if (s < raw.length && raw[s] == '/')
-        ++s;
-    size_t e = s;
-    while (e < raw.length && raw[e].isAlphaNum)
-        ++e;
-    char[16] buf;
-    if (e - s == 0 || e - s > buf.length)
-        return false;
-    foreach (k, char c; raw[s .. e])
-        buf[k] = c.toLower;
-    return voidElements.canFind(buf[0 .. e - s]);
-}
-
-/// `true` iff `raw` opens one of the below-line annotation blocks.
-private bool isAnnotationTag(scope const(char)[] raw) @safe pure nothrow
-{
-    import std.algorithm.searching : canFind;
-
-    if (!raw.canFind("class=\""))
-        return false;
-    foreach (c; annotationClasses)
-        if (raw.canFind(c))
-            return true;
-    return false;
-}
-
-/**
-Rewrites `fragment` (a whole hue `--html` document: `<style>` + `<pre
-class="syn-root…"><code>…</code></pre>`) so its code is line-numbered, returning
-the gutter width in `ch` via `gutterCols`. A fragment whose `<pre><code>` cannot be
-located is returned unchanged (with a default gutter), so a shape change degrades
-rather than corrupts.
-*/
-string withLineNumbers(string fragment, out int gutterCols) @safe pure
-{
-    gutterCols = 3;
-    // Already numbered by `FragmentOptions.gutter`: re-wrapping would nest the
-    // `.ln` spans and count every line twice. Take the width it recorded.
-    const rec = fragment.indexOf(gutterProperty);
-    if (rec >= 0)
-    {
-        int n;
-        foreach (char c; fragment[cast(size_t) rec + gutterProperty.length .. $])
-        {
-            if (c < '0' || c > '9')
-                break;
-            n = n * 10 + (c - '0');
-        }
-        if (n > 0)
-            gutterCols = n;
-        return fragment;
-    }
-
-    const preAt = fragment.indexOf("<pre class=\"syn-root");
-    if (preAt < 0)
-        return fragment;
-    const openAt = fragment[cast(size_t) preAt .. $].indexOf("><code>");
-    if (openAt < 0)
-        return fragment;
-    const innerStart = cast(size_t) preAt + cast(size_t) openAt + "><code>".length;
-    const closeAt = fragment.lastIndexOf("</code></pre>");
-    if (closeAt < 0 || cast(size_t) closeAt < innerStart)
-        return fragment;
-
-    size_t lines;
-    const inner = relayoutGutter(fragment[innerStart .. cast(size_t) closeAt], lines);
-    gutterCols = gutterWidth(lines);
-    return fragment[0 .. innerStart] ~ inner ~ fragment[cast(size_t) closeAt .. $];
-}
-
-/// The gutter width in `ch` for a `lines`-line document: the widest number
-/// plus a 1ch number-gap and a 1ch pad.
-private int gutterWidth(size_t lines) @safe pure nothrow @nogc
-    => cast(int)(digits(lines) + 2);
-
-/// Decimal digit count of `n` (`0` has one digit).
-private size_t digits(size_t n) @safe pure nothrow @nogc
-{
-    size_t d = 1;
-    while (n >= 10)
-    {
-        n /= 10;
-        ++d;
-    }
-    return d;
-}
+import sparkles.docs.fragment : withLineNumbers;
+import sparkles.docs.options;
+import sparkles.docs.source_set : SourceEntry, SourceSet;
 
 // ── the page shell (GAL3, GAL6, GAL7) ──────────────────────────────────────
-
-/// Presentation knobs for a gallery — the page-title prefix and the index copy.
-struct GalleryOptions
-{
-    string titlePrefix = "hue";                     /// `<title>` prefix per page
-    string heading = "hue gallery";                 /// the index's `<h1>`
-    string indexTitle;                              /// the index's `<title>` (default: `heading`)
-    string blurb = "Rendered by <code>hue</code>."; /// the index's lead paragraph (raw HTML)
-
-    /**
-    The page chrome (`GAL6`) — pass $(LREF themeChrome) of the theme the
-    fragments were rendered with, so the pane and everything around it are one
-    surface.
-
-    The background half of this used to be scraped back out of each fragment's
-    own `<style>` block, and the rest was a catppuccin palette hardcoded in
-    `pageShell`. A fragment need not carry a style block any more
-    (`FragmentOptions.embedStyles`), and a scraper that silently falls back to a
-    fixed colour turns that into a visual regression no test catches — so the
-    caller states it.
-    */
-    ChromePalette chrome = ChromePalette(
-        background: defaultBackground,
-        surface: "#181825",
-        border: "#313244",
-        text: "#cdd6f4",
-        muted: "#a6adc8",
-        faint: "#6c7086",
-        link: "#89b4fa",
-    );
-
-    /// the same, for the dark half of a two-theme run — the chrome has to
-    /// follow `html.dark` too, or the pane and the page come apart the moment
-    /// the switch is flipped. Unset leaves the light chrome in both schemes.
-    ChromePalette darkChrome;
-
-    /// `true` iff a dark half was supplied.
-    bool hasDarkChrome() const scope @safe pure nothrow @nogc
-        => darkChrome.background.length != 0;
-
-    /**
-    Linked from `<head>` when set — the shared stylesheet the fragments leave
-    their rules to.
-
-    In a mirrored gallery (`GAL12`) pages sit at varying depths, so this is the
-    href $(B as seen from the gallery root); $(LREF writeGallery) rewrites it per
-    page with $(LREF depthAdjustedHref) rather than making every caller compute
-    one href per depth.
-    */
-    string stylesheetHref;
-
-    /**
-    Blob base for the forge links in the breadcrumb trail (`GAL14`) — e.g.
-    `https://github.com/PetarKirov/sparkles/blob/main`.
-
-    Unset renders the trail without forge links rather than guessing a remote:
-    a gallery of a directory that is not in a repository has nowhere to point.
-    */
-    string repoUrl;
-
-    /// The gallery root's path inside that repository, when the two differ —
-    /// `hue gallery libs/base` from the repo root makes the pages' `src/x.d`
-    /// the repo's `libs/base/src/x.d`.
-    string repoPrefix;
-}
-
-/**
-The name [`H4`](../../../docs/specs/hue/web-integration.md) reserves for the
-successor of $(LREF GalleryOptions) once a whole $(I site) — not just one gallery
-— has its own knobs.
-
-An alias, not a second struct: H4 has not settled its field set, and two structs
-today would only buy a conversion function. When H4 lands it renames this and
-`GalleryOptions` becomes the alias (or goes away).
-*/
-alias SiteOptions = GalleryOptions;
 
 /**
 Wraps a content `fragment` in the full preview shell (`GAL3`/`GAL6`): a header
@@ -430,7 +43,7 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     in GalleryOptions opt = GalleryOptions.init,
     scope const(char)[] relPath = null) @safe pure
 {
-    import breadcrumbs : breadcrumbCss, breadcrumbScript, breadcrumbsFor,
+    import sparkles.docs.breadcrumbs : breadcrumbCss, breadcrumbScript, breadcrumbsFor,
         renderBreadcrumbs;
 
     const crumbs = relPath.length
@@ -670,7 +283,7 @@ gallery's index is byte-for-byte the one it always was.
 string galleryIndex(scope const SourceEntry[] entries,
     in GalleryOptions opt = GalleryOptions.init) @safe pure
 {
-    import site_tree : buildSiteTree, directoryIndex, DirNode;
+    import sparkles.docs.site_tree : buildSiteTree, directoryIndex, DirNode;
 
     auto tree = buildSiteTree(entries);
     return directoryIndex(tree.nodes.length ? tree.nodes[0] : DirNode.init, opt);
@@ -754,137 +367,6 @@ private const(char)[][] segments(const(char)[] path) @safe pure nothrow
     return outp;
 }
 
-/// The backdrop for a theme that declares no background of its own.
-enum defaultBackground = "#1e1e2e";
-
-/**
-The page chrome's colours, as `#rrggbb` (`GAL6`/`HTM7`).
-
-Everything outside the code pane — the header bar, its rule, the nav links, the
-line-number gutter — used to be a fixed catppuccin palette written into
-`pageShell`. That is wrong for every other theme: `hue gallery --theme
-github-light` produced a light code pane inside dark chrome, and no test could
-see it because the fragment and the surround were decided in different places.
-
-$(LREF themeChrome) derives one from the theme instead, so the two agree by
-construction; `--chrome=site` will supply the docs site's own palette here
-without `pageShell` learning about either.
-*/
-struct ChromePalette
-{
-    string background;  /// page + pane surround — one surface with the code
-    string surface;     /// the header bar
-    string border;      /// the rule under it
-    string text;        /// body text
-    string muted;       /// a page's summary / kind tally
-    string faint;       /// a disabled nav link, and the line-number gutter
-    string link;        /// prev · index · next
-}
-
-/**
-Derives $(LREF ChromePalette) from `theme`'s own colours.
-
-Only two inputs are load-bearing: the theme's default background and
-foreground. Every neutral is a mix of the two, so the chrome tracks any
-theme — light or dark — without a table of per-theme values to maintain, and
-`background` is $(LREF themeBackground) exactly, so the surround and the pane
-cannot disagree.
-
-The one colour that cannot be mixed is `link`, which needs a hue: it is the
-theme's own `function` style, since a theme that highlights code at all styles
-that one. A theme that does not falls back to `text`, which is legible on
-`surface` by construction.
-*/
-ChromePalette themeChrome(in ResolvedTheme theme) @safe pure
-{
-    RgbColor bg, fg;
-    if (!concreteRgb(theme.defaults.bg, bg))
-        bg = RgbColor(0x1e, 0x1e, 0x2e);
-    if (!concreteRgb(theme.defaults.fg, fg))
-        fg = RgbColor(0xcd, 0xd6, 0xf4);
-
-    RgbColor link = fg;
-    const id = theme.labels.resolve("function");
-    if (id)
-        cast(void) concreteRgb(theme[id].fg, link);
-
-    return ChromePalette(
-        background: hexRgb(bg),
-        surface: hexRgb(mixRgb(bg, fg, 0.06)),
-        border: hexRgb(mixRgb(bg, fg, 0.20)),
-        text: hexRgb(fg),
-        muted: hexRgb(mixRgb(fg, bg, 0.35)),
-        faint: hexRgb(mixRgb(fg, bg, 0.62)),
-        link: hexRgb(link),
-    );
-}
-
-/// `t` of the way from `a` to `b`, per channel.
-private RgbColor mixRgb(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
-{
-    static ubyte lerp(ubyte x, ubyte y, double t) @safe pure nothrow @nogc
-    {
-        const v = x + (cast(double) y - x) * t;
-        return cast(ubyte)(v < 0 ? 0 : (v > 255 ? 255 : v + 0.5));
-    }
-
-    return RgbColor(lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t));
-}
-
-/// `#rrggbb`.
-private string hexRgb(RgbColor c) @safe pure
-{
-    import sparkles.base.text.writers : writeHexByte;
-
-    auto w = appender!string;
-    w ~= '#';
-    writeHexByte(w, c.r);
-    writeHexByte(w, c.g);
-    writeHexByte(w, c.b);
-    return w[];
-}
-
-/**
-The background `theme`'s stylesheet puts on `.syn-root`, as `#rrggbb` — the
-colour a page surround must use to be one surface with the code pane (`GAL6`);
-$(LREF defaultBackground) when the theme declares none.
-
-It asks `sparkles:syntax`'s `concreteRgb` rather than re-deciding which colours
-produce a declaration, so this can never disagree with the emitted CSS.
-*/
-string themeBackground(in ResolvedTheme theme) @safe pure
-{
-    import sparkles.base.text.writers : writeHexByte;
-
-    RgbColor rgb;
-    if (!concreteRgb(theme.defaults.bg, rgb))
-        return defaultBackground;
-
-    auto w = appender!string;
-    w ~= '#';
-    writeHexByte(w, rgb.r);
-    writeHexByte(w, rgb.g);
-    writeHexByte(w, rgb.b);
-    return w[];
-}
-
-/// Escapes `&`, `<`, `>`, `"` into `w`. Public (not `private`) because
-/// [`site_tree`](./site_tree.d) renders directory indices with the same escaping —
-/// one implementation, or the two would drift. (These are root-level modules with
-/// no enclosing package, so `package` would not reach it.)
-void escapeInto(ref Appender!string w, scope const(char)[] s) @safe pure
-{
-    foreach (char c; s)
-        switch (c)
-        {
-            case '&': w ~= "&amp;"; break;
-            case '<': w ~= "&lt;"; break;
-            case '>': w ~= "&gt;"; break;
-            case '"': w ~= "&quot;"; break;
-            default: w ~= c; break;
-        }
-}
-
 // ── the I/O seam ───────────────────────────────────────────────────────────
 
 /**
@@ -906,7 +388,7 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
     import std.path : buildPath, dirName;
     import std.stdio : stderr;
 
-    import site_tree : buildSiteTree, directoryIndex;
+    import sparkles.docs.site_tree : buildSiteTree, directoryIndex;
 
     mkdirRecurse(outDir);
 
@@ -963,141 +445,6 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
 }
 
 // ---------------------------------------------------------------------------
-
-@("gallery.plainFragment.embedStylesAndGutter")
-@system
-unittest
-{
-    import std.algorithm.searching : canFind, startsWith;
-
-    const theme = resolveTheme(Theme(name: "t",
-        defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e),
-        rules: [ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(0xcb, 0xa6, 0xf7)))]),
-        LabelSet.standard());
-    const events = [HighlightEvent.sourceSpan(0, 4)];
-
-    // The default is the self-contained document, unchanged.
-    const embedded = plainFragment("a\nb\n", events, theme);
-    assert(embedded.startsWith("<style>\npre { padding: 1em; }\n"), embedded);
-    assert(embedded.canFind("<pre class=\"syn-root\"><code>a\nb\n</code></pre>\n"), embedded);
-    assert(!embedded.canFind("class=\"ln\""), embedded);
-
-    // A shared stylesheet carries the rules: no `<style>` block survives.
-    const bare = plainFragment("a\nb\n", events, theme, FragmentOptions(embedStyles: false));
-    assert(!bare.canFind("<style"), bare);
-    assert(bare == "<pre class=\"syn-root\"><code>a\nb\n</code></pre>\n", bare);
-
-    // With no page shell to add one, the gutter is baked in and its width
-    // recorded inline — 2 lines ⇒ 1 digit + 2.
-    const numbered = plainFragment("a\nb\n", events, theme,
-        FragmentOptions(embedStyles: false, gutter: true));
-    assert(numbered == "<pre class=\"syn-root\" style=\"--hue-gutter:3ch\"><code>"
-        ~ "<span class=\"ln\">a</span>\n<span class=\"ln\">b</span>\n"
-        ~ "</code></pre>\n", numbered);
-}
-
-@("gallery.relayoutGutter.physicalLinesAndBlanks")
-@safe pure
-unittest
-{
-    size_t lines;
-    // Three physical lines, the middle one blank: each is wrapped, the newlines
-    // are kept, and the blank line still counts (it must keep its height).
-    const outp = relayoutGutter("<span>a</span>\n\n<span>b</span>\n", lines);
-    assert(lines == 3, outp);
-    assert(outp == "<span class=\"ln\"><span>a</span></span>\n"
-        ~ "<span class=\"ln\"></span>\n"
-        ~ "<span class=\"ln\"><span>b</span></span>\n", outp);
-}
-
-@("gallery.relayoutGutter.nestedNewlinesDoNotSplit")
-@safe pure
-unittest
-{
-    size_t lines;
-    // A newline INSIDE nested markup (a hover popup) is at depth > 0, so it must
-    // not end the physical line: one line out, with the newline kept verbatim.
-    const outp = relayoutGutter("<span class=\"twoslash-hover\">x\ny</span>\n", lines);
-    assert(lines == 1, outp);
-    assert(outp == "<span class=\"ln\"><span class=\"twoslash-hover\">x\ny</span></span>\n", outp);
-}
-
-@("gallery.relayoutGutter.annotationsAreUnnumbered")
-@safe pure
-unittest
-{
-    // hue flushes a below-line block immediately after the newline that ends the
-    // line it annotates, and adds no newline of its own — so the next `'\n'`
-    // belongs to the NEXT source line. The block must pass through verbatim and
-    // must not consume a line number: `b` below is still line 2.
-    size_t lines;
-    const outp = relayoutGutter(
-        "<span>a</span>\n<div class=\"twoslash-meta-line twoslash-error-line\">boom</div>"
-        ~ "<span>b</span>\n", lines);
-    assert(lines == 2, outp);
-    assert(outp == "<span class=\"ln\"><span>a</span></span>\n"
-        ~ "<div class=\"twoslash-meta-line twoslash-error-line\">boom</div>"
-        ~ "<span class=\"ln\"><span>b</span></span>\n", outp);
-
-    // When the annotated line is followed by a BLANK source line, that blank line's
-    // own newline follows the block — and is numbered, as any blank line is.
-    size_t l2;
-    const blank = relayoutGutter(
-        "<span>a</span>\n<div class=\"twoslash-meta-line\">boom</div>\n<span>c</span>\n", l2);
-    assert(l2 == 3, blank); // a, the blank line, c
-    assert(blank == "<span class=\"ln\"><span>a</span></span>\n"
-        ~ "<div class=\"twoslash-meta-line\">boom</div>"
-        ~ "<span class=\"ln\"></span>\n"
-        ~ "<span class=\"ln\"><span>c</span></span>\n", blank);
-}
-
-@("gallery.relayoutGutter.voidTagsKeepDepth")
-@safe pure
-unittest
-{
-    size_t lines;
-    // A void element must not open a level (or the rest of the file would be
-    // swallowed as one line).
-    const outp = relayoutGutter("a<br>b\nc\n", lines);
-    assert(lines == 2, outp);
-    // An unterminated tag degrades to text instead of hanging.
-    size_t l2;
-    const bad = relayoutGutter("a<span", l2);
-    assert(l2 == 1 && bad == "<span class=\"ln\">a<span</span>", bad);
-}
-
-@("gallery.withLineNumbers.wrapsOnlyTheCode")
-@safe pure
-unittest
-{
-    import std.algorithm.searching : canFind;
-
-    int gutter;
-    const frag = "<style>\n.syn-root { background-color: #1e1e2e; }\n</style>\n"
-        ~ "<pre class=\"syn-root\"><code>a\nb\n</code></pre>\n";
-    const outp = withLineNumbers(frag, gutter);
-    assert(gutter == 3, outp);                       // 1 digit + 2
-    assert(outp.canFind("<style>"), outp);            // the stylesheet is untouched
-    assert(outp.canFind("<span class=\"ln\">a</span>\n"), outp);
-    assert(outp.canFind("</code></pre>"), outp);
-
-    // A fragment of an unexpected shape is returned unchanged, not corrupted.
-    int g2;
-    assert(withLineNumbers("<p>nope</p>", g2) == "<p>nope</p>");
-}
-
-/// A fragment that already carries the gutter is left alone — nesting `.ln`
-/// spans would number every line twice — and its recorded width is reused.
-@("gallery.withLineNumbers.idempotentOverAGutterFragment")
-@safe pure
-unittest
-{
-    const frag = "<pre class=\"syn-root\" style=\"--hue-gutter:4ch\"><code>"
-        ~ "<span class=\"ln\">a</span>\n</code></pre>\n";
-    int gutter;
-    assert(withLineNumbers(frag, gutter) is frag);
-    assert(gutter == 4);
-}
 
 @("gallery.pageShell.appearanceToggleUsesVitePressKeyAndOnlyWhenDual")
 @safe pure
@@ -1176,27 +523,6 @@ unittest
     assert(!page.canFind("#6c7086"), "the catppuccin gutter colour leaked");
 }
 
-@("gallery.themeChrome.takesItsLinkHueFromTheThemeAndDegrades")
-@safe pure
-unittest
-{
-    // `link` is the one colour a mix cannot produce, so it comes from the
-    // theme's own `function` style.
-    auto theme = Theme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
-        defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e));
-    theme.rules ~= ThemeRule("function", StyleSpec(fg: Color.fromRgb(0x89, 0xb4, 0xfa)));
-    const c = themeChrome(resolveTheme(theme, LabelSet.fromNames(["function"])));
-    assert(c.link == "#89b4fa", c.link);
-
-    // A theme that styles no functions falls back to the body text, which is
-    // legible on `surface` by construction — never to a hardcoded blue.
-    const bare = themeChrome(resolveTheme(
-        Theme(name: "b", defaultFg: Color.fromRgb(0x11, 0x22, 0x33),
-            defaultBg: Color.fromRgb(0xee, 0xee, 0xee)),
-        LabelSet.fromNames(["keyword"])));
-    assert(bare.link == bare.text, bare.link);
-}
-
 @("gallery.pageShell.darkChromeFollowsHtmlDark")
 @safe pure
 unittest
@@ -1225,34 +551,6 @@ unittest
     const single = pageShell("f.d", "s", "<pre class=\"syn-root\"><code>x</code></pre>",
         "", "", GalleryOptions(chrome: opt.chrome));
     assert(!single.canFind("html.dark"), single);
-}
-
-@("gallery.themeBackground.matchesTheEmittedRule")
-@safe pure
-unittest
-{
-    import std.algorithm.searching : canFind;
-
-    // The colour must be the one the stylesheet actually writes on `.syn-root`
-    // — the invariant the old fragment-scraping `synRootBackground` stood for.
-    const theme = Theme(name: "t", defaultFg: Color.fromRgb(0xcd, 0xd6, 0xf4),
-        defaultBg: Color.fromRgb(0x1e, 0x1e, 0x2e));
-    const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
-    auto sheet = appender!string;
-    writeThemeStylesheet(resolved, sheet);
-    assert(sheet[].canFind("background-color:" ~ themeBackground(resolved)), sheet[]);
-
-    // A theme with no background of its own falls back rather than inventing one
-    // (its stylesheet declares no `background-color` to match).
-    const bare = resolveTheme(Theme(name: "b"), LabelSet.fromNames(["keyword"]));
-    assert(themeBackground(bare) == defaultBackground);
-
-    // A palette colour concretizes exactly as the CSS does.
-    const pal = resolveTheme(Theme(name: "p", defaultBg: Color.fromPalette(8)),
-        LabelSet.fromNames(["keyword"]));
-    auto palSheet = appender!string;
-    writeThemeStylesheet(pal, palSheet);
-    assert(palSheet[].canFind("background-color:" ~ themeBackground(pal)), palSheet[]);
 }
 
 @("gallery.pageShell.linksASharedStylesheet")
@@ -1367,7 +665,7 @@ unittest
     import std.path : buildPath;
     import std.uuid : randomUUID;
 
-    import source_set : SourceEntry, SourceSet;
+    import sparkles.docs.source_set : SourceEntry, SourceSet;
 
     const outDir = buildPath(tempDir(), "hue-gallery-mirror-" ~ randomUUID.toString);
     scope (exit)
@@ -1420,7 +718,7 @@ unittest
     import std.path : buildPath;
     import std.uuid : randomUUID;
 
-    import source_set : SourceEntry, SourceSet;
+    import sparkles.docs.source_set : SourceEntry, SourceSet;
 
     const outDir = buildPath(tempDir(), "hue-gallery-skip-" ~ randomUUID.toString);
     scope (exit)

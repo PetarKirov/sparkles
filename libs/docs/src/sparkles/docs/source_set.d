@@ -1,6 +1,6 @@
 /**
-The **document set** ([`SRC5`/`SRC6`](../../../docs/specs/hue/feature-requirements.md),
-[`gallery.md` `GAL1`](../../../docs/specs/hue/gallery.md)) — hue's model of "more
+The **document set** ([`SRC5`/`SRC6`](../../../../../docs/specs/hue/feature-requirements.md),
+[`gallery.md` `GAL1`](../../../../../docs/specs/hue/gallery.md)) — hue's model of "more
 than one file".
 
 A directory target resolves to an ordered, filtered list of renderable files, each
@@ -10,8 +10,8 @@ gallery iterates it, and the interactive backends navigate it — a set is acqui
 once and rendered many ways.
 
 The shape is deliberately thin. It is the substrate the planned
-[tab view](../../../docs/specs/hue/tab-view.md) (`TBU1`) turns into tabs and the
-planned [navigation](../../../docs/specs/hue/navigation.md) (`LNK3`) reuses to open
+[tab view](../../../../../docs/specs/hue/tab-view.md) (`TBU1`) turns into tabs and the
+planned [navigation](../../../../../docs/specs/hue/navigation.md) (`LNK3`) reuses to open
 files, not a parallel mechanism.
 
 A set is either $(B one directory deep) or the whole $(B subtree)
@@ -26,7 +26,7 @@ $(LREF entryName), $(LREF entryRelPath) and the tally functions are `@safe pure`
 and unit-tested with no filesystem, while $(LREF collectSources) is the one
 function that touches disk.
 */
-module source_set;
+module sparkles.docs.source_set;
 
 import std.algorithm.sorting : sort;
 import std.conv : text, to;

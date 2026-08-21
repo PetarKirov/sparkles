@@ -25,8 +25,12 @@ dependency "sparkles:twoslash" path="../.."
 dependency "sparkles:fuzzy" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 // The files finder reuses the repository's nested-.gitignore walker (`PKS1`);
-// the recursive document set (`SRC9`, src/source_set.d) descends with it too.
+// sparkles:docs' recursive document set (`SRC9`) descends with it too.
 dependency "sparkles:build-primitives" path="../.."
+// The static doc-site machinery extracted from src/gallery.d & friends:
+// fragments, page shell, site tree, breadcrumbs, stylesheet assets, and the
+// document set (`SRC9`/`GAL*`).
+dependency "sparkles:docs" path="../.."
 // Coverage ingestion for the `--overlay coverage` gutter (`COV1`).
 dependency "sparkles:code-instrumentation" path="../.."
 // The terminal UI stack: the interactive viewer (src/tui.d) and the `--twoslash`

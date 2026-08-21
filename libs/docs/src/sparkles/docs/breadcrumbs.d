@@ -17,11 +17,11 @@ interchangeable while the docs site still has both kinds of page.
 Interactivity is ~30 lines of vanilla JS ($(LREF breadcrumbScript)) rather than
 a framework: copy-to-clipboard and a 2-second label swap.
 */
-module breadcrumbs;
+module sparkles.docs.breadcrumbs;
 
 import std.array : appender, Appender;
 
-import gallery : ChromePalette, escapeInto;
+import sparkles.docs.options : ChromePalette, escapeInto;
 
 /**
 One path segment.
