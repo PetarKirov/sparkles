@@ -716,7 +716,7 @@ struct PropertyTree(T)
     private bool buildSearch(ref T subject, ref TreeViewState!string tv,
         string q, string pinnedPath) @safe
     {
-        PartMatcher[] parts;
+        PartMatcher!()[] parts;
         if (!parseParts(q, parts))
             return false;
 
@@ -840,7 +840,7 @@ struct PropertyTree(T)
     }
 
     /// Splits the query on whitespace and prepares each part once (PRT30).
-    private bool parseParts(string q, out PartMatcher[] parts) @safe
+    private bool parseParts(string q, out PartMatcher!()[] parts) @safe
     {
         const(char)[][] texts;
         size_t i;
@@ -868,7 +868,7 @@ struct PropertyTree(T)
         }
         foreach (t; texts)
         {
-            PartMatcher pm;
+            PartMatcher!() pm;
             pm.text = t.idup;
             foreach (c; pm.text)
                 pm.caseSensitive |= c >= 'A' && c <= 'Z';
@@ -979,13 +979,15 @@ private struct DisclosureVisitor
 /// Compile-time bound of the search heap; the match target clamps here.
 private enum size_t searchHeapCapacity = 1024;
 
-/// One query part, prepared once per rebuild (`PRT30`).
-private struct PartMatcher
+/// One query part, prepared once per rebuild (`PRT30`). A template (like
+/// every fuzzy-touching entity here) so no fuzzy TypeInfo chain anchors in
+/// this package's own objects — see the dub recipe's import-only note.
+private struct PartMatcher(Caps = DefaultFuzzyCaps)
 {
     string text;
-    QueryStorage!()* storage; /// null → literal-substring matching only
+    QueryStorage!Caps* storage; /// null → literal-substring matching only
     bool substringOnly;
-    bool caseSensitive;       /// smart case for the exact-unit path
+    bool caseSensitive;         /// smart case for the exact-unit path
 }
 
 /// One admitted record's decoration, kept beside the ranked heap.
@@ -1032,11 +1034,10 @@ drops parts shorter than two analyzed units, and one typed character must
 narrow the tree instead of matching everything. ASCII case fold; fixed,
 deterministic scoring.
 */
-private FieldTry substringTry(ref PartMatcher pm, string fieldText)
-    @safe pure nothrow
+private FieldTry substringTry(string needle, bool caseSensitive,
+    string fieldText) @safe pure nothrow
 {
     FieldTry none;
-    const needle = pm.text;
     if (needle.length == 0 || needle.length > fieldText.length)
         return none;
     outer: foreach (i; 0 .. fieldText.length - needle.length + 1)
@@ -1045,7 +1046,7 @@ private FieldTry substringTry(ref PartMatcher pm, string fieldText)
         {
             char a = fieldText[i + j];
             char b = needle[j];
-            if (!pm.caseSensitive)
+            if (!caseSensitive)
             {
                 a = asciiLowerChar(a);
                 b = asciiLowerChar(b);
@@ -1069,14 +1070,14 @@ capacity (4,096 bytes — refused as `candidateTooLong`, never truncated) is
 analyzed as source-offset-preserving UTF-8-boundary chunks with a
 one-query-span overlap; the best chunk wins (`PRT30`).
 */
-private FieldTry tryField(Caps = DefaultFuzzyCaps)(ref PartMatcher pm,
+private FieldTry tryField(Caps = DefaultFuzzyCaps)(ref PartMatcher!Caps pm,
     string fieldText, scope MatcherWorkspace!Caps* ws) @safe
 {
     FieldTry none;
     if (fieldText.length == 0 || pm.text.length == 0)
         return none;
     if (pm.substringOnly || pm.storage is null)
-        return substringTry(pm, fieldText);
+        return substringTry(pm.text, pm.caseSensitive, fieldText);
 
     enum size_t cap = DefaultFuzzyCaps.maxCandidateBytes;
     size_t overlap = pm.text.length + 8;
@@ -1098,7 +1099,8 @@ private FieldTry tryField(Caps = DefaultFuzzyCaps)(ref PartMatcher pm,
         if (!r.hasError)
         {
             if (r.value.kind == MatchKind.noFuzzyTerms)
-                return substringTry(pm, fieldText); // the dropped-part case
+                // the dropped-short-part case
+                return substringTry(pm.text, pm.caseSensitive, fieldText);
             if (r.value.admitted && (!best.hit || r.value.score > best.score))
             {
                 best.hit = true;
@@ -1142,7 +1144,7 @@ private string snippetOf(string doc, ByteSpan[] spans) @safe pure nothrow
 /// the walk, retaining the best direct matches in the ranked heap.
 private struct DiscoverVisitor(Caps = DefaultFuzzyCaps)
 {
-    PartMatcher[] parts;
+    PartMatcher!Caps[] parts;
     MatcherWorkspace!()* ws;
     TopK!searchHeapCapacity* heap;
     SearchHit[] hits;
@@ -1685,6 +1687,7 @@ version (UiPropertyFixtures)
     }
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.pathGrammarRoundTrips")
 @safe pure unittest
 {
@@ -1714,6 +1717,7 @@ version (UiPropertyFixtures)
     assert(!parsePath("a[#]", bad));
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.atAndResolveAgree")
 @safe unittest
 {
@@ -1761,6 +1765,7 @@ version (UiPropertyFixtures)
     assert(read(l, "fill.stopList[#7].name") == "<no such path>");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.disclosureDrivesMaterialisation")
 @safe unittest
 {
@@ -1797,6 +1802,7 @@ version (UiPropertyFixtures)
     assert(!pt.wasCapped);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.metadataShapesRows")
 @safe unittest
 {
@@ -1839,6 +1845,7 @@ version (UiPropertyFixtures)
     assert(byPath("fill.stops").label == "stop count");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.erasedSeamCrossesByCapability")
 @safe unittest
 {
@@ -1863,6 +1870,7 @@ version (UiPropertyFixtures)
     assert(sawRetries && sawQuoted);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.allOpenTerminatesUnderCaps")
 @safe unittest
 {
@@ -1899,6 +1907,7 @@ version (UiPropertyFixtures)
     assert(sawDeep, "the cycle unrolls exactly as far as disclosure asks");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.duplicateKeysDiagnoseVisibly")
 @safe unittest
 {
@@ -1915,6 +1924,7 @@ version (UiPropertyFixtures)
     assert(sawDiagnostic, "duplicate keys produce a visible diagnostic row");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.selectionRestoresByPathThenAncestor")
 @safe unittest
 {
@@ -1941,6 +1951,7 @@ version (UiPropertyFixtures)
     assert(pt.selectedPath(tv) == "fill.stopList");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.invalidMetadataFailsTheBuild")
 @safe unittest
 {
@@ -2582,6 +2593,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
 // Tests — the edit path.
 // ─────────────────────────────────────────────────────────────────────────────
 
+version (UiPropertyFixtures)
 @("ui.property_tree.editValueEqualityIsTotal")
 @safe pure nothrow @nogc unittest
 {
@@ -2594,6 +2606,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(EditValue.of(true) != EditValue.of(1L), "kinds never cross-equal");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.applyReturnsInverseAndRefusals")
 @safe unittest
 {
@@ -2650,6 +2663,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
         EditValue.of(0.1)))) == RefusalKind.duplicateKey);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.assignmentIsLosslessOverWidths")
 @safe unittest
 {
@@ -2675,6 +2689,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(w.f == 0.5f);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.previewGroupingIsInteractionScoped")
 @safe unittest
 {
@@ -2712,6 +2727,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(es.undo.length == 2);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.staleInteractionDiscardsWithoutOverwrite")
 @safe unittest
 {
@@ -2730,6 +2746,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(es.undo.length == 0);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.finishPendingIsTheCommitBoundary")
 @safe unittest
 {
@@ -2749,6 +2766,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(es.undo.length == 1);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.undoRedoPreconditionsCatchExternalWrites")
 @safe unittest
 {
@@ -2791,6 +2809,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(undoProperty(l, es).refusal.kind == RefusalKind.emptyHistory);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.historyEvictsOldestWholeAndKeepsTheNewest")
 @safe unittest
 {
@@ -2818,6 +2837,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(tiny.undo[0].after == EditValue.ofText("second"));
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.refusalsRenderInlineAndClearOnSuccess")
 @safe unittest
 {
@@ -2834,6 +2854,7 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
         "that path's next success clears it");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.editThenRebuildRefreshesAndPreserves")
 @safe unittest
 {
@@ -2901,6 +2922,7 @@ version (UiPropertyFixtures)
     }
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.searchProjectionIgnoresAndPreservesDisclosure")
 @safe unittest
 {
@@ -2934,6 +2956,7 @@ version (UiPropertyFixtures)
     assert(rowPaths(pt, tv) == before);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.oneTypedCharacterNarrows")
 @safe unittest
 {
@@ -2961,6 +2984,7 @@ version (UiPropertyFixtures)
     assert(sawNoMatch);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.partsLandInDifferentFieldsAndRankTotal")
 @safe unittest
 {
@@ -3000,6 +3024,7 @@ version (UiPropertyFixtures)
     assert(rowByPath(pt, "extra.retries") !is null);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.filterAnchorRestoresOnClear")
 @safe unittest
 {
@@ -3030,6 +3055,7 @@ version (UiPropertyFixtures)
     assert(tv.sel - tv.top == wantRow, "…at the same viewport row");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.pendingEditPathStaysPinned")
 @safe unittest
 {
@@ -3050,6 +3076,7 @@ version (UiPropertyFixtures)
     assert(pt.selectedPath(tv) == "fill.opacity");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.malformedQueryKeepsTheLastCompleteResult")
 @safe unittest
 {
@@ -3071,6 +3098,7 @@ version (UiPropertyFixtures)
     assert(rowPaths(pt, tv) == good);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.honestOmissionAndIncompleteRows")
 @safe unittest
 {
@@ -3105,6 +3133,7 @@ version (UiPropertyFixtures)
     assert(sawIncomplete && !sawOmittedRow);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.transientFoldHidesWithoutTouchingDisclosure")
 @safe unittest
 {
@@ -3134,6 +3163,7 @@ version (UiPropertyFixtures)
     assert(tv.open.exceptions.length == 0);
 }
 
+version (UiPropertyFixtures)
 @("ui.property_tree.revealInBaseOpensAndSelects")
 @safe unittest
 {
