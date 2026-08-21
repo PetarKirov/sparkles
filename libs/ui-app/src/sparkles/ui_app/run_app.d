@@ -43,7 +43,7 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.style : Palette, Visual;
+import sparkles.ui.style : Palette, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.widget : WidgetTree;
 import sparkles.ui_app.backend : BackendPolicy;
@@ -172,9 +172,8 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
     // The page first, so the theme's background shows wherever the tree does
     // not cover — the backend-neutral answer to the arms' black clear.
     const sz = h.size;
-    h.ops() ~= DrawOp(kind: OpKind.fillRect,
-        rect: Rect(0, 0, sz.width, sz.height),
-        visual: Visual(fg: frame.pageFg, bg: frame.pageBg, hasBg: true));
+    h.ops().fillRect(Rect(0, 0, sz.width, sz.height), Slot.inherit,
+        Visual(fg: frame.pageFg, bg: frame.pageBg, hasBg: true));
 
     // An empty tree is a bare page, not a crash — layout indexes its root.
     if (snap.tree.nodes.length == 0)

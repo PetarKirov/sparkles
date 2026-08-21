@@ -105,7 +105,10 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, Visual,
 import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.canvas : DrawOp, LineStyle, OpKind, RuleEdge;
+import sparkles.ui.canvas : DrawOp, LineStyle, match, OpKind, RuleEdge,
+    Scrollbar;
+import sparkles.ui.cmd_buffer : CmdBufferT;
+import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
 import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
@@ -1038,7 +1041,9 @@ int runGui(GuiArgs guiArgs) @system
     // and the display-list sink are cleared and refilled, never regrown
     // (`NFR2`, via `buildDisplayListInto`).
     LabelArena ltnLabels;
-    SmallBuffer!(DrawOp, 256) ltnOps;
+    // The guide panel's operations and the arena their text lives in: reused
+    // every frame, so a panel that is up costs no allocation to repaint.
+    CmdBufferT!(FrameArena!(), 256) ltnOps;
 
     // The picker preview's cell blit: the document pane paints a `Grid`
     // (exactly what the terminal shows), and this draws those cells through
@@ -1345,19 +1350,18 @@ int runGui(GuiArgs guiArgs) @system
             in RgbColor thumbColor, dchar trackGlyph = '│',
             dchar thumbGlyph = '█')
         {
-            chrome.scrollbar(DrawOp(
-                kind: OpKind.scrollbar,
+            chrome.scrollbar(Scrollbar(
                 rect: rect,
-                ruleEdge: edge,
-                barContent: barInt(content),
-                barViewport: barInt(viewport),
-                barOffset: barInt(offset),
+                content: barInt(content),
+                viewport: barInt(viewport),
+                offset: barInt(offset),
+                fg: thumbColor,
+                trackColor: trackColor,
+                trackLit: trackLit,
                 expandPercent: barPercent(expand),
-                barTrackLit: trackLit,
-                barTrackColor: trackColor,
-                barTrackGlyph: trackGlyph,
-                barThumbGlyph: thumbGlyph,
-                visual: Visual(fg: thumbColor),
+                edge: edge,
+                trackGlyph: trackGlyph,
+                thumbGlyph: thumbGlyph,
             ));
         }
         // GL scissor state is global; a scissor leaked from any earlier path
@@ -1424,29 +1428,37 @@ int runGui(GuiArgs guiArgs) @system
                     continue;
                 auto op = sourceOp;
                 const activeSv = vm.activeBar();
-                if (op.kind == OpKind.scrollbar && activeSv !is null
+                if (activeSv !is null
                     && (vm.activeFenceOwner != size_t.max
                         || vm.activeTableOwner != size_t.max))
                 {
-                    const h = op.ruleEdge == RuleEdge.centerY;
-                    const isFence = vm.activeFenceOwner != size_t.max;
-                    const want = isFence
-                        ? (h ? vm.fenceHBarHitBase : vm.fenceVBarHitBase)
-                            + vm.activeFenceOwner
-                        : (h ? vm.tableHBarHitBase : vm.tableVBarHitBase)
-                            + vm.activeTableOwner;
-                    foreach (ref const t; vm.targets)
-                    {
-                        if (t.hitId != want || t.rect != op.rect)
-                            continue;
-                        op.expandPercent = barPercent(h
-                            ? activeSv.hAnim.percent
-                            : activeSv.vAnim.percent);
-                        op.barTrackLit = h
-                            ? activeSv.h.hovered || activeSv.h.dragging
-                            : activeSv.v.hovered || activeSv.v.dragging;
-                        break;
-                    }
+                    // The hover/drag animation is applied to the copy, on the
+                    // one arm that has somewhere to put it.
+                    op.payload.match!(
+                        (ref Scrollbar bar)
+                        {
+                            const h = bar.edge == RuleEdge.centerY;
+                            const isFence = vm.activeFenceOwner != size_t.max;
+                            const want = isFence
+                                ? (h ? vm.fenceHBarHitBase : vm.fenceVBarHitBase)
+                                    + vm.activeFenceOwner
+                                : (h ? vm.tableHBarHitBase : vm.tableVBarHitBase)
+                                    + vm.activeTableOwner;
+                            foreach (ref const t; vm.targets)
+                            {
+                                if (t.hitId != want || t.rect != bar.rect)
+                                    continue;
+                                bar.expandPercent = barPercent(h
+                                    ? activeSv.hAnim.percent
+                                    : activeSv.vAnim.percent);
+                                bar.trackLit = h
+                                    ? activeSv.h.hovered || activeSv.h.dragging
+                                    : activeSv.v.hovered || activeSv.v.dragging;
+                                break;
+                            }
+                        },
+                        (ref _) {},
+                    );
                 }
                 paint(canvas, (&op)[0 .. 1]);
             }
@@ -1872,7 +1884,7 @@ int runGui(GuiArgs guiArgs) @system
                 // point; the panel is chrome over everything, not content
                 // inside a pane.
                 window.resetClip();
-                ltnOps.clear();
+                ltnOps.reset();
                 buildDisplayListInto(ltnTree, ltnFrames,
                     themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                     ltnOps);
@@ -1898,7 +1910,7 @@ int runGui(GuiArgs guiArgs) @system
             const pkX = (cellsW - pkPanel.width) / 2;
             const pkOriginX = pkX > 0 ? pkX : 0;
             window.resetClip();
-            ltnOps.clear(); // sequential reuse of the guide's sink (`NFR2`)
+            ltnOps.reset(); // sequential reuse of the guide's sink (`NFR2`)
             buildDisplayListInto(pkTree, pkFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                 ltnOps);

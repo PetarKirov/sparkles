@@ -9,7 +9,8 @@ SSG/ANSI backend consumes without ever touching a widget or a palette again.
 */
 module sparkles.ui.display_list;
 
-import sparkles.ui.canvas : DrawOp, OpKind, textRunOp;
+import sparkles.ui.canvas : DrawOp, OpKind;
+import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
 import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
@@ -29,9 +30,9 @@ $(LREF buildDisplayListInto).
 DrawOp[] buildDisplayList(in WidgetTree tree, in Frame[] frames, in Palette pal,
     in RgbColor pageFg, in RgbColor pageBg)
 {
-    DrawOp[] ops;
-    buildDisplayListInto(tree, frames, pal, pageFg, pageBg, ops);
-    return ops;
+    GcCmdBuffer buf;
+    buildDisplayListInto(tree, frames, pal, pageFg, pageBg, buf);
+    return buf.ops.dup;
 }
 
 /**
@@ -53,7 +54,12 @@ slice of it. This is the ownership question
 */
 void buildDisplayListInto(Sink)(in WidgetTree tree, in Frame[] frames,
     in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref Sink ops)
-if (__traits(compiles, (ref Sink s) { DrawOp op; s ~= op; }))
+if (__traits(compiles, (ref Sink s) {
+    s.fillRect(Rect.init);
+    s.textRun(Rect.init, "x");
+    s.pushClip(Rect.init);
+    s.popClip();
+}))
 {
     emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops);
 }
@@ -97,7 +103,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     // "fill this bg", then emit the decorated box first (children paint over it).
     vis.hasBg = node.paintBackground && vis.hasBg;
     if (vis.hasBg || vis.border.any || vis.shadow.any || vis.arrow)
-        ops ~= DrawOp(kind: OpKind.fillRect, rect: rect, slot: node.slot, visual: vis);
+        ops.fillRect(rect, node.slot, vis);
 
     final switch (node.kind) with (WidgetKind)
     {
@@ -105,7 +111,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
-                ops ~= textRunOp(rect, node.text, node.slot, vis);
+                ops.textRun(rect, node.text, node.slot, vis);
                 break;
             }
             // A wrapped run: one op per broken line, stacked down the frame.
@@ -113,7 +119,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             // take their advance from the text itself).
             const inner = rect.deflate(node.padding);
             foreach (li, ln; lines)
-                ops ~= textRunOp(
+                ops.textRun(
                     Rect(inner.x, inner.y + cast(int) li, inner.width, 1),
                     ln, node.slot, vis);
             break;
@@ -149,9 +155,8 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                     }
                     const r = Rect(x, y, w, 1);
                     if (vis.hasBg)
-                        ops ~= DrawOp(kind: OpKind.fillRect, rect: r,
-                            slot: slot, visual: vis);
-                    ops ~= textRunOp(r, span.text, slot, vis);
+                        ops.fillRect(r, slot, vis);
+                    ops.textRun(r, span.text, slot, vis);
                     x += w;
                 }
             }
@@ -164,17 +169,12 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 emitSpanRow(node.spans, inner.y);
             break;
         case glyph:
-            ops ~= DrawOp(
-                kind: OpKind.glyph, rect: rect, glyph: node.glyph,
-                slot: node.slot, visual: vis,
-            );
+            ops.glyph(rect.origin, node.glyph, node.slot, vis);
             break;
         case line:
-            ops ~= DrawOp(
-                kind: OpKind.line, rect: rect,
-                to: Point(rect.x + node.lineTo.x, rect.y + node.lineTo.y),
-                lineStyle: node.lineStyle, slot: node.slot, visual: vis,
-            );
+            ops.line(rect.origin,
+                Point(rect.x + node.lineTo.x, rect.y + node.lineTo.y),
+                node.lineStyle, node.slot, vis);
             break;
         case scrollbar:
             static int barInt(long value) pure nothrow @nogc
@@ -188,21 +188,13 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 trackVis.fg = node.barTrackFgOverride;
             if (node.hasFgOverride)
                 thumbVis.fg = node.fgOverride;
-            ops ~= DrawOp(
-                kind: OpKind.scrollbar,
-                rect: rect,
-                ruleEdge: node.barEdge,
-                barContent: barInt(node.barContent),
-                barViewport: barInt(node.barViewport),
-                barOffset: barInt(node.barOffset),
+            ops.scrollbar(rect, node.barEdge,
+                barInt(node.barContent), barInt(node.barViewport),
+                barInt(node.barOffset), Slot.thumb, thumbVis,
+                trackColor: trackVis.fg, trackLit: node.barTrackLit,
                 expandPercent: node.barExpandPercent,
-                barTrackLit: node.barTrackLit,
-                barTrackColor: trackVis.fg,
-                barTrackGlyph: node.barTrackGlyph,
-                barThumbGlyph: node.barThumbGlyph,
-                slot: Slot.thumb,
-                visual: thumbVis,
-            );
+                trackGlyph: node.barTrackGlyph,
+                thumbGlyph: node.barThumbGlyph);
             break;
         case box:
             break; // background (if any) already emitted
@@ -214,11 +206,11 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             const clips = node.clipX || node.clipY;
             const childClip = childClipOf(node, rect, clip);
             if (clips)
-                ops ~= DrawOp(kind: OpKind.pushClip, rect: childClip);
+                ops.pushClip(childClip);
             foreach (child; node.children)
                 emit(tree, child, frames, pal, pageFg, pageBg, childClip, ops);
             if (clips)
-                ops ~= DrawOp(kind: OpKind.popClip);
+                ops.popClip();
             break;
     }
 }
@@ -469,50 +461,50 @@ unittest
     // The sink path is the same walk: op for op, the two agree.
     auto viaArray = buildDisplayList(tree, frames, pal, fg, bg);
 
-    SmallBuffer!(DrawOp, 64) viaSink;
+    CmdBuffer viaSink;
     buildDisplayListInto(tree, frames, pal, fg, bg, viaSink);
 
     assert(viaSink.length == viaArray.length);
     foreach (i; 0 .. viaArray.length)
     {
-        assert(viaSink[i].kind == viaArray[i].kind);
-        assert(viaSink[i].rect == viaArray[i].rect);
-        assert(viaSink[i].visual == viaArray[i].visual);
-        assert(viaSink[i].text == viaArray[i].text);
+        assert(viaSink.ops[i].kind == viaArray[i].kind);
+        assert(viaSink.ops[i].rect == viaArray[i].rect);
+        assert(viaSink.ops[i].visual == viaArray[i].visual);
+        assert(viaSink.ops[i].text == viaArray[i].text);
     }
 
-    // A reused sink is the point: cleared and refilled, it yields the same
-    // frame again without allocating a second array.
-    viaSink.length = 0;
+    // A reused sink is the point: reset and refilled, it yields the same
+    // frame again without allocating a second array — and its text is the new
+    // frame's, interned afresh into the same arena bytes.
+    viaSink.reset();
     buildDisplayListInto(tree, frames, pal, fg, bg, viaSink);
     assert(viaSink.length == viaArray.length);
+    assert(viaSink.ops[$ - 1].text == viaArray[$ - 1].text);
 }
 
 @("ui.display_list.sinkPathIsNogc")
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
-
     // The requirement `NFR2` actually states, proved at compile time: with a
-    // `SmallBuffer` sink the whole walk allocates nothing. A function that
-    // returns an array can never satisfy this, which is why the sink form
-    // exists rather than a flag on the old one.
+    // `CmdBuffer` sink the whole walk allocates nothing — text included, which
+    // is new. A function that returns an array can never satisfy this, which
+    // is why the sink form exists rather than a flag on the old one.
     static assert(__traits(compiles, () @nogc {
         WidgetTree tree;
         Frame[] frames;
         Palette pal;
-        SmallBuffer!(DrawOp, 32) ops;
+        CmdBuffer ops;
         buildDisplayListInto(tree, frames, pal,
             RgbColor(0, 0, 0), RgbColor(0, 0, 0), ops);
-    }), "the SmallBuffer sink path must be @nogc");
+    }), "the CmdBuffer sink path must be @nogc");
 
     // And it stays `@safe` — the seam is a sink, not a pointer.
     static assert(__traits(compiles, () @safe {
         WidgetTree tree;
         Frame[] frames;
         Palette pal;
-        SmallBuffer!(DrawOp, 32) ops;
+        CmdBuffer ops;
         buildDisplayListInto(tree, frames, pal,
             RgbColor(0, 0, 0), RgbColor(0, 0, 0), ops);
     }));

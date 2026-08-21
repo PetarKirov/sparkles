@@ -690,7 +690,7 @@ struct Gallery
     private void paintTermChrome(H, TV)(ref H h, TV tv, in Rect pane)
     {
         import raylib : Color, DrawRectangle;
-        import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
+        import sparkles.ui.canvas : RuleEdge, Scrollbar;
 
         auto c = h.canvas;
         const cw = c.fonts.cellW();
@@ -709,16 +709,16 @@ struct Gallery
 
         if (s.terms.sbTotal <= s.terms.sbLen || s.terms.sbLen <= 0)
             return;
-        c.scrollbar(DrawOp(
-            kind: OpKind.scrollbar,
+        const thumbFg = mixRgb(bg, theme().pageFg, 0.55f);
+        c.scrollbar(Scrollbar(
             rect: Rect(pane.x + pane.width, pane.y, gutterCells, pane.height),
-            ruleEdge: RuleEdge.right,
-            barContent: cast(int) s.terms.sbTotal,
-            barViewport: cast(int) s.terms.sbLen,
-            barOffset: cast(int) s.termView.v.offset,
+            content: cast(int) s.terms.sbTotal,
+            viewport: cast(int) s.terms.sbLen,
+            offset: cast(int) s.termView.v.offset,
+            fg: thumbFg,
+            trackColor: mixRgb(bg, theme().pageFg, 0.25f),
             expandPercent: cast(ubyte) s.termView.vAnim.percent,
-            barTrackColor: mixRgb(bg, theme().pageFg, 0.25f),
-            visual: Visual(fg: mixRgb(bg, theme().pageFg, 0.55f)),
+            edge: RuleEdge.right,
         ));
     }
 

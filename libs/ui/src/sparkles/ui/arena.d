@@ -221,8 +221,9 @@ struct GcArena
         return p;
     }
 
-    /// ditto — the collector is the reset.
-    void reset() {}
+    /// ditto — the collector is the reset, so this costs nothing and stays
+    /// callable from the `@nogc` frame bracket every host shares.
+    void reset() @nogc {}
 }
 
 static assert(isArena!(FrameArena!()));

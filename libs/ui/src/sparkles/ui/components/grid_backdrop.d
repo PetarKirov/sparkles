@@ -16,7 +16,8 @@ module sparkles.ui.components.grid_backdrop;
 import std.json : JSONValue;
 
 import sparkles.base.term_color : Color, RgbColor;
-import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
+import sparkles.ui.canvas : DrawOp, fillRectOp, glyphOp, OpKind, ruleOp,
+    RuleEdge;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.style : Palette, resolveSlot, Slot, Visual;
 
@@ -700,21 +701,19 @@ private void emitFill(Sink)(ref Sink ops, in Rect r, Slot slot, in Visual vis)
 {
     if (r.empty)
         return;
-    ops ~= DrawOp(kind: OpKind.fillRect, rect: r, slot: slot, visual: vis);
+    ops ~= fillRectOp(r, slot, vis);
 }
 
 private void emitRule(Sink)(
     ref Sink ops, in Rect r, RuleEdge edge, Slot slot, in Visual vis)
 {
-    ops ~= DrawOp(kind: OpKind.rule, rect: r, ruleEdge: edge, slot: slot,
-        visual: vis);
+    ops ~= ruleOp(r, edge, slot, vis);
 }
 
 private void emitGlyph(Sink)(
     ref Sink ops, in Point at, dchar g, Slot slot, in Visual vis)
 {
-    ops ~= DrawOp(kind: OpKind.glyph, rect: Rect(at.x, at.y, 1, 1),
-        glyph: g, slot: slot, visual: vis);
+    ops ~= glyphOp(at, g, slot, vis);
 }
 
 private int divFloor(int a, int b) @safe pure nothrow @nogc

@@ -199,11 +199,8 @@ struct DiagramApp
             theme.pageBg, frameOps);
         if (dy <= 0)
             return;
-        foreach (i; start .. frameOps.length)
-        {
-            frameOps[i].rect.origin.y = frameOps[i].rect.origin.y + dy;
-            frameOps[i].to.y = frameOps[i].to.y + dy;
-        }
+        foreach (ref op; frameOps.ops[start .. $])
+            op.translate(0, dy);
     }
 }
 

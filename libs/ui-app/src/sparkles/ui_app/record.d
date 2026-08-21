@@ -20,6 +20,7 @@ module sparkles.ui_app.record;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, cellPointer;
+import sparkles.ui.arena : GcArena;
 import sparkles.ui.canvas : DrawOp, RecordingCanvas;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
@@ -53,7 +54,10 @@ struct RecordingHost
     // hundred bytes instead of a quarter-megabyte; every frame's operations are
     // `dup`ed to the heap on the line below anyway, so nothing here was ever
     // served by inline storage.
-    mixin HostState!recordedOpCapacity;
+    // The recorder's frames outlive the frame that drew them (that is what a
+    // recorder is for), so its operations' text must too — the collector's
+    // arena, not the per-frame one. See `FrameOpsOf`.
+    mixin HostState!(recordedOpCapacity, GcArena);
 
     // ── what the caller sets up ─────────────────────────────────────────────
 
@@ -220,7 +224,7 @@ RecordingHost runRecorded(Present, Handle)(
 
 version (unittest)
 {
-    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.canvas : fillRectOp, OpKind;
     import sparkles.ui.geometry : Rect;
     import sparkles.input : charEvent, Key, keyEvent, PointerAction,
         PointerButton, PointerEvent, Point, ResizeEvent;
@@ -229,7 +233,7 @@ version (unittest)
     // an unannotated one is `@system` and makes every lambda calling it
     // `@system` too — which then cannot be called from a `@safe` unittest.
     private DrawOp fill(int x) @safe pure nothrow
-        => DrawOp(kind: OpKind.fillRect, rect: Rect(x, 0, 1, 1));
+        => fillRectOp(Rect(x, 0, 1, 1));
 }
 
 @("ui_app.record.framesAndOps")
