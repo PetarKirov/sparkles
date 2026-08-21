@@ -4,6 +4,17 @@ The cross-subject synthesis over the whole corpus — the Tier-1 five and the Ti
 
 **Last reviewed:** August 19, 2026
 
+> [!WARNING]
+> Two of this page's claims are **superseded** by the later design spikes (see
+> [`property-tree.md` § Corrections](../../specs/ui/property-tree.md#corrections-to-the-survey-snapshot)):
+> recursive static reflection does _not_ need a visited-type set or a
+> delegate-per-node erasure boundary — the build failure was path-parameterised
+> instantiation, retracted by
+> [`type-only-instantiation.d`](./examples/type-only-instantiation.d) — and the
+> `SumType.opAssign` `@system` rule is directional, not blanket, per
+> [`edit-commands.d`](./examples/edit-commands.d). The prose below is kept as
+> evidence of the failed approaches, not as a competing requirement.
+
 > [!NOTE]
 > Eight subjects were read from source at pinned revisions ([Qt][qt], [Godot][godot],
 > [WinForms][winforms], [bevy][bevy], [Unity][unity], the [derive-macro crates][derive],

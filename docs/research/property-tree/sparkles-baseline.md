@@ -2,6 +2,16 @@
 
 What the toolkit already answers on each spine dimension, read from the working tree, and the delta between that and what a reflective property editor needs.
 
+> [!WARNING]
+> Two of this page's claims are **superseded** by the later design spikes (see
+> [`property-tree.md` § Corrections](../../specs/ui/property-tree.md#corrections-to-the-survey-snapshot)):
+> the visited-type set / erasure-boundary requirement for recursive reflection
+> was retracted by
+> [`type-only-instantiation.d`](./examples/type-only-instantiation.d), and the
+> blanket "`SumType` assignment is `@system`" rule is directional per
+> [`edit-commands.d`](./examples/edit-commands.d). The prose below remains as
+> evidence of the failed approaches.
+
 |                    |                                                                                                               |
 | ------------------ | ------------------------------------------------------------------------------------------------------------- |
 | **Subject**        | `libs/ui` (`sparkles:ui`), `libs/ui-app`, with `libs/input`                                                   |
