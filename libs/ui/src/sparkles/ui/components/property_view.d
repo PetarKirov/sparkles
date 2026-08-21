@@ -426,6 +426,7 @@ version (UiPropertyFixtures)
     }
 }
 
+version (UiPropertyFixtures)
 @("ui.property_view.valueAffordancesFollowTheLeafKind")
 @safe unittest
 {
@@ -451,6 +452,7 @@ version (UiPropertyFixtures)
     assert(rowText("id") == "7", "a read-only leaf is a plain readout");
 }
 
+version (UiPropertyFixtures)
 @("ui.property_view.refusalRendersInlineBelowItsRow")
 @safe unittest
 {
@@ -485,6 +487,7 @@ version (UiPropertyFixtures)
         .canFind("out of range"));
 }
 
+version (UiPropertyFixtures)
 @("ui.property_view.searchDecorationIsColorIndependent")
 @safe unittest
 {
