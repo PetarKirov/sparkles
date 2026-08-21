@@ -39,7 +39,7 @@ import std.conv : text;
 
 import sparkles.ui.components.tree_view : TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, Guide,
-    TreeData, TreeGlyphs;
+    nodeExpandable, TreeData, TreeGlyphs;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;
@@ -303,9 +303,15 @@ WidgetInspect inspectWidgets(WidgetTree subject, const(Frame)[] frames)
 The flattened tree as indented text with guide rails — the inspector's
 ANSI/file/logging target. One line per row: guides, the label, and (when the
 node carries one) the badge after two spaces. Ends with a newline.
+
+With an `isOpen` predicate supplied, each row also carries the shared
+disclosure marker (`PRT12`): open/closed through $(LREF nodeExpandable) —
+the same projection every interactive surface asks — or the leaf glyph. The
+default (`null`) keeps the historical marker-free output.
 */
 void writeTreeText(Writer, T)(ref Writer w, in TreeData!T data,
-    in FlatTreeRow[] rows, in TreeGlyphs glyphs = TreeGlyphs.init)
+    in FlatTreeRow[] rows, in TreeGlyphs glyphs = TreeGlyphs.init,
+    scope bool delegate(uint) @safe isOpen = null)
 {
     foreach (ref const r; rows)
     {
@@ -319,6 +325,10 @@ void writeTreeText(Writer, T)(ref Writer w, in TreeData!T data,
                 case end: w.put(glyphs.end); break;
             }
         }
+        if (isOpen !is null)
+            w.put(nodeExpandable(data, r.node)
+                ? (isOpen(r.node) ? glyphs.open : glyphs.closed)
+                : glyphs.leaf);
         ref const v = data.nodes[r.node].value;
         static if (__traits(compiles, { const(char)[] s = v.label; }))
             w.put(v.label);
@@ -336,12 +346,13 @@ void writeTreeText(Writer, T)(ref Writer w, in TreeData!T data,
 
 /// ditto — as one `string`.
 string treeText(T)(in TreeData!T data, in FlatTreeRow[] rows,
-    in TreeGlyphs glyphs = TreeGlyphs.init)
+    in TreeGlyphs glyphs = TreeGlyphs.init,
+    scope bool delegate(uint) @safe isOpen = null)
 {
     import std.array : appender;
 
     auto w = appender!string;
-    writeTreeText(w, data, rows, glyphs);
+    writeTreeText(w, data, rows, glyphs, isOpen);
     return w[];
 }
 

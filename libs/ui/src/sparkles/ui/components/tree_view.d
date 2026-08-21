@@ -49,8 +49,8 @@ import sparkles.input : InputCapabilities, InputKey = Key, KeyEvent,
     PointerAction, PointerButton, PointerEvent;
 import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
-import sparkles.ui.components.tree_widget : FlatTreeRow, TreeData, TreeGlyphs,
-    treeView;
+import sparkles.ui.components.tree_widget : FlatTreeRow, nodeExpandable,
+    TreeData, TreeGlyphs, treeView;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.state : CaptureState, DisclosureState, LineEditState,
     ScrollbarState;
@@ -92,6 +92,14 @@ struct TreeViewState(Key)
     int contentCols;
     /// The live filter's editor (STM13); `filter.active` IS filter mode.
     LineEditState filter;
+    /**
+    The per-query transient fold overlay (`PRT29`): while a query is live,
+    folding commands act here — visibility only, never on `open`, so
+    clearing the filter restores the exact manual disclosure intent. Default-
+    open polarity (a search result renders open); `filterStart` and a
+    cancelled filter reset it, so the overlay dies with the query.
+    */
+    DisclosureState!Key searchFold = DisclosureState!Key(true, null);
     /// Pane geometry: outer size, and rows of pane chrome outside the tree
     /// (header + status/details; a chromeless pane sets 0). Prefer
     /// $(LREF resize) over assigning `height`: a pane that GREW must not
@@ -301,6 +309,7 @@ struct TreeViewState(Key)
     TreeStep filterStart() pure nothrow
     {
         filter = filter.started();
+        searchFold = DisclosureState!Key(true, null);
         return TreeStep.rebuild;
     }
 
@@ -325,6 +334,7 @@ struct TreeViewState(Key)
                 return TreeStep.handled;
             case InputKey.escape:
                 filter = filter.cancelled();
+                searchFold = DisclosureState!Key(true, null);
                 return TreeStep.rebuild;
             default:
                 return TreeStep.none;
@@ -399,7 +409,7 @@ TreeStep collapseOrUp(Key, T, KeyOf)(ref TreeViewState!Key s,
     if (s.sel >= cast(long) s.rows.length)
         return TreeStep.handled;
     const node = s.rows[cast(size_t) s.sel].node;
-    if (data.hasChildren(node) && s.open.isOpen(keyOf(node)))
+    if (nodeExpandable(data, node) && s.open.isOpen(keyOf(node)))
     {
         s.open = s.open.closed(keyOf(node));
         return TreeStep.rebuild;
@@ -429,11 +439,7 @@ TreeStep activate(Key, T, KeyOf)(ref TreeViewState!Key s,
     const node = s.selectedNode;
     if (node == uint.max)
         return TreeStep.handled;
-    bool toggles = data.hasChildren(node);
-    static if (__traits(compiles,
-        { bool e = data.nodes[node].value.expandable; }))
-        toggles = data.nodes[node].value.expandable;
-    if (toggles)
+    if (nodeExpandable(data, node))
     {
         s.open = s.open.toggled(keyOf(node));
         return TreeStep.rebuild;
@@ -865,4 +871,51 @@ unittest
     s.resize(4);
     s.scrollBy(100);
     assert(s.top == 12 - s.bodyRows);
+}
+
+@("ui.tree_view.collapseOrUpClosesALazyComposite")
+@safe unittest
+{
+    // The other half of the PRT12 defect: Left on a closed-but-expandable
+    // node whose children were never materialised must close it (report
+    // rebuild via the opened set), not climb past it.
+    static struct Lazy
+    {
+        string label;
+        bool expandable;
+    }
+
+    TreeData!Lazy data;
+    data.add(Lazy("root", true));
+
+    TreeViewState!uint s;
+    s.width = 30;
+    s.height = 6;
+    s.open = s.open.opened(0); // intent: open — children just aren't built
+    s.rows = flatten(data, (uint n) => s.open.isOpen(n));
+
+    assert(collapseOrUp(s, data, (uint n) => n) == TreeStep.rebuild,
+        "an open lazy composite closes");
+    assert(!s.open.isOpen(0));
+}
+
+@("ui.tree_view.searchFoldDiesWithTheQuery")
+@safe unittest
+{
+    TreeViewState!uint s;
+    assert(s.searchFold.isOpen(7), "default polarity is open");
+
+    s.filterStart();
+    s.searchFold = s.searchFold.closed(7); // fold a context subtree mid-search
+    assert(!s.searchFold.isOpen(7));
+    assert(s.open == DisclosureState!uint.init,
+        "the overlay never touches base disclosure");
+
+    s.filterKey(KeyEvent(InputKey.escape));
+    assert(s.searchFold.isOpen(7), "Esc discards the overlay with the query");
+
+    s.filterStart();
+    s.searchFold = s.searchFold.closed(3);
+    s.filterStart();
+    assert(s.searchFold.isOpen(3), "a new query starts with a fresh overlay");
 }
