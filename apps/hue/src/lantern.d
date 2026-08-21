@@ -20,15 +20,18 @@ import ui_lantern = sparkles.ui.lantern;
 public import sparkles.ui.lantern : defaultDelay, LanternState, StepKind,
     tick, untilShown;
 
-import keymap : Command, hueBindings, KeyContext;
+import keymap : activeBindings, Command, hueBindings, KeyContext;
 
 /// The framework's step result with hue's command type.
 alias LanternStep = ui_lantern.LanternStep!Command;
 
-/// $(REF step, sparkles,ui,lantern) over $(REF hueBindings, keymap).
+/// $(REF step, sparkles,ui,lantern) over $(REF activeBindings, keymap) — the
+/// same table resolution reads, so a `CFG6` rebinding is described, not the
+/// compiled row it replaced (`KEY12`). Not `pure` for the same reason the
+/// keymap wrappers are not: the installed table is a mutable module ref.
 LanternStep step(ref LanternState s, in KeyEvent raw, in KeyContext ctx)
-    @safe pure nothrow @nogc
-    => ui_lantern.step(s, hueBindings, raw, ctx);
+    @safe nothrow @nogc
+    => ui_lantern.step(s, activeBindings, raw, ctx);
 
 // ---------------------------------------------------------------------------
 // Tests — hue's policy through the machine.
@@ -40,12 +43,14 @@ version (unittest)
     import sparkles.input.events : Key, Mods;
     import keymap : InputMode, KeyCommand;
 
+    // Explicit-table framework calls, NOT the wrapper: the policy oracle
+    // stays `pure` and independent of any installed CFG6 overlay.
     LanternStep ch(ref LanternState s, dchar c, KeyContext ctx = KeyContext.init,
         Mods m = Mods()) @safe pure nothrow @nogc
-        => step(s, KeyEvent(Key.char_, c, m), ctx);
+        => ui_lantern.step(s, hueBindings, KeyEvent(Key.char_, c, m), ctx);
     LanternStep nk(ref LanternState s, Key k, KeyContext ctx = KeyContext.init,
         Mods m = Mods()) @safe pure nothrow @nogc
-        => step(s, KeyEvent(k, 0, m), ctx);
+        => ui_lantern.step(s, hueBindings, KeyEvent(k, 0, m), ctx);
 }
 
 @("lantern.prefixDescendsThenExecutes")
