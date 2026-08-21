@@ -52,7 +52,7 @@ the _decision_.
 | [Gutter channels](./gutter.md)                      | the per-line chrome model — line numbers, coverage counts, fold arrows, diff markers and blame as one set of layout channels beside the content, composed after layout, width-reserved, priority-merged and budgeted — `GUT`                                                      |
 | [Containers](./containers.md)                       | the container tier: `ScrollView` (owned scrolling) and the single-window docking layout (splits, tabbed groups, drag-to-redock, focus/capture ownership) — `SCV`/`DCK`                                                                                                            |
 | [Inspector](./inspector.md)                         | the generic **inspector component** — a tree over a subject + details pane + the adapter-defined selection/extent contract, with the widget-tree adapter (toolkit self-inspection) — `INS`                                                                                        |
-| [Property tree](./property-tree.md) _(planned)_     | the reflective **property-tree component** — `PropertyTree!T` as an adapter over the tree widget: the type-only walk, metadata UDAs, path addressing, ranked fuzzy filtering, value-semantic edits with host-stored undo/redo, and the read-only script-free HTML posture — `PRT` |
+| [Property tree](./property-tree.md)                 | the reflective **property-tree component** — `PropertyTree!T` as an adapter over the tree widget: the type-only walk, metadata UDAs, path addressing, ranked fuzzy filtering, value-semantic edits with host-stored undo/redo, and the read-only script-free HTML posture — `PRT` |
 | [Anchored overlays](./popup.md) _(proposed)_        | the one anchored-overlay primitive behind every floating surface: the anchor value, the placement solve, the ordered top-layer arena that fills `DCK13`'s rung, triggers, dismissal, layering and modality — `POP`/`ANC`/`PLC`/`TRG`/`DSM`/`LYR`/`MDL`                            |
 | [Editor](./editor.md) _(planned)_                   | the **editable-text component** — the `EditorState` machine (`EDT`), per-backend text input incl. IME/soft-keyboard phasing (`EDI`), the editor widget (`EDR`), and its consumers (`EDU`) — the capability behind hue's diff **write wave** ([`UIA9`](../hue/ui-architecture.md)) |
 | [Backends](./backends.md)                           | the `isCanvas` seam, the shipped targets, per-backend declared capabilities, and forward-compatibility rules for additional GPU backends                                                                                                                                          |
@@ -124,36 +124,36 @@ table at the foot of each spec lists each file against the requirement IDs that
 own it, so coverage is auditable in both directions: requirement → code (the
 "Traces to" column of every row) and code → requirement (the coverage tables).
 
-| Source file                                                      | Primary spec + areas                                                                                      |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `libs/ui/src/sparkles/ui/geometry.d`                             | [layout](./layout.md) — `LAY3`, `LAY6`                                                                    |
-| `libs/ui/src/sparkles/ui/layout.d`                               | [layout](./layout.md) — `LAY1`–`LAY8`, `LAY11`, `LAY12`                                                   |
-| `libs/ui/src/sparkles/ui/wrap.d`                                 | [layout](./layout.md) — `LAY10`                                                                           |
-| `libs/ui/src/sparkles/ui/tracks.d`                               | [layout](./layout.md) — `LAY9`                                                                            |
-| `libs/ui/src/sparkles/ui/style.d`                                | [theme](./theme.md) — `THM1`–`THM5`                                                                       |
-| `libs/ui/src/sparkles/ui/theme.d`                                | [theme](./theme.md) — `THM6`–`THM9`                                                                       |
-| `libs/ui/src/sparkles/ui/canvas.d`                               | [backends](./backends.md) — `TGT1`, `TGT5`                                                                |
-| `libs/ui/src/sparkles/ui/widget.d`                               | [widgets](./widgets.md) — `WGT1`–`WGT6`                                                                   |
-| `libs/ui/src/sparkles/ui/display_list.d`                         | [backends](./backends.md) — `TGT2`                                                                        |
-| `libs/ui/src/sparkles/ui/state.d`                                | [state machines](./state-machines.md) — `STM1`–`STM7`                                                     |
-| `libs/ui/src/sparkles/ui/keymap.d`                               | [keymap & lantern](./keymap.md) — `KEY2`–`KEY10`, `KEY13`                                                 |
-| `libs/ui/src/sparkles/ui/lantern.d`                              | [keymap & lantern](./keymap.md) — `LTN1`–`LTN4`, `LTN9`–`LTN12`                                           |
-| `libs/ui/src/sparkles/ui/components/lantern_view.d`              | [keymap & lantern](./keymap.md) — `LTN5`–`LTN8`, `LTN14`                                                  |
-| `libs/ui/src/sparkles/ui/interp/immediate.d`                     | [backends](./backends.md) — `TGT3`                                                                        |
-| `libs/ui/src/sparkles/ui/interp/cells.d`                         | [backends](./backends.md) — `TGT6`; superseded by the cell adapter and retired with it                    |
-| `libs/ui/src/sparkles/ui/interp/html.d`                          | [backends](./backends.md) — `TGT4`, `TGT7`                                                                |
-| `libs/ui/src/sparkles/ui/components/`                            | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                                                 |
-| `libs/ui/src/sparkles/ui/components/inspector.d`                 | [inspector](./inspector.md) — `INS1`–`INS5`                                                               |
-| `libs/ui/src/sparkles/ui/components/gutter.d`                    | [gutter channels](./gutter.md) — `GUT1`–`GUT9`                                                            |
-| `libs/ui/src/sparkles/ui/property_tree.d` _(planned)_            | [property tree](./property-tree.md) — `PRT1`–`PRT11`, `PRT14`–`PRT35`                                     |
-| `libs/ui/src/sparkles/ui/components/property_view.d` _(planned)_ | [property tree](./property-tree.md) — `PRT12`–`PRT13`, `PRT21`, `PRT23`, `PRT25`–`PRT28`, `PRT32`–`PRT35` |
-| `libs/input/src/sparkles/input/`                                 | [input](./input.md) — `INP1`–`INP9`                                                                       |
-| `libs/ui-tui/src/`                                               | [backends](./backends.md) — `TGT6`                                                                        |
-| `libs/ui-raylib/src/`                                            | [backends](./backends.md) — `TGT6`                                                                        |
-| `libs/ui/src/sparkles/ui/overlay/anchor.d` _(planned)_           | [anchored overlays](./popup.md) — `ANC1`–`ANC9`                                                           |
-| `libs/ui/src/sparkles/ui/overlay/place.d` _(planned)_            | [anchored overlays](./popup.md) — `PLC1`–`PLC15`                                                          |
-| `libs/ui/src/sparkles/ui/overlay/arena.d` _(planned)_            | [anchored overlays](./popup.md) — `POP4`, `POP7`, `LYR1`–`LYR4`, `LYR9`, `LYR10`, `LYR12`                 |
-| `libs/ui/src/sparkles/ui/overlay/policy.d` _(planned)_           | [anchored overlays](./popup.md) — `TRG1`–`TRG5`, `DSM1`–`DSM6`, `DSM11`, `MDL2`, `MDL3`                   |
-| `libs/ui/src/sparkles/ui/overlay/package.d` _(planned)_          | [anchored overlays](./popup.md) — re-exports only                                                         |
+| Source file                                             | Primary spec + areas                                                                                      |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `libs/ui/src/sparkles/ui/geometry.d`                    | [layout](./layout.md) — `LAY3`, `LAY6`                                                                    |
+| `libs/ui/src/sparkles/ui/layout.d`                      | [layout](./layout.md) — `LAY1`–`LAY8`, `LAY11`, `LAY12`                                                   |
+| `libs/ui/src/sparkles/ui/wrap.d`                        | [layout](./layout.md) — `LAY10`                                                                           |
+| `libs/ui/src/sparkles/ui/tracks.d`                      | [layout](./layout.md) — `LAY9`                                                                            |
+| `libs/ui/src/sparkles/ui/style.d`                       | [theme](./theme.md) — `THM1`–`THM5`                                                                       |
+| `libs/ui/src/sparkles/ui/theme.d`                       | [theme](./theme.md) — `THM6`–`THM9`                                                                       |
+| `libs/ui/src/sparkles/ui/canvas.d`                      | [backends](./backends.md) — `TGT1`, `TGT5`                                                                |
+| `libs/ui/src/sparkles/ui/widget.d`                      | [widgets](./widgets.md) — `WGT1`–`WGT6`                                                                   |
+| `libs/ui/src/sparkles/ui/display_list.d`                | [backends](./backends.md) — `TGT2`                                                                        |
+| `libs/ui/src/sparkles/ui/state.d`                       | [state machines](./state-machines.md) — `STM1`–`STM7`                                                     |
+| `libs/ui/src/sparkles/ui/keymap.d`                      | [keymap & lantern](./keymap.md) — `KEY2`–`KEY10`, `KEY13`                                                 |
+| `libs/ui/src/sparkles/ui/lantern.d`                     | [keymap & lantern](./keymap.md) — `LTN1`–`LTN4`, `LTN9`–`LTN12`                                           |
+| `libs/ui/src/sparkles/ui/components/lantern_view.d`     | [keymap & lantern](./keymap.md) — `LTN5`–`LTN8`, `LTN14`                                                  |
+| `libs/ui/src/sparkles/ui/interp/immediate.d`            | [backends](./backends.md) — `TGT3`                                                                        |
+| `libs/ui/src/sparkles/ui/interp/cells.d`                | [backends](./backends.md) — `TGT6`; superseded by the cell adapter and retired with it                    |
+| `libs/ui/src/sparkles/ui/interp/html.d`                 | [backends](./backends.md) — `TGT4`, `TGT7`                                                                |
+| `libs/ui/src/sparkles/ui/components/`                   | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                                                 |
+| `libs/ui/src/sparkles/ui/components/inspector.d`        | [inspector](./inspector.md) — `INS1`–`INS5`                                                               |
+| `libs/ui/src/sparkles/ui/components/gutter.d`           | [gutter channels](./gutter.md) — `GUT1`–`GUT9`                                                            |
+| `libs/ui/src/sparkles/ui/property_tree.d` _(planned)_   | [property tree](./property-tree.md) — `PRT1`–`PRT11`, `PRT14`–`PRT35`                                     |
+| `libs/ui/src/sparkles/ui/components/property_view.d`    | [property tree](./property-tree.md) — `PRT12`–`PRT13`, `PRT21`, `PRT23`, `PRT25`–`PRT28`, `PRT32`–`PRT35` |
+| `libs/input/src/sparkles/input/`                        | [input](./input.md) — `INP1`–`INP9`                                                                       |
+| `libs/ui-tui/src/`                                      | [backends](./backends.md) — `TGT6`                                                                        |
+| `libs/ui-raylib/src/`                                   | [backends](./backends.md) — `TGT6`                                                                        |
+| `libs/ui/src/sparkles/ui/overlay/anchor.d` _(planned)_  | [anchored overlays](./popup.md) — `ANC1`–`ANC9`                                                           |
+| `libs/ui/src/sparkles/ui/overlay/place.d` _(planned)_   | [anchored overlays](./popup.md) — `PLC1`–`PLC15`                                                          |
+| `libs/ui/src/sparkles/ui/overlay/arena.d` _(planned)_   | [anchored overlays](./popup.md) — `POP4`, `POP7`, `LYR1`–`LYR4`, `LYR9`, `LYR10`, `LYR12`                 |
+| `libs/ui/src/sparkles/ui/overlay/policy.d` _(planned)_  | [anchored overlays](./popup.md) — `TRG1`–`TRG5`, `DSM1`–`DSM6`, `DSM11`, `MDL2`, `MDL3`                   |
+| `libs/ui/src/sparkles/ui/overlay/package.d` _(planned)_ | [anchored overlays](./popup.md) — re-exports only                                                         |
 
 → [Feature requirements](./feature-requirements.md) · [Principles](./principles.md) · [Layout](./layout.md) · [Widgets](./widgets.md)
