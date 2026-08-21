@@ -708,6 +708,32 @@
         ]
       },
       {
+        "text": "Docs (SSG)",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/specs/docs/"
+          },
+          {
+            "text": "SSG surface",
+            "link": "/specs/docs/site"
+          },
+          {
+            "text": "Site discovery",
+            "link": "/specs/docs/discovery"
+          },
+          {
+            "text": "API doc generator",
+            "link": "/specs/docs/apidoc"
+          },
+          {
+            "text": "Components (flow-mode)",
+            "link": "/specs/docs/components"
+          }
+        ]
+      },
+      {
         "text": "Event Horizon",
         "collapsed": false,
         "items": [
