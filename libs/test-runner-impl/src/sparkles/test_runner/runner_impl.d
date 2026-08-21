@@ -150,7 +150,8 @@ package ParsedArgs parseRunnerOptions(string[] args)
     import std.conv : ConvException, text;
     import std.getopt : arraySep, config, getopt, GetOptException;
 
-    args = args.filter!(a => !a.startsWith("--DRT-")).array;
+    args = args.filter!(a => !a.startsWith("--DRT-")
+        && !a.startsWith("dstpath:") && !a.startsWith("merge:") && !a.startsWith("srcpath:")).array;
 
     ParsedArgs r;
     // Comma-separated array options (`--group-by=dataset,operation`, repeatable

@@ -2462,7 +2462,7 @@ private struct CoverageRun
 
     /// The runtime arguments, after `--`.
     string[] runtimeArgs() const @safe pure nothrow
-        => enabled ? ["--", "--DRT-covopt=merge:1 dstpath:" ~ dir] : null;
+        => enabled ? ["--", "--DRT-covopt=merge:1", "--DRT-covopt=dstpath:" ~ dir] : null;
 
     /// The environment additions for the child.
     const(string[string]) env() const @safe pure nothrow
