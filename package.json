@@ -5,9 +5,10 @@
   "scripts": {
     "build:wasm": "bash docs/scripts/build-wasm.sh",
     "build:twoslash-showcase": "bash docs/scripts/build-twoslash-showcase.sh",
-    "docs:dev": "npm run build:wasm && npm run build:twoslash-showcase && vitepress dev docs --host",
-    "docs:build": "npm run build:wasm && npm run build:twoslash-showcase && vitepress build docs",
-    "docs:preview": "vitepress preview docs"
+    "docs:dev": "npm run build:wasm && npm run build:twoslash-showcase && npm run build:listings && vitepress dev docs --host",
+    "docs:build": "npm run build:wasm && npm run build:twoslash-showcase && npm run build:listings && vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "build:listings": "bash docs/scripts/build-source-listings.sh"
   },
   "devDependencies": {
     "dockview-vue": "^7.0.2",
