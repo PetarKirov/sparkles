@@ -24,7 +24,7 @@ module settings_io;
 
 import std.traits : FieldNameTuple, getUDAs, hasUDA;
 
-import expected : Expected, err;
+import expected : Expected, err, ok;
 
 import sparkles.wired.json : JsonError, JsonStage, fromJSON;
 
@@ -32,7 +32,7 @@ import sparkles.ui.property_tree : Doc;
 
 import settings : ConfigSection, HueConfig;
 import settings_load : LoadedConfig;
-import settings_overlay : Origin, OriginKind, Origins;
+import settings_overlay : Origin, OriginKind, Origins, Sparse;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JSONC → strict JSON, offsets preserved.
@@ -465,4 +465,196 @@ private void renderStarterSection(Writer, T)(ref Writer w, in T value, int depth
     assert(w[].canFind(`"appearance": {`));
     assert(w[].canFind(`// "tabWidth": 4,`));
     assert(w[].canFind(`// "delayMs": 200,`));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `config save` — persist session deltas into the user file (CFG11).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Why a save did not happen.
+struct SaveRefusal
+{
+    /// ditto
+    enum Kind : ubyte
+    {
+        /// The existing file only parses as JSONC — comments a rewrite would
+        /// destroy. hue never rewrites a file it did not generate.
+        humanOwned,
+        /// Encoding or filesystem failure (rendered from the JsonError).
+        ioError,
+    }
+
+    Kind kind;
+
+    /// Rendered explanation; for `humanOwned` it carries the exact strict-
+    /// JSON delta snippet to paste, so the refusal is instructive, not lossy.
+    string message;
+}
+
+/// Field-wise union of two sparse overlays: where `deltas` speaks it wins,
+/// everywhere else `base` stands — the shape of "this session's changes
+/// applied to what the user file already said".
+Sparse!T mergeSparse(T)(Sparse!T base, Sparse!T deltas) @safe
+{
+    import settings : ConfigSection;
+
+    Sparse!T merged = base;
+    static foreach (i, _; base.tupleof)
+    {
+        static if (hasUDA!(typeof(T.tupleof[i]), ConfigSection))
+            merged.tupleof[i] = mergeSparse!(typeof(T.tupleof[i]))(
+                base.tupleof[i], deltas.tupleof[i]);
+        else
+        {
+            if (!deltas.tupleof[i].isNull)
+                merged.tupleof[i] = deltas.tupleof[i];
+        }
+    }
+    return merged;
+}
+
+/// The pretty strict-JSON text of a sparse overlay (unset fields omitted) —
+/// what `saveUserConfig` writes, and what a refusal shows to paste.
+string sparseText(in Sparse!HueConfig overlay)
+{
+    import std.array : appender;
+    import sparkles.wired.json : writeJSON;
+    import sparkles.wired.json.writer : JsonWriteOptions;
+
+    auto w = appender!string;
+    auto r = writeJSON!(JsonWriteOptions(pretty: true))(overlay, w);
+    assert(!r.hasError, "a sparse overlay failed to encode");
+    return w[];
+}
+
+/**
+Persists `existing ∪ deltas` as the user file. The `CFG11` precedence rule is
+structural in the signature: the caller supplies `deltas` as
+diff(session now, session start) expressed sparsely, so a value a CLI flag
+supplied but the user never touched is simply absent and can never be baked
+into the file; a value the user did touch is written with the toggled value,
+not the flag's.
+
+Rewrite policy (settling spec open question 1's consequence): a file that
+parses under strict RFC 8259 is machine-owned — hue generated it — and is
+rewritten atomically; a file that only parses as JSONC carries a human's
+comments and is $(B refused) with the exact snippet to paste (`force`
+overwrites explicitly, destroying comments). A missing file is written fresh.
+*/
+Expected!(void, SaveRefusal) saveUserConfig(string path,
+    Sparse!HueConfig existing, Sparse!HueConfig deltas, bool force = false)
+{
+    import std.file : exists, readText;
+    import sparkles.wired.json : writeJSONFile;
+
+    static Expected!(void, SaveRefusal) refuse(SaveRefusal.Kind kind, string msg)
+        => err!void(SaveRefusal(kind, msg));
+
+    if (!path.length)
+        return refuse(SaveRefusal.Kind.ioError,
+            "no writable config location (no config dir; pass --config)");
+
+    const merged = mergeSparse!HueConfig(existing, deltas);
+
+    if (path.exists && !force)
+    {
+        string text;
+        try
+            text = readText(path);
+        catch (Exception e)
+            return refuse(SaveRefusal.Kind.ioError, e.msg);
+
+        // Strict parse == machine-owned. A decode failure under the strict
+        // reader means comments, trailing commas, or a file this schema
+        // never wrote — a human's, either way.
+        if (fromJSON!(Sparse!HueConfig)(text).hasError)
+            return refuse(SaveRefusal.Kind.humanOwned,
+                path ~ " carries comments hue would destroy — paste this " ~
+                "into it instead (or pass force):\n" ~ sparseText(deltas));
+    }
+
+    auto wrote = writeJSONFile(merged, path);
+    if (wrote.hasError)
+        return refuse(SaveRefusal.Kind.ioError, wrote.error.toString);
+    return ok!SaveRefusal();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Save tests.
+// ─────────────────────────────────────────────────────────────────────────────
+
+@("settings_io.saveUserConfig.freshAndRewrite")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.conv : text;
+
+    const dir = buildPath(tempDir, text("hue-save-fresh-", thisProcessID));
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    const path = buildPath(dir, "config.json");
+
+    // Fresh: deltas alone become the file.
+    Sparse!HueConfig deltas;
+    deltas.appearance.theme = "builtin-dark";
+    deltas.panes.viewer.tabWidth = 8;
+    auto first = saveUserConfig(path, Sparse!HueConfig.init, deltas);
+    assert(!first.hasError, first.hasError ? first.error.message : "");
+
+    auto back = readJsoncFile!(Sparse!HueConfig)(path);
+    assert(!back.hasError);
+    assert(back.value.appearance.theme.get == "builtin-dark");
+    assert(back.value.panes.viewer.tabWidth.get == 8);
+    assert(back.value.panes.viewer.lineNumbers.isNull); // still sparse
+
+    // Machine-owned rewrite: new deltas win, prior settings survive.
+    Sparse!HueConfig next;
+    next.panes.viewer.tabWidth = 2;
+    next.behaviour.liveTypes = false;
+    auto second = saveUserConfig(path, back.value, next);
+    assert(!second.hasError);
+    auto again = readJsoncFile!(Sparse!HueConfig)(path);
+    assert(again.value.appearance.theme.get == "builtin-dark"); // kept
+    assert(again.value.panes.viewer.tabWidth.get == 2);         // toggled
+    assert(again.value.behaviour.liveTypes.get == false);       // added
+}
+
+@("settings_io.saveUserConfig.refusesHumanOwned")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.conv : text;
+
+    const dir = buildPath(tempDir, text("hue-save-human-", thisProcessID));
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    const path = buildPath(dir, "config.json");
+    write(path, "{\n  // my carefully commented file\n  \"appearance\": { \"theme\": \"x\" }\n}\n");
+
+    Sparse!HueConfig deltas;
+    deltas.panes.viewer.tabWidth = 2;
+
+    auto refused = saveUserConfig(path, Sparse!HueConfig.init, deltas);
+    assert(refused.hasError);
+    assert(refused.error.kind == SaveRefusal.Kind.humanOwned);
+    // The refusal is instructive: it names the file and carries the snippet.
+    assert(refused.error.message.canFind(path));
+    assert(refused.error.message.canFind(`"tabWidth": 2`), refused.error.message);
+
+    // The file was untouched.
+    auto still = readJsoncFile!(Sparse!HueConfig)(path);
+    assert(still.value.appearance.theme.get == "x");
+    assert(still.value.panes.viewer.tabWidth.isNull);
+
+    // force overwrites, explicitly and destructively.
+    auto forced = saveUserConfig(path, still.value, deltas, force: true);
+    assert(!forced.hasError);
+    auto after = readJsoncFile!(Sparse!HueConfig)(path);
+    assert(after.value.appearance.theme.get == "x");
+    assert(after.value.panes.viewer.tabWidth.get == 2);
 }
