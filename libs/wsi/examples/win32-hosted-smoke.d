@@ -53,7 +53,6 @@ int main()
         writeln("SKIP: IOCP unavailable");
         return 0;
     }
-    scope (exit) loop.destroy();
 
     auto armed = loop.waker();
     assert(armed.hasValue);
@@ -62,7 +61,6 @@ int main()
     Win32Wsi wsi;
     auto openedWsi = Win32Wsi.open(wsi);
     assert(!openedWsi.hasError);
-    scope (exit) cast(void) wsi.close();
 
     WindowConfig config;
     assert(config.title.assign("sparkles:wsi Wine smoke"));

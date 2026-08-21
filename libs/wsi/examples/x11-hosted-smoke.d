@@ -28,7 +28,6 @@ int main()
     DefaultLoop loop;
     auto openedLoop = DefaultLoop.create(loop, LoopConfig());
     assert(!openedLoop.hasError);
-    scope (exit) loop.destroy();
 
     auto armed = loop.waker();
     assert(armed.hasValue);
@@ -43,7 +42,6 @@ int main()
         return 0;
     }
     assert(!openedWsi.hasError);
-    scope (exit) cast(void) wsi.close();
 
     WindowConfig config;
     assert(config.title.assign("sparkles:wsi X11 smoke"));

@@ -102,7 +102,7 @@ struct Win32Wsi
         wsi.ownerThread_ = GetCurrentThreadId();
         // Process-global and therefore best effort: a host may have selected
         // the same or another awareness context before opening WSI.
-        cast(void) SetProcessDpiAwarenessContext(cast(void*) -4);
+        SetProcessDpiAwarenessContext(cast(void*) -4);
 
         WNDCLASSEXW wc;
         wc.cbSize = WNDCLASSEXW.sizeof;
@@ -200,11 +200,12 @@ struct Win32Wsi
         slot.hwnd = hwnd;
         slot.metrics = metricsOf(hwnd);
         slot.ready = true;
-        auto queued = emit(id, ReadyEvent(slot.metrics));
-        if (queued.hasError)
+        const hadSticky = hasStickyError_;
+        emit(id, ReadyEvent(slot.metrics));
+        if (!hadSticky && hasStickyError_)
         {
             DestroyWindow(hwnd);
-            return wsiErr!WindowId(queued.error);
+            return wsiErr!WindowId(stickyError_);
         }
 
         if (config.visible)
@@ -312,15 +313,25 @@ struct Win32Wsi
         auto owner = requireOwner!void(WsiOperation.close);
         if (owner.hasError)
             return owner;
-        if (closed_)
-            return wsiOk();
+        closeNow();
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
 
+    /// RAII teardown: idempotent and best-effort; errors join the sticky slot.
+    private void closeNow()
+    {
+        if (closed_ || !open_)
+            return;
         foreach (ref slot; windows_)
             if (slot.live && slot.hwnd !is null)
                 DestroyWindow(slot.hwnd);
         closed_ = true;
         open_ = false;
-        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    ~this()
+    {
+        closeNow();
     }
 
     private WsiResult!HWND parentHandle(WindowId id)
@@ -364,17 +375,18 @@ struct Win32Wsi
             return wsiOk(T.init);
     }
 
-    private WsiResult!void emit(Payload)(WindowId id, Payload payload) nothrow
+    // Fire-and-forget by design: a full queue lands in the sticky error,
+    // which the next fallible operation reports.
+    private void emit(Payload)(WindowId id, Payload payload) nothrow
     {
         auto result = events_.push(WindowEvent(nextSequence_, id,
             WindowEventPayload(payload)));
         if (result.hasError)
         {
             remember(result.error);
-            return wsiErr!void(stickyError_);
+            return;
         }
         ++nextSequence_;
-        return wsiOk();
     }
 
     private void remember(WsiError error) nothrow
@@ -418,7 +430,7 @@ struct Win32Wsi
                 WsiErrorKind.capacity);
             return;
         }
-        cast(void) emit(id, committed);
+        emit(id, committed);
     }
 
     private void emitComposition(WindowId id, scope const(wchar)[] wide,
@@ -478,7 +490,7 @@ struct Win32Wsi
             composition.selectionStart = cast(ushort) firstTarget;
             composition.selectionLength = cast(ushort)(targetEnd - firstTarget);
         }
-        cast(void) emit(id, composition);
+        emit(id, composition);
     }
 
     private void handleImeComposition(ref Slot slot, WindowId id,
@@ -491,7 +503,7 @@ struct Win32Wsi
                 "ImmGetContext failed");
             return;
         }
-        scope (exit) cast(void) ImmReleaseContext(slot.hwnd, context);
+        scope (exit) ImmReleaseContext(slot.hwnd, context);
 
         if ((flags & GCS_RESULTSTR) != 0)
         {
@@ -660,7 +672,7 @@ struct Win32Wsi
             : KeyAction.release;
         event.modifiers = currentModifiers();
         event.composing = slot.composing;
-        cast(void) emit(id, event);
+        emit(id, event);
     }
 
     private static KeyLocation keyLocation(uint virtualKey, uint scanCode,
@@ -738,13 +750,13 @@ struct Win32Wsi
             case WM_ERASEBKGND:
                 return TRUE;
             case WM_CLOSE:
-                cast(void) owner.emit(id, CloseRequestedEvent());
+                owner.emit(id, CloseRequestedEvent());
                 return 0;
             case WM_SETFOCUS:
-                cast(void) owner.emit(id, FocusChangedEvent(true));
+                owner.emit(id, FocusChangedEvent(true));
                 return 0;
             case WM_KILLFOCUS:
-                cast(void) owner.emit(id, FocusChangedEvent(false));
+                owner.emit(id, FocusChangedEvent(false));
                 return 0;
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN:
@@ -773,7 +785,7 @@ struct Win32Wsi
                 return 0;
             case WM_IME_STARTCOMPOSITION:
                 slot.composing = true;
-                cast(void) owner.emit(id, CompositionEvent());
+                owner.emit(id, CompositionEvent());
                 return 0;
             case WM_IME_COMPOSITION:
                 slot.composing = true;
@@ -781,7 +793,7 @@ struct Win32Wsi
                 return 0;
             case WM_IME_ENDCOMPOSITION:
                 slot.composing = false;
-                cast(void) owner.emit(id, CompositionEvent());
+                owner.emit(id, CompositionEvent());
                 return 0;
             case WM_IME_SETCONTEXT:
                 // The application renders preedit itself. Keep candidate UI
@@ -795,7 +807,7 @@ struct Win32Wsi
             case WM_SIZE:
                 const metrics = metricsOf(hwnd);
                 if (slot.ready && metrics != slot.metrics)
-                    cast(void) owner.emit(id,
+                    owner.emit(id,
                         SurfaceMetricsChangedEvent(metrics));
                 slot.metrics = metrics;
                 return 0;
@@ -803,7 +815,7 @@ struct Win32Wsi
                 const x = cast(short)(lParam & 0xFFFF);
                 const y = cast(short)((lParam >> 16) & 0xFFFF);
                 if (slot.ready)
-                    cast(void) owner.emit(id,
+                    owner.emit(id,
                         MovedEvent(PhysicalPosition(x, y)));
                 return 0;
             case WM_DPICHANGED_:
@@ -814,7 +826,7 @@ struct Win32Wsi
                     SWP_NOACTIVATE | SWP_NOZORDER);
                 const metrics = metricsOf(hwnd);
                 if (slot.ready && metrics != slot.metrics)
-                    cast(void) owner.emit(id,
+                    owner.emit(id,
                         SurfaceMetricsChangedEvent(metrics));
                 slot.metrics = metrics;
                 return 0;
@@ -824,13 +836,13 @@ struct Win32Wsi
                 EndPaint(hwnd, &paint);
                 if (slot.ready)
                 {
-                    cast(void) owner.emit(id, ExposedEvent());
-                    cast(void) owner.emit(id, FrameReadyEvent());
+                    owner.emit(id, ExposedEvent());
+                    owner.emit(id, FrameReadyEvent());
                 }
                 return 0;
             case WM_NCDESTROY:
                 if (slot.live)
-                    cast(void) owner.emit(id, DestroyedEvent());
+                    owner.emit(id, DestroyedEvent());
                 slot.live = false;
                 slot.ready = false;
                 slot.composing = false;

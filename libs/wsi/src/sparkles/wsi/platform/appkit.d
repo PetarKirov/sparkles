@@ -263,7 +263,9 @@ private enum ulong NSWindowStyleMaskMiniaturizable = 4;
 private enum ulong NSWindowStyleMaskResizable = 8;
 private enum ulong NSBackingStoreBuffered = 2;
 
-private __gshared AppKitWsi* activeOwner;
+// AppKit is main-thread-only: every native callback and owner call runs on
+// the main thread, so plain TLS is the correct storage for the pin.
+private AppKitWsi* activeOwner;
 
 /**
 One process-main-thread AppKit WSI owner.
@@ -436,18 +438,19 @@ struct AppKitWsi
         slot.metrics = metricsOf(slot);
         slot.ready = true;
         auto id = idAt(index);
-        auto queued = emit(id, ReadyEvent(slot.metrics));
-        if (queued.hasError)
+        const hadSticky = hasStickyError_;
+        emit(id, ReadyEvent(slot.metrics));
+        if (!hadSticky && hasStickyError_)
         {
             destroySlot(index, false);
-            return wsiErr!WindowId(queued.error);
+            return wsiErr!WindowId(stickyError_);
         }
 
         if (config.visible)
             window.makeKeyAndOrderFront(null);
         // NSView refuses first-responder status by default; without it the
         // responder chain never delivers keyDown/keyUp to the view.
-        cast(void) window.makeFirstResponder(view);
+        window.makeFirstResponder(view);
         view.setNeedsDisplay(true);
         return wsiOk(id);
     }
@@ -547,9 +550,15 @@ struct AppKitWsi
         auto owner = requireOwner!void(WsiOperation.close);
         if (owner.hasError)
             return owner;
-        if (closed_)
-            return wsiOk();
+        closeNow();
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
 
+    /// RAII teardown: idempotent and best-effort; errors join the sticky slot.
+    private void closeNow()
+    {
+        if (closed_ || !open_)
+            return;
         foreach (i; 0 .. windows_.length)
             if (windows_[i].window !is null)
                 destroySlot(i, windows_[i].live);
@@ -558,7 +567,11 @@ struct AppKitWsi
         open_ = false;
         if (activeOwner is &this)
             activeOwner = null;
-        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    ~this()
+    {
+        closeNow();
     }
 
     private WsiResult!size_t checkedSlot(WindowId id,
@@ -593,18 +606,18 @@ struct AppKitWsi
             return wsiOk(T.init);
     }
 
-    private WsiResult!void emit(Payload)(WindowId id,
-        Payload payload) nothrow
+    // Fire-and-forget by design: a full queue lands in the sticky error,
+    // which the next fallible operation reports.
+    private void emit(Payload)(WindowId id, Payload payload) nothrow
     {
         auto result = events_.push(WindowEvent(nextSequence_, id,
             WindowEventPayload(payload)));
         if (result.hasError)
         {
             remember(result.error);
-            return wsiErr!void(stickyError_);
+            return;
         }
         ++nextSequence_;
-        return wsiOk();
     }
 
     private void remember(WsiError error) nothrow
@@ -673,7 +686,7 @@ struct AppKitWsi
         ref slot = windows_[index];
         const metrics = metricsOf(slot);
         if (slot.ready && metrics != slot.metrics)
-            cast(void) emit(idAt(index),
+            emit(idAt(index),
                 SurfaceMetricsChangedEvent(metrics));
         slot.metrics = metrics;
     }
@@ -690,7 +703,7 @@ struct AppKitWsi
             ? (event.isARepeat ? KeyAction.repeat : KeyAction.press)
             : KeyAction.release;
         keyboard.modifiers = appKitMods(event.modifierFlags);
-        cast(void) emit(idAt(index), keyboard);
+        emit(idAt(index), keyboard);
     }
 
     // Modifier keys never reach keyDown/keyUp; AppKit reports them through
@@ -710,7 +723,7 @@ struct AppKitWsi
         keyboard.action = (event.modifierFlags & flag) != 0
             ? KeyAction.press : KeyAction.release;
         keyboard.modifiers = appKitMods(event.modifierFlags);
-        cast(void) emit(idAt(index), keyboard);
+        emit(idAt(index), keyboard);
     }
 
     /*
@@ -776,22 +789,22 @@ struct AppKitWsi
         const index = indexOfView(view);
         if (index == size_t.max || !windows_[index].ready)
             return;
-        cast(void) emit(idAt(index), ExposedEvent());
-        cast(void) emit(idAt(index), FrameReadyEvent());
+        emit(idAt(index), ExposedEvent());
+        emit(idAt(index), FrameReadyEvent());
     }
 
     private void onCloseRequest(SparklesWsiWindow window)
     {
         const index = indexOfWindow(window);
         if (index != size_t.max)
-            cast(void) emit(idAt(index), CloseRequestedEvent());
+            emit(idAt(index), CloseRequestedEvent());
     }
 
     private void onFocus(SparklesWsiWindow window, bool focused)
     {
         const index = indexOfWindow(window);
         if (index != size_t.max && windows_[index].ready)
-            cast(void) emit(idAt(index), FocusChangedEvent(focused));
+            emit(idAt(index), FocusChangedEvent(focused));
     }
 
     private void destroySlot(size_t index, bool notify)
@@ -807,7 +820,7 @@ struct AppKitWsi
             slot.window.close();
         }
         if (notify)
-            cast(void) emit(id, DestroyedEvent());
+            emit(id, DestroyedEvent());
         if (slot.view !is null)
             slot.view.release();
         if (slot.window !is null)
