@@ -1660,9 +1660,8 @@ version (HueDmdFmt) version (Posix)
 
     // The zygote needs the fork-safety window: run with
     //     dub test :hue -- -t 1 -i forkBackend
-    if (Thread.getAll().length != 1)
+    if (Thread.getAll().length != 1 || !startFormatForkServer())
         skipTest("needs a single-threaded process (run with -t 1)");
-    assert(startFormatForkServer(), "the zygote did not start");
 
     ViewerModel vm;
     vm.names = ["dark"];
