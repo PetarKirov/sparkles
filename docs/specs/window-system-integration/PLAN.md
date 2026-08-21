@@ -180,8 +180,12 @@ handle-pair validation, instance/surface/device ownership in `sparkles:vulkan-ws
 a headless-Weston Wayland-to-present-device smoke; then the proven `CommandPool`,
 `FrameSync`, `Swapchain`, resize decisions, and deferred-retirement policy were moved
 from SDL into that bridge. The SDL module names are compatibility re-exports and its
-existing triangle builds unchanged against the shared implementation. The native
-triangle, X11/Win32 runtime surface probes, validation, and HITL resize remain.
+existing triangle builds unchanged against the shared implementation. The renderer
+half of that triangle is promoted to `sparkles.vulkan_wsi.triangle`, and the native
+Wayland triangle drives it through `sparkles:wsi` and Event Horizon alone — no SDL
+or libdecor in the process — presenting under sync validation with compositor
+resize, with the native-I/O borrow widened to cover acquire and present. X11/Win32
+runtime surface probes and the HITL live-resize trace remain.
 
 ## Milestone M7 — Skia Graphite
 
