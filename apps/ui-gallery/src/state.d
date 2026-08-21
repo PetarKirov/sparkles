@@ -27,6 +27,8 @@ import sparkles.ui.widget : Alignment, Visibility;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.ui_app.backend : Backend;
 
+import property_subject : PropertyDemo;
+
 @safe:
 
 /**
@@ -304,6 +306,7 @@ struct GalleryState
     TracksDemo tracksDemo;   ///
     TableDemo tableDemo;     ///
     TreeDemo treeDemo;       ///
+    PropertyDemo prop;       /// the Property page's subject + tree + history
     MachinesDemo machines;   ///
     SplitState split = SplitState(24); ///
     /// The Dock page's live container: a sidebar beside a tabbed group of

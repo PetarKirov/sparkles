@@ -380,7 +380,7 @@ string propertyText(in TreeData!PropertyNode data, in FlatTreeRow[] rows,
 // Tests
 // ---------------------------------------------------------------------------
 
-version (unittest)
+version (UiPropertyFixtures)
 {
     import sparkles.ui.property_tree : Doc, Edit, editProperty, EditValue,
         Label, PropertyTree, Range, readOnly;
