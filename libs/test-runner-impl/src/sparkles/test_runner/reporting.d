@@ -18,16 +18,17 @@ import sparkles.test_runner.capability : allCapabilities, BackendCapabilities,
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.metrics : MetricClass, MetricDescriptor;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
+import sparkles.test_runner.snippet : renderCodeSnippet;
 import sparkles.test_runner.workload : WorkloadWindow;
 
-/// Whether the `sparkles:ui` components are in the tested package's dependency
-/// closure. This package *does* depend on them, but `base`/`core-cli`/`test-utils`
+/// Whether the table/progress `sparkles:ui` components are in the tested
+/// package's dependency closure. This package *does* depend on them, but
+/// `base`/`core-cli`/`test-utils`
 /// source-include the runner rather than depending on it (that would be a cycle
 /// when testing themselves), and in those builds the toolkit is absent — so the
 /// UI niceties are detected by introspection and skipped when missing. Keep this
 /// a guard, never an unconditional import: `docs/specs/ui/migration.md` `MIG6`.
 private enum bool hasUiComponents = __traits(compiles, {
-    import sparkles.ui.components.osc_link : oscLink;
     import sparkles.ui.components.table : drawTable;
     import sparkles.ui.components.progress : ProgressLine;
 });
@@ -92,35 +93,52 @@ unittest
     assert(formatDuration(12.msecs) == "12.0ms");
 }
 
-/// A `file:line` reference; an OSC 8 hyperlink (`file://` URI) when `colored`.
+/// A `file:line` reference; an editor-aware OSC 8 hyperlink when `colored`.
 string formatLocation(in TestLocation location, bool colored) @safe
 {
-    import std.conv : text;
-
     if (!location.file.length)
         return null;
 
-    const label = text(location.file, ':', location.line);
-    static if (hasUiComponents)
-    {
-        if (colored)
-        {
-            import std.path : absolutePath;
-            import sparkles.ui.components.osc_link : oscLink;
+    return "[" ~ formatSourceReference(
+        location.file, location.line, location.column, colored) ~ "]";
+}
 
-            const uri = text("file://", location.file.absolutePath, "#L", location.line);
-            return "[" ~ oscLink(label, uri) ~ "]";
-        }
-    }
-    return "[" ~ label ~ "]";
+/// A visible source label, wrapped directly instead of relying on the optional
+/// UI package so cycle-safe source-included runner builds get links too.
+private string formatSourceReference(
+    scope const(char)[] file,
+    size_t line,
+    size_t column,
+    bool colored,
+) @safe
+{
+    import std.conv : text;
+    import sparkles.base.source_uri : editorSourceUri;
+
+    const label = text(file, ':', line);
+    if (!colored)
+        return label;
+    const uri = editorSourceUri(file.idup, line, column);
+    return "\x1b]8;;" ~ uri ~ "\x07" ~ label ~ "\x1b]8;;\x07";
 }
 
 @("formatLocation.plain")
 @safe
 unittest
 {
-    assert(formatLocation(TestLocation(file: "src/foo.d", line: 42, column: 1), false) == "[src/foo.d:42]");
+    import std.algorithm.searching : canFind;
+    import std.string : startsWith, endsWith;
+
+    assert(formatLocation(
+        TestLocation(file: "src/foo.d", line: 42, column: 1), false)
+        == "[src/foo.d:42]");
     assert(formatLocation(TestLocation.init, false) is null);
+
+    const linked = formatLocation(
+        TestLocation(file: "src/foo.d", line: 42, column: 1), true);
+    assert(linked.startsWith("[\x1b]8;;"), linked);
+    assert(linked.canFind("src/foo.d:42"), linked);
+    assert(linked.endsWith("\x1b]8;;\x07]"), linked);
 }
 
 /// The tail of a dotted `moduleName` fitting in `budget` terminal cells
@@ -305,34 +323,157 @@ unittest
     assert(formatCtfeFailedLine(test, false) == " ✗ pkg.mod ct (compile time)");
 }
 
-/// Details of one caught `Throwable`, indented under the failed test's line.
-/// Non-`verbose` traces stop at the first runner frame.
-string formatThrown(in Thrown thrown, bool colored, bool verbose) @safe
+/// Whether a frame is one of druntime's assertion/unittest dispatchers. These
+/// are implementation detail under every `-checkaction` mode that throws.
+private bool isAssertionDispatcher(string frame) @safe pure nothrow @nogc
 {
     import std.algorithm.searching : canFind;
+
+    static immutable names = [
+        "_d_assert_msg", "_d_assertfail", "_d_assert_pred", "_d_assert",
+        "_d_unittest_msg", "_d_unittest",
+    ];
+    foreach (name; names)
+        if (frame.canFind(name))
+            return true;
+    return false;
+}
+
+/// Runner, worker-pool, and process-entry frames hidden from compact reports.
+private bool isInternalFrame(string frame) @safe pure nothrow @nogc
+{
+    import std.algorithm.searching : canFind;
+    import std.string : startsWith;
+
+    return frame.canFind("sparkles.test_runner")
+        || frame.canFind("libs/test-runner")
+        || frame.canFind("std.parallelism")
+        || frame.canFind("thread_entryPoint")
+        || frame.canFind("core.thread")
+        || frame.canFind("runModuleUnitTests")
+        || frame.canFind("rt.dmain2")
+        || frame.canFind("_d_run_main")
+        || frame.canFind("core/internal/entrypoint")
+        || frame.canFind("core.internal.entrypoint")
+        || frame.canFind("__libc_start_main")
+        || frame.canFind(" _start ")
+        || frame.startsWith("??:? [0x");
+}
+
+/// Demangles a raw D symbol embedded in an otherwise formatted trace frame.
+private string demangleFrame(string frame) @safe pure nothrow
+{
+    import core.demangle : demangle;
+    import std.string : indexOf;
+
+    const startPos = frame.indexOf("_D");
+    if (startPos < 0)
+        return frame;
+    const start = cast(size_t) startPos;
+    size_t end = start + 2;
+    while (end < frame.length)
+    {
+        const c = frame[end];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '_'))
+            break;
+        end++;
+    }
+
+    const symbol = frame[start .. end];
+    const decoded = demangle(symbol);
+    return decoded == symbol
+        ? frame
+        : frame[0 .. start] ~ decoded.idup ~ frame[end .. $];
+}
+
+private struct StackLocation
+{
+    string file;
+    size_t line;
+    string suffix;
+    bool valid;
+}
+
+/// Parses druntime's leading `file:line` without mistaking a Windows drive
+/// colon for the separator. Unknown (`??:?`) locations intentionally miss.
+private StackLocation stackLocation(string frame) @safe pure nothrow @nogc
+{
+    size_t headEnd;
+    while (headEnd < frame.length && frame[headEnd] != ' ' && frame[headEnd] != '\t')
+        headEnd++;
+    const head = frame[0 .. headEnd];
+    size_t colon;
+    foreach_reverse (i, c; head)
+        if (c == ':')
+        {
+            colon = i;
+            break;
+        }
+    if (colon == 0 || colon + 1 == head.length)
+        return StackLocation.init;
+
+    size_t line;
+    foreach (c; head[colon + 1 .. $])
+    {
+        if (c < '0' || c > '9')
+            return StackLocation.init;
+        line = line * 10 + cast(size_t)(c - '0');
+    }
+    return StackLocation(
+        file: head[0 .. colon],
+        line: line,
+        suffix: frame[headEnd .. $],
+        valid: true,
+    );
+}
+
+private string formatStackFrame(string frame, bool colored) @safe
+{
+    frame = demangleFrame(frame);
+    const location = stackLocation(frame);
+    if (!location.valid)
+        return render(colored, i"    {dim $(frame)}\n");
+
+    const reference = formatSourceReference(location.file, location.line, 0, colored);
+    return render(colored, i"    {cyan $(reference)}$(location.suffix)\n");
+}
+
+/// Details of one caught `Throwable`, indented under the failed test's line.
+/// Assertion dispatchers are always omitted; compact traces additionally drop
+/// runner, worker-pool, thread, and process-entry boilerplate.
+string formatThrown(in Thrown thrown, bool colored, bool verbose) @safe
+{
     import std.string : lineSplitter;
 
+    string sourceReference = thrown.file.length
+        ? formatSourceReference(thrown.file, thrown.line, 0, colored)
+        : "unknown location";
     string result;
     bool firstLine = true;
     foreach (line; lineSplitter(thrown.message))
     {
         result ~= firstLine
             ? render(colored,
-                i"    {red $(thrown.type)} thrown from {bold $(thrown.file):$(thrown.line)}: $(line)\n")
+                i"    {red $(thrown.type)} thrown from {bold $(sourceReference)}: $(line)\n")
             : render(colored, i"      $(line)\n");
         firstLine = false;
     }
     if (firstLine) // empty message
         result ~= render(colored,
-            i"    {red $(thrown.type)} thrown from {bold $(thrown.file):$(thrown.line)}\n");
+            i"    {red $(thrown.type)} thrown from {bold $(sourceReference)}\n");
 
-    result ~= render(colored, i"    {dim --- stack trace ---}\n");
+    result ~= renderCodeSnippet(thrown.file, thrown.line, colored);
+
+    string trace;
     foreach (frame; thrown.info)
     {
-        if (!verbose && frame.canFind("sparkles.test_runner"))
-            break;
-        result ~= render(colored, i"    {dim $(frame)}\n");
+        if (isAssertionDispatcher(frame) || (!verbose && isInternalFrame(frame)))
+            continue;
+        trace ~= formatStackFrame(frame, colored);
     }
+    if (trace.length)
+        result ~= render(colored, i"    {dim --- stack trace ---}\n") ~ trace;
     return result;
 }
 
@@ -345,20 +486,50 @@ unittest
         message: "boom\ndetails",
         file: "src/mod.d",
         line: 42,
-        info: ["frame0", "sparkles.test_runner.execution.executeTest", "frame2"],
+        info: ["??:? _d_assert_msg [0x1]", "frame0",
+            "sparkles.test_runner.execution.executeTest", "std.parallelism.worker", "frame2"],
     );
     assert(formatThrown(thrown, false, false) ==
         "    core.exception.AssertError thrown from src/mod.d:42: boom\n" ~
         "      details\n" ~
         "    --- stack trace ---\n" ~
-        "    frame0\n");
+        "    frame0\n" ~
+        "    frame2\n");
     assert(formatThrown(thrown, false, true) ==
         "    core.exception.AssertError thrown from src/mod.d:42: boom\n" ~
         "      details\n" ~
         "    --- stack trace ---\n" ~
         "    frame0\n" ~
         "    sparkles.test_runner.execution.executeTest\n" ~
+        "    std.parallelism.worker\n" ~
         "    frame2\n");
+}
+
+@("formatThrown.frameLocationAndDemangling")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const linked = formatStackFrame("src/mod.d:7 _D4test3fooFZv [0x1]", false);
+    assert(linked.canFind("src/mod.d:7"), linked);
+    assert(linked.canFind("test.foo"), linked);
+    assert(!linked.canFind("_D4test3fooFZv"), linked);
+    assert(stackLocation("C:\\src\\mod.d:17 symbol").file == "C:\\src\\mod.d");
+}
+
+@("formatThrown.noiseClassification")
+@safe pure nothrow
+unittest
+{
+    foreach (name; ["_d_assert_msg", "_d_assert", "_d_assertfail",
+            "_d_assert_pred", "_d_unittest_msg", "_d_unittest"])
+        assert(isAssertionDispatcher("??:? " ~ name ~ " [0x1]"));
+
+    assert(isInternalFrame("std.parallelism.worker"));
+    assert(isInternalFrame("core.thread.thread_entryPoint"));
+    assert(isInternalFrame("??:? [0x123]"));
+    assert(!isInternalFrame("src/app.d:7 app.run"));
 }
 
 /// Aggregated counts of one run, for the summary line.
@@ -420,10 +591,18 @@ unittest
 
 /// A recap of every failed test, printed after the summary so a long parallel
 /// run still names each failure (and its throwable) at the end of the log.
-/// Empty when nothing failed. Traces are always verbose — this is the
-/// permanent record, not the compact live line.
-string formatFailedRecap(in TestResult[] failed, bool colored) @safe
+/// Empty when nothing failed. Trace verbosity follows the runner option, and
+/// copy-pasteable per-test rerun commands close the recap.
+string formatFailedRecap(
+    in TestResult[] failed,
+    bool colored,
+    bool verbose = false,
+    string packageSelector = null,
+) @safe
 {
+    import std.algorithm.searching : canFind;
+    import std.string : replace;
+
     if (!failed.length)
         return null;
 
@@ -435,10 +614,28 @@ string formatFailedRecap(in TestResult[] failed, bool colored) @safe
             result ~= "\n";
         result ~= r.test.traits.isCtfe
             ? formatCtfeFailedLine(r.test, colored) ~ "\n"
-            : formatResultLine(r, colored, verbose: true, width: 0) ~ "\n";
+            : formatResultLine(r, colored, verbose, width: 0) ~ "\n";
         foreach (thrown; r.thrown)
-            result ~= formatThrown(thrown, colored, verbose: true);
+            result ~= formatThrown(thrown, colored, verbose);
     }
+
+    result ~= render(colored, i"\n{bold To rerun:}\n");
+    string[] commands;
+    foreach (ref r; failed)
+    {
+        const filter = r.test.name
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("$", "\\$")
+            .replace("`", "\\`")
+            .replace("!", "\\!");
+        const command = "dub test" ~ (packageSelector.length
+            ? " " ~ packageSelector : "") ~ " -- -i \"" ~ filter ~ "\"";
+        if (!commands.canFind(command))
+            commands ~= command;
+    }
+    foreach (command; commands)
+        result ~= render(colored, i"  {cyan $(command)}\n");
     return result;
 }
 
@@ -464,12 +661,20 @@ unittest
             info: ["frame0", "sparkles.test_runner.execution.executeTest"],
         )],
     );
-    const recap = formatFailedRecap([boom], false);
+    const recap = formatFailedRecap([boom], false,
+        verbose: false, packageSelector: ":core-cli");
     assert(recap.canFind("Failed tests (1):"), recap);
     assert(recap.canFind("✗ pkg.mod case"), recap);
-    assert(recap.canFind("[src/mod.d:9]"), recap);
+    assert(!recap.canFind("[src/mod.d:9]"), recap);
     assert(recap.canFind("AssertError thrown from src/mod.d:9: boom"), recap);
-    assert(recap.canFind("sparkles.test_runner.execution.executeTest"), recap);
+    assert(!recap.canFind("sparkles.test_runner.execution.executeTest"), recap);
+    assert(recap.canFind(
+        "To rerun:\n  dub test :core-cli -- -i \"case\""), recap);
+
+    const verbose = formatFailedRecap([boom], false,
+        verbose: true, packageSelector: ":core-cli");
+    assert(verbose.canFind("[src/mod.d:9]"), verbose);
+    assert(verbose.canFind("sparkles.test_runner.execution.executeTest"), verbose);
 }
 
 @("formatResultLine.skipped")
