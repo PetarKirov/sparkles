@@ -327,6 +327,25 @@ sharpen the text above:
   config (`cli.viewRenderOptionsOf`/`guiOptionsOf`), which deleted the
   drift-prone `copyGui` and collapsed the duplicate `--theme` declaration.
 
+### The settings pane (`SET`)
+
+The in-app editing surface, shipped with the core: `PropertyTree!HueConfig`
+as a modal overlay both hosts mount — the picker's pattern (context-gated
+modality, one shared widget tree, overlay-local pointer routing), the
+property tree's edit machinery (validated dispatch, inline refusals,
+undo/redo, preview drags), and the config core's sparse save.
+
+| ID     | Requirement                                                                                                                                                                                                                                                                                                                                                                                     | Status |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `SET1` | One component (`settings_pane.d`), generic over the subject and mounted by the workspace and the window alike; `,` / `<leader>us` open it; modality is keymap context (`Scope_.settings`, terminal + hiding), never a loop `if`.                                                                                                                                                                | full   |
+| `SET2` | **Live-apply**: a committed edit mutates the running config immediately through the generated dispatch — range-checked, refusable inline, undoable; `v` preview drags collapse to one history entry at the commit boundary.                                                                                                                                                                     | full   |
+| `SET3` | String leaves edit through hue's line editor (`InputMode.settingsText` over the `input` scope) and commit as validated text writes; enums cycle, numerics step by `@Range`; `r` resets a leaf to its compiled default through the same dispatch.                                                                                                                                                | full   |
+| `SET4` | **Explicit save** (`s` / `Ctrl-S`): the pane's _file draft_ — seeded from defaults + the user file, below env and CLI — persists through the sparse writer. Closing without saving keeps the session's runtime state and persists nothing.                                                                                                                                                      | full   |
+| `SET5` | The `CFG11` precedence rule holds structurally: only paths the user touched this session are written, with the toggled value; an env/CLI-shadowed value the user never touched cannot leak into the file, and the footer warns when the selected leaf is shadowed.                                                                                                                              | full   |
+| `SET6` | The live fuzzy filter, match navigation, reveal-in-base and transient folding are the property tree's own (`PRT28`–`PRT33`), first-refusal ahead of the command dispatch.                                                                                                                                                                                                                       | full   |
+| `SET7` | Host-specific application happens through a longest-prefix apply table: theme commits re-resolve the name into the host's cycle (an unknown name stays in the config, honest and undoable, with the footer saying why nothing changed); pane-width commits re-arrange the dock; font commits reload in the window only (a next-launch note in v1 — the live reload needs the pt→px setup path). | full   |
+| `SET8` | `keys` stays `@hidden` from the pane in v1: a chord-keyed map needs structural edits and a chord-capture editor the tree does not have; the file and `config show` are its surface.                                                                                                                                                                                                             | full   |
+
 ## Milestones
 
 | Milestone | Scope                                                                           | Requirements                   |
