@@ -1333,14 +1333,21 @@ private int executeSite(in HueCli root, in Site cmd)
             stderr.writeln("hue: cannot load sidebar ", sidebarPath, ": ", loaded.error);
             return 1;
         }
-        // The nested docs nav carries the same "(source)" entries the
-        // VitePress sidebar gets at config eval (`DSC7`) — one algorithm,
-        // both surfaces.
+        // One augmentation, in D (`DSC7`): the "(source)" entries land in the
+        // nested docs nav here, and the augmented tree is written beside the
+        // manifest so the VitePress config READS it for the site's own
+        // sidebar instead of re-implementing the merge.
         string[] navDirs;
         foreach (ref const node; buildSiteTree(set.entries).nodes)
             navDirs ~= node.relPath;
-        docsNavHtml = sidebarItemsHtml(
-            augmentWithListingDirs(loaded.value, navDirs), cmd.siteBase);
+        auto augmented = augmentWithListingDirs(loaded.value, navDirs);
+        docsNavHtml = sidebarItemsHtml(augmented, cmd.siteBase);
+        {
+            import sparkles.docs.site : sidebarJson;
+            import std.file : write;
+
+            write(buildPath(outDir, "sidebar.json"), sidebarJson(augmented));
+        }
     }
 
     const gopt = GalleryOptions(

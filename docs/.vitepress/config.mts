@@ -31,83 +31,23 @@ const manifest: SiteManifest | null = fs.existsSync(manifestPath)
   ? (JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as SiteManifest)
   : null;
 
-// Listing directories under docs/ join the sidebar group that owns that part
-// of the docs tree (DSC7): e.g. the source examples in
-// docs/research/async-io/io-uring/examples appear as "examples/" under the
-// group whose pages live at /research/async-io/io-uring/. Only immediate
-// children are added — deeper trees are reachable through the listing's own
-// explorer sidebar. Runtime augmentation, not an edit to sidebar.json: the
-// data file stays the source of truth for *pages*, and ci --check-docs-sidebar
-// keeps checking it (listing routes are generated pages, not docs pages).
-function augmentSidebar(
-  items: DefaultTheme.SidebarItem[],
-): DefaultTheme.SidebarItem[] {
-  if (!manifest) {
-    return items;
-  }
-  type Group = { node: DefaultTheme.SidebarItem; dirs: Set<string> };
-  const groups: Group[] = [];
-  function collect(node: DefaultTheme.SidebarItem) {
-    if (!node.items) {
-      return;
-    }
-    // A directory belongs to the group that lists pages in it DIRECTLY —
-    // a child that is itself a group owns its own directories.
-    const dirs = new Set<string>();
-    const own = (n: DefaultTheme.SidebarItem) => {
-      if (n.link?.startsWith('/')) {
-        dirs.add(
-          n.link.endsWith('/')
-            ? n.link
-            : n.link.slice(0, n.link.lastIndexOf('/') + 1),
-        );
-      }
-    };
-    own(node);
-    for (const child of node.items) {
-      if (!child.items) {
-        own(child);
-      }
-    }
-    groups.push({ node, dirs });
-    node.items.forEach(collect);
-  }
-  items.forEach(collect);
-
-  const additions = new Map<Group, { text: string; link: string }[]>();
-  for (const [dir, route] of Object.entries(manifest.dirs)) {
-    if (!dir.startsWith('docs/')) {
-      continue;
-    }
-    const listingRoute = '/' + dir.slice('docs/'.length) + '/';
-    let best: Group | null = null;
-    let bestLen = 0;
-    for (const g of groups) {
-      for (const d of g.dirs) {
-        if (listingRoute.startsWith(d) && d.length > bestLen) {
-          best = g;
-          bestLen = d.length;
-        }
-      }
-    }
-    if (!best || bestLen <= 1) {
-      continue; // unowned, or owned only by the site root — too noisy
-    }
-    const rel = listingRoute.slice(bestLen);
-    if (rel.split('/').filter(Boolean).length !== 1) {
-      continue; // not an immediate child of the group's directory
-    }
-    if (!additions.has(best)) {
-      additions.set(best, []);
-    }
-    additions.get(best)!.push({ text: rel + ' (source)', link: route });
-  }
-  for (const [group, entries] of additions) {
-    entries.sort((a, b) => a.text.localeCompare(b.text));
-    group.node.items!.push(...entries);
-  }
-  return items;
-}
+// Listing directories join the docs sidebar (DSC7): the merge itself lives
+// in D (`sparkles.docs.site.augmentWithListingDirs`) — `hue site` writes the
+// augmented tree beside the manifest, and this config just READS it, falling
+// back to the raw sidebar.json when the listings are not built. One
+// algorithm, one implementation; sidebar.json stays the checked source of
+// truth for pages (ci --check-docs-sidebar is unaffected).
+const augmentedSidebarPath = path.resolve(
+  process.cwd(),
+  'docs/public/src/sidebar.json',
+);
+const effectiveSidebar: DefaultTheme.SidebarItem[] = fs.existsSync(
+  augmentedSidebarPath,
+)
+  ? (JSON.parse(
+      fs.readFileSync(augmentedSidebarPath, 'utf8'),
+    ) as DefaultTheme.SidebarItem[])
+  : (sidebar as DefaultTheme.SidebarItem[]);
 
 function listingRouteFor(href: string, relativePath: string): string | null {
   if (!manifest || /^(https?:|mailto:|#|\/)/.test(href)) {
@@ -230,7 +170,7 @@ export default withMermaid(
         { text: 'API', link: '/api/' },
       ],
 
-      sidebar: augmentSidebar(sidebar as DefaultTheme.SidebarItem[]),
+      sidebar: effectiveSidebar,
 
       socialLinks: [
         { icon: 'github', link: 'https://github.com/PetarKirov/sparkles' },
