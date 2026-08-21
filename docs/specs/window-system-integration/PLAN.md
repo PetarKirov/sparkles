@@ -12,8 +12,15 @@ to [feature-requirements.md](./feature-requirements.md)._
    updates the comparison matrix in that same commit.
 2. Preserve the SDL triangle until the native Wayland path is measured and green; then
    retain SDL as the explicit compatibility backend.
-3. Do not begin Graphite integration until every native backend has the full `F01`–`F17`
-   contract. This prevents renderer work from fossilizing an incomplete WSI seam.
+3. Renderer work must not fossilize an incomplete WSI seam. Graphite work that does not
+   touch the seam (the Nix Skia build, `extern(C++)` bindings, offscreen render/readback
+   goldens, the `sparkles:ui` canvas adapter) may proceed in parallel at any time; the
+   presentation host may begin once the renderer-facing subset — `INT1`/`INT2` handles
+   and Vulkan bridge, `F01` first frame, `F02` resize, `F04` frame pacing, `F08`
+   scale — is verified on the platform in question, which it now is on all four at the
+   partial level the evidence log records. M7's full acceptance gate (goldens,
+   interactive resize, DPI, device loss) is unchanged, and `ui-app` integration (M8)
+   stays sequential because it consumes the still-moving input vocabulary.
 4. Platform code may reuse OS client libraries but never a cross-platform WSI library.
 5. Prefer pure model/translation tests, then automated native harnesses, then the named
    HITL pass. Record which kind proved each claim.
