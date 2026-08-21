@@ -80,7 +80,7 @@ struct X11Wsi
         }
         // Best effort: without XKB the server keeps synthesizing a release
         // before each repeated press, and held keys read as typing.
-        cast(void) wsi_xcb_enable_detectable_autorepeat(wsi.connection_);
+        wsi_xcb_enable_detectable_autorepeat(wsi.connection_);
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         return wsiOk();
@@ -148,14 +148,15 @@ struct X11Wsi
             LogicalSize(width, height), PhysicalSize(width, height),
             ScaleFactor(1));
         auto id = idAt(index);
-        auto queued = emit(id, ReadyEvent(slot.metrics));
-        if (queued.hasError)
+        const hadSticky = hasStickyError_;
+        emit(id, ReadyEvent(slot.metrics));
+        if (!hadSticky && hasStickyError_)
         {
-            cast(void) wsi_xcb_destroy_window(connection_, window);
+            wsi_xcb_destroy_window(connection_, window);
             slot.live = false;
             slot.ready = false;
             slot.window = 0;
-            return wsiErr!WindowId(queued.error);
+            return wsiErr!WindowId(stickyError_);
         }
         return wsiOk(id);
     }
@@ -173,7 +174,8 @@ struct X11Wsi
         slot.live = false;
         slot.ready = false;
         slot.window = 0;
-        return emit(id, DestroyedEvent());
+        emit(id, DestroyedEvent());
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
     }
 
     WsiResult!NativeHandles nativeHandles(WindowId id)
@@ -304,15 +306,26 @@ struct X11Wsi
         auto owner = requireOwner!void(WsiOperation.close);
         if (owner.hasError)
             return owner;
-        if (closed_)
-            return wsiOk();
+        closeNow();
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
 
+    /// RAII teardown: idempotent and best-effort; errors join the sticky slot.
+    private void closeNow()
+    {
+        if (closed_ || !open_)
+            return;
         auto detached = detach();
         if (detached.hasError)
-            return detached;
+            remember(detached.error);
         foreach (i; 0 .. windows_.length)
             if (windows_[i].live)
-                cast(void) destroyWindow(idAt(i));
+            {
+                wsi_xcb_destroy_window(connection_, windows_[i].window);
+                windows_[i].live = false;
+                windows_[i].ready = false;
+                windows_[i].window = 0;
+            }
         if (connection_ !is null)
         {
             wsi_xcb_disconnect(connection_);
@@ -320,7 +333,11 @@ struct X11Wsi
         }
         closed_ = true;
         open_ = false;
-        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    ~this()
+    {
+        closeNow();
     }
 
     private WsiResult!void armPoll()
@@ -396,21 +413,21 @@ struct X11Wsi
         switch (native.kind)
         {
             case WSI_XCB_EVENT_EXPOSE:
-                cast(void) emit(id, ExposedEvent());
-                cast(void) emit(id, FrameReadyEvent());
+                emit(id, ExposedEvent());
+                emit(id, FrameReadyEvent());
                 break;
             case WSI_XCB_EVENT_CONFIGURE:
                 auto metrics = SurfaceMetrics(
                     LogicalSize(native.width, native.height),
                     PhysicalSize(native.width, native.height), ScaleFactor(1));
                 if (metrics != slot.metrics)
-                    cast(void) emit(id, SurfaceMetricsChangedEvent(metrics));
+                    emit(id, SurfaceMetricsChangedEvent(metrics));
                 slot.metrics = metrics;
-                cast(void) emit(id,
+                emit(id,
                     MovedEvent(PhysicalPosition(native.x, native.y)));
                 break;
             case WSI_XCB_EVENT_CLOSE:
-                cast(void) emit(id, CloseRequestedEvent());
+                emit(id, CloseRequestedEvent());
                 break;
             case WSI_XCB_EVENT_KEY_PRESS:
             case WSI_XCB_EVENT_KEY_RELEASE:
@@ -425,19 +442,19 @@ struct X11Wsi
                     ? (repeated ? KeyAction.repeat : KeyAction.press)
                     : KeyAction.release;
                 event.modifiers = x11Mods(native.state);
-                cast(void) emit(id, event);
+                emit(id, event);
                 break;
             case WSI_XCB_EVENT_FOCUS_IN:
-                cast(void) emit(id, FocusChangedEvent(true));
+                emit(id, FocusChangedEvent(true));
                 break;
             case WSI_XCB_EVENT_FOCUS_OUT:
-                cast(void) emit(id, FocusChangedEvent(false));
+                emit(id, FocusChangedEvent(false));
                 break;
             case WSI_XCB_EVENT_DESTROYED:
                 slot.live = false;
                 slot.ready = false;
                 slot.window = 0;
-                cast(void) emit(id, DestroyedEvent());
+                emit(id, DestroyedEvent());
                 break;
             default:
                 break;
@@ -445,14 +462,22 @@ struct X11Wsi
     }
 
     private bool keyIsDown(uint keycode) const @safe pure nothrow @nogc
-        => (pressedKeys_[(keycode >> 6) & 3] & (1UL << (keycode & 63))) != 0;
+        => keyIsDownIn(pressedKeys_, keycode);
 
     private void setKeyDown(uint keycode, bool down) @safe pure nothrow @nogc
+        => setKeyDownIn(pressedKeys_, keycode, down);
+
+    package static bool keyIsDownIn(ref const ulong[4] keys, uint keycode)
+        @safe pure nothrow @nogc
+        => (keys[(keycode >> 6) & 3] & (1UL << (keycode & 63))) != 0;
+
+    package static void setKeyDownIn(ref ulong[4] keys, uint keycode,
+        bool down) @safe pure nothrow @nogc
     {
         if (down)
-            pressedKeys_[(keycode >> 6) & 3] |= 1UL << (keycode & 63);
+            keys[(keycode >> 6) & 3] |= 1UL << (keycode & 63);
         else
-            pressedKeys_[(keycode >> 6) & 3] &= ~(1UL << (keycode & 63));
+            keys[(keycode >> 6) & 3] &= ~(1UL << (keycode & 63));
     }
 
     /// X keycode = evdev + 8 under the evdev-standard map every current
@@ -507,18 +532,18 @@ struct X11Wsi
             return wsiOk(T.init);
     }
 
-    private WsiResult!void emit(Payload)(WindowId id,
-        Payload payload) nothrow
+    // Fire-and-forget by design: a full queue lands in the sticky error,
+    // which the next fallible operation reports.
+    private void emit(Payload)(WindowId id, Payload payload) nothrow
     {
         auto result = events_.push(WindowEvent(nextSequence_, id,
             WindowEventPayload(payload)));
         if (result.hasError)
         {
             remember(result.error);
-            return wsiErr!void(stickyError_);
+            return;
         }
         ++nextSequence_;
-        return wsiOk();
     }
 
     private void remember(WsiError error) nothrow
@@ -577,15 +602,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    X11Wsi wsi;
-    assert(!wsi.keyIsDown(38));
-    wsi.setKeyDown(38, true);
-    assert(wsi.keyIsDown(38));
-    wsi.setKeyDown(200, true);
-    assert(wsi.keyIsDown(200));
-    wsi.setKeyDown(38, false);
-    assert(!wsi.keyIsDown(38));
-    assert(wsi.keyIsDown(200));
-    wsi.setKeyDown(200, false);
-    assert(!wsi.keyIsDown(200));
+    ulong[4] keys;
+    assert(!X11Wsi.keyIsDownIn(keys, 38));
+    X11Wsi.setKeyDownIn(keys, 38, true);
+    assert(X11Wsi.keyIsDownIn(keys, 38));
+    X11Wsi.setKeyDownIn(keys, 200, true);
+    assert(X11Wsi.keyIsDownIn(keys, 200));
+    X11Wsi.setKeyDownIn(keys, 38, false);
+    assert(!X11Wsi.keyIsDownIn(keys, 38));
+    assert(X11Wsi.keyIsDownIn(keys, 200));
+    X11Wsi.setKeyDownIn(keys, 200, false);
+    assert(!X11Wsi.keyIsDownIn(keys, 200));
 }

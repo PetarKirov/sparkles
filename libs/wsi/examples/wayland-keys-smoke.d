@@ -25,7 +25,6 @@ int main()
     DefaultLoop loop;
     auto openedLoop = DefaultLoop.create(loop, LoopConfig());
     assert(!openedLoop.hasError);
-    scope (exit) loop.destroy();
 
     WaylandWsi wsi;
     auto openedWsi = WaylandWsi.open(wsi, loop);
@@ -36,7 +35,6 @@ int main()
         return 0;
     }
     assert(!openedWsi.hasError);
-    scope (exit) cast(void) wsi.close();
 
     const bootstrapStart = MonoTime.currTime;
     while (!wsi.bootstrapComplete)

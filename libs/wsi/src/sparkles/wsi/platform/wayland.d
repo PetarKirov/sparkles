@@ -30,6 +30,14 @@ import sparkles.wsi.types;
 
 import wayland_native;
 
+/*
+The listener tables are immutable data, but ImportC drops the C `const`
+qualifier from `*_add_listener` parameters. The protocol never writes
+through a listener table, so handing out a mutable view is sound.
+*/
+private T* listenerPtr(T)(ref immutable T listener) @system pure nothrow @nogc
+    => cast(T*) &listener;
+
 /** One UI-thread Wayland connection and its bounded native event queue. */
 struct WaylandWsi
 {
@@ -106,7 +114,7 @@ struct WaylandWsi
         wsi.registry_ = wsi_wayland_display_get_registry(wsi.display_);
         if (wsi.registry_ is null
             || wsi_wayland_registry_add_listener(wsi.registry_,
-                &registryListener, &wsi) != 0)
+                listenerPtr(registryListener), &wsi) != 0)
         {
             wsi.closeConnectionOnly();
             return waylandFailure!void(WsiOperation.open, 0,
@@ -115,7 +123,7 @@ struct WaylandWsi
         wsi.bootstrapSync_ = wsi_wayland_display_sync(wsi.display_);
         if (wsi.bootstrapSync_ is null
             || wsi_wayland_callback_add_listener(wsi.bootstrapSync_,
-                &bootstrapListener, &wsi) != 0)
+                listenerPtr(bootstrapListener), &wsi) != 0)
         {
             wsi.closeConnectionOnly();
             return waylandFailure!void(WsiOperation.open, 0,
@@ -206,12 +214,17 @@ struct WaylandWsi
         if (slot.surface is null || slot.xdgSurface is null
             || slot.toplevel is null
             || wsi_wayland_xdg_surface_add_listener(slot.xdgSurface,
-                &xdgSurfaceListener, &slot) != 0
+                listenerPtr(xdgSurfaceListener), &slot) != 0
             || wsi_wayland_toplevel_add_listener(slot.toplevel,
-                &toplevelListener, &slot) != 0)
+                listenerPtr(toplevelListener), &slot) != 0)
         {
             destroyNative(slot);
-            cast(void) prepareAndArm();
+            // Re-arm on the failure path; its own error must not shadow the
+            // construction failure being reported, so it goes to the sticky
+            // slot instead.
+            auto rearmed = prepareAndArm();
+            if (rearmed.hasError)
+                remember(rearmed.error);
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "failed to construct Wayland toplevel object tree");
         }
@@ -271,10 +284,11 @@ struct WaylandWsi
             return paused;
         ref slot = windows_[checked.value];
         destroyNative(slot);
-        auto queued = emit(id, DestroyedEvent());
+        const hadSticky = hasStickyError_;
+        emit(id, DestroyedEvent());
         auto rearmed = prepareAndArm();
-        if (queued.hasError)
-            return queued;
+        if (!hadSticky && hasStickyError_)
+            return wsiErr!void(stickyError_);
         return rearmed;
     }
 
@@ -385,19 +399,29 @@ struct WaylandWsi
         auto owner = requireOwner!void(WsiOperation.close);
         if (owner.hasError)
             return owner;
-        if (closed_)
-            return wsiOk();
+        closeNow();
+        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
 
+    /// RAII teardown: idempotent and best-effort; errors join the sticky slot.
+    private void closeNow()
+    {
+        if (closed_ || !open_)
+            return;
         auto detached = detach();
         if (detached.hasError)
-            return detached;
+            remember(detached.error);
         foreach (ref slot; windows_)
             if (slot.live)
                 destroyNative(slot);
         closeConnectionOnly();
         closed_ = true;
         open_ = false;
-        return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    ~this()
+    {
+        closeNow();
     }
 
     private WsiResult!void pausePoll()
@@ -656,18 +680,18 @@ struct WaylandWsi
             return wsiOk(T.init);
     }
 
-    private WsiResult!void emit(Payload)(WindowId id,
-        Payload payload) nothrow @nogc
+    // Fire-and-forget by design: a full queue lands in the sticky error,
+    // which the next fallible operation reports.
+    private void emit(Payload)(WindowId id, Payload payload) nothrow @nogc
     {
         auto result = events_.push(WindowEvent(nextSequence_, id,
             WindowEventPayload(payload)));
         if (result.hasError)
         {
             remember(result.error);
-            return wsiErr!void(stickyError_);
+            return;
         }
         ++nextSequence_;
-        return wsiOk();
     }
 
     private WsiResult!void connectionFailure(WsiOperation operation,
@@ -716,7 +740,7 @@ struct WaylandWsi
                 registry, name, &xdg_wm_base_interface, 1);
             if (owner.wmBase_ !is null
                 && wsi_wayland_wm_base_add_listener(owner.wmBase_,
-                    &wmBaseListener, owner) != 0)
+                    listenerPtr(wmBaseListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install xdg_wm_base listener"));
@@ -730,7 +754,7 @@ struct WaylandWsi
             owner.seatVersion_ = version_;
             if (owner.seat_ !is null
                 && wsi_wayland_seat_add_listener(owner.seat_,
-                    &seatListener, owner) != 0)
+                    listenerPtr(seatListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install wl_seat listener"));
@@ -753,7 +777,7 @@ struct WaylandWsi
             owner.keyboard_ = wsi_wayland_seat_get_keyboard(seat);
             if (owner.keyboard_ !is null
                 && wsi_wayland_keyboard_add_listener(owner.keyboard_,
-                    &keyboardListener, owner) != 0)
+                    listenerPtr(keyboardListener), owner) != 0)
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.dispatch, BackendKind.wayland, 0,
                     "failed to install wl_keyboard listener"));
@@ -779,7 +803,7 @@ struct WaylandWsi
         uint, int fd, uint) nothrow @nogc
     {
         if (fd >= 0)
-            cast(void) posixClose(fd);
+            posixClose(fd);
     }
 
     private extern (C) static void onKeyboardEnter(void* data,
@@ -789,7 +813,7 @@ struct WaylandWsi
         owner.keyboardFocus_ = surface;
         const index = owner.indexOfSurface(surface);
         if (index != size_t.max)
-            cast(void) owner.emit(owner.idAt(index), FocusChangedEvent(true));
+            owner.emit(owner.idAt(index), FocusChangedEvent(true));
     }
 
     private extern (C) static void onKeyboardLeave(void* data,
@@ -800,7 +824,7 @@ struct WaylandWsi
             owner.keyboardFocus_ = null;
         const index = owner.indexOfSurface(surface);
         if (index != size_t.max)
-            cast(void) owner.emit(owner.idAt(index), FocusChangedEvent(false));
+            owner.emit(owner.idAt(index), FocusChangedEvent(false));
     }
 
     private extern (C) static void onKeyboardKey(void* data, wl_keyboard*,
@@ -815,7 +839,7 @@ struct WaylandWsi
         event.location = evdevKeyLocation(key);
         event.action = state != 0 ? KeyAction.press : KeyAction.release;
         event.modifiers = owner.keyboardMods_;
-        cast(void) owner.emit(owner.idAt(index), event);
+        owner.emit(owner.idAt(index), event);
     }
 
     private extern (C) static void onKeyboardModifiers(void* data,
@@ -878,21 +902,21 @@ struct WaylandWsi
         {
             slot.ready = true;
             slot.metrics = metrics;
-            cast(void) owner.emit(id, ReadyEvent(metrics));
-            cast(void) owner.emit(id, ExposedEvent());
+            owner.emit(id, ReadyEvent(metrics));
+            owner.emit(id, ExposedEvent());
             // Initial configure is the renderer's opportunity to make its
             // first buffer commit; later cadence comes from frame callbacks.
-            cast(void) owner.emit(id,
+            owner.emit(id,
                 FrameReadyEvent(owner.nextFrameToken_++, 0));
             owner.armFrameCallback(*slot);
         }
         else
         {
             if (metrics != slot.metrics)
-                cast(void) owner.emit(id,
+                owner.emit(id,
                     SurfaceMetricsChangedEvent(metrics));
             slot.metrics = metrics;
-            cast(void) owner.emit(id, ExposedEvent());
+            owner.emit(id, ExposedEvent());
         }
     }
 
@@ -911,7 +935,7 @@ struct WaylandWsi
         auto owner = slot.owner;
         const index = owner.indexOfSlot(slot);
         if (index != size_t.max)
-            cast(void) owner.emit(owner.idAt(index), CloseRequestedEvent());
+            owner.emit(owner.idAt(index), CloseRequestedEvent());
     }
 
     private extern (C) static void onToplevelConfigureBounds(void*,
@@ -934,7 +958,7 @@ struct WaylandWsi
         const index = owner.indexOfSlot(slot);
         if (index == size_t.max || !slot.live)
             return;
-        cast(void) owner.emit(owner.idAt(index), FrameReadyEvent(
+        owner.emit(owner.idAt(index), FrameReadyEvent(
             owner.nextFrameToken_++, 0));
         owner.armFrameCallback(*slot);
     }
@@ -947,7 +971,7 @@ struct WaylandWsi
         slot.frameCallback = wsi_wayland_surface_frame(slot.surface);
         if (slot.frameCallback is null
             || wsi_wayland_callback_add_listener(slot.frameCallback,
-                &frameListener, &slot) != 0)
+                listenerPtr(frameListener), &slot) != 0)
         {
             if (slot.frameCallback !is null)
                 wsi_wayland_callback_destroy(slot.frameCallback);
@@ -959,30 +983,30 @@ struct WaylandWsi
     }
 }
 
-private __gshared wl_registry_listener registryListener = {
+private immutable wl_registry_listener registryListener = {
     &WaylandWsi.onRegistryGlobal, &WaylandWsi.onRegistryGlobalRemove
 };
-private __gshared wl_callback_listener bootstrapListener = {
+private immutable wl_callback_listener bootstrapListener = {
     &WaylandWsi.onBootstrapDone
 };
-private __gshared xdg_wm_base_listener wmBaseListener = {
+private immutable xdg_wm_base_listener wmBaseListener = {
     &WaylandWsi.onWmBasePing
 };
-private __gshared xdg_surface_listener xdgSurfaceListener = {
+private immutable xdg_surface_listener xdgSurfaceListener = {
     &WaylandWsi.onXdgSurfaceConfigure
 };
-private __gshared xdg_toplevel_listener toplevelListener = {
+private immutable xdg_toplevel_listener toplevelListener = {
     &WaylandWsi.onToplevelConfigure, &WaylandWsi.onToplevelClose,
     &WaylandWsi.onToplevelConfigureBounds,
     &WaylandWsi.onToplevelWmCapabilities
 };
-private __gshared wl_callback_listener frameListener = {
+private immutable wl_callback_listener frameListener = {
     &WaylandWsi.onFrameDone
 };
-private __gshared wl_seat_listener seatListener = {
+private immutable wl_seat_listener seatListener = {
     &WaylandWsi.onSeatCapabilities, &WaylandWsi.onSeatName
 };
-private __gshared wl_keyboard_listener keyboardListener = {
+private immutable wl_keyboard_listener keyboardListener = {
     &WaylandWsi.onKeyboardKeymap, &WaylandWsi.onKeyboardEnter,
     &WaylandWsi.onKeyboardLeave, &WaylandWsi.onKeyboardKey,
     &WaylandWsi.onKeyboardModifiers, &WaylandWsi.onKeyboardRepeatInfo

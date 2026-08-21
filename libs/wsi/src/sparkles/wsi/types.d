@@ -223,7 +223,12 @@ WsiError wsiError(WsiErrorKind kind, WsiOperation operation,
 {
     WsiError result = WsiError(kind, backend, operation, nativeCode);
     if (!result.diagnostic.assign(diagnostic))
-        cast(void) result.diagnostic.assign("diagnostic exceeds inline capacity");
+    {
+        // The fallback text fits the inline capacity by construction.
+        const assigned =
+            result.diagnostic.assign("diagnostic exceeds inline capacity");
+        assert(assigned);
+    }
     return result;
 }
 
