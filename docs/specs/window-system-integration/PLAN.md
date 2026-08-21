@@ -184,8 +184,13 @@ existing triangle builds unchanged against the shared implementation. The render
 half of that triangle is promoted to `sparkles.vulkan_wsi.triangle`, and the native
 Wayland triangle drives it through `sparkles:wsi` and Event Horizon alone — no SDL
 or libdecor in the process — presenting under sync validation with compositor
-resize, with the native-I/O borrow widened to cover acquire and present. X11/Win32
-runtime surface probes and the HITL live-resize trace remain.
+resize, with the native-I/O borrow widened to cover acquire and present. The X11
+and Win32 runtime surface probes drive the live ICD through the same typed
+handles: XCB under Xvfb and winevulkan under Wine both create a real surface,
+select a present-capable device (falling through to lavapipe where hardware
+ICDs cannot present), and prove the integrated wait still dispatches after the
+driver ran. The HITL live-resize trace against the SDL handoff's measured
+target and native Windows CI remain.
 
 ## Milestone M7 — Skia Graphite
 
