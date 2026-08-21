@@ -1261,3 +1261,905 @@ version (unittest)
     static assert(!builds!BadEditorOpaque());
     static assert(!builds!BadShowIf());
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edits and refusals are values (PRT14–PRT16).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Whether an edit is part of a live interaction or completes one (`PRT19`).
+enum EditPhase : ubyte
+{
+    preview, /// mutates the subject; adds no history entry
+    commit,  /// completes the interaction; records exactly one entry
+}
+
+/**
+The closed leaf-value vocabulary an edit carries (`PRT14`). A Regular value:
+equality is total — floating payloads compare by stored representation, so a
+NaN-valued edit cannot be stale relative to itself (`PRT15`).
+*/
+struct EditValue
+{
+    /// ditto
+    enum Kind : ubyte { none, boolean, integral, floating, text, enumeration }
+
+    Kind kind;  ///
+    bool b;     ///
+    long i;     ///
+    double f;   ///
+    string s;   /// text payload / enumeration member name
+
+    ///
+    static EditValue of(bool v) @safe pure nothrow @nogc
+        => EditValue(Kind.boolean, v);
+    /// ditto
+    static EditValue of(long v) @safe pure nothrow @nogc
+        => EditValue(Kind.integral, false, v);
+    /// ditto
+    static EditValue of(double v) @safe pure nothrow @nogc
+        => EditValue(Kind.floating, false, 0, v);
+    /// ditto
+    static EditValue ofText(string v) @safe pure nothrow @nogc
+        => EditValue(Kind.text, false, 0, 0, v);
+    /// ditto
+    static EditValue ofEnum(string member) @safe pure nothrow @nogc
+        => EditValue(Kind.enumeration, false, 0, 0, member);
+
+    /// Total equality: doubles compare bitwise, so `NaN == NaN` here.
+    bool opEquals(in EditValue o) const @safe pure nothrow @nogc
+        => kind == o.kind && b == o.b && i == o.i
+            && doubleBits(f) == doubleBits(o.f) && s == o.s;
+
+    /// The presented text of this value.
+    string toText() const @safe pure
+    {
+        final switch (kind)
+        {
+            case Kind.none: return "∅";
+            case Kind.boolean: return b ? "true" : "false";
+            case Kind.integral: return i.to!string;
+            case Kind.floating: return f.to!string;
+            case Kind.text: return text('"', s, '"');
+            case Kind.enumeration: return s;
+        }
+    }
+
+    /// This value with its text payload owned (an `in Edit`'s text is scope
+    /// and must be copied before it can be stored — `PRT14`).
+    EditValue owned() const scope @safe pure nothrow
+        => EditValue(kind, b, i, f, s.length ? s.idup : null);
+}
+
+/// The one deliberate reinterpretation total floating equality needs.
+private ulong doubleBits(double v) @trusted pure nothrow @nogc
+    => *cast(const ulong*) &v;
+
+/// Why a write (or history operation) was refused. Rendered inline at the
+/// addressed row (`PRT21`); never an exception (`PRT14`).
+enum RefusalKind : ubyte
+{
+    none,             ///
+    malformedPath,    ///
+    noSuchPath,       ///
+    nullTraversal,    ///
+    readOnlyField,    /// `@readOnly`, an opaque leaf, or the erased read seam
+    readOnlyPolicy,   /// `PropertyTreePolicy(readOnly: true)`
+    typeMismatch,     /// wrong `EditValue` kind / unknown enum member
+    outOfRange,       /// width, signedness, lossy narrowing, or `@Range`
+    staleHistory,     /// undo/redo precondition failed (`PRT18`)
+    staleInteraction, /// the subject changed under a pending group (`PRT19`)
+    editInProgress,   /// a different-path operation during a pending group
+    duplicateKey,     /// `[#k]` matched more than one element (`PRT7`)
+    emptyHistory,     /// undo/redo with nothing to replay
+}
+
+/// A path-addressed refusal value.
+struct Refusal
+{
+    RefusalKind kind;  ///
+    string path;       ///
+    string detail;     ///
+
+    /// ditto
+    bool refused() const @safe pure nothrow @nogc
+        => kind != RefusalKind.none;
+}
+
+/// An edit is an owned value; applying it never throws for user input.
+struct Edit
+{
+    string path;                        ///
+    EditValue value;                    ///
+    EditPhase phase = EditPhase.commit; ///
+}
+
+/// What applying an edit produced: the inverse, or a refusal (`PRT14`).
+struct Applied
+{
+    Refusal refusal; ///
+    Edit inverse;    /// valid when `ok`
+
+    /// ditto
+    bool ok() const @safe pure nothrow @nogc => !refusal.refused;
+}
+
+/**
+The raw generated dispatch (`PRT14`–`PRT16`): parses the path, walks the
+subject, checks `@readOnly`, the policy, `EditValue` kind, signedness/width,
+exact floating representability, enum membership and `@Range` $(B before)
+mutating, and returns the inverse. History-free — hosts normally go through
+$(LREF editProperty), which adds the transaction rules.
+*/
+Applied applyEdit(T)(ref T subject, in Edit e,
+    in PropertyTreePolicy policy = PropertyTreePolicy.init) @safe
+{
+    static Applied refuse(RefusalKind k, in Edit e, string detail = null) @safe
+        => Applied(Refusal(k, e.path.idup, detail));
+
+    if (policy.readOnly)
+        return refuse(RefusalKind.readOnlyPolicy, e,
+            "the whole component is read-only");
+    PathSeg[] segs;
+    if (!parsePath(e.path, segs))
+        return refuse(RefusalKind.malformedPath, e);
+    if (segs.length == 0)
+        return refuse(RefusalKind.noSuchPath, e);
+    EditValue old;
+    const k = applyAt(subject, segs, 0, e.value, false, false,
+        double.nan, double.nan, old);
+    if (k != RefusalKind.none)
+        return refuse(k, e);
+    return Applied(Refusal.init, Edit(e.path.idup, old, EditPhase.commit));
+}
+
+private RefusalKind applyAt(T)(ref T subject, in PathSeg[] segs, size_t at_,
+    in EditValue val, bool ro, bool hasRange, double lo, double hi,
+    out EditValue old) @safe
+{
+    static if (hasPropChildren!T)
+        return RefusalKind.readOnlyField; // the v1 erased seam is a read seam
+    else static if (is(T == U*, U))
+    {
+        if (subject is null)
+            return RefusalKind.nullTraversal;
+        return applyAt(*subject, segs, at_, val, ro, hasRange, lo, hi, old);
+    }
+    else static if (isArray!T && !isSomeString!T)
+    {
+        if (at_ >= segs.length)
+            return RefusalKind.typeMismatch; // structural edits: not in v1
+        static if (hasElementKey!(typeof(subject[0])))
+        {
+            if (segs[at_].isKey)
+            {
+                size_t found, hits;
+                foreach (idx; 0 .. subject.length)
+                    if (subject[idx].propElementKey == segs[at_].key)
+                    {
+                        found = idx;
+                        hits++;
+                    }
+                if (hits > 1)
+                    return RefusalKind.duplicateKey;
+                if (hits == 0)
+                    return RefusalKind.noSuchPath;
+                return applyAt(subject[found], segs, at_ + 1, val, ro,
+                    hasRange, lo, hi, old);
+            }
+        }
+        if (!segs[at_].isIndex || segs[at_].index >= subject.length)
+            return RefusalKind.noSuchPath;
+        return applyAt(subject[segs[at_].index], segs, at_ + 1, val, ro,
+            hasRange, lo, hi, old);
+    }
+    else static if (isAggregateType!T && !isSomeString!T
+        && !hasUDA!(T, opaqueValue))
+    {
+        if (at_ >= segs.length)
+            return RefusalKind.typeMismatch; // a composite is not assignable
+        if (segs[at_].isIndex || segs[at_].isKey)
+            return RefusalKind.noSuchPath;
+        switch (segs[at_].name)
+        {
+            static foreach (name; FieldNameTuple!T)
+            {{
+            case name:
+                alias M = __traits(getMember, T, name);
+                // `@readOnly` refuses the whole subtree, HERE, inside the
+                // generated dispatch — no view can route around it (PRT16).
+                enum mro = hasUDA!(M, readOnly);
+                enum mHasRange = hasUDA!(M, Range);
+                static if (mHasRange)
+                {
+                    enum mLo = getUDAs!(M, Range)[0].lo;
+                    enum mHi = getUDAs!(M, Range)[0].hi;
+                }
+                else
+                {
+                    enum mLo = double.nan;
+                    enum mHi = double.nan;
+                }
+                if (at_ + 1 == segs.length)
+                {
+                    if (ro || mro)
+                        return RefusalKind.readOnlyField;
+                    static if (descends!(typeof(__traits(getMember, T, name))))
+                        return RefusalKind.typeMismatch; // structural (PRT22)
+                    else
+                        return assignLeaf(__traits(getMember, subject, name),
+                            val, mHasRange || hasRange,
+                            mHasRange ? mLo : lo, mHasRange ? mHi : hi, old);
+                }
+                return applyAt(__traits(getMember, subject, name), segs,
+                    at_ + 1, val, ro || mro, mHasRange || hasRange,
+                    mHasRange ? mLo : lo, mHasRange ? mHi : hi, old);
+            }}
+            default:
+                return RefusalKind.noSuchPath;
+        }
+    }
+    else
+    {
+        // A leaf with segments left over, or an addressed leaf whose parent
+        // arm did not consume it (an opaque aggregate).
+        if (at_ < segs.length)
+            return RefusalKind.noSuchPath;
+        if (ro)
+            return RefusalKind.readOnlyField;
+        return assignLeaf(subject, val, hasRange, lo, hi, old);
+    }
+}
+
+/// Lossless, total assignment over the supported leaves (`PRT15`).
+private RefusalKind assignLeaf(V)(ref V v, in EditValue e, bool hasRange,
+    double lo, double hi, out EditValue old) @safe
+{
+    static if (is(V == bool))
+    {
+        if (e.kind != EditValue.Kind.boolean)
+            return RefusalKind.typeMismatch;
+        old = EditValue.of(v);
+        v = e.b;
+        return RefusalKind.none;
+    }
+    else static if (is(V == enum))
+    {
+        if (e.kind != EditValue.Kind.enumeration)
+            return RefusalKind.typeMismatch;
+        old = EditValue.ofEnum(text(v));
+        switch (e.s)
+        {
+            static foreach (m; __traits(allMembers, V))
+            {
+            case m:
+                v = __traits(getMember, V, m);
+                return RefusalKind.none;
+            }
+            default:
+                return RefusalKind.typeMismatch; // the member must exist
+        }
+    }
+    else static if (isIntegral!V)
+    {
+        if (e.kind != EditValue.Kind.integral)
+            return RefusalKind.typeMismatch;
+        // Signedness and width, checked before mutation.
+        static if (__traits(isUnsigned, V))
+        {
+            if (e.i < 0 || cast(ulong) e.i > cast(ulong) V.max)
+                return RefusalKind.outOfRange;
+        }
+        else
+        {
+            if (e.i < cast(long) V.min || e.i > cast(long) V.max)
+                return RefusalKind.outOfRange;
+        }
+        if (hasRange && (e.i < cast(long) lo || e.i > cast(long) hi))
+            return RefusalKind.outOfRange;
+        old = EditValue.of(cast(long) v);
+        v = cast(V) e.i;
+        return RefusalKind.none;
+    }
+    else static if (isFloatingPoint!V)
+    {
+        if (e.kind != EditValue.Kind.floating)
+            return RefusalKind.typeMismatch;
+        // The payload must round-trip exactly through the target width.
+        const narrowed = cast(double) cast(V) e.f;
+        if (doubleBits(narrowed) != doubleBits(e.f))
+            return RefusalKind.outOfRange;
+        if (hasRange && !(e.f >= lo && e.f <= hi))
+            return RefusalKind.outOfRange; // NaN fails a ranged leaf
+        old = EditValue.of(cast(double) v);
+        v = cast(V) e.f;
+        return RefusalKind.none;
+    }
+    else static if (isSomeString!V)
+    {
+        if (e.kind != EditValue.Kind.text)
+            return RefusalKind.typeMismatch;
+        // dip1000 earns its keep: an `in Edit`'s text is scope, so it cannot
+        // enter the subject or history without this copy (PRT14).
+        old = EditValue.ofText(v.idup);
+        v = e.s.idup;
+        return RefusalKind.none;
+    }
+    else
+        return RefusalKind.readOnlyField; // opaque: never assignable in v1
+}
+
+/**
+Reads the leaf value at `path` as an `EditValue` — the precondition probe
+undo/redo and pending groups use (`PRT18`, `PRT19`). Answers `false` for a
+missing path or a non-leaf target.
+*/
+bool readValueAt(T)(ref T subject, scope const(char)[] path,
+    out EditValue val) @safe
+{
+    PathSeg[] segs;
+    if (!parsePath(path, segs))
+        return false;
+    bool got;
+    EditValue tmp;
+    resolve!((ref v) {
+        alias V = typeof(v);
+        static if (is(V == bool))
+        {
+            tmp = EditValue.of(v);
+            got = true;
+        }
+        else static if (is(V == enum))
+        {
+            tmp = EditValue.ofEnum(text(v));
+            got = true;
+        }
+        else static if (isIntegral!V)
+        {
+            tmp = EditValue.of(cast(long) v);
+            got = true;
+        }
+        else static if (isFloatingPoint!V)
+        {
+            tmp = EditValue.of(cast(double) v);
+            got = true;
+        }
+        else static if (isSomeString!V)
+        {
+            tmp = EditValue.ofText(v.idup);
+            got = true;
+        }
+    })(subject, segs);
+    val = tmp;
+    return got;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Undo/redo belongs to the component; the state belongs to the host
+// (PRT17–PRT21).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One committed interaction: the path and the exact before/after values.
+struct HistoryEntry
+{
+    string path;      ///
+    EditValue before; ///
+    EditValue after;  ///
+}
+
+/**
+The per-logical-subject edit state (`PRT17`): undo, redo, the pending preview
+group, and the path-addressed refusal display, as one serialisable value the
+host stores $(B beside the subject) — two panes over one subject share it, and
+rebinding to a replacement subject means resetting it.
+*/
+struct PropertyEditState
+{
+    HistoryEntry[] undo; ///
+    HistoryEntry[] redo; ///
+
+    /// The pending preview group (`PRT19`): live from the first successful
+    /// preview until the next commit on the same path.
+    bool pendingActive;      ///
+    string pendingPath;      /// ditto
+    EditValue pendingBefore; /// the value before the interaction began
+    EditValue pendingLast;   /// the last value the group wrote
+
+    /// Path-addressed refusals, latest per path; a path's next success
+    /// clears its entry (`PRT21`).
+    Refusal[] refusals;
+
+    /// History bounds (`PRT20`): entries across both stacks, and logical
+    /// payload bytes. Eviction removes oldest undo entries whole after a
+    /// commit; the just-committed entry is always retained.
+    size_t maxHistoryEntries = 256;
+    /// ditto
+    size_t maxHistoryBytes = 1_048_576;
+
+    /// Availability queries for the host's binding table (`PRT23`).
+    bool canUndo() const @safe pure nothrow @nogc
+        => !pendingActive && undo.length > 0;
+    /// ditto
+    bool canRedo() const @safe pure nothrow @nogc
+        => !pendingActive && redo.length > 0;
+
+    /// The current refusal addressed to `path`, or an empty value.
+    Refusal refusalFor(scope const(char)[] path) const @safe pure nothrow @nogc
+    {
+        foreach (ref const r; refusals)
+            if (r.path == path)
+                return r;
+        return Refusal.init;
+    }
+
+    private void note(in Refusal r) @safe pure nothrow
+    {
+        foreach (ref slot; refusals)
+            if (slot.path == r.path)
+            {
+                slot = Refusal(r.kind, r.path.idup, r.detail.idup);
+                return;
+            }
+        refusals ~= Refusal(r.kind, r.path.idup, r.detail.idup);
+    }
+
+    private void clearFor(scope const(char)[] path) @safe pure nothrow
+    {
+        foreach (i, ref const r; refusals)
+            if (r.path == path)
+            {
+                refusals = refusals[0 .. i] ~ refusals[i + 1 .. $];
+                return;
+            }
+    }
+
+    /// Logical payload bytes of one entry, as the byte bound counts them.
+    private static size_t entryBytes(in HistoryEntry e) @safe pure nothrow @nogc
+        => e.path.length + e.before.s.length + e.after.s.length
+            + 2 * EditValue.sizeof;
+
+    private size_t historyBytes() const @safe pure nothrow @nogc
+    {
+        size_t total;
+        foreach (ref const e; undo)
+            total += entryBytes(e);
+        foreach (ref const e; redo)
+            total += entryBytes(e);
+        return total;
+    }
+
+    /// Evicts oldest undo entries whole until both bounds hold; the newest
+    /// undo entry is always retained, even when it alone exceeds the byte
+    /// bound (`PRT20`).
+    private void evict() @safe pure nothrow
+    {
+        while (undo.length > 1
+            && (undo.length + redo.length > maxHistoryEntries
+                || historyBytes() > maxHistoryBytes))
+            undo = undo[1 .. $];
+    }
+}
+
+/**
+The transactional edit verb (`PRT18`–`PRT21`): $(LREF applyEdit) plus the
+interaction-scoped grouping rules. The subject arrives by `ref` per call; the
+state is the host's per-subject value.
+*/
+Applied editProperty(T)(ref T subject, in Edit e, ref PropertyEditState es,
+    in PropertyTreePolicy policy = PropertyTreePolicy.init) @safe
+{
+    // A different path cannot join a pending group (PRT19 rule 5).
+    if (es.pendingActive && e.path != es.pendingPath)
+    {
+        auto r = Applied(Refusal(RefusalKind.editInProgress, e.path.idup,
+            "an interaction is pending on " ~ es.pendingPath));
+        es.note(r.refusal);
+        return r;
+    }
+
+    // Each later step requires the current value to equal the last value the
+    // group wrote; an external change makes the interaction stale and
+    // discards the group WITHOUT overwriting that change (PRT19 rule 5).
+    if (es.pendingActive)
+    {
+        EditValue current;
+        if (!readValueAt(subject, es.pendingPath, current)
+            || current != es.pendingLast)
+        {
+            es.pendingActive = false;
+            auto r = Applied(Refusal(RefusalKind.staleInteraction,
+                e.path.idup, "the subject changed under the interaction"));
+            es.note(r.refusal);
+            return r;
+        }
+    }
+
+    auto applied = applyEdit(subject, e, policy);
+    if (!applied.ok)
+    {
+        es.note(applied.refusal); // refusals never change history (PRT20)
+        return applied;
+    }
+    es.clearFor(e.path);
+
+    final switch (e.phase)
+    {
+        case EditPhase.preview:
+            if (!es.pendingActive)
+            {
+                // The first successful edit of a new interaction (PRT20).
+                es.pendingActive = true;
+                es.pendingPath = e.path.idup;
+                es.pendingBefore = applied.inverse.value;
+                es.redo = null;
+            }
+            es.pendingLast = e.value.owned;
+            break;
+        case EditPhase.commit:
+            EditValue before;
+            if (es.pendingActive)
+            {
+                before = es.pendingBefore; // one entry per interaction
+                es.pendingActive = false;
+            }
+            else
+            {
+                before = applied.inverse.value;
+                es.redo = null; // a lone commit is its own new interaction
+            }
+            es.undo ~= HistoryEntry(e.path.idup, before, e.value.owned);
+            es.evict();
+            applied.inverse.value = before;
+            break;
+    }
+    return applied;
+}
+
+/**
+The commit boundary (`PRT19`): pointer release, pointer cancellation and
+focus loss must finish a pending group with its last previewed value before
+routing the event onward. A no-op without a pending group.
+*/
+Applied finishPending(T)(ref T subject, ref PropertyEditState es,
+    in PropertyTreePolicy policy = PropertyTreePolicy.init) @safe
+{
+    if (!es.pendingActive)
+        return Applied.init;
+    return editProperty(subject,
+        Edit(es.pendingPath, es.pendingLast, EditPhase.commit), es, policy);
+}
+
+/**
+Undo (`PRT18`): applies only when the addressed value still equals the
+entry's `after`; a stale or missing path refuses and leaves the subject and
+both stacks unchanged.
+*/
+Applied undoProperty(T)(ref T subject, ref PropertyEditState es,
+    in PropertyTreePolicy policy = PropertyTreePolicy.init) @safe
+    => replayHistory!(false)(subject, es, policy);
+
+/// Redo: symmetric — the value must equal the entry's `before`.
+Applied redoProperty(T)(ref T subject, ref PropertyEditState es,
+    in PropertyTreePolicy policy = PropertyTreePolicy.init) @safe
+    => replayHistory!(true)(subject, es, policy);
+
+private Applied replayHistory(bool redoDir, T)(ref T subject,
+    ref PropertyEditState es, in PropertyTreePolicy policy) @safe
+{
+    // While a group is pending, history operations refuse without mutation.
+    if (es.pendingActive)
+        return Applied(Refusal(RefusalKind.editInProgress, es.pendingPath,
+            "an interaction is pending"));
+    auto stack = redoDir ? &es.redo : &es.undo;
+    if ((*stack).length == 0)
+        return Applied(Refusal(RefusalKind.emptyHistory, ""));
+
+    auto entry = (*stack)[$ - 1];
+    const expect = redoDir ? entry.before : entry.after;
+    const write = redoDir ? entry.after : entry.before;
+
+    EditValue current;
+    if (!readValueAt(subject, entry.path, current) || current != expect)
+        return Applied(Refusal(RefusalKind.staleHistory, entry.path,
+            "the subject no longer holds the value this entry recorded"));
+
+    auto applied = applyEdit(subject, Edit(entry.path, write), policy);
+    if (!applied.ok)
+        return applied;
+    // Moving an entry between stacks never changes the combined budget.
+    *stack = (*stack)[0 .. $ - 1];
+    static if (redoDir)
+        es.undo ~= entry;
+    else
+        es.redo ~= entry;
+    es.clearFor(entry.path);
+    return applied;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — the edit path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+@("ui.property_tree.editValueEqualityIsTotal")
+@safe pure nothrow @nogc unittest
+{
+    // NaN payloads compare by stored representation, so a value cannot be
+    // stale relative to itself (PRT15).
+    assert(EditValue.of(double.nan) == EditValue.of(double.nan));
+    assert(EditValue.of(1.5) == EditValue.of(1.5));
+    assert(EditValue.of(1.5) != EditValue.of(2.5));
+    assert(EditValue.of(0.0) != EditValue.of(-0.0), "bitwise: -0 is not 0");
+    assert(EditValue.of(true) != EditValue.of(1L), "kinds never cross-equal");
+}
+
+@("ui.property_tree.applyReturnsInverseAndRefusals")
+@safe unittest
+{
+    auto l = sampleLayer();
+
+    // A successful edit returns its exact inverse (PRT14).
+    auto r = applyEdit(l, Edit("fill.opacity", EditValue.of(0.25)));
+    assert(r.ok && l.fill.opacity == 0.25);
+    assert(r.inverse.value == EditValue.of(1.0));
+    assert(applyEdit(l, r.inverse).ok && l.fill.opacity == 1.0);
+
+    // Every leaf kind assigns losslessly.
+    assert(applyEdit(l, Edit("visible", EditValue.of(false))).ok);
+    assert(l.visible == false);
+    assert(applyEdit(l, Edit("fill.kind", EditValue.ofEnum("gradient"))).ok);
+    assert(l.fill.kind == FillKind.gradient);
+    assert(applyEdit(l, Edit("name", EditValue.ofText("bg"))).ok);
+    assert(l.name == "bg");
+    assert(applyEdit(l, Edit("dashes[1]", EditValue.of(8L))).ok);
+    assert(l.dashes[1] == 8);
+    assert(applyEdit(l, Edit("fill.stopList[#9].offset",
+        EditValue.of(0.75))).ok);
+    assert(l.fill.stopList[1].offset == 0.75);
+
+    // Refusals are values, addressed to their path (PRT14, PRT21).
+    static RefusalKind kindOf(Applied a) @safe => a.refusal.kind;
+
+    assert(kindOf(applyEdit(l, Edit("id", EditValue.of(7L))))
+        == RefusalKind.readOnlyField);
+    assert(kindOf(applyEdit(l, Edit("name", EditValue.of(1L))))
+        == RefusalKind.typeMismatch);
+    assert(kindOf(applyEdit(l, Edit("fill.kind", EditValue.ofEnum("nope"))))
+        == RefusalKind.typeMismatch, "the enum member must exist");
+    assert(kindOf(applyEdit(l, Edit("fill.opacity", EditValue.of(1.5))))
+        == RefusalKind.outOfRange, "@Range is enforced before mutation");
+    assert(l.fill.opacity == 1.0, "a refused edit never mutates");
+    assert(kindOf(applyEdit(l, Edit("nope", EditValue.of(1L))))
+        == RefusalKind.noSuchPath);
+    assert(kindOf(applyEdit(l, Edit("a..b", EditValue.of(1L))))
+        == RefusalKind.malformedPath);
+    assert(kindOf(applyEdit(l, Edit("linked.name", EditValue.ofText("x"))))
+        == RefusalKind.nullTraversal);
+    assert(kindOf(applyEdit(l, Edit("handle", EditValue.of(1L))))
+        == RefusalKind.readOnlyField, "opaque is never assignable");
+    assert(kindOf(applyEdit(l, Edit("extra.retries", EditValue.of(1.0))))
+        == RefusalKind.readOnlyField, "the erased seam is a read seam");
+    assert(kindOf(applyEdit(l, Edit("fill", EditValue.of(1L))))
+        == RefusalKind.typeMismatch, "a composite is not assignable (PRT22)");
+    assert(kindOf(applyEdit(l, Edit("name", EditValue.ofText("x")),
+        PropertyTreePolicy(readOnly: true))) == RefusalKind.readOnlyPolicy);
+
+    l.fill.stopList = [KStop(7, "x"), KStop(7, "y")];
+    assert(kindOf(applyEdit(l, Edit("fill.stopList[#7].offset",
+        EditValue.of(0.1)))) == RefusalKind.duplicateKey);
+}
+
+@("ui.property_tree.assignmentIsLosslessOverWidths")
+@safe unittest
+{
+    static struct Widths
+    {
+        byte b;
+        ubyte ub;
+        float f;
+    }
+
+    Widths w;
+    assert(applyEdit(w, Edit("b", EditValue.of(-128L))).ok);
+    assert(applyEdit(w, Edit("b", EditValue.of(128L))).refusal.kind
+        == RefusalKind.outOfRange, "width is checked before mutation");
+    assert(applyEdit(w, Edit("ub", EditValue.of(-1L))).refusal.kind
+        == RefusalKind.outOfRange, "signedness too");
+    assert(applyEdit(w, Edit("ub", EditValue.of(255L))).ok);
+
+    // A float leaf accepts only payloads that round-trip exactly.
+    assert(applyEdit(w, Edit("f", EditValue.of(0.5))).ok);
+    assert(applyEdit(w, Edit("f", EditValue.of(0.1))).refusal.kind
+        == RefusalKind.outOfRange, "0.1 is not representable as float");
+    assert(w.f == 0.5f);
+}
+
+@("ui.property_tree.previewGroupingIsInteractionScoped")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyEditState es;
+
+    // Previews mutate the subject but add no history (PRT19 rules 1–2).
+    foreach (v; [0.8, 0.6, 0.4])
+        assert(editProperty(l, Edit("fill.opacity", EditValue.of(v),
+            EditPhase.preview), es).ok);
+    assert(l.fill.opacity == 0.4);
+    assert(es.undo.length == 0 && es.pendingActive);
+
+    // A different path cannot join the group; history refuses too (rule 5).
+    assert(editProperty(l, Edit("visible", EditValue.of(false), ), es)
+        .refusal.kind == RefusalKind.editInProgress);
+    assert(l.visible == true, "refused without mutation");
+    assert(undoProperty(l, es).refusal.kind == RefusalKind.editInProgress);
+
+    // The commit records ONE entry, from the pre-preview value (rule 3).
+    assert(editProperty(l, Edit("fill.opacity", EditValue.of(0.4)), es).ok);
+    assert(!es.pendingActive);
+    assert(es.undo.length == 1);
+    assert(es.undo[0].before == EditValue.of(1.0));
+    assert(es.undo[0].after == EditValue.of(0.4));
+
+    // Undo restores the pre-interaction value in one step.
+    assert(undoProperty(l, es).ok);
+    assert(l.fill.opacity == 1.0);
+
+    // A commit without a preview is one entry; two completed commits never
+    // merge (rule 4).
+    assert(editProperty(l, Edit("visible", EditValue.of(false)), es).ok);
+    assert(editProperty(l, Edit("visible", EditValue.of(true)), es).ok);
+    assert(es.undo.length == 2);
+}
+
+@("ui.property_tree.staleInteractionDiscardsWithoutOverwrite")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyEditState es;
+
+    assert(editProperty(l, Edit("fill.opacity", EditValue.of(0.5),
+        EditPhase.preview), es).ok);
+    l.fill.opacity = 0.9; // an external write under the drag
+
+    const r = editProperty(l, Edit("fill.opacity", EditValue.of(0.3),
+        EditPhase.preview), es);
+    assert(r.refusal.kind == RefusalKind.staleInteraction);
+    assert(l.fill.opacity == 0.9, "the external change is not overwritten");
+    assert(!es.pendingActive, "the pending group is discarded");
+    assert(es.undo.length == 0);
+}
+
+@("ui.property_tree.finishPendingIsTheCommitBoundary")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyEditState es;
+
+    assert(editProperty(l, Edit("fill.opacity", EditValue.of(0.7),
+        EditPhase.preview), es).ok);
+    // Pointer release / cancellation / focus loss: the input owner finishes
+    // the group with its last previewed value (PRT19).
+    assert(finishPending(l, es).ok);
+    assert(!es.pendingActive && es.undo.length == 1);
+    assert(es.undo[0].before == EditValue.of(1.0));
+    assert(es.undo[0].after == EditValue.of(0.7));
+    assert(finishPending(l, es).refusal.kind == RefusalKind.none,
+        "a no-op without a pending group");
+    assert(es.undo.length == 1);
+}
+
+@("ui.property_tree.undoRedoPreconditionsCatchExternalWrites")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyEditState es;
+
+    assert(editProperty(l, Edit("name", EditValue.ofText("bg")), es).ok);
+    assert(editProperty(l, Edit("name", EditValue.ofText("fg")), es).ok);
+    assert(es.undo.length == 2);
+
+    // Undo requires the addressed value to equal `after` (PRT18).
+    l.name = "external";
+    const r = undoProperty(l, es);
+    assert(r.refusal.kind == RefusalKind.staleHistory);
+    assert(l.name == "external" && es.undo.length == 2 && es.redo.length == 0,
+        "a failed precondition leaves the subject and both stacks unchanged");
+
+    l.name = "fg"; // the recorded state returns
+    assert(undoProperty(l, es).ok && l.name == "bg");
+    assert(es.undo.length == 1 && es.redo.length == 1);
+
+    // Redo requires `before`.
+    l.name = "poked";
+    assert(redoProperty(l, es).refusal.kind == RefusalKind.staleHistory);
+    l.name = "bg";
+    assert(redoProperty(l, es).ok && l.name == "fg");
+
+    // The first successful edit of a new interaction clears redo; refused
+    // edits do not (PRT20).
+    assert(undoProperty(l, es).ok);
+    assert(es.redo.length == 1);
+    assert(!editProperty(l, Edit("id", EditValue.of(1L)), es).ok);
+    assert(es.redo.length == 1, "a refusal never clears redo");
+    assert(editProperty(l, Edit("visible", EditValue.of(false)), es).ok);
+    assert(es.redo.length == 0);
+
+    assert(undoProperty(l, es).ok, "visible returns");
+    assert(undoProperty(l, es).ok, "…then the first name edit");
+    assert(l.name == "layer");
+    assert(undoProperty(l, es).refusal.kind == RefusalKind.emptyHistory);
+}
+
+@("ui.property_tree.historyEvictsOldestWholeAndKeepsTheNewest")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyEditState es;
+    es.maxHistoryEntries = 3;
+
+    foreach (i; 0 .. 5)
+        assert(editProperty(l, Edit("dashes[0]",
+            EditValue.of(cast(long) i)), es).ok);
+    assert(es.undo.length == 3, "oldest entries evicted whole");
+    assert(es.undo[0].before == EditValue.of(1L),
+        "the surviving prefix is the newest");
+
+    // The byte bound: the just-committed entry survives even alone over it.
+    PropertyEditState tiny;
+    tiny.maxHistoryBytes = 8;
+    assert(editProperty(l, Edit("name",
+        EditValue.ofText("a very long value that exceeds eight bytes")),
+        tiny).ok);
+    assert(tiny.undo.length == 1, "the newest entry is always retained");
+    assert(editProperty(l, Edit("name", EditValue.ofText("second")),
+        tiny).ok);
+    assert(tiny.undo.length == 1, "…and evicts everything older");
+    assert(tiny.undo[0].after == EditValue.ofText("second"));
+}
+
+@("ui.property_tree.refusalsRenderInlineAndClearOnSuccess")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyEditState es;
+
+    assert(!editProperty(l, Edit("fill.opacity", EditValue.of(9.0)), es).ok);
+    assert(es.refusalFor("fill.opacity").kind == RefusalKind.outOfRange,
+        "the refusal is addressed to its row (PRT21)");
+    assert(es.refusalFor("name").kind == RefusalKind.none);
+
+    assert(editProperty(l, Edit("fill.opacity", EditValue.of(0.5)), es).ok);
+    assert(es.refusalFor("fill.opacity").kind == RefusalKind.none,
+        "that path's next success clears it");
+}
+
+@("ui.property_tree.editThenRebuildRefreshesAndPreserves")
+@safe unittest
+{
+    // PRT25: a successful edit followed by rebuild refreshes values and
+    // conditional visibility while preserving disclosure and selection.
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    PropertyEditState es;
+    auto tv = freshView();
+    tv.open = tv.open.opened("fill");
+    pt.rebuild(l, tv);
+
+    foreach (i, ref const r; tv.rows)
+        if (pt.data.nodes[r.node].value.path == "fill.opacity")
+            tv.sel = cast(long) i;
+
+    assert(editProperty(l, Edit("fill.kind", EditValue.ofEnum("gradient")),
+        es).ok);
+    pt.rebuild(l, tv);
+
+    bool sawStops, sawNewKind;
+    foreach (ref const nd; pt.data.nodes)
+    {
+        sawStops |= nd.value.path == "fill.stops";
+        sawNewKind |= nd.value.path == "fill.kind"
+            && nd.value.badge == "gradient";
+    }
+    assert(sawStops, "@ShowIf re-evaluated: the gradient row appeared");
+    assert(sawNewKind, "the badge refreshed");
+    assert(pt.selectedPath(tv) == "fill.opacity", "selection preserved");
+    assert(tv.open.isOpen("fill"), "disclosure preserved");
+}
