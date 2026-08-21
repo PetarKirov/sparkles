@@ -33,6 +33,7 @@ module settings;
 import sparkles.ui.property_tree : Doc, Label, Range;
 
 import ansi_model : BackgroundMode;
+import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout;
 import viewer_model : ScrollAnchorMode;
 
@@ -93,18 +94,6 @@ enum TableCopyMode : ubyte
     markdown,
     /// The DSV dialect's own source text.
     source,
-}
-
-/// `CFG15`: when the grammar-aware structural diff engages
-/// (`--diff-structural`; the CLI spells the first member `auto`).
-enum StructuralMode : ubyte
-{
-    /// Engage when a grammar is available and the inputs are within guards.
-    detect,
-    /// Always engage; report when it cannot.
-    on,
-    /// Never engage.
-    off,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -300,8 +289,8 @@ struct DiffSettings
     @Label("ignore whitespace")
     WhitespaceMode ignoreWhitespace = WhitespaceMode.exact;
 
-    @Doc("Grammar-aware structural diff: detect, on, or off.")
-    StructuralMode structural = StructuralMode.detect;
+    @Doc("Grammar-aware structural diff: off, automatic, on, or view.")
+    StructuralPolicy structural = StructuralPolicy.automatic;
 
     @Doc("Diff rendered markdown documents instead of raw source.")
     bool preview = false;
@@ -609,7 +598,7 @@ struct HueConfig
     // spellings are pinned here too, because a rename there is silently a
     // config-format break.
     static foreach (E; AliasSeq!(BackgroundMode, DefaultView, AnsiCopyMode,
-        TableCopyMode, StructuralMode, DiffLayout, WhitespaceMode,
+        TableCopyMode, StructuralPolicy, DiffLayout, WhitespaceMode,
         ScrollAnchorMode, Placement))
     {
         static foreach (m; __traits(allMembers, E))
