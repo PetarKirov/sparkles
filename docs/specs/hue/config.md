@@ -314,14 +314,22 @@ sharpen the text above:
 - **Open question 4 is settled structurally**: `saveUserConfig` takes the
   session deltas as a sparse overlay the _caller_ computes, so an untouched
   CLI-supplied value is absent by construction and can never be baked in.
-- **The partial rows**: `CFG11` has the machinery but no in-app trigger yet
-  (it lands with the settings pane); `CFG12` resolves the Android path
+- **The partial rows**: `CFG12` resolves the Android path
   (`android_paths.configPath`) but on-device validation is owed; `CFG14`
   merges `grammarPaths` composed, but the grammar registry does not consume
-  the configured paths yet; `CFG15`/`CFG18`/`CFG19`/`CFG20` have their
-  sections in the schema with the CLI-backed fields wired — the engine
-  extras, lantern/picker knobs and the external-formatter table await the
-  tier-2/3 consumption pass.
+  the configured paths yet; `CFG19` wires the picker's budgets and delays
+  while the layout/grep presets and the frecency store await their own
+  features; `CFG20` wires preview/width/formatter while the
+  external-formatter table awaits its consumption; `CFG11`'s in-app trigger
+  is the settings pane's save — out-of-pane runtime toggles (the theme
+  arrows, `l`/`c`/`t`) do not round into the store yet.
+- The tier-2 consumption pass landed with the pane: the lantern's
+  delay/placement/enabled (`CFG18` — disabled = the panel never opens,
+  sequences still resolve), the picker's step budget and preview delays,
+  `scroll.hScrollStep`, `timing.liveTickMs`, and the diff engine's
+  context/similarity-floor/Myers-guard through the pipeline's one
+  `diffOptions()` seam (`CFG15`). All read live: a settings-pane commit
+  re-syncs the cached knobs on the spot.
 - The five-layer resolution happens once in `main` (`cli.loadConfigFor`);
   `ViewRenderOptions`/`GuiOptions` are **projections** of the effective
   config (`cli.viewRenderOptionsOf`/`guiOptionsOf`), which deleted the
