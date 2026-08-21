@@ -346,6 +346,63 @@ SidebarItem[] augmentWithListingDirs(SidebarItem[] items,
 private string listingDirRouteOf(scope const(char)[] dir) @safe pure
     => directoryRoute(dir);
 
+/++
+The augmented sidebar as `sidebar.json`-shaped text, written beside
+`manifest.json` so the VitePress config $(B reads) the augmented tree instead
+of re-implementing the augmentation — one algorithm, one implementation, in D
+(`DSC7`); `config.mts` falls back to the raw `sidebar.json` when the artifact
+is absent (listings not built).
+
+Field-for-field the loader's schema: `link` omitted when empty, `collapsed`
+only when `true`, `items` only when non-empty — the exact subset VitePress's
+`DefaultTheme.SidebarItem` consumes, proved by the round-trip test below.
++/
+string sidebarJson(scope const(SidebarItem)[] items) @safe pure
+{
+    auto w = appender!string;
+    writeSidebarItemsJson(w, items, 0);
+    w ~= "\n";
+    return w[];
+}
+
+private void writeSidebarItemsJson(ref Appender!string w,
+    scope const(SidebarItem)[] items, size_t depth) @safe pure
+{
+    void indent(size_t n) @safe pure
+    {
+        foreach (_; 0 .. n)
+            w ~= "  ";
+    }
+
+    w ~= "[";
+    foreach (i, ref const it; items)
+    {
+        w ~= i ? ",\n" : "\n";
+        indent(depth + 1);
+        w ~= "{ \"text\": ";
+        writeJsonString(w, it.text);
+        if (it.link.length)
+        {
+            w ~= ", \"link\": ";
+            writeJsonString(w, it.link);
+        }
+        if (it.collapsed)
+            w ~= ", \"collapsed\": true";
+        if (it.items.length)
+        {
+            w ~= ", \"items\": ";
+            writeSidebarItemsJson(w, it.items, depth + 1);
+        }
+        w ~= " }";
+    }
+    if (items.length)
+    {
+        w ~= "\n";
+        indent(depth);
+    }
+    w ~= "]";
+}
+
 // ── manifest.json (DSC2) ────────────────────────────────────────────────────
 
 /// One `manifest.skipped` row.
@@ -559,4 +616,31 @@ unittest
     assert(outp[1].items[0].items.length == 2);
     auto again = augmentWithListingDirs(outp, dirs);
     assert(again[1].items[0].items[1].items.length == 2);
+}
+
+@("site.sidebarJson.roundTripsThroughTheLoader")
+@system
+unittest
+{
+    import sparkles.wired.json : fromJSON;
+
+    const items = [
+        SidebarItem(text: "Overview", link: "/overview"),
+        SidebarItem(text: "Specs <q>", collapsed: true, items: [
+            SidebarItem(text: "Hue", link: "/specs/hue/"),
+            SidebarItem(text: "examples/ (source)",
+                link: "/src/docs/specs/hue/examples/index.html"),
+        ]),
+    ];
+    const json = sidebarJson(items);
+    auto back = fromJSON!(SidebarItem[])(json);
+    assert(!back.hasError, json);
+    assert(back.value == items, json);
+    // Empty fields are omitted, not emitted empty — the VitePress side must
+    // never see `"link": ""`.
+    import std.algorithm.searching : canFind;
+
+    assert(!json.canFind(`"link": ""`), json);
+    assert(!json.canFind(`"collapsed": false`), json);
+    assert(!json.canFind(`"items": []`), json);
 }
