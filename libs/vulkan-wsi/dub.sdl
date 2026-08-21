@@ -13,6 +13,11 @@ dflags "-preview=in" "-preview=dip1000"
 // `vulkan.pc` supplies it as well as the loader link used by the smoke tests.
 libs "vulkan"
 
+// The renderer shared by the native and SDL triangle examples embeds the
+// committed SPIR-V at compile time. Keep the shaders with their owning Vulkan
+// example rather than duplicating them in each host package.
+stringImportPaths "examples/shaders"
+
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:vulkan" path="../.."
 dependency "sparkles:wsi" path="../.."
