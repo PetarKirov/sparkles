@@ -76,12 +76,12 @@ Three findings shaped this spec:
 
 ## Milestones
 
-| M   | Content                                                                                                     | Depends         | Status                            |
-| --- | ----------------------------------------------------------------------------------------------------------- | --------------- | --------------------------------- |
-| D0  | Extraction: `sparkles:docs` exists, `hue gallery` output byte-identical, sidebar schema shared with ci      | —               | **done** (PR #360)                |
-| D1  | Spec landed; sidebar rendered on generated pages (`DOC8`); escaping unification (`DOC10`)                   | `DOC*`          | **done** (`36e7225b`, `100a10b1`) |
-| D2  | `hue site`: link-driven discovery + `manifest.json`; VitePress link rewriting consumes it                   | `DSC*`          | **done** (`DSC5` open)            |
-| D3  | apidoc core: dmd-lsp semantic walk → symbol model; doc-coverage fixtures + goldens; route-collision cascade | `APD1`–`APD5`   | not started                       |
-| D4  | apidoc pages: the DDoc prose pipeline inside the site shell — per-symbol pages                              | D2, D3          | not started                       |
-| D5  | Search index + type graph                                                                                   | D4              | not started                       |
-| D6  | Flow-mode adoption: doc components as `sparkles:ui` views                                                   | `FLW*`, ui `B2` | not started                       |
+| M   | Content                                                                                                                          | Depends         | Status                            |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | --------------- | --------------------------------- |
+| D0  | Extraction: `sparkles:docs` exists, `hue gallery` output byte-identical, sidebar schema shared with ci                           | —               | **done** (PR #360)                |
+| D1  | Spec landed; sidebar rendered on generated pages (`DOC8`); escaping unification (`DOC10`)                                        | `DOC*`          | **done** (`36e7225b`, `100a10b1`) |
+| D2  | `hue site`: discovery + `manifest.json` + link rewriting; UAT follow-up: explorer shell (`DOC11`), sidebar augmentation (`DSC7`) | `DSC*`          | **done** (`DSC5` open)            |
+| D3  | apidoc core: dmd-lsp semantic walk → symbol model; doc-coverage fixtures + goldens; route-collision cascade                      | `APD1`–`APD5`   | not started                       |
+| D4  | apidoc pages: the DDoc prose pipeline inside the site shell — per-symbol pages                                                   | D2, D3          | not started                       |
+| D5  | Search index + type graph                                                                                                        | D4              | not started                       |
+| D6  | Flow-mode adoption: doc components as `sparkles:ui` views                                                                        | `FLW*`, ui `B2` | not started                       |
