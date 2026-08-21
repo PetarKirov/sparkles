@@ -22,6 +22,12 @@
  *   C7. The escape hatch: a type the ladder cannot classify is `opaque`, and
  *       an opaque row is presented via its own `toString` — VS Code's
  *       `Complex` posture, which is also what read-only targets need.
+ *   C27. Invalid metadata is a BUILD error, not a frame-time surprise: an
+ *        `@Editor` whose symbol does not accept and emit the field's concrete
+ *        leaf type, an `@Editor` on an `@opaqueValue` leaf, and a `@ShowIf`
+ *        naming a missing member each fail compilation, shown by negative
+ *        probes. (Added with the spec review: the earlier revision carried
+ *        `@Editor` as a string name — a registry key — which the spec forbids.)
  *
  * Run: `dub run --single leaf-dispatch.d`
  */
@@ -42,7 +48,7 @@ struct Range { double lo, hi, step = 0; } /// numeric bounds → slider/stepper
 struct Doc { string text; }               /// tooltip / details row
 enum hidden;                              /// never presented
 enum readOnly;                            /// presented, never editable
-struct Editor { string name; }            /// force a leaf editor by name
+struct Editor(alias fn) {}                /// force a leaf editor: a SYMBOL (C27)
 struct ShowIf { string cond; }            /// a condition over the VALUE (C6)
 
 // ── the leaf classification (C4) ─────────────────────────────────────────────
@@ -118,8 +124,22 @@ LeafPlan!T[] planOf(T)(string prefix = "") pure nothrow
                     p.hasRange = true;
                     p.range = getUDAs!(M, Range)[0];
                 }
-                static if (hasUDA!(M, Editor))
-                    p.editor = getUDAs!(M, Editor)[0].name;
+                static foreach (uda; __traits(getAttributes, M))
+                {{
+                    static if (is(uda == Editor!fn, alias fn))
+                    {
+                        // The override is a symbol, validated HERE at the walk
+                        // (C27): it must accept and emit the field's concrete
+                        // leaf type, and it cannot make an opaque leaf
+                        // assignable — so no presentation can route around
+                        // the dispatch through a loosely-typed editor.
+                        static assert(leafKindOf!F != LeafKind.opaque,
+                            name ~ ": @Editor cannot make an opaque leaf assignable");
+                        static assert(is(typeof(fn(F.init)) : F),
+                            name ~ ": @Editor symbol must accept and emit " ~ F.stringof);
+                        p.editor = __traits(identifier, fn);
+                    }
+                }}
                 static if (hasUDA!(M, ShowIf))
                 {
                     // The condition is a compile-time-checked EXPRESSION over
@@ -191,9 +211,26 @@ struct Style
     @hidden
     uint revision;
 
-    @Group("advanced") @Editor("color-swatch")
+    @Group("advanced") @Editor!colorSwatch
     uint tint = 0xff00ff;
 }
+
+/// The custom editor under test: accepts and emits the field's type. (The
+/// spike cares about the typing seam, not the painting.)
+uint colorSwatch(uint v) pure nothrow => v;
+
+// ── C27: invalid metadata fails the build — negative probes ──────────────────
+
+string wrongType(string s) pure nothrow => s;
+Handle handleEditor(Handle h) pure nothrow => h;
+
+struct BadEditorType   { @Editor!wrongType uint tint; }        // type mismatch
+struct BadEditorOpaque { @Editor!handleEditor Handle handle; } // opaque leaf
+struct BadShowIf       { int kind; @ShowIf("knid == 1") int stops; }
+
+static assert(!__traits(compiles, planOf!BadEditorType()));
+static assert(!__traits(compiles, planOf!BadEditorOpaque()));
+static assert(!__traits(compiles, planOf!BadShowIf()));
 
 // ── driving ──────────────────────────────────────────────────────────────────
 
@@ -236,4 +273,12 @@ void main()
     writefln("      presented by its own toString: %s", s.handle);
     writefln("      isLeaf!Handle = %s, isLeaf!Style = %s",
         isLeaf!Handle, isLeaf!Style);
+
+    writeln("\nC27 — invalid metadata fails the BUILD, probed negatively:");
+    writefln("      @Editor symbol of the wrong type → compiles: %s",
+        __traits(compiles, planOf!BadEditorType()));
+    writefln("      @Editor on an @opaqueValue leaf  → compiles: %s",
+        __traits(compiles, planOf!BadEditorOpaque()));
+    writefln("      @ShowIf naming a missing member  → compiles: %s",
+        __traits(compiles, planOf!BadShowIf()));
 }
