@@ -52,6 +52,10 @@ import inspector_pane : InspectorPane;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
+import settings : HueConfig;
+import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
+    SettingsResult;
+import settings_store : ConfigStore, hueApplyRules, SettingsPane;
 import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -119,6 +123,12 @@ struct WorkspaceTui
     /// The picker's preview: another document pane, fed by the same loader
     /// and theme as the main viewer (`picker_preview`). Heap with `picker`.
     package PickerDocPane* pickerDoc;
+
+    /// The modal settings pane (`SET*`) over the shared config store; a
+    /// null `cfg` (tests, capture paths) leaves `,` a quiet no-op.
+    SettingsPane settings;
+    /// ditto
+    ConfigStore* cfg;
 
     /// The sidebar's width in cells (incl. its own chrome) — `--tree-width`
     /// seeds it, the divider drag moves it.
@@ -419,6 +429,7 @@ struct WorkspaceTui
         }
         paintDockScrollbars(g);
         paintPicker(g);
+        paintSettings(g);
     }
 
     /// The overlay's frame-stable geometry: two equal panels, sized by the
@@ -429,6 +440,77 @@ struct WorkspaceTui
         import picker_view : pickerGeometryFor;
 
         return pickerGeometryFor(width, height);
+    }
+
+    /// The settings overlay's frame-stable geometry, terminal-sized.
+    package SettingsGeometry settingsGeometry() const @safe pure nothrow @nogc
+        => settingsGeometryFor(width, height);
+
+    /// Opens the settings pane over the shared store (`,` / `<leader>us`).
+    void openSettings() @system
+    {
+        if (cfg is null || settings.active)
+            return;
+        auto store = cfg;
+        settings.applyRules = hueApplyRules.dup;
+        settings.doSave = (ref const HueConfig d, const(string)[] t)
+            => store.save(d, t);
+        settings.originOf = (string p) @safe => store.shadowOrigin(p);
+        settings.open(&store.resolved, store.fileValue, settingsGeometry());
+    }
+
+    /// The live-apply half the pane cannot do itself: application is the
+    /// host's (the terminal resolves a theme NAME into its cycle; fonts are
+    /// the window's problem and a no-op here).
+    private void applySettings(in SettingsResult r) @system
+    {
+        if (r.apply & ApplyMask.theme)
+        {
+            const name = cfg.resolved.appearance.theme;
+            bool found;
+            foreach (i, n; viewer.names)
+                if (n == name)
+                {
+                    viewer.setTheme(i);
+                    viewer.relayout();
+                    found = true;
+                    break;
+                }
+            // An unknown name stays IN the config (honest, undoable); the
+            // pane's footer says why nothing changed.
+            if (!found)
+                settings.status = "theme '" ~ name ~ "' is not in the cycle";
+        }
+        if (r.apply & ApplyMask.layout)
+        {
+            const cols = cfg.resolved.panes.tree.width;
+            if (cols >= minTreeCols)
+                treeCols(cols);
+        }
+    }
+
+    /// The settings pane, over everything — the same widget-tree → display
+    /// list → cell path the picker paints through, centred both ways.
+    private void paintSettings(ref Grid g) @system
+    {
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.geometry : Constraints;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+        import sparkles.ui_tui : paintGrid;
+
+        if (!settings.active)
+            return;
+        const geometry = settingsGeometry();
+        auto view = settings.buildView(geometry);
+        auto frames = layout(view, Constraints(maxW: geometry.panelCols));
+        const panel = frames[view.root].rect;
+        const x = (width - panel.width) / 2;
+        const y = (height - panel.height) / 2;
+        paintGrid(g, pageBg, buildDisplayList(view, frames,
+            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg,
+            pageBg), x > 0 ? x : 0, y > 0 ? y : 0,
+            Rect(0, 0, panel.width, panel.height));
     }
 
     /**
@@ -969,6 +1051,32 @@ struct WorkspaceTui
 
     bool handle(in Event e) @system
     {
+        // The settings pane is a modal surface exactly like the picker:
+        // keys to its dispatch, pointer translated overlay-local, nothing
+        // reaches a pane beneath (`SET*`).
+        if (settings.active)
+        {
+            const sg = settingsGeometry();
+            const sx = (width - sg.panelCols) / 2;
+            const sy = (height - sg.panelRows) / 2;
+            const ox = sx > 0 ? sx : 0;
+            const oy = sy > 0 ? sy : 0;
+            e.match!(
+                (in KeyEvent k) { applySettings(settings.handleKey(k)); },
+                (in PointerEvent p) {
+                    PointerEvent local = p;
+                    local.pos = Point(p.pos.x - ox, p.pos.y - oy);
+                    applySettings(settings.handleOverlay(Event(local), sg));
+                },
+                (in WheelEvent w) {
+                    WheelEvent local = w;
+                    local.pos = Point(w.pos.x - ox, w.pos.y - oy);
+                    applySettings(settings.handleOverlay(Event(local), sg));
+                },
+                (_) {});
+            return true;
+        }
+
         // The fuzzy picker is a modal surface (`PIK1`): while it is open it
         // owns the whole keyboard AND the pointer — keys route by pane
         // focus, wheel and presses by position (`DCK7` inside the modal:
@@ -1059,6 +1167,10 @@ struct WorkspaceTui
                         break;
                     case Command.setNext:
                         openAdjacent(+1);
+                        handled = true;
+                        break;
+                    case Command.settingsOpen:
+                        openSettings();
                         handled = true;
                         break;
                     default:
@@ -1507,9 +1619,11 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     string formatterName = null,
     string tableCopyFlag = "auto",
     ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment,
-    string gutter = "all", bool lineNumbers = true) @system
+    string gutter = "all", bool lineNumbers = true,
+    ConfigStore* configStore = null) @system
 {
     WorkspaceTui w;
+    w.cfg = configStore;
     // The picker's worker pool and the preview's oracle must stop before the
     // process exits.
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
@@ -1922,6 +2036,55 @@ unittest
     assert(w.treeVisible == !treeWas, "'e' toggled the explorer");
     assert(w.treeFocused == w.treeVisible, "and focus followed it");
     assert(!rec.quitRequested, "'e' is not a quit");
+}
+
+@("workspace.settingsPaneOpensEditsSaves")
+@system
+unittest
+{
+    import std.conv : text;
+    import std.file : rmdirRecurse;
+    import std.process : thisProcessID;
+    import std.path : buildPath;
+    import sparkles.input : charEvent;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
+    import settings_io : readJsoncFile;
+    import settings_overlay : Sparse;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, text("hue-workspace-settings-",
+        thisProcessID));
+    scope (exit) rmdirRecurse(root);
+
+    // The shared store, with its user file inside the fixture dir.
+    auto store = new ConfigStore;
+    store.resolved = HueConfig.init;
+    store.fileValue = HueConfig.init;
+    store.userFilePath = buildPath(root, "config.json");
+    w.cfg = store;
+
+    RunConfig cfg;
+    auto rec = runAppRecorded(w, cfg,
+        [
+            charEvent(','), // open the settings pane
+            charEvent('j'), // move: appearance → panes
+            charEvent('j'), // → behaviour
+            charEvent('j'), // → diff
+            charEvent('s'), // save (nothing touched yet: writes {} sparsely)
+            charEvent('q'), // close; runtime state kept, keyboard returned
+            charEvent('e'), // …and the workspace answers keys again
+        ],
+        (ref RecordingHost h) { h.size = Size(100, 30); });
+
+    assert(!rec.quitRequested, "q closed the PANE, not the app");
+    assert(!w.settings.active, "closed");
+
+    // The save wrote the (empty) sparse user file atomically.
+    auto back = readJsoncFile!(Sparse!HueConfig)(store.userFilePath);
+    assert(!back.hasError, back.error.toString);
+    assert(back.value == Sparse!HueConfig.init, "nothing touched, all sparse");
 }
 
 @("workspace.leaderETogglesTheExplorer")
