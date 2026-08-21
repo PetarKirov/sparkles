@@ -261,8 +261,11 @@ private string originText(Origin o) @safe pure nothrow
 private string showValueText(V)(in V v)
 {
     import std.conv : text;
+    import std.traits : isAssociativeArray;
 
-    static if (is(V == string))
+    static if (isAssociativeArray!V)
+        return v.length ? text(v.length, " entries") : "{}";
+    else static if (is(V == string))
         return v.length ? v : "";
     else static if (is(V : const(string)[]))
     {

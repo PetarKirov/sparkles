@@ -33,6 +33,7 @@ module settings;
 import sparkles.ui.property_tree : Doc, Label, Range;
 
 import ansi_model : BackgroundMode;
+import keymap_config : KeysConfig;
 import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout;
 import viewer_model : ScrollAnchorMode;
@@ -526,12 +527,6 @@ struct ForgeSettings
 {
 }
 
-/// `CFG6`: the user keybinding overlay. Filled by `keymap_config.d`; an empty
-/// struct decodes `{}` cleanly until then.
-@ConfigSection
-struct KeysSettings
-{
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The root.
@@ -552,7 +547,15 @@ struct HueConfig
     ScrollSettings scroll;
     LimitsSettings limits;
     ForgeSettings forges;
-    KeysSettings keys;
+
+    /**
+    `CFG6`: the user keybinding overlay — context → chord → command-or-null,
+    applied row by row on `hueBindings` at startup (`keymap_config.d`). One
+    layer-scalar in the merge: a higher layer's `keys` map replaces a
+    lower's.
+    */
+    @Doc("Keybinding overlay: context → chord → command (null unbinds).")
+    KeysConfig keys;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
