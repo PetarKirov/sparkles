@@ -618,19 +618,19 @@ derived from Shikijs/TextMate themes.
 module sparkles.syntax.themes;
 
 import sparkles.syntax.color : Color;
-import sparkles.syntax.theme : StyleSpec, TextAttr, Theme, ThemeRule, UnderlineStyle;
+import sparkles.syntax.theme : StyleSpec, TextAttr, SyntaxTheme, ThemeRule, UnderlineStyle;
 
 @safe:
 
 /// Alias definitions for backward compatibility:
-static immutable Theme builtinDark = catppuccin_mocha;
-static immutable Theme builtinLight = solarized_light;
+static immutable SyntaxTheme builtinDark = catppuccin_mocha;
+static immutable SyntaxTheme builtinLight = solarized_light;
 `;
 
     foreach (theme; results)
     {
         dCode ~= format("\n/// %s Theme.\n", theme.displayName);
-        dCode ~= format("static immutable Theme %s = Theme(\n", theme.idName);
+        dCode ~= format("static immutable SyntaxTheme %s = SyntaxTheme(\n", theme.idName);
         dCode ~= format("    name: \"%s\",\n", theme.name);
         if (theme.defaultFg)
             dCode ~= format("    defaultFg: %s,\n", colorExpr(theme.defaultFg));

@@ -312,7 +312,7 @@ fi
 
 if [ "$skip_examples" -eq 0 ] && ci_have nix; then
   run_stage "Markdown runnable examples verification" \
-    "${repo_root}/ci/run-batch.sh" 35m nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**'
+    "${repo_root}/ci/run-batch.sh" 35m nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 fi
 
 # --- Stage 11: Documentation Site Build ------------------------------------

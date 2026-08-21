@@ -19,10 +19,10 @@ import std.conv : text;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.width : CellAlign = Align;
-import sparkles.syntax.md.render_widgets : MdTableExtras;
+import sparkles.source_view.markdown : MdTableExtras;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 
-version (unittest) import sparkles.syntax.md.render_widgets : TableScroll;
+version (unittest) import sparkles.source_view.markdown : TableScroll;
 import sparkles.dsv : applyProjection, classifyValue, ColumnType, decodeCell,
     detectHeader, Dialect, DsvDoc, inferColumnTypes, parseDsv, ProjectionSpec,
     seedForExtension, sniff, sniffMaxBytes, sniffMaxRecords, SortKey;
@@ -701,15 +701,16 @@ version (unittest)
     {
         import std.utf : encode;
         import sparkles.base.term_color : RgbColor, toRgb;
-        import sparkles.syntax : builtinThemes, LabelSet, resolveTheme;
-        import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme,
+        import sparkles.source_view.markdown : MdViewOptions, MdViewTheme,
             viewMarkdown;
+        import sparkles.syntax : LabelSet, resolveTheme;
         import sparkles.ui.display_list : buildDisplayList;
         import sparkles.ui.geometry : Constraints;
         import sparkles.ui.interp.cells : CellGrid;
         import sparkles.ui.interp.immediate : paint;
         import sparkles.ui.layout : layout;
         import sparkles.ui.style : defaultTwoslashPalette;
+        import sparkles.ui.themes : builtinThemes;
 
         const labels = LabelSet.standard();
         const theme = resolveTheme(builtinThemes["catppuccin-mocha"], labels);

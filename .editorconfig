@@ -32,7 +32,7 @@ insert_final_newline = unset
 
 # Markdown rendering fixtures + their rendered-grid goldens: byte-exact test
 # data (fixture indentation is markdown syntax; golden columns are layout).
-[libs/syntax/test/data/**]
+[libs/{syntax,source-view}/test/data/**]
 charset = unset
 indent_style = unset
 indent_size = unset

@@ -33,6 +33,7 @@ import expected : Expected, err, ok;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax : HighlightEvent;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
+version (unittest) import sparkles.ui.themes : builtinDark;
 
 import viewer_model : ViewerModel;
 
@@ -1430,7 +1431,7 @@ version (HueDmdFmt)
     import core.thread : Thread;
     import core.time : msecs;
 
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     import gui_preview : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
@@ -1480,7 +1481,7 @@ version (HueDmdFmt)
 @("format_preview.toggle.refusesWithoutFormatter")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     import gui_preview : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
@@ -1553,7 +1554,7 @@ version (HueDmdFmt)
     import core.thread : Thread;
     import core.time : msecs;
 
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     import gui_preview : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
@@ -1605,7 +1606,7 @@ version (HueDmdFmt)
     import core.thread : Thread;
     import core.time : msecs;
 
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     import gui_preview : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
@@ -1653,7 +1654,7 @@ version (HueDmdFmt) version (Posix)
     import sparkles.test_runner.skip : skipTest;
 
     import format_dmd : startFormatForkServer;
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     import gui_preview : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;

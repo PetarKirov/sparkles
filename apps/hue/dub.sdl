@@ -15,6 +15,7 @@ stringImportPaths "src"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:syntax" path="../.."
+dependency "sparkles:source-view" path="../.."
 dependency "sparkles:diff" path="../.."
 dependency "sparkles:dsv" path="../.."
 dependency "sparkles:core-cli" path="../.."
@@ -164,16 +165,7 @@ configuration "unittest" {
     dependency "sparkles:dmd-fmt" path="../.."
     versions "HueDmdFmt"
 
-    // hue has no unittests of its own, but `dub test` still compiles its
-    // dependency sources with -unittest — and sparkles:syntax / sparkles:
-    // tree-sitter call `skipTest` (in the impl package) from their env-gated
-    // tests. Pulling the runner as a plain `dependency` links impl as a static
-    // archive positioned before those objects, so ld.bfd (single-pass) never
-    // pulls `skip.o` → undefined reference. Source-include the shim + impl
-    // instead (the cycle-safe recipe base/core-cli use) so `skipTest` compiles
-    // directly into this build.
-    sourcePaths "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
-    importPaths "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
+    dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

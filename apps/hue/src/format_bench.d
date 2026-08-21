@@ -21,8 +21,9 @@ version (HueDmdFmt):
 import std.process : environment;
 
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.syntax : builtinDark, GrammarRegistry, HighlightEvent,
+import sparkles.syntax : GrammarRegistry, HighlightEvent,
     highlightInjected, LabelSet, TsConfigCache;
+import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchIter, blackBox;

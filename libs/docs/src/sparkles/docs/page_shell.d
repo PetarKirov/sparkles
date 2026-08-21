@@ -742,7 +742,7 @@ unittest
     // light code pane inside a fixed dark surround, because the fragment and the
     // chrome were decided in different places.
     const light = resolveTheme(
-        Theme(name: "light", defaultFg: Color.fromRgb(0x24, 0x29, 0x2e),
+        SyntaxTheme(name: "light", defaultFg: Color.fromRgb(0x24, 0x29, 0x2e),
             defaultBg: Color.fromRgb(0xff, 0xff, 0xff)),
         LabelSet.fromNames(["keyword", "function"]));
     const c = themeChrome(light);

@@ -17,7 +17,7 @@ import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
-import sparkles.syntax.md.render_widgets : FenceScroll, TableScroll;
+import sparkles.source_view.markdown : FenceScroll, TableScroll;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration;
@@ -32,7 +32,9 @@ import staging : StageAction;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
-    RgbColor, Theme, toRgb;
+    RgbColor, toRgb;
+import sparkles.ui.theme : Theme;
+version (unittest) import sparkles.ui.themes : builtinDark;
 
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -771,7 +773,7 @@ struct PreviewTui
         if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
             return;
         import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
-        import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+        import sparkles.source_view.markdown : highlightedFenceRenderer,
             MdViewTheme;
         import sparkles.twoslash.render_widgets : clampOrigin,
             effectivePopupWidth, HoverViewOptions, signatureSpans;
@@ -1801,7 +1803,7 @@ struct PreviewTui
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
     import std.algorithm.searching : canFind;
 
     static immutable src = "hello\nworld\n";
@@ -1843,7 +1845,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
 
     string src;
     foreach (i; 0 .. 40)
@@ -1895,7 +1897,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+    import sparkles.syntax : MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
 
     // A paragraph whose 120-cell unbreakable word overflows a 40-column
@@ -1945,7 +1947,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+    import sparkles.syntax : MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
 
     // The wide table that used to drive the document bar now carries its own
@@ -2016,7 +2018,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+    import sparkles.syntax : MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
 
     // A 120-cell code line, once top-level and once inside a BLOCK QUOTE,
@@ -2062,7 +2064,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+    import sparkles.syntax : MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
     import std.algorithm.searching : canFind;
 
@@ -2163,7 +2165,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, MdBlock, MdBlockKind, MdDoc,
+    import sparkles.syntax : MdBlock, MdBlockKind, MdDoc,
         MdInline, MdInlineKind, Span, LabelSet;
 
     // A paragraph + a 3-line fence; folding at the fence collapses it to one
@@ -2229,7 +2231,7 @@ unittest
 unittest
 {
     import sparkles.input : Mods;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
 
     // Before this, the terminal viewer had its own copy of the keyboard
     // policy and had drifted: `g`/`G` were top/bottom while the window's `g`
@@ -2279,7 +2281,7 @@ unittest
 {
     import core.time : msecs;
     import sparkles.input : Mods;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
     import std.algorithm.searching : canFind;
 
     // `UIA2`'s claim is that one widget tree serves both backends. That is
@@ -2342,7 +2344,7 @@ version (unittest)
 @system
 unittest
 {
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
     import sparkles.twoslash.protocol : Node;
     import std.algorithm.searching : canFind;
 
@@ -2403,7 +2405,7 @@ unittest
 @("tui.wheel.horizontalNotchesAndShiftScrollSideways")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, ColAlign, LabelSet, MdBlock,
+    import sparkles.syntax : ColAlign, LabelSet, MdBlock,
         MdBlockKind, MdDoc, MdInline, MdInlineKind, Span;
     import sparkles.input.events : Mods, WheelEvent;
 
@@ -2461,7 +2463,7 @@ version (HueDmdFmt)
     import core.thread : Thread;
     import core.time : msecs;
 
-    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.syntax : LabelSet;
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -2524,7 +2526,7 @@ version (HueDmdFmt)
 {
     import dsv_view : adaptDsv, DsvCopy, DsvFlags;
     import sparkles.input : Mods;
-    import sparkles.syntax : builtinDark, LabelSet, Theme;
+    import sparkles.syntax : LabelSet;
 
     const src = "name,qty\nb,2\na,3\nc,1\n";
     auto adapted = adaptDsv(src, "csv", DsvFlags());
@@ -2587,7 +2589,7 @@ version (HueDmdFmt)
 @("tui.resize.keepsTheFirstLineInPlace")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
 
     // The end-to-end shape of issue #299 through the pane that owns the
     // terminal's geometry: narrowing re-wraps, and the row the reader was on
@@ -2629,7 +2631,7 @@ version (HueDmdFmt)
 @("tui.resize.aTallerTerminalRevealsMoreBelow")
 @system unittest
 {
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
 
     // Growing the window must only change how much of the file is visible
     // AFTER the first line — never which line that is.
@@ -2665,7 +2667,7 @@ unittest
 {
     import std.algorithm.searching : canFind, startsWith;
     import std.array : replicate;
-    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import sparkles.syntax : HighlightEvent, LabelSet;
 
     // The gutter lives inside the document tree, so a host that pans the whole
     // display list takes the line numbers off the left edge with the code —

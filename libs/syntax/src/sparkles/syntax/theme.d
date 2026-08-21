@@ -20,15 +20,28 @@ producing `ThemeRule[]` is missing.
 */
 module sparkles.syntax.theme;
 
-import sparkles.syntax.color : Color;
+public import sparkles.base.term_color : Color;
+public import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle;
 import sparkles.syntax.event : LabelId;
 import sparkles.syntax.label : LabelSet;
 
-// The theme value and its style vocabulary. `StyleSpec` is `base`'s `TermStyle`,
-// so nothing syntax-specific crosses the boundary — re-exported here so
-// `sparkles.syntax.theme.Theme`/`StyleSpec` keep resolving for every backend.
-public import sparkles.ui.theme : StyleSpec, TermStyle, TextAttr, Theme,
-    ThemeRule, UnderlineStyle;
+alias StyleSpec = TermStyle;
+
+/// One syntax rule: a dotted label selector and the style it assigns.
+struct ThemeRule
+{
+    string selector; /// dotted label name, matched by longest-dot-prefix
+    StyleSpec style; /// the whole spec assigned on match (no cascade)
+}
+
+/// A syntax theme definition containing rules and optional default colors.
+struct SyntaxTheme
+{
+    string name;
+    Color defaultFg;
+    Color defaultBg;
+    const(ThemeRule)[] rules;
+}
 
 @safe:
 
@@ -63,7 +76,7 @@ is the GC-allocating convenience wrapper. A `defaultFg`/`defaultBg` of
 `Color.defaultColor` is normalized to unset — for a renderer, "the terminal
 default" and "unspecified" both mean "emit nothing".
 */
-void writeThemeStyles(Writer)(ref Writer w, in Theme theme, LabelSet labels,
+void writeThemeStyles(Writer, T)(ref Writer w, in T theme, LabelSet labels,
     out StyleSpec defaults)
 {
     import std.range.primitives : put;
@@ -97,7 +110,7 @@ Resolves `theme` against `labels` into a freshly allocated `ResolvedTheme`.
 Configure-time only (allocates the table once); see $(LREF writeThemeStyles)
 for the `@nogc` output-range variant this delegates to.
 */
-ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
+ResolvedTheme resolveTheme(T)(in T theme, LabelSet labels) pure nothrow
 {
     import std.array : appender;
     import std.exception : assumeUnique;
@@ -116,7 +129,7 @@ ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
 @("theme.resolveTheme.longestPrefixLastWins")
 unittest
 {
-    const theme = Theme(
+    const theme = SyntaxTheme(
         name: "test",
         rules: [
             ThemeRule("string", StyleSpec(fg: Color.fromPalette(2))),
@@ -141,7 +154,7 @@ unittest
 unittest
 {
     // "str" must not match "string" — prefixes are whole dotted segments.
-    const theme = Theme(name: "test", rules: [
+    const theme = SyntaxTheme(name: "test", rules: [
         ThemeRule("str", StyleSpec(fg: Color.fromPalette(1))),
     ]);
     const labels = LabelSet.standard();
@@ -158,7 +171,7 @@ unittest
     // Resolves into a reused SmallBuffer with no GC — the interactive-previewer
     // path. `put` appends each StyleSpec, so no pre-sizing/fill is needed.
     ThemeRule[1] rules = [ThemeRule("string", StyleSpec(fg: Color.fromPalette(2)))];
-    const theme = Theme(name: "t", defaultFg: Color.fromPalette(7), rules: rules[]);
+    const theme = SyntaxTheme(name: "t", defaultFg: Color.fromPalette(7), rules: rules[]);
     const labels = LabelSet.standard();
 
     SmallBuffer!(StyleSpec, 128) styles;
@@ -176,7 +189,7 @@ unittest
 unittest
 {
     // The output-range path is identical to the GC wrapper, entry for entry.
-    const theme = Theme(name: "t", defaultBg: Color.fromPalette(235), rules: [
+    const theme = SyntaxTheme(name: "t", defaultBg: Color.fromPalette(235), rules: [
         ThemeRule("string", StyleSpec(fg: Color.fromPalette(2))),
         ThemeRule("string.special", StyleSpec(fg: Color.fromPalette(5))),
         ThemeRule("comment", StyleSpec(fg: Color.fromPalette(8))),

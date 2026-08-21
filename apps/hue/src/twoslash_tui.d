@@ -249,7 +249,7 @@ private struct TwoslashTui
                     withoutQuickinfoPrefix(tw.nodes[ni].text)) : null;
             // The registry overload renders the ddoc as markdown; without it
             // the popup shows headings and fence markers as literal text.
-            import sparkles.syntax.md.render_widgets : highlightedFenceRenderer,
+            import sparkles.source_view.markdown : highlightedFenceRenderer,
                 MdViewTheme;
 
             auto opts = HoverViewOptions(

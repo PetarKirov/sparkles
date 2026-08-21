@@ -11,7 +11,7 @@ import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEve
     ResolvedTheme, toRgb, RgbColor, GrammarRegistry, TsConfigCache,
     canonicalLanguage, extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.syntax.md.render_widgets : MdTableExtras;
+import sparkles.source_view.markdown : MdTableExtras;
 import sparkles.base.term_color : mix;
 import sparkles.test_runner.attributes : benchmark;
 
@@ -213,14 +213,14 @@ version (unittest)
     private static struct RebuildState
     {
         import sparkles.syntax.md.model : MdDoc;
-        import sparkles.syntax.md.render_widgets : MdViewOptions;
+        import sparkles.source_view.markdown : MdViewOptions;
 
         MdDoc doc;
         MdViewOptions opt;
         int w;
         size_t run()
         {
-            import sparkles.syntax.md.render_widgets : viewMarkdown;
+            import sparkles.source_view.markdown : viewMarkdown;
             import sparkles.test_runner.bench : blackBox;
             import sparkles.ui.display_list : buildDisplayList;
             import sparkles.ui.geometry : Constraints;
@@ -236,7 +236,7 @@ version (unittest)
 
     private void registerRebuildCase(PreviewModel m, ResolvedTheme theme, int w)
     {
-        import sparkles.syntax.md.render_widgets : MdViewOptions, MdViewTheme;
+        import sparkles.source_view.markdown : MdViewOptions, MdViewTheme;
         import sparkles.test_runner.bench : benchCase;
         import std.conv : text;
 

@@ -11,28 +11,23 @@ stringImportPaths "src/sparkles/twoslash/views"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:base" path="../.."
+dependency "sparkles:syntax" path="../.."
+dependency "sparkles:source-view" path="../.."
+dependency "sparkles:twoslash-protocol" path="../.."
+dependency "sparkles:wired" path="../.."
+dependency "sparkles:ui" path="../.."
+
 configuration "library" {
-    // sourceLibrary: sparkles:syntax is a sourceLibrary (ImportC types in its
-    // signatures), and twoslash re-exposes its TsConfigCache / highlightInjected
-    // in the overlay renderers' signatures, so it must compile inside each
-    // dependent too — see docs/guidelines/importc-c-libraries.md.
+    // sourceLibrary: twoslash re-exposes TsConfigCache / highlightInjected
+    // in the overlay renderers' signatures.
     targetType "sourceLibrary"
-    dependency "sparkles:base" path="../.."
-    dependency "sparkles:syntax" path="../.."
-    dependency "sparkles:twoslash-protocol" path="../.."
-    dependency "sparkles:wired" path="../.."
-    dependency "sparkles:ui" path="../.."
 }
 
 configuration "unittest" {
     // Fast path: depend on the runner shim (pulls the prebuilt impl library),
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:base" path="../.."
-    dependency "sparkles:syntax" path="../.."
-    dependency "sparkles:twoslash-protocol" path="../.."
-    dependency "sparkles:wired" path="../.."
-    dependency "sparkles:ui" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "preview_widget"
     dependency "sparkles:syntax" path="../../.."
+    dependency "sparkles:source-view" path="../../.."
 +/
 // Renders a markdown file through the WIDGET path (viewMarkdown → layout →
 // CellGrid → ANSI) — the visual parity probe for the M10 preview swap: run it
@@ -13,8 +14,8 @@ import std.stdio : write;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor, toRgb;
+import sparkles.source_view.markdown;
 import sparkles.syntax;
-import sparkles.syntax.md.render_widgets;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints;
 import sparkles.ui.interp.cells : CellGrid;

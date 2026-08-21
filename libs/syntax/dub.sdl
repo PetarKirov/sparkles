@@ -6,29 +6,27 @@ license "BSL-1.0"
 
 targetPath "build"
 
-importPaths "src"
+importPaths "src" "../test-runner/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:tree-sitter" path="../.."
 
 configuration "library" {
     // sourceLibrary so the tree-sitter engine modules (ImportC types in their
     // signatures) compile inside each dependent's build, where dub runs
     // pkg-config — see docs/guidelines/importc-c-libraries.md.
     targetType "sourceLibrary"
-    dependency "sparkles:base" path="../.."
-    dependency "sparkles:tree-sitter" path="../.."
-    dependency "sparkles:ui" path="../.."
 }
 
 configuration "unittest" {
-    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
-    // so `dub test` recompiles only this package, not the runner sources.
-    dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:base" path="../.."
-    dependency "sparkles:tree-sitter" path="../.."
-    dependency "sparkles:ui" path="../.."
+    // Cycle-safe path: test-runner-impl depends on sparkles:syntax, so a
+    // dependency on sparkles:test-runner would close a cycle. Source-include
+    // the shim and impl instead.
+    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
