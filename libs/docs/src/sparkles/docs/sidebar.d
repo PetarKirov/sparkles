@@ -286,7 +286,7 @@ string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init
     w ~= text("                  background: ", c.surface, "; border-right: 1px solid ",
         c.border, "; font-size: 0.92em; }\n");
     w ~= text("  .site-sidebar a.sb-link { color: ", c.text,
-        "; text-decoration: none; display: inline-block; padding: 0.12em 0; }\n");
+        "; text-decoration: none; display: block; padding: 0.12em 0; }\n");
     w ~= text("  .site-sidebar a.sb-link:hover { color: ", c.link, "; }\n");
     w ~= "  .site-sidebar .sb-group { margin: 0 0 0.4em; }\n";
     w ~= "  .site-sidebar summary { cursor: pointer; font-weight: 600; padding: 0.25em 0; }\n";

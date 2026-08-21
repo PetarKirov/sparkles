@@ -1325,13 +1325,22 @@ private int executeSite(in HueCli root, in Site cmd)
     string docsNavHtml;
     if (sidebarPath.length)
     {
+        import sparkles.docs.site : augmentWithListingDirs;
+
         auto loaded = loadSidebarFile(sidebarPath);
         if (loaded.hasError)
         {
             stderr.writeln("hue: cannot load sidebar ", sidebarPath, ": ", loaded.error);
             return 1;
         }
-        docsNavHtml = sidebarItemsHtml(loaded.value, cmd.siteBase);
+        // The nested docs nav carries the same "(source)" entries the
+        // VitePress sidebar gets at config eval (`DSC7`) — one algorithm,
+        // both surfaces.
+        string[] navDirs;
+        foreach (ref const node; buildSiteTree(set.entries).nodes)
+            navDirs ~= node.relPath;
+        docsNavHtml = sidebarItemsHtml(
+            augmentWithListingDirs(loaded.value, navDirs), cmd.siteBase);
     }
 
     const gopt = GalleryOptions(

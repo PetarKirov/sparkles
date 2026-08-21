@@ -23,7 +23,7 @@ import std.conv : text;
 import sparkles.wired.json : readJSONFile;
 import sparkles.wired.policy : WireOptional;
 
-import sparkles.docs.sidebar : LoadResult;
+import sparkles.docs.sidebar : LoadResult, SidebarItem;
 
 /// Path of the site-discovery knobs, relative to the repository root. JSON,
 /// like its `sidebar.json` / `docs-config.json` siblings — the spec first
@@ -222,6 +222,130 @@ string directoryRoute(scope const(char)[] rel) @safe pure
     => rel.length ? text(siteRoutePrefix, rel, "/index.html")
         : text(siteRoutePrefix, "index.html");
 
+// ── the docs-sidebar augmentation (DSC7) ────────────────────────────────────
+
+/++
+Appends each listing directory under `docs/` to the sidebar group that owns
+that part of the docs tree, so the docs nav shows the same `(source)` entries
+$(B everywhere it renders) — the VitePress site augments at config eval
+(`config.mts` `augmentSidebar`, the same algorithm), and the nested nav on
+listing pages gets it here.
+
+Ownership is by $(B direct) links only — a child that is itself a group owns
+its own directories — so `docs/research/async-io/io-uring/examples` lands
+under the group whose pages live at `/research/async-io/io-uring/`, not under
+a top-level ancestor. Immediate children only (deeper trees are reached
+through the explorer), root-owned directories skipped as noise, duplicates
+(re-augmentation) skipped by link.
+
+Mutates and returns `items`.
++/
+SidebarItem[] augmentWithListingDirs(SidebarItem[] items,
+    scope const(string)[] dirs) @safe pure
+{
+    import std.algorithm.searching : startsWith;
+    import std.algorithm.sorting : sort;
+
+    static string routeDir(string link) @safe pure nothrow
+    {
+        if (link.length == 0 || link[0] != '/')
+            return null;
+        if (link[$ - 1] == '/')
+            return link;
+        foreach_reverse (idx, char c; link)
+            if (c == '/')
+                return link[0 .. idx + 1];
+        return null;
+    }
+
+    static struct Group
+    {
+        size_t[] path;
+        string[] owned;
+    }
+
+    Group[] groups;
+    // Explicit attributes: a self-recursive nested function gets no inference.
+    void collect(scope const(SidebarItem)[] nodes, size_t[] path) @safe pure
+    {
+        foreach (i, ref const n; nodes)
+        {
+            if (n.items.length == 0)
+                continue;
+            string[] owned;
+            if (auto d = routeDir(n.link))
+                owned ~= d;
+            foreach (ref const child; n.items)
+                if (child.items.length == 0)
+                    if (auto d = routeDir(child.link))
+                        owned ~= d;
+            groups ~= Group(path ~ i, owned);
+            collect(n.items, path ~ i);
+        }
+    }
+
+    collect(items, null);
+
+    static struct Addition
+    {
+        size_t[] path;
+        SidebarItem item;
+    }
+
+    Addition[] adds;
+    foreach (dir; dirs)
+    {
+        if (!dir.startsWith("docs/"))
+            continue;
+        const route = "/" ~ dir["docs/".length .. $] ~ "/";
+        const(size_t)[] bestPath;
+        size_t bestLen;
+        foreach (ref const g; groups)
+            foreach (d; g.owned)
+                if (route.startsWith(d) && d.length > bestLen)
+                {
+                    bestPath = g.path;
+                    bestLen = d.length;
+                }
+        if (bestLen <= 1)
+            continue; // unowned, or owned only by the site root — noise
+        const rel = route[bestLen .. $];
+        size_t slashes;
+        foreach (char c; rel)
+            if (c == '/')
+                ++slashes;
+        if (slashes != 1 || rel.length < 2)
+            continue; // not an immediate child of the group's directory
+        adds ~= Addition(bestPath.dup,
+            SidebarItem(text: rel ~ " (source)", link: listingDirRouteOf(dir)));
+    }
+    adds.sort!((a, b) => a.path < b.path
+        || (a.path == b.path && a.item.text < b.item.text));
+
+    // Explicit attributes: recursive, and returning a ref into the tree.
+    static ref SidebarItem groupAt(ref SidebarItem[] nodes,
+        scope const(size_t)[] path) @safe pure
+    {
+        return path.length == 1
+            ? nodes[path[0]]
+            : groupAt(nodes[path[0]].items, path[1 .. $]);
+    }
+
+    outer: foreach (ref a; adds)
+    {
+        foreach (ref const existing; groupAt(items, a.path).items)
+            if (existing.link == a.item.link)
+                continue outer;
+        groupAt(items, a.path).items ~= a.item;
+    }
+    return items;
+}
+
+/// $(LREF directoryRoute) — a private spelling so the augmentation reads as a
+/// unit above; kept separate from the manifest section it forward-references.
+private string listingDirRouteOf(scope const(char)[] dir) @safe pure
+    => directoryRoute(dir);
+
 // ── manifest.json (DSC2) ────────────────────────────────────────────────────
 
 /// One `manifest.skipped` row.
@@ -397,4 +521,42 @@ unittest
 
     // Empty sections stay valid JSON.
     assert(manifestJson(null, null, null).canFind(`"files": {},`));
+}
+
+@("site.augmentWithListingDirs.deepOwnerImmediateChildrenOnly")
+@safe pure
+unittest
+{
+    auto sidebar = [
+        SidebarItem(text: "Overview", link: "/overview"),
+        SidebarItem(text: "Research", collapsed: true, items: [
+            SidebarItem(text: "Async I/O", items: [
+                SidebarItem(text: "Concepts", link: "/research/async-io/concepts"),
+                SidebarItem(text: "io_uring Reference", items: [
+                    SidebarItem(text: "Features",
+                        link: "/research/async-io/io-uring/features"),
+                ]),
+            ]),
+        ]),
+    ];
+    const dirs = [
+        "docs/research/async-io/io-uring/examples",       // → io_uring Reference
+        "docs/research/async-io/io-uring/examples/deep",  // not an immediate child
+        "docs/elsewhere",                                 // unowned → skipped
+        "libs/base",                                      // not under docs/ → skipped
+    ];
+    auto outp = augmentWithListingDirs(sidebar, dirs);
+
+    const iouring = outp[1].items[0].items[1];
+    assert(iouring.text == "io_uring Reference");
+    assert(iouring.items.length == 2);
+    assert(iouring.items[1].text == "examples/ (source)", iouring.items[1].text);
+    assert(iouring.items[1].link
+        == "/src/docs/research/async-io/io-uring/examples/index.html");
+
+    // No stray additions anywhere else, and re-augmenting is a no-op.
+    assert(outp[0].items.length == 0);
+    assert(outp[1].items[0].items.length == 2);
+    auto again = augmentWithListingDirs(outp, dirs);
+    assert(again[1].items[0].items[1].items.length == 2);
 }
