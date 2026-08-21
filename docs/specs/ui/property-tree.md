@@ -1,6 +1,6 @@
 # `sparkles:ui` property tree — Feature Requirements (`PRT`)
 
-_**Status:** planned · **Date:** 2026-08-20 · **Scope:** `PropertyTree!T`, the
+_**Status:** planned · **Date:** 2026-08-21 · **Scope:** `PropertyTree!T`, the
 reflective `sparkles:ui` adapter that presents one D value as an interactive,
 filterable tree of property rows, applies scalar edits, and owns a host-stored
 undo/redo model. The read path serves raylib, the terminal cell grid,
@@ -95,13 +95,17 @@ Search discovery ignores the opened set and descends through every locally
 enumerable, eligible composite within the automatic-walk budgets. The result
 contains direct matches plus the minimum ancestor closure needed to explain
 their paths, like broot's tree-as-search-result mode and hue's shipped `TRV5`
-explorer filter. Search-result edges render open, but filtering never calls
-`DisclosureState.opened` / `closed` and folding commands do not mutate that
-state while a query is present. Clearing a filter therefore restores the exact
-manual disclosure intent rather than a search-expanded approximation. A
-directly matching composite does not drag in all its unmatched descendants; a
-named **reveal in base tree** command clears the query, opens its ancestors and
-selects it when the reader wants to explore it.
+explorer filter. Search-result edges render open by default, but filtering
+never calls `DisclosureState.opened` / `closed`. While a query is present,
+folding commands act on a per-query **transient fold overlay** owned by the
+filter portion of `TreeViewState!string`, so a reader can fold a noisy context
+subtree mid-search; the overlay affects visibility only — never admission,
+ranking or match counts — and is discarded with the query. Clearing a filter
+therefore restores the exact manual disclosure intent rather than a
+search-expanded approximation. A directly matching composite does not drag in
+all its unmatched descendants; a named **reveal in base tree** command clears
+the query, opens its ancestors and selects it when the reader wants to explore
+it.
 
 Every eligible row has one `PropertySearchRecord`: stable path, display label,
 rendered scalar text when present, and `@Doc` text when present. `@hidden` rows
@@ -113,17 +117,26 @@ than fuzzy's dropped-short-part behavior, so typing one character narrows the
 tree instead of matching everything. Every query part is required, but
 different parts may land in different record fields (for example
 `opacity 0.5` may match label plus value). A field longer than the fuzzy
-candidate capacity is analyzed as source-offset-preserving Unicode-boundary
-chunks with a one-query-span overlap; it is never truncated silently. The
-aggregate score is the arithmetic mean of the part scores. Ties prefer a label
-match, then path, value and documentation; then shallower depth; then the
-canonical path's byte order. This is a total order and does not depend on walk,
-hash or worker order.
+candidate capacity (4,096 analyzed units / 4,096 source bytes — fuzzy refuses
+such a candidate as `candidateTooLong` rather than truncating it) is analyzed
+as source-offset-preserving Unicode-boundary chunks with a one-query-span
+overlap; the chunking is this component's own layer over that refusal, not an
+existing fuzzy facility, and a field is never truncated silently. The
+aggregate score is the floor of the arithmetic mean of the part scores —
+fuzzy's own intra-candidate rule. Ties prefer a label match, then path, value
+and documentation; then shallower depth; then the canonical path's byte order.
+This is property-tree's own total order layered over fuzzy's integer part
+scores — it deliberately replaces fuzzy's default recency/id tie-breaking,
+which has no meaning for property rows — and does not depend on walk, hash or
+worker order.
 
 The builder scores during discovery instead of materialising a full hidden
 `TreeData` and filtering it afterward. It retains the best direct matches in a
-`sparkles.fuzzy.TopK`; the default match target is ten times the positive
-viewport row target, bounded by `maxNodes`. It then reconstructs their ancestor
+`sparkles:fuzzy` `TopK` (defined in `sparkles.fuzzy.rank`, re-exported by the
+package); the match target is ten times the requesting pane's viewport row
+count, read from that pane's `TreeViewState` at rebuild — so the projection
+stays a pure function of `(subject, query, policy, target rows)` and a resize
+is simply another rebuild — bounded by `maxNodes`. It then reconstructs their ancestor
 closure in declaration / collection order, dropping lowest-ranked matches and
 now-unneeded ancestors until the flat result also fits `maxNodes`. Ranking
 therefore decides admission and the initial best match, while visible siblings
@@ -148,10 +161,12 @@ On the first empty-to-non-empty query transition, the filter portion of
 (`sel - top`). Each later query rebuild preserves the current selection when
 that path remains, otherwise selects the highest-ranked direct match. Named
 next/previous-match commands cycle through direct matches in visible tree
-order, skipping ancestors and synthetic rows. Accepting the editor keeps the
-query, result and captured base anchor. Clearing it restores the captured path
-at the same viewport row, falling back to its nearest visible ancestor and the
-ordinary clamp; only then is the anchor discarded.
+order, skipping ancestors, synthetic rows and rows hidden by a transient fold.
+Accepting the editor keeps the query, result and captured base anchor.
+Clearing it restores the captured path at the same viewport row, falling back
+to its nearest visible ancestor and the ordinary clamp; only then is the
+anchor discarded. **Reveal in base tree** is the exception: it clears the
+query, discards the anchor, and selects its own target instead.
 
 Every query mutation advances a monotonically increasing generation. The
 locally enumerable v1 walk may complete synchronously under the hard budgets;
@@ -162,9 +177,9 @@ search job may retain `T*`; it either receives `ref T` for its bounded step or
 works from an owned, generation-bound search-record snapshot.
 
 Filtering must not break an edit transaction. A path with a pending preview is
-pinned into the result with its ancestors even if the previewed value stops
-matching; it remains selected until commit, cancellation or stale-interaction
-refusal ends the group. The next rebuild then applies the query normally. Undo,
+pinned into every pane's result with its ancestors even if the previewed value
+stops matching; it remains selected — in the pane that owns the interaction —
+until commit, cancellation or stale-interaction refusal ends the group. The next rebuild then applies the query normally. Undo,
 redo and an ordinary committed edit likewise rebuild the result because the
 rendered value and `@ShowIf` eligibility may have changed.
 
@@ -178,12 +193,20 @@ never the meaning of a row or the edit dispatch behind it.
 
 Every row has one readable, persistable path. The base grammar is
 `name ( "." name | "[" digits "]" )*`: members use `style.opacity`, array
-elements use `stops[2]`. `at!"style.opacity"(subject)` is a compile-time-checked,
-`ref`-returning direct access; a typo is a build error. `resolve` parses the
-same grammar at run time and returns a refusal for a bad member, bad index or
-null pointer rather than faulting. The two forms are differentially equal over
-all paths the planner emits, as proved by
-[`path-addressing.d`](../../research/property-tree/examples/path-addressing.d).
+elements use `stops[2]`. Erased child names are not restricted to D
+identifiers — a `JsonValue`-shaped subject may hold keys containing `.`, `[`,
+spaces or leading digits — so the grammar adds a quoted segment: `["…"]`
+addresses a child by arbitrary name, with `\"` and `\\` escapes. The path
+emitter uses the bare form exactly when the name is identifier-shaped and the
+quoted form otherwise, so every emitted path re-parses to the same segments.
+`at!"style.opacity"(subject)` is a compile-time-checked, `ref`-returning
+direct access; a typo is a build error. `resolve` parses the same grammar at
+run time and returns a refusal for a bad member, bad index or null pointer
+rather than faulting. The two forms are differentially equal over all
+base-grammar paths the planner emits, and the quoted round-trip is proved in
+the same spike, by
+[`path-addressing.d`](../../research/property-tree/examples/path-addressing.d);
+quoted segments, like keyed ones below, are runtime-resolved only.
 
 Index paths are deliberately positional in v1. This is simple and useful for
 fixed collections, but deleting element zero re-points every later opened row,
@@ -194,7 +217,11 @@ requires keys to be unique within that collection. A duplicate key produces a
 visible diagnostic row and refuses addressing; it never falls back to an index.
 The keyed extension is runtime-resolved because `[#7]` is not a D field-access
 expression; the compile-time direct-access guarantee remains exact for the
-base positional grammar.
+base positional grammar. The element-provided key is a deliberate departure
+from the survey spike's first fix, which minted the id in an adapter-owned
+table: identity belongs beside the element, not in an ambient side table
+([`PRN1`, `PRN2`](./principles.md)), and the extended spike proves the
+intrusive form, duplicate refusal included (C25).
 
 Before rebuilding, the adapter remembers the selected row's path and restores
 that path in the new rows. If it no longer exists, it selects the nearest
@@ -209,24 +236,27 @@ strings remain leaves. `@opaqueValue` makes any type a leaf rendered through
 its own `toString`, the script-free equivalent of VS Code's `Complex` escape.
 An opaque value is never editable merely because it has text.
 
-The compile-time metadata vocabulary is `@Label`, `@Group`, `@Doc`, `@Range`,
-`@hidden`, `@readOnly`, `@Editor` and `@ShowIf`. `@Editor` names a symbol that
-must compile for the concrete supported leaf type and emit a compatible
-`EditValue`; it is not a registry key and cannot make an arbitrary opaque value
-assignable.
+The compile-time metadata vocabulary is `@Label`, `@Doc`, `@Range`, `@hidden`,
+`@readOnly`, `@Editor` and `@ShowIf`. (`@Group` exists in the research spike's
+vocabulary but is deferred until its semantics are defined — see Deferred.)
+`@Editor` names a symbol that must compile for the concrete supported leaf
+type and emit a compatible `EditValue`; it is not a registry key and cannot
+make an arbitrary opaque value assignable.
 `@ShowIf("kind == FillKind.gradient")` is compiled into a typed `@safe`
 predicate over the enclosing value and evaluated on every rebuild. Bad member
-names or incompatible custom editors are build errors. The complete dispatch,
-including the opaque escape and value-dependent predicate, is proved by
+names or incompatible custom editors are build errors, shown by the spike's
+negative-compile probes (C27). The complete dispatch, including the opaque
+escape and value-dependent predicate, is proved by
 [`leaf-dispatch.d`](../../research/property-tree/examples/leaf-dispatch.d).
 
 All surfaces ask one shared `nodeExpandable` projection. It reads a node's
 optional `expandable` capability and falls back to structural
 `TreeData.hasChildren`. `activate` already has this rule; `treeView`,
-`writeTreeText` and `collapseOrUp` must use it too. Otherwise a closed composite
-whose lazy children do not exist yet is painted as a leaf, and Left climbs
-instead of closing it. The text target includes the same open/closed/leaf/capped
-meaning rather than publishing a different tree.
+`writeTreeText` and `collapseOrUp` must use it too. Today `treeView` paints a
+closed lazy composite as a leaf, `collapseOrUp` climbs instead of closing it,
+and `writeTreeText` publishes no open/closed/leaf distinction at all; after
+the fix the text target includes the same open/closed/leaf/capped meaning
+rather than publishing a different tree.
 
 ### Edits and refusals are values
 
@@ -297,8 +327,12 @@ no-op inverse demonstrated by
 The first successful edit of a new interaction clears redo. Refused edits do
 not change history. History is bounded by both `maxHistoryEntries = 256` and
 `maxHistoryBytes = 1_048_576` logical payload bytes by default; after a commit,
-oldest undo entries are evicted whole until both limits hold. Moving entries
-between undo and redo does not change the combined budget.
+oldest undo entries are evicted whole until both limits hold. The
+just-committed entry is always retained, even when it alone exceeds the byte
+bound: eviction removes older entries and stops, so the entry bound stays
+hard, the byte bound is a target the newest entry may exceed, and undo of the
+latest commit always remains possible. Moving entries between undo and redo
+does not change the combined budget.
 
 Collection add/remove/reorder and sum-variant replacement are structural
 edits. They are not exposed in v1, and therefore cannot bypass history as
@@ -324,11 +358,14 @@ the text editor. Script-free HTML always applies
 `PropertyTreePolicy(readOnly: true)` and renders real values, documentation,
 refusals and cuts without dead controls.
 
-String fields remain read-only with a visible `needs EDT` marker until
-[`EDT1`–`EDR5`](./editor.md) ship; property-tree does not invent a second text
-editor. The later string control composes that component and keeps property
-history as the outer value-level transaction rather than creating competing
-undo stacks.
+String fields remain read-only with a visible `needs EDT` marker until the
+editor spec ships — the `EDT` state machine, the `EDI` backend text-input/IME
+tier and the `EDR` widget of [`editor.md`](./editor.md); `EDI3` (raylib has no
+IME composition) and `EDI4` (the Android soft keyboard) are the hard half of
+that gate for this component's targets. Property-tree does not invent a second
+text editor. The later string control composes that component and keeps
+property history as the outer value-level transaction rather than creating
+competing undo stacks.
 
 ### Corrections to the survey snapshot
 
@@ -345,54 +382,60 @@ approaches, not a competing requirement.
 
 ## Requirements (`PRT`)
 
-| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                              | Status      | Traces to                                                                  |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------- |
-| PRT1  | `PropertyTree!T` must be an **adapter over the existing tree**: one per-rebuild `TreeData!PropertyNode`, host-owned `TreeViewState!string`, and the existing flatten/interaction/view functions. It must not add another retained or recursive node model.                                                                                                                               | not started | `WGT12`, `VMD1`–`VMD7`; `tree-adapter.d`                                   |
-| PRT2  | Every persistent concern must be a **named host-owned value**. The adapter must receive `ref T` for each rebuild/edit and must not retain `T*`; expansion/view state and edit history remain separately ownable and shareable.                                                                                                                                                           | not started | `PRN1`, `PRN2`, `PRN7`; `tree-adapter.d` C24; `run_app.d` frame model      |
-| PRT3  | Reflection must use one **type-only** template walk. Path, depth, opened state and budgets are values, so a self-referential type compiles at runtime and at CTFE without a visited-type set, delegate-per-node erasure, registry or caller branch.                                                                                                                                      | not started | `type-only-instantiation.d`; `open-set-descent.d` C1–C2                    |
-| PRT4  | Descent must materialise only opened children. Automatic descent, including `allOpen`, must terminate under `PropertyTreePolicy(maxDepth: 16, maxNodes: 5_000)` defaults and emit a visible, non-editable `⋯ (capped)` row at either cut; limits must be host-configurable positive values.                                                                                              | not started | `open-set-descent.d` C2–C3; `STM5`; DevTools fetch policy                  |
-| PRT5  | A statically typed erased subject may provide `propChildren`, `propExpandable` and `propText`; the same walk must cross between static and erased children by capability presence. The v1 erased seam is read-only unless a future typed edit capability is present.                                                                                                                     | not started | `erased-subject.d` C16–C19; `VMD6`                                         |
-| PRT6  | Row addresses must use `name(.name\|[index])*`. `at!P(ref subject)` must be a compile-time-checked direct `ref` access for that grammar; runtime `resolve` must implement the same segments and refuse malformed paths, missing members, out-of-range indices and null pointer hops without faulting.                                                                                    | not started | `path-addressing.d` C8–C10                                                 |
-| PRT7  | Collection indices are positional by default. An element exposing unique `ulong propElementKey() const` must instead use `[#key]` for disclosure, selection, pending edits and runtime resolution; duplicate keys must produce a visible diagnostic and no positional fallback.                                                                                                          | not started | `path-addressing.d` C11; rjsf synthetic row keys                           |
-| PRT8  | Rebuild must restore selection by the prior row path, falling back to its nearest visible ancestor and then the normal clamp. Thus stable element keys preserve selection through reorder, while a removed selection degrades predictably.                                                                                                                                               | not started | `VMD2`, `VMD7`; `path-addressing.d` C11                                    |
-| PRT9  | The metadata vocabulary must be `@Label`, `@Group`, `@Doc`, `@Range`, `@hidden`, `@readOnly`, `@Editor`, `@ShowIf` and type-level `@opaqueValue`; invalid metadata/editor combinations must fail compilation.                                                                                                                                                                            | not started | `leaf-dispatch.d` C5–C7                                                    |
-| PRT10 | `@ShowIf` must compile its expression into a typed `@safe` predicate over the enclosing value and evaluate it per rebuild; there must be no `void*`, untyped callback or runtime script evaluation.                                                                                                                                                                                      | not started | `leaf-dispatch.d` C6; `PRN8`                                               |
-| PRT11 | Leaf dispatch must be a closed `static if` mapping to boolean, integral, floating, text, enumeration or opaque. `@opaqueValue` uses the type's `toString` and remains read-only in v1; `@Editor` may override only a supported leaf with a type-correct editor that emits compatible `EditValue`s.                                                                                       | not started | `leaf-dispatch.d` C4/C7; VS Code `Complex`; `PRN5`, `PRN12`                |
-| PRT12 | One shared `nodeExpandable` projection (optional node `expandable`, structural fallback) must drive `activate`, `treeView`, `writeTreeText` and `collapseOrUp`, including the same leaf/open/closed/capped meaning on the plain-text target.                                                                                                                                             | not started | `tree-adapter.d` C22; `INS5`; `VMD6`–`VMD7`                                |
-| PRT13 | V1 editing must cover bool, enum, integral and floating leaves through pointer/key controls. Strings must render read-only with `needs EDT` until `EDT`/`EDR` ship; script-free HTML must apply the read-only policy as its complete, intentional mode.                                                                                                                                  | not started | `EDT1`–`EDR5`; `WGT14`; DevTools read-only inspector                       |
-| PRT14 | `Edit(path, EditValue, phase)` and `Applied(inverse \| Refusal)` must be owned Regular values. Runtime user/input failures must be refusal values, not exceptions, and an `in Edit` string must be copied before it can enter the subject or history.                                                                                                                                    | not started | `edit-commands.d` C12; `PRN6`; `dip1000` evidence                          |
-| PRT15 | Generated assignment must be lossless and total over supported leaves: check signedness/width, enum membership, floating representation and `@Range` before mutation. `EditValue` equality must be total, including NaN payloads, so history preconditions are coherent.                                                                                                                 | not started | `PRN5`, `PRN6`, `PRN11`; `leaf-dispatch.d` range metadata                  |
-| PRT16 | `@readOnly` and `PropertyTreePolicy(readOnly: true)` must refuse inside the generated mutation dispatch. A view may omit or disable an affordance, but no alternate view may bypass the policy.                                                                                                                                                                                          | not started | `edit-commands.d` C13; script-free HTML doctrine                           |
-| PRT17 | `PropertyEditState` must own undo, redo, the pending preview group and path-addressed refusal display as one serialisable value stored per logical subject. Multiple panes over one subject share it; replacing the logical subject clears it.                                                                                                                                           | not started | `PRN1`, `PRN6`; frame-model table in `comparison.md`                       |
-| PRT18 | A successful commit must store a `HistoryEntry(path, before, after)`. Undo may apply only when the current value equals `after`; redo only when it equals `before`. A stale/missing path must refuse and leave the subject and both stacks unchanged.                                                                                                                                    | not started | `edit-commands.d` C12; local-reasoning contracts; external-mutation hazard |
-| PRT19 | Preview grouping must span exactly the first successful preview through the next commit on the same path, preserving the pre-preview value. Later previews add no entry; commit without preview adds one; other-path/history operations refuse while pending; each step checks the last emitted value; release/cancel/focus loss commits; completed groups never merge.                  | not started | `edit-commands.d` C14; Godot `MERGE_ENDS`                                  |
-| PRT20 | The first successful edit of a new interaction must clear redo; refusals must not. Combined undo/redo history must default to at most 256 entries and 1,048,576 logical payload bytes, evicting oldest undo entries whole after commit until both bounds hold.                                                                                                                           | not started | value-semantic undo; `PRN1`, `PRN6`                                        |
-| PRT21 | Edit refusals and validation failures must render **inline at the addressed row**, survive rebuilding as part of `PropertyEditState`, clear on that path's next success, and never require a modal surface.                                                                                                                                                                              | not started | VS Code inline validation; WinForms modal contrast; `PRN8`, `PRN9`         |
-| PRT22 | Collection add/remove/reorder and variant replacement must not be exposed in v1. They may ship only with a reversible value-semantic structural `Edit` case and the same staleness contract; variant replacement must isolate the directional `SumType` hazard in exactly one documented `@trusted` seam.                                                                                | not started | `edit-commands.d` C15; `PRN5`; rjsf variant migration                      |
-| PRT23 | Undo and redo must be named component commands with availability queries for the host's binding table and exhaustive dispatch. The component must not hard-code keys, chords or platform affordances.                                                                                                                                                                                    | not started | `KEY1`, `KEY11`; Android input surface                                     |
-| PRT24 | Templates must infer attributes; non-templates must be explicitly `@safe`. The only planned `@trusted` operation is structural variant overwrite with the precondition that no reference into the old payload survives the call.                                                                                                                                                         | not started | `edit-commands.d` C15; project safety rules                                |
-| PRT25 | A successful edit followed by rebuild must refresh values and conditional visibility while preserving opened paths, restored selection, viewport bounds, history and any pending same-path preview.                                                                                                                                                                                      | not started | `tree-adapter.d` C21/C23; `TreeStep.rebuild`; `VMD2`, `VMD7`               |
-| PRT26 | The read model and all semantic edit transitions must be backend-independent. Raylib, TUI and Android may realise controls differently; HTML must render the same rows/readouts/cuts/refusals without an inert editing affordance.                                                                                                                                                       | not started | `PRN8`, `PRN9`; four-target constraint; `INS5`                             |
-| PRT27 | Implementation must live in `sparkles.ui.property_tree` (metadata, walk, paths, edits, adapter) and `sparkles.ui.components.property_view` (presentation), with the expandability fix kept in the existing tree/inspector modules rather than copied into the adapter.                                                                                                                   | not started | `PRN8`, `PRN10`; `tree_widget.d`, `tree_view.d`, `inspector.d`             |
-| PRT28 | Tests must include CTFE/runtime path differential cases, cyclic/open/all-open cuts, null/bad paths, UDA compile failures, stable-key reorder and duplicate cases, policy bypass attempts, preview grouping, stale undo/redo, history eviction, floating totality, all four target renderings, the one trusted seam's precondition, and the complete filtering matrix in `PRT29`–`PRT34`. | not started | seven property-tree design spikes; `PRN11`; `INS5`                         |
-| PRT29 | A non-empty shared-tree query must rebuild a distinct **search-result projection** from the subject: direct matches plus their minimum ancestor closure, independent of the opened set. Filtering must neither read disclosure to limit discovery nor mutate it; clearing must restore the prior disclosure projection exactly.                                                          | not started | `VMD7`; `TRV5`; broot dual-tree/search-result model; VS Code model swap    |
-| PRT30 | Search records must cover stable path, display label, rendered scalar value and `@Doc`, excluding `@hidden`/false-`@ShowIf` rows. All query parts must match across those fields through `sparkles:fuzzy` `codePath` semantics, with exact one-unit matching and lossless chunking for over-capacity fields; ranking must be total and canonical witness ranges retained.                | not started | `sparkles:fuzzy` §§2–6; broot fuzzy scoring/highlighting                   |
-| PRT31 | Filtering must score during bounded discovery, retain up to `10 * targetRows` best direct matches (bounded by `maxNodes`), reconstruct their ancestor closure in source order, and emit honest non-selectable omitted/incomplete rows. Query generations must cancel stale chunked/parallel work, which may retain owned records but never `T*`.                                         | not started | broot BFS/Top-K/pruning/cancellation; `sparkles:fuzzy` §§6/9; `PRN1`       |
-| PRT32 | Filter state must capture the pre-filter selection path and viewport row, preserve a still-visible selection across query edits, otherwise choose the best direct match, and restore the base anchor on clear. Next/previous-match must skip context/status rows; reveal-in-base must clear, open ancestors and select the result without hard-coded keys.                               | not started | broot selection restoration; `TRV3`, `TRV7`; `VMD2`, `VMD7`; `KEY1`        |
-| PRT33 | Nodes must distinguish direct match, ancestor context and synthetic status, retain field-specific highlight spans, and expose why a row matched in color-independent text. Invalid queries keep the last complete result with an explicit error; zero results are explicit; HTML supports precomputed results/`<mark>` but no inert live-search control.                                 | not started | broot direct-match/pruning rendering; `PRN8`–`PRN9`; `TRB3`                |
-| PRT34 | A path with a pending edit preview must remain pinned with its ancestors and selection until that interaction ends. Commit/cancel/refusal, undo, redo and committed edits must then re-evaluate filtering so value matches and conditional visibility cannot strand an editor or pointer capture.                                                                                        | not started | `PRT19`, `PRT25`; `SCV8`; frame-model local reasoning                      |
+| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Status      | Traces to                                                                  |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------------- |
+| PRT1  | `PropertyTree!T` must be an **adapter over the existing tree**: one per-rebuild `TreeData!PropertyNode`, host-owned `TreeViewState!string`, and the existing flatten/interaction/view functions. It must not add another retained or recursive node model.                                                                                                                                                                                                                                                                  | not started | `WGT12`, `VMD1`–`VMD7`; `tree-adapter.d`                                   |
+| PRT2  | Every persistent concern must be a **named host-owned value**. The adapter must receive `ref T` for each rebuild/edit and must not retain `T*`; expansion/view state and edit history remain separately ownable and shareable.                                                                                                                                                                                                                                                                                              | not started | `PRN1`, `PRN2`, `PRN7`; `tree-adapter.d` C24; `run_app.d` frame model      |
+| PRT3  | Reflection must use one **type-only** template walk. Path, depth, opened state and budgets are values, so the one walk over a self-referential type builds, and runs at runtime and at CTFE, without a visited-type set, delegate-per-node erasure, registry or caller branch.                                                                                                                                                                                                                                              | not started | `type-only-instantiation.d`; `open-set-descent.d` C1–C2                    |
+| PRT4  | Descent must materialise only opened children. Automatic descent, including `allOpen`, must terminate under `PropertyTreePolicy(maxDepth: 16, maxNodes: 5_000)` defaults and emit a visible, non-editable `⋯ (capped)` row at either cut; limits must be host-configurable positive values.                                                                                                                                                                                                                                 | not started | `open-set-descent.d` C2–C3; `STM5`; DevTools fetch policy                  |
+| PRT5  | A statically typed erased subject may provide `propChildren`, `propExpandable` and `propText`; the same walk must cross between static and erased children by capability presence. The v1 erased seam is read-only unless a future typed edit capability is present.                                                                                                                                                                                                                                                        | not started | `erased-subject.d` C16–C19; `VMD6`                                         |
+| PRT6  | Row addresses must use `name(.name\|[index])*`, plus a quoted segment `["name"]` (backslash escapes) for erased child names outside the identifier subset; the emitter must pick bare exactly when the name is identifier-shaped so every emitted path re-parses. `at!P(ref subject)` must be a compile-time-checked direct `ref` access for the base grammar; runtime `resolve` must implement all segment forms and refuse malformed paths, missing members, out-of-range indices and null pointer hops without faulting. | not started | `path-addressing.d` C8–C10, C26                                            |
+| PRT7  | Collection indices are positional by default. An element exposing unique `ulong propElementKey() const` must instead use `[#key]` for disclosure, selection, pending edits and runtime resolution; duplicate keys must produce a visible diagnostic and no positional fallback.                                                                                                                                                                                                                                             | not started | `path-addressing.d` C11/C25; rjsf synthetic row keys                       |
+| PRT8  | Rebuild must restore selection by the prior row path, falling back to its nearest visible ancestor and then the normal clamp. Thus stable element keys preserve selection through reorder, while a removed selection degrades predictably.                                                                                                                                                                                                                                                                                  | not started | `VMD2`, `VMD7`; `path-addressing.d` C11                                    |
+| PRT9  | The metadata vocabulary must be `@Label`, `@Doc`, `@Range`, `@hidden`, `@readOnly`, `@Editor`, `@ShowIf` and type-level `@opaqueValue` (`@Group` is deferred); invalid metadata/editor combinations must fail compilation.                                                                                                                                                                                                                                                                                                  | not started | `leaf-dispatch.d` C5–C7, C27                                               |
+| PRT10 | `@ShowIf` must compile its expression into a typed `@safe` predicate over the enclosing value and evaluate it per rebuild; there must be no `void*`, untyped callback or runtime script evaluation.                                                                                                                                                                                                                                                                                                                         | not started | `leaf-dispatch.d` C6; `PRN8`                                               |
+| PRT11 | Leaf dispatch must be a closed `static if` mapping to boolean, integral, floating, text, enumeration or opaque. `@opaqueValue` uses the type's `toString` and remains read-only in v1; `@Editor` may override only a supported leaf with a type-correct editor that emits compatible `EditValue`s.                                                                                                                                                                                                                          | not started | `leaf-dispatch.d` C4/C7/C27; VS Code `Complex`; `PRN5`, `PRN12`            |
+| PRT12 | One shared `nodeExpandable` projection (optional node `expandable`, structural fallback) must drive `activate`, `treeView`, `writeTreeText` and `collapseOrUp`, including the same leaf/open/closed/capped meaning on the plain-text target.                                                                                                                                                                                                                                                                                | not started | `tree-adapter.d` C22; `INS5`; `VMD6`–`VMD7`                                |
+| PRT13 | V1 editing must cover bool, enum, integral and floating leaves through pointer/key controls. Strings must render read-only with `needs EDT` until `EDT`/`EDR` ship; script-free HTML must apply the read-only policy as its complete, intentional mode.                                                                                                                                                                                                                                                                     | not started | `EDT`/`EDI`/`EDR`; `WGT14`; DevTools read-only inspector                   |
+| PRT14 | `Edit(path, EditValue, phase)` and `Applied(inverse \| Refusal)` must be owned Regular values. Runtime user/input failures must be refusal values, not exceptions, and an `in Edit` string must be copied before it can enter the subject or history.                                                                                                                                                                                                                                                                       | not started | `edit-commands.d` C12; `PRN6`; `dip1000` evidence                          |
+| PRT15 | Generated assignment must be lossless and total over supported leaves: check signedness/width, enum membership, floating representation and `@Range` before mutation. `EditValue` equality must be total, including NaN payloads, so history preconditions are coherent.                                                                                                                                                                                                                                                    | not started | `PRN5`, `PRN6`, `PRN11`; `leaf-dispatch.d` range metadata                  |
+| PRT16 | `@readOnly` and `PropertyTreePolicy(readOnly: true)` must refuse inside the generated mutation dispatch. A view may omit or disable an affordance, but no alternate view may bypass the policy.                                                                                                                                                                                                                                                                                                                             | not started | `edit-commands.d` C13; script-free HTML doctrine                           |
+| PRT17 | `PropertyEditState` must own undo, redo, the pending preview group and path-addressed refusal display as one serialisable value stored per logical subject. Multiple panes over one subject share it; replacing the logical subject clears it.                                                                                                                                                                                                                                                                              | not started | `PRN1`, `PRN6`; frame-model table in `comparison.md`                       |
+| PRT18 | A successful commit must store a `HistoryEntry(path, before, after)`. Undo may apply only when the current value equals `after`; redo only when it equals `before`. A stale/missing path must refuse and leave the subject and both stacks unchanged.                                                                                                                                                                                                                                                                       | not started | `edit-commands.d` C12; local-reasoning contracts; external-mutation hazard |
+| PRT19 | Preview grouping must span exactly the first successful preview through the next commit on the same path, preserving the pre-preview value. Later previews add no entry; commit without preview adds one; other-path/history operations refuse while pending; each step checks the last emitted value; release/cancel/focus loss commits; completed groups never merge.                                                                                                                                                     | not started | `edit-commands.d` C14; Godot `MERGE_ENDS`                                  |
+| PRT20 | The first successful edit of a new interaction must clear redo; refusals must not. Combined undo/redo history must default to at most 256 entries and 1,048,576 logical payload bytes, evicting oldest undo entries whole after commit until both bounds hold; the just-committed entry is always retained even when it alone exceeds the byte bound.                                                                                                                                                                       | not started | value-semantic undo; `PRN1`, `PRN6`                                        |
+| PRT21 | Edit refusals and validation failures must render **inline at the addressed row**, survive rebuilding as part of `PropertyEditState`, clear on that path's next success, and never require a modal surface.                                                                                                                                                                                                                                                                                                                 | not started | VS Code inline validation; WinForms modal contrast; `PRN8`, `PRN9`         |
+| PRT22 | Collection add/remove/reorder and variant replacement must not be exposed in v1. They may ship only with a reversible value-semantic structural `Edit` case and the same staleness contract; variant replacement must isolate the directional `SumType` hazard in exactly one documented `@trusted` seam.                                                                                                                                                                                                                   | not started | `edit-commands.d` C15; `PRN5`; rjsf variant migration                      |
+| PRT23 | Undo and redo must be named component commands with availability queries for the host's binding table and exhaustive dispatch. The component must not hard-code keys, chords or platform affordances.                                                                                                                                                                                                                                                                                                                       | not started | `KEY1`, `KEY11`; Android input surface                                     |
+| PRT24 | Templates must infer attributes; non-templates must be explicitly `@safe`. The only planned `@trusted` operation is structural variant overwrite with the precondition that no reference into the old payload survives the call.                                                                                                                                                                                                                                                                                            | not started | `edit-commands.d` C15; project safety rules                                |
+| PRT25 | A successful edit followed by rebuild must refresh values and conditional visibility while preserving opened paths, restored selection, viewport bounds, history and any pending same-path preview.                                                                                                                                                                                                                                                                                                                         | not started | `tree-adapter.d` C21/C23; `TreeStep.rebuild`; `VMD2`, `VMD7`               |
+| PRT26 | The read model and all semantic edit transitions must be backend-independent. Raylib, TUI and Android may realise controls differently; HTML must render the same rows/readouts/cuts/refusals without an inert editing affordance.                                                                                                                                                                                                                                                                                          | not started | `PRN8`, `PRN9`; four-target constraint; `INS5`                             |
+| PRT27 | Implementation must live in `sparkles.ui.property_tree` (metadata, walk, paths, edits, adapter) and `sparkles.ui.components.property_view` (presentation), with the expandability fix kept in the existing tree/inspector modules rather than copied into the adapter.                                                                                                                                                                                                                                                      | not started | `PRN8`, `PRN10`; `tree_widget.d`, `tree_view.d`, `inspector.d`             |
+| PRT28 | Read-path tests must include CTFE/runtime path differential cases, quoted-segment round-trips, cyclic/open/all-open cuts, null/bad paths, UDA compile failures, stable-key reorder and duplicate cases, all four target renderings, and the read-side filtering matrix in `PRT29`–`PRT33`. (`PRT35` is the write-path matrix.)                                                                                                                                                                                              | not started | seven property-tree design spikes; `PRN11`; `INS5`                         |
+| PRT29 | A non-empty shared-tree query must rebuild a distinct **search-result projection** from the subject: direct matches plus their minimum ancestor closure, independent of the opened set. Filtering must neither read disclosure to limit discovery nor mutate it; folding while filtered must act on a per-query transient overlay (visibility only, discarded with the query); clearing must restore the prior disclosure projection exactly.                                                                               | not started | `VMD7`; `TRV5`; broot dual-tree/search-result model; VS Code model swap    |
+| PRT30 | Search records must cover stable path, display label, rendered scalar value and `@Doc`, excluding `@hidden`/false-`@ShowIf` rows. All query parts must match across those fields through `sparkles:fuzzy` `codePath` semantics, with exact one-unit matching and lossless chunking for over-capacity fields; ranking must be total and canonical witness ranges retained.                                                                                                                                                   | not started | `sparkles:fuzzy` §§2–6; broot fuzzy scoring/highlighting                   |
+| PRT31 | Filtering must score during bounded discovery, retain up to ten times the requesting pane's viewport row target — read from its `TreeViewState` at rebuild — in best direct matches (bounded by `maxNodes`), reconstruct their ancestor closure in source order, and emit honest non-selectable omitted/incomplete rows. Query generations must cancel stale chunked/parallel work, which may retain owned records but never `T*`.                                                                                          | not started | broot BFS/Top-K/pruning/cancellation; `sparkles:fuzzy` §§6/9; `PRN1`       |
+| PRT32 | Filter state must capture the pre-filter selection path and viewport row, preserve a still-visible selection across query edits, otherwise choose the best direct match, and restore the base anchor on clear. Next/previous-match must skip context/status rows and rows hidden by a transient fold; reveal-in-base must clear the query, discard the captured anchor, open ancestors and select the result without hard-coded keys.                                                                                       | not started | broot selection restoration; `TRV3`, `TRV7`; `VMD2`, `VMD7`; `KEY1`        |
+| PRT33 | Nodes must distinguish direct match, ancestor context and synthetic status, retain field-specific highlight spans, and expose why a row matched in color-independent text. Invalid queries keep the last complete result with an explicit error; zero results are explicit; HTML supports precomputed results/`<mark>` but no inert live-search control.                                                                                                                                                                    | not started | broot direct-match/pruning rendering; `PRN8`–`PRN9`; `TRB3`                |
+| PRT34 | A path with a pending edit preview must remain pinned with its ancestors in every pane's projection — selected in the interaction's own pane — until that interaction ends. Commit/cancel/refusal, undo, redo and committed edits must then re-evaluate filtering so value matches and conditional visibility cannot strand an editor or pointer capture.                                                                                                                                                                   | not started | `PRT19`, `PRT25`; `SCV8` precedent; frame-model local reasoning            |
+| PRT35 | Write-path tests must include policy bypass attempts, preview grouping, stale undo/redo, history eviction including the oversized-newest-entry rule, floating-equality totality, the one trusted seam's precondition, and the filter/edit interplay in `PRT34`.                                                                                                                                                                                                                                                             | not started | `edit-commands.d` C12–C15; `PRN11`                                         |
 
 ## Milestones
 
-| Milestone | Independently shippable scope                                                                                                                                                                             | Status      | Requirements                              |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------- |
-| P0        | Read path on all four targets: type-only disclosure/search projections, ranked fuzzy filtering, metadata, paths, dynamic read seam, stable keys, caps, shared expandability and plain-text/HTML rendering | not started | `PRT1`–`PRT12`, `PRT24`–`PRT33`           |
-| P1        | Scalar write path on raylib/TUI/Android: bool/enum/numeric controls, generated refusal/validation, read-only policy, per-subject bounded undo/redo and keymap commands                                    | not started | `PRT13`–`PRT21`, `PRT23`–`PRT28`, `PRT34` |
-| P2        | String leaves by composition after the shared editor lands; property-level commit/history remains outside the editor's internal text operation log                                                        | deferred    | `PRT13`; gated by `EDT1`–`EDR5`           |
-| P3        | Structural editing only after reversible collection/variant edit cases and the trusted variant seam are separately designed, implemented and property-tested                                              | deferred    | `PRT22`, `PRT24`, `PRT28`                 |
+| Milestone | Independently shippable scope                                                                                                                                                                             | Status      | Requirements                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------- |
+| P0        | Read path on all four targets: type-only disclosure/search projections, ranked fuzzy filtering, metadata, paths, dynamic read seam, stable keys, caps, shared expandability and plain-text/HTML rendering | not started | `PRT1`–`PRT12`, `PRT24`, `PRT26` (read model), `PRT27`–`PRT33`                  |
+| P1        | Scalar write path on raylib/TUI/Android: bool/enum/numeric controls, generated refusal/validation, read-only policy, per-subject bounded undo/redo and keymap commands                                    | not started | `PRT13`–`PRT21`, `PRT23`, `PRT25`, `PRT26` (edit transitions), `PRT34`, `PRT35` |
+| P2        | String leaves by composition after the shared editor lands; property-level commit/history remains outside the editor's internal text operation log                                                        | deferred    | `PRT13`; gated by `EDT`/`EDI`/`EDR`                                             |
+| P3        | Structural editing only after reversible collection/variant edit cases and the trusted variant seam are separately designed, implemented and property-tested                                              | deferred    | `PRT22`, `PRT24`, `PRT35`                                                       |
 
 ## Deferred by decision
 
+- **Property grouping (`@Group`)** — the UDA exists in the research spike's
+  vocabulary, but its semantics are undecided: synthetic header rows versus
+  visual labels, ordering, path neutrality, and how headers behave under
+  filtering. It ships only with a defined model; v1 presents siblings in
+  declaration order, ungrouped.
 - **Multi-subject editing (`D8`)** — v1 edits one logical subject. Unity's
   ambient mixed-value flag is cheap only because its model owns an invalidated
   comparison cache; adding that model and per-subject preconditions is a
@@ -414,7 +457,8 @@ approaches, not a competing requirement.
 
 ## Open questions
 
-No open question blocks P0 or P1. P2 is gated by the existing `EDT` spec. P3
+No open question blocks P0 or P1. P2 is gated by the existing `EDT`/`EDI`/`EDR`
+spec. P3
 must answer the structural-payload and variant-migration questions above before
 any structural control is enabled. Writable erased subjects likewise need a
 separate typed edit capability; the v1 `propChildren` seam intentionally
@@ -424,25 +468,26 @@ promises inspection only.
 
 | Planned source file                                  | Requirements                                                        |
 | ---------------------------------------------------- | ------------------------------------------------------------------- |
-| `libs/ui/src/sparkles/ui/property_tree.d`            | `PRT1`–`PRT11`, `PRT14`–`PRT34`                                     |
-| `libs/ui/src/sparkles/ui/components/property_view.d` | `PRT12`–`PRT13`, `PRT21`, `PRT23`, `PRT25`–`PRT28`, `PRT32`–`PRT34` |
+| `libs/ui/src/sparkles/ui/property_tree.d`            | `PRT1`–`PRT11`, `PRT14`–`PRT35`                                     |
+| `libs/ui/src/sparkles/ui/components/property_view.d` | `PRT12`–`PRT13`, `PRT21`, `PRT23`, `PRT25`–`PRT28`, `PRT32`–`PRT35` |
 | `libs/ui/src/sparkles/ui/components/tree_widget.d`   | `PRT12`, `PRT33`                                                    |
 | `libs/ui/src/sparkles/ui/components/tree_view.d`     | `PRT12`, `PRT29`, `PRT31`–`PRT32`                                   |
 | `libs/ui/src/sparkles/ui/components/inspector.d`     | `PRT12`, `PRT26`, `PRT33`                                           |
 
 ## Relationship to existing specs
 
-| Piece                                                      | Role                                                                                     |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| [Widgets](./widgets.md) `WGT12`, `VMD1`–`VMD7`             | the flat tree, external interaction state, lazy intent and shared interaction verbs      |
-| [Hue tree view](../hue/tree-view.md) `TRV3`–`TRV5`, `TRV7` | the shipped live-filter protocol, navigation and stable selection contract               |
-| [Broot research](../../research/tui-libraries/broot.md)    | ranked tree-as-search-result, ancestor closure, honest pruning and cancellation          |
-| [`sparkles:fuzzy`](../fuzzy/SPEC.md) §§2–6, §9             | Unicode/smart-case admission, canonical highlight positions, Top-K and query generations |
-| [Inspector](./inspector.md) `INS5`, `INS8`                 | the plain-text surface and future async/remote-provider seam                             |
-| [State machines](./state-machines.md) `STM5`               | disclosure as a value, including the `allOpen` polarity whose automatic walk needs caps  |
-| [Editor](./editor.md) `EDT`, `EDR`                         | the deliberately unimplemented dependency for editable string leaves                     |
-| [Keymap](./keymap.md) `KEY1`, `KEY11`                      | named undo/redo commands, host-selected bindings and exhaustive dispatch                 |
-| [Principles](./principles.md) `PRN1`–`PRN12`               | explicit relationships, Regular values, local transitions and one semantic definition    |
-| [Property-tree research](../../research/property-tree/)    | corpus, comparison, vocabulary, baseline and executable design-spike evidence            |
+| Piece                                                              | Role                                                                                                                                                      |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Widgets](./widgets.md) `WGT12`, `VMD1`–`VMD7`                     | the flat tree, external interaction state, lazy intent and shared interaction verbs                                                                       |
+| [Hue tree view](../hue/tree-view.md) `TRV3`–`TRV5`, `TRV7`, `TRB3` | the shipped live-filter protocol, navigation, stable selection — and the script-free HTML tree doctrine (`TRB3`) behind `PRT33`                           |
+| [Broot research](../../research/tui-libraries/broot.md)            | ranked tree-as-search-result, ancestor closure, honest pruning and cancellation                                                                           |
+| [`sparkles:fuzzy`](../fuzzy/SPEC.md) §§2–6, §9                     | Unicode/smart-case admission, canonical highlight positions, Top-K and query generations                                                                  |
+| [Inspector](./inspector.md) `INS5`, `INS8`                         | the plain-text surface and future async/remote-provider seam                                                                                              |
+| [Containers](./containers.md) `SCV8`                               | precedent, not an inherited contract: a live pointer capture keeps being served across a view change — the shape `PRT34` restates for rebuild-during-edit |
+| [State machines](./state-machines.md) `STM5`                       | disclosure as a value, including the `allOpen` polarity whose automatic walk needs caps                                                                   |
+| [Editor](./editor.md) `EDT`, `EDI`, `EDR`                          | the deliberately unimplemented dependency for editable string leaves (`EDI3`/`EDI4` carry the raylib-IME and Android soft-keyboard risk)                  |
+| [Keymap](./keymap.md) `KEY1`, `KEY11`                              | named undo/redo commands, host-selected bindings and exhaustive dispatch                                                                                  |
+| [Principles](./principles.md) `PRN1`–`PRN12`                       | explicit relationships, Regular values, local transitions and one semantic definition                                                                     |
+| [Property-tree research](../../research/property-tree/)            | corpus, comparison, vocabulary, baseline and executable design-spike evidence                                                                             |
 
 → [Overview](./index.md) · [Widgets](./widgets.md) · [Inspector](./inspector.md) · [Editor](./editor.md)
