@@ -1,23 +1,25 @@
 /**
-Win32 lifecycle + Event Horizon hosted-wait smoke test.
+Win32 driver for the shared WSI conformance suite.
 
-Cross-compile and run through `scripts/verify-win32-wine.sh`. The bounded run
-creates a real HWND, observes ready/expose/resize/close/destroy events, proves
-the typed handle, and drives an IOCP timer plus a foreign-thread waker through
-the same `MsgWaitForMultipleObjectsEx` wait as User32 messages.
+Every cross-backend assertion lives in `sparkles.wsi.conformance`; this
+driver supplies the User32/IOCP hosted step, `SetWindowPos`/`WM_CLOSE`
+requests, and a `SendMessageW` key chord. Injected messages bypass the
+thread key-state table, so the chord's modifier assertion is relaxed
+(`chordModifierObserved = false`) while identity, location, and ordering
+stay strict. The Win32-only channels — UTF-16 `WM_CHAR` commits and the
+IMM32 composition round trip Wine implements deterministically — follow as
+a platform addendum. Run through `scripts/verify-win32-wine.sh`.
 */
 module win32_hosted_smoke;
 
 version (Windows):
 
-import core.sys.windows.windows;
 import core.sys.windows.imm : CPS_COMPLETE, NI_COMPOSITIONSTR, SCS_SETSTR;
-import core.thread : Thread;
-import core.time : MonoTime, msecs, seconds;
+import core.sys.windows.windows;
+import core.time : Duration, MonoTime, seconds;
 import std.stdio : writeln;
 
-import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
-import sparkles.event_horizon.op : Completion;
+import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.input.events : KeyAction;
 import sparkles.wsi;
 
@@ -35,79 +37,106 @@ private extern (Windows) nothrow @nogc
     BOOL ImmNotifyIME(HIMC context, DWORD action, DWORD index, DWORD value);
 }
 
-private __gshared Win32Wsi* wrongThreadWsi;
-private __gshared WsiErrorKind wrongThreadKind;
-
-private void timerComplete(void* context, ref Completion completion)
-    nothrow @nogc
+private struct Win32Hooks
 {
-    *cast(bool*) context = completion.res == 0;
+    Win32Wsi* wsi;
+    DefaultLoop* loop;
+    HWND hwnd;
+
+    enum uint chordShiftCode = 0x2A; // scan code: left shift
+    enum uint chordKeyCode = 0x1E; // scan code: A
+    enum bool chordModifierObserved = false;
+    enum bool resizeExact = false;
+
+    void step(Duration timeout)
+    {
+        loop.runHostedOnce(*wsi, timeout).value;
+    }
+
+    void onWindowReady(WindowId id)
+    {
+        hwnd = wsi.nativeHandles(id).value.window.match!(
+            (in Win32WindowHandle handle) => cast(HWND) handle.hwnd,
+            (_) => cast(HWND) null);
+        assert(hwnd !is null);
+    }
+
+    void checkHandles(in NativeHandles handles)
+    {
+        assert(handles.window.match!(
+            (in Win32WindowHandle handle) => handle.hwnd !is null,
+            (_) => false));
+    }
+
+    void requestResize(uint width, uint height)
+    {
+        assert(SetWindowPos(hwnd, null, 0, 0, width, height,
+            SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER));
+    }
+
+    void requestClose()
+    {
+        assert(PostMessageW(hwnd, WM_CLOSE, 0, 0));
+    }
+
+    void injectChord()
+    {
+        SendMessageW(hwnd, WM_KEYDOWN, VK_SHIFT, 0x002A_0001);
+        SendMessageW(hwnd, WM_KEYDOWN, 'A', 0x001E_0001);
+        SendMessageW(hwnd, WM_KEYUP, 'A', 0xC01E_0001);
+        SendMessageW(hwnd, WM_KEYUP, VK_SHIFT, 0xC02A_0001);
+    }
 }
 
 int main()
 {
     DefaultLoop loop;
-    auto openedLoop = DefaultLoop.create(loop, LoopConfig());
-    if (openedLoop.hasError)
+    if (DefaultLoop.create(loop, LoopConfig()).hasError)
     {
         writeln("SKIP: IOCP unavailable");
         return 0;
     }
 
-    auto armed = loop.waker();
-    assert(armed.hasValue);
-    auto waker = armed.value;
-
     Win32Wsi wsi;
-    auto openedWsi = Win32Wsi.open(wsi);
-    assert(!openedWsi.hasError);
+    assert(!Win32Wsi.open(wsi).hasError);
 
+    auto hooks = Win32Hooks(&wsi, &loop);
+    const outcome = checkWsiConformance(wsi, loop, hooks,
+        "sparkles:wsi Win32 conformance");
+    writeln("ok: Win32 WSI conformance (", outcome.checked, " checked, ",
+        outcome.skipped, " skipped)");
+
+    checkTextAndComposition(wsi);
+    writeln("ok: Win32 text commit + IMM32 composition round trip");
+    return 0;
+}
+
+/// Win32-only addendum: VK logical identity, UTF-16 commits, and the IMM32
+/// preedit/result contract, on a fresh window.
+private void checkTextAndComposition(ref Win32Wsi wsi)
+{
     WindowConfig config;
-    assert(config.title.assign("sparkles:wsi Wine smoke"));
+    assert(config.title.assign("sparkles:wsi Win32 text"));
     config.logicalSize = LogicalSize(480, 320);
-    const created = wsi.createWindow(config);
-    assert(created.hasValue);
-    const id = created.value;
-
-    bool ready;
-    bool exposed;
-    bool frameReady;
+    const id = wsi.createWindow(config).value;
     ulong lastSequence;
-    auto drain = () {
-        auto result = wsi.drain((WindowEvent event) {
-            assert(event.sequence > lastSequence);
-            lastSequence = event.sequence;
+    bool ready;
+    auto readyDrain = wsi.drain((WindowEvent event) {
+        assert(event.sequence > lastSequence);
+        lastSequence = event.sequence;
+        if (event.window == id)
             event.payload.match!(
                 (in ReadyEvent _) { ready = true; },
-                (in ExposedEvent _) { exposed = true; },
-                (in FrameReadyEvent _) { frameReady = true; },
                 (_) {});
-        });
-        assert(result.hasValue);
-    };
-    drain();
-    assert(ready && exposed && frameReady);
-
-    wrongThreadWsi = &wsi;
-    auto wrongThread = new Thread({
-        auto result = wrongThreadWsi.pumpMessages();
-        if (result.hasError)
-            wrongThreadKind = result.error.kind;
     });
-    wrongThread.start();
-    wrongThread.join();
-    assert(wrongThreadKind == WsiErrorKind.wrongThread);
-    wrongThreadWsi = null;
-
-    auto queried = wsi.nativeHandles(id);
-    assert(queried.hasValue);
-    HWND hwnd = queried.value.window.match!(
+    assert(!readyDrain.hasError && ready);
+    HWND hwnd = wsi.nativeHandles(id).value.window.match!(
         (in Win32WindowHandle handle) => cast(HWND) handle.hwnd,
         (_) => cast(HWND) null);
     assert(hwnd !is null);
 
-    // Exercise the physical-key and UTF-16 commit channels independently of
-    // Wine's installed keyboard layouts.
+    // Physical-key and UTF-16 commit channels, independent of Wine's
+    // installed keyboard layouts.
     SendMessageW(hwnd, WM_KEYDOWN, 'A', 0x001E_0001);
     SendMessageW(hwnd, WM_CHAR, 'a', 0);
     SendMessageW(hwnd, WM_KEYUP, 'A', 0xC01E_0001);
@@ -129,7 +158,7 @@ int main()
             },
             (_) {});
     });
-    assert(keyDrain.hasValue && keyPressed && keyReleased && charCommitted);
+    assert(!keyDrain.hasError && keyPressed && keyReleased && charCommitted);
 
     // Wine's IMM32 implementation provides a deterministic, headless IME
     // round trip: setting the composition synchronously emits preedit, and
@@ -166,70 +195,8 @@ int main()
             },
             (_) {});
     });
-    assert(imeDrain.hasValue && sawPreedit && sawCompositionEnd
+    assert(!imeDrain.hasError && sawPreedit && sawCompositionEnd
         && sawImeCommit);
 
-    // Programmatic size messages are delivered synchronously inside User32.
-    assert(SetWindowPos(hwnd, null, 0, 0, 640, 480,
-        SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER));
-    bool resized;
-    auto resizedDrain = wsi.drain((WindowEvent event) {
-        assert(event.sequence > lastSequence);
-        lastSequence = event.sequence;
-        event.payload.match!(
-            (in SurfaceMetricsChangedEvent metrics) {
-                resized = metrics.metrics.physicalSize.width > 0
-                    && metrics.metrics.physicalSize.height > 0;
-            },
-            (_) {});
-    });
-    assert(resizedDrain.hasValue && resized);
-
-    bool timerFired;
-    auto timer = loop.submitAfter(25.msecs, &timerComplete, &timerFired);
-    assert(timer.hasValue);
-
-    auto worker = new Thread({
-        Thread.sleep(10.msecs);
-        waker.wake();
-    });
-    worker.start();
-
-    const started = MonoTime.currTime;
-    auto first = loop.runHostedOnce(wsi, 5.seconds);
-    assert(first.hasValue && first.value == RunStatus.dispatched);
-    while (!timerFired)
-    {
-        auto step = loop.runHostedOnce(wsi, 5.seconds);
-        assert(step.hasValue && step.value == RunStatus.dispatched);
-    }
-    const elapsed = MonoTime.currTime - started;
-    worker.join();
-    assert(elapsed < 2.seconds);
-
-    assert(PostMessageW(hwnd, WM_CLOSE, 0, 0));
-    assert(wsi.pumpMessages().hasValue);
-    bool closeRequested;
-    auto closeDrain = wsi.drain((WindowEvent event) {
-        assert(event.sequence > lastSequence);
-        lastSequence = event.sequence;
-        event.payload.match!(
-            (in CloseRequestedEvent _) { closeRequested = true; },
-            (_) {});
-    });
-    assert(closeDrain.hasValue && closeRequested);
-
     assert(!wsi.destroyWindow(id).hasError);
-    bool destroyed;
-    auto destroyedDrain = wsi.drain((WindowEvent event) {
-        assert(event.sequence > lastSequence);
-        lastSequence = event.sequence;
-        event.payload.match!(
-            (in DestroyedEvent _) { destroyed = true; },
-            (_) {});
-    });
-    assert(destroyedDrain.hasValue && destroyed);
-
-    writeln("ok: Win32 HWND + keyboard/IMM32 + IOCP hosted wait");
-    return 0;
 }

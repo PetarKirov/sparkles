@@ -17,6 +17,12 @@ to [feature-requirements.md](./feature-requirements.md)._
 4. Platform code may reuse OS client libraries but never a cross-platform WSI library.
 5. Prefer pure model/translation tests, then automated native harnesses, then the named
    HITL pass. Record which kind proved each claim.
+6. Behavior assertions are written once, in `sparkles.wsi.conformance`, against the
+   value-level contract, and every implementation — the four native backends and the
+   recording fake — runs the same suite. A platform smoke is a thin driver supplying
+   only what that platform alone can (its wait step, out-of-band triggers, key
+   injection); platform-only channels (IMM32) are explicit addenda, and a backend that
+   cannot trigger a behavior skips that property rather than weakening it.
 
 ## Milestone overview
 

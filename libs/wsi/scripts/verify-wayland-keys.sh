@@ -24,7 +24,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/test-runner/src" \
   -I"$expected_src" \
   -I"$during_src" \
-  "$repo/libs/wsi/examples/wayland-keys-smoke.d" \
+  "$repo/libs/wsi/examples/wayland-hosted-smoke.d" \
   "$repo/libs/wsi/src/wayland_native.c" \
   -L-lwayland-client \
   -of="$work/wsi-wayland-keys-smoke"
@@ -59,7 +59,7 @@ for _ in \$(seq 1 150); do
 done
 test -S "\$rt/wsi-keys"
 
-WAYLAND_DISPLAY=wsi-keys "$work/wsi-wayland-keys-smoke" \
+WSI_CONFORMANCE_KEYS=1 WAYLAND_DISPLAY=wsi-keys "$work/wsi-wayland-keys-smoke" \
   >"$work/smoke.log" 2>&1 &
 smoke_pid=\$!
 
@@ -80,5 +80,5 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
   bash "$work/lane.sh" || lane_status=$?
 cat "$work/smoke.log" 2>/dev/null || true
 test "$lane_status" -eq 0
-grep -q '^ok: Wayland keyboard chord delivered' "$work/smoke.log"
+grep -q '^ok: Wayland WSI conformance (9 checked, 1 skipped)' "$work/smoke.log"
 echo ">> sparkles:wsi Wayland keyboard verified through Weston."

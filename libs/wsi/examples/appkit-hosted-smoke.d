@@ -1,23 +1,23 @@
 /**
-AppKit lifecycle + Event Horizon hosted-wait smoke test.
+AppKit driver for the shared WSI conformance suite.
 
-Build and run on macOS through `scripts/verify-appkit-macos.sh`. The bounded
-test creates a real NSWindow, observes first metrics/draw/resize/close, checks
-the typed handles and main-thread rule, and drives a kqueue timer plus a
-foreign-thread waker through AppKit's one CFRunLoop wait.
+Every cross-backend assertion lives in `sparkles.wsi.conformance`; this
+driver supplies the CFRunLoop/kqueue hosted step, `setContentSize` and
+`performClose:` requests, and a synthetic key chord posted through the real
+responder chain (`NSEvent.keyEventWithType` + `postEvent:`) — the modifier
+travels as `flagsChanged` and the letter as `keyDown`/`keyUp`, with real
+modifier flags on the events themselves. Run on macOS through
+`scripts/verify-appkit-macos.sh`.
 */
 module appkit_hosted_smoke;
 
 version (OSX):
 
 import core.attribute : selector;
-import core.thread : Thread;
-import core.time : MonoTime, msecs, seconds;
+import core.time : Duration, seconds;
 import std.stdio : writeln;
 
-import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
-import sparkles.event_horizon.op : Completion;
-import sparkles.input.events : KeyAction;
+import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.wsi;
 
 private extern (C) nothrow @nogc
@@ -78,13 +78,71 @@ private extern class NSApplication : NSObject
 
 extern (D):
 
-private __gshared AppKitWsi* wrongThreadWsi;
-private __gshared WsiErrorKind wrongThreadKind;
-
-private void timerComplete(void* context, ref Completion completion)
-    nothrow @nogc
+private struct AppKitHooks
 {
-    *cast(bool*) context = completion.res == 0;
+    AppKitWsi* wsi;
+    DefaultLoop* loop;
+    NSWindow nativeWindow;
+
+    enum uint chordShiftCode = 0x38; // kVK_Shift
+    enum uint chordKeyCode = 0x00; // kVK_ANSI_A
+    enum bool resizeExact = false; // physical size scales with the backing
+
+    void step(Duration timeout)
+    {
+        loop.runHostedOnce(*wsi, timeout).value;
+    }
+
+    void onWindowReady(WindowId id)
+    {
+        nativeWindow = wsi.nativeHandles(id).value.window.match!(
+            (in AppKitWindowHandle handle) => cast(NSWindow) handle.window,
+            (_) => cast(NSWindow) null);
+        assert(nativeWindow !is null);
+    }
+
+    void checkHandles(in NativeHandles handles)
+    {
+        assert(handles.window.match!(
+            (in AppKitWindowHandle handle) => handle.window !is null
+                && handle.view !is null,
+            (_) => false));
+    }
+
+    void requestResize(uint width, uint height)
+    {
+        nativeWindow.setContentSize(NSSize(width, height));
+    }
+
+    void requestClose()
+    {
+        nativeWindow.performClose(null);
+    }
+
+    void injectChord()
+    {
+        enum ulong keyDownType = 10;
+        enum ulong keyUpType = 11;
+        enum ulong flagsChangedType = 12;
+        enum ulong shiftFlag = 1UL << 17;
+        auto application = NSApplication.sharedApplication();
+        auto lower = NSString.alloc().initWithUTF8String("a");
+        auto upper = NSString.alloc().initWithUTF8String("A");
+        const number = nativeWindow.windowNumber();
+        void post(ulong type, ulong flags, NSString characters,
+            ushort keyCode)
+        {
+            auto event = NSEvent.keyEventWithType(type, NSPoint(0, 0), flags,
+                0, number, null, characters, characters, false, keyCode);
+            assert(event !is null);
+            application.postEvent(event, false);
+        }
+
+        post(flagsChangedType, shiftFlag, lower, chordShiftCode);
+        post(keyDownType, shiftFlag, upper, chordKeyCode);
+        post(keyUpType, shiftFlag, upper, chordKeyCode);
+        post(flagsChangedType, 0, lower, chordShiftCode);
+    }
 }
 
 int main()
@@ -99,184 +157,15 @@ int main()
     scope (exit) objc_autoreleasePoolPop(pool);
 
     DefaultLoop loop;
-    auto openedLoop = DefaultLoop.create(loop, LoopConfig());
-    assert(!openedLoop.hasError);
-
-    auto armed = loop.waker();
-    assert(armed.hasValue);
-    auto waker = armed.value;
+    assert(!DefaultLoop.create(loop, LoopConfig()).hasError);
 
     AppKitWsi wsi;
-    auto openedWsi = AppKitWsi.open(wsi);
-    assert(!openedWsi.hasError);
+    assert(!AppKitWsi.open(wsi).hasError);
 
-    WindowConfig config;
-    assert(config.title.assign("sparkles:wsi AppKit smoke"));
-    config.logicalSize = LogicalSize(480, 320);
-    auto created = wsi.createWindow(config);
-    assert(created.hasValue);
-    auto id = created.value;
-
-    bool ready;
-    bool exposed;
-    bool frameReady;
-    ulong lastSequence;
-    auto drain = () {
-        auto result = wsi.drain((WindowEvent event) {
-            assert(event.sequence > lastSequence);
-            lastSequence = event.sequence;
-            event.payload.match!(
-                (in ReadyEvent value) {
-                    ready = value.metrics.logicalSize.width == 480
-                        && value.metrics.logicalSize.height == 320
-                        && value.metrics.physicalSize.width > 0
-                        && value.metrics.scale.valid;
-                },
-                (in ExposedEvent _) { exposed = true; },
-                (in FrameReadyEvent _) { frameReady = true; },
-                (_) {});
-        });
-        assert(result.hasValue);
-    };
-    drain();
-    assert(ready);
-
-    wrongThreadWsi = &wsi;
-    auto wrongThread = new Thread({
-        auto result = wrongThreadWsi.pumpEvents();
-        if (result.hasError)
-            wrongThreadKind = result.error.kind;
-    });
-    wrongThread.start();
-    wrongThread.join();
-    assert(wrongThreadKind == WsiErrorKind.wrongThread);
-    wrongThreadWsi = null;
-
-    auto queried = wsi.nativeHandles(id);
-    assert(queried.hasValue);
-    auto nativeWindow = queried.value.window.match!(
-        (in AppKitWindowHandle handle) => cast(NSWindow) handle.window,
-        (_) => cast(NSWindow) null);
-    assert(nativeWindow !is null);
-
-    nativeWindow.setContentSize(NSSize(640, 480));
-    bool resized;
-    auto resizeDrain = wsi.drain((WindowEvent event) {
-        assert(event.sequence > lastSequence);
-        lastSequence = event.sequence;
-        event.payload.match!(
-            (in SurfaceMetricsChangedEvent metrics) {
-                resized |= metrics.metrics.logicalSize.width == 640
-                    && metrics.metrics.logicalSize.height == 480
-                    && metrics.metrics.physicalSize.width >= 640;
-            },
-            (_) {});
-    });
-    assert(resizeDrain.hasValue && resized);
-
-    bool timerFired;
-    auto timer = loop.submitAfter(25.msecs, &timerComplete, &timerFired);
-    assert(timer.hasValue);
-    auto worker = new Thread({
-        Thread.sleep(10.msecs);
-        waker.wake();
-    });
-    worker.start();
-
-    const started = MonoTime.currTime;
-    while (!timerFired || !frameReady)
-    {
-        auto step = loop.runHostedOnce(wsi, 5.seconds);
-        assert(step.hasValue);
-        assert(step.value == RunStatus.dispatched);
-        drain();
-    }
-    worker.join();
-    assert(exposed && MonoTime.currTime - started < 2.seconds);
-
-    // Synthetic responder-chain keys: a left-shift chord around 'a'. The
-    // modifier travels as flagsChanged, the letter as keyDown/keyUp, and the
-    // view is first responder, so the events come back as KeyboardEvents.
-    enum ulong keyDownType = 10;
-    enum ulong keyUpType = 11;
-    enum ulong flagsChangedType = 12;
-    enum ulong shiftFlag = 1UL << 17;
-    enum ushort vkShift = 0x38;
-    enum ushort vkA = 0x00;
-    auto application = NSApplication.sharedApplication();
-    auto lower = NSString.alloc().initWithUTF8String("a");
-    auto upper = NSString.alloc().initWithUTF8String("A");
-    const windowNumber = nativeWindow.windowNumber();
-    auto postKey = (ulong type, ulong flags, NSString chars, ushort keyCode) {
-        auto event = NSEvent.keyEventWithType(type, NSPoint(0, 0), flags, 0,
-            windowNumber, null, chars, chars, false, keyCode);
-        assert(event !is null);
-        application.postEvent(event, false);
-    };
-    postKey(flagsChangedType, shiftFlag, lower, vkShift);
-    postKey(keyDownType, shiftFlag, upper, vkA);
-    postKey(keyUpType, shiftFlag, upper, vkA);
-    postKey(flagsChangedType, 0, lower, vkShift);
-
-    bool shiftLeft;
-    bool chordedPress;
-    bool releaseSeen;
-    bool shiftReleased;
-    const keysStart = MonoTime.currTime;
-    while (!(shiftLeft && chordedPress && releaseSeen && shiftReleased))
-    {
-        assert(wsi.pumpEvents().hasValue);
-        auto keysDrain = wsi.drain((WindowEvent event) {
-            assert(event.sequence > lastSequence);
-            lastSequence = event.sequence;
-            event.payload.match!(
-                (in KeyboardEvent value) {
-                    if (value.physical.nativeCode == vkShift)
-                    {
-                        if (value.action == KeyAction.press)
-                            shiftLeft = value.location == KeyLocation.left
-                                && value.modifiers.shift;
-                        else if (value.action == KeyAction.release)
-                            shiftReleased = !value.modifiers.shift;
-                    }
-                    if (value.physical.nativeCode == vkA)
-                    {
-                        assert(value.location == KeyLocation.standard);
-                        if (value.action == KeyAction.press)
-                            chordedPress = value.modifiers.shift;
-                        else if (value.action == KeyAction.release)
-                            releaseSeen = true;
-                    }
-                },
-                (_) {});
-        });
-        assert(keysDrain.hasValue);
-        assert(MonoTime.currTime - keysStart < 2.seconds,
-            "synthetic key chord never came back through the responder chain");
-    }
-
-    nativeWindow.performClose(null);
-    bool closeRequested;
-    auto closeDrain = wsi.drain((WindowEvent event) {
-        assert(event.sequence > lastSequence);
-        lastSequence = event.sequence;
-        event.payload.match!(
-            (in CloseRequestedEvent _) { closeRequested = true; },
-            (_) {});
-    });
-    assert(closeDrain.hasValue && closeRequested);
-
-    assert(!wsi.destroyWindow(id).hasError);
-    bool destroyed;
-    auto destroyedDrain = wsi.drain((WindowEvent event) {
-        assert(event.sequence > lastSequence);
-        lastSequence = event.sequence;
-        event.payload.match!(
-            (in DestroyedEvent _) { destroyed = true; },
-            (_) {});
-    });
-    assert(destroyedDrain.hasValue && destroyed);
-
-    writeln("ok: AppKit NSWindow + keys + kqueue timer/waker on one CFRunLoop");
+    auto hooks = AppKitHooks(&wsi, &loop);
+    const outcome = checkWsiConformance(wsi, loop, hooks,
+        "sparkles:wsi AppKit conformance");
+    writeln("ok: AppKit WSI conformance (", outcome.checked, " checked, ",
+        outcome.skipped, " skipped)");
     return 0;
 }
