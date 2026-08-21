@@ -414,10 +414,18 @@ version (unittest)
 
         import sparkles.test_runner.skip : skipTest;
 
-        if (Thread.getAll().length == 1)
-            return true;
-        skipTest("needs a single-threaded process (run with -t 1)");
-        assert(0);
+        version (OSX)
+        {
+            skipTest("forkserver requires SOCK_SEQPACKET (unsupported on macOS AF_UNIX)");
+            assert(0);
+        }
+        else
+        {
+            if (Thread.getAll().length == 1)
+                return true;
+            skipTest("needs a single-threaded process (run with -t 1)");
+            assert(0);
+        }
     }
 }
 
