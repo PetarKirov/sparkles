@@ -216,11 +216,27 @@ private enum bool isExpectedLike(X) =
     && __traits(hasMember, X, "value") && __traits(hasMember, X, "error");
 
 /// The JSON object-key text for an associative-array key: a `string` verbatim,
-/// or an enum by its resolved name / underlying-value text (§7).
+/// a type carrying a type-level `@WireConvert` by its converter's `to`, or an
+/// enum by its resolved name / underlying-value text (§7).
 private string aaKeyText(K)(K k)
 {
     static if (is(K == string))
         return k;
+    else static if (hasConvert!(Json, K))
+    {
+        alias Conv = convertOf!(Json, K);
+        static assert(!is(Conv.to == void),
+            "wired: a deserialize-only @WireConvert cannot render the AA key "
+            ~ K.stringof);
+        // Unlike a value position, a key has no error channel on encode: the
+        // converter's `to` must render a valid in-memory key totally, so an
+        // Expected-shaped `to` is rejected here rather than asserted at run
+        // time.
+        static assert(is(typeof(Conv.to(K.init)) : string),
+            "wired: an AA-key @WireConvert must render to string, not "
+            ~ typeof(Conv.to(K.init)).stringof);
+        return Conv.to(k);
+    }
     else static if (is(K == enum))
     {
         enum repr = resolveRepr!(Json, K);
@@ -245,7 +261,7 @@ private string aaKeyText(K)(K k)
         }
     }
     else
-        static assert(false, "wired: associative-array keys must be string or enum, not " ~ K.stringof);
+        static assert(false, "wired: associative-array keys must be string, enum, or a type carrying @WireConvert, not " ~ K.stringof);
 }
 
 /// The comma-joined resolved member names of `E` under `Json` at case `style`,
@@ -887,6 +903,29 @@ private NRes!K aaKeyParseNative(K)(
 {
     static if (is(K == string))
         return nOk(keyStr.idup);
+    else static if (hasConvert!(Json, K))
+    {
+        alias Conv = convertOf!(Json, K);
+        static assert(!is(Conv.from == void),
+            "wired: a serialize-only @WireConvert cannot decode the AA key "
+            ~ K.stringof);
+        auto back = Conv.from(keyStr.idup);
+        static if (isExpectedLike!(typeof(back)))
+        {
+            if (back.hasError)
+            {
+                JsonError e;
+                e.stage = JsonStage.decode;
+                e.targetType = K.stringof;
+                e.reason = back.error.msg;
+                e.prependKey(keyStr);
+                return nFail!K(failure, e);
+            }
+            return nOk(back.value);
+        }
+        else
+            return nOk(back);
+    }
     else static if (is(K == enum))
     {
         enum repr = resolveRepr!(Json, K);
@@ -940,7 +979,7 @@ private NRes!K aaKeyParseNative(K)(
     }
     else
         static assert(false,
-            "wired: associative-array keys must be string or enum, not " ~ K.stringof);
+            "wired: associative-array keys must be string, enum, or a type carrying @WireConvert, not " ~ K.stringof);
 }
 
 /// Materializes a parsed subtree as a `std.json.JSONValue` — the §4.2
@@ -1738,6 +1777,74 @@ version (unittest)
     assert(layoutText!(JsonWriteOptions.init)(v) == `{"xxx":3,"y":2,"zz":1}`);
     assert(layoutText!(JsonWriteOptions.init, byLengthThenLexical)(v)
         == `{"y":2,"zz":1,"xxx":3}`);
+}
+
+version (unittest)
+{
+    // Fixture for the AA-key `@WireConvert` test: a dotted version key
+    // ("1.2" ↔ `AaVer(1, 2)`) whose parse reports failures Expected-style,
+    // so the located-error path is exercised too.
+    private struct AaVerError
+    {
+        string msg;
+    }
+
+    private struct AaVerParsed
+    {
+        AaVer value;
+        AaVerError error;
+        bool bad;
+        bool hasValue() const @safe pure nothrow @nogc => !bad;
+        bool hasError() const @safe pure nothrow @nogc => bad;
+    }
+
+    private string aaVerText(AaVer k) @safe
+    {
+        import std.conv : text;
+
+        return text(k.major, '.', k.minor);
+    }
+
+    private AaVerParsed aaVerParse(string s) @safe
+    {
+        import std.conv : to, ConvException;
+        import std.string : indexOf;
+
+        const dot = s.indexOf('.');
+        if (dot < 0)
+            return AaVerParsed(AaVer.init, AaVerError("expected MAJOR.MINOR"), true);
+        try
+            return AaVerParsed(AaVer(s[0 .. dot].to!int, s[dot + 1 .. $].to!int));
+        catch (ConvException)
+            return AaVerParsed(AaVer.init, AaVerError("expected MAJOR.MINOR"), true);
+    }
+
+    @WireConvert!(aaVerText, aaVerParse)
+    private struct AaVer
+    {
+        int major;
+        int minor;
+    }
+}
+
+@("wired.json.aaKeyWireConvert")
+@safe unittest
+{
+    // A type-level `@WireConvert` on an AA key type renders and parses the
+    // key through its converter — the seam a chord-keyed table needs (AA
+    // keys were previously string or enum only).
+    int[AaVer] m = [AaVer(1, 2): 10, AaVer(1, 10): 20];
+    const text = jsonText(m);
+    assert(text == `{"1.10":20,"1.2":10}`); // sorted by rendered key text
+    assert(fromJSON!(int[AaVer])(text).value == m);
+
+    // A key the converter rejects is a located decode error carrying the
+    // offending key and the converter's own reason.
+    auto bad = fromJSON!(int[AaVer])(`{"1.2":1,"oops":2}`);
+    assert(bad.hasError);
+    assert(bad.error.path[] == ".oops");
+    assert(bad.error.reason == "expected MAJOR.MINOR");
+    assert(bad.error.targetType == "AaVer");
 }
 
 @("wired.json.wireConvert")
