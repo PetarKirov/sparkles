@@ -346,6 +346,19 @@ int wsi_xcb_focus_window(void *opaque, uint32_t window)
         ? 0 : xcb_connection_has_error(connection);
 }
 
+int wsi_xcb_warp_pointer(void *opaque,
+    const struct wsi_xcb_bootstrap *bootstrap, int16_t x, int16_t y)
+{
+    xcb_connection_t *connection = (xcb_connection_t *) opaque;
+    int error = wsi_xcb_check(connection,
+        xcb_warp_pointer_checked(connection, XCB_NONE, bootstrap->root,
+            0, 0, 0, 0, x, y));
+    if (error)
+        return error;
+    return xcb_flush(connection) > 0
+        ? 0 : xcb_connection_has_error(connection);
+}
+
 int wsi_xcb_send_key(void *opaque, uint8_t keycode, int press)
 {
     xcb_connection_t *connection = (xcb_connection_t *) opaque;

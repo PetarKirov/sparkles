@@ -455,43 +455,14 @@ struct X11Wsi
             pressedKeys_[(keycode >> 6) & 3] &= ~(1UL << (keycode & 63));
     }
 
-    /*
-    Location from the evdev-standard keycode map (X keycode = evdev + 8) that
-    every current server exposes through xkeyboard-config. A server with a
-    different map degrades to `standard`, never to a wrong modifier pairing,
-    because left/right identity also lives in the keycode itself there.
-    */
+    /// X keycode = evdev + 8 under the evdev-standard map every current
+    /// server exposes through xkeyboard-config.
     package static KeyLocation x11KeyLocation(uint keycode) @safe pure nothrow @nogc
-    {
-        switch (keycode)
-        {
-            case 50: // KEY_LEFTSHIFT + 8
-            case 37: // KEY_LEFTCTRL + 8
-            case 64: // KEY_LEFTALT + 8
-            case 133: // KEY_LEFTMETA + 8
-                return KeyLocation.left;
-            case 62: // KEY_RIGHTSHIFT + 8
-            case 105: // KEY_RIGHTCTRL + 8
-            case 108: // KEY_RIGHTALT + 8
-            case 134: // KEY_RIGHTMETA + 8
-                return KeyLocation.right;
-            case 63: // KEY_KPASTERISK + 8
-            case 79: .. case 91: // KEY_KP7 .. KEY_KPDOT + 8
-            case 104: // KEY_KPENTER + 8
-            case 106: // KEY_KPSLASH + 8
-                return KeyLocation.numpad;
-            default:
-                return KeyLocation.standard;
-        }
-    }
+        => keycode >= 8 ? evdevKeyLocation(keycode - 8) : KeyLocation.standard;
 
-    /// Core-protocol state mask: Shift, Control, Mod1 (Alt), Mod4 (Super).
+    /// Core-protocol state shares the xkb real-modifier bit positions.
     package static Mods x11Mods(uint state) @safe pure nothrow @nogc
-        => Mods(
-            ctrl: (state & 0x4) != 0,
-            alt: (state & 0x8) != 0,
-            shift: (state & 0x1) != 0,
-            super_: (state & 0x40) != 0);
+        => xkbRealMods(state);
 
     private size_t indexOfWindow(uint window) const pure nothrow @nogc
     {

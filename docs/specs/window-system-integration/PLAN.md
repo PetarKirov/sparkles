@@ -134,9 +134,16 @@ translation. Wine/Xvfb exercises a real `SCS_SETSTR` → `GCS_COMPSTR` →
 evdev-keycode identity, left/right/numpad location, core-state-mask modifiers and
 press/repeat/release, with XKB detectable auto-repeat requested so a held key
 repeats without synthesized releases; an XTEST-injected shift-chorded key runs
-through the real server under Xvfb. Logical key translation (xkbcommon), XIM,
-candidate-window placement, raw input, pointer/cursor/DPI/output work, the
-Wayland and AppKit input adapters, and native-Windows evidence remain.
+through the real server under Xvfb. The Wayland slice binds `wl_seat`, tracks
+capability arrival and departure, consumes the keymap fd, derives keyboard
+focus from enter/leave, and queues press/release with the same shared
+evdev-location and xkb-real-modifier policy; its evidence lane chords through
+Xvfb → Weston's X11 backend → `wl_keyboard`, with the smoke mapping a real shm
+buffer under the native-I/O borrow because compositors only focus mapped
+surfaces. Logical key translation (xkbcommon), Wayland client-side repeat
+synthesis, XIM, candidate-window placement, raw input,
+pointer/cursor/DPI/output work, the AppKit input adapter, and native-Windows
+evidence remain.
 
 Required platform paths:
 

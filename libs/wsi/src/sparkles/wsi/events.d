@@ -276,3 +276,55 @@ unittest
     assert(e.unit == ScrollUnit.pixel && e.phase == ScrollPhase.momentum);
     assert(e.inverted && e.discreteY == -1);
 }
+
+/*
+Shared Linux key-translation policy. Wayland delivers evdev keycodes
+directly and X11 delivers evdev + 8; both express chord modifiers through
+the fixed xkb real-modifier bit positions (Shift, Lock, Control, Mod1–Mod5),
+which the X11 core state mask shares. Location falls back to `standard` on
+an unknown code — never to a wrong pairing — because left/right identity
+lives in the keycode itself under the evdev-standard map.
+*/
+package KeyLocation evdevKeyLocation(uint evdevCode) @safe pure nothrow @nogc
+{
+    switch (evdevCode)
+    {
+        case 42: // KEY_LEFTSHIFT
+        case 29: // KEY_LEFTCTRL
+        case 56: // KEY_LEFTALT
+        case 125: // KEY_LEFTMETA
+            return KeyLocation.left;
+        case 54: // KEY_RIGHTSHIFT
+        case 97: // KEY_RIGHTCTRL
+        case 100: // KEY_RIGHTALT
+        case 126: // KEY_RIGHTMETA
+            return KeyLocation.right;
+        case 55: // KEY_KPASTERISK
+        case 71: .. case 83: // KEY_KP7 .. KEY_KPDOT
+        case 96: // KEY_KPENTER
+        case 98: // KEY_KPSLASH
+            return KeyLocation.numpad;
+        default:
+            return KeyLocation.standard;
+    }
+}
+
+/// Chord modifiers only: Lock (caps) and Mod2 (num lock) are latched states.
+package Mods xkbRealMods(uint mask) @safe pure nothrow @nogc
+    => Mods(
+        ctrl: (mask & 0x4) != 0,
+        alt: (mask & 0x8) != 0,
+        shift: (mask & 0x1) != 0,
+        super_: (mask & 0x40) != 0);
+
+@("wsi.events.evdevLocationAndRealModsAreSharedPolicy")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(evdevKeyLocation(42) == KeyLocation.left);
+    assert(evdevKeyLocation(97) == KeyLocation.right);
+    assert(evdevKeyLocation(96) == KeyLocation.numpad);
+    assert(evdevKeyLocation(30) == KeyLocation.standard);
+    assert(xkbRealMods(0x1 | 0x40) == Mods(shift: true, super_: true));
+    assert(xkbRealMods(0x2 | 0x10) == Mods());
+}

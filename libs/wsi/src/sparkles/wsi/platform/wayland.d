@@ -13,10 +13,12 @@ version (linux):
 import core.stdc.errno : EAGAIN, errno;
 import core.stdc.string : strcmp;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
+import core.sys.posix.unistd : posixClose = close;
 import core.time : Duration;
 import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
+import sparkles.input.events : KeyAction, Mods;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
@@ -56,6 +58,13 @@ struct WaylandWsi
     private wl_registry* registry_;
     private wl_compositor* compositor_;
     private xdg_wm_base* wmBase_;
+    private wl_seat* seat_;
+    private uint seatVersion_;
+    private wl_keyboard* keyboard_;
+    private const(wl_surface)* keyboardFocus_;
+    private Mods keyboardMods_;
+    private int keyRepeatRate_;
+    private int keyRepeatDelayMs_;
     private wl_callback* bootstrapSync_;
     private pthread_t ownerThread_;
     private Slot[maxWindows] windows_;
@@ -545,6 +554,17 @@ struct WaylandWsi
             wsi_wayland_callback_destroy(bootstrapSync_);
             bootstrapSync_ = null;
         }
+        if (keyboard_ !is null)
+        {
+            wsi_wayland_keyboard_destroy(keyboard_, seatVersion_);
+            keyboard_ = null;
+            keyboardFocus_ = null;
+        }
+        if (seat_ !is null)
+        {
+            wsi_wayland_seat_destroy(seat_, seatVersion_);
+            seat_ = null;
+        }
         if (wmBase_ !is null)
         {
             wsi_wayland_wm_base_destroy(wmBase_);
@@ -606,6 +626,17 @@ struct WaylandWsi
     {
         foreach (i; 0 .. windows_.length)
             if (&windows_[i] is slot)
+                return i;
+        return size_t.max;
+    }
+
+    private size_t indexOfSurface(const wl_surface* surface)
+        const pure nothrow @nogc
+    {
+        if (surface is null)
+            return size_t.max;
+        foreach (i, const ref slot; windows_)
+            if (slot.live && slot.surface is surface)
                 return i;
         return size_t.max;
     }
@@ -690,11 +721,117 @@ struct WaylandWsi
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install xdg_wm_base listener"));
         }
+        else if (strcmp(interfaceName, wl_seat_interface.name) == 0
+            && owner.seat_ is null)
+        {
+            const version_ = advertisedVersion < 5 ? advertisedVersion : 5;
+            owner.seat_ = cast(wl_seat*) wsi_wayland_registry_bind(
+                registry, name, &wl_seat_interface, version_);
+            owner.seatVersion_ = version_;
+            if (owner.seat_ !is null
+                && wsi_wayland_seat_add_listener(owner.seat_,
+                    &seatListener, owner) != 0)
+                owner.remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.open, BackendKind.wayland, 0,
+                    "failed to install wl_seat listener"));
+        }
     }
 
     private extern (C) static void onRegistryGlobalRemove(void*,
         wl_registry*, uint) nothrow @nogc
     {
+    }
+
+    private extern (C) static void onSeatCapabilities(void* data,
+        wl_seat* seat, uint capabilities) nothrow @nogc
+    {
+        enum keyboardCapability = 2;
+        auto owner = cast(WaylandWsi*) data;
+        const hasKeyboard = (capabilities & keyboardCapability) != 0;
+        if (hasKeyboard && owner.keyboard_ is null)
+        {
+            owner.keyboard_ = wsi_wayland_seat_get_keyboard(seat);
+            if (owner.keyboard_ !is null
+                && wsi_wayland_keyboard_add_listener(owner.keyboard_,
+                    &keyboardListener, owner) != 0)
+                owner.remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.dispatch, BackendKind.wayland, 0,
+                    "failed to install wl_keyboard listener"));
+        }
+        else if (!hasKeyboard && owner.keyboard_ !is null)
+        {
+            wsi_wayland_keyboard_destroy(owner.keyboard_,
+                owner.seatVersion_);
+            owner.keyboard_ = null;
+            owner.keyboardFocus_ = null;
+            owner.keyboardMods_ = Mods();
+        }
+    }
+
+    private extern (C) static void onSeatName(void*, wl_seat*,
+        const(char)*) nothrow @nogc
+    {
+    }
+
+    // The keymap fd must be consumed; mapping it through xkbcommon is the
+    // logical-key slice, so until then close it immediately.
+    private extern (C) static void onKeyboardKeymap(void*, wl_keyboard*,
+        uint, int fd, uint) nothrow @nogc
+    {
+        if (fd >= 0)
+            cast(void) posixClose(fd);
+    }
+
+    private extern (C) static void onKeyboardEnter(void* data,
+        wl_keyboard*, uint, wl_surface* surface, wl_array*) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.keyboardFocus_ = surface;
+        const index = owner.indexOfSurface(surface);
+        if (index != size_t.max)
+            cast(void) owner.emit(owner.idAt(index), FocusChangedEvent(true));
+    }
+
+    private extern (C) static void onKeyboardLeave(void* data,
+        wl_keyboard*, uint, wl_surface* surface) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (owner.keyboardFocus_ is surface)
+            owner.keyboardFocus_ = null;
+        const index = owner.indexOfSurface(surface);
+        if (index != size_t.max)
+            cast(void) owner.emit(owner.idAt(index), FocusChangedEvent(false));
+    }
+
+    private extern (C) static void onKeyboardKey(void* data, wl_keyboard*,
+        uint, uint, uint key, uint state) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        const index = owner.indexOfSurface(owner.keyboardFocus_);
+        if (index == size_t.max)
+            return;
+        KeyboardEvent event;
+        event.physical = PhysicalKey(key, 0);
+        event.location = evdevKeyLocation(key);
+        event.action = state != 0 ? KeyAction.press : KeyAction.release;
+        event.modifiers = owner.keyboardMods_;
+        cast(void) owner.emit(owner.idAt(index), event);
+    }
+
+    private extern (C) static void onKeyboardModifiers(void* data,
+        wl_keyboard*, uint, uint depressed, uint latched, uint,
+        uint) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.keyboardMods_ = xkbRealMods(depressed | latched);
+    }
+
+    private extern (C) static void onKeyboardRepeatInfo(void* data,
+        wl_keyboard*, int rate, int delay) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.keyRepeatRate_ = rate;
+        owner.keyRepeatDelayMs_ = delay;
     }
 
     private extern (C) static void onBootstrapDone(void* data,
@@ -841,6 +978,14 @@ private __gshared xdg_toplevel_listener toplevelListener = {
 };
 private __gshared wl_callback_listener frameListener = {
     &WaylandWsi.onFrameDone
+};
+private __gshared wl_seat_listener seatListener = {
+    &WaylandWsi.onSeatCapabilities, &WaylandWsi.onSeatName
+};
+private __gshared wl_keyboard_listener keyboardListener = {
+    &WaylandWsi.onKeyboardKeymap, &WaylandWsi.onKeyboardEnter,
+    &WaylandWsi.onKeyboardLeave, &WaylandWsi.onKeyboardKey,
+    &WaylandWsi.onKeyboardModifiers, &WaylandWsi.onKeyboardRepeatInfo
 };
 
 private WsiResult!T waylandFailure(T)(WsiOperation operation,
