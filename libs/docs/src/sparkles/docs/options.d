@@ -90,6 +90,21 @@ struct GalleryOptions
     once rather than every page resolving them again.
     */
     string sidebarHtml;
+
+    /**
+    The **explorer** sidebar (`DOC11`) — the site's own file tree as the
+    aside, per page: directories as collapsibles open along the current page's
+    path, pages as links relative to the current page, the current one
+    highlighted. Supersedes `sidebarHtml` when set: the explorer varies per
+    page, so `writeGallery` builds it (`page_shell.explorerNav`) rather than
+    the caller supplying one string.
+    */
+    bool explorerSidebar;
+
+    /// The docs-site nav (`sidebar.sidebarItemsHtml` of `sidebar.json`)
+    /// nested under the explorer's `docs/` node — constant across pages, so
+    /// it is supplied once here.
+    string docsNavHtml;
 }
 
 /**
