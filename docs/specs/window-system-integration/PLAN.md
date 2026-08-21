@@ -140,9 +140,14 @@ focus from enter/leave, and queues press/release with the same shared
 evdev-location and xkb-real-modifier policy; its evidence lane chords through
 Xvfb → Weston's X11 backend → `wl_keyboard`, with the smoke mapping a real shm
 buffer under the native-I/O borrow because compositors only focus mapped
-surfaces. Logical key translation (xkbcommon), Wayland client-side repeat
-synthesis, XIM, candidate-window placement, raw input,
-pointer/cursor/DPI/output work, the AppKit input adapter, and native-Windows
+surfaces. The AppKit slice completes the four-platform physical-keyboard
+contract: the content view accepts first-responder status, `keyDown`/`keyUp`
+carry Carbon virtual keycodes with repeat identity, and modifier keys arrive
+through `flagsChanged` with press/release derived from the event's own flag
+state; a synthetic shift-chorded key posted through the real responder chain
+verifies it on macOS. Logical key translation (xkbcommon and the platform
+equivalents), Wayland client-side repeat synthesis, XIM, candidate-window
+placement, raw input, pointer/cursor/DPI/output work, and native-Windows
 evidence remain.
 
 Required platform paths:
