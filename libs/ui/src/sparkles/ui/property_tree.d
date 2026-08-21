@@ -42,6 +42,13 @@ import std.traits : EnumMembers, FieldNameTuple, getUDAs, hasUDA,
     isAggregateType, isArray, isBoolean, isFloatingPoint, isIntegral,
     isSomeString;
 
+import sparkles.fuzzy.common : CandidateView, DefaultFuzzyCaps, FuzzyLimits,
+    StableId, TextRange;
+import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind,
+    Scoring;
+import sparkles.fuzzy.query : parseQuery, QueryStorage;
+import sparkles.fuzzy.rank : RankedResult, TopK;
+
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData;
 import sparkles.ui.state : DisclosureState;
@@ -522,30 +529,147 @@ struct PropertyTree(T)
     /// Automatic-walk budgets + the read-only gate; host-configurable data.
     PropertyTreePolicy policy;
 
+    // ── search diagnostics the view renders (PRT31, PRT33) ─────────────────
+    /// A malformed/over-capacity query's error; the last complete result is
+    /// kept while this is non-empty.
+    string filterError;
+    /// Direct matches retained in the current search projection.
+    size_t matchCount;
+    /// Known lower-ranked matches dropped by the match target / `maxNodes`.
+    size_t omittedMatches;
+    /// Discovery ended on a budget: the result must not claim completeness.
+    bool searchIncomplete;
+
     private DisclosureState!string _open;
-    private int _count;
     private bool _capped;
+    private string _lastQuery;
+    private string _anchorPath;
+    private long _anchorRow;
+    private bool _hasAnchor;
+    private string _bestMatchPath;
+    private MatcherWorkspace!()* _ws;
+    private TopK!searchHeapCapacity* _heap;
 
     /// Whether the last rebuild hit `maxDepth`/`maxNodes` (`PRT4`).
     bool wasCapped() const @safe pure nothrow @nogc => _capped;
 
+    /// Whether a search projection (a non-empty query) is showing.
+    bool searching() const @safe pure nothrow @nogc => _lastQuery.length > 0;
+
     /**
-    Rebuilds rows from the subject and the host's disclosure, restoring the
-    selection to its previous path (else its nearest visible ancestor, else
-    the ordinary clamp) and remeasuring content (`PRT8`, `PRT25`).
+    Rebuilds rows from the subject and the host's state (`PRT8`, `PRT25`).
+
+    An empty query builds the disclosure projection; a non-empty one builds
+    the ranked search-result projection (`PRT29`–`PRT33`), leaving base
+    disclosure untouched. `pinnedPath` (a pending edit's path) is kept in the
+    result with its ancestors regardless of the query (`PRT34`). The first
+    empty→non-empty transition captures the selection anchor; clearing the
+    query restores it at the same viewport row (`PRT32`).
     */
-    void rebuild(ref T subject, ref TreeViewState!string tv) @safe
+    void rebuild(ref T subject, ref TreeViewState!string tv,
+        string pinnedPath = null) @safe
     {
         import sparkles.ui.components.tree_view : measureContent;
 
+        const q = tv.filterQuery.idup;
         const prev = pathAt(tv, tv.sel);
-        _open = tv.open;
-        buildRows(subject);
+
+        if (q.length && _lastQuery.length == 0)
+        {
+            _anchorPath = prev;
+            _anchorRow = tv.sel - tv.top;
+            _hasAnchor = true;
+        }
+
         auto self = &this;
-        tv.rows = flatten(data,
-            (uint n) => self._open.isOpen(self.data.nodes[n].value.path));
-        tv.measureContent(data);
-        restoreSelection(tv, prev);
+        if (q.length == 0)
+        {
+            _open = tv.open;
+            buildRows(subject);
+            tv.rows = flatten(data,
+                (uint n) => self._open.isOpen(self.data.nodes[n].value.path));
+            tv.measureContent(data);
+            filterError = null;
+            matchCount = 0;
+            omittedMatches = 0;
+            searchIncomplete = false;
+            _bestMatchPath = null;
+            if (_lastQuery.length && _hasAnchor)
+            {
+                restoreSelection(tv, _anchorPath);
+                tv.top = tv.sel - _anchorRow;
+                tv.clampBounds();
+                _hasAnchor = false;
+            }
+            else
+                restoreSelection(tv, prev);
+        }
+        else if (buildSearch(subject, tv, q, pinnedPath))
+        {
+            tv.rows = flatten(data,
+                (uint n) => tv.searchFold.isOpen(
+                    self.data.nodes[n].value.path));
+            tv.measureContent(data);
+            if (pinnedPath.length && selectRow(tv, pinnedPath)) {}
+            else if (prev.length && selectRow(tv, prev)) {}
+            else if (!selectRow(tv, _bestMatchPath))
+                tv.clampBounds();
+        }
+        // A failed search build keeps the last complete result (PRT33).
+        _lastQuery = q;
+    }
+
+    /// Selects the row whose path is exactly `path`; `false` when absent.
+    private bool selectRow(ref TreeViewState!string tv, string path) @safe
+    {
+        if (!path.length)
+            return false;
+        foreach (i, ref const r; tv.rows)
+            if (data.nodes[r.node].value.path == path)
+            {
+                tv.sel = cast(long) i;
+                tv.clamp();
+                return true;
+            }
+        return false;
+    }
+
+    /// Cycles the cursor through direct matches in visible tree order,
+    /// skipping context/status rows and rows a transient fold hid (`PRT32`).
+    void jumpMatch(ref TreeViewState!string tv, int dir) @safe
+    {
+        import sparkles.ui.components.tree_view : jumpMatching;
+
+        auto self = &this;
+        tv.jumpMatching(dir,
+            (uint n) => self.data.nodes[n].value.role == SearchRole.direct);
+    }
+
+    /**
+    Reveal in base tree (`PRT32`): clears the query, $(B discards) the
+    captured anchor, opens the target's ancestors in base disclosure, and
+    selects it.
+    */
+    void revealInBase(ref T subject, ref TreeViewState!string tv) @safe
+    {
+        string target = selectedPath(tv);
+        const node = tv.selectedNode;
+        if (node == uint.max || node >= data.nodes.length
+            || data.nodes[node].value.role != SearchRole.direct)
+            if (_bestMatchPath.length)
+                target = _bestMatchPath;
+        tv.filter = tv.filter.cancelled();
+        tv.searchFold = typeof(tv.searchFold)(true, null);
+        _hasAnchor = false;
+        auto p = parentPath(target);
+        while (p.length)
+        {
+            tv.open = tv.open.opened(p);
+            p = parentPath(p);
+        }
+        rebuild(subject, tv);
+        if (target.length)
+            restoreSelection(tv, target);
     }
 
     /// The selected row's stable path, or `""`.
@@ -581,253 +705,828 @@ struct PropertyTree(T)
         tv.clampBounds();
     }
 
+    // ── the search projection (PRT29–PRT34) ────────────────────────────────
+
+    /// Builds the ranked search-result projection: direct matches plus their
+    /// minimum ancestor closure, scored during bounded discovery. `false`
+    /// keeps the previous complete result (`filterError` says why).
+    private bool buildSearch(ref T subject, ref TreeViewState!string tv,
+        string q, string pinnedPath) @safe
+    {
+        PartMatcher[] parts;
+        if (!parseParts(q, parts))
+            return false;
+
+        if (_ws is null)
+            _ws = new MatcherWorkspace!();
+        if (_heap is null)
+            _heap = new TopK!searchHeapCapacity;
+
+        // The match target: ten times the requesting pane's viewport row
+        // count, bounded by maxNodes and the heap capacity (PRT31).
+        const targetRows = tv.bodyRows > 0 ? tv.bodyRows : 40;
+        size_t want = 10 * cast(size_t) targetRows;
+        if (want > cast(size_t) policy.maxNodes)
+            want = cast(size_t) policy.maxNodes;
+        if (want > searchHeapCapacity)
+            want = searchHeapCapacity;
+        if (want == 0)
+            want = 1;
+        cast(void) _heap.reset(0, want);
+
+        // Discovery ignores the opened set and descends every eligible
+        // composite within the automatic-walk budgets (PRT29).
+        DiscoverVisitor dv;
+        dv.parts = parts;
+        dv.ws = _ws;
+        dv.heap = _heap;
+        walkSubject(subject, policy, dv);
+        searchIncomplete = dv.incomplete;
+
+        static struct PageBuf { RankedResult[searchHeapCapacity] page; }
+        auto pb = new PageBuf;
+        size_t got;
+        {
+            auto pg = _heap.page(pb.page);
+            got = pg.hasError ? 0 : pg.value;
+        }
+
+        // The ancestor closure, in declaration order — dropping lowest-ranked
+        // matches until the flat result also fits maxNodes (PRT31). A path
+        // with a pending preview is pinned with its ancestors regardless of
+        // the query (PRT34).
+        SearchHit[string] deco;
+        bool[string] addSet;
+        size_t kept = got;
+        while (true)
+        {
+            deco = null;
+            addSet = null;
+            foreach (k; 0 .. kept)
+            {
+                auto hit = dv.hits[pb.page[k].corpusIndex];
+                deco[hit.path] = hit;
+                auto p = hit.path;
+                while (p.length && (p in addSet) is null)
+                {
+                    addSet[p] = true;
+                    p = parentPath(p);
+                }
+            }
+            if (pinnedPath.length)
+            {
+                auto p = pinnedPath;
+                while (p.length && (p in addSet) is null)
+                {
+                    addSet[p] = true;
+                    p = parentPath(p);
+                }
+            }
+            if (addSet.length <= cast(size_t) policy.maxNodes || kept == 0)
+                break;
+            kept--;
+        }
+        matchCount = kept;
+        omittedMatches = dv.admitted > kept ? dv.admitted - kept : 0;
+        _bestMatchPath = kept
+            ? dv.hits[pb.page[0].corpusIndex].path : null;
+
+        bool[string] descendSet;
+        foreach (p, _; addSet)
+        {
+            auto par = parentPath(p);
+            while (par.length && (par in descendSet) is null)
+            {
+                descendSet[par] = true;
+                par = parentPath(par);
+            }
+        }
+
+        data = TreeData!PropertyNode.init;
+        ProjectVisitor pv;
+        pv.data = &data;
+        pv.addSet = addSet;
+        pv.descendSet = descendSet;
+        pv.deco = deco;
+        auto relaxed = policy;
+        relaxed.maxNodes = int.max; // the result is already bounded above
+        walkSubject(subject, relaxed, pv);
+
+        // Honest status rows (PRT31, PRT33): a capped discovery must not
+        // claim a complete match count.
+        void status(string label) @safe
+        {
+            PropertyNode n = {
+                label: label,
+                synthetic: true,
+                role: SearchRole.status,
+            };
+            data.add(n, uint.max);
+        }
+
+        if (kept == 0 && !searchIncomplete)
+            status("No properties match");
+        if (searchIncomplete)
+            status("⋯ search incomplete (capped)");
+        else if (omittedMatches)
+            status(text("⋯ ", omittedMatches,
+                " lower-ranked matches omitted"));
+        filterError = null;
+        _capped = false;
+        return true;
+    }
+
+    /// Splits the query on whitespace and prepares each part once (PRT30).
+    private bool parseParts(string q, out PartMatcher[] parts) @safe
+    {
+        const(char)[][] texts;
+        size_t i;
+        while (i < q.length)
+        {
+            while (i < q.length && (q[i] == ' ' || q[i] == '\t'))
+                i++;
+            size_t j = i;
+            while (j < q.length && q[j] != ' ' && q[j] != '\t')
+                j++;
+            if (j > i)
+                texts ~= q[i .. j];
+            i = j;
+        }
+        if (texts.length == 0)
+        {
+            filterError = "empty query";
+            return false;
+        }
+        if (texts.length > DefaultFuzzyCaps.maxFuzzyParts)
+        {
+            filterError = text("too many query parts (max ",
+                DefaultFuzzyCaps.maxFuzzyParts, ")");
+            return false;
+        }
+        foreach (t; texts)
+        {
+            PartMatcher pm;
+            pm.text = t.idup;
+            foreach (c; pm.text)
+                pm.caseSensitive |= c >= 'A' && c <= 'Z';
+            auto r = parseQuery(pm.text);
+            if (r.hasError)
+            {
+                // A malformed or over-capacity query keeps the last complete
+                // result and reports the fuzzy error in filter chrome (PRT33).
+                filterError = text("query error: ", r.error.code, " in \"",
+                    pm.text, '"');
+                return false;
+            }
+            if (r.value.hasFuzzyParts)
+            {
+                auto st = new QueryStorage!();
+                *st = r.value;
+                pm.storage = st;
+            }
+            else
+                pm.substringOnly = true; // constraint-shaped: literal fallback
+            parts ~= pm;
+        }
+        return true;
+    }
+
     // ── the walk ────────────────────────────────────────────────────────────
 
     private void buildRows(ref T subject) @safe
     {
         data = TreeData!PropertyNode.init;
-        _count = 0;
-        _capped = false;
-        addChildrenOf(subject, uint.max, "", -1, policy.readOnly);
+        auto vis = DisclosureVisitor(&data, &_open);
+        walkSubject(subject, policy, vis);
+        _capped = vis.capped;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The one type-only walk (PRT3), generic over a visitor — the disclosure
+// projection, search discovery, and the search-result projection are three
+// drivers of the same traversal, so no projection can disagree about what a
+// row is.
+//
+// The visitor contract (capability-style, all @safe):
+//   bool enter(PropertyNode n)    — a row exists; return true to descend
+//                                    (only asked-for composites descend)
+//   void leave()                  — the descend that `enter` approved ended
+//   void onCapped(int depth)      — a maxDepth/maxNodes cut happened here
+//   void onDuplicateKeys(string collectionPath, int depth)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The disclosure driver: adds every visited row, descends where the host's
+/// opened set says so, and materialises `⋯ (capped)` / duplicate-key rows.
+private struct DisclosureVisitor
+{
+    TreeData!PropertyNode* data;
+    const(DisclosureState!string)* open;
+    uint[] parents;
+    bool capped;
+
+    private uint top() const scope @safe pure nothrow @nogc
+        => parents.length ? parents[$ - 1] : uint.max;
+
+    bool enter(PropertyNode n) scope @safe
+    {
+        const descend = n.composite && n.expandable && open.isOpen(n.path);
+        const idx = data.add(n, top);
+        if (descend)
+            parents ~= idx;
+        return descend;
     }
 
-    private void addCappedRow(uint parent, int depth) @safe
+    void leave() scope @safe
     {
-        if (_capped)
-            return;
-        _capped = true;
+        parents = parents[0 .. $ - 1];
+    }
+
+    void onCapped(int depth) scope @safe
+    {
+        capped = true;
         PropertyNode n = {
             label: "⋯ (capped)",
             synthetic: true,
             capped: true,
-            role: SearchRole.none,
             depth: depth,
         };
-        data.add(n, parent);
+        data.add(n, top);
     }
 
-    /// Children of one already-added composite value.
-    private void addChildrenOf(U)(ref U v, uint node, string path, int depth,
-        bool inheritedRO) @safe
+    void onDuplicateKeys(string, int depth) scope @safe
     {
-        if (_capped)
-            return;
+        PropertyNode d = {
+            label: "⚠ duplicate element key",
+            doc: "addressing refused; keys must be unique",
+            synthetic: true,
+            diagnostic: true,
+            depth: depth,
+        };
+        data.add(d, top);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Search machinery (PRT29–PRT33): part preparation, per-field matching with
+// smart-case exact-unit fallback and over-capacity chunking, discovery
+// scoring into a ranked heap, and the projection driver.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compile-time bound of the search heap; the match target clamps here.
+private enum size_t searchHeapCapacity = 1024;
+
+/// One query part, prepared once per rebuild (`PRT30`).
+private struct PartMatcher
+{
+    string text;
+    QueryStorage!()* storage; /// null → literal-substring matching only
+    bool substringOnly;
+    bool caseSensitive;       /// smart case for the exact-unit path
+}
+
+/// One admitted record's decoration, kept beside the ranked heap.
+private struct SearchHit
+{
+    string path;
+    long score; /// floor of the arithmetic mean of the part scores
+    MatchedField matched;
+    ByteSpan[] labelSpans;
+    ByteSpan[] badgeSpans;
+    string snippet;
+}
+
+/// The path's bytes as the rank tie-break id: ascending id = ascending byte
+/// order over the first 16 bytes (walk order settles deeper ties).
+private StableId pathId(scope const(char)[] path) @safe pure nothrow @nogc
+{
+    ulong hi, lo;
+    foreach (k; 0 .. 16)
+    {
+        const ubyte b = k < path.length ? cast(ubyte) path[k] : 0;
+        if (k < 8)
+            hi = (hi << 8) | b;
+        else
+            lo = (lo << 8) | b;
+    }
+    return StableId(hi, lo);
+}
+
+private char asciiLowerChar(char c) @safe pure nothrow @nogc
+    => c >= 'A' && c <= 'Z' ? cast(char)(c + 32) : c;
+
+/// One field × one part: hit, integer score, canonical witness ranges.
+private struct FieldTry
+{
+    bool hit;
+    uint score;
+    ByteSpan[] spans;
+}
+
+/**
+Exact smart-case admission — the one-analyzed-unit override (`PRT30`): fuzzy
+drops parts shorter than two analyzed units, and one typed character must
+narrow the tree instead of matching everything. ASCII case fold; fixed,
+deterministic scoring.
+*/
+private FieldTry substringTry(ref PartMatcher pm, string fieldText)
+    @safe pure nothrow
+{
+    FieldTry none;
+    const needle = pm.text;
+    if (needle.length == 0 || needle.length > fieldText.length)
+        return none;
+    outer: foreach (i; 0 .. fieldText.length - needle.length + 1)
+    {
+        foreach (j; 0 .. needle.length)
+        {
+            char a = fieldText[i + j];
+            char b = needle[j];
+            if (!pm.caseSensitive)
+            {
+                a = asciiLowerChar(a);
+                b = asciiLowerChar(b);
+            }
+            if (a != b)
+                continue outer;
+        }
+        FieldTry t = {
+            hit: true,
+            score: cast(uint)(12 * needle.length + 8),
+            spans: [ByteSpan(i, i + needle.length)],
+        };
+        return t;
+    }
+    return none;
+}
+
+/**
+One part against one record field. A field longer than fuzzy's candidate
+capacity (4,096 bytes — refused as `candidateTooLong`, never truncated) is
+analyzed as source-offset-preserving UTF-8-boundary chunks with a
+one-query-span overlap; the best chunk wins (`PRT30`).
+*/
+private FieldTry tryField(ref PartMatcher pm, string fieldText,
+    scope MatcherWorkspace!()* ws) @safe
+{
+    FieldTry none;
+    if (fieldText.length == 0 || pm.text.length == 0)
+        return none;
+    if (pm.substringOnly || pm.storage is null)
+        return substringTry(pm, fieldText);
+
+    enum size_t cap = DefaultFuzzyCaps.maxCandidateBytes;
+    size_t overlap = pm.text.length + 8;
+    if (overlap > 64)
+        overlap = 64;
+    FieldTry best;
+    size_t start;
+    for (;;)
+    {
+        size_t end = start + cap;
+        if (end >= fieldText.length)
+            end = fieldText.length;
+        else
+            while (end > start && (fieldText[end] & 0xC0) == 0x80)
+                end--;
+        CandidateView cand = { path: fieldText[start .. end] };
+        auto r = match(*pm.storage, cand, MatchConfig.init, Scoring.init,
+            FuzzyLimits.init, *ws);
+        if (!r.hasError)
+        {
+            if (r.value.kind == MatchKind.noFuzzyTerms)
+                return substringTry(pm, fieldText); // the dropped-part case
+            if (r.value.admitted && (!best.hit || r.value.score > best.score))
+            {
+                best.hit = true;
+                best.score = r.value.score;
+                best.spans = null;
+                foreach (rg; ws.lastRanges)
+                    best.spans ~= ByteSpan(rg.start + start, rg.end + start);
+            }
+        }
+        if (end >= fieldText.length)
+            break;
+        auto next = end > overlap ? end - overlap : end;
+        if (next <= start)
+            next = end;
+        start = next;
+        while (start < fieldText.length && (fieldText[start] & 0xC0) == 0x80)
+            start++;
+        if (start >= fieldText.length)
+            break;
+    }
+    return best;
+}
+
+/// A bounded secondary snippet for a doc-only hit (`PRT33`).
+private string snippetOf(string doc, ByteSpan[] spans) @safe pure nothrow
+{
+    if (doc.length <= 48)
+        return doc;
+    const at = spans.length ? spans[0].start : 0;
+    size_t start = at > 16 ? at - 16 : 0;
+    while (start < doc.length && (doc[start] & 0xC0) == 0x80)
+        start++;
+    size_t end = start + 48 > doc.length ? doc.length : start + 48;
+    while (end > start && end < doc.length && (doc[end] & 0xC0) == 0x80)
+        end--;
+    return (start ? "…" : "") ~ doc[start .. end]
+        ~ (end < doc.length ? "…" : "");
+}
+
+/// The discovery driver (`PRT29`–`PRT31`): scores every eligible row during
+/// the walk, retaining the best direct matches in the ranked heap.
+private struct DiscoverVisitor
+{
+    PartMatcher[] parts;
+    MatcherWorkspace!()* ws;
+    TopK!searchHeapCapacity* heap;
+    SearchHit[] hits;
+    size_t admitted;
+    bool incomplete;
+
+    bool enter(PropertyNode n) scope @safe
+    {
+        if (!n.synthetic)
+            score(n);
+        return n.composite && n.expandable;
+    }
+
+    void leave() scope @safe {}
+    void onCapped(int) scope @safe { incomplete = true; }
+    void onDuplicateKeys(string, int) scope @safe {}
+
+    private void score(PropertyNode n) scope @safe
+    {
+        ulong sum;
+        MatchedField matched;
+        ByteSpan[] labelSpans, badgeSpans, docSpans;
+        bool docHit;
+        foreach (ref pm; parts)
+        {
+            // Field preference order IS the tie-break order (PRT30): a later
+            // field must beat, not tie, an earlier one.
+            auto best = tryField(pm, n.label, ws);
+            ubyte bestField = 1;
+            auto t = tryField(pm, n.path, ws);
+            if (t.hit && (!best.hit || t.score > best.score))
+            {
+                best = t;
+                bestField = 2;
+            }
+            t = tryField(pm, n.badge, ws);
+            if (t.hit && (!best.hit || t.score > best.score))
+            {
+                best = t;
+                bestField = 3;
+            }
+            t = tryField(pm, n.doc, ws);
+            if (t.hit && (!best.hit || t.score > best.score))
+            {
+                best = t;
+                bestField = 4;
+            }
+            if (!best.hit)
+                return; // every query part is required
+            sum += best.score;
+            switch (bestField)
+            {
+                case 1: matched |= MatchedField.label;
+                    labelSpans ~= best.spans; break;
+                case 2: matched |= MatchedField.path; break;
+                case 3: matched |= MatchedField.value;
+                    badgeSpans ~= best.spans; break;
+                default: matched |= MatchedField.doc;
+                    docSpans = best.spans;
+                    docHit = true; break;
+            }
+        }
+        admitted++;
+
+        // The floor of the arithmetic mean of the part scores (PRT30).
+        const mean = cast(long)(sum / parts.length);
+        SearchHit hit = {
+            path: n.path,
+            score: mean,
+            matched: matched,
+            labelSpans: labelSpans,
+            badgeSpans: badgeSpans,
+        };
+        // A path-only or doc-only hit shows one bounded secondary snippet so
+        // the reason for inclusion is visible (PRT33).
+        if (!(matched & (MatchedField.label | MatchedField.value)))
+            hit.snippet = docHit ? snippetOf(n.doc, docSpans) : n.path;
+
+        // The outer total order (PRT30): score, then field preference
+        // (label > path > value > doc as presence bits), then shallower
+        // depth; the heap's final tie-break is the path-byte id.
+        RankedResult rr;
+        rr.id = pathId(n.path);
+        rr.corpusIndex = hits.length;
+        const long pref = (matched & MatchedField.label ? 8 : 0)
+            | (matched & MatchedField.path ? 4 : 0)
+            | (matched & MatchedField.value ? 2 : 0)
+            | (matched & MatchedField.doc ? 1 : 0);
+        const depthBias = n.depth < 255 ? 255 - n.depth : 0;
+        rr.score.total = mean * 65_536 + pref * 256 + depthBias;
+        hits ~= hit;
+        auto offered = heap.offer(rr);
+        if (offered.hasError || !offered.value)
+            hits = hits[0 .. $ - 1]; // nothing retained it
+    }
+}
+
+/// The projection driver (`PRT31`, `PRT33`): re-walks the subject in
+/// declaration order, emitting exactly the needed rows with decorations.
+private struct ProjectVisitor
+{
+    TreeData!PropertyNode* data;
+    bool[string] addSet;
+    bool[string] descendSet;
+    SearchHit[string] deco;
+    uint[] parents;
+
+    private uint top() const scope @safe pure nothrow @nogc
+        => parents.length ? parents[$ - 1] : uint.max;
+
+    bool enter(PropertyNode n) scope @safe
+    {
+        if ((n.path in addSet) is null)
+            return false;
+        if (auto h = n.path in deco)
+        {
+            n.role = SearchRole.direct;
+            n.score = h.score;
+            n.matched = h.matched;
+            n.labelSpans = h.labelSpans;
+            n.badgeSpans = h.badgeSpans;
+            n.snippet = h.snippet;
+        }
+        else
+            n.role = SearchRole.context;
+        const idx = data.add(n, top);
+        const descend = n.composite && n.expandable
+            && (n.path in descendSet) !is null;
+        if (descend)
+            parents ~= idx;
+        return descend;
+    }
+
+    void leave() scope @safe
+    {
+        parents = parents[0 .. $ - 1];
+    }
+
+    void onCapped(int) scope @safe {}
+
+    void onDuplicateKeys(string, int depth) scope @safe
+    {
+        PropertyNode d = {
+            label: "⚠ duplicate element key",
+            doc: "addressing refused; keys must be unique",
+            synthetic: true,
+            diagnostic: true,
+            depth: depth,
+        };
+        data.add(d, top);
+    }
+}
+
+/// Drives one complete walk of `subject`'s roots through `vis`.
+private void walkSubject(T, V)(ref T subject, in PropertyTreePolicy policy,
+    scope ref V vis) @safe
+{
+    int count;
+    bool halted;
+    walkChildren(subject, "", -1, policy.readOnly, policy, vis, count, halted);
+}
+
+/// One value's row, and — when the visitor asks — its children (`PRT4`).
+private void walkValue(U, V)(ref U v, string path, string label, int depth,
+    MemberMeta meta, in PropertyTreePolicy policy, scope ref V vis,
+    ref int count, ref bool halted) @safe
+{
+    if (halted)
+        return;
+    if (count >= policy.maxNodes)
+    {
+        vis.onCapped(depth);
+        halted = true;
+        return;
+    }
+    auto n = makeNode(v, path, label, depth, meta, policy);
+    count++;
+    if (vis.enter(n))
+    {
+        if (depth + 1 >= policy.maxDepth)
+            vis.onCapped(depth + 1);
+        else
+            walkChildren(v, path, depth, meta.readOnly, policy, vis, count,
+                halted);
+        vis.leave();
+    }
+}
+
+/// The children of one composite value, in declaration / collection order.
+private void walkChildrenOf(U, V)(ref U v, string path, int depth,
+    bool inheritedRO, in PropertyTreePolicy policy, scope ref V vis,
+    ref int count, ref bool halted) @safe
+    => walkChildren(v, path, depth, inheritedRO, policy, vis, count, halted);
+
+private void walkChildren(U, V)(ref U v, string path, int depth,
+    bool inheritedRO, in PropertyTreePolicy policy, scope ref V vis,
+    ref int count, ref bool halted) @safe
+{
+    if (halted)
+        return;
+    static if (hasPropChildren!U)
+    {
+        // The v1 erased seam is a read seam (`PRT5`).
+        foreach (i, name, ref child; v.propChildren)
+        {
+            if (halted)
+                break;
+            const p = name is null ? elementPath(path, i)
+                : childPath(path, name);
+            const lbl = name is null ? "[" ~ i.to!string ~ "]" : name.idup;
+            walkValue(child, p, lbl, depth + 1,
+                MemberMeta(label: lbl, readOnly: true), policy, vis, count,
+                halted);
+        }
+    }
+    else static if (is(U == P*, P))
+    {
+        if (v !is null)
+            walkChildren(*v, path, depth, inheritedRO, policy, vis, count,
+                halted);
+    }
+    else static if (isArray!U && !isSomeString!U)
+    {
+        static if (hasElementKey!(typeof(v[0])))
+        {
+            // Duplicate keys: a visible diagnostic, and addressing refuses —
+            // it never falls back to an index (`PRT7`).
+            bool dup;
+            foreach (a; 0 .. v.length)
+                foreach (bIdx; a + 1 .. v.length)
+                    if (v[a].propElementKey == v[bIdx].propElementKey)
+                        dup = true;
+            if (dup)
+                vis.onDuplicateKeys(path, depth + 1);
+            foreach (i, ref e; v)
+            {
+                if (halted)
+                    break;
+                walkValue(e, keyedPath(path, e.propElementKey),
+                    "[#" ~ e.propElementKey.to!string ~ "]", depth + 1,
+                    MemberMeta(readOnly: inheritedRO), policy, vis, count,
+                    halted);
+            }
+        }
+        else
+        {
+            foreach (i, ref e; v)
+            {
+                if (halted)
+                    break;
+                walkValue(e, elementPath(path, i), "[" ~ i.to!string ~ "]",
+                    depth + 1, MemberMeta(readOnly: inheritedRO), policy, vis,
+                    count, halted);
+            }
+        }
+    }
+    else static if (isAggregateType!U && !isSomeString!U)
+    {
+        static foreach (name; FieldNameTuple!U)
+        {{
+            alias M = __traits(getMember, U, name);
+            static if (!hasUDA!(M, hidden))
+            {{
+                alias F = typeof(__traits(getMember, U, name));
+                bool visible = true;
+                static if (hasUDA!(M, ShowIf))
+                {
+                    // The condition is a compile-time-checked expression over
+                    // the enclosing value — a typed predicate, no cast, no
+                    // callback (`PRT10`).
+                    enum cond = getUDAs!(M, ShowIf)[0].cond;
+                    visible = mixin("v." ~ cond);
+                }
+                if (visible && !halted)
+                {
+                    MemberMeta meta;
+                    meta.label = name;
+                    meta.readOnly = inheritedRO || hasUDA!(M, readOnly);
+                    static if (hasUDA!(M, Label))
+                        meta.label = getUDAs!(M, Label)[0].text;
+                    static if (hasUDA!(M, Doc))
+                        meta.doc = getUDAs!(M, Doc)[0].text;
+                    static if (hasUDA!(M, Range))
+                    {
+                        meta.hasRange = true;
+                        meta.lo = getUDAs!(M, Range)[0].lo;
+                        meta.hi = getUDAs!(M, Range)[0].hi;
+                        meta.step = getUDAs!(M, Range)[0].step;
+                    }
+                    static foreach (uda; __traits(getAttributes, M))
+                    {{
+                        static if (is(uda == Editor!fn, alias fn))
+                        {
+                            // `@Editor` names a symbol; validated HERE, so an
+                            // invalid combination fails the build (`PRT9`,
+                            // `PRT11`).
+                            static assert(leafKindOf!F != LeafKind.opaque
+                                && !descends!F,
+                                name ~ ": @Editor cannot make an opaque or "
+                                ~ "composite value assignable");
+                            static assert(is(typeof(fn(F.init)) : F),
+                                name ~ ": @Editor symbol must accept and "
+                                ~ "emit " ~ F.stringof);
+                            meta.editor = __traits(identifier, fn);
+                        }
+                    }}
+                    walkValue(__traits(getMember, v, name),
+                        childPath(path, name), meta.label, depth + 1, meta,
+                        policy, vis, count, halted);
+                }
+            }}
+        }}
+    }
+    else
+    {
+        // A leaf has no children; nothing to walk.
+    }
+}
+
+/// One value's row, classified — shared by every projection.
+private PropertyNode makeNode(U)(ref U v, string path, string label,
+    int depth, MemberMeta meta, in PropertyTreePolicy policy) @safe
+{
+    PropertyNode n = {
+        path: path,
+        label: label,
+        doc: meta.doc,
+        editor: meta.editor,
+        typeName: U.stringof,
+        depth: depth,
+        hasRange: meta.hasRange,
+        lo: meta.lo,
+        hi: meta.hi,
+        step: meta.step,
+    };
+
+    static if (descends!U)
+    {
+        n.composite = true;
+        n.kind = LeafKind.none;
         static if (hasPropChildren!U)
         {
-            // The v1 erased seam is a read seam (`PRT5`).
-            foreach (i, name, ref child; v.propChildren)
-            {
-                const p = name is null ? elementPath(path, i)
-                    : childPath(path, name);
-                const lbl = name is null
-                    ? "[" ~ i.to!string ~ "]" : name.idup;
-                addValueNode(child, node, p, lbl, depth + 1,
-                    MemberMeta(label: lbl, readOnly: true));
-                if (_capped)
-                    return;
-            }
+            static if (__traits(compiles, { bool e = v.propExpandable; }))
+                n.expandable = v.propExpandable;
+            else
+                n.expandable = true;
+            static if (__traits(compiles, { string s = v.propText; }))
+                n.badge = v.propText;
+            n.editable = false; // the erased seam is read-only in v1
         }
         else static if (is(U == P*, P))
         {
-            if (v !is null)
-                addChildrenOf(*v, node, path, depth, inheritedRO);
+            if (v is null)
+            {
+                n.composite = false;
+                n.expandable = false;
+                n.badge = "null";
+                n.kind = LeafKind.opaque;
+            }
+            else
+                n.expandable = true;
+            n.editable = false;
         }
         else static if (isArray!U && !isSomeString!U)
         {
-            static if (hasElementKey!(typeof(v[0])))
-            {
-                // Duplicate keys: a visible diagnostic row, and addressing
-                // refuses — it never falls back to an index (`PRT7`).
-                bool dup;
-                foreach (a; 0 .. v.length)
-                    foreach (bIdx; a + 1 .. v.length)
-                        if (v[a].propElementKey == v[bIdx].propElementKey)
-                            dup = true;
-                if (dup)
-                {
-                    PropertyNode d = {
-                        label: "⚠ duplicate element key",
-                        doc: "addressing refused; keys must be unique",
-                        synthetic: true,
-                        diagnostic: true,
-                        depth: depth + 1,
-                    };
-                    data.add(d, node);
-                    _count++;
-                }
-                foreach (i, ref e; v)
-                {
-                    const p = keyedPath(path, e.propElementKey);
-                    addValueNode(e, node, p, "[#"
-                        ~ e.propElementKey.to!string ~ "]", depth + 1,
-                        MemberMeta(readOnly: inheritedRO));
-                    if (_capped)
-                        return;
-                }
-            }
-            else
-            {
-                foreach (i, ref e; v)
-                {
-                    addValueNode(e, node, elementPath(path, i),
-                        "[" ~ i.to!string ~ "]", depth + 1,
-                        MemberMeta(readOnly: inheritedRO));
-                    if (_capped)
-                        return;
-                }
-            }
-        }
-        else static if (isAggregateType!U && !isSomeString!U)
-        {
-            static foreach (name; FieldNameTuple!U)
-            {{
-                alias M = __traits(getMember, U, name);
-                static if (!hasUDA!(M, hidden))
-                {{
-                    alias F = typeof(__traits(getMember, U, name));
-                    bool visible = true;
-                    static if (hasUDA!(M, ShowIf))
-                    {
-                        // The condition is a compile-time-checked expression
-                        // over the enclosing value — a typed predicate, no
-                        // cast, no callback (`PRT10`).
-                        enum cond = getUDAs!(M, ShowIf)[0].cond;
-                        visible = mixin("v." ~ cond);
-                    }
-                    if (visible && !_capped)
-                    {
-                        MemberMeta meta;
-                        meta.label = name;
-                        meta.readOnly = inheritedRO || hasUDA!(M, readOnly);
-                        static if (hasUDA!(M, Label))
-                            meta.label = getUDAs!(M, Label)[0].text;
-                        static if (hasUDA!(M, Doc))
-                            meta.doc = getUDAs!(M, Doc)[0].text;
-                        static if (hasUDA!(M, Range))
-                        {
-                            meta.hasRange = true;
-                            meta.lo = getUDAs!(M, Range)[0].lo;
-                            meta.hi = getUDAs!(M, Range)[0].hi;
-                            meta.step = getUDAs!(M, Range)[0].step;
-                        }
-                        static foreach (uda; __traits(getAttributes, M))
-                        {{
-                            static if (is(uda == Editor!fn, alias fn))
-                            {
-                                // `@Editor` names a symbol; validated HERE, so
-                                // an invalid combination fails the build
-                                // (`PRT9`, `PRT11`).
-                                static assert(leafKindOf!F != LeafKind.opaque
-                                    && !descends!F,
-                                    name ~ ": @Editor cannot make an opaque "
-                                    ~ "or composite value assignable");
-                                static assert(is(typeof(fn(F.init)) : F),
-                                    name ~ ": @Editor symbol must accept and "
-                                    ~ "emit " ~ F.stringof);
-                                meta.editor = __traits(identifier, fn);
-                            }
-                        }}
-                        addValueNode(__traits(getMember, v, name), node,
-                            childPath(path, name), meta.label, depth + 1, meta);
-                    }
-                }}
-            }}
+            n.badge = "[" ~ v.length.to!string ~ "]";
+            n.expandable = v.length > 0;
+            n.editable = false;
         }
         else
         {
-            // A leaf has no children; nothing to add.
+            n.expandable = true;
+            n.editable = false;
         }
     }
-
-    /// One value's row, and — when its path is open — its children (`PRT4`).
-    private uint addValueNode(U)(ref U v, uint parent, string path,
-        string label, int depth, MemberMeta meta) @safe
+    else
     {
-        if (_capped)
-            return uint.max;
-        if (_count >= policy.maxNodes)
-        {
-            addCappedRow(parent, depth);
-            return uint.max;
-        }
-
-        PropertyNode n = {
-            path: path,
-            label: label,
-            doc: meta.doc,
-            editor: meta.editor,
-            typeName: U.stringof,
-            depth: depth,
-            hasRange: meta.hasRange,
-            lo: meta.lo,
-            hi: meta.hi,
-            step: meta.step,
-        };
-
-        static if (descends!U)
-        {
-            n.composite = true;
-            n.kind = LeafKind.none;
-            static if (hasPropChildren!U)
-            {
-                static if (__traits(compiles, { bool e = v.propExpandable; }))
-                    n.expandable = v.propExpandable;
-                else
-                    n.expandable = true;
-                static if (__traits(compiles, { string s = v.propText; }))
-                    n.badge = v.propText;
-                n.editable = false; // the erased seam is read-only in v1
-            }
-            else static if (is(U == P*, P))
-            {
-                if (v is null)
-                {
-                    n.composite = false;
-                    n.expandable = false;
-                    n.badge = "null";
-                    n.kind = LeafKind.opaque;
-                }
-                else
-                    n.expandable = true;
-                n.editable = false;
-            }
-            else static if (isArray!U && !isSomeString!U)
-            {
-                n.badge = "[" ~ v.length.to!string ~ "]";
-                n.expandable = v.length > 0;
-                n.editable = false;
-            }
-            else
-            {
-                n.expandable = true;
-                n.editable = false;
-            }
-        }
-        else
-        {
-            n.kind = leafKindOf!U;
-            n.expandable = false;
-            n.badge = renderLeaf(v);
-            n.editable = !meta.readOnly && !policy.readOnly
-                && n.kind != LeafKind.opaque;
-            static if (is(U == enum))
-                static foreach (m; __traits(allMembers, U))
-                    n.choices ~= m;
-        }
-
-        const idx = data.add(n, parent);
-        _count++;
-
-        static if (descends!U)
-            if (n.composite && n.expandable && _open.isOpen(path))
-            {
-                if (depth + 1 >= policy.maxDepth)
-                    addCappedRow(idx, depth + 1);
-                else
-                    addChildrenOf(v, idx, path, depth, meta.readOnly);
-            }
-        return idx;
+        n.kind = leafKindOf!U;
+        n.expandable = false;
+        n.badge = renderLeaf(v);
+        n.editable = !meta.readOnly && !policy.readOnly
+            && n.kind != LeafKind.opaque;
+        static if (is(U == enum))
+            static foreach (m; __traits(allMembers, U))
+                n.choices ~= m;
     }
+    return n;
 }
 
 /// The presented text of one leaf value.
@@ -2162,4 +2861,293 @@ private Applied replayHistory(bool redoDir, T)(ref T subject,
     assert(sawNewKind, "the badge refreshed");
     assert(pt.selectedPath(tv) == "fill.opacity", "selection preserved");
     assert(tv.open.isOpen("fill"), "disclosure preserved");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — the search projection.
+// ─────────────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    private string[] rowPaths(ref PropertyTree!Layer pt,
+        ref TreeViewState!string tv) @safe
+    {
+        string[] ps;
+        foreach (ref const r; tv.rows)
+            ps ~= pt.data.nodes[r.node].value.path;
+        return ps;
+    }
+
+    private const(PropertyNode)* rowByPath(ref PropertyTree!Layer pt,
+        string p) @safe
+    {
+        foreach (ref const nd; pt.data.nodes)
+            if (nd.value.path == p)
+                return (() @trusted => &nd.value)();
+        return null;
+    }
+
+    private void typeQuery(ref TreeViewState!string tv, string q) @safe
+    {
+        import sparkles.input : Key, KeyEvent;
+
+        tv.filterStart();
+        foreach (dchar c; q)
+            tv.filterKey(KeyEvent(Key.char_, c));
+    }
+}
+
+@("ui.property_tree.searchProjectionIgnoresAndPreservesDisclosure")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView();
+    pt.rebuild(l, tv); // everything closed
+    const before = rowPaths(pt, tv);
+
+    // A query discovers through CLOSED composites (PRT29)…
+    typeQuery(tv, "opacity");
+    pt.rebuild(l, tv);
+    assert(pt.searching && pt.matchCount >= 1);
+    const hit = rowByPath(pt, "fill.opacity");
+    assert(hit !is null, "found inside a closed composite");
+    assert(hit.role == SearchRole.direct);
+    assert(hit.labelSpans.length, "the witness is retained");
+    const anc = rowByPath(pt, "fill");
+    assert(anc !is null && anc.role == SearchRole.context,
+        "the minimum ancestor closure explains the path");
+    assert(rowByPath(pt, "visible") is null,
+        "an unmatched root is not dragged in");
+    assert(tv.open.exceptions.length == 0,
+        "filtering never mutates disclosure");
+
+    // …and clearing restores the prior disclosure projection exactly.
+    import sparkles.input : Key, KeyEvent;
+
+    tv.filterKey(KeyEvent(Key.escape));
+    pt.rebuild(l, tv);
+    assert(rowPaths(pt, tv) == before);
+}
+
+@("ui.property_tree.oneTypedCharacterNarrows")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView();
+
+    // Fuzzy drops one-unit parts; the exact smart-case override must narrow
+    // instead of matching everything (PRT30).
+    typeQuery(tv, "v");
+    pt.rebuild(l, tv);
+    assert(pt.matchCount > 0);
+    assert(rowByPath(pt, "visible") !is null);
+    assert(rowByPath(pt, "handle") is null, "no 'v' anywhere in that record");
+
+    // Zero matches are explicit, never empty (PRT33).
+    tv.filter = tv.filter.cancelled();
+    typeQuery(tv, "qqzz");
+    pt.rebuild(l, tv);
+    assert(pt.matchCount == 0);
+    bool sawNoMatch;
+    foreach (ref const nd; pt.data.nodes)
+        sawNoMatch |= nd.value.role == SearchRole.status
+            && nd.value.label == "No properties match";
+    assert(sawNoMatch);
+}
+
+@("ui.property_tree.partsLandInDifferentFieldsAndRankTotal")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView();
+
+    // "name layer": one part lands in the label; the other lands wherever it
+    // scores best — here the @Doc text ("shown in the layer list") outranks
+    // the rendered value, which is exactly the per-part best-field rule.
+    typeQuery(tv, "name layer");
+    pt.rebuild(l, tv);
+    const hit = rowByPath(pt, "name");
+    assert(hit !is null && hit.role == SearchRole.direct);
+    assert((hit.matched & MatchedField.label) != 0);
+    assert((hit.matched & (MatchedField.value | MatchedField.doc)) != 0,
+        "the second part landed in a different field");
+
+    // A label match outranks path-only matches (PRT30 tie order). Park the
+    // selection on a row the next query will NOT match, so the best-match
+    // rule (not selection preservation) is what the assert exercises.
+    tv.filter = tv.filter.cancelled();
+    pt.rebuild(l, tv);
+    foreach (i, ref const r; tv.rows)
+        if (pt.data.nodes[r.node].value.path == "visible")
+            tv.sel = cast(long) i;
+    typeQuery(tv, "fill");
+    pt.rebuild(l, tv);
+    assert(tv.rows.length > 0);
+    assert(pt.selectedPath(tv) == "fill",
+        "the highest-ranked direct match is selected (PRT32)");
+
+    // Erased values are searchable through propText/@names (PRT30 corpus).
+    tv.filter = tv.filter.cancelled();
+    typeQuery(tv, "retries");
+    pt.rebuild(l, tv);
+    assert(rowByPath(pt, "extra.retries") !is null);
+}
+
+@("ui.property_tree.filterAnchorRestoresOnClear")
+@safe unittest
+{
+    import sparkles.input : Key, KeyEvent;
+
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView(12);
+    tv.open = tv.open.opened("fill");
+    pt.rebuild(l, tv);
+
+    // Park the selection somewhere specific first.
+    assert(pt.data.nodes.length > 0);
+    foreach (i, ref const r; tv.rows)
+        if (pt.data.nodes[r.node].value.path == "fill.opacity")
+            tv.sel = cast(long) i;
+    tv.clamp();
+    const wantRow = tv.sel - tv.top;
+
+    typeQuery(tv, "dash");
+    pt.rebuild(l, tv);
+    assert(pt.selectedPath(tv) == "dashes", "best match selected");
+
+    tv.filterKey(KeyEvent(Key.escape));
+    pt.rebuild(l, tv);
+    assert(pt.selectedPath(tv) == "fill.opacity",
+        "clearing restores the captured path (PRT32)");
+    assert(tv.sel - tv.top == wantRow, "…at the same viewport row");
+}
+
+@("ui.property_tree.pendingEditPathStaysPinned")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    PropertyEditState es;
+    auto tv = freshView();
+
+    assert(editProperty(l, Edit("fill.opacity", EditValue.of(0.7),
+        EditPhase.preview), es).ok);
+
+    // The query matches something else entirely; the previewed path is
+    // pinned with its ancestors and stays selected (PRT34).
+    typeQuery(tv, "dash");
+    pt.rebuild(l, tv, es.pendingActive ? es.pendingPath : null);
+    assert(rowByPath(pt, "fill.opacity") !is null);
+    assert(rowByPath(pt, "fill") !is null);
+    assert(pt.selectedPath(tv) == "fill.opacity");
+}
+
+@("ui.property_tree.malformedQueryKeepsTheLastCompleteResult")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView();
+
+    typeQuery(tv, "opacity");
+    pt.rebuild(l, tv);
+    const good = rowPaths(pt, tv);
+    assert(good.length > 0 && pt.filterError.length == 0);
+
+    // Nine parts exceed fuzzy's part capacity: an explicit error, and the
+    // last complete result is kept (PRT33).
+    tv.filter = tv.filter.cancelled();
+    typeQuery(tv, "a b c d e f g h i");
+    pt.rebuild(l, tv);
+    assert(pt.filterError.length);
+    assert(rowPaths(pt, tv) == good);
+}
+
+@("ui.property_tree.honestOmissionAndIncompleteRows")
+@safe unittest
+{
+    auto l = sampleLayer();
+    l.dashes = new int[](300); // three hundred path matches for "dashes"
+    PropertyTree!Layer pt;
+    auto tv = freshView(7); // tiny pane → small match target (PRT31)
+
+    typeQuery(tv, "dashes");
+    pt.rebuild(l, tv);
+    assert(pt.omittedMatches > 0);
+    bool sawOmitted;
+    foreach (ref const nd; pt.data.nodes)
+        sawOmitted |= nd.value.role == SearchRole.status
+            && nd.value.synthetic;
+    assert(sawOmitted, "known rejected matches become a visible row");
+
+    // A capped discovery says incomplete and must not claim a count.
+    PropertyTree!Layer small;
+    small.policy.maxNodes = 10;
+    auto tv2 = freshView();
+    typeQuery(tv2, "dashes");
+    small.rebuild(l, tv2);
+    assert(small.searchIncomplete);
+    bool sawIncomplete, sawOmittedRow;
+    foreach (ref const nd; small.data.nodes)
+    {
+        sawIncomplete |= nd.value.label == "⋯ search incomplete (capped)";
+        sawOmittedRow |= nd.value.label.length > 2
+            && nd.value.label[$ - 8 .. $] == " omitted";
+    }
+    assert(sawIncomplete && !sawOmittedRow);
+}
+
+@("ui.property_tree.transientFoldHidesWithoutTouchingDisclosure")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView();
+
+    typeQuery(tv, "opacity");
+    pt.rebuild(l, tv);
+    bool visibleNow(string p) @safe
+    {
+        foreach (ref const r; tv.rows)
+            if (pt.data.nodes[r.node].value.path == p)
+                return true;
+        return false;
+    }
+    assert(visibleNow("fill.opacity"));
+
+    // Folding in the search projection acts on the overlay (PRT29): the row
+    // hides, admission and counts do not change, base disclosure untouched.
+    const count = pt.matchCount;
+    tv.searchFold = tv.searchFold.closed("fill");
+    pt.rebuild(l, tv);
+    assert(!visibleNow("fill.opacity"));
+    assert(visibleNow("fill"), "the folded composite itself stays");
+    assert(pt.matchCount == count);
+    assert(tv.open.exceptions.length == 0);
+}
+
+@("ui.property_tree.revealInBaseOpensAndSelects")
+@safe unittest
+{
+    auto l = sampleLayer();
+    PropertyTree!Layer pt;
+    auto tv = freshView();
+
+    typeQuery(tv, "offset");
+    pt.rebuild(l, tv);
+    assert(pt.matchCount > 0);
+    const target = pt.selectedPath(tv);
+    assert(target.length && target != "fill",
+        "a nested stop field matched: " ~ target);
+
+    pt.revealInBase(l, tv);
+    assert(!tv.searching && tv.filterQuery.length == 0);
+    assert(!pt.searching);
+    assert(tv.open.isOpen("fill") && tv.open.isOpen("fill.stopList"),
+        "ancestors opened in base disclosure");
+    assert(pt.selectedPath(tv) == target, "the target is selected");
 }
