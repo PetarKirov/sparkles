@@ -1,0 +1,21 @@
+﻿tag,date,commits since previous,notes
+v0.0.1,2026-02-09,72,tagged release
+v0.0.2,2026-02-18,22,tagged release
+v0.0.3,2026-02-19,13,tagged release
+v0.1.0,2026-05-13,78,tagged release
+v0.2.0,2026-05-18,5,tagged release
+befire-rebase,2026-05-18,59,tagged release
+v0.3.0,2026-06-01,12,tagged release
+v0.4.0,2026-06-02,34,tagged release
+backup/pre-reorder-ee4edfd,2026-07-01,229,tagged release
+wired-json-engine-prerebase,2026-07-06,238,tagged release
+backup/feat-sparkles-syntax-pre-tidy,2026-07-12,221,tagged release
+pre-tidy-backup,2026-08-02,545,tagged release
+backup/pre-ddoc-div-rebase,2026-08-04,223,tagged release
+random-tip-for-git-worktree,2026-08-07,493,tagged release
+backup/pre-glfw-rebase,2026-08-14,39,tagged release
+backup/pre-coverage-tidy,2026-08-17,31,tagged release
+pre-rebase-format-preview,2026-08-18,121,tagged release
+next,
+someday,2199-01-01,0,wishful,extra-cell
+"unterminated,2199-12-31,0,the parser tolerates this
