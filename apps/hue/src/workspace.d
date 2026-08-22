@@ -1967,8 +1967,11 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
         return true;
     }
     // The wait expired rather than a key arriving: advance the guide's
-    // clock so the panel opens on time.
+    // clock so the panel opens on time — and the settings pane's scrollbar
+    // easing with it (the same cadence, the same look as every tree view).
     w.tickLantern(waited);
+    if (w.settings.active)
+        w.settings.tickAnims(waited);
     return w.tickDock(waited);
 }
 

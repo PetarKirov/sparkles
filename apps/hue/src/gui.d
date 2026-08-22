@@ -2574,6 +2574,8 @@ int runGui(GuiArgs guiArgs) @system
             // not depend on how fast this machine renders.
             ltnTick(pn.lantern, dur!"msecs"(frameMs(window.frameSeconds)),
                 guiLanternDelay());
+            if (settingsPane.active)
+                settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
 
             foreach (kev; keyBuf)
             {

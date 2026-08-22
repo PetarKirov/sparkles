@@ -230,11 +230,19 @@ private string historyLine(in typeof(PropertyDemo.edits.undo) stack)
 // ---------------------------------------------------------------------------
 
 /// The frame step: builds the persistent demo the first time the page is
-/// live, so the interactive app never shows a placeholder.
-void step(ref GalleryState s, int)
+/// live, so the interactive app never shows a placeholder — and advances the
+/// scrollbar hover-expand easing (the bar animates exactly as the tree
+/// views' do).
+void step(ref GalleryState s, int dtMs)
 {
-    if (s.page == registry_propertyPageIndex && !s.prop.built)
+    if (s.page != registry_propertyPageIndex)
+        return;
+    if (!s.prop.built)
         s.prop.ensure();
+    import core.time : msecs;
+    import sparkles.input.capability : mousePointer;
+
+    s.prop.tv.tick(mousePointer, dtMs / 1000.0f);
 }
 
 /// The live filter's typed-text seam: the shell offers every key here while
