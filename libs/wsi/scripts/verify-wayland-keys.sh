@@ -88,5 +88,5 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
   bash "$work/lane.sh" || lane_status=$?
 cat "$work/smoke.log" 2>/dev/null || true
 test "$lane_status" -eq 0
-grep -q '^ok: Wayland WSI conformance (13 checked, 3 skipped)' "$work/smoke.log"
+grep -q '^ok: Wayland WSI conformance (13 checked, 4 skipped)' "$work/smoke.log"
 echo ">> sparkles:wsi Wayland keyboard verified through Weston."

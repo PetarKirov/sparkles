@@ -23,10 +23,35 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$during_src" \
   "$repo/libs/wsi/examples/x11-hosted-smoke.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxkbcommon -L-lxkbcommon-x11 \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-imdkit \
+  -L-lxkbcommon -L-lxkbcommon-x11 \
   -of="$work/wsi-x11-smoke"
 
-echo ">> running under Xvfb ..."
-xvfb-run -a -s "-screen 0 1024x768x24" "$work/wsi-x11-smoke" | tee "$work/output.log"
-grep -q '^ok: X11 WSI conformance' "$work/output.log"
+echo ">> building the test XIM server ..."
+ldc2 -preview=in -preview=dip1000 -g -i \
+  -I"$repo/libs/wsi/src" \
+  -I"$repo/libs/wsi/examples" \
+  "$repo/libs/wsi/examples/xim-test-server.d" \
+  "$repo/libs/wsi/src/xcb_native.c" \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-imdkit \
+  -L-lxkbcommon -L-lxkbcommon-x11 \
+  -of="$work/xim-test-server"
+
+cat >"$work/lane.sh" <<EOF
+set -euo pipefail
+"$work/xim-test-server" >"$work/xim-server.log" 2>&1 &
+server_pid=\$!
+trap 'kill "\$server_pid" 2>/dev/null || true' EXIT
+for _ in \$(seq 1 100); do
+  grep -q 'ready' "$work/xim-server.log" 2>/dev/null && break
+  sleep 0.05
+done
+grep -q 'ready' "$work/xim-server.log"
+XMODIFIERS=@im=test WSI_XIM_LANE=1 "$work/wsi-x11-smoke"
+EOF
+
+echo ">> running under Xvfb with the test XIM server ..."
+xvfb-run -a -s "-screen 0 1024x768x24" bash "$work/lane.sh" \
+  | tee "$work/output.log"
+grep -q '^ok: X11 WSI conformance (16 checked, 1 skipped)' "$work/output.log"
 echo ">> sparkles:wsi X11 foreign-fd smoke verified under Xvfb."

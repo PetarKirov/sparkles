@@ -42,6 +42,11 @@ $(LIST
         `KeyAction.repeat` for that physical key between its press and its
         release (the release is injected only after a repeat arrived).
         Shares the chord's `chordEnabled` runtime gate and `chordDeadline`.
+    * `void injectImeCommit()` plus `enum string imeCommittedText` — press
+        the platform IME channel's commit key; the property requires a
+        `TextCommittedEvent` carrying exactly that text. Gated at runtime
+        by `imeEnabled` (lanes must provide an input method) and paced by
+        `chordDeadline`.
     * `void onWindowReady(WindowId id)` — post-ready driver setup (e.g.
         mapping a buffer so a compositor will grant keyboard focus); the
         two-argument form also receives the ready metrics, so the buffer
@@ -117,6 +122,7 @@ private struct Observed
     bool heldPress;
     bool heldRepeat;
     bool heldRelease;
+    bool imeCommitted;
     bool pointerEntered;
     bool pointerMoved;
     bool leftPressed;
@@ -167,6 +173,9 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
                 (in CloseRequestedEvent _) { seen.closeRequested = true; },
                 (in DestroyedEvent _) { seen.destroyed = true; },
                 (in KeyboardEvent value) { observeKey(hooks, seen, value); },
+                (in TextCommittedEvent value) {
+                    observeCommit(hooks, seen, value);
+                },
                 (in PointerEvent value) { observePointer(seen, value); },
                 (in ScrollEvent value) {
                     if (value.discreteY > 0 || value.dy > 0)
@@ -392,6 +401,33 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
             hooks.releaseHold();
             driveUntil(() => seen.heldRelease,
                 "the held key's release never arrived", holdLimit);
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: a key routed through the platform IME channel arrives as
+    // the input method's committed text — a TextCommittedEvent carrying
+    // the declared string — because the IME consumed the key instead of
+    // the window seeing a bare key press.
+    static if (is(typeof(hooks.injectImeCommit()))
+        && is(typeof(Hooks.imeCommittedText)))
+    {
+        bool runIme = true;
+        static if (is(typeof(hooks.imeEnabled)))
+            runIme = hooks.imeEnabled;
+        if (runIme)
+        {
+            static if (is(typeof(Hooks.chordDeadline)))
+                const imeLimit = Hooks.chordDeadline;
+            else
+                const imeLimit = 5.seconds;
+            hooks.injectImeCommit();
+            driveUntil(() => seen.imeCommitted,
+                "the IME never committed the expected text", imeLimit);
             ++outcome.checked;
         }
         else
@@ -641,6 +677,13 @@ private void observeKey(Hooks)(ref Hooks hooks, ref Observed seen,
     }
 }
 
+private void observeCommit(Hooks)(ref Hooks hooks, ref Observed seen,
+    in TextCommittedEvent event)
+{
+    static if (is(typeof(Hooks.imeCommittedText)))
+        seen.imeCommitted |= event.text.value == Hooks.imeCommittedText;
+}
+
 @("wsi.conformance.recordingBackendPassesTheValueContract")
 @system
 unittest
@@ -672,5 +715,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 10);
+    assert(outcome.checked == 6 && outcome.skipped == 11);
 }

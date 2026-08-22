@@ -207,6 +207,14 @@
         pkgs.libxrandr.dev
         pkgs.libxcb
         pkgs.libxcb.dev
+
+        # fcitx's XIM-over-XCB library: `libs "xcb-imdkit"` in libs/wsi —
+        # the X11 backend's XIM client, and the lane's test XIM server,
+        # both over the backend's single XCB connection. Its .pc requires
+        # xcb-util, so pkg-config needs that too.
+        pkgs.xcb-imdkit
+        pkgs.xorg.xcbutil
+        pkgs.xorg.xcbutil.dev
       ]
       ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
         # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader

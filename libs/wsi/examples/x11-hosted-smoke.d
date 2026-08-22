@@ -10,7 +10,7 @@ module x11_hosted_smoke;
 
 version (linux):
 
-import core.time : Duration;
+import core.time : Duration, msecs;
 import std.stdio : writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
@@ -25,6 +25,8 @@ private struct X11Hooks
     DefaultLoop* loop;
     xcb_connection_t* connection;
     uint window;
+    WindowId windowId;
+    bool imeEnabled;
 
     enum uint chordShiftCode = 50; // X keycode: KEY_LEFTSHIFT + 8
     enum uint chordKeyCode = 38; // X keycode: KEY_A + 8
@@ -41,6 +43,7 @@ private struct X11Hooks
 
     void onWindowReady(WindowId id)
     {
+        windowId = id;
         auto handles = wsi.nativeHandles(id).value;
         connection = handles.display.match!(
             (in X11DisplayHandle handle)
@@ -73,6 +76,28 @@ private struct X11Hooks
     }
 
     enum uint holdKeyCode = chordKeyCode;
+
+    // The lane's test XIM server commits "xim" for the commit key
+    // (X keycode 54, evdev KEY_C) and bounces every other key back.
+    enum string imeCommittedText = "xim";
+    enum uint imeCommitKeyCode = 54;
+
+    void injectImeCommit()
+    {
+        // The XIM handshake (discovery, open, create-ic) races window
+        // creation; inject only once the input context is live, or the
+        // key would be delivered as a bare key and no commit could come.
+        foreach (_; 0 .. 400)
+        {
+            if (wsi.textInputReady(windowId))
+                break;
+            step(25.msecs);
+        }
+        assert(wsi.textInputReady(windowId),
+            "the XIM input context never became ready");
+        assert(sendKey(connection, imeCommitKeyCode, true) == 0);
+        assert(sendKey(connection, imeCommitKeyCode, false) == 0);
+    }
 
     void holdKey()
     {
@@ -135,6 +160,12 @@ int main()
     assert(!wsi.attach(loop).hasError);
 
     auto hooks = X11Hooks(&wsi, &loop);
+    {
+        import core.stdc.stdlib : getenv;
+
+        // The IME property needs the lane's XIM server on $XMODIFIERS.
+        hooks.imeEnabled = getenv("WSI_XIM_LANE") !is null;
+    }
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi X11 conformance");
     writeln("ok: X11 WSI conformance (", outcome.checked, " checked, ",
