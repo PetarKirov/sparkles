@@ -1,7 +1,7 @@
 [
   {
     "text": "Overview",
-    "collapsed": false,
+    "collapsed": true,
     "items": [
       {
         "text": "Package Overview",
@@ -107,12 +107,12 @@
   },
   {
     "text": "Apps",
-    "collapsed": false,
+    "collapsed": true,
     "items": [
       {
         "text": "terminal",
         "link": "/apps/terminal/",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Getting started",
@@ -160,16 +160,16 @@
   },
   {
     "text": "Libraries",
-    "collapsed": false,
+    "collapsed": true,
     "items": [
       {
         "text": "base",
         "link": "/libs/base/",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Tutorial",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Getting started",
@@ -260,7 +260,7 @@
         "items": [
           {
             "text": "Tutorial",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Getting started",
@@ -306,7 +306,7 @@
       },
       {
         "text": "core-cli",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "drawTable playground",
@@ -317,10 +317,11 @@
       {
         "text": "fuzzy",
         "link": "/libs/fuzzy/",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Tutorial",
+            "collapsed": true,
             "items": [
               {
                 "text": "Getting started",
@@ -330,6 +331,7 @@
           },
           {
             "text": "How-to guides",
+            "collapsed": true,
             "items": [
               {
                 "text": "Chunked search",
@@ -339,6 +341,7 @@
           },
           {
             "text": "Reference",
+            "collapsed": true,
             "items": [
               {
                 "text": "API",
@@ -348,6 +351,7 @@
           },
           {
             "text": "Explanation",
+            "collapsed": true,
             "items": [
               {
                 "text": "Admission and ranking",
@@ -401,11 +405,11 @@
       {
         "text": "test-runner",
         "link": "/libs/test-runner/",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Tutorial",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Getting started",
@@ -480,11 +484,11 @@
       {
         "text": "versions",
         "link": "/libs/versions/",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Tutorial",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Getting started",
@@ -591,7 +595,7 @@
     "items": [
       {
         "text": "Application Packaging",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -605,11 +609,11 @@
       },
       {
         "text": "Base",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Text",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Cell-splitting & width spec",
@@ -641,7 +645,7 @@
       },
       {
         "text": "CI",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "ci-stats specification",
@@ -655,7 +659,7 @@
       },
       {
         "text": "Core-CLI",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "args subcommands spec",
@@ -677,7 +681,7 @@
       },
       {
         "text": "DMD-FMT",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "M0 Decision Record",
@@ -687,7 +691,7 @@
       },
       {
         "text": "DMD-LSP",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -735,7 +739,7 @@
       },
       {
         "text": "Event Horizon",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -757,7 +761,7 @@
       },
       {
         "text": "Window System Integration",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -783,7 +787,7 @@
       },
       {
         "text": "Fuzzy",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -801,7 +805,7 @@
       },
       {
         "text": "Hue",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -929,7 +933,7 @@
       },
       {
         "text": "Release",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -965,7 +969,7 @@
       },
       {
         "text": "Test Runner",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -983,7 +987,7 @@
       },
       {
         "text": "TUI",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -1001,7 +1005,7 @@
       },
       {
         "text": "Twoslash",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -1011,7 +1015,7 @@
       },
       {
         "text": "UI",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -1093,7 +1097,7 @@
       },
       {
         "text": "UI SDL3",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Native Wayland resize handoff",
@@ -1113,7 +1117,7 @@
       },
       {
         "text": "UI App",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -1139,7 +1143,7 @@
       },
       {
         "text": "Diagram",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -1157,7 +1161,7 @@
       },
       {
         "text": "UI Gallery",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -1171,7 +1175,7 @@
       },
       {
         "text": "Versions",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -1185,7 +1189,7 @@
       },
       {
         "text": "Wired",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Specification",
@@ -1221,7 +1225,7 @@
       },
       {
         "text": "Dman (design)",
-        "collapsed": false,
+        "collapsed": true,
         "items": [
           {
             "text": "Overview",
@@ -3982,7 +3986,7 @@
           },
           {
             "text": "Constraint Systems",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Android ConstraintLayout",
@@ -3996,7 +4000,7 @@
           },
           {
             "text": "CSS Layout Specs",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "CSS Flexbox",
@@ -4014,7 +4018,7 @@
           },
           {
             "text": "Declarative App Frameworks",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Flutter (Dart)",
@@ -4032,7 +4036,7 @@
           },
           {
             "text": "Desktop GUI Toolkits",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "GTK 4 (C)",
@@ -4058,7 +4062,7 @@
           },
           {
             "text": "Foundational Algorithms",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Cassowary (algorithm)",
@@ -4072,7 +4076,7 @@
           },
           {
             "text": "Immediate-Mode Layout",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Dear ImGui (C++)",
@@ -4086,7 +4090,7 @@
           },
           {
             "text": "Renderer-Agnostic Libraries",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "Clay (C)",
@@ -4112,7 +4116,7 @@
           },
           {
             "text": "Tiling / Structural Layout",
-            "collapsed": false,
+            "collapsed": true,
             "items": [
               {
                 "text": "i3 / sway",
@@ -4235,6 +4239,7 @@
               {
                 "text": "Wayland",
                 "link": "/research/window-system-integration/os-apis/wayland/",
+                "collapsed": true,
                 "items": [
                   {
                     "text": "Feature demos",
@@ -4319,6 +4324,7 @@
               {
                 "text": "X11 / Xlib",
                 "link": "/research/window-system-integration/os-apis/x11/",
+                "collapsed": true,
                 "items": [
                   {
                     "text": "Feature demos",
@@ -4399,6 +4405,7 @@
               {
                 "text": "Windows (Win32)",
                 "link": "/research/window-system-integration/os-apis/win32/",
+                "collapsed": true,
                 "items": [
                   {
                     "text": "Feature demos",
@@ -4479,6 +4486,7 @@
               {
                 "text": "macOS (AppKit)",
                 "link": "/research/window-system-integration/os-apis/appkit/",
+                "collapsed": true,
                 "items": [
                   {
                     "text": "Feature demos",
