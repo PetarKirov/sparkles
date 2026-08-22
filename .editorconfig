@@ -91,3 +91,9 @@ indent_size = unset
 # — so disable indent-style checking for that file.
 [docs/research/code-formatting/gofmt.md]
 indent_style = unset
+
+# These deep-dives quote real Kotlin, Godot C++ and Pango C source, all of which
+# upstream writes with literal tabs — keep the quotes byte-exact rather than
+# reformatting the evidence.
+[docs/research/ui-backend-seam/{pango-harfbuzz,godot-textserver,mosaic}.md]
+indent_style = unset
