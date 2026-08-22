@@ -67,6 +67,12 @@ private extern class NSEvent : NSObject
         NSObject context, long eventNumber, long clickCount, float pressure)
         @selector("mouseEventWithType:location:modifierFlags:timestamp:"
             ~ "windowNumber:context:eventNumber:clickCount:pressure:");
+    static NSEvent otherEventWithType(ulong type, NSPoint location,
+        ulong modifierFlags, double timestamp, long windowNumber,
+        NSObject context, short subtype, long data1, long data2)
+        nothrow @nogc
+        @selector("otherEventWithType:location:modifierFlags:timestamp:"
+            ~ "windowNumber:context:subtype:data1:data2:");
     static NSEvent keyEventWithType(ulong type, NSPoint location,
         ulong modifierFlags, double timestamp, long windowNumber,
         NSObject context, NSString characters,
@@ -78,8 +84,13 @@ private extern class NSEvent : NSObject
 
 private extern class NSApplication : NSObject
 {
-    static NSApplication sharedApplication() @selector("sharedApplication");
-    void postEvent(NSEvent event, bool atStart) @selector("postEvent:atStart:");
+    static NSApplication sharedApplication() nothrow @nogc
+        @selector("sharedApplication");
+    void postEvent(NSEvent event, bool atStart) nothrow @nogc
+        @selector("postEvent:atStart:");
+    long runModalForWindow(NSWindow window)
+        @selector("runModalForWindow:");
+    void stopModal() nothrow @nogc @selector("stopModal");
 }
 
 private extern (C) struct NSRange
@@ -155,6 +166,33 @@ private struct AppKitHooks
     void requestResize(uint width, uint height)
     {
         nativeWindow.setContentSize(NSSize(width, height));
+    }
+
+    /*
+    runModalForWindow blocks in AppKit's modal session — a nested run loop
+    this host does not own. The kqueue source lives in the common modes, so
+    Event Horizon completions still fire; the property's timer callback
+    calls stopModal, which is the only way this call returns.
+    */
+    void enterModalPhase()
+    {
+        NSApplication.sharedApplication().runModalForWindow(nativeWindow);
+    }
+
+    /*
+    stopModal only takes effect from within one of the modal session's own
+    event callouts; from a CFRunLoop source callout the session keeps
+    waiting for its next event — so post one.
+    */
+    void exitModalPhase() nothrow @nogc
+    {
+        enum ulong applicationDefinedType = 15;
+        auto application = NSApplication.sharedApplication();
+        application.stopModal();
+        auto wake = NSEvent.otherEventWithType(applicationDefinedType,
+            NSPoint(0, 0), 0, 0, 0, null, 0, 0, 0);
+        if (wake !is null)
+            application.postEvent(wake, true);
     }
 
     void requestClose()

@@ -18,6 +18,9 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
 
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
+import core.time : Duration;
+
+import sparkles.event_horizon.loop : DefaultLoop;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
@@ -88,6 +91,8 @@ struct Win32Wsi
 
     private HINSTANCE instance_;
     private DWORD ownerThread_;
+    private DefaultLoop* hostLoop_;
+    private bool modalPumping_;
     private Slot[maxWindows] windows_;
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
@@ -283,6 +288,38 @@ struct Win32Wsi
     }
 
     /** Event Horizon native-host concept: non-blocking native dispatch. */
+    /*
+    F03 modal-loop survival: DefWindowProc's move/size and menu loops spin
+    inside dispatchPending, so the hosted wait stops being pumped for their
+    whole duration. A USER timer armed on entering the phase fires inside
+    those loops, and its handler drives one non-blocking Event Horizon
+    drain — completions, timers and wakers keep making progress until the
+    phase ends and the ordinary wait resumes.
+    */
+
+    /// Presence-detected by `runHostedOnce`: the loop that drives this host.
+    void noteHostLoop(ref DefaultLoop loop) nothrow @nogc
+    {
+        hostLoop_ = &loop;
+    }
+
+    private enum UINT_PTR modalPumpTimer = 0x5741; // 'WA'
+    private enum UINT modalPumpMilliseconds = 16;
+
+    private void pumpDuringModalPhase() nothrow
+    {
+        if (hostLoop_ is null || modalPumping_)
+            return;
+        modalPumping_ = true;
+        scope (exit) modalPumping_ = false;
+        auto progressed = hostLoop_.runOnce(Duration.zero);
+        if (progressed.hasError)
+            remember(wsiError(WsiErrorKind.nativeFailure,
+                WsiOperation.dispatch, BackendKind.win32,
+                progressed.error.errnoValue,
+                "Event Horizon drain failed inside a modal loop"));
+    }
+
     bool dispatchPending()
     {
         auto pumped = pumpMessages();
@@ -1067,6 +1104,21 @@ struct Win32Wsi
                 slot.pendingHighSurrogate = 0;
                 slot.hwnd = null;
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA_, 0);
+                return DefWindowProcW(hwnd, message, wParam, lParam);
+            case WM_ENTERSIZEMOVE:
+            case WM_ENTERMENULOOP:
+                SetTimer(hwnd, modalPumpTimer, modalPumpMilliseconds, null);
+                return DefWindowProcW(hwnd, message, wParam, lParam);
+            case WM_EXITSIZEMOVE:
+            case WM_EXITMENULOOP:
+                KillTimer(hwnd, modalPumpTimer);
+                return DefWindowProcW(hwnd, message, wParam, lParam);
+            case WM_TIMER:
+                if (wParam == modalPumpTimer)
+                {
+                    owner.pumpDuringModalPhase();
+                    return 0;
+                }
                 return DefWindowProcW(hwnd, message, wParam, lParam);
             default:
                 return DefWindowProcW(hwnd, message, wParam, lParam);

@@ -219,7 +219,26 @@ IME-commit property runs on AppKit (a posted key comes back as committed
 text through the real input context) and an addendum drives the
 marked-text contract exactly as the input context does. Keymap-change
 events, callback-style XIM pre-edit, candidate-window placement, and raw
-input remain. The scale slice makes
+input remain. The modal-loop slice makes F03 real on the two platforms
+whose native loops steal the thread: Win32 arms a USER timer on entering
+move/size and menu loops, and its `WM_TIMER` handler — which those loops
+do dispatch — drives one non-blocking Event Horizon drain, while AppKit's
+kqueue source already lives in the common run-loop modes and now drives
+the drain itself whenever it fires outside this host's own wait (live
+resize, menu tracking, modal sessions), re-arming its one-shot callback.
+Both learn which loop drives them by presence (`noteHostLoop` in
+`runHostedOnce`). The conformance property is built not to pass vacuously:
+a timer armed before the phase must fire during it, its completion is the
+only thing that ends the phase, and `enterModalPhase` blocks for the
+phase's whole duration — which is how the property caught Wine's `SC_MOVE`
+never entering a loop (the driver runs `TrackPopupMenu`'s real menu loop
+instead), caught the wiring hole where a backend whose properties were
+all satisfied synchronously had never run its hosted wait, and caught that
+kqueue hands armed ops to the kernel only at the next wait — so the
+property steps once between arming and the phase, the shape a real app
+has, and AppKit's `stopModal` needs a posted wake event when called from
+a source callout. Interactive move/size traces and dialog loops
+(`WM_ENTERIDLE`) remain. The scale slice makes
 `SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
 window's scale is the maximum of its entered outputs, a change requests the
 matching buffer scale and reports one atomic metrics transition — verified at
