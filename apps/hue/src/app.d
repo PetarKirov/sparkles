@@ -688,7 +688,7 @@ int executeSite(in HueCli root, in Site cmd)
     import sparkles.docs.options : ChromePalette, GalleryOptions, themeChrome;
     import sparkles.docs.page_shell : writeGallery;
     import sparkles.docs.sidebar : docsConfigPath, loadDocsConfig, loadSidebarFile,
-        sidebarItemsHtml;
+        SidebarItem;
     import sparkles.docs.site : loadSiteConfig, manifestJson, SiteConfig,
         siteConfigPath;
     import sparkles.docs.site_tree : buildSiteTree;
@@ -814,10 +814,11 @@ int executeSite(in HueCli root, in Site cmd)
         const def = buildPath(repoRoot, "docs", ".vitepress", "sidebar.json");
         sidebarPath = def.exists ? def : null;
     }
-    string docsNavHtml;
+    SidebarItem[] docsNav;
     if (sidebarPath.length)
     {
-        import sparkles.docs.site : augmentWithListingDirs;
+        import sparkles.docs.site : augmentWithListingDirs, sidebarJson;
+        import std.file : write;
 
         auto loaded = loadSidebarFile(sidebarPath);
         if (loaded.hasError)
@@ -825,21 +826,16 @@ int executeSite(in HueCli root, in Site cmd)
             stderr.writeln("hue: cannot load sidebar ", sidebarPath, ": ", loaded.error);
             return 1;
         }
-        // One augmentation, in D (`DSC7`): the "(source)" entries land in the
-        // nested docs nav here, and the augmented tree is written beside the
-        // manifest so the VitePress config READS it for the site's own
-        // sidebar instead of re-implementing the merge.
+        // One augmentation, in D (`DSC7`): the explorer's docs/ node renders
+        // this tree inline (listing routes become relative file subtrees,
+        // `DOC11`), and the same tree is written beside the manifest so the
+        // VitePress config READS it for the site's own sidebar instead of
+        // re-implementing the merge.
         string[] navDirs;
         foreach (ref const node; buildSiteTree(set.entries).nodes)
             navDirs ~= node.relPath;
-        auto augmented = augmentWithListingDirs(loaded.value, navDirs);
-        docsNavHtml = sidebarItemsHtml(augmented, cmd.siteBase);
-        {
-            import sparkles.docs.site : sidebarJson;
-            import std.file : write;
-
-            write(buildPath(outDir, "sidebar.json"), sidebarJson(augmented));
-        }
+        docsNav = augmentWithListingDirs(loaded.value, navDirs);
+        write(buildPath(outDir, "sidebar.json"), sidebarJson(docsNav));
     }
 
     const gopt = GalleryOptions(
@@ -847,9 +843,9 @@ int executeSite(in HueCli root, in Site cmd)
         heading: "source listings",
         blurb: "Source listings rendered by <code>hue site</code>.",
         chrome: chrome, darkChrome: darkChrome, stylesheetHref: stylesheetAssetPath,
-        repoUrl: cmd.repoUrl, explorerSidebar: true, docsNavHtml: docsNavHtml);
+        repoUrl: cmd.repoUrl, explorerSidebar: true, siteBase: cmd.siteBase);
 
-    const n = writeGallery(set, outDir, gopt, &renderOne);
+    const n = writeGallery(set, outDir, gopt, &renderOne, docsNav);
 
     // `manifest.json` (`DSC2`): only pages that rendered are routes; the dirs
     // are the written tree's — the same one the index pages were written for.

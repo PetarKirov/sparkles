@@ -101,10 +101,11 @@ struct GalleryOptions
     */
     bool explorerSidebar;
 
-    /// The docs-site nav (`sidebar.sidebarItemsHtml` of `sidebar.json`)
-    /// nested under the explorer's `docs/` node — constant across pages, so
-    /// it is supplied once here.
-    string docsNavHtml;
+    /// Base URL the docs-site nav's site-absolute routes resolve against
+    /// (the explorer's `docs/` node renders that nav; listing routes inside
+    /// it become relative file subtrees instead). Empty leaves them
+    /// root-absolute.
+    string siteBase;
 }
 
 /**
