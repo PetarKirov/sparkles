@@ -928,6 +928,11 @@ struct ExplorerTui
 
             // The settings pane's dispatch answers these; its scope is
             // unreachable while a pane dispatches (KEY11).
+            case Command.dsvColumns:
+            case Command.dsvPalDown: case Command.dsvPalUp:
+            case Command.dsvPalToggle:
+            case Command.dsvPalMoveUp: case Command.dsvPalMoveDown:
+            case Command.dsvPalClose:
             case Command.settingsOpen: case Command.settingsClose:
             case Command.settingsDown: case Command.settingsUp:
             case Command.settingsPageDown: case Command.settingsPageUp:
