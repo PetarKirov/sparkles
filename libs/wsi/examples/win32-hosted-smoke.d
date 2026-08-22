@@ -80,6 +80,30 @@ private struct Win32Hooks
             SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER));
     }
 
+    /*
+    TrackPopupMenu runs User32's menu modal loop inside this very call
+    (WM_ENTERMENULOOP arms the backend's pump timer): the thread spins in
+    the native loop until the menu is dismissed. Only the Event Horizon
+    timer's completion — delivered by that WM_TIMER pump — calls
+    exitModalPhase, so returning from here is itself the survival proof.
+    */
+    void enterModalPhase()
+    {
+        auto menu = CreatePopupMenu();
+        assert(menu !is null);
+        scope (exit) DestroyMenu(menu);
+        assert(AppendMenuW(menu, MF_STRING, 1, "sparkles"w.ptr));
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        assert(TrackPopupMenu(menu, 0, 10, 10, 0, hwnd, null));
+    }
+
+    void exitModalPhase() nothrow @nogc
+    {
+        enum UINT WM_CANCELMODE_ = 0x001F;
+        SendMessageW(hwnd, WM_CANCELMODE_, 0, 0);
+    }
+
     void requestClose()
     {
         assert(PostMessageW(hwnd, WM_CLOSE, 0, 0));

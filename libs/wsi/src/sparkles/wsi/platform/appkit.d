@@ -17,6 +17,9 @@ import sparkles.base.text.cstring : toTempStringz;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
+import core.time : Duration;
+
+import sparkles.event_horizon.loop : DefaultLoop;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.wsi.events;
@@ -542,6 +545,8 @@ struct AppKitWsi
 
     // Event Horizon kqueue → CFRunLoop bridge.
     private int bridgedKqueue_ = -1;
+    private DefaultLoop* hostLoop_;
+    private bool inOwnWait_;
     private CFRunLoopRef runLoop_;
     private CFFileDescriptorRef kqueueDescriptor_;
     private CFRunLoopSourceRef kqueueSource_;
@@ -763,6 +768,20 @@ struct AppKitWsi
     `completionHandle` is the kqueue descriptor encoded as an opaque token by
     Event Horizon. CFFileDescriptor folds it into AppKit's main run loop.
     */
+    /*
+    F03 modal-loop survival: the kqueue source lives in the common run-loop
+    modes, so AppKit's nested loops (live resize, menu tracking, modal
+    sessions) still fire its callback — and outside this host's own wait
+    the callback drives one non-blocking Event Horizon drain itself, since
+    nobody else will until the nested loop unwinds.
+    */
+
+    /// Presence-detected by `runHostedOnce`: the loop that drives this host.
+    void noteHostLoop(ref DefaultLoop loop) nothrow @nogc
+    {
+        hostLoop_ = &loop;
+    }
+
     IoResult!bool wait(void* completionHandle, uint timeoutMilliseconds)
     {
         if (pthread_main_np() == 0)
@@ -778,6 +797,8 @@ struct AppKitWsi
             kCFFileDescriptorReadCallBack);
         const seconds = timeoutMilliseconds == uint.max
             ? 1.0e20 : cast(double) timeoutMilliseconds / 1000.0;
+        inOwnWait_ = true;
+        scope (exit) inOwnWait_ = false;
         const result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds,
             true);
         return ioOk(completionReady_
@@ -1392,8 +1413,18 @@ private extern (C) void onKqueueReady(CFFileDescriptorRef descriptor,
     CFOptionFlags types, void* info) nothrow @nogc
 {
     auto owner = cast(AppKitWsi*) info;
-    if (owner !is null)
-        owner.completionReady_ = true;
+    if (owner is null)
+        return;
+    owner.completionReady_ = true;
+    if (owner.inOwnWait_ || owner.hostLoop_ is null)
+        return;
+    // A nested loop this host does not own is running (live resize, menu
+    // tracking, a modal session): drain Event Horizon here, and re-enable
+    // the one-shot callback so later completions keep waking the phase.
+    owner.hostLoop_.runOnce(Duration.zero);
+    if (owner.kqueueDescriptor_ !is null)
+        CFFileDescriptorEnableCallBacks(owner.kqueueDescriptor_,
+            kCFFileDescriptorReadCallBack);
 }
 
 /*

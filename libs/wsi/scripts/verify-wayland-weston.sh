@@ -52,5 +52,5 @@ test -S "$work/wsi-wayland"
 echo ">> running against headless Weston ..."
 XDG_RUNTIME_DIR="$work" WAYLAND_DISPLAY=wsi-wayland \
   "$work/wsi-wayland-smoke" | tee "$work/output.log"
-grep -q '^ok: Wayland WSI conformance (9 checked, 8 skipped)' "$work/output.log"
+grep -q '^ok: Wayland WSI conformance (9 checked, 9 skipped)' "$work/output.log"
 echo ">> sparkles:wsi Wayland prepare-read smoke verified under Weston."

@@ -333,6 +333,12 @@ if (isCompletionBackend!Backend)
             if (_stopRequested)
                 return ioOk(RunStatus.stopped);
 
+            // A host that can service this loop from inside a native modal
+            // phase (Win32 move/size loops, AppKit modal sessions) learns
+            // which loop drives it, by presence.
+            static if (is(typeof(host.noteHostLoop(this))))
+                host.noteHostLoop(this);
+
             bool hostWork = host.dispatchPending();
             auto first = runOnce(Duration.zero);
             if (first.hasError)

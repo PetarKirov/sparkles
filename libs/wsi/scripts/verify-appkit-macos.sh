@@ -30,6 +30,6 @@ if grep -q '^SKIP: no macOS WindowServer' "$work/output.log"; then
   echo ">> AppKit smoke skipped: no WindowServer."
   exit 0
 fi
-grep -q '^ok: AppKit WSI conformance (14 checked, 3 skipped)' "$work/output.log"
+grep -q '^ok: AppKit WSI conformance (15 checked, 3 skipped)' "$work/output.log"
 grep -q '^ok: AppKit marked-text round trip' "$work/output.log"
 echo ">> sparkles:wsi AppKit hosted-loop smoke verified on macOS."

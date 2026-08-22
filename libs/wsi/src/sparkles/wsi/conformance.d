@@ -47,6 +47,12 @@ $(LIST
         `TextCommittedEvent` carrying exactly that text. Gated at runtime
         by `imeEnabled` (lanes must provide an input method) and paced by
         `chordDeadline`.
+    * `void enterModalPhase()` / `void exitModalPhase()` — start a native
+        modal phase (Win32 move/size loop, AppKit modal session) and end it.
+        The property arms an Event Horizon timer first and requires its
+        completion to fire during the phase; the completion callback is
+        what calls `exitModalPhase` (which must be `nothrow @nogc`), so a
+        starved loop cannot pass. `enterModalPhase` blocks until then.
     * `void onWindowReady(WindowId id)` — post-ready driver setup (e.g.
         mapping a buffer so a compositor will grant keyboard focus); the
         two-argument form also receives the ready metrics, so the buffer
@@ -436,6 +442,56 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     else
         ++outcome.skipped;
 
+    // Property: Event Horizon keeps making progress while the backend sits
+    // inside a native modal phase (a move/size loop, a modal session): a
+    // timer armed before the phase must fire during it — and its completion
+    // is what asks the driver to end the phase, so a starved loop cannot
+    // pass by accident.
+    static if (is(typeof(hooks.enterModalPhase()))
+        && is(typeof(hooks.exitModalPhase())))
+    {
+        static struct ModalProbe
+        {
+            bool fired;
+            Hooks* hooks;
+        }
+
+        static void onModalTimer(void* context, ref Completion done)
+            nothrow @nogc
+        {
+            auto probe = cast(ModalProbe*) context;
+            if (done.res != 0)
+                return;
+            probe.fired = true;
+            probe.hooks.exitModalPhase();
+        }
+
+        ModalProbe modalProbe;
+        modalProbe.hooks = &hooks;
+        auto armed = loop.submitAfter(150.msecs, &onModalTimer,
+            &modalProbe);
+        assert(!armed.hasError, "arming the modal-phase timer failed");
+        // One explicit hosted step between arming and the phase — the shape
+        // a real app has, whose loop was waiting before the user started a
+        // drag. The wait is where the host learns which loop drives it
+        // (`noteHostLoop`) and where a change-list backend (kqueue) hands
+        // the armed timer to the kernel; a backend whose earlier properties
+        // were all satisfied synchronously has done neither yet.
+        static if (hasStep)
+            hooks.step(Duration.zero);
+        hooks.enterModalPhase();
+        // enterModalPhase blocks for the phase's whole duration, and only
+        // the timer's completion ends it — so returning without the flag
+        // means no modal loop ever ran (or it ended by itself), which
+        // would make this property vacuous.
+        assert(modalProbe.fired,
+            "the native modal phase ended without the timer's completion");
+        drainAll();
+        ++outcome.checked;
+    }
+    else
+        ++outcome.skipped;
+
     // Property: an injected left click arrives in order — optionally after
     // an enter/motion event — as a press at the declared position and its
     // release, never a release first.
@@ -715,5 +771,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 11);
+    assert(outcome.checked == 6 && outcome.skipped == 12);
 }
