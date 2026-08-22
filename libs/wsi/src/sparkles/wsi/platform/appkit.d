@@ -106,6 +106,27 @@ private extern (C) struct NSRect
     NSSize size;
 }
 
+private extern (C) struct NSRange
+{
+    ulong location;
+    ulong length;
+}
+
+/// AppKit's NSNotFound (NSIntegerMax) for "no range".
+private enum ulong nsNotFound = long.max;
+
+// The Objective-C runtime calls that register NSTextInputClient conformance
+// on the D-defined view class: NSView's `inputContext` is non-nil only for
+// views whose class adopts the protocol, and D's extern(Objective-C) has no
+// protocol-adoption syntax.
+private extern (C) nothrow @nogc
+{
+    void* objc_getProtocol(const(char)* name);
+    void* object_getClass(void* object);
+    byte class_addProtocol(void* cls, void* protocol);
+    void* sel_registerName(const(char)* name);
+}
+
 extern (Objective-C):
 
 private extern class NSObject
@@ -119,6 +140,17 @@ private extern class NSString : NSObject
     NSString initWithUTF8String(const(char)* text)
         @selector("initWithUTF8String:");
     const(char)* UTF8String() @selector("UTF8String");
+    // The insertText:/setMarkedText: payload is typed NSString here but is
+    // NSAttributedString when an IME composes; only the attributed one
+    // answers `string`, and dispatch is by instance, not static type.
+    bool respondsToSelector(void* selector)
+        @selector("respondsToSelector:");
+    NSString stringValue() @selector("string");
+}
+
+private extern class NSArray : NSObject
+{
+    static NSArray array() @selector("array");
 }
 
 private extern class NSDate : NSObject
@@ -182,7 +214,15 @@ private extern class NSView : NSResponder
         @selector("convertPoint:fromView:");
     void setFrameSize(NSSize size) @selector("setFrameSize:");
     void setNeedsDisplay(bool value) @selector("setNeedsDisplay:");
+    NSTextInputContext inputContext() @selector("inputContext");
 }
+
+private extern class NSTextInputContext : NSObject
+{
+    bool handleEvent(NSEvent event) @selector("handleEvent:");
+    void discardMarkedText() @selector("discardMarkedText");
+}
+
 
 private extern class NSWindow : NSResponder
 {
@@ -206,6 +246,23 @@ private extern class NSWindow : NSResponder
 }
 
 /** Private NSView subclass forwarding only lossless native observations. */
+/// UTF-8 view of an insertText/setMarkedText payload (NSString, or
+/// NSAttributedString unwrapped through `string`); empty when absent.
+/// (`extern (D)`: the module-wide Objective-C linkage label reaches here.)
+private extern (D) const(char)[] payloadUtf8(NSString text)
+{
+    import core.stdc.string : strlen;
+
+    if (text is null)
+        return null;
+    auto resolved = text.respondsToSelector(sel_registerName("string"))
+        ? text.stringValue() : text;
+    if (resolved is null)
+        return null;
+    auto utf8 = resolved.UTF8String();
+    return utf8 is null ? null : utf8[0 .. strlen(utf8)];
+}
+
 private class SparklesWsiView : NSView
 {
     static SparklesWsiView alloc() @selector("alloc");
@@ -232,10 +289,81 @@ private class SparklesWsiView : NSView
     bool acceptsFirstMouse(NSEvent event) @selector("acceptsFirstMouse:")
         => true;
 
+    // --- NSTextInputClient (adopted at view creation via class_addProtocol)
+
+    void insertText(NSString text, NSRange replacementRange)
+        @selector("insertText:replacementRange:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onInsertText(this, payloadUtf8(text));
+    }
+
+    void setMarkedText(NSString text, NSRange selectedRange,
+        NSRange replacementRange)
+        @selector("setMarkedText:selectedRange:replacementRange:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onSetMarkedText(this, payloadUtf8(text),
+                selectedRange);
+    }
+
+    void unmarkText() @selector("unmarkText")
+    {
+        if (activeOwner !is null)
+            activeOwner.onUnmarkText(this);
+    }
+
+    bool hasMarkedText() @selector("hasMarkedText")
+        => activeOwner !is null && activeOwner.markedUtf16Length(this) != 0;
+
+    NSRange markedRange() @selector("markedRange")
+    {
+        const units = activeOwner is null
+            ? 0 : activeOwner.markedUtf16Length(this);
+        return units == 0 ? NSRange(nsNotFound, 0) : NSRange(0, units);
+    }
+
+    NSRange selectedRange() @selector("selectedRange")
+        => NSRange(nsNotFound, 0);
+
+    NSString attributedSubstringForProposedRange(NSRange range,
+        NSRange* actual)
+        @selector("attributedSubstringForProposedRange:actualRange:")
+        => null;
+
+    // Candidate-window placement is a later refinement (F07 remaining);
+    // a zero rect keeps the protocol total.
+    NSRect firstRectForCharacterRange(NSRange range, NSRange* actual)
+        @selector("firstRectForCharacterRange:actualRange:")
+        => NSRect(NSPoint(0, 0), NSSize(0, 0));
+
+    ulong characterIndexForPoint(NSPoint point)
+        @selector("characterIndexForPoint:")
+        => nsNotFound;
+
+    // Required by the protocol; no attributed pre-edit styling is consumed.
+    NSArray validAttributesForMarkedText()
+        @selector("validAttributesForMarkedText")
+        => NSArray.array();
+
+    // Non-text keys (arrows, return, escape) surface here during
+    // interpretation; they are already delivered as physical keys.
+    void doCommandBySelector(void* selector)
+        @selector("doCommandBySelector:")
+    {
+    }
+
     void keyDown(NSEvent event) @selector("keyDown:")
     {
         if (activeOwner !is null)
             activeOwner.onKey(this, event, true);
+        // Text arrives through the NSTextInputClient protocol, never from
+        // raw keys: route the event to the input context (non-nil once the
+        // class adopted the protocol), which calls insertText/setMarkedText
+        // back on this view — for an IME and for plain typing alike.
+        auto context = this.inputContext();
+        if (context !is null)
+            context.handleEvent(event);
     }
 
     void keyUp(NSEvent event) @selector("keyUp:")
@@ -392,6 +520,8 @@ struct AppKitWsi
         bool live;
         bool ready;
         SurfaceMetrics metrics;
+        InlineUtf8!512 marked;
+        ulong markedUnits16;
     }
 
     private NSApplication application_;
@@ -507,6 +637,7 @@ struct AppKitWsi
                 "NSWindow initialization failed");
 
         auto view = SparklesWsiView.alloc().initWithFrame(rect);
+        adoptTextInputProtocol(view);
         if (view is null)
         {
             window.release();
@@ -798,6 +929,72 @@ struct AppKitWsi
             emit(idAt(index),
                 SurfaceMetricsChangedEvent(metrics));
         slot.metrics = metrics;
+    }
+
+    private void onInsertText(SparklesWsiView view, scope const(char)[] bytes)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        ref slot = windows_[index];
+        const id = idAt(index);
+        if (bytes.length != 0 && !validateUtf8(bytes).hasError)
+        {
+            TextCommittedEvent committed;
+            // An oversized commit degrades to none rather than to a cut
+            // multi-byte sequence.
+            if (committed.text.assign(bytes))
+                emit(id, committed);
+        }
+        // insertText replaces any marked text: the composition is over.
+        if (!slot.marked.empty)
+        {
+            slot.marked.clear();
+            slot.markedUnits16 = 0;
+            emit(id, CompositionEvent());
+        }
+    }
+
+    private void onSetMarkedText(SparklesWsiView view,
+        scope const(char)[] bytes, NSRange selectedRange)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        ref slot = windows_[index];
+        const id = idAt(index);
+        if (bytes.length == 0 || validateUtf8(bytes).hasError)
+        {
+            onUnmarkText(view);
+            return;
+        }
+        if (!slot.marked.assign(bytes))
+        {
+            onUnmarkText(view);
+            return;
+        }
+        slot.markedUnits16 = utf16Length(bytes);
+        emit(id, appKitComposition(bytes, selectedRange.location,
+            selectedRange.length));
+    }
+
+    private void onUnmarkText(SparklesWsiView view)
+    {
+        const index = indexOfView(view);
+        if (index == size_t.max || !windows_[index].ready)
+            return;
+        ref slot = windows_[index];
+        if (slot.marked.empty)
+            return;
+        slot.marked.clear();
+        slot.markedUnits16 = 0;
+        emit(idAt(index), CompositionEvent());
+    }
+
+    private ulong markedUtf16Length(SparklesWsiView view)
+    {
+        const index = indexOfView(view);
+        return index == size_t.max ? 0 : windows_[index].markedUnits16;
     }
 
     private void onKey(SparklesWsiView view, NSEvent event, bool pressed)
@@ -1188,6 +1385,120 @@ private extern (C) void onKqueueReady(CFFileDescriptorRef descriptor,
     auto owner = cast(AppKitWsi*) info;
     if (owner !is null)
         owner.completionReady_ = true;
+}
+
+/*
+D's extern(Objective-C) cannot declare protocol adoption, and NSView's
+`inputContext` is non-nil only when the class conforms, so the first view
+registers NSTextInputClient on its class through the runtime.
+*/
+private extern (D) void adoptTextInputProtocol(SparklesWsiView view)
+{
+    static bool adopted;
+    if (adopted || view is null)
+        return;
+    adopted = true;
+    auto protocol = objc_getProtocol("NSTextInputClient");
+    auto cls = object_getClass(cast(void*) view);
+    if (protocol !is null && cls !is null)
+        class_addProtocol(cls, protocol);
+}
+
+/// UTF-16 code units of a valid UTF-8 string (astral scalars count two).
+package extern (D) ulong utf16Length(scope const(char)[] text)
+    @safe pure nothrow @nogc
+{
+    ulong units;
+    size_t i;
+    while (i < text.length)
+    {
+        const lead = text[i];
+        const step = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+        units += step == 4 ? 2 : 1;
+        i += step;
+    }
+    return units;
+}
+
+/// Byte offset of a UTF-16 code-unit index into a valid UTF-8 string,
+/// clamped to the end.
+package extern (D) size_t utf16UnitsToByteOffset(scope const(char)[] text,
+    ulong units) @safe pure nothrow @nogc
+{
+    size_t i;
+    ulong seen;
+    while (i < text.length && seen < units)
+    {
+        const lead = text[i];
+        const step = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+        seen += step == 4 ? 2 : 1;
+        i += step;
+    }
+    return i;
+}
+
+/**
+Maps one setMarkedText batch to the shared composition vocabulary. AppKit's
+`selectedRange` is in UTF-16 code units within the marked text; the cursor
+sits at the selection start, the selection (when non-empty) becomes both
+the selection fields and a `selected` segment over the conventional
+whole-pre-edit underline.
+*/
+extern (D) CompositionEvent appKitComposition(scope const(char)[] preedit,
+    ulong selLocation16, ulong selLength16) @safe pure nothrow @nogc
+{
+    CompositionEvent event;
+    if (!event.preedit.assign(preedit))
+        return event;
+    if (preedit.length == 0)
+        return event;
+    const selStart = selLocation16 == nsNotFound
+        ? preedit.length
+        : utf16UnitsToByteOffset(preedit, selLocation16);
+    const selEnd = selLocation16 == nsNotFound
+        ? preedit.length
+        : utf16UnitsToByteOffset(preedit, selLocation16 + selLength16);
+    event.cursor = cast(ushort) selStart;
+    event.segments[0] = CompositionSegment(0, cast(ushort) preedit.length,
+        CompositionSegmentStyle.underline);
+    event.segmentCount = 1;
+    if (selEnd > selStart)
+    {
+        event.selectionStart = cast(ushort) selStart;
+        event.selectionLength = cast(ushort) (selEnd - selStart);
+        event.segments[1] = CompositionSegment(cast(ushort) selStart,
+            cast(ushort) (selEnd - selStart), CompositionSegmentStyle.selected);
+        event.segmentCount = 2;
+    }
+    return event;
+}
+
+@("wsi.appkit.appKitComposition.utf16UnitsBecomeByteOffsets")
+@safe pure nothrow @nogc
+unittest
+{
+    // Selection over the second of three kana (3 bytes each, 1 unit each).
+    const kana = appKitComposition("にほん", 1, 1);
+    assert(kana.preedit.value == "にほん");
+    assert(kana.cursor == 3);
+    assert(kana.selectionStart == 3 && kana.selectionLength == 3);
+    assert(kana.segmentCount == 2);
+    assert(kana.segments[1] == CompositionSegment(3, 3,
+        CompositionSegmentStyle.selected));
+
+    // An astral scalar is one 4-byte sequence but two UTF-16 units.
+    const astral = appKitComposition("a😀b", 1, 2);
+    assert(astral.selectionStart == 1 && astral.selectionLength == 4);
+
+    // A caret with no selection: cursor only, single underline segment.
+    const caret = appKitComposition("ab", 2, 0);
+    assert(caret.cursor == 2 && caret.segmentCount == 1);
+
+    // NSNotFound parks the caret at the end.
+    const parked = appKitComposition("ab", nsNotFound, 0);
+    assert(parked.cursor == 2 && parked.selectionLength == 0);
+
+    assert(utf16Length("a😀b") == 4);
 }
 
 private WsiResult!T appKitFailure(T)(WsiOperation operation, long nativeCode,
