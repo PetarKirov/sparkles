@@ -30,6 +30,13 @@ indent_size = unset
 charset = unset
 insert_final_newline = unset
 
+# The DSV sample corpus: the defect fixture deliberately carries a BOM, CRLF
+# terminators and no trailing newline (docs/specs/hue/dsv-preview.md DSM3).
+[apps/hue/samples/dsv/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+
 # Markdown rendering fixtures + their rendered-grid goldens: byte-exact test
 # data (fixture indentation is markdown syntax; golden columns are layout).
 [libs/{syntax,source-view}/test/data/**]

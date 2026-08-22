@@ -1,0 +1,80 @@
+file,line,marker,text
+docs/research/anchored-overlays/angular-cdk.md,380,TODO,TODO(jelbourn): someday replace this with IntersectionObservers`.
+docs/research/anchored-overlays/compose.md,325,TODO,"TODO(b/256233441)` at `ContextMenuPopupPositionProvider.kt:61`, and"
+docs/research/anchored-overlays/gpui.md,207,TODO,TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left`).
+docs/research/anchored-overlays/gtk4.md,603,FIXME,FIXME: we need to ignore the release that is paired
+docs/research/anchored-overlays/headlessui.md,418,TODO,TODO: Enable when ready`
+docs/research/anchored-overlays/headlessui.md,1138,TODO,"TODO: Enable when ready`. The structure suggests the hover-only interaction is the unfinished part — the panel as implemented is not hoverable, since entering it does not cancel the hide.       | The best-developed timing machine in the repository ships to nobody, and it is not the reason for the two `@react-aria` dependencies, which the shipped components also use.                                                                                                                 |"
+docs/research/anchored-overlays/helix.md,787,TODO,TODO: consistently style menu` sits on the very lines
+docs/research/anchored-overlays/helix.md,1311,TODO,TODO: consistently style menu` sits on the lines consuming the result.                         |
+docs/research/anchored-overlays/nvim-completion.md,239,TODO,TODO: never go above the screen width and height` admitting the gap.
+docs/research/anchored-overlays/nvim-completion.md,370,TODO,"TODO: fix nvim_win_text_height`, and nvim-cmp's"
+docs/research/anchored-overlays/nvim-completion.md,1217,TODO,"TODO: never go above the screen width and height` in the window library, and the only"
+docs/research/anchored-overlays/nvim-completion.md,1231,TODO,"TODO: fix nvim_win_text_height` is left in place. Read from the loops, not profiled."
+docs/research/anchored-overlays/radix.md,206,TODO,"TODO: make sure to update this when we change positioning logic`. The intent is stored as `{area, side}` and expires after 300 ms regardless of pointer position."
+docs/research/anchored-overlays/radix.md,376,TODO,TODO: Move to primitive` comment ([`popover.tsx:617`][popover-describedby-dup]).
+docs/research/anchored-overlays/radix.md,418,TODO,TODO: Move to primitive` in both copies; and two branch registries were added independently for the same shape of problem.
+docs/research/anchored-overlays/radix.md,441,TODO,TODO: Move to primitive` in both copies.
+docs/research/anchored-overlays/react-aria.md,904,TODO,TODO: add tray back in
+docs/research/anchored-overlays/tippy.md,298,TODO,"TODO: find a better technique"" ([`src/bindGlobalEventListeners.ts:42-58`][bgl-blur])."
+docs/research/anchored-overlays/uno.md,55,TODO,"TODO: UWP also uses values coming from the input pane and app bars, if any."
+docs/research/async-io/libuv.md,245,TODO,TODO(bnoordhuis)` to that effect in `uv__work_cancel`.
+docs/research/code-formatting/clang-format.md,8,FIXME,FIXME: Write up design.`
+docs/research/code-formatting/clang-format.md,32,FIXME,"FIXME: Write up design."" — [`clang/docs/LibFormat.rst`][libformat]"
+docs/research/code-formatting/clang-format.md,89,FIXME,FIXME: Add diagnostic?`.
+docs/research/code-formatting/clang-format.md,200,FIXME,FIXME: Write up design.` after a decade.
+docs/research/code-formatting/gofmt.md,108,TODO,TODO(gri): linebreak may add too many lines if the next statement at 'line' is preceded by
+docs/research/code-formatting/grounding/clang-format.md,13,FIXME,"FIXME: Add diagnostic?` fallback                                                                                                                                                                                                                                                    | `UnwrappedLineFormatter.cpp:1402-1404, 1415-1418, 1433-1436`                                             |"
+docs/research/code-formatting/grounding/clang-format.md,14,FIXME,FIXME: Write up design.`                                                                                                                                                                                                                                                                                                                                                 | `clang/docs/LibFormat.rst`                                                                               |
+docs/research/code-formatting/grounding/gofmt.md,13,TODO,"TODO(gri)` comment, quoted in full                                                                                | `nodes.go:35-44`                |"
+docs/research/code-formatting/grounding/theory-cost-and-search.md,33,FIXME,"FIXME: Add diagnostic?"" (L113)                                                                                                  | code  | `clang-uf:1433-1436`                                            | verbatim                                                                                                                                                                                                   | ✓      |"
+docs/research/code-formatting/theory/cost-and-search.md,113,FIXME,FIXME: Add diagnostic? }`                                                                                  |
+docs/research/coroutines/stackless/ldc-codegen.md,572,TODO,TODO: Skip passes according to Phase.
+docs/research/coroutines/wasm-and-wasmfx.md,208,TODO,TODO: Skip passes according to Phase.
+docs/research/diff-review/git-split-diffs.md,157,TODO,TODO: Fix to handle multiple hunk
+docs/research/diff-review/neovim-charmatch.md,58,TODO,TODO(lewis6991): handle whitespace ignoring higher up in the stack`
+docs/research/diff-review/neovim-linematch.md,158,TODO,"TODO(lewis6991)` in `count_n_matched_chars` proposes to ""handle"
+docs/research/diff-review/vscode.md,30,TODO,"TODO: Maybe a neural net can be used to derive the result from these numbers""."
+docs/research/iroh/docs-sync.md,321,TODO,"TODO: optimize` ([`store/fs.rs`][docs-store-fs], lines 747–748) — there is no cached fingerprint tree, so even reconciling two _equal_ sets costs a full scan for the initial fingerprint, and blake3 over the whole range runs on the serialising actor thread."
+docs/research/iroh/net-report.md,82,TODO,"TODO: is this good?`), else falls back to the initial plan."
+docs/research/iroh/net-report.md,84,TODO,"TODO: randomize choice?`), one task per address family the interface state supports and that ""needs probing"" (v4 whenever there is no cached v4 report; v6 when cached-v6-presence disagrees with `if_state.have_v6`), each wrapped in `PROBES_TIMEOUT` = 3 s and a per-family child `CancellationToken` ([`net_report.rs:493`][nr-fanout]). The join loop early-cancels once `reports.len() >= enough_relays` (`min(3, num_relays)`, `ENOUGH_ENDPOINTS` = 3) _and_ at least one result per started family has landed."
+docs/research/iroh/net-report.md,404,TODO,"TODO: is this good?`), leaning entirely on cached QAD watchers — a stale cached conn can report UDP works for up to ~35 s after the network actually broke (an open question the recon could not fully resolve from `net_report` alone)."
+docs/research/iroh/socket.md,344,TODO,TODO: use this` for remote-state pruning). `EndpointIdMappedAddr` is a 16-byte value that can be a `@safe pure nothrow @nogc` struct.
+docs/research/manim/grounding/manim-community.md,44,TODO,"TODO: _""Change cubic curve groups to have 4 points instead of 3""_                                                                                                                                                                | quote      | `manim/mobject/types/vectorized_mobject.py:73`                                                                                 | ✓      |"
+docs/research/manim/grounding/mathanimation.md,37,TODO,TODO: Add a hardware accelerated version …`)                                                                            | fact     | https://github.com/ambrosiogabe/MathAnimation/blob/4b2bace5e5d43ecccfd9cd5374d3eb9760ace4ef/Animations/src/video/NvidiaEncoder.cpp       | ✓      |
+docs/research/manim/mathanimation.md,366,TODO,TODO:
+docs/research/manim/mathanimation.md,368,TODO,"TODO: Add a hardware accelerated version that usee CUDA and NVENC""_"
+docs/research/property-tree/godot-inspector.md,27,TODO,"TODO: Can be useful to store more context for the focusable, such as the caret position in LineEdit."
+docs/research/sanitizers/d-toolchain.md,570,TODO,"TODO: remaining sanitizers"" — **no TSan or MSan link path on Windows at all**"
+docs/research/sanitizers/grounding/d-toolchain.md,34,TODO,"TODO: remaining sanitizers"" — no TSan/MSan link path                                                   | fact     | `driver/linker-msvc.cpp:76-98`                                                                                                                   | ✓ (src)           |"
+docs/research/sanitizers/grounding/macos-windows.md,41,TODO,"TODO: remaining sanitizers`; artifact: lib32/lib64 asan libs, **libarm64/ = `ldc_rt.dso.obj` only** | quote      | `driver/linker-msvc.cpp:76-98`; `CMakeLists.txt:903-918`; `7z l ldc2-1.41.0-windows-multilib.7z`                                                                                               | ✓      |"
+docs/research/sanitizers/grounding/runner-integrations.md,26,TODO,TODO(golang.org/issue/29062): tests that exit with status 0 without printing a final result should fail.`                                                                                         | quote            | `test.go:1772-1773` (verbatim)                                                                                           | ✓                     |
+docs/research/sanitizers/grounding/runner-integrations.md,36,FIXME,FIXME: We need to throw from here if given sanitizers can't be enabled…`; UBSan-for-Swift is left to `swiftc`                                                                                                    | quote            | `Sanitizers.swift:39-42`                                                                                                 | ✓ (◯ swiftc behavior) |
+docs/research/sanitizers/grounding/tsan.md,30,FIXME,"FIXME: this is work in progress, nothing really works yet.""                                                                                                                                                                                                          | quote        | `sanitizer_deadlock_detector.h:9-17` (verbatim `:17`)                                               | ✓      |"
+docs/research/sanitizers/macos-windows.md,352,TODO,TODO: remaining sanitizers` —
+docs/research/sanitizers/macos-windows.md,559,TODO,TODO: remaining sanitizers` end.
+docs/research/sanitizers/runner-integrations.md,170,TODO,TODO(golang.org/issue/29062): tests that exit with status 0 without printing
+docs/research/sanitizers/runner-integrations.md,248,FIXME,FIXME: We need to throw
+docs/research/sanitizers/tsan.md,174,FIXME,"FIXME: this is work in progress, nothing really works yet.`"
+docs/research/sql/grounding/skunk.md,61,TODO,"TODO: turn this into an ADT of structured error types""                                                                                    | ✓                 |"
+docs/research/units-of-measure/grounding/cpp-mp-units.md,71,TODO,"TODO: `// TODO the below are logarithmic units - how to support those?` + `// neper // bel // decibel` at `si/units.h` L119-122 (pre-flagged)                                                      | quote      | `systems/si/units.h:119-122`                                                                                                                                                                                                                  | **verbatim, exactly L119-122**; no `dB`/decibel anywhere else in `src/` (grep)                                                                          | ✓             |"
+docs/research/units-of-measure/grounding/haskell-uom-plugin.md,77,TODO,"TODO: Find out why unQuantity (3 m s^-1) fails with ghc-8.0.2."" + the limit line                                                                                                              | ✓            |"
+docs/research/units-of-measure/grounding/kotlin-measured.md,49,TODO,TODO: Kapt code generation possible?` (L244)                                                                       | quote      | `Units.kt:244`                                                                                                                   | `// TODO: Kapt code generation possible?` verbatim at L244                                                                                                                                                                        | ✓           |
+docs/research/units-of-measure/grounding/kotlin-measured.md,136,TODO,TODO: Kapt`
+docs/research/units-of-measure/grounding/nim-unchained.md,43,XXX,XXX:` prefix the page drops; `~` preserved); on `UnitInstance.power`. L33 is `value*: FloatType`                                                       | ✓ (note)       |
+docs/research/units-of-measure/kotlin-measured.md,239,TODO,"TODO: Kapt code generation possible?`"", [`Units.kt`][units] L244). Two rules do all"
+docs/research/vulkan/ocaml-olivine.md,102,TODO,TODO:
+docs/research/window-system-integration/os-apis/win32/f04-frame-pacing.md,68,FIXME,"FIXME(""() stub""); return S_OK;` ([`dwmapi_main.c` lines 89–96][wine-dwmapi])."
+docs/research/window-system-integration/platform-gotchas.md,145,TODO,TODO: implement INCR`). | [ICCCM spec][x11-icccm] |
+docs/research/window-system-integration/slint.md,125,TODO,"TODO: winit is missing attributes.minimized */`. Minimizing is only honored on an already-mapped window. Several attributes (transparency, always-on-top, decorations toggling) are honored or ignored entirely at winit's discretion per compositor/WM."
+docs/research/window-system-integration/slint.md,281,TODO,TODO: send a resize event or try to keep the logical size the same.` admitting the resize coupling is incomplete. On the KMS backend scaling is whatever the renderer reports for the single output; there is no multi-monitor.
+docs/research/window-system-integration/sokol.md,269,HACK,"HACK: This is a (hopefully temporary) workaround for Chromium`), not a compositor quirk."
+docs/research/window-system-integration/uno-platform.md,124,TODO,TODO: modal windows` (`:23-26`).
+docs/research/window-system-integration/uno-platform.md,259,TODO,"TODO: implement INCR` (`:506`). DnD is a hand-written XDND drop handler (`X11DragDropExtension`, deriving from edrosten's `x_clipboard` sample), wired through `ClientMessage` events for `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` (`X11XamlRootHost.x11events.cs:190-197`)."
+docs/specs/hue/feature-requirements.md,460,TODO,TODO: calibrate against the [window-system-integration research](../../research/window-system-integration/index.md) and empirical measurement._                                                                                                    | researched/not-started | provisional target; no benchmark gate yet                                                                                            |
+docs/specs/hue/feature-requirements.md,462,TODO,TODO: calibrate against third-party editors + benchmarks._                                                                              | partial                | [gui.md](./gui.md) `RND1` (culled scroll); load/relayout unbenchmarked                                                               |
+libs/base/src/sparkles/base/term_caps.d,35,TODO,TODO: upstream
+libs/dmd-lsp/src/sparkles/dmd_lsp/visitor.d,220,TODO,TODO: has ident
+libs/dmd-lsp/src/sparkles/dmd_lsp/visitor.d,472,TODO,TODO: check result ident
+libs/dmd-lsp/src/sparkles/dmd_lsp/visitor.d,3315,TODO,TODO: struct/class not going to parent if accessed from elsewhere (but does if nested)
+libs/dmd-lsp/src/sparkles/dmd_lsp/visitor.d,3316,TODO,TODO: UFCS
