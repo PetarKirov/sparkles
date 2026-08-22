@@ -113,6 +113,9 @@ struct KeyContext
     /// gating exactly like the picker — while set, only `always`, `input`
     /// (its line editor) and the `settings` scope are reachable.
     bool settingsActive;
+    /// The DSV columns palette is open (`DSB3`): modal like the settings
+    /// pane — while set, only `always` and the `dsvPalette` scope resolve.
+    bool dsvPaletteActive;
 
 @safe pure nothrow @nogc const:
 
@@ -157,14 +160,17 @@ struct KeyContext
             case Scope_.picker:  return pickerActive;
             case Scope_.inspector: return inspectorFocused && !settingsActive;
             case Scope_.settings: return settingsActive;
+            case Scope_.dsvPalette: return dsvPaletteActive;
             case Scope_.ctrl:    return !pickerActive && !inspectorFocused
-                && !settingsActive;
+                && !settingsActive && !dsvPaletteActive;
             case Scope_.tree:    return !pickerActive && !inspectorFocused
-                && !settingsActive && treeFocused && treeVisible;
+                && !settingsActive && !dsvPaletteActive
+                && treeFocused && treeVisible;
             case Scope_.viewer:  return !pickerActive && !inspectorFocused
-                && !settingsActive && !(treeFocused && treeVisible);
+                && !settingsActive && !dsvPaletteActive
+                && !(treeFocused && treeVisible);
             case Scope_.shared_: return !pickerActive && !inspectorFocused
-                && !settingsActive;
+                && !settingsActive && !dsvPaletteActive;
         }
     }
 
@@ -173,6 +179,7 @@ struct KeyContext
     bool scopeActive(Scope_ s, in KeyEvent k)
         => s == Scope_.ctrl
             ? (!pickerActive && !inspectorFocused && !settingsActive
+                && !dsvPaletteActive
                 && (k.mods.ctrl || k.mods.super_) && k.key == Key.char_)
             : reachable(s);
 }
@@ -240,6 +247,11 @@ enum Command : ubyte
     startGoto,             /// `gl`
     dsvFilter,             /// `/` over a DSV grid — the filter bar (`DSF1`)
     dsvReset,              /// `Shift-R` — back to the pristine grid (`DSB2`)
+    dsvColumns,            /// `Shift-C` over a DSV grid — the columns palette (`DSB3`)
+    dsvPalDown, dsvPalUp,  /// palette cursor
+    dsvPalToggle,          /// Space / Enter — show/hide the selected column
+    dsvPalMoveUp, dsvPalMoveDown, /// `Shift-K` / `Shift-J` — reorder
+    dsvPalClose,           /// Escape / `q` / `Shift-C` — close the palette
     lanternAll,            /// `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     quit,                  /// `q` — leave the viewer
@@ -354,6 +366,9 @@ enum Scope_ : ubyte
     /// hiding, so an unmatched key is swallowed, never a command below, and
     /// the guide lists only what can fire
     @terminalScope @hidesLaterScopes settings,
+    /// the DSV columns palette (`DSB3`), while open: modal like the
+    /// settings pane — terminal and hiding
+    @terminalScope @hidesLaterScopes dsvPalette,
     /// a Ctrl chord, before the plain letter is considered
     @terminalScope ctrl,
     tree,    /// the explorer pane, while focused and shown
@@ -491,7 +506,8 @@ immutable Binding[] hueBindings = [
     bind(Scope_.viewer, chord('j'), Command.viewDown, "down"),
     bind(Scope_.viewer, chord('k'), Command.viewUp, "up"),
     bind(Scope_.viewer, chord('l'), Command.toggleLineNumbers, "line numbers"),
-    bind(Scope_.viewer, chord('c'), Command.toggleCodeLineNumbers, "code line numbers"),
+    bind(Scope_.viewer, chord('c', ShiftReq.no), Command.toggleCodeLineNumbers,
+        "code line numbers"),
     // The ruler nudge shares the drag's clamp (`RUL5`); gated so `<`/`>`
     // stay free elsewhere. `[`/`]` are set/diff navigation — not these.
     bind(Scope_.viewer, chord('<'), Command.formatWidthNarrower, "ruler narrower",
@@ -559,6 +575,25 @@ immutable Binding[] hueBindings = [
         require: CtxFlag.hasDsvGrid),
     bind(Scope_.viewer, chord('r', ShiftReq.yes), Command.dsvReset,
         "reset sort/filter", require: CtxFlag.hasDsvGrid),
+    bind(Scope_.viewer, chord('c', ShiftReq.yes), Command.dsvColumns,
+        "columns palette", require: CtxFlag.hasDsvGrid),
+
+    // ── the DSV columns palette (`DSB3`: modal while open) ───────────────
+    bind(Scope_.dsvPalette, chord(Key.down), Command.dsvPalDown, "down"),
+    bind(Scope_.dsvPalette, chord('j', ShiftReq.no), Command.dsvPalDown, "down"),
+    bind(Scope_.dsvPalette, chord(Key.up), Command.dsvPalUp, "up"),
+    bind(Scope_.dsvPalette, chord('k', ShiftReq.no), Command.dsvPalUp, "up"),
+    bind(Scope_.dsvPalette, chord(' '), Command.dsvPalToggle, "show/hide"),
+    bind(Scope_.dsvPalette, chord(Key.enter), Command.dsvPalToggle,
+        "show/hide"),
+    bind(Scope_.dsvPalette, chord('j', ShiftReq.yes), Command.dsvPalMoveDown,
+        "move down"),
+    bind(Scope_.dsvPalette, chord('k', ShiftReq.yes), Command.dsvPalMoveUp,
+        "move up"),
+    bind(Scope_.dsvPalette, chord(Key.escape), Command.dsvPalClose, "close"),
+    bind(Scope_.dsvPalette, chord('q'), Command.dsvPalClose, "close"),
+    bind(Scope_.dsvPalette, chord('c', ShiftReq.yes), Command.dsvPalClose,
+        "close"),
     // A diff session claims the bracket pair ahead of a document set: its
     // changed-file list is the set a reviewer is walking (`DVG1`). This pair
     // of rows is the one place order within a scope decides the outcome.
