@@ -44,7 +44,7 @@ import sparkles.ui.style : Slot;
 import ansi_model : BackgroundMode;
 import diff_view : DiffLayout;
 import document : Document;
-import dsv_browser : DsvBrowser, fuzzyRowMask;
+import dsv_browser : DsvBrowser, fuzzyRowMask, PaletteRow, paletteRows;
 import dsv_view : adaptDsv, DsvCopy, dsvStatusNote, flagsOf, resolveTableCopy;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
@@ -127,6 +127,11 @@ struct WorkspaceTui
     /// The modal settings pane (`SET*`) over the shared config store; a
     /// null `cfg` (tests, capture paths) leaves `,` a quiet no-op.
     SettingsPane settings;
+    /// The DSV columns palette (`DSB3`): modal like the settings pane;
+    /// the order/visibility state lives on `dsvBrowser` — the palette
+    /// carries only its cursor.
+    package bool dsvPalOpen;
+    package uint dsvPalCursor;
     /// ditto
     ConfigStore* cfg;
 
@@ -430,6 +435,7 @@ struct WorkspaceTui
         paintDockScrollbars(g);
         paintPicker(g);
         paintSettings(g);
+        paintDsvPalette(g);
     }
 
     /// The overlay's frame-stable geometry: two equal panels, sized by the
@@ -513,6 +519,43 @@ struct WorkspaceTui
         // The cached tier-2 knobs (lantern, scroll, picker) re-sync on any
         // commit — cheap, and it makes every one of them live.
         syncConfigDerived();
+    }
+
+    /// The palette's rows, derived fresh from the browser + the open
+    /// document's headers (`DSB3`).
+    private PaletteRow[] dsvPalRows() @system
+    {
+        const st = viewer.dsvCopy;
+        if (!st.info.present)
+            return null;
+        return paletteRows(dsvBrowser, st.headerNames, st.info.columns);
+    }
+
+    /// The DSV columns palette, over everything — the settings pane's
+    /// widget-tree → display list → cell path, centred both ways (`DSB3`).
+    private void paintDsvPalette(ref Grid g) @system
+    {
+        import dsv_palette : viewDsvPalette;
+        import sparkles.ui.display_list : buildDisplayList;
+        import sparkles.ui.geometry : Constraints;
+        import sparkles.ui.layout : layout;
+        import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+        import sparkles.ui_tui : paintGrid;
+
+        if (!dsvPalOpen)
+            return;
+        const rows = dsvPalRows();
+        if (rows.length == 0)
+            return;
+        auto view = viewDsvPalette(rows, dsvPalCursor);
+        auto frames = layout(view, Constraints(maxW: width));
+        const panel = frames[view.root].rect;
+        const x = (width - panel.width) / 2;
+        const y = (height - panel.height) / 2;
+        paintGrid(g, pageBg, buildDisplayList(view, frames,
+            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg,
+            pageBg), x > 0 ? x : 0, y > 0 ? y : 0,
+            Rect(0, 0, panel.width, panel.height));
     }
 
     /// The settings pane, over everything — the same widget-tree → display
@@ -721,6 +764,7 @@ struct WorkspaceTui
         viewer.dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
         viewer.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         dsvBrowser = DsvBrowser.init;
+        dsvPalOpen = false;
         wireDsvHooks();
         syncTreeSession();
         startDiffTypes();
@@ -1078,6 +1122,66 @@ struct WorkspaceTui
 
     bool handle(in Event e) @system
     {
+        // The columns palette is modal like the settings pane (`DSB3`):
+        // its keys resolve through the one binding table's `dsvPalette`
+        // scope; everything else is swallowed while it is open.
+        if (dsvPalOpen)
+        {
+            e.match!((in KeyEvent k) {
+                import keymap : Command, commandFor, KeyContext;
+
+                const rows = dsvPalRows();
+                if (rows.length == 0)
+                {
+                    dsvPalOpen = false;
+                    return;
+                }
+                const st = viewer.dsvCopy;
+                switch (commandFor(k,
+                    KeyContext(dsvPaletteActive: true)).cmd)
+                {
+                    case Command.dsvPalDown:
+                        if (dsvPalCursor + 1 < rows.length)
+                            dsvPalCursor++;
+                        break;
+                    case Command.dsvPalUp:
+                        if (dsvPalCursor > 0)
+                            dsvPalCursor--;
+                        break;
+                    case Command.dsvPalToggle:
+                        if (dsvBrowser.toggleColumn(
+                                rows[dsvPalCursor].col, st.info.columns))
+                            applyDsvBrowser();
+                        else
+                            viewer.showNotice(
+                                "the last visible column stays");
+                        break;
+                    case Command.dsvPalMoveDown:
+                        if (dsvBrowser.moveColumn(rows[dsvPalCursor].col,
+                                +1, st.info.columns))
+                        {
+                            dsvPalCursor++;
+                            applyDsvBrowser();
+                        }
+                        break;
+                    case Command.dsvPalMoveUp:
+                        if (dsvBrowser.moveColumn(rows[dsvPalCursor].col,
+                                -1, st.info.columns))
+                        {
+                            dsvPalCursor--;
+                            applyDsvBrowser();
+                        }
+                        break;
+                    case Command.dsvPalClose:
+                        dsvPalOpen = false;
+                        break;
+                    default:
+                        break; // modal: unmatched keys are swallowed
+                }
+            }, (_) {});
+            return true;
+        }
+
         // The settings pane is a modal surface exactly like the picker:
         // keys to its dispatch, pointer translated overlay-local, nothing
         // reaches a pane beneath (`SET*`).
@@ -1173,7 +1277,9 @@ struct WorkspaceTui
                 const ctx = KeyContext(
                     treeFocused: treeFocused, treeVisible: treeVisible,
                     hasDiffSession: viewerHasDiffSession,
-                    hasDocSet: currentDocPath.length != 0);
+                    hasDocSet: currentDocPath.length != 0,
+                    hasDsvGrid: viewer.vm.showPreview
+                        && viewer.dsvCopy.info.present);
                 // With the tree focused the brackets resolve to the pane's
                 // own commands (next/prev git change) and fall through to
                 // it; the viewer-scope rows carry the `DVG1` precedence — a
@@ -1198,6 +1304,16 @@ struct WorkspaceTui
                         break;
                     case Command.settingsOpen:
                         openSettings();
+                        handled = true;
+                        break;
+                    case Command.dsvColumns:
+                        // `DSB3`: open over the grid; the cursor starts on
+                        // the first column.
+                        if (dsvPalRows().length)
+                        {
+                            dsvPalOpen = true;
+                            dsvPalCursor = 0;
+                        }
                         handled = true;
                         break;
                     default:
@@ -1680,6 +1796,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.viewer.tableFmt = resolveTableCopy(w.tableCopyFlag,
                 fresh.dsvInfo.present);
             w.dsvBrowser = DsvBrowser.init;
+            w.dsvPalOpen = false;
             w.wireDsvHooks();
         };
     w.liveTypes = liveTypes;
@@ -1737,6 +1854,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         w.viewer.tableFmt = resolveTableCopy(tableCopyFlag,
             initial.dsvInfo.present);
         w.dsvBrowser = DsvBrowser.init;
+        w.dsvPalOpen = false;
         w.wireDsvHooks();
         w.syncTreeSession();
         w.startDiffTypes();
@@ -2118,6 +2236,63 @@ unittest
     auto back = readJsoncFile!(Sparse!HueConfig)(store.userFilePath);
     assert(!back.hasError, back.error.toString);
     assert(back.value == Sparse!HueConfig.init, "nothing touched, all sparse");
+}
+
+@("workspace.dsvColumnsPalette.togglesAndReorders")
+@system
+unittest
+{
+    import std.file : rmdirRecurse;
+    import dsv_view : adaptDsv, DsvFlags;
+    import gui_preview : PreviewModel;
+    import sparkles.input : charEvent, keyEvent;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+    import sparkles.ui_app.record : RecordingHost;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-workspace-dsv-palette");
+    scope (exit) rmdirRecurse(root);
+
+    // Hand the viewer a DSV document (the fixture's loader is plain-text).
+    // A table-only preview never touches the fence cache, so a default one
+    // satisfies `applyDsvBrowser`'s rebuild.
+    const src = "name,qty\nb,2\na,3\nc,1\n";
+    auto adapted = adaptDsv(src, "csv", DsvFlags());
+    PreviewModel pm = { present: true, doc: adapted.doc,
+        tableExtras: adapted.extras };
+    w.viewer.setDocument("browse.csv", adapted.text, null, pm,
+        startPreview: true);
+    w.viewer.dsvCopy = DsvCopy.of(src, adapted.info);
+    w.viewer.cache = new TsConfigCache;
+    w.wireDsvHooks();
+
+    RunConfig cfg;
+    auto rec0 = runAppRecorded(w, cfg, [charEvent('C')],
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+    import std.stdio : stderr;
+    stderr.writeln("DBG after C: palOpen=", w.dsvPalOpen,
+        " rows=", w.dsvPalRows().length,
+        " showPreview=", w.viewer.vm.showPreview,
+        " present=", w.viewer.dsvCopy.info.present);
+    auto rec = runAppRecorded(w, cfg,
+        [
+            charEvent(' '), // hide `name` (cursor row 0)
+            charEvent(' '), // …and show it again
+            charEvent('J'), // move `name` below `qty`
+            charEvent('q'), // close the palette, not the app
+            charEvent('C'), // reopens (the keyboard returned to the viewer)
+            keyEvent(Key.escape), // Escape closes too
+        ],
+        (ref RecordingHost h) { h.size = Size(80, 24); });
+
+    assert(!rec.quitRequested, "q closed the PALETTE, not the app");
+    assert(!w.dsvPalOpen, "closed");
+    assert(w.dsvBrowser.hiddenCols.length == 0, "toggle round-tripped");
+    assert(w.dsvBrowser.colOrder == [1u, 0], "name moved below qty");
+    assert(w.viewer.docNote.length && w.viewer.dsvCopy.info.projected,
+        "the reorder reprojected the grid");
 }
 
 @("workspace.leaderETogglesTheExplorer")

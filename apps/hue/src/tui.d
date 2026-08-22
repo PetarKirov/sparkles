@@ -1405,6 +1405,14 @@ struct PreviewTui
                 if (onDsvReset !is null)
                     onDsvReset();
                 break;
+            // The columns palette is the workspace's modal surface
+            // (`DSB3`); its scope never routes here (`KEY11`).
+            case Command.dsvColumns:
+            case Command.dsvPalDown: case Command.dsvPalUp:
+            case Command.dsvPalToggle:
+            case Command.dsvPalMoveUp: case Command.dsvPalMoveDown:
+            case Command.dsvPalClose:
+                break;
             case Command.startGoto:   break; // the TUI has no go-to bar yet
             case Command.matchNext:   jumpMatch(top + 1, true); break;
             case Command.matchPrev:   jumpMatch(top - 1, false); break;
