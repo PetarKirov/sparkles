@@ -24,7 +24,8 @@ module world;
 
 import lantern : LanternState;
 import sparkles.base.unique : makeUnique, Unique;
-import sparkles.ui.components.grid_backdrop : gridPreset, GridConfig, GridPreset;
+import settings : DiagramSettings;
+import sparkles.ui.components.grid_backdrop : GridConfig;
 import sparkles.ui.geometry : Point, Rect;
 
 /// The board's caps. A few thousand nodes is past what a diagram stays
@@ -144,19 +145,33 @@ struct World
     char[labelCap] editBuf;
     /// ditto
     ubyte editLen;
-    bool minimapVisible = true;      /// `m` toggles it (`IXN4`)
-    /// Board backdrop (`GRD7`). Init is the `RND4` faint line grid.
-    GridConfig gridConfig;
+    /**
+    Everything the settings pane edits (`SET4`): the backdrop configuration
+    (`GRD7`) and the board preferences that are also runtime toggles.
+
+    $(B One value, not a copy the pane edits and writes back.) The pane is a
+    $(REF PropertyTree, sparkles,ui,property_tree) over exactly this field, so
+    a committed edit lands in the running board immediately (`SET3`) and there
+    is no second declaration of any setting to drift. `gridConfig` and
+    `minimapVisible` remain as `ref` accessors below, so the systems that read
+    them never learned this moved.
+    */
+    DiagramSettings settings;
     /**
     The key guide's machine (`LTN`): which chords are pending and whether the
     panel shows. Interaction state like every other field here (`WLD4`) — the
     render side reads it, and a scripted test can assert on it.
     */
     LanternState lantern;
-    /// Settings panel for the grid (`GRD9`).
-    bool gridSettingsOpen;
-    /// Which named fixture the settings list highlights (0..2).
-    ubyte gridPresetIndex;
+    /**
+    The settings pane is up (`SET2`).
+
+    Only the flag lives here: it is what $(REF DiagramContext, keymap) reads to
+    reach the modal scope, and what the render side tests. The pane's own
+    machinery — the property tree, its rows, its edit history — is GC state on
+    the app, deliberately outside this `@nogc` world (`DIA5`).
+    */
+    bool settingsOpen;
     /**
     Space is down (or sticky-armed on a target without key releases).
 
@@ -179,12 +194,11 @@ struct World
     /// The highest slot ever used — the bound of every column walk.
     uint highWater() const scope => _high;
 
-    /// Applies a named grid fixture (`GRD9`).
-    void applyGridPreset(GridPreset p) scope
-    {
-        gridConfig = gridPreset(p);
-        gridPresetIndex = cast(ubyte) p;
-    }
+    /// The backdrop configuration (`GRD7`), where the pane keeps it (`SET4`).
+    ref inout(GridConfig) gridConfig() inout return => settings.grid;
+
+    /// Whether the minimap shows (`IXN4`); `m` toggles it, and so does the pane.
+    ref inout(bool) minimapVisible() inout return => settings.board.minimap;
 
     /// Whether `e` names a live entity. An index alone cannot say: slots are
     /// recycled, so a stale handle points at somebody else's rectangle.
