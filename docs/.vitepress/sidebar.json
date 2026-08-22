@@ -2277,7 +2277,7 @@
                 "link": "/research/async-io/io-uring/features"
               },
               {
-                "text": "Timeline (v5.1\u2013v7.1)",
+                "text": "Timeline (v5.1–v7.1)",
                 "link": "/research/async-io/io-uring/timeline"
               },
               {
@@ -2554,7 +2554,7 @@
                 "link": "/research/fuzzy-matching/snacks-picker"
               },
               {
-                "text": "Helix \u00d7 nucleo",
+                "text": "Helix × nucleo",
                 "link": "/research/fuzzy-matching/helix-integration"
               }
             ]
@@ -3121,7 +3121,7 @@
                 "link": "/research/coroutines/stackful/wasmfx-as-target"
               },
               {
-                "text": "Fiber \u2192 WasmFX Plan",
+                "text": "Fiber → WasmFX Plan",
                 "link": "/research/coroutines/stackful/fiber-to-wasmfx-plan"
               }
             ]
@@ -3775,7 +3775,7 @@
             "link": "/research/anchored-overlays/features-people-forget"
           },
           {
-            "text": "Web \u2014 Headless Behavior & Positioning",
+            "text": "Web — Headless Behavior & Positioning",
             "collapsed": true,
             "items": [
               {
@@ -4140,7 +4140,7 @@
             "collapsed": true,
             "items": [
               {
-                "text": "Tier 1 \u2014 Windowing Libraries",
+                "text": "Tier 1 — Windowing Libraries",
                 "collapsed": true,
                 "items": [
                   {
@@ -4166,7 +4166,7 @@
                 ]
               },
               {
-                "text": "Tier 2 \u2014 Framework Platform Layers",
+                "text": "Tier 2 — Framework Platform Layers",
                 "collapsed": true,
                 "items": [
                   {
@@ -4188,7 +4188,7 @@
                 ]
               },
               {
-                "text": "Tier 3 \u2014 Additional Perspectives",
+                "text": "Tier 3 — Additional Perspectives",
                 "collapsed": true,
                 "items": [
                   {
@@ -4241,7 +4241,7 @@
                     "collapsed": true,
                     "items": [
                       {
-                        "text": "Wayland scaffold \u2014 a real `xdg-shell` window",
+                        "text": "Wayland scaffold — a real `xdg-shell` window",
                         "link": "/research/window-system-integration/os-apis/wayland/scaffold"
                       },
                       {
@@ -4325,7 +4325,7 @@
                     "collapsed": true,
                     "items": [
                       {
-                        "text": "X11 scaffold \u2014 findings",
+                        "text": "X11 scaffold — findings",
                         "link": "/research/window-system-integration/os-apis/x11/scaffold"
                       },
                       {
@@ -4361,19 +4361,19 @@
                         "link": "/research/window-system-integration/os-apis/x11/f08-dpi-scaling"
                       },
                       {
-                        "text": "F09 output enumeration & hotplug \u2014 findings",
+                        "text": "F09 output enumeration & hotplug — findings",
                         "link": "/research/window-system-integration/os-apis/x11/f09-outputs"
                       },
                       {
-                        "text": "F10 pointer capture \u2014 findings",
+                        "text": "F10 pointer capture — findings",
                         "link": "/research/window-system-integration/os-apis/x11/f10-pointer-capture"
                       },
                       {
-                        "text": "F11 scroll fidelity \u2014 findings",
+                        "text": "F11 scroll fidelity — findings",
                         "link": "/research/window-system-integration/os-apis/x11/f11-scroll"
                       },
                       {
-                        "text": "F12 cursors \u2014 findings",
+                        "text": "F12 cursors — findings",
                         "link": "/research/window-system-integration/os-apis/x11/f12-cursors"
                       },
                       {
@@ -4405,15 +4405,15 @@
                     "collapsed": true,
                     "items": [
                       {
-                        "text": "Win32 scaffold \u2014 findings",
+                        "text": "Win32 scaffold — findings",
                         "link": "/research/window-system-integration/os-apis/win32/scaffold"
                       },
                       {
-                        "text": "Win32 \u2014 F01: first pixel & init cost",
+                        "text": "Win32 — F01: first pixel & init cost",
                         "link": "/research/window-system-integration/os-apis/win32/f01-first-pixel"
                       },
                       {
-                        "text": "Win32 \u2014 F02: resize correctness",
+                        "text": "Win32 — F02: resize correctness",
                         "link": "/research/window-system-integration/os-apis/win32/f02-resize"
                       },
                       {
@@ -4425,35 +4425,35 @@
                         "link": "/research/window-system-integration/os-apis/win32/f04-frame-pacing"
                       },
                       {
-                        "text": "Win32 \u2014 F05: loop wakeup & external handles",
+                        "text": "Win32 — F05: loop wakeup & external handles",
                         "link": "/research/window-system-integration/os-apis/win32/f05-loop-wakeup"
                       },
                       {
-                        "text": "Win32 \u2014 F06: keyboard & keymap",
+                        "text": "Win32 — F06: keyboard & keymap",
                         "link": "/research/window-system-integration/os-apis/win32/f06-keyboard"
                       },
                       {
-                        "text": "Win32 \u2014 F07: IME / text input",
+                        "text": "Win32 — F07: IME / text input",
                         "link": "/research/window-system-integration/os-apis/win32/f07-text-input"
                       },
                       {
-                        "text": "Win32 \u2014 F08: DPI / runtime rescale",
+                        "text": "Win32 — F08: DPI / runtime rescale",
                         "link": "/research/window-system-integration/os-apis/win32/f08-dpi-scaling"
                       },
                       {
-                        "text": "Win32 \u2014 F09: Output enumeration & hotplug",
+                        "text": "Win32 — F09: Output enumeration & hotplug",
                         "link": "/research/window-system-integration/os-apis/win32/f09-outputs"
                       },
                       {
-                        "text": "Win32 \u2014 F10: Pointer \u2014 relative motion, lock & confine",
+                        "text": "Win32 — F10: Pointer — relative motion, lock & confine",
                         "link": "/research/window-system-integration/os-apis/win32/f10-pointer-capture"
                       },
                       {
-                        "text": "Win32 \u2014 F11: Scroll fidelity",
+                        "text": "Win32 — F11: Scroll fidelity",
                         "link": "/research/window-system-integration/os-apis/win32/f11-scroll"
                       },
                       {
-                        "text": "Win32 \u2014 F12: Cursors",
+                        "text": "Win32 — F12: Cursors",
                         "link": "/research/window-system-integration/os-apis/win32/f12-cursors"
                       },
                       {
@@ -4485,7 +4485,7 @@
                     "collapsed": true,
                     "items": [
                       {
-                        "text": "AppKit scaffold \u2014 findings",
+                        "text": "AppKit scaffold — findings",
                         "link": "/research/window-system-integration/os-apis/appkit/scaffold"
                       },
                       {
@@ -4569,7 +4569,7 @@
                 "link": "/research/window-system-integration/os-apis/summary"
               },
               {
-                "text": "Demo Feature Specs (F01\u2013F17)",
+                "text": "Demo Feature Specs (F01–F17)",
                 "link": "/research/window-system-integration/os-apis/features/",
                 "collapsed": true,
                 "items": [
@@ -4827,7 +4827,7 @@
                 "link": "/research/units-of-measure/theory/whitney"
               },
               {
-                "text": "Buckingham \u03c0",
+                "text": "Buckingham π",
                 "link": "/research/units-of-measure/theory/buckingham-pi"
               },
               {
@@ -4963,28 +4963,212 @@
         "collapsed": true,
         "items": [
           {
-            "text": "Overview",
-            "link": "/research/ui-backend-seam/"
+            "text": "Synthesis",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Overview",
+                "link": "/research/ui-backend-seam/"
+              },
+              {
+                "text": "Comparison",
+                "link": "/research/ui-backend-seam/comparison"
+              }
+            ]
           },
           {
-            "text": "Comparison",
-            "link": "/research/ui-backend-seam/comparison"
+            "text": "Cross-target",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Slint",
+                "link": "/research/ui-backend-seam/slint"
+              },
+              {
+                "text": "imtui",
+                "link": "/research/ui-backend-seam/imtui"
+              },
+              {
+                "text": "Mosaic",
+                "link": "/research/ui-backend-seam/mosaic"
+              },
+              {
+                "text": "Textual",
+                "link": "/research/ui-backend-seam/textual"
+              }
+            ]
           },
           {
-            "text": "Slint",
-            "link": "/research/ui-backend-seam/slint"
+            "text": "Terminal / cell",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Notcurses",
+                "link": "/research/ui-backend-seam/notcurses"
+              },
+              {
+                "text": "Ratatui",
+                "link": "/research/ui-backend-seam/ratatui"
+              },
+              {
+                "text": "libvaxis",
+                "link": "/research/ui-backend-seam/libvaxis"
+              },
+              {
+                "text": "Vty Image",
+                "link": "/research/ui-backend-seam/vty-image"
+              },
+              {
+                "text": "Notty",
+                "link": "/research/ui-backend-seam/notty"
+              }
+            ]
           },
           {
-            "text": "Qt QPaintEngine",
-            "link": "/research/ui-backend-seam/qt-qpaintengine"
+            "text": "Retained scenes",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "GTK4 / GSK",
+                "link": "/research/ui-backend-seam/gtk4-gsk"
+              },
+              {
+                "text": "Flutter engine",
+                "link": "/research/ui-backend-seam/flutter-engine"
+              },
+              {
+                "text": "Qt Quick scene graph",
+                "link": "/research/ui-backend-seam/qt-quick-scenegraph"
+              },
+              {
+                "text": "WebRender",
+                "link": "/research/ui-backend-seam/webrender"
+              },
+              {
+                "text": "Zed GPUI",
+                "link": "/research/ui-backend-seam/gpui"
+              }
+            ]
           },
           {
-            "text": "Notcurses",
-            "link": "/research/ui-backend-seam/notcurses"
+            "text": "Reified command streams",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Skia SkPicture",
+                "link": "/research/ui-backend-seam/skia-skpicture"
+              },
+              {
+                "text": "Chromium PaintOpBuffer",
+                "link": "/research/ui-backend-seam/chromium-paintop"
+              },
+              {
+                "text": "Vello",
+                "link": "/research/ui-backend-seam/vello"
+              },
+              {
+                "text": "Gloss Picture",
+                "link": "/research/ui-backend-seam/gloss-picture"
+              },
+              {
+                "text": "elm-canvas",
+                "link": "/research/ui-backend-seam/elm-canvas"
+              }
+            ]
           },
           {
-            "text": "egui",
-            "link": "/research/ui-backend-seam/egui"
+            "text": "Device abstractions",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Qt QPaintEngine",
+                "link": "/research/ui-backend-seam/qt-qpaintengine"
+              },
+              {
+                "text": "Cairo & Direct2D",
+                "link": "/research/ui-backend-seam/cairo-direct2d"
+              },
+              {
+                "text": "Java2D",
+                "link": "/research/ui-backend-seam/java2d"
+              },
+              {
+                "text": "SDL_Renderer",
+                "link": "/research/ui-backend-seam/sdl-renderer"
+              },
+              {
+                "text": "Avalonia",
+                "link": "/research/ui-backend-seam/avalonia"
+              },
+              {
+                "text": "Piet",
+                "link": "/research/ui-backend-seam/piet"
+              },
+              {
+                "text": "Racket draw & pict",
+                "link": "/research/ui-backend-seam/racket-dc"
+              }
+            ]
+          },
+          {
+            "text": "Capability models",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Iced",
+                "link": "/research/ui-backend-seam/iced"
+              },
+              {
+                "text": "wgpu",
+                "link": "/research/ui-backend-seam/wgpu"
+              },
+              {
+                "text": "Monomer",
+                "link": "/research/ui-backend-seam/monomer"
+              },
+              {
+                "text": "Doodle",
+                "link": "/research/ui-backend-seam/scala-doodle"
+              },
+              {
+                "text": "Haskell diagrams",
+                "link": "/research/ui-backend-seam/haskell-diagrams"
+              },
+              {
+                "text": "OCaml Vg",
+                "link": "/research/ui-backend-seam/ocaml-vg"
+              }
+            ]
+          },
+          {
+            "text": "Geometry & text",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "egui",
+                "link": "/research/ui-backend-seam/egui"
+              },
+              {
+                "text": "Pango & HarfBuzz",
+                "link": "/research/ui-backend-seam/pango-harfbuzz"
+              },
+              {
+                "text": "Godot TextServer",
+                "link": "/research/ui-backend-seam/godot-textserver"
+              },
+              {
+                "text": "Parley & Xilem",
+                "link": "/research/ui-backend-seam/parley-xilem"
+              },
+              {
+                "text": "elm-ui",
+                "link": "/research/ui-backend-seam/elm-ui"
+              },
+              {
+                "text": "Functional images",
+                "link": "/research/ui-backend-seam/functional-images"
+              }
+            ]
           }
         ]
       }
