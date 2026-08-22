@@ -317,7 +317,8 @@ SidebarItem[] augmentWithListingDirs(SidebarItem[] items,
         if (slashes != 1 || rel.length < 2)
             continue; // not an immediate child of the group's directory
         adds ~= Addition(bestPath.dup,
-            SidebarItem(text: rel ~ " (source)", link: listingDirRouteOf(dir)));
+            SidebarItem(text: rel ~ " (source)", link: listingDirRouteOf(dir),
+                target: "_blank", rel: "noreferrer"));
     }
     adds.sort!((a, b) => a.path < b.path
         || (a.path == b.path && a.item.text < b.item.text));
@@ -388,6 +389,16 @@ private void writeSidebarItemsJson(ref Appender!string w,
         }
         if (it.collapsed)
             w ~= ", \"collapsed\": true";
+        if (it.target.length)
+        {
+            w ~= ", \"target\": ";
+            writeJsonString(w, it.target);
+        }
+        if (it.rel.length)
+        {
+            w ~= ", \"rel\": ";
+            writeJsonString(w, it.rel);
+        }
         if (it.items.length)
         {
             w ~= ", \"items\": ";
@@ -629,7 +640,8 @@ unittest
         SidebarItem(text: "Specs <q>", collapsed: true, items: [
             SidebarItem(text: "Hue", link: "/specs/hue/"),
             SidebarItem(text: "examples/ (source)",
-                link: "/src/docs/specs/hue/examples/index.html"),
+                link: "/src/docs/specs/hue/examples/index.html",
+                target: "_blank", rel: "noreferrer"),
         ]),
     ];
     const json = sidebarJson(items);
