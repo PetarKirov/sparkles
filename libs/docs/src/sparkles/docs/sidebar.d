@@ -60,6 +60,16 @@ struct SidebarItem
 
     /// Child entries of a group; empty for a leaf.
     @WireOptional() SidebarItem[] items;
+
+    /// Anchor `target` for the rendered link (VitePress's `DefaultTheme`
+    /// honors it). The listing entries set `_blank`: a `/src/…` route is a
+    /// static page, and a plain sidebar link would be intercepted by the SPA
+    /// router — which has no such route — and 404, where a real navigation
+    /// serves the file (`DSC7`).
+    @WireOptional() string target;
+
+    /// Anchor `rel` for the rendered link.
+    @WireOptional() string rel;
 }
 
 /// The contents of `docs-config.json`.

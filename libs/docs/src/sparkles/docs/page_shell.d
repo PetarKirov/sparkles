@@ -474,6 +474,23 @@ string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
         return rel in at ? rel : null;
     }
 
+    // `true` iff the current page lives inside a listing subtree somewhere
+    // below `items` — the chain of nav groups above the reader must render
+    // open, exactly as the file tree opens along the current path.
+    bool navContainsCurrent(scope const SidebarItem[] items) @safe pure
+    {
+        foreach (ref const it; items)
+        {
+            if (it.items.length && navContainsCurrent(it.items))
+                return true;
+            if (const dirRel = listingDirOf(it.link))
+                if (currentDir.startsWith(dirRel ~ "/")
+                    || currentOut == dirRel ~ "/index.html")
+                    return true;
+        }
+        return false;
+    }
+
     void renderNav(scope const SidebarItem[] items) @safe pure
     {
         foreach (ref const it; items)
@@ -481,7 +498,7 @@ string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
             if (it.items.length)
             {
                 w ~= "<details class=\"sb-group\"";
-                if (!it.collapsed)
+                if (!it.collapsed || navContainsCurrent(it.items))
                     w ~= " open";
                 w ~= "><summary>";
                 escapeInto(w, it.text);
@@ -1160,6 +1177,14 @@ unittest
     import std.algorithm.searching : count;
 
     assert(fromX.count(">ex/</a>") == 1, fromX);
+
+    // On a page inside a listing subtree, the whole nav chain above it opens
+    // — collapsed groups included — exactly like the file tree does; on an
+    // unrelated page the same groups honor their collapsed flag.
+    const fromE = explorerNav(entries, "docs/ex/e.d.html", docsNav, "https://docs.example");
+    assert(fromE.canFind(`<details class="sb-group" open><summary>Research</summary>`), fromE);
+    assert(fromE.canFind(`aria-current="page">e.d</a>`), fromE);
+    assert(fromX.canFind(`<details class="sb-group"><summary>Research</summary>`), fromX);
 
     // A directory page is the active node of its own explorer.
     const fromDir = explorerNav(entries, "libs/a/index.html");
