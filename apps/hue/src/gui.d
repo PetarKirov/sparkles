@@ -1774,9 +1774,11 @@ int runGui(GuiArgs guiArgs) @system
                     children: [iv], width: SizeSpec.fixed(ir.width),
                     clipX: true);
                 auto iwt = ib.finish(ib.add(ipane));
+                // vm.palette, not the raw theme palette: it carries the
+                // link-tinted sbTrack/sbThumb every other bar in the window
+                // is painted with — one scrollbar look (SCV1).
                 auto iOps = buildDisplayList(iwt, layout(iwt),
-                    themes[vm.themeIdx].effectivePalette, vm.pageFg,
-                    vm.pageBg);
+                    vm.palette, vm.pageFg, vm.pageBg);
                 auto iCanvas = RaylibCanvas(fontsP, &buf, cellW,
                     cellH, cast(float)(ir.x * cellW),
                     cast(float)(ir.y * cellH));
@@ -1963,9 +1965,10 @@ int runGui(GuiArgs guiArgs) @system
             const sY = (cellsH - sPanel.height) / 2;
             window.resetClip();
             ltnOps.reset();
+            // vm.palette for the same reason as the inspector's: the bar
+            // must be the same chrome as every other bar in the window.
             buildDisplayListInto(sTree, sFrames,
-                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
-                ltnOps);
+                vm.palette, vm.pageFg, vm.pageBg, ltnOps);
             auto sCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 cast(float)((sX > 0 ? sX : 0) * cellW),
                 cast(float)((sY > 0 ? sY : 0) * cellH));
@@ -2438,6 +2441,21 @@ int runGui(GuiArgs guiArgs) @system
         {
             // The settings pane is modal exactly like the picker (`SET*`).
             cast(void) currentSettingsGeometry();
+            // Bar hover comes from the FOLDED pointer, per frame: the window
+            // host synthesizes no bare motion events (RaylibEvents emits
+            // edges, drags and wheel only), so the machine's hover — the
+            // trackLit and the expand easing — must be fed the way the dock
+            // feeds its own bars. This is also what HUE_GUI_POINTER
+            // overrides, so a hover is photographable.
+            if (!inp.fin.buttons[PointerButton.left].down)
+            {
+                PointerEvent hover;
+                hover.action = PointerAction.move;
+                hover.pos = Point(cast(int) inp.fin.pos.x,
+                    cast(int) inp.fin.pos.y);
+                routeSettingsOverlay(Event(hover));
+            }
+            settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
             foreach (k; keyBuf)
                 applySettingsResult(settingsPane.handleKey(k));
         }
@@ -3127,10 +3145,14 @@ int runGui(GuiArgs guiArgs) @system
                 && formatPreviewRulerHits(vm, rulerColF()));
 
         const fenceShape = vm.barShape();
-        window.pointerShape(pn.dock.shape(
-            rulerGrabbing ? PointerShape.ewResize
-            : vm.barGrabbing ? fenceShape : PointerShape.default_,
-            rulerHovering ? PointerShape.ewResize : fenceShape));
+        // The settings pane is modal: while it owns the pointer, the frame's
+        // one shape call reports ITS bar machine, not the chrome beneath.
+        window.pointerShape(settingsPane.active
+            ? settingsPane.pointerShape()
+            : pn.dock.shape(
+                rulerGrabbing ? PointerShape.ewResize
+                : vm.barGrabbing ? fenceShape : PointerShape.default_,
+                rulerHovering ? PointerShape.ewResize : fenceShape));
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
@@ -3721,6 +3743,16 @@ int runGui(GuiArgs guiArgs) @system
             openFilePicker();
             foreach (ch; capture.picker)
                 cast(void) filePicker.get.handleKey(KeyEvent(Key.char_, ch));
+        }
+
+        // Debug/CI: the settings pane, open before the first frame, with the
+        // seed's keys typed — the modal's scroll geometry only exists while
+        // it shows.
+        if (capture.settingsSet)
+        {
+            openSettingsPane();
+            foreach (ch; capture.settings)
+                cast(void) settingsPane.handleKey(KeyEvent(Key.char_, ch));
         }
     }
 

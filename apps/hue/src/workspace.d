@@ -533,8 +533,10 @@ struct WorkspaceTui
         const panel = frames[view.root].rect;
         const x = (width - panel.width) / 2;
         const y = (height - panel.height) / 2;
+        // The viewer's tuned palette: its link-tinted track/thumb are what
+        // every other bar in the terminal paints with (SCV1).
         paintGrid(g, pageBg, buildDisplayList(view, frames,
-            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg,
+            viewer.vm.palette, pageFg,
             pageBg), x > 0 ? x : 0, y > 0 ? y : 0,
             Rect(0, 0, panel.width, panel.height));
     }
@@ -1094,6 +1096,16 @@ struct WorkspaceTui
                     PointerEvent local = p;
                     local.pos = Point(p.pos.x - ox, p.pos.y - oy);
                     applySettings(settings.handleOverlay(Event(local), sg));
+                    // The frame's pointer shape while the modal owns the
+                    // pointer: the bar machine's — ns-resize over or
+                    // grabbing the bar, like every other bar in the app.
+                    const want = settings.pointerShape();
+                    if (want != curShape)
+                    {
+                        curShape = want;
+                        pendingShape = want;
+                        shapePending = true;
+                    }
                 },
                 (in WheelEvent w) {
                     WheelEvent local = w;
@@ -1967,8 +1979,11 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
         return true;
     }
     // The wait expired rather than a key arriving: advance the guide's
-    // clock so the panel opens on time.
+    // clock so the panel opens on time — and the settings pane's scrollbar
+    // easing with it (the same cadence, the same look as every tree view).
     w.tickLantern(waited);
+    if (w.settings.active)
+        w.settings.tickAnims(waited);
     return w.tickDock(waited);
 }
 

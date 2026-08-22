@@ -214,6 +214,7 @@ struct Scrollbar
     RgbColor fg;            /// the thumb's colour
     ubyte fgAlpha = 0xFF;
     RgbColor trackColor;    /// the optional painted track behind the thumb
+    ubyte trackAlpha = 0xFF; /// ...at this alpha (the palette dims the track)
     bool trackLit;          /// paint that track?
     ubyte expandPercent;    /// rail expansion: 0 idle, 100 expanded
     RuleEdge edge;
