@@ -78,6 +78,12 @@ int main(string[] args)
             return 1;
         }
     }
+    // Where the settings pane's `s` writes (`SET5`). A file named on the
+    // command line is the one the reader already chose; otherwise the
+    // platform's own config location, so the pane is not useless on a launch
+    // without flags — which, on a desktop icon or on Android, is every launch.
+    app.settingsPath = parsed.value.configFile.length
+        ? parsed.value.configFile : defaultSettingsPath();
     final switch (runApp(app, cfg))
     {
         case RunOutcome.ok:
@@ -96,4 +102,16 @@ int main(string[] args)
             stderr.writeln("no usable backend — try --tui in a terminal");
             return 1;
     }
+}
+
+/// `$XDG_CONFIG_HOME/diagram/grid.json`, or empty when there is no home to
+/// resolve — in which case the pane says it has nowhere to save rather than
+/// writing somewhere surprising.
+private string defaultSettingsPath()
+{
+    import std.path : buildPath;
+    import sparkles.core_cli.common_dirs : configDir;
+
+    const base = configDir();
+    return base.length ? buildPath(base, "diagram", "grid.json") : null;
 }

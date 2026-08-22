@@ -23,10 +23,12 @@ $(UL
     (`IXN5`). Marked $(REF terminalScope, sparkles,ui,keymap), so an unbound
     printable stops here rather than reaching the board's tool switches: it
     is text, and the dispatcher types it.)
-    $(LI $(LREF DiagramScope.gridSettings) — open settings claim 1/2/3, the
-    arrows and Enter (`GRD9`). Deliberately $(I not) terminal: everything it
-    does not answer still reaches the board, which is how `q` quits and Esc
-    walks the dismissal chain while the panel shows.)
+    $(LI $(LREF DiagramScope.settings) — the settings pane (`SET2`). Terminal,
+    unlike the three-fixture panel it replaced: a
+    $(REF PropertyTree, sparkles,ui,property_tree) navigates with `j`/`k` and
+    edits with `+`/`-`, and this board binds `d` to pan and `q` to quit, so a
+    pane that let unbound keys through would pan the camera underneath itself
+    and quit the application from a typo.)
     $(LI $(LREF DiagramScope.board) — the tools, the camera and the
     selection.)
 )
@@ -82,9 +84,20 @@ enum DiagramCommand : ubyte
     // The label edit (`IXN5`).
     editCommit, editCancel, editErase,
 
-    // Grid settings (`GRD9`).
-    gridPreset,  /// `1`–`3` — the ranged arg names the preset
-    gridPrev, gridNext, gridApply,
+    // The settings pane (`SET`). Navigation and editing are the property
+    // tree's own named verbs (`PRT23`): the component supplies them, this
+    // table decides which keys reach them.
+    settingsOpen,      /// `,` on the board
+    settingsClose,
+    settingsUp, settingsDown, settingsPageUp, settingsPageDown,
+    settingsHome, settingsEnd,
+    settingsCollapse, settingsExpand, settingsActivate,
+    settingsDec, settingsInc,
+    settingsPreview,   /// `v` — one history entry per drag (`PRT19`)
+    settingsUndo, settingsRedo, settingsReset,
+    settingsFilter, settingsMatchNext, settingsMatchPrev, settingsReveal,
+    settingsSave,
+    gridPreset,        /// `1`–`3` — the ranged arg names the fixture
 }
 
 /**
@@ -101,8 +114,8 @@ enum DiagramScope : ubyte
     always,
     /// a label edit: modal, and it swallows what it does not answer
     @terminalScope @hidesLaterScopes edit,
-    /// the grid settings panel: first refusal, then the board
-    gridSettings,
+    /// the settings pane: modal, and it swallows what it does not answer
+    @terminalScope @hidesLaterScopes settings,
     /// the board itself — tools, camera, selection
     board,
 }
@@ -117,8 +130,8 @@ row could be written "only while typing" without naming the scope.
 */
 struct DiagramContext
 {
-    bool isEditing;         /// a label edit is open (`World.isEditing`)
-    bool gridSettingsOpen;  /// the grid settings panel shows (`World.gridSettingsOpen`)
+    bool isEditing;      /// a label edit is open (`World.isEditing`)
+    bool settingsOpen;   /// the settings pane shows (`World.settingsOpen`)
 
 @safe pure nothrow @nogc const:
 
@@ -128,8 +141,8 @@ struct DiagramContext
         {
             case always: return true;
             case edit: return isEditing;
-            case gridSettings: return gridSettingsOpen;
-            case board: return !isEditing;
+            case settings: return settingsOpen;
+            case board: return !isEditing && !settingsOpen;
         }
     }
 
@@ -155,15 +168,51 @@ immutable Binding[] diagramBindings = [
     bind(DiagramScope.edit, chord(Key.backspace), DiagramCommand.editErase,
         "erase"),
 
-    // ── grid settings, while open (`GRD9`) ───────────────────────────────
-    bind(DiagramScope.gridSettings, chordRange('1', '3'),
-        DiagramCommand.gridPreset, "pick preset"),
-    bind(DiagramScope.gridSettings, chord(Key.up), DiagramCommand.gridPrev,
-        "previous preset"),
-    bind(DiagramScope.gridSettings, chord(Key.down), DiagramCommand.gridNext,
-        "next preset"),
-    bind(DiagramScope.gridSettings, chord(Key.enter), DiagramCommand.gridApply,
-        "apply and close"),
+    // ── the settings pane, while open (`SET2`) ───────────────────────────
+    // Both spellings of every move, because this pane is the one surface a
+    // reader may meet with either a vi hand or an arrow hand.
+    bind(DiagramScope.settings, chord(Key.escape),
+        DiagramCommand.settingsClose, "close"),
+    bind(DiagramScope.settings, chord(Key.back),
+        DiagramCommand.settingsClose, "close"),
+    bind(DiagramScope.settings, chord('j'), DiagramCommand.settingsDown, "down"),
+    bind(DiagramScope.settings, chord(Key.down), DiagramCommand.settingsDown, "down"),
+    bind(DiagramScope.settings, chord('k'), DiagramCommand.settingsUp, "up"),
+    bind(DiagramScope.settings, chord(Key.up), DiagramCommand.settingsUp, "up"),
+    bind(DiagramScope.settings, chord(Key.pageDown),
+        DiagramCommand.settingsPageDown, "page down"),
+    bind(DiagramScope.settings, chord(Key.pageUp),
+        DiagramCommand.settingsPageUp, "page up"),
+    bind(DiagramScope.settings, chord(Key.home), DiagramCommand.settingsHome, "first row"),
+    bind(DiagramScope.settings, chord(Key.end), DiagramCommand.settingsEnd, "last row"),
+    bind(DiagramScope.settings, chord('h'), DiagramCommand.settingsCollapse, "collapse"),
+    bind(DiagramScope.settings, chord(Key.left), DiagramCommand.settingsCollapse, "collapse"),
+    bind(DiagramScope.settings, chord('l'), DiagramCommand.settingsExpand, "expand"),
+    bind(DiagramScope.settings, chord(Key.right), DiagramCommand.settingsExpand, "expand"),
+    bind(DiagramScope.settings, chord(Key.enter),
+        DiagramCommand.settingsActivate, "open / toggle"),
+    // `+`/`-` and their unshifted spellings, exactly as the board's zoom does.
+    bind(DiagramScope.settings, chord('+'), DiagramCommand.settingsInc, "next value"),
+    bind(DiagramScope.settings, chord('='), DiagramCommand.settingsInc, "next value"),
+    bind(DiagramScope.settings, chord('-'), DiagramCommand.settingsDec, "previous value"),
+    bind(DiagramScope.settings, chord('_'), DiagramCommand.settingsDec, "previous value"),
+    bind(DiagramScope.settings, chord('v'), DiagramCommand.settingsPreview,
+        "preview drag"),
+    bind(DiagramScope.settings, chord('u'), DiagramCommand.settingsUndo, "undo"),
+    bind(DiagramScope.settings, Chord(key: Key.char_, ch: 'r', ctrl: true),
+        DiagramCommand.settingsRedo, "redo"),
+    bind(DiagramScope.settings, chord('r'), DiagramCommand.settingsReset,
+        "reset to default"),
+    bind(DiagramScope.settings, chord('/'), DiagramCommand.settingsFilter, "filter"),
+    bind(DiagramScope.settings, chord('n'), DiagramCommand.settingsMatchNext,
+        "next match"),
+    bind(DiagramScope.settings, chord('p'), DiagramCommand.settingsMatchPrev,
+        "previous match"),
+    bind(DiagramScope.settings, chord('.'), DiagramCommand.settingsReveal,
+        "reveal in tree"),
+    bind(DiagramScope.settings, chord('s'), DiagramCommand.settingsSave, "save"),
+    bind(DiagramScope.settings, chordRange('1', '3'),
+        DiagramCommand.gridPreset, "grid fixture"),
 
     // ── tools (`IXN2`) ───────────────────────────────────────────────────
     bind(DiagramScope.board, chord('v'), DiagramCommand.toolSelect, "select tool"),
@@ -191,6 +240,7 @@ immutable Binding[] diagramBindings = [
 
     // ── the world ────────────────────────────────────────────────────────
     bind(DiagramScope.board, chord('m'), DiagramCommand.toggleMinimap, "minimap"),
+    bind(DiagramScope.board, chord(','), DiagramCommand.settingsOpen, "settings"),
     bind(DiagramScope.board, chord('g'), DiagramCommand.groupSelection, "group"),
     bind(DiagramScope.board, chord('u'), DiagramCommand.ungroupSelection, "ungroup"),
     bind(DiagramScope.board, chord(Key.delete_), DiagramCommand.deleteSelection,
@@ -268,28 +318,57 @@ unittest
     assert(nk(Key.up, editing).cmd == DiagramCommand.none);
 }
 
-@("diagram.keymap.gridSettingsTakesFirstRefusalNotTheKeyboard")
+@("diagram.keymap.theSettingsPaneOwnsTheKeyboard")
 @safe pure nothrow @nogc
 unittest
 {
-    const open = DiagramContext(gridSettingsOpen: true);
+    const open = DiagramContext(settingsOpen: true);
 
-    // It claims its own keys…
+    // Its own keys resolve, in both spellings…
+    assert(ch('j', open).cmd == DiagramCommand.settingsDown);
+    assert(nk(Key.down, open).cmd == DiagramCommand.settingsDown);
+    assert(nk(Key.enter, open).cmd == DiagramCommand.settingsActivate);
     assert(ch('1', open).cmd == DiagramCommand.gridPreset);
-    assert(ch('1', open).arg == 0);
     assert(ch('3', open).arg == 2, "the ranged row carries which key landed");
-    assert(nk(Key.up, open).cmd == DiagramCommand.gridPrev);
-    assert(nk(Key.enter, open).cmd == DiagramCommand.gridApply);
 
-    // …and passes on everything else, which is what keeps `q` and the
-    // dismissal chain alive while the panel shows (the old fall-through).
-    assert(ch('q', open).cmd == DiagramCommand.quit);
-    assert(nk(Key.escape, open).cmd == DiagramCommand.dismiss);
-    assert(ch('v', open).cmd == DiagramCommand.toolSelect);
+    // …and NOTHING else does. This is the change from the three-fixture
+    // panel, which took only first refusal: `d` would have panned the board
+    // under the pane, and `q` would have quit the application from a typo.
+    assert(ch('d', open).cmd == DiagramCommand.none);
+    assert(ch('q', open).cmd == DiagramCommand.none);
+    assert(ch('g', open).cmd == DiagramCommand.none);
+    assert(ch('w', open).cmd == DiagramCommand.none);
 
-    // Closed, its keys mean nothing: `1` is unbound on the board.
+    // Esc is the pane's own close, not the board's dismissal chain.
+    assert(nk(Key.escape, open).cmd == DiagramCommand.settingsClose);
+
+    // Closed, the pane's keys mean what the board says: `1` is unbound, `j`
+    // is nothing, `d` pans.
     assert(ch('1').cmd == DiagramCommand.none);
-    assert(nk(Key.up).cmd == DiagramCommand.panUp);
+    assert(ch('d').cmd == DiagramCommand.panRight);
+    assert(ch(',').cmd == DiagramCommand.settingsOpen);
+}
+
+@("diagram.keymap.theGuideListsThePaneNotTheBoardWhileItIsOpen")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // A terminal, hiding scope means the guide advertises exactly what the
+    // resolver would answer — so the panel cannot offer a board key that no
+    // longer works (`FOC4`, and `SET2`'s point).
+    SmallBuffer!(Binding, 96) rows;
+    bindingsAt(rows, DiagramContext(settingsOpen: true));
+    assert(rows.length > 0);
+    bool sawPaneRow;
+    foreach (ref r; rows[])
+    {
+        assert(r.cmd != DiagramCommand.panRight, "no board key while modal");
+        assert(r.cmd != DiagramCommand.quit);
+        sawPaneRow |= r.cmd == DiagramCommand.settingsSave;
+    }
+    assert(sawPaneRow);
 }
 
 @("diagram.keymap.arrowsAndWasdAreTheSameCommands")

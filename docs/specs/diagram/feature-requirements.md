@@ -1,21 +1,22 @@
 # `apps/diagram` — Feature Requirements
 
-_**Status:** in progress — Series 1–2 complete (D1.1–D2.5); `GRD` implemented · **Date:** 2026-08-13 ·
-**Scope:** `apps/diagram` — architecture (`DIA`), camera (`CAM`), world (`WLD`),
-interaction (`IXN`), rendering (`RND`), grid (`GRD`). The grid core is a
-composable `sparkles:ui` component; diagram hosts it and `ui-gallery` showcases
-it._
+_**Status:** in progress — Series 1–3 complete (D1.1–D3.3); `GRD` and `SET`
+implemented · **Date:** 2026-08-13, updated 2026-08-22 · **Scope:**
+`apps/diagram` — architecture (`DIA`), camera (`CAM`), world (`WLD`),
+interaction (`IXN`), rendering (`RND`), grid (`GRD`), settings (`SET`). The
+grid core is a composable `sparkles:ui` component; diagram hosts it and
+`ui-gallery` showcases it._
 
 ## Architecture (`DIA`)
 
-| ID   | Requirement                                                                                                                                                                                                                                                                                                             | Status                                                                    | Traces to                             |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------- |
-| DIA1 | The application depends on `sparkles:ui`, `sparkles:ui-app`, `sparkles:input`, `sparkles:base`, `sparkles:core-cli` and **nothing else** — no `sparkles:ui-tui`, `sparkles:ui-raylib`, `raylib` or `sparkles.tui` import anywhere under `apps/diagram/` ([`APP2`](../ui-app/feature-requirements.md#architecture-app)). | full — deps and imports; re-checked at each gate                          | `apps/diagram/dub.sdl`                |
-| DIA2 | The isolation check is a **manual grep**, run at every phase gate and recorded in the PR: `rg -n "ui_tui\|ui_raylib\|sparkles\.tui\|import raylib" apps/diagram/` must find nothing. Deliberately not automated — the decision is recorded in the ui-app plan.                                                          | full — grep is clean through D1.5                                         | PR checklists                         |
-| DIA3 | The app enters through **`runApp`** (`HST10`): a component whose `view` supplies the (empty) page tree, whose `handle` feeds `systemInput`, and whose `paint` (`HST13`) replays the frame's op buffer onto `host.canvas` through the toolkit's immediate interpreter — so the board renders identically on both arms.   | full                                                                      | `src/diagram_app.d`                   |
-| DIA4 | Two configurations: the default carries the host's `full` closure; a `no-gui` configuration carries `tui` only — proving the app builds and runs where no GPU stack exists.                                                                                                                                             | full                                                                      | `apps/diagram/dub.sdl`                |
-| DIA5 | The world's columns and the frame's op buffer are `SmallBuffer`/fixed arrays; labels live in fixed `char[labelCap]` slots — the steady-state frame is `@nogc`, asserted by compiling a frame path under the attribute.                                                                                                  | full                                                                      | `src/world.d`; `src/systems/render.d` |
-| DIA6 | Every system is a **free function over `World`** — `Event → World` mutations and `World → ops` renders — so every behavior is a scripted-event or pure-function test against the recording target (`TST1`), and `main` is the only untested line.                                                                       | full — input + render free functions; `main` excluded from the test build | `src/systems/`                        |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                          | Status                                                                    | Traces to                             |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------- |
+| DIA1 | The application depends on `sparkles:ui`, `sparkles:ui-app`, `sparkles:input`, `sparkles:base`, `sparkles:core-cli` and — for the settings pane's link edge only — `sparkles:fuzzy`, which `sparkles:ui` reaches import-only and cannot carry itself. **Nothing else**: no `sparkles:ui-tui`, `sparkles:ui-raylib`, `raylib` or `sparkles.tui` import anywhere under `apps/diagram/` ([`APP2`](../ui-app/feature-requirements.md#architecture-app)). | full — deps and imports; re-checked at each gate                          | `apps/diagram/dub.sdl`                |
+| DIA2 | The isolation check is a **manual grep**, run at every phase gate and recorded in the PR: `rg -n "ui_tui\|ui_raylib\|sparkles\.tui\|import raylib" apps/diagram/` must find nothing. Deliberately not automated — the decision is recorded in the ui-app plan.                                                                                                                                                                                       | full — grep is clean through D1.5                                         | PR checklists                         |
+| DIA3 | The app enters through **`runApp`** (`HST10`): a component whose `view` supplies the (empty) page tree, whose `handle` feeds `systemInput`, and whose `paint` (`HST13`) replays the frame's op buffer onto `host.canvas` through the toolkit's immediate interpreter — so the board renders identically on both arms.                                                                                                                                | full                                                                      | `src/diagram_app.d`                   |
+| DIA4 | Two configurations: the default carries the host's `full` closure; a `no-gui` configuration carries `tui` only — proving the app builds and runs where no GPU stack exists.                                                                                                                                                                                                                                                                          | full                                                                      | `apps/diagram/dub.sdl`                |
+| DIA5 | The world's columns and the frame's op buffer are `SmallBuffer`/fixed arrays; labels live in fixed `char[labelCap]` slots — the steady-state frame is `@nogc`, asserted by compiling a frame path under the attribute.                                                                                                                                                                                                                               | full                                                                      | `src/world.d`; `src/systems/render.d` |
+| DIA6 | Every system is a **free function over `World`** — `Event → World` mutations and `World → ops` renders — so every behavior is a scripted-event or pure-function test against the recording target (`TST1`), and `main` is the only untested line.                                                                                                                                                                                                    | full — input + render free functions; `main` excluded from the test build | `src/systems/`                        |
 
 ## Camera (`CAM`)
 
@@ -95,9 +96,71 @@ diagram ECS.
 | GRD6  | **TUI/GUI parity:** the same config yields the same lattice/stripe **geometry** and style mapping on both arms (including identical world positions for dots). Backends may map thickness/dash/alpha/marks through honest cell resolution (e.g. TUI dots as a centered glyph), but must not disagree about what is under a world cell. Toolkit gaps (dash arrays, thickness, alpha fills, sub-cell marks) are implementation dependencies of this contract, not a license to GUI-only styling. | full   | `appendGridBackdrop` — one `DrawOp` stream                                                                                                                                                |
 | GRD7  | **Diagram host:** the board stream draws the backdrop **only** through the ui component (`GRD1`) — no second private grid model once `GRD` lands. Defaults match pre-`GRD` `RND4`. Lattice/stripes append on the board stream before entities (`RND1` order). Groups, marquee, and create preview stay diagram-local (`RND4`).                                                                                                                                                                 | full   | `apps/diagram/src/systems/render.d`                                                                                                                                                       |
 | GRD8  | **Diagram config file:** `--config-file <path>` loads grid config (and any palette slot overrides the file carries) at startup. Invalid file **fails closed** with a clear error — no silent half-apply. Prefer `sparkles:wired` JSON matching the component's config type so gallery, settings, and CLI share one schema.                                                                                                                                                                     | full   | `apps/diagram/src/grid_file.d`; `app.d` (`--config-file`). JSON schema is the component's (`parseGridConfigJson` / `writeGridConfigJson`) so `DIA1` stays closed — no `wired` dependency. |
-| GRD9  | **Diagram settings UI:** an in-app settings surface edits the live grid config (visibility, intervals, mark kind, lattice styles, stripe brushes) and relevant palette slot colors/alphas, and can persist via the same schema as the config file. Reachable from chrome (menu or toolbar); not a full app-shell redesign.                                                                                                                                                                     | full   | context-menu **Grid…**; 1/2/3 and arrows pick the three fixtures. Persist is the shared JSON schema (`writeGridConfigJson`).                                                              |
+| GRD9  | **Diagram settings UI:** an in-app settings surface edits the live grid config (visibility, intervals, mark kind, lattice styles, stripe brushes) and the theme **slots** its strokes and brushes name (`SET7` scopes free-colour palette overrides back to the config file), and can persist via the same schema as the config file. Reachable from chrome (menu or toolbar); not a full app-shell redesign.                                                                                  | full   | a modal `PropertyTree` pane over the live config — **`SET`** below; persist is the shared JSON schema (`writeGridConfigJson`)                                                             |
 | GRD10 | Grid colors remain theme-slot based (`RND5`): lattice strokes and stripe fills resolve through `resolveSlot` / palette alphas. Settings and config may **override slot color and alpha values**; render code still names slots, never free RGB.                                                                                                                                                                                                                                                | full   | `resolveSlot` in emit; `slotOverrides` in JSON                                                                                                                                            |
 | GRD11 | **Gallery showcase:** `apps/ui-gallery` ships a page (or catalog section) that **composes** the grid component, exercises the three named fixtures (default / stripe bands / dot paper), and exposes enough controls to validate subdivisions, mark kinds, and brushes **without** the diagram world or tools.                                                                                                                                                                                 | full   | `apps/ui-gallery/src/pages/grid_page.d`                                                                                                                                                   |
+
+## Settings (`SET`)
+
+The in-app editing surface `GRD9` asked for, built the way the toolkit already
+answers this question: a **modal `PropertyTree` pane**
+([`PRT1`](../ui/property-tree.md)) over the live board configuration.
+
+What shipped for `GRD9` first was a stand-in and honest about it — four rows,
+`1`/`2`/`3`, one named fixture each. Every knob `GRD2`–`GRD5` specifies (an
+interval, a mark kind, a stroke slot, a thickness, a dash array, a stripe
+brush) was reachable only by writing a JSON file and restarting (`GRD8`). The
+property tree closes that gap without `apps/diagram` declaring a single row:
+`GridConfig` **is** the schema, so a field added to the component is a row in
+the pane, and the pane cannot drift from the thing it edits.
+
+### The modal owns the keyboard, and that is a change
+
+The stand-in took only _first refusal_: it claimed `1`–`3`, the arrows and
+Enter, and let everything else fall through, which is how `q` still quit while
+it showed. A property tree cannot be layered that way. Its navigation is
+`j`/`k`/arrows, its edits are `+`/`-`/Enter, and the board binds `d` to pan,
+`u` to ungroup and `q` to quit — a pane that let unbound keys through would
+pan the camera underneath the dialog and quit the application from a typo.
+
+So `DiagramScope.settings` is `@terminalScope @hidesLaterScopes`: the shape the
+label edit already uses (`IXN5`), and the shape hue's settings scope has
+([`SET1`](../hue/config.md#the-settings-pane-set)). While the pane is open the
+board's keys are neither resolved nor advertised, so the key guide (`LTN`)
+lists the pane's own rows — which it must, since both read one table.
+
+The routing guard that delivers an event to the pane is one `if` at the
+component's event seam, exactly as the picker and the settings pane are routed
+in hue. What a key _means_ is never an `if`: it is the scope.
+
+### What the pane edits, and what it deliberately does not
+
+The subject is `DiagramSettings` — the live `GridConfig` (`GRD2`–`GRD5`) plus
+the board preferences that are already runtime toggles, so an experiment made
+with `m` and a value set in the pane are the same setting rather than two.
+
+Palette **slot colour and alpha overrides** stay out. `RND5`/`GRD10` are the
+reason: render code names slots and never free RGB, and the pane honours that
+by editing the slot _choice_ — `LatticeStyle.stroke` is a `Slot` leaf, so
+picking a different one is an ordinary enum edit. Overriding what a slot
+_resolves to_ is a palette edit, not a grid edit; it remains the config file's
+`slotOverrides` (`GRD8`) until a palette surface is designed for it.
+
+`GridConfig` has no string leaves — every field is a `bool`, an integer, or an
+enum — so the pane needs no line editor and the `EDT`/`EDR` gate that holds
+back [`PRT13`](../ui/property-tree.md) does not apply here. A string leaf, if
+one ever appears, renders read-only with the property view's own marker.
+
+| ID     | Requirement                                                                                                                                                                                                                                                                                              | Status | Traces to                                         |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------- |
+| `SET1` | One component (`src/settings_pane.d`) generic over its subject, built from `PropertyTree` + `propertyView` and mounted by the board's own `handle`/`paint` — so `--tui` and `--gui` show the same pane and `DIA1`/`DIA2` still hold: no backend name appears in it.                                      | full   | `src/settings_pane.d`; `src/diagram_app.d`        |
+| `SET2` | Modality is the keymap: `DiagramScope.settings` is `@terminalScope @hidesLaterScopes`, so the board's keys neither resolve nor list while the pane shows. Event routing is one guard at the component seam; no key's meaning is decided by an `if`.                                                      | full   | `src/keymap.d`; `src/diagram_app.d`               |
+| `SET3` | **Live-apply**: a committed edit mutates the running `World.gridConfig` immediately through the property tree's generated dispatch — range-checked, refusable inline (`PRT21`), undoable (`PRT18`). `v` preview drags collapse to one history entry at the commit boundary (`PRT19`).                    | full   | `src/settings_pane.d`                             |
+| `SET4` | The subject is `DiagramSettings`: the live `GridConfig` plus the board preferences that are already runtime toggles (minimap). Named fixtures stay one keystroke away (`1`–`3`) and are applied **through the same dispatch as any edit**, so a preset is undoable rather than a trapdoor.               | full   | `src/settings.d`                                  |
+| `SET5` | **Explicit save** (`s`): the subject's grid half persists through `writeGridConfigJson` — the schema `--config-file` reads (`GRD8`) — to that file's path when one was given, else `$XDG_CONFIG_HOME/diagram/grid.json`. A write failure reports in the pane's footer and never escapes as an exception. | full   | `src/grid_file.d`; `src/settings_pane.d`; `app.d` |
+| `SET6` | The live fuzzy filter, match navigation, reveal-in-base and transient folding are the property tree's own (`PRT29`–`PRT33`), taking first refusal ahead of the pane's command dispatch.                                                                                                                  | full   | `src/settings_pane.d`                             |
+| `SET7` | Palette slot **colour/alpha** overrides are out of scope: the pane edits which `Slot` a stroke or brush names (`RND5`, `GRD10`), and free-colour overrides stay the config file's `slotOverrides`. String leaves render read-only — `GridConfig` has none, so no line editor exists to go stale.         | full   | `src/settings.d`; `GRD8` schema                   |
+| `SET8` | `DIA5` is unaffected: `systemRender` stays `@nogc`, and the pane — like the key guide — costs a GC frame only on the frames it actually shows.                                                                                                                                                           | full   | `src/systems/render.d`; `src/diagram_app.d`       |
 
 ## Non-goals (MVP)
 

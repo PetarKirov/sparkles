@@ -37,7 +37,7 @@ import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette,
 
 import camera : Camera, contentBounds, minimapDivisor, minimapFrustum,
     worldToMinimap;
-import systems.input : boardArea, gridSettingsPanel,
+import systems.input : boardArea,
     menuItemCount, menuItemLabel, menuItemRect, menuPanel, MenuItem,
     minimapPanel, statusRows, toolButton, toolbarArea, toolbarRows;
 import world : Capture, Entity, GroupId, liveBounds, noEntity, Tool, World,
@@ -78,8 +78,11 @@ void systemRender(ref const World w, ref const Camera cam, in Size viewport,
     renderChrome(w, cam, viewport, pal, pageFg, pageBg, ops);
     if (w.menuOpen)
         renderMenu(w, viewport, pal, pageFg, pageBg, ops);
-    if (w.gridSettingsOpen)
-        renderGridSettings(w, viewport, pal, pageFg, pageBg, ops);
+    // The settings pane is NOT painted here (`SET8`): it is a widget tree, so
+    // it needs `Builder`/`layout`, which allocate — and this function is the
+    // `@nogc` steady-state frame (`DIA5`). `DiagramApp.paint` appends it to
+    // the same buffer afterwards, on the frames it actually shows, exactly as
+    // the key guide does.
 }
 
 // ── board (`RND2`, `RND4`) ──────────────────────────────────────────────────
@@ -530,39 +533,6 @@ private void renderMenu(ref const World w, in Size viewport, in Palette pal,
         const row = menuItemRect(w, item);
         textAt(ops, Point(row.x + 1, row.y), menuItemLabel(item), Slot.code,
             code, row.width > 1 ? row.width - 1 : 0);
-    }
-}
-
-private void renderGridSettings(ref const World w, in Size viewport,
-    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref FrameOps ops)
-    @safe pure nothrow @nogc
-{
-    const panel = gridSettingsPanel(w, viewport);
-    if (panel.empty)
-        return;
-    const surface = resolveSlot(pal, Slot.surface, pageFg, pageBg);
-    const border = resolveSlot(pal, Slot.border, pageFg, pageBg);
-    const accent = resolveSlot(pal, Slot.chromeAccent, pageFg, pageBg);
-    const code = resolveSlot(pal, Slot.code, pageFg, pageBg);
-    fill(ops, panel, Slot.surface, withBg(surface, true));
-    outline(ops, panel, Slot.border, border);
-
-    static immutable string[4] labels = [
-        "Grid",
-        "1  Default lines",
-        "2  Stripe bands",
-        "3  Dot paper",
-    ];
-    foreach (i, label; labels)
-    {
-        const row = Rect(panel.x, panel.y + cast(int) i, panel.width, 1);
-        const selected = i > 0 && cast(ubyte) (i - 1) == w.gridPresetIndex;
-        if (selected)
-            fill(ops, row, Slot.chromeAccent, withBg(accent, true));
-        const slot = i == 0 ? Slot.chromeAccent : Slot.code;
-        const vis = i == 0 ? accent : (selected ? accent : code);
-        textAt(ops, Point(row.x + 1, row.y), label, slot, vis,
-            row.width > 1 ? row.width - 1 : 0);
     }
 }
 

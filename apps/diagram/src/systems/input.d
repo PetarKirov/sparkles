@@ -35,7 +35,6 @@ import camera : Camera, contentBounds, fitContent, scaleBase, minimapDivisor,
     minimapToWorld;
 import keymap : DiagramCommand, DiagramContext;
 import lantern : ltnStep = step, StepKind;
-import sparkles.ui.components.grid_backdrop : GridPreset;
 
 import world : Capture, Entity, liveBounds, noEntity, Tool, World;
 
@@ -53,10 +52,6 @@ enum int zoomOutRatio = 91;
 
 /// Keyboard pan step, in screen cells (`IXN3`).
 enum int panStepCells = 2;
-
-/// How many grid fixtures the settings panel cycles through (`GRD9`) — the
-/// enum's own length, so adding a preset never leaves a hardcoded 3 behind.
-enum size_t gridPresetCount = __traits(allMembers, GridPreset).length;
 
 /// Chrome sizes shared with the render systems (`RND1`): one toolbar row, one
 /// status row, a fixed minimap panel in the board's bottom-right.
@@ -135,7 +130,7 @@ enum MenuItem : ubyte
     label,
     connect,
     delete_,
-    grid,
+    settings,
 }
 
 /// ditto
@@ -171,40 +166,8 @@ string menuItemLabel(MenuItem item) @safe pure nothrow @nogc
         case MenuItem.label: return "Label…";
         case MenuItem.connect: return "Connect";
         case MenuItem.delete_: return "Delete";
-        case MenuItem.grid: return "Grid…";
+        case MenuItem.settings: return "Settings…";
     }
-}
-
-/// Settings-panel size (`GRD9`).
-enum int gridSettingsWidth = 22;
-/// title + 3 presets
-enum int gridSettingsRows = 4;
-
-/// Screen-space rect of the grid settings panel, or empty when closed.
-Rect gridSettingsPanel(ref const World w, in Size viewport)
-    @safe pure nothrow @nogc
-{
-    if (!w.gridSettingsOpen)
-        return Rect.init;
-    int x = 2;
-    int y = toolbarRows + 1;
-    if (x + gridSettingsWidth > viewport.width)
-        x = viewport.width > gridSettingsWidth
-            ? viewport.width - gridSettingsWidth : 0;
-    if (y + gridSettingsRows > viewport.height)
-        y = viewport.height > gridSettingsRows
-            ? viewport.height - gridSettingsRows : 0;
-    return Rect(x, y, gridSettingsWidth, gridSettingsRows);
-}
-
-/// Hit rect for one preset row (0..2), or empty when closed.
-Rect gridSettingsRow(ref const World w, in Size viewport, ubyte row)
-    @safe pure nothrow @nogc
-{
-    const panel = gridSettingsPanel(w, viewport);
-    if (panel.empty || row >= 3)
-        return Rect.init;
-    return Rect(panel.x, panel.y + 1 + row, panel.width, 1);
 }
 
 /// Toolkit capture id for a board capture owner, or `0` for none.
@@ -262,7 +225,7 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
     }
 
     const ctx = DiagramContext(isEditing: w.isEditing,
-        gridSettingsOpen: w.gridSettingsOpen);
+        settingsOpen: w.settingsOpen);
 
     // Escape closes the guide before it means anything else — otherwise
     // dismissing the panel would walk the chain underneath it, and on an
@@ -371,36 +334,42 @@ private bool onKey(ref World w, ref Camera cam, ref CaptureState cap,
             w.editErase();
             return false;
 
-        // Grid settings (`GRD9`): the ranged row's `arg` is the preset.
+        // The settings pane (`SET1`, `SET2`). Opening it is the board's
+        // business; everything the pane does is the pane's, and none of it
+        // can arrive here — those rows live in a scope that is unreachable
+        // while the pane is closed, and while it is open the event never
+        // reaches this system at all.
+        case settingsOpen:
+            w.settingsOpen = true;
+            return false;
+        case settingsClose:
+        case settingsUp: case settingsDown:
+        case settingsPageUp: case settingsPageDown:
+        case settingsHome: case settingsEnd:
+        case settingsCollapse: case settingsExpand: case settingsActivate:
+        case settingsDec: case settingsInc:
+        case settingsPreview:
+        case settingsUndo: case settingsRedo: case settingsReset:
+        case settingsFilter: case settingsMatchNext: case settingsMatchPrev:
+        case settingsReveal:
+        case settingsSave:
         case gridPreset:
-            w.applyGridPreset(cast(GridPreset) c.arg);
-            return false;
-        case gridPrev:
-            w.applyGridPreset(cast(GridPreset)
-                (w.gridPresetIndex > 0 ? w.gridPresetIndex - 1 : gridPresetCount - 1));
-            return false;
-        case gridNext:
-            w.applyGridPreset(cast(GridPreset)
-                ((w.gridPresetIndex + 1) % gridPresetCount));
-            return false;
-        case gridApply:
-            w.applyGridPreset(cast(GridPreset) (w.gridPresetIndex % gridPresetCount));
-            w.gridSettingsOpen = false;
             return false;
     }
 }
 
 /**
-Esc dismissal chain (`IXN6`): settings → menu → label edit → pending connect →
-capture → selection → quit. `q` bypasses the chain and quits directly.
+Esc dismissal chain (`IXN6`): menu → label edit → pending connect → capture →
+selection → quit. `q` bypasses the chain and quits directly.
+
+$(B The settings pane is deliberately not the chain's head.) It was, while it
+was a first-refusal panel; now it is modal (`SET2`), so an Escape aimed at it
+resolves to the pane's own close in a scope that hides this one, and never
+arrives here. A branch for it would be a line that cannot run — and, worse, a
+reader's evidence for a chain order that no longer exists.
 */
 private bool dismiss(ref World w, ref CaptureState cap) @safe pure nothrow @nogc
 {
-    if (w.gridSettingsOpen)
-    {
-        w.gridSettingsOpen = false;
-        return false;
-    }
     if (w.menuOpen)
     {
         closeMenu(w);
@@ -488,10 +457,9 @@ private void onPointer(ref World w, ref Camera cam, ref CaptureState cap,
 private void pressFree(ref World w, ref Camera cam, ref CaptureState cap,
     in PointerEvent p, in InputView view) @safe pure nothrow @nogc
 {
-    // Layered hit order, topmost first (`IXN1`): settings → menu → toolbar →
-    // minimap → board.
-    if (hitGridSettings(w, p, view))
-        return;
+    // Layered hit order, topmost first (`IXN1`): menu → toolbar → minimap →
+    // board. The settings pane sits above all of them, and never gets here:
+    // it is modal, so `DiagramApp` routes the event to it first (`SET2`).
     if (hitMenu(w, cam, cap, p, view))
         return;
     // RMB opens the context menu on the board (after the menu itself has had
@@ -593,37 +561,10 @@ private void runMenuItem(ref World w, ref Camera, ref CaptureState cap,
         case MenuItem.delete_:
             w.deleteSelection();
             return;
-        case MenuItem.grid:
-            w.gridSettingsOpen = true;
+        case MenuItem.settings:
+            w.settingsOpen = true;
             return;
     }
-}
-
-private bool hitGridSettings(ref World w, in PointerEvent p, in InputView view)
-    @safe pure nothrow @nogc
-{
-    if (!w.gridSettingsOpen)
-        return false;
-    const cell = surfaceCell(p.pos, view);
-    const panel = gridSettingsPanel(w, view.viewport);
-    if (p.action != PointerAction.press)
-        return true;
-    if (!panel.contains(cell))
-    {
-        w.gridSettingsOpen = false;
-        return p.button == PointerButton.right;
-    }
-    if (p.button != PointerButton.left)
-        return true;
-    foreach (ubyte i; 0 .. 3)
-    {
-        if (gridSettingsRow(w, view.viewport, i).contains(cell))
-        {
-            w.applyGridPreset(cast(GridPreset) i);
-            return true;
-        }
-    }
-    return true;
 }
 
 private bool hitToolbar(ref World w, ref CaptureState cap, in PointerEvent p,
@@ -952,7 +893,10 @@ private void fitAll(ref World w, ref Camera cam, in Size viewport)
 // ── coordinate helpers ──────────────────────────────────────────────────────
 
 /// Pointer position → surface cell (toolbar / minimap / board share this grid).
-private Point surfaceCell(in Point pos, in InputView view) @safe pure nothrow @nogc
+/// Pointer position → surface cell. Pixel positions (`HST18`) divide by the
+/// natural cell; cell positions pass through. Public because a modal overlay
+/// outside this system — the settings pane — needs the same conversion.
+Point surfaceCell(in Point pos, in InputView view) @safe pure nothrow @nogc
 {
     if (view.naturalCellW > 0 && view.naturalCellH > 0)
     {
@@ -1487,32 +1431,60 @@ unittest
     assert(!w.isEditing && w.labelOf(e) == "Hi");
 }
 
-@("diagram.input.gridSettingsFromMenuAndKeys")
+@("diagram.input.theMenuAndTheCommaKeyBothOpenTheSettingsPane")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.ui.components.grid_backdrop : MarkKind;
-
     auto wOwner = World.create();
     ref World w() => wOwner.get();
     Camera cam;
     CaptureState cap;
     const view = tuiView();
 
+    // Route one: the context menu's own entry (`GRD9`'s "reachable from
+    // chrome").
     drive(w, cam, cap, view, [
         Event(PointerEvent(action: PointerAction.press,
             button: PointerButton.right, pos: Point(3, 1 + 3))),
     ]);
-    const item = menuItemRect(w, MenuItem.grid);
+    const item = menuItemRect(w, MenuItem.settings);
     drive(w, cam, cap, view, [pressAt(item.x + 1, item.y)]);
-    assert(w.gridSettingsOpen);
+    assert(w.settingsOpen);
+    w.settingsOpen = false;
 
-    cast(void) systemInput(w, cam, cap, charEvent('3'), view);
-    assert(w.gridConfig.minorStyle.markKind == MarkKind.dots);
-    assert(w.gridPresetIndex == 2);
+    // Route two: the keyboard.
+    cast(void) systemInput(w, cam, cap, charEvent(','), view);
+    assert(w.settingsOpen);
 
+    // Closing is NOT this system's job: Esc resolves in the pane's own scope,
+    // which hides the board's, so it never reaches the dismissal chain. The
+    // round trip is asserted where the routing lives — `diagram_app`.
     cast(void) systemInput(w, cam, cap, keyEvent(Key.escape), view);
-    assert(!w.gridSettingsOpen);
+    assert(w.settingsOpen, "the board does not close a modal it does not own");
+}
+
+@("diagram.input.thePaneOwnsTheKeyboardSoTheBoardSeesNothing")
+@safe pure nothrow @nogc
+unittest
+{
+    // While the pane is open the app routes keys to it, so this system never
+    // sees them. What this asserts is the other half of that contract: even
+    // if one arrives, the board must not act on it — the modal scope hides
+    // the board's rows, so `d` does not pan and `q` does not quit (`SET2`).
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
+    Camera cam;
+    CaptureState cap;
+    const view = tuiView();
+
+    cast(void) systemInput(w, cam, cap, charEvent(','), view);
+    assert(w.settingsOpen);
+
+    const before = cam.origin;
+    assert(!systemInput(w, cam, cap, charEvent('d'), view), "no pan");
+    assert(!systemInput(w, cam, cap, charEvent('q'), view), "and no quit");
+    assert(cam.origin == before);
+    assert(w.tool == Tool.select, "…and no tool switch from `v`/`r`");
 }
 
 @("diagram.input.toolbarPicksTheTool")

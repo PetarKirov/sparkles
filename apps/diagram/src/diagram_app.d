@@ -19,7 +19,8 @@ module diagram_app;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.unique : makeUnique, Unique;
-import sparkles.input : EndOfInput, Event, isEndOfInput, match;
+import sparkles.input : EndOfInput, Event, isEndOfInput, KeyAction, KeyEvent,
+    match, Point, PointerAction, PointerEvent, WheelEvent;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
     Placement, viewLantern;
 import sparkles.ui.display_list : buildDisplayListInto;
@@ -32,8 +33,10 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 
 import camera : Camera;
+import grid_file : saveGridConfigFile;
 import keymap : Binding, bindingsAt, DiagramContext;
-import systems.input : InputView, systemInput;
+import settings_pane : PaneGeometry, paneGeometryFor, PaneOutcome, SettingsPane;
+import systems.input : InputView, surfaceCell, systemInput;
 import systems.render : FrameOps, systemRender;
 import world : World;
 
@@ -88,6 +91,20 @@ struct DiagramApp
     FrameOps frameOps;
     /// The key guide's label storage, reused across frames (`LTN`).
     LabelArena guideLabels;
+    /**
+    The modal settings pane (`SET1`).
+
+    GC state — a property tree, its rows and its edit history — so it lives
+    here rather than in the `@nogc` $(MREF world) (`DIA5`). The world keeps
+    only `settingsOpen`, which is the flag the keymap and the systems read.
+    */
+    SettingsPane settingsPane;
+    /**
+    Where `s` writes (`SET5`), set by `main`: `--config-file`'s path, or the
+    platform config dir. Empty means the pane has nowhere to save and says so
+    instead of guessing a location.
+    */
+    string settingsPath;
 
     /// No stack instances: see the type's note. `create` is the way in.
     @disable this();
@@ -140,8 +157,90 @@ struct DiagramApp
             }
         }
 
+        // The pane is modal (`SET2`), so it receives the event instead of the
+        // board. This is the ONE `if` the design allows: it decides who is
+        // listening, never what a key means — that stays the keymap's
+        // `settings` scope, which is terminal and hides the board's rows.
+        if (world.settingsOpen)
+        {
+            routeToPane(h.size, view, e);
+            return;
+        }
+
         if (systemInput(world, camera, capture, e, view))
             h.quit();
+    }
+
+    /// Feeds one event to the open pane, in the pane's own coordinates.
+    private void routeToPane(in Size viewport, in InputView view, in Event e)
+        @safe
+    {
+        const g = paneGeometryFor(viewport);
+        settingsPane.ensure(world.settings, g);
+        auto self = (() @trusted => &this)();
+        e.match!(
+            (in KeyEvent k) {
+                // A release is not pane business, and a terminal cannot send
+                // one anyway — the same rule the board's `onKey` follows.
+                if (k.action == KeyAction.release)
+                    return;
+                self.applyOutcome(
+                    self.settingsPane.handleKey(self.world.settings, k));
+            },
+            (in PointerEvent p) {
+                const cell = surfaceCell(p.pos, view);
+                if (!g.contains(cell))
+                {
+                    // A click outside a modal surface closes it, which is what
+                    // every other overlay on this board does.
+                    if (p.action == PointerAction.press)
+                    {
+                        self.settingsPane.close(self.world.settings);
+                        self.world.settingsOpen = false;
+                    }
+                    return;
+                }
+                PointerEvent local = p;
+                local.pos = Point(cell.x - g.x, cell.y - g.y);
+                self.applyOutcome(self.settingsPane.handleOverlay(
+                    self.world.settings, Event(local)));
+            },
+            (in WheelEvent wv) {
+                self.applyOutcome(self.settingsPane.handleOverlay(
+                    self.world.settings, Event(wv)));
+            },
+            (e2) {},
+        );
+    }
+
+    /// Performs what the pane asked for and could not do itself (`SET5`).
+    private void applyOutcome(PaneOutcome outcome) @safe
+    {
+        final switch (outcome)
+        {
+            case PaneOutcome.consumed:
+                return;
+            case PaneOutcome.closed:
+                world.settingsOpen = false;
+                return;
+            case PaneOutcome.saveRequested:
+                settingsPane.status = saveSettings();
+                return;
+        }
+    }
+
+    /**
+    Writes the grid half through the schema `--config-file` reads (`SET5`), and
+    answers with the footer line — a reason on failure, never an exception: the
+    board is fine either way, and a stack trace would be the wrong report.
+    */
+    private string saveSettings() @safe
+    {
+        if (settingsPath.length == 0)
+            return "nowhere to save — start with --config-file PATH";
+        string err;
+        return saveGridConfigFile(settingsPath, world.settings.grid, err)
+            ? "saved to " ~ settingsPath : err;
     }
 
     /**
@@ -154,6 +253,7 @@ struct DiagramApp
         systemRender(world, camera, h.size, theme.palette, theme.pageFg,
             theme.pageBg, frameOps);
         paintGuide(h.size);
+        paintSettings(h.size);
         // One call on every host: `paint` is `auto ref`, so a recorder field
         // binds by reference and a live by-value handle binds by value.
         .paint(h.canvas, frameOps[]);
@@ -179,7 +279,7 @@ struct DiagramApp
 
         SmallBuffer!(Binding, guideRowCap) listed;
         bindingsAt(listed, DiagramContext(isEditing: world.isEditing,
-            gridSettingsOpen: world.gridSettingsOpen), world.lantern.pending[]);
+            settingsOpen: world.settingsOpen), world.lantern.pending[]);
         if (listed.length == 0)
             return;
 
@@ -202,6 +302,33 @@ struct DiagramApp
         foreach (ref op; frameOps.ops[start .. $])
             op.translate(0, dy);
     }
+
+    /**
+    Appends the settings pane to the frame, centred (`SET1`, `SET8`).
+
+    Same shape as $(LREF paintGuide) and for the same reason: a widget tree
+    built at the origin, laid out, flattened onto the board's own op buffer
+    (`RND1`), then shifted as a block. Painting it here rather than in
+    $(REF systemRender, systems,render) is what keeps that function `@nogc`
+    (`DIA5`) — this costs a GC frame only while the pane is up.
+    */
+    private void paintSettings(in Size viewport) @safe
+    {
+        if (!world.settingsOpen)
+            return;
+
+        const g = paneGeometryFor(viewport);
+        settingsPane.ensure(world.settings, g);
+        auto tree = settingsPane.buildView();
+        auto frames = layout(tree, Constraints(maxW: g.cols));
+        const start = frameOps.length;
+        buildDisplayListInto(tree, frames, theme.palette, theme.pageFg,
+            theme.pageBg, frameOps);
+        if (g.x == 0 && g.y == 0)
+            return;
+        foreach (ref op; frameOps.ops[start .. $])
+            op.translate(g.x, g.y);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -212,8 +339,7 @@ struct DiagramApp
 
 version (unittest)
 {
-    import sparkles.input : charEvent, keyEvent, Key, KeyAction, Mods,
-        PointerAction, PointerButton, PointerEvent, Point;
+    import sparkles.input : charEvent, keyEvent, Key, Mods, PointerButton;
     import sparkles.ui.canvas : OpKind;
     import sparkles.ui.geometry : Rect;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Slot;
@@ -454,4 +580,118 @@ unittest
     assert(frameBody, "frameOps holds the entity body with Slot.surface");
     assert(frameLabel, "frameOps holds the entity label textRun");
     assert(canvasBody, "canvas received the entity body");
+}
+
+@("diagram.app.theSettingsPaneOpensEditsTheLiveBoardAndCloses")
+@safe
+unittest
+{
+    // The whole `SET` round trip through the real host loop: `,` opens the
+    // pane, its keys reach it instead of the board, an edit lands in the
+    // running world, and Esc gives the keyboard back.
+    import sparkles.ui.components.grid_backdrop : MarkKind;
+
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+
+    const beforeOrigin = app.camera.origin;
+    auto rec = runAppRecorded(app, RunConfig.init, [
+        charEvent(','),
+        // `d` and `q` are board keys — pan right and quit. Inside the pane
+        // they are unbound, and a modal surface spends them (`SET2`).
+        charEvent('d'),
+        charEvent('q'),
+    ]);
+    assert(!rec.quitRequested, "`q` did not reach the board");
+    assert(app.world.settingsOpen);
+    assert(app.camera.origin == beforeOrigin, "`d` did not pan the board");
+
+    // `3` is the dot-paper fixture; it must change the board the render
+    // system reads, not a copy (`SET3`).
+    cast(void) runAppRecorded(app, RunConfig.init, [charEvent('3')]);
+    assert(app.world.gridConfig.minorStyle.markKind == MarkKind.dots);
+
+    cast(void) runAppRecorded(app, RunConfig.init, [keyEvent(Key.escape)]);
+    assert(!app.world.settingsOpen, "Esc closed the pane…");
+
+    // …and the board has its keys back: the same `q` now quits.
+    auto after = runAppRecorded(app, RunConfig.init, [charEvent('q')]);
+    assert(after.quitRequested);
+}
+
+@("diagram.app.theSettingsPanePaintsOverTheBoard")
+@safe
+unittest
+{
+    // `SET8`: the pane rides the board's own op buffer (`RND1`), appended
+    // after the frame the `@nogc` render system built — so z-order is append
+    // order and `systemRender` never learned about widgets.
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+
+    auto plain = runAppRecorded(app, RunConfig.init, []);
+    const boardOps = app.frameOps.length;
+    assert(plain.frames.length == 1);
+
+    cast(void) runAppRecorded(app, RunConfig.init, [charEvent(',')]);
+    assert(app.world.settingsOpen);
+    assert(app.frameOps.length > boardOps, "the pane added ops");
+
+    // The panel's own surface is somewhere inside the viewport, below the
+    // toolbar — a modal centred on the screen, not chrome pinned to an edge.
+    const g = paneGeometryFor(RecordingHost.init.size);
+    bool framed;
+    foreach (ref op; app.frameOps[])
+        if (op.kind == OpKind.fillRect && op.slot == Slot.surface
+            && op.rect.x >= g.x && op.rect.y >= g.y
+            && op.rect.width >= g.cols - 4)
+            framed = true;
+    assert(framed, "the pane's framed surface is on the frame, and centred");
+}
+
+@("diagram.app.savingWithoutAPathSaysSoInsteadOfGuessing")
+@safe
+unittest
+{
+    // `SET5`: `main` supplies the path. With none, the pane must report that
+    // rather than write somewhere the reader did not ask for.
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+    assert(app.settingsPath.length == 0);
+
+    cast(void) runAppRecorded(app, RunConfig.init, [charEvent(','), charEvent('s')]);
+    assert(app.settingsPane.status.length > 0);
+    assert(app.world.settingsOpen, "a failed save does not close the pane");
+}
+
+@("diagram.app.savingWritesTheSchemaTheConfigFileReads")
+@system
+unittest
+{
+    import std.file : exists, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import grid_file : loadGridConfigFile;
+    import sparkles.ui.components.grid_backdrop : GridConfig, MarkKind;
+    import sparkles.ui.style : Palette;
+
+    const dir = buildPath(tempDir, "diagram-app-save-test");
+    scope (exit) if (exists(dir)) rmdirRecurse(dir);
+
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+    app.settingsPath = buildPath(dir, "grid.json");
+
+    // Open, pick the dot-paper fixture, save.
+    cast(void) runAppRecorded(app, RunConfig.init, [
+        charEvent(','), charEvent('3'), charEvent('s'),
+    ]);
+    assert(exists(app.settingsPath), app.settingsPane.status);
+
+    // What came out is what `--config-file` puts back in (`GRD8`/`SET5`).
+    GridConfig loaded;
+    Palette pal;
+    string err;
+    assert(loadGridConfigFile(app.settingsPath, loaded, pal, err), err);
+    assert(loaded.minorStyle.markKind == MarkKind.dots);
+    assert(loaded == app.world.gridConfig);
 }

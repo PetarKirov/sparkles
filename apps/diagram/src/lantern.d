@@ -110,16 +110,30 @@ unittest
     assert(!s.shown);
 }
 
-@("diagram.lantern.gridSettingsKeysStillResolveWhileTheGuideShows")
+@("diagram.lantern.theBoardsKeysStillResolveWhileTheGuideShows")
 @safe pure nothrow @nogc
 unittest
 {
-    // The guide is a panel, not a mode: the scopes underneath it resolve
-    // exactly as they did, so the reader can act on what they just read.
+    // The guide is a panel, not a mode: the scope underneath it resolves
+    // exactly as it did, so the reader can act on what they just read.
     LanternState s;
-    const open = DiagramContext(gridSettingsOpen: true);
-    cast(void) ch(s, '?', open);
-    const r = nk(s, Key.enter, open);
-    assert(r.kind == StepKind.execute && r.cmd.cmd == DiagramCommand.gridApply);
+    cast(void) ch(s, '?', DiagramContext.init);
+    assert(s.shown);
+    const r = ch(s, 'm', DiagramContext.init);
+    assert(r.kind == StepKind.execute
+        && r.cmd.cmd == DiagramCommand.toggleMinimap);
+    assert(!s.shown, "acting on a listed key closes the panel");
+}
+
+@("diagram.lantern.theSettingsPaneIsAModeSoTheGuideNeverOpensOverIt")
+@safe pure nothrow @nogc
+unittest
+{
+    // The other half of `SET2`: the pane's scope is terminal, so `?` is not a
+    // board key any more — it is simply unbound, and the guide stays shut
+    // rather than describing a board the reader cannot reach.
+    LanternState s;
+    const open = DiagramContext(settingsOpen: true);
+    assert(ch(s, '?', open).kind == StepKind.unbound);
     assert(!s.shown);
 }
