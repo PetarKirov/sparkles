@@ -3145,10 +3145,14 @@ int runGui(GuiArgs guiArgs) @system
                 && formatPreviewRulerHits(vm, rulerColF()));
 
         const fenceShape = vm.barShape();
-        window.pointerShape(pn.dock.shape(
-            rulerGrabbing ? PointerShape.ewResize
-            : vm.barGrabbing ? fenceShape : PointerShape.default_,
-            rulerHovering ? PointerShape.ewResize : fenceShape));
+        // The settings pane is modal: while it owns the pointer, the frame's
+        // one shape call reports ITS bar machine, not the chrome beneath.
+        window.pointerShape(settingsPane.active
+            ? settingsPane.pointerShape()
+            : pn.dock.shape(
+                rulerGrabbing ? PointerShape.ewResize
+                : vm.barGrabbing ? fenceShape : PointerShape.default_,
+                rulerHovering ? PointerShape.ewResize : fenceShape));
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;

@@ -1096,6 +1096,16 @@ struct WorkspaceTui
                     PointerEvent local = p;
                     local.pos = Point(p.pos.x - ox, p.pos.y - oy);
                     applySettings(settings.handleOverlay(Event(local), sg));
+                    // The frame's pointer shape while the modal owns the
+                    // pointer: the bar machine's — ns-resize over or
+                    // grabbing the bar, like every other bar in the app.
+                    const want = settings.pointerShape();
+                    if (want != curShape)
+                    {
+                        curShape = want;
+                        pendingShape = want;
+                        shapePending = true;
+                    }
                 },
                 (in WheelEvent w) {
                     WheelEvent local = w;
