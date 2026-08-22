@@ -1,154 +1,887 @@
-# Comparison — what four seams did, and what it means for `isCanvas`
+# Comparison — thirty-eight seams, and what they decide for `isCanvas`
 
-**Last reviewed:** August 22, 2026.
-**Coverage:** 4 of 11 planned subjects surveyed — Slint, Qt, Notcurses, egui.
-The remaining seven are listed in the [umbrella](./index.md) and are **not**
-represented below; where this document says "every subject", it means every subject
-_surveyed_.
+**Coverage:** 38 of 38 subjects surveyed — the four that opened the survey
+(Slint, Qt `QPaintEngine`, Notcurses, egui) plus the 34 added in the completing
+pass. Every subject file is cited below; no question is answered from an
+unsurveyed subject.
+**Last reviewed:** August 23, 2026.
 
-The four were chosen to bound the space rather than to be representative:
-Slint spans the widest target range, Qt is the declared-capability model,
-Notcurses is a cell target that addresses below the cell, and egui is the
-geometry extreme. Conclusions that hold across all four are reported as
-findings; where they disagree, the disagreement is the finding.
+The subjects were chosen to bound a space, not to sample a population: they run
+from a 1982 paper in which a picture is a function of its bounding box
+([functional images](./functional-images.md)) to a browser compositor that
+serialises its display list across a process boundary
+([Chromium `cc::PaintOpBuffer`](./chromium-paintop.md)), and from a seam of
+three constructors that cannot address below a character cell
+([Notty](./notty.md)) to one that hands a compute shader six parallel byte
+streams ([Vello](./vello.md)). Eight questions, `Q1`–`Q8`, are defined in the
+[umbrella](./index.md); each tests one entry of
+[`canvas-seam-friction.md`][friction].
+
+Where the 38 agree, the agreement is reported as a finding and the absence of
+dissent is stated explicitly, because unanimity across 38 subjects is a much
+stronger claim than across four. Where they disagree, the disagreement is the
+finding, and the axis that separates the camps is what the proposal has to
+choose on.
+
+> [!NOTE]
+> This document replaces a synthesis written against four subjects. Three of its
+> seven findings did not survive: the old `F5` (continuous coordinates dissolve
+> the sub-unit problem) is falsified twice over, the old `F7` (extent belongs to
+> the surface) is contradicted by twelve subjects, and the old `F1`'s second
+> clause (measurement belongs behind a backend-chosen abstraction) is Slint's
+> answer rather than the field's. The new numbering is `F1`–`F12` and does not
+> correspond to the old one.
+
+---
 
 ## The matrix
 
-| Question                            | Slint                                             | Qt `QPaintEngine`                        | Notcurses                            | egui / epaint                         |
-| ----------------------------------- | ------------------------------------------------- | ---------------------------------------- | ------------------------------------ | ------------------------------------- |
-| **Q1** unit / who measures          | separate `TextShaper`; `Font::Length` assoc. type | `QFontMetrics`, not the engine           | grapheme width, above the blitter    | none — backend gets a shaped `Galley` |
-| **Q2** contract stated?             | trait + defaults; no query                        | **`PaintEngineFeature` + `hasFeature`**  | runtime terminfo query; auto-degrade | nothing to negotiate                  |
-| **Q3** semantic or primitive        | **semantic** (8 ops incl. `draw_box_shadow`)      | primitive (rects, paths, `drawTextItem`) | primitive over planes                | primitive (12 `Shape` variants)       |
-| **Q4** command shape                | virtual dispatch, no reified command              | virtual dispatch, no reified command     | direct plane calls                   | **sum type** (`enum Shape`)           |
-| **Q5** sub-unit placement           | continuous floats                                 | continuous floats                        | **blitter = a fidelity ladder**      | continuous floats                     |
-| **Q6** resolved or semantic styling | resolved; role in the method name                 | resolved (`QPainterState`)               | resolved per cell                    | resolved by tessellation              |
-| **Q7** payload ownership            | borrowed + backend-owned `ItemCache`              | borrowed; `QPixmap` implicitly shared    | plane owns its cells                 | **`Arc`-shared** `Mesh` / `Galley`    |
-| **Q8** extent query                 | clip bounds only                                  | the **device** declares extent           | the **plane** declares extent        | falls out of primitives               |
+38 rows by 8 columns is unreadable. Each question below is a table of **distinct
+answers**, with the subjects that give each one. Grouping by answer is what makes
+38 subjects legible where four were not — and the size of a group is itself
+evidence.
+
+### Q1 — what unit does measurement return, and who answers?
+
+| Answer                                            | Subjects                                                                                                                                                                                                                                                                                                                                                    | Note                                                                                                                                                                                 |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Unshaped text cannot cross the seam at all**    | [Flutter](./flutter-engine.md) (`DlText`), [WebRender](./webrender.md) (`GlyphInstance`), [Chromium](./chromium-paintop.md) (`SkTextBlob`), [Qt Quick](./qt-quick-scenegraph.md) (`QGlyphRun`), [GSK](./gtk4-gsk.md) (`PangoGlyphString`), [Avalonia](./avalonia.md) (`IGlyphRunImpl`), [Vello](./vello.md) (`Glyph{id,x,y}`), [egui](./egui.md) (`Galley`) | The strongest form: the seam has no string to measure. Flutter's `Paragraph` must be laid out before it may be measured _or_ drawn — measurer and painter cannot disagree.           |
+| **A free function or fixed table above the seam** | [Ratatui](./ratatui.md) (`cell_width`), [Textual](./textual.md) (`cell_len`), [Mosaic](./mosaic.md) (code-point count), [Vty](./vty-image.md), [Notty](./notty.md)                                                                                                                                                                                          | Vty installs a **process-global** width table generated by interrogating the terminal, precisely so two consumers cannot disagree. Notty fixes width as a constructor postcondition. |
+| **A peer service with its own contract**          | [Godot `TextServer`](./godot-textserver.md), [Pango](./pango-harfbuzz.md), [Java2D](./java2d.md), [Skia](./skia-skpicture.md), [Cairo](./cairo-direct2d.md), [GPUI](./gpui.md), [Monomer](./monomer.md)                                                                                                                                                     | Godot's `TextServer::has_feature` is a live 15-flag capability query — on the _measurement_ seam, while the rendering seam's equivalent is dead code.                                |
+| **Measurement type chosen by the backend**        | [Slint](./slint.md) (`Font::Length`), [Doodle](./scala-doodle.md) (`type Bounds`), [iced](./iced.md) (`Paragraph`), [piet](./piet.md) (`TextLayout`)                                                                                                                                                                                                        | Only Slint and Doodle make the _unit_ backend-chosen. iced and piet fix logical pixels; iced's `fallback.rs` shows the price — two backends compose only if the types are identical. |
+| **Removed from the library**                      | [Vg](./ocaml-vg.md), [gloss](./gloss-picture.md), [diagrams](./haskell-diagrams.md), [elm-ui](./elm-ui.md), [elm-canvas](./elm-canvas.md), [SDL](./sdl-renderer.md)                                                                                                                                                                                         | diagrams is the negative control: `mkText'` gives text `pointEnvelope origin` — "takes up no space" — and the layout engine cannot lay out a string.                                 |
+| **On the painter**                                | [Racket `dc<%>`](./racket-dc.md), [libvaxis](./libvaxis.md) (wrapped extent only), [imtui](./imtui.md) (by redefining the unit)                                                                                                                                                                                                                             | The only outright dissent is Racket's `get-text-extent`, and Racket prices it: a global `dc-for-text-size` parameter defaulting to a 1x1 Cairo surface allocated to hold metrics.    |
+
+### Q2 — is the backend contract stated in one place?
+
+| Answer                                              | Subjects                                                                                                                                                                                                                                                                                 | Note                                                                                                                                                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Total: every member mandatory, nothing to probe** | [Flutter](./flutter-engine.md) (49 pure virtuals), [Chromium](./chromium-paintop.md) (45), [Avalonia](./avalonia.md) (27), [Monomer](./monomer.md) (45 record fields), [Notty](./notty.md) (12 closures), [GPUI](./gpui.md), [gloss](./gloss-picture.md), [Godot](./godot-textserver.md) | Affordable only when the seam is private or the vendor writes every backend. Avalonia buys it with `[Unstable]`/`[PrivateApi]`; Skia's real device seam is in `src/`, not `include/`.                |
+| **Capability declared as data**                     | [Qt `QPaintEngine`](./qt-qpaintengine.md), [wgpu](./wgpu.md), [SDL](./sdl-renderer.md), [WebRender](./webrender.md), [libvaxis](./libvaxis.md), [Mosaic](./mosaic.md), [Vty](./vty-image.md), [Avalonia](./avalonia.md)                                                                  | wgpu types the three kinds apart by refusability. SDL scopes the query to a _domain_ (blend modes, texture formats). Mosaic consumes it at the **lowering** step, never at a draw call.              |
+| **Encoded in the language, no capability data**     | [Skia](./skia-skpicture.md), [Java2D](./java2d.md), [Ratatui](./ratatui.md), [Masonry/imaging](./parley-xilem.md), [Doodle](./scala-doodle.md), [diagrams](./haskell-diagrams.md), [iced](./iced.md)                                                                                     | Skia: pure virtual = floor, virtual-with-default = negotiable, `return false` = refusal. Java2D's floor is the **superclass** — a backend cannot forget it, because forgetting means not overriding. |
+| **Refusal per call, argument-dependent**            | [Cairo](./cairo-direct2d.md), [SDL](./sdl-renderer.md), [Vg](./ocaml-vg.md), [libvaxis](./libvaxis.md)                                                                                                                                                                                   | Cairo's paginated surfaces replay each page in `CAIRO_PAGINATED_MODE_ANALYZE` and partition it into supported and fallback regions. Vg's `warn` carries the offending image back.                    |
+| **Prose only**                                      | [Vg](./ocaml-vg.md), [piet](./piet.md), [Qt Quick](./qt-quick-scenegraph.md)                                                                                                                                                                                                             | Vg's per-backend "Render warnings and limitations" sections are the best written contracts in the survey and are entirely unchecked.                                                                 |
+| **Nothing stated**                                  | [imtui](./imtui.md), [elm-ui](./elm-ui.md), [Textual](./textual.md), [functional images](./functional-images.md)                                                                                                                                                                         | Textual makes negotiation unnecessary rather than missing: the whole driver contract is `write(str)`.                                                                                                |
+
+### Q3 — do semantic widgets reach the backend?
+
+| Answer                                          | Subjects                                                                                                                                                                                                                                                                                                                                                                                                                                        | Note                                                                                                                                                                                            |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Semantic operations live in the seam**        | [Slint](./slint.md) (8, incl. `draw_box_shadow`), [GSK](./gtk4-gsk.md) (`GskBorderNode`, `GskInsetShadowNode`), [Qt Quick](./qt-quick-scenegraph.md) (private node kinds), [Skia](./skia-skpicture.md) (`DrawShadowRec`), [Flutter](./flutter-engine.md) (`drawShadow`), [Vello](./vello.md), [piet](./piet.md) (`blurred_rect`), [Pango](./pango-harfbuzz.md) (`draw_error_underline`), [Godot](./godot-textserver.md) (`CommandNinePatch`)    | Every one stops far below a widget. GSK's admission test is "do the backends disagree about how to draw it?"; Godot's and Vello's is "does lowering need knowledge only the backend has?"       |
+| **Identity travels with no appearance**         | [WebRender](./webrender.md) (`IS_SCROLLBAR_CONTAINER`, one bit), [Chromium](./chromium-paintop.md) (`DrawScrollingContentsOp`, `CustomDataOp`, `AnnotateOp`), [Cairo](./cairo-direct2d.md) (`tag` bracket), [Masonry/imaging](./parley-xilem.md) (`push_context`), [GSK](./gtk4-gsk.md) (`GskDebugNode`)                                                                                                                                        | One bit on a shared header buys WebRender a tile-cache slice barrier. Our eight scrollbar fields on every `DrawOp` buy less.                                                                    |
+| **Primitive seam, semantics resolved above it** | [Java2D](./java2d.md), [SDL](./sdl-renderer.md), [Godot](./godot-textserver.md), [iced](./iced.md) (`fill_quad`), [GPUI](./gpui.md), [egui](./egui.md), [Avalonia](./avalonia.md), [Monomer](./monomer.md), [gloss](./gloss-picture.md), [Vg](./ocaml-vg.md), [diagrams](./haskell-diagrams.md), [Notty](./notty.md), [Vty](./vty-image.md), [Mosaic](./mosaic.md), [Ratatui](./ratatui.md), [Textual](./textual.md), [libvaxis](./libvaxis.md) | Ratatui, libvaxis and Textual each degrade a scrollbar in the widget, in the toolkit's own vocabulary, in 33–60 lines. libvaxis's whole `Scrollbar.zig` is 33 lines with one `character` field. |
+| **Zero semantics — and the problem inverts**    | [imtui](./imtui.md)                                                                                                                                                                                                                                                                                                                                                                                                                             | With nothing semantic in the seam, the scrollbar has to know what the target is. The bill was a permanent fork of ImGui's widget layer.                                                         |
+
+### Q4 — what shape is a draw command?
+
+| Answer                                                 | Subjects                                                                                                                                                                                                                                                                                                               | Note                                                                                                                                                                                           |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sum type / tagged union with per-variant payload**   | [egui](./egui.md), [GPUI](./gpui.md), [WebRender](./webrender.md), [SDL](./sdl-renderer.md), [Cairo](./cairo-direct2d.md), [Vg](./ocaml-vg.md), [gloss](./gloss-picture.md), [Vty](./vty-image.md), [Notty](./notty.md), [Doodle](./scala-doodle.md), [elm-canvas](./elm-canvas.md), [diagrams](./haskell-diagrams.md) | WebRender's `#[repr(u8)]` enum serialises as discriminant + that variant's payload, so the union is _cheaper_ than a flat record. SDL groups 11 tags over 4 union arms.                        |
+| **Per-op struct in variable-stride storage**           | [Flutter](./flutter-engine.md) (68 records in a byte arena), [Chromium](./chromium-paintop.md) (36 `final` subclasses), [Skia](./skia-skpicture.md) (`SkRecord` over an arena), [Godot](./godot-textserver.md) (bump-allocated subclasses)                                                                             | The three largest subjects all landed here. Each op pays only for its own fields; Chromium's `LargestPaintOp` union exists only as a deserialisation scratch buffer.                           |
+| **Open class hierarchy**                               | [GSK](./gtk4-gsk.md) (37 GType kinds), [Avalonia](./avalonia.md) (9 node classes), [Qt Quick](./qt-quick-scenegraph.md)                                                                                                                                                                                                | GSK added twelve node kinds since 4.0 without touching a backend, because a `NULL` vtable entry degrades automatically. A closed sum type makes every backend non-exhaustive on each addition. |
+| **Parallel streams / tag-plus-index into side arenas** | [Vello](./vello.md) (six streams, prefix sum), [Masonry/imaging](./parley-xilem.md) (`Command` = tag + one id)                                                                                                                                                                                                         | Vello's own `doc/pathseg.md` records abandoning a fixed 36-byte element record. The same repository chose a plain Rust enum for its _sequential_ consumer.                                     |
+| **The result, not the instructions**                   | [Ratatui](./ratatui.md) (`Buffer`), [Textual](./textual.md) (`Strip`), [Mosaic](./mosaic.md) (`TextSurface`), [imtui](./imtui.md) (`TScreen`), [Vty](./vty-image.md) (`SpanOp` rows)                                                                                                                                   | Buys diffing, read-back composition (`Exact.merge("│","─") == "┼"`), hit-testing and value-comparable goldens for free — and does not reach a GPU.                                             |
+| **Generated from the method set**                      | [Racket `record-dc%`](./racket-dc.md)                                                                                                                                                                                                                                                                                  | A `define/record` macro emits both a replay closure and a serialisable `(list 'name arg ...)`. One declaration, no artifact that can drift.                                                    |
+| **Nothing reified**                                    | [Slint](./slint.md), [Qt `QPaintEngine`](./qt-qpaintengine.md), [Java2D](./java2d.md), [Pango](./pango-harfbuzz.md), [piet](./piet.md), [iced](./iced.md), [elm-ui](./elm-ui.md), [functional images](./functional-images.md)                                                                                          | piet's trait doc anticipates a recording context; nobody ever wrote one, and cross-backend verification degraded to tolerant per-OS PNG diffs.                                                 |
+| **Reified but unusable**                               | [Monomer](./monomer.md) (a queue of `IO ()` closures), [imtui](./imtui.md) (untagged `ImDrawCmd`), [elm-canvas](./elm-canvas.md) (opaque `{type, name, args}`)                                                                                                                                                         | Three ways to reify and cash nothing. imtui's discriminant relocates into a UV-equality heuristic; a heuristic can be wrong where a tag cannot.                                                |
+
+### Q5 — how is sub-unit placement expressed?
+
+| Answer                                                     | Subjects                                                                                                                                                                                                                                                                                                                                                                                                           | Note                                                                                                                                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Continuous coordinates — and the problem still arrives** | [GSK](./gtk4-gsk.md) (`GskSnapDirection`, `Since: 4.24`), [Pango](./pango-harfbuzz.md) (`pango_quantize_line_geometry`), [GPUI](./gpui.md) (`snap_stroke`), [Java2D](./java2d.md) (`minPenSize` + `normPosition` + `KEY_STROKE_CONTROL`), [Avalonia](./avalonia.md) (layout rounding by `dpiScale`), [Racket](./racket-dc.md) (`set-alignment-scale`), [iced](./iced.md) (`Quad::snap`), [imtui](./imtui.md)       | Six of these add a _named policy_ to a float seam. Pango's contract is "at least one pixel"; GTK's is grow / shrink / round, each documented by the artifact it avoids.                        |
+| **Name a fidelity, not a position**                        | [Notcurses](./notcurses.md) (blitter ladder), [Flutter](./flutter-engine.md) (`strokeWidth == 0`), [Skia](./skia-skpicture.md), [Racket](./racket-dc.md) (pen width 0, device answers), [SDL](./sdl-renderer.md) (`SDL_HINT_RENDER_LINE_METHOD`), [Ratatui](./ratatui.md) (`symbols::Marker`), [Godot](./godot-textserver.md) (`SubpixelPositioning`), [functional images](./functional-images.md) (Henderson's ε) | Arrived at independently from a 1982 paper, a terminal library, a GPU rasteriser and a PostScript device. The strongest form is Flutter's: an ordinary parameter value, not a separate enum.   |
+| **Query the device unit and express the answer in it**     | [iced](./iced.md) (`1.0 / hint_factor()`), [libvaxis](./libvaxis.md) (`DrawContext.cell_size`, `pixel_offset`, `Cell.Scale`), [SDL](./sdl-renderer.md) (`SDL_SetRenderLogicalPresentation`)                                                                                                                                                                                                                        | libvaxis is the second cell-native sub-cell library and it does **not** copy Notcurses: it hands every widget the pixel size of a cell and routes finer content through a negotiated protocol. |
+| **An accumulator that composes across ops**                | [Textual](./textual.md) (`Quad` + `combine_quads`)                                                                                                                                                                                                                                                                                                                                                                 | A per-cell line weight per compass direction, resolved to a glyph once at render. Two ops touching one cell can agree; `RuleEdge`'s edge-per-op cannot.                                        |
+| **Derive fidelity from the accumulated transform**         | [gloss](./gloss-picture.md) (`circScale`, `circleSteps`)                                                                                                                                                                                                                                                                                                                                                           | Only available while transforms are still nodes. A pre-flattened absolute-coordinate stream has thrown the scale factor away.                                                                  |
+| **Refuse, and substitute a glyph**                         | [Vty](./vty-image.md) (`clipText` inserts `'…'`), [Notty](./notty.md) (space for a severed wide cluster), [Mosaic](./mosaic.md)                                                                                                                                                                                                                                                                                    | Mosaic knows the terminal's pixel size and the Kitty sizing flags and deliberately keeps all of it out of `DrawScope`.                                                                         |
+
+### Q6 — resolved appearance, semantic role, or both?
+
+| Answer                                                            | Subjects                                                                                                                                                                                                                                                                                                     | Note                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Resolved only, on the op**                                      | [Flutter](./flutter-engine.md), [Chromium](./chromium-paintop.md), [GPUI](./gpui.md), [GSK](./gtk4-gsk.md), [Vello](./vello.md), [egui](./egui.md), [Godot](./godot-textserver.md), [Monomer](./monomer.md), [Doodle](./scala-doodle.md), [Vg](./ocaml-vg.md), [Notty](./notty.md), [Vty](./vty-image.md)    | The majority answer, and every one of them lacks a re-resolving consumer. Broadway is GSK's Browser target and gets _no_ semantic help at all.                               |
+| **Resolved, but the leaves are symbolic**                         | [Ratatui](./ratatui.md), [libvaxis](./libvaxis.md), [Vty](./vty-image.md) (`Color = Default \| Indexed \| Rgb`)                                                                                                                                                                                              | One 4-byte field holds either a role or a value; the terminal re-resolves against the user palette past every backend. One field doing what `visual` + `slot` does with two. |
+| **Role by op identity, value in state**                           | [Qt Quick](./qt-quick-scenegraph.md) (node type + `QSGMaterial`), [Pango](./pango-harfbuzz.md) (`PangoRenderPart` per call, colour in renderer state)                                                                                                                                                        | In a sum type the **tag is the slot**. Qt's `NodeType` is too coarse and the software backend pays a five-deep `dynamic_cast` per node per frame.                            |
+| **Appearance as stream or device state, not op payload**          | [SDL](./sdl-renderer.md) (`SDL_RENDERCMD_SETDRAWCOLOR`, deduplicated), [Racket](./racket-dc.md), [Java2D](./java2d.md) (pipe recompiled per state change), [Flutter](./flutter-engine.md) (delta-encoded `setColor`)                                                                                         | Cheapest per op, and structurally incompatible with an order-independent, pairwise-comparable op stream — i.e. with `RecordingCanvas`. A genuine fork, not a defect.         |
+| **A late-bound handle into a per-frame table**                    | [Masonry/imaging](./parley-xilem.md) (`BrushIndex`), [WebRender](./webrender.md) (`PropertyBinding`)                                                                                                                                                                                                         | "Enables updating of brush details without performing relayouts." Strictly better than carrying both channels.                                                               |
+| **Style as a scope, not a field**                                 | [gloss](./gloss-picture.md) (`Color c p` wraps a subtree), [elm-canvas](./elm-canvas.md) (`mergeDrawOp` lattice join, `save`/`restore` bracketing), [Mosaic](./mosaic.md) (`Unspecified` sentinels compose in the cell)                                                                                      | Per-op `visual` is a cost of **flatness**, not of hedging. Adopting this requires the display list to retain grouping structure, which a flat `DrawOp[]` discards.           |
+| **A second channel that buys something the first cannot express** | [wgpu](./wgpu.md) (`Limits` + `DownlevelFlags`), [Avalonia](./avalonia.md) (`ServerPen` + `ClientPen`, by thread affinity), [Vg](./ocaml-vg.md) (`glyphs` + `text`, on one constructor of five), [Skia](./skia-skpicture.md) (`SkPaintFilterCanvas` decorator), [Cairo](./cairo-direct2d.md) (`tag` bracket) | The rule is not "never two channels" — it is **never the same fact twice**. Avalonia's second field buys a capability; ours buys a consumer.                                 |
+
+### Q7 — who owns a command's payload?
+
+| Answer                                                | Subjects                                                                                                                                                                                                                                                                                            | Note                                                                                                                                                                 |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Copy by value into the record's own storage**       | [Skia](./skia-skpicture.md), [Cairo](./cairo-direct2d.md) (snapshot at record time), [WebRender](./webrender.md) (inline, read back as `ItemRange` into the list), [SDL](./sdl-renderer.md) (`(first, count)` into a per-frame arena), [Flutter](./flutter-engine.md), [Pango](./pango-harfbuzz.md) | The most performance-obsessed 2-D library in existence pays a copy or an atomic bump on every op. That removes performance as a defence of a borrowed `DrawOp.text`. |
+| **Reference count**                                   | [Qt](./qt-qpaintengine.md), [egui](./egui.md), [Flutter](./flutter-engine.md), [GSK](./gtk4-gsk.md) (atomic), [Avalonia](./avalonia.md) (`IRef` + a one-bit transfer flag), [Chromium](./chromium-paintop.md), [Vello](./vello.md), [iced](./iced.md)                                               | GSK's atomic refcount is what makes the GPU renderer's Cairo fallback legal — the node deliberately outlives the frame walk.                                         |
+| **A backend-owned cache keyed by identity**           | [Slint](./slint.md) (`draw_cached_pixmap`), [GPUI](./gpui.md) (`PlatformAtlas`), [Java2D](./java2d.md), [Vg](./ocaml-vg.md), [Notty](./notty.md) (ephemeron memo), [gloss](./gloss-picture.md) (`makeStableName`), [Doodle](./scala-doodle.md) (the backend's own command type is the cache)        | Doodle's variant is the sharpest: an expensive backend-specific measurement is computed at layout and travels to paint time _inside the backend's own command type_. |
+| **A key into an out-of-band store**                   | [WebRender](./webrender.md) (`ImageKey`), [Chromium](./chromium-paintop.md) (`PaintCacheId`, mailbox, transfer cache), [Godot](./godot-textserver.md) (`RID`)                                                                                                                                       | The only answers that survive IPC and a thread hop. Chromium chose a mirrored cache over refcounting because it "avoids the need for cross-process ref-counting".    |
+| **Weak reference plus inline geometry**               | [iced](./iced.md) (`paragraph::Weak { min_bounds, align_x, align_y }`)                                                                                                                                                                                                                              | A dropped payload degrades to "nothing drawn" rather than dangling, and damage tracking still has the rectangle.                                                     |
+| **Borrow for the frame, own the raster**              | [libvaxis](./libvaxis.md) (`Cell` borrows, `InternalCell` owns), [imtui](./imtui.md) (`TScreen`)                                                                                                                                                                                                    | Legal precisely because the only thing outliving the frame is a copy in a type that owns — and only because a cell grid is small and self-contained.                 |
+| **A declared synchronisation window**                 | [Qt Quick](./qt-quick-scenegraph.md) (`updatePaintNode` with the GUI thread blocked)                                                                                                                                                                                                                | Enforced by prose, not by types.                                                                                                                                     |
+| **Move the scene, not the commands**                  | [Monomer](./monomer.md) (`Either Renderer (TChan (RenderMsg s e))`)                                                                                                                                                                                                                                 | The `Renderer` never leaves the GL thread; an immutable widget tree is what crosses. Possible because the seam is a value.                                           |
+| **Immutable and GC-managed — the question dissolves** | [Textual](./textual.md), [Mosaic](./mosaic.md), [Vty](./vty-image.md), [Notty](./notty.md), [gloss](./gloss-picture.md), [diagrams](./haskell-diagrams.md), [Doodle](./scala-doodle.md), [elm-ui](./elm-ui.md), [elm-canvas](./elm-canvas.md), [functional images](./functional-images.md)          | The null result, and worth stating: `DrawOp.text`'s hazard comes from choosing a borrowed slice, not from reifying a command.                                        |
+
+### Q8 — can the scene answer its own extent?
+
+| Answer                                                     | Subjects                                                                                                                                                                                                                                                                                                                                                                    | Note                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Yes — cached on every node, maintained at construction** | [GSK](./gtk4-gsk.md) (`bounds` on the base node), [Vty](./vty-image.md) (`imageWidth`/`imageHeight`, O(1)), [Notty](./notty.md) (`dim` per composite), [Racket](./racket-dc.md) (pict's eager `width`/`height`/`ascent`/`descent`), [Avalonia](./avalonia.md) (`Rect? Bounds` per node, union cached behind `_boundsValid`), [diagrams](./haskell-diagrams.md) (`Envelope`) | Cheap because it was never _derived_: the constructor is the only place it could be computed, so it costs one addition per node.                                                                                                                                              |
+| **Yes — accumulated during recording**                     | [Flutter](./flutter-engine.md) (`AccumulateOpBounds`), [Cairo](./cairo-direct2d.md) (`cairo_recording_surface_ink_extents`), [Godot](./godot-textserver.md) (`Item::get_rect()` behind `rect_dirty`), [Chromium](./chromium-paintop.md) (`DisplayItemList::bounds()` from producer-declared visual rects)                                                                   | Cairo computes it by replaying the scene into a measuring backend — `RecordingCanvas`'s role generalised into a measurement service.                                                                                                                                          |
+| **Yes — layout already knew it**                           | [Doodle](./scala-doodle.md) (`Finalized.boundingBox` → `Size.FitToImage`), [Mosaic](./mosaic.md) (the measured root sizes the surface), [libvaxis](./libvaxis.md) (`Widget.draw` _returns_ a `Surface.size`), [Textual](./textual.md) (`get_optimal_width`/`get_height`), [Ratatui](./ratatui.md) (`Buffer::with_lines`), [Monomer](./monomer.md) (`widgetGetSizeReq`)      | libvaxis's is the cheapest mechanism in the survey: make paint return a size. Mosaic's terminal size is _not_ used to size the surface — content decides.                                                                                                                     |
+| **Deliberately refused**                                   | [Skia](./skia-skpicture.md) (`cullRect()` is the caller's argument), [GPUI](./gpui.md) (`BoundsTree` private), [WebRender](./webrender.md), [Vello](./vello.md) (root), [Vg](./ocaml-vg.md), [Masonry/imaging](./parley-xilem.md)                                                                                                                                           | Skia is the strongest witness _for_ refusing: it holds per-op bounds **and** a spatial index of them and still exposes only `approximateOpCount()`. WebRender's reason is stronger — items are explicitly allowed to be logically infinite, so extent-by-scanning is unsound. |
+| **The extent is an input to the scene**                    | [Vg](./ocaml-vg.md) (`renderable = size2 * box2 * image`), [functional images](./functional-images.md) (`p(a,b,c)`), [elm-canvas](./elm-canvas.md) (`toHtml (width, height) …`)                                                                                                                                                                                             | Henderson makes the box an argument, so the query can never arise. That is the fix for §8 stated as an architecture rather than an API.                                                                                                                                       |
+| **The surface declares it and nothing else does**          | [Qt `QPaintEngine`](./qt-qpaintengine.md), [Notcurses](./notcurses.md), [SDL](./sdl-renderer.md), [Java2D](./java2d.md), [iced](./iced.md), [gloss](./gloss-picture.md), [imtui](./imtui.md), [egui](./egui.md), [elm-ui](./elm-ui.md), [piet](./piet.md)                                                                                                                   | egui derives extent from primitives — which is what `skia-canvas-render.d` had to do, and it was the _only_ member of the old four-subject survey to do so.                                                                                                                   |
+
+---
 
 ## Findings
 
-### F1. Text measurement does not belong on the painter — unanimous
+### F1. Text measurement is not a method of the drawing seam
 
-All four put it elsewhere, by four different routes: a separate shaping trait
-with a backend-chosen length type (Slint), a parallel metrics class (Qt), a
-property resolved above the blitter (Notcurses), and total pre-resolution into
-a `Galley` before a backend exists (egui).
+**Support:** 35 of 38. Every subject that measures at all puts advance
+measurement somewhere other than the painter, by six distinct routes: shaped
+payloads that make the question unaskable ([Flutter](./flutter-engine.md),
+[WebRender](./webrender.md), [Chromium](./chromium-paintop.md),
+[Qt Quick](./qt-quick-scenegraph.md), [GSK](./gtk4-gsk.md),
+[Avalonia](./avalonia.md), [Vello](./vello.md), [egui](./egui.md)); a peer
+service ([Godot](./godot-textserver.md), [Pango](./pango-harfbuzz.md),
+[Java2D](./java2d.md), [Skia](./skia-skpicture.md), [GPUI](./gpui.md),
+[Monomer](./monomer.md)); a free function
+([Ratatui](./ratatui.md), [Textual](./textual.md), [Mosaic](./mosaic.md)); a
+process-global table ([Vty](./vty-image.md)); a constructor postcondition
+([Notty](./notty.md)); or removal from the library entirely
+([Vg](./ocaml-vg.md), [SDL](./sdl-renderer.md)).
 
-Two of them are not GPU toolkits, so this is not an artifact of our unusual
-terminal/GPU spread. It is simply the ordinary answer, and
-[friction §1](../../specs/ui-skia/canvas-seam-friction.md) is not a close call:
-`measure` on `isCanvas` is the design error, and it is why `SkiaCanvas.measure`
-has to ignore Skia and return `cellsOf(text)`.
+**Dissent, and it is real:** [Racket](./racket-dc.md)'s `get-text-extent` is a
+method on `dc<%>`. It is the only outright counter-example in 38 subjects, and
+it is a _priced_ one — `pict` cannot measure without a device, so it carries a
+global `dc-for-text-size` parameter whose default is a 1x1 bitmap surface
+allocated purely to hold font metrics, and errors with "no `dc<%>` object
+installed for sizing" when it is unset.
 
-### F2. Reifying the command stream is ours to keep — but not as a tagged struct
+**Two qualifications.** [libvaxis](./libvaxis.md) puts _wrapped_ extent on the
+painter deliberately: `Window.print(.{ .commit = false })` is a dry run
+returning `PrintResult { col, row, overflow }`, because wrapping needs the
+target rect and a width function cannot answer it. [imtui](./imtui.md) keeps
+ImGui's measurement on the painter and survives only by redefining the unit
+(`SizePixels = 1.00`, every glyph quad forced to one unit wide and zero tall).
 
-Slint, Qt and Notcurses all dispatch through methods and have no command
-values. egui alone reifies, as a **sum type**, and gets exactly the properties
-we depend on: shapes are values, so they can be collected, culled, replayed and
-compared.
+So the claim is not "unanimous"; it is "the ordinary answer, with one dissenter
+that documents its own cost, and one exception for wrapping".
+[Friction §1][friction] is confirmed on placement.
 
-That is the whole justification for `RecordingCanvas` and the op-stream parity
-harness, so the reification is right. What egui does not do is our tag-plus-
-eighteen-fields encoding — which is also the encoding `sparkles.input.events`
-opens by rejecting for its own `Event`. Friction §4 stands, and the fix is a
-`SumType`, not the removal of `DrawOp`.
+### F2. Relocating `measure` is necessary and nowhere near sufficient
 
-### F3. Semantic operations are legitimate — the axis is _where degradation lives_
+Moving measurement off the painter leaves five independent decisions, and the
+survey shows each one being got wrong somewhere.
 
-Friction §3 called `scrollbar` in the drawing seam a layering violation. Slint
-disproves the general claim: it ships eight semantic operations including
-`draw_box_shadow` and `draw_text_input`, for exactly our reason — a backend
-that cannot render the real thing must know what was intended in order to
-degrade it.
+1. **Relocate, do not delete.** [diagrams](./haskell-diagrams.md) removed
+   measurement and gives every `Text` `pointEnvelope origin` — "takes up no
+   space, as text size information is not available" — producing a layout engine
+   that cannot lay out a string. [elm-ui](./elm-ui.md) can only get away with
+   the same because its single backend is a complete constraint solver;
+   neither a cell grid nor Skia will line-break for us.
+2. **One unit is not one oracle.** [Ratatui](./ratatui.md) has exactly one unit
+   and ships two width functions that disagree on U+FF9E/U+FF9F.
+   [libvaxis](./libvaxis.md) makes the oracle a negotiated capability
+   (`gwidth.Method` = `unicode` / `wcwidth` / `no_zwj`, measurably disagreeing in
+   its own tests) plus an unverified per-cell caller override.
+   [Vty](./vty-image.md) responds by making the oracle a **process-global** table
+   generated from the terminal, precisely so two consumers _cannot_ disagree.
+3. **The unit need not be backend-chosen.** That is
+   [Slint](./slint.md)'s and [Doodle](./scala-doodle.md)'s answer, not the
+   field's. [GPUI](./gpui.md), [iced](./iced.md), [Avalonia](./avalonia.md),
+   [Textual](./textual.md) and [piet](./piet.md) all fix one unit, and iced's
+   `fallback.rs` prices the alternative: two backends compose only if their
+   `Font`, `Paragraph` and `Editor` types are _identical_.
+4. **`Size` is the wrong return shape in any unit.**
+   [Cairo](./cairo-direct2d.md) and DirectWrite both separate the inked box from
+   the advance (`cairo_text_extents_t` vs `x_advance`; `width` vs
+   `widthIncludingTrailingWhitespace`), and [Pango](./pango-harfbuzz.md) returns
+   ink and logical extents accumulated by deliberately different rules — a
+   zero-ink glyph contributes nothing to the ink rect and still reserves advance.
+   [Flutter](./flutter-engine.md)'s `Paragraph` additionally answers intrinsic
+   widths, baselines, per-range boxes and `getPositionForOffset`, none of which a
+   `Size measure(text)` can express: the replacement should be an object, not a
+   function.
+5. **Measurement is device-parameterised even when it is device-independent.**
+   [Pango](./pango-harfbuzz.md) keys its font map on the merged
+   `cairo_font_options_t` and rounds extents to whole device pixels whenever
+   metrics hinting is on — which is why [GSK](./gtk4-gsk.md)'s
+   `gsk_get_glyph_string_extents` has to opt _out_. [Java2D](./java2d.md)
+   expresses the same as an immutable `FontRenderContext` used as a cache key.
+   [Racket](./racket-dc.md) names the idea outright: `get-font-metrics-key`
+   returns a _metric-universe_ tag (1 for the default backend, 2 for PostScript,
+   3 for SVG, 0 when scaled), so a mismatched measurer is detectable — and
+   nothing checks it. Microsoft names the regime as a value
+   (`DWRITE_MEASURING_MODE`); `sparkles:ui` has exactly one regime — cells — and
+   no name for it.
 
-The useful axis is not semantic-vs-primitive but **who degrades**:
+**And the measured artifact should be the painted one.**
+[Flutter](./flutter-engine.md) forbids unshaped text from crossing the seam;
+[Masonry](./parley-xilem.md)'s `Label` caches built Parley layouts keyed by the
+constraint they were built under and `measure`, `layout` and `paint` all read the
+same cached value; [Vello](./vello.md)'s `glifo` states the goal of sharing "the
+hinting instance and hinted advance" between shaper and renderer.
+[Mosaic](./mosaic.md) is the counter-example that proves layering and
+correctness are independent: perfect placement, and a code-point count with no
+`wcwidth`, no East Asian Width table and no grapheme segmentation anywhere in the
+repository.
 
-- **In the backend** — Slint. The seam is semantic, and each backend decides.
-- **In the framework** — Qt. `QPainter` _emulates_ a missing feature and hands
-  the engine an image of the result. The fallback exists once.
+### F3. Reification is right; "sum type" is one of eight encodings, and not the one the largest subjects chose
 
-`sparkles:ui` is currently in the first camp without having chosen it, and pays
-Qt's price anyway: `DrawOp` carries eight scrollbar fields so that every
-backend can re-derive the same rail geometry, when `scrollbarThumb` already
-computes it once.
+**Support for keeping it:** [Henderson](./functional-images.md) shows the cost of
+dropping it — with no comparable stream he relies on idempotent overdraw ("it
+doesn't matter if we draw the same object twice"), which is fine for a plotter
+and useless for a golden test. [piet](./piet.md) is the empirical case: nothing
+is reified, its trait doc anticipates a recording context nobody wrote, and
+cross-backend verification degraded to tolerant per-OS PNG diffs against an
+out-of-tree snapshot submodule.
 
-### F4. Optional capabilities need a stated floor and a refusable degrade
+**Against the prescribed encoding:** the three largest reifying subjects —
+[Flutter](./flutter-engine.md) (68 exactly-sized records in a byte arena),
+[Chromium](./chromium-paintop.md) (36 `final` subclasses at
+`ComputeOpAlignedSize<T>()` bytes) and [Skia](./skia-skpicture.md) (`SkRecord`
+over an `SkArenaAlloc`) — all chose **tag plus per-op struct in variable-stride
+storage**, and all three generate the enum, the structs and the visitors from one
+macro list. A closed `SumType!(...)[]` is a fixed-size cell; Chromium tolerates
+that cost in exactly one place, the deserialisation scratch buffer
+(`LargestPaintOp`).
 
-Qt separates capabilities the framework can emulate from two (`AlphaBlend`,
-`PorterDuff`) that it cannot — a floor. Notcurses degrades automatically **and**
-lets a caller pass `NCVISUAL_OPTION_NODEGRADE` to get a failure instead.
+Five further complications:
 
-`sparkles:ui` has neither. `rule`, `scrollbar` and the clip pair are one
-undifferentiated "optional" bucket, discovered by `__traits(compiles)` at call
-sites, and there is no way to ask for a hairline and be told no — which is
-precisely what a golden test wants. Friction §2 is confirmed, and the fix has
-two halves rather than one.
+- **The defect in `DrawOp` is the tag, not the width.** [wgpu](./wgpu.md) keeps a
+  ~60-field flat `Limits` record where most fields are zero on any target, and it
+  is fine, because it is **tagless** (0 means "none available", not "garbage for
+  this variant"), its field list exists once in `with_limits!`, and a test proves
+  the macro exhaustive. "Wide records are bad" would also condemn the capability
+  record the proposal is about to introduce.
+- **Dead fields are an expensive enough problem to duplicate op types over.**
+  Chromium ships `DrawLineLiteOp`/`DrawArcLiteOp`, differing from their siblings
+  only by carrying a smaller `CorePaintFlags`, each with an open TODO. Flutter
+  splits `DrawPoints`/`DrawLines`/`DrawPolygon` rather than widen a record:
+  "The point type is packed into 3 different OpTypes to avoid expanding the fixed
+  payload beyond the 8 bytes."
+- **A sum type does not make illegal states unrepresentable — it relocates
+  them.** [elm-canvas](./elm-canvas.md) is a total language with proper unions
+  and still documents settings that silently do nothing: `maxWidth` matches all
+  five `Drawable` constructors and returns four untouched.
+  [Textual](./textual.md)'s one-variant `Segment` grew a tag-shaped dead field
+  (`control`, `None` on every drawing segment, filtered before measuring).
+  [libvaxis](./libvaxis.md)'s tag-free `Cell` carries `image` and `scale` that
+  are null and identity for nearly every cell. A sum type removes _illegal_
+  combinations, not _rare_ ones.
+- **Untagged is worse than tagged-with-dead-fields.** [imtui](./imtui.md)'s
+  `ImDrawCmd` has no dead fields because it has one variant, and the discriminant
+  relocates into a UV-equality heuristic plus an unchecked `i += 3` assumption
+  about the producer's tessellation.
+- **An open hierarchy extends better than a closed sum.** [GSK](./gtk4-gsk.md)
+  added twelve node kinds since 4.0 without touching a backend, because a `NULL`
+  vtable entry degrades automatically; a closed sum type makes every backend
+  non-exhaustive on each addition. The countervailing cost is
+  [Qt Quick](./qt-quick-scenegraph.md)'s: a seven-value `NodeType` too coarse to
+  dispatch on, and a five-deep `dynamic_cast` ladder per node per frame ending in
+  `// We dont know, so skip`.
 
-### F5. Continuous coordinates dissolve §5 — and Notcurses shows the alternative
+**Two shapes worth naming that the old finding could not see.**
+[Vty](./vty-image.md) exports its sum type **abstractly** — constructors hidden,
+`horizJoin` pads with `BGFill` before building — so an unequal-height join is
+unconstructible. Without a constructor boundary, invariants like "a `textRun`'s
+`rect.width` is its advance in cells" stay conventions.
+[Racket](./racket-dc.md) generates the recorder _from the method set_, so the
+seam and the reified stream cannot drift.
 
-Three of four have no sub-unit problem because their coordinates are floats.
-`RuleEdge` is a symptom of integer cell coordinates, not of a missing
-enumerator, and enumerating positions will keep costing enumerators.
+### F4. The axis is not semantic-vs-primitive but where the lowering lives — and there are six places, not two
 
-Notcurses is the one subject that faces our constraint, and its answer
-generalises: **name a fidelity, not a position.** A seam that says "hairline
-fidelity within this rect" lets a pixel backend spend one device pixel, a cell
-backend fill a cell, and a sextant-capable terminal land in between — with the
-toolkit naming no positions at all.
+The old finding named two camps (backend, framework). The survey found six, and
+several subjects occupy more than one.
 
-### F6. Payload ownership: share it, do not borrow it
+| Where degradation lives | Subjects                                                                                                                                                 | Mechanism                                                                                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| In the backend          | [Slint](./slint.md), [Doodle](./scala-doodle.md), [Skia](./skia-skpicture.md), [Flutter](./flutter-engine.md)                                            | The seam is semantic and each backend decides                                                                                                    |
+| In the framework        | [Qt](./qt-qpaintengine.md), [Avalonia](./avalonia.md), [Godot](./godot-textserver.md), [SDL](./sdl-renderer.md), [Java2D](./java2d.md)                   | One emulation or lowering, written once. SDL lowers unconditionally; Qt only on refusal                                                          |
+| In the node kind        | [GSK](./gtk4-gsk.md)                                                                                                                                     | Every `GskRenderNodeClass` ships a Cairo `draw` vmethod; the fallback travels with the kind — which is why the whole Cairo renderer is 228 lines |
+| In the producer         | [WebRender](./webrender.md)                                                                                                                              | `push_shadow`/`pop_all_shadows` desugar inside the builder, "replacing the scene builder's shadow expansion"                                     |
+| In the widget           | [Ratatui](./ratatui.md), [Textual](./textual.md), [libvaxis](./libvaxis.md), [Monomer](./monomer.md), [gloss](./gloss-picture.md), [Mosaic](./mosaic.md) | The scrollbar resolves its own geometry and picks its own glyphs before any target exists                                                        |
+| Nobody                  | [GPUI](./gpui.md), [Notty](./notty.md), [Vty](./vty-image.md), [functional images](./functional-images.md), [elm-canvas](./elm-canvas.md)                | Available only with one target class                                                                                                             |
 
-Nobody borrows a payload that must outlive the frame. Qt's `QPixmap` and egui's
-`Mesh`/`Galley` are reference-counted; Slint adds a **backend-owned cache**
-(`draw_cached_pixmap`) so the party that knows a payload's lifetime owns it.
+[piet](./piet.md) adds a seventh position that is really a policy: the framework
+**publishes** the fallback (`piet::util::compute_blurred_rect`) and each backend
+chooses whether to call it — two do, one uses a native effect, one uses the
+Canvas shadow, one silently drops the blur. [Skia](./skia-skpicture.md) occupies
+two camps at once: semantic ops in the seam _and_ the default lowering shipped in
+the framework base class.
 
-Friction §7 stands, and there are two cheaper answers than the interning the
-pre-pivot plan assumed: reference-counting, or a backend-owned cache keyed by
-identity.
+**Three admission tests were found, and they agree.** GSK: "do the backends
+disagree about how to draw it?" [Vello](./vello.md) and
+[Godot](./godot-textserver.md): "does lowering it require knowledge only the
+backend has?" [Doodle](./scala-doodle.md): "an operation that is semantic _and_
+unserviceable by some backends becomes its own capability, not another member of
+the shared seam."
 
-### F7. Extent belongs to the surface, not the scene
+Applied to `scrollbar`: the **semantics pass** every test — a cell backend
+genuinely degrades a scrollbar differently, and
+[Qt Quick](./qt-quick-scenegraph.md) proves geometry-only vocabularies are
+portable only among like backends (its software renderer silently drops a custom
+`QSGGeometryNode`, the documented public way to add content). The **eight
+derived-geometry fields fail** every test: `scrollbarThumb` already computes the
+rail once, above the seam, and GSK's semantic nodes carry geometry and colour but
+never a fallback glyph. [Friction §3][friction] is therefore half right — right
+about the layering smell, wrong about which half is the smell.
 
-Qt's paint _device_ declares width and height; a Notcurses plane declares its
-own. Only egui derives extent from primitives, which is what
-`skia-canvas-render.d` had to do.
+**And zero semantics is not the safe choice.** [imtui](./imtui.md) is the
+experiment: retarget a pure-geometry seam to cells and degradation has nowhere to
+live, so it migrates _upward_ into a permanent fork of the widget layer
+(`RenderArrow` → `AddText("<")`, `RenderCheckMark` → `AddText(symbol)`,
+`CloseButton` → `AddText("[X]")`, table borders → `for` loops of pipe
+characters). A second cell backend with different capabilities would need a
+second fork.
 
-This inverts friction §8: a backend allocating a surface generally knows the
-size because it chose it. The real gap is narrower — an _offscreen_ consumer
-that wants to size a surface to content — and is better served by a layout
-query than by making the display list self-describing.
+### F5. Optional capability is cheap, and D already has every construct it needs
 
-## What this does not settle
+The old finding asked for "a stated floor and a refusable degrade" on the model
+of Qt's `PaintEngineFeature`. Two things changed.
 
-The umbrella's open question stands: **whether the terminal and GPU targets
-should share one seam at all.** Nothing here decides it. Slint is the
-encouraging data point — one `ItemRenderer` really does span an MCU software
-renderer and Skia — but its range is "small GPU to large GPU", not "character
-cells to shaped glyphs". No surveyed subject spans what we span, and egui shows
-what happens when a design optimises for one end: it becomes structurally
-unable to reach the other.
+**Qt itself abandoned the model.** [Qt Quick](./qt-quick-scenegraph.md) deleted
+`PaintEngineFeature` and did not replace it: `QSGRendererInterface` reports API
+identity, `QRhi::isFeatureSupported` reports hardware, and nothing anywhere asks
+"will you draw this". The replacement policy is documented silence — "any
+attempts to use unsupported features are ignored".
 
-The seven unsurveyed subjects most likely to move this are **GTK4/GSK**
-(semantic retained nodes across Vulkan/GL/Cairo renderers) and **Flutter**
-(a deliberately narrow `dart:ui` under a very wide widget layer).
+**And the distinction needs no capability data at all.**
+[Skia](./skia-skpicture.md) encodes the whole contract in C++ constructs the
+compiler checks: pure virtual = floor (10 of 26 `SkDevice` draws),
+virtual-with-a-working-base-lowering = negotiable (`drawArc` → `drawPath`),
+`return false` = refusal (`drawBlurredRRect`). All three exist in D today.
+[Java2D](./java2d.md) goes further and makes the floor **unforgettable**: it is
+the superclass, so `MTLSurfaceData.validatePipe` calls `super.validatePipe` for
+every state it cannot accelerate and `getMaskFill` returns null so "the
+validation code will choose a more general software-based loop". A backend cannot
+forget the floor, because forgetting means not overriding.
 
-## Recommended shape, on this evidence
+Refusal likewise has cheaper shapes than a flag. [Ratatui](./ratatui.md)'s
+`trait Backend { type Error; }` makes every method return a `Result` so refusal
+is typed at every call site, unforgettably.
+[Masonry/imaging](./parley-xilem.md) shows the ergonomic form: sink methods
+return `()`, the backend records `set_error_once(Error::UnsupportedFilter)`, and
+`finish() -> Result` surfaces an enumerated `RenderUnsupportedError` — refusal
+deferred and stream-scoped, because making every draw call fallible poisons the
+authoring API. [Cairo](./cairo-direct2d.md) makes it argument-dependent
+(`CAIRO_INT_STATUS_UNSUPPORTED` per call, with a whole `ANALYZE` replay pass
+partitioning a page into supported and fallback regions).
+[Vg](./ocaml-vg.md) reports the _offending value_ back, not merely a code.
 
-Stated as input to a proposal in `docs/specs/ui/`, not as a decision:
+Four further refinements:
 
-1. **Move `measure` off the canvas** into a font/metrics abstraction with a
-   backend-chosen unit (F1). Highest confidence; unanimous.
-2. **Re-encode `DrawOp` as a sum type**, keeping the reified stream (F2).
-3. **Decide where degradation lives** and say so, rather than inheriting
-   Slint's answer by accident while paying Qt's cost (F3).
-4. **Split optional capabilities into a floor and a negotiable set, and make
-   degradation refusable** (F4).
-5. **Replace `RuleEdge` with a fidelity** rather than more positions (F5).
-6. **Share payloads by reference count or a backend-owned cache** rather than
-   borrowing or interning (F6).
-7. **Leave extent to the surface**; add a layout query for the offscreen case
-   (F7).
+- **Capability belongs to a domain, not to a global probe, and is consumed at the
+  lowering step, not at each call site.** [SDL](./sdl-renderer.md) splits a
+  hard-coded floor of seven blend modes from a per-driver query and refuses with
+  `SDL_Unsupported()` rather than approximating; texture formats are a separate
+  domain. [Mosaic](./mosaic.md)'s thirteen-field `Terminal.Capabilities` is
+  excellent and is read exactly where cells become bytes — never by drawing code.
+- **Refusability is a type, not a value.** [wgpu](./wgpu.md) has three capability
+  kinds: `Features` (requestable, refused loudly), `Limits` (requestable,
+  refused with the number), `DownlevelFlags` (observable, with **no**
+  `required_downlevel_flags` field, so an impossible demand is unrepresentable).
+  It also closes the grant _above_: "Exactly the specified set of features, and
+  no more or less, will be allowed" — not requesting a capability forbids it even
+  on hardware that has it, which turns cross-backend parity from a discipline
+  into a consequence of the seam.
+- **Observability may substitute for refusal.** [GSK](./gtk4-gsk.md) has no
+  refusal flag and instead paints every Cairo fallback with a pink checkerboard
+  under `GSK_DEBUG=cairo`, documented as letting application code "detect where
+  it is using Cairo drawing". Capability is otherwise asserted at _test_ time via
+  per-renderer expected-failure tables.
+  [libvaxis](./libvaxis.md) adds an **override** channel
+  (`VAXIS_FORCE_WCWIDTH`, `VAXIS_FORCE_UNICODE`, `VHS_RECORD`, `NO_COLOR`) that
+  can pin or downgrade a negotiated capability — worth more than refusal for a
+  repository with PTY and GUI golden oracles.
+- **Static checking does not prevent the silent degrade, and prose contracts
+  rot.** [diagrams](./haskell-diagrams.md) makes an unsupported primitive a
+  compile error at the use site and still documents `render _ _ = mempty` as a
+  courtesy instance the type system cannot distinguish from a real one; worse,
+  its cairo backend _declares_ `Renderable (DImage Double External)` and then
+  refuses anything but PNG at run time with a `putStrLn`. [Vg](./ocaml-vg.md)'s
+  written limitation sections are the best in the survey and nothing fails if one
+  rots — an argument for generating ours from a `RecordingCanvas` conformance run.
 
-Every one of these keeps the four properties the friction log recorded as
-working — structural typing with attribute inference, cell-space layout,
-`RecordingCanvas` as reference and test seam, and the optional-primitive
-bargain.
+**Dissent worth recording:** [Flutter](./flutter-engine.md),
+[Chromium](./chromium-paintop.md), [GPUI](./gpui.md), [Godot](./godot-textserver.md)'s
+render seam, [Notty](./notty.md) and [Textual](./textual.md) ship _zero_
+negotiation and are fine, because their seam is total or narrow enough that every
+primitive degrades to nothing. Chromium inverts the direction entirely: the
+backend's abilities arrive as plain fields on `SerializeOptions`, while the
+_stream_ declares its own needs via predicates computed at push time
+(`has_draw_text_ops_`, `num_slow_paths_up_to_min_for_MSAA_`). Nobody probes
+anybody.
+
+### F6. Continuous coordinates relocate the sub-unit problem; they do not dissolve it
+
+The old finding claimed float coordinates make [friction §5][friction]
+disappear. Two independent falsifications, and six corroborations.
+
+- **[GSK](./gtk4-gsk.md)** has had float coordinates since 4.0 and GTK is
+  _adding_ `GskSnapDirection` (`NONE`/`FLOOR`/`CEIL`/`ROUND`) to the seam at
+  4.24 — four directions packed per node as a `GskRectSnap`, with three named
+  compositions (`GROW`, `SHRINK`, `ROUND`) each documented by the artifact it
+  avoids: seams, overlap, or fitting the allocation.
+- **[Pango](./pango-harfbuzz.md)** measures in 1/1024 of a device unit and still
+  ships `pango_quantize_line_geometry`, which quantises thickness and position
+  "to whole device pixels … to avoid such lines looking blurry" and takes care
+  "to make sure `thickness` is at least one pixel".
+- **[imtui](./imtui.md)** is the negative control: continuous floats over a
+  _discrete device_, and the problem becomes untypeable and is answered with
+  scattered magic constants — `ScrollbarSize = 0.5f`, `GrabMinSize = 0.1f`,
+  `p_max - ImVec2(+0.1, 0.1)`, a clip rect narrowed by `- 2.1f`, a circle drawn
+  at radius `0.1f` to be invisible. Those are rounding steering, not geometry.
+
+Corroborating: [GPUI](./gpui.md)'s three role-differentiated rounding functions
+(`snap_bounds`, `snap_stroke` — "clamps any non-zero input up to 1 dp so thin
+strokes do not disappear" — and `cover_bounds`); [Java2D](./java2d.md)'s triple
+of minimum feature size, snap tolerance and snap policy (`minPenSize`,
+`normPosition`, `KEY_STROKE_CONTROL`, bounded by a javadoc contract that
+normalization "should never move the coordinates by more than half a pixel");
+[Avalonia](./avalonia.md)'s layout rounding parameterised by `dpiScale` and
+performed _above_ the seam; [Racket](./racket-dc.md)'s `set-smoothing` /
+`set-alignment-scale`; [iced](./iced.md)'s `Quad::snap`.
+
+**What replaces `RuleEdge` is three mechanisms, not one enumerator.**
+
+1. **A named fidelity rather than a position** — the survey's most-converged
+   answer, reached independently by [Notcurses](./notcurses.md) (blitter ladder),
+   [Flutter](./flutter-engine.md) and [Skia](./skia-skpicture.md)
+   (`strokeWidth == 0` means hairline, the backend decides what that is — Impeller
+   clamps to one device pixel and pays the shortfall in alpha coverage),
+   [Racket](./racket-dc.md) (pen width 0, `1/sx` on screen and `1/(4*cx)` for
+   PostScript), [SDL](./sdl-renderer.md) (`SDL_HINT_RENDER_LINE_METHOD`, three
+   defensible rasterisations named as user-settable policy), and
+   [Henderson](./functional-images.md) in 1982 (a single render-time ε below which
+   nothing is drawn).
+2. **Query the device unit and express the answer in it** — [iced](./iced.md)'s
+   `1.0 / renderer.hint_factor()` is one device pixel in the toolkit's own unit;
+   [libvaxis](./libvaxis.md) hands every widget `cell_size` and routes anything
+   finer through real device units under a capability gate. This needs no new
+   toolkit vocabulary at all.
+3. **An accumulator where ops compose** — [Textual](./textual.md)'s per-cell
+   `Quad` (a line weight per compass direction) combined by `combine_quads` and
+   resolved to a glyph once at render. `RuleEdge` names one edge of one rect on
+   one op, so two ops touching a cell cannot agree; an accumulator is what
+   box-drawing joins actually need.
+
+> [!WARNING]
+> Do not delete `RuleEdge` before the replacement exists. Its six enumerators are
+> a finite, named, greppable set; [imtui](./imtui.md) shows what un-named
+> sub-unit steering degenerates into, and it is strictly worse.
+
+### F7. Extent is three questions, and most subjects answer at least one of them from the scene
+
+The old finding said extent belongs to the surface and called the offscreen case
+narrow. Twelve subjects contradict it, and the reconciliation is a different axis
+entirely.
+
+**Scene-side extent ships in:** [GSK](./gtk4-gsk.md) (`bounds` on the base node;
+`gsk_renderer_render_texture(renderer, root, NULL)` is documented "NULL to use
+`root`'s bounds" — friction §8's exact case), [Vty](./vty-image.md),
+[Notty](./notty.md), [Racket](./racket-dc.md), [Avalonia](./avalonia.md),
+[diagrams](./haskell-diagrams.md), [Flutter](./flutter-engine.md),
+[Cairo](./cairo-direct2d.md), [Godot](./godot-textserver.md),
+[Chromium](./chromium-paintop.md), [Doodle](./scala-doodle.md),
+[Mosaic](./mosaic.md), [libvaxis](./libvaxis.md).
+
+**And is deliberately refused by:** [Skia](./skia-skpicture.md) — the strongest
+possible witness for the old finding, since it computes conservative per-op
+bounds _and_ builds a spatial index of them and still exposes only
+`approximateOpCount()` and `approximateBytesUsed()`, with `cullRect()` returning
+"bounds passed when SkPicture was created" — plus [GPUI](./gpui.md) (its
+`BoundsTree` is private and used only to assign draw order),
+[WebRender](./webrender.md), [Vello](./vello.md) at the root,
+[Vg](./ocaml-vg.md) and [Masonry/imaging](./parley-xilem.md).
+
+**What separates the camps is not surface-vs-scene. It is maintained-at-
+construction versus derived-by-scan.** Every subject that publishes the number
+computed it for another reason and did not throw it away: Vty and Notty compute
+it in the constructor (one addition per node), Doodle and Mosaic get it from
+layout, Godot caches it behind a `rect_dirty` bit set by `alloc_command`,
+Chromium takes it from producer-declared visual rects, Flutter accumulates it
+during recording using the op-flags table the recorder already consults. Every
+subject that refuses either cannot bound its ops in principle — WebRender states
+that items are "logically infinite" and bounded only by their `clip_rect`, so
+extent-by-scanning is **unsound**, not merely inconvenient; Vg's image denotes the
+infinite plane — or has a caller-declared rect it can clamp to (Skia).
+
+`skia-canvas-render.d` scans because `buildDisplayList` discards a number that
+layout already had. That is the derived-by-scan failure mode, and
+[imtui](./imtui.md) supplies an accidental demonstration of how quietly it fails:
+`drawTriangle`'s bounding box seeds `ymin` with `screen->size()` (the cell count)
+where `screen->ny` was meant, and it is harmless only by accident.
+
+**Two details the old finding could not see.** Extent without its scale is not
+actionable at a seam that spans units — [Avalonia](./avalonia.md)'s
+`RenderTargetSceneInfo` carries `PixelSize`, `Scaling` and `LogicalSize`
+together, and Direct2D's `GetImageLocalBounds` is a method on the _context_, not
+the image, because the bounds "reflect the current DPI, unit mode, and
+interpolation mode". And extent is genuinely three questions:
+[Racket](./racket-dc.md) ships all three separately — surface (`get-size`),
+layout (`pict-width`/`height`/`ascent`/`descent`) and **ink**
+(`get-ink-extent`, opt-in, backed by `cairo_recording_surface_ink_extents`,
+justified against exactly friction §8's failure: it "takes into account the
+visible effect of drawing with different pen widths and the shape of drawn text,
+as opposed to just collecting path coordinates and nominal text extents").
+
+The cheapest mechanism in the survey is [libvaxis](./libvaxis.md)'s: make paint
+return a size. The most architectural is [Henderson](./functional-images.md)'s:
+make the box an _argument_, so the query can never arise.
+
+### F8. Nothing borrows a payload across a frame — no dissent in 38 subjects
+
+Every subject that could borrow either owns, copies, refcounts, caches, or keys
+out of band; the ones for which the question dissolves do so because their
+language is garbage-collected. There is no counter-example.
+
+The eight mechanisms are tabulated in the Q7 section of the matrix above.
+Three results bear on `DrawOp.text` directly.
+
+- **Performance is not a defence.** [Skia](./skia-skpicture.md) stores `SkPath`
+  by value and copies POD arrays into the record's own arena; Skia's own
+  accounting is that appending costs `8 + sizeof(T)` bytes. The most
+  performance-obsessed 2-D library in existence pays a copy or an atomic bump on
+  every op rather than borrow.
+- **Owning buys capabilities we do not have yet.** [GPUI](./gpui.md)'s
+  `Window::reuse_paint` splices an unchanged element's primitives forward out of
+  the _previous_ frame's scene by index range; [Vty](./vty-image.md) retains the
+  reified result across frames in `prevOutputOps` and diffs against it. Both are
+  structurally impossible with a borrowed slice.
+- **The thread question can be answered by the artifact.**
+  [Flutter](./flutter-engine.md)'s `DisplayList::isUIThreadSafe()` is conjoined
+  during recording from each payload's own declaration — the seam does not force
+  everything to be shareable, it lets payloads declare their constraint and lets
+  the finished list answer one question. That is precisely what `UI-O4` /
+  friction §7 asks for at `M7/T5`.
+
+The cheapest answer depends on the payload. For a cell-bounded grapheme,
+[Ratatui](./ratatui.md) copies into inline small-string storage. For
+variable-length runs, [WebRender](./webrender.md) and [SDL](./sdl-renderer.md)
+copy into the stream's own arena and hand out an offset pair, which is what makes
+a command trivially copyable and thread-transferable. For anything that must
+cross a process boundary, only the out-of-band-key answers survive.
+
+### F9. Nobody carries resolved appearance and semantic role on every op — but the requirement behind ours is real
+
+**No dissent:** not one of the 38 pays for both channels per operation. The
+seven cheaper encodings are tabulated in the Q6 section of the matrix above.
+Three deserve naming because they fit `sparkles:ui` specifically.
+
+1. **The tag is the slot.** [Qt Quick](./qt-quick-scenegraph.md) carries the role
+   as the node's _type_ and the value as its material. Fused with F3 this becomes
+   one change instead of two: a variant per semantic op makes the discriminant
+   carry the role and leaves `visual` as the only styling field. Qt also shows the
+   failure mode — a `NodeType` too coarse to dispatch on forces a `dynamic_cast`
+   ladder, so the variant set has to be fine enough to be the role.
+2. **Resolved values whose leaves are symbolic.** [Ratatui](./ratatui.md),
+   [libvaxis](./libvaxis.md) and [Vty](./vty-image.md) all use one colour type
+   that can hold `Default`, a palette index, a named ANSI colour, or an RGB
+   triple. One field holds either a role or a value, and the terminal
+   re-resolves against the user's theme past every backend. That is what `Slot`
+   would be if `Visual` could name a palette entry.
+3. **A separate, ignorable channel.** [Cairo](./cairo-direct2d.md)'s `tag` is its
+   own vtable slot, its own recorded command kind and its own public API, emitted
+   once per styled region rather than per primitive; a backend leaving the slot
+   `NULL` ignores it and still paints correctly.
+   [Masonry/imaging](./parley-xilem.md) ships literally this, with a `Slot`
+   context kind, in a channel documented as not affecting pixels.
+
+**The rule is not "never two channels".** [wgpu](./wgpu.md) carries `Limits` and
+`DownlevelFlags` with no duplication because the semantic channel is not
+recoverable from the resolved one; [Avalonia](./avalonia.md) carries two pens
+because its two consumers run on different threads; [Vg](./ocaml-vg.md) carries
+glyphs _and_ text on one constructor out of five, with a named failure
+(`` `Textless_glyph_cut ``) when a backend needed the channel it did not get. The
+rule is **never the same fact twice**, and a second channel must buy something the
+first cannot express. `visual` is derivable from `slot` plus a theme; `slot` is
+not derivable from `visual`. The redundant field is `visual`, not `slot` — which
+inverts the intuition [friction §6][friction] was written with.
+
+> [!IMPORTANT]
+> The cheapest answers — appearance as **stream state** ([SDL](./sdl-renderer.md)'s
+> deduplicated `SDL_RENDERCMD_SETDRAWCOLOR`, [Racket](./racket-dc.md)'s device
+> state, [Java2D](./java2d.md)'s pipe recompilation, [Flutter](./flutter-engine.md)'s
+> delta-encoded `setColor`) — are structurally incompatible with an
+> order-independent, pairwise-comparable op stream, i.e. with `RecordingCanvas`
+> and the parity harness. That makes friction §6 a genuine fork to decide, not a
+> defect to fix.
+
+### F10. Almost every friction entry is the invoice for spanning two target classes
+
+Every subject with a single target class converges on the same shape: a tiny
+primitive vocabulary, no capability query worth the name, no sub-unit
+vocabulary, and one styling channel. [Notty](./notty.md) has three op
+constructors; [Vty](./vty-image.md) has six image constructors and three span
+ops; [Mosaic](./mosaic.md) has two drawing operations and defines no border,
+scrollbar or shadow in the library at all; [Ratatui](./ratatui.md) and
+[Textual](./textual.md) have no drawing operations, only a result;
+[libvaxis](./libvaxis.md) has `writeCell`. None of them lost any semantics —
+those live in the retained widget or image tree above the painter.
+
+Conversely, every subject that spans unlike hardware grew the same four
+complications the friction log records: semantic operations
+([Slint](./slint.md), [GSK](./gtk4-gsk.md), [Qt Quick](./qt-quick-scenegraph.md)),
+a capability vocabulary ([Qt](./qt-qpaintengine.md), [wgpu](./wgpu.md),
+[Avalonia](./avalonia.md)), a sub-unit policy ([GSK](./gtk4-gsk.md),
+[Java2D](./java2d.md), [GPUI](./gpui.md)), and payload lifetime machinery
+([Chromium](./chromium-paintop.md), [Flutter](./flutter-engine.md)).
+
+So the friction log is not primarily a list of mistakes. It is the price of the
+span, and a proposal can hope to reduce it, not to eliminate it. The entries that
+are genuinely _defects_ rather than _invoice items_ are the ones no subject with
+our constraints pays: the eight derived-geometry fields (F4), the dual styling
+channel (F9), the borrowed payload (F8), and the four artifacts that can disagree
+about the contract (F11).
+
+### F11. State the contract once and derive the rest
+
+[Friction §2][friction] records that `isCanvas` names five methods, `OpKind` has
+eight members, and `rule` / `scrollbar` / `pushClip` / `popClip` are discovered by
+`__traits(compiles)` at each interpreter call site. That is four artifacts that
+can disagree, and they already do.
+
+Every large subject that reifies generates them from one declaration:
+[Skia](./skia-skpicture.md) (`SK_RECORD_TYPES(M)` emits the enum, the structs and
+the visit/mutate switches), [Flutter](./flutter-engine.md)
+(`FOR_EACH_DISPLAY_LIST_OP`), [Chromium](./chromium-paintop.md) (`TYPES(M)` with
+`static_assert(kNumOpTypes == TYPES(M))`), [wgpu](./wgpu.md) (`with_limits!` plus
+an exhaustiveness test), [Racket](./racket-dc.md) (`define/record` generates the
+whole recorder from the method set). D's `static foreach` and CTFE make this
+cheaper than any of them.
+
+The corollary is a per-kind obligation table. [Skia](./skia-skpicture.md) tags
+each op kind (`kHasImage_Tag`, `kHasText_Tag`, `kHasPaint_Tag`) so passes select
+by _property_ instead of enumerating kinds; [Flutter](./flutter-engine.md)'s
+`DisplayListOpFlags` declares per operation which paint attributes it consults;
+[Avalonia](./avalonia.md) and [GSK](./gtk4-gsk.md) put `Bounds` and `HitTest` on
+the node so adding an operation cannot leave the extent walker behind. In D that
+property is recoverable only if the walkers are written as `final switch`.
+
+### F12. Reification pays only while the value stays inspectable — and the op stream is the parity oracle, not the golden
+
+Three subjects reify and cash nothing. [elm-canvas](./elm-canvas.md) has proper
+sum types above the seam and lowers to a stringly-typed `{type, name, args}` at
+it, cashing exactly one of the four properties (replay) and never culling,
+diffing or comparing. [Monomer](./monomer.md) reifies a queue of `IO ()`
+closures, which buys ordering and forecloses everything else.
+[Chromium](./chromium-paintop.md) shows the ceiling: under serialisation the
+stream is not type-stable (`DrawTextBlobOp` becomes `DrawSlugOp`), two op types
+are `NOTREACHED()` and flattened, and a field is dropped — "compare the op
+stream" is a weaker oracle than it looks once a boundary is involved.
+
+Meanwhile the subjects with the best golden coverage compare something else.
+[GSK](./gtk4-gsk.md) serialises its node tree to a text file format whose
+documented purpose is "creating testsuites and benchmarks, exchanging nodes in
+bug reports", backing 279 `.node`/`.png` goldens run across four renderers in
+nine variants. [Textual](./textual.md)'s golden format is its _second backend_:
+448 SVG snapshots, the same artifact a user exports.
+[Ratatui](./ratatui.md)'s own documentation points past its `TestBackend` —
+"it is preferable to write unit tests for widgets directly against the buffer" —
+because an op stream is unstable under drawing-order refactors that leave the
+result identical. [Mosaic](./mosaic.md) compares frames.
+
+So `RecordingCanvas` stays, and [friction][friction] is right that it pays for
+itself — but its job is narrower than the friction log implies. The cell arm's
+natural golden is the grid, the GPU arm's is the image, and the op stream is what
+proves the two _agree_. [Avalonia](./avalonia.md) adds a design note for it: its
+headless backend deliberately answers `false` to
+`SupportsIndividualRoundRects`/`SupportsRegions` where Skia answers `true`, so
+the fallback path is exercised on every headless run. `RecordingCanvas` should
+decline some optional capabilities on purpose rather than implement everything.
+
+---
+
+## Verdicts on the eight friction entries
+
+| #   | Friction entry                    | Verdict                              | Decided by | What actually changes                                                                                                                                                                                     |
+| --- | --------------------------------- | ------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §1  | `measure` denominated in cells    | **Confirmed, and enlarged**          | F1, F2     | Placement is right (35/38, one priced dissenter). But relocation alone fixes nothing: unit, oracle, return shape, device parameters and the identity of the measured artifact are five further decisions. |
+| §2  | five methods, eight kinds         | **Confirmed, reframed**              | F5, F11    | The defect is four artifacts that can disagree, not an under-specified concept. Optionality itself is cheap and already expressible in D.                                                                 |
+| §3  | `scrollbar` in the drawing seam   | **Half-refuted, half-confirmed**     | F4         | The semantics survive every admission test the field uses; the eight derived-geometry fields fail all of them. Zero-semantics is _worse_ (imtui).                                                         |
+| §4  | `DrawOp`'s eighteen fields        | **Confirmed; prescription wrong**    | F3         | The defect is the tag, not the width (wgpu). "Sum type" is one of eight encodings, and the three largest reifying subjects chose variable-stride per-op structs.                                          |
+| §5  | `RuleEdge` as a compass           | **Reframed, not refuted**            | F6         | Continuous coordinates relocate the problem (GSK 4.24, Pango, imtui). The replacement is a queried device unit + a named snap policy + an accumulator — three mechanisms, not more enumerators.           |
+| §6  | `visual` _and_ `slot` on every op | **Confirmed, with a fork**           | F9         | No dissent: nobody pays both per op. But the redundant field is `visual`, and the cheapest alternatives (stream state) are incompatible with `RecordingCanvas`.                                           |
+| §7  | borrowed `DrawOp.text`            | **Confirmed, unanimous**             | F8         | 38/38. Copy into the stream's arena for cell-bounded payloads; declare thread-safety on the finished list (Flutter) rather than on every payload.                                                         |
+| §8  | no extent query                   | **Confirmed; old synthesis refuted** | F7         | Twelve subjects publish scene extent. The axis is maintained-at-construction vs derived-by-scan, and `buildDisplayList` is discarding a number layout already computed.                                   |
+
+---
+
+## The open question: should the terminal and GPU targets share one seam?
+
+The [umbrella](./index.md) asks this and says the survey may not settle it. It
+now can, partially, and the part it settles is the part that matters.
+
+**The evidence against one _drawing_ seam spanning both is strong and, unusually
+for this survey, includes failures rather than only designs.**
+
+- [imtui](./imtui.md) is the direct experiment: one geometry seam retargeted to
+  character cells. It did not fail at the backend — it failed _upward_, because a
+  seam with no semantics gives degradation nowhere to live. The cost was a
+  permanent fork of the widget layer, and a second cell backend with different
+  capabilities would need a second fork.
+- [Cairo](./cairo-direct2d.md) is the long-run empirical result: its 1.18 `NEWS`
+  removes "GL and GLES drawing", and `cairo.h` marks ten surface types deprecated
+  — Glitz, BeOS, DirectFB, OS/2, Qt, VG, GL, DRM, Skia, Cogl. Every
+  GPU-targeting backend it ever had is gone; the survivors either _are_ the image
+  surface or serialise to a vector format. A seam shaped by its first backend did
+  not survive a genuinely different second one.
+- [piet](./piet.md) is the signed post-mortem, and the reason is not mechanism.
+  Raph Levien, in Vello's `doc/vision.md`: "I think we want to move away from
+  abstracting over platform capabilities … One is that it's harder to ensure
+  consistent results. Another is that it's hard to add new features." The failure
+  mode piet also documents in-tree is duplication: `piet-web`'s line breaking
+  opens "currently basically copied and pasted from cairo backend".
+- [Qt Quick](./qt-quick-scenegraph.md) states the technical limit: geometry plus
+  shader is portable only among shader backends. Its software adaptation's
+  handler for a custom `QSGGeometryNode` — the documented public way to add
+  content — ends `// We dont know, so skip`.
+
+**The evidence for a shared layer is equally strong, but it is about a different
+layer.**
+
+- [Mosaic](./mosaic.md) reuses `androidx.compose.runtime` verbatim through a
+  four-method `Applier` and re-declares Compose's whole measure/place protocol in
+  cell integers — and then has no renderer seam at all. The portable artifact is
+  the retained node tree; the painter is two operations.
+- [Textual](./textual.md) grew a second and third target cheaply _because it has
+  no drawing seam_: widgets produce a reified, immutable, self-measuring result,
+  and every target is an encoder of that result. Its pixel target was made to
+  comply with the cell grid, not the reverse.
+- [Ratatui](./ratatui.md) reaches the same shape from the other direction: the
+  seam is a readable grid, which is why widgets can compose by read-back
+  (`Exact.merge("│","─") == "┼"`) — something no command stream can do.
+- [Doodle](./scala-doodle.md) ships **both** designs and documents the loss: a
+  wide capability-decomposed algebra, and a closed `Image` DSL whose docs
+  repeatedly say what it cannot reach. A single closed `DrawOp` union is
+  structurally the `Image` half of that pair.
+
+**[Slint](./slint.md) remains the encouraging counter-example and its range must
+be read honestly.** One `ItemRenderer` really does span an MCU software renderer
+and Skia — but that is small-GPU to large-GPU, not character cells to shaped
+glyphs, and Slint's seam is _semantic_ (eight operations including
+`draw_box_shadow`), which is exactly what Qt says is required to span unlike
+backends. No surveyed subject spans what `sparkles:ui` spans.
+
+**Verdict.** The evidence supports **one shared vocabulary above the painters and
+per-target painters below**, with the reified op stream retained as the
+cross-target _parity artifact_ rather than as the portability abstraction (F12).
+That is not a rejection of `isCanvas` — it is a statement about what the seam
+should be allowed to grow into. Every entry in the friction log that is a genuine
+defect (F10) is fixable without answering this question; every entry that is an
+invoice item gets cheaper the more the shared vocabulary moves up.
+
+**What would settle the remainder**, and it is a measurement rather than more
+reading: enumerate every use of every `OpKind` in `sparkles:ui`'s widget set and
+ask whether the widget could emit cells and rects instead. Ratatui, Textual and
+libvaxis answer _yes_ for scrollbars, rules, meters and trees, in a few dozen
+lines of widget code each — libvaxis's whole `widgets/Scrollbar.zig` is 33 lines. The open cases are exactly two — clipping (where
+[WebRender](./webrender.md)'s `CLIPPING_AND_POSITIONING.md` documents a
+hierarchical clip stack failing against real content, replaced by out-of-band
+clip and spatial trees) and the re-resolving HTML interpreter, which is a
+consumer no other surveyed subject has except [GSK](./gtk4-gsk.md)'s Broadway —
+and GSK gives Broadway no semantic help at all.
+
+---
+
+## Recommendations
+
+Input to a proposal in `docs/specs/ui/`, not decisions. Ordered by what the
+proposal should do first: each is cheap, and each unblocks the next.
+
+1. **Delete `measure` from `isCanvas`.** Resolves [friction §1][friction];
+   justified by F1. This is nearly free: `layout` is already parameterised on
+   `isTextMeasure` and never touches a canvas, every in-tree `layout` call passes
+   the default `CellMeasure`, and no interpreter call site calls `.measure` — the
+   [elm-ui](./elm-ui.md) deep-dive verified this by grep. Do **not** design a
+   font abstraction in the same change; F2 says that is five decisions, and
+   [diagrams](./haskell-diagrams.md) is the warning about deleting rather than
+   relocating.
+2. **Name the measurement regime and make layout and paint call one oracle.**
+   Resolves the rest of §1; justified by F2. Follow
+   [Ratatui](./ratatui.md)'s failure (two width functions that disagree) and
+   [Vty](./vty-image.md)'s remedy (one authoritative table), and adopt
+   [Racket](./racket-dc.md)'s `get-font-metrics-key` idea — a small comparable
+   tag identifying the metric universe — so a mismatched measurer is detectable.
+   Widen the return type past `Size` (F2.4) only when a proportional consumer
+   exists.
+3. **Generate `OpKind`, `DrawOp`, the concept and the interpreter's probes from
+   one declaration.** Resolves [friction §2][friction]; justified by F11. This is
+   the change that makes the rest safe, because it removes the possibility of the
+   four artifacts drifting again. Write every walker as `final switch` so a new
+   kind cannot leave the extent or hit-test pass behind (F11, F3).
+4. **State the capability contract as floor / defaulted / refusable, using
+   constructs D already has.** Resolves the rest of §2; justified by F5. A
+   `mixin template` of default lowerings is [Java2D](./java2d.md)'s
+   unforgettable-superclass floor; an `Expected`-returning method is
+   [Ratatui](./ratatui.md)'s typed refusal; a stream-scoped deferred error is
+   [Masonry](./parley-xilem.md)'s ergonomic form. Scope the query to a domain
+   ([SDL](./sdl-renderer.md)) and consume it at the lowering step
+   ([Mosaic](./mosaic.md)), not at each call site. Generate the written contract
+   from a `RecordingCanvas` conformance run rather than writing prose that rots
+   ([Vg](./ocaml-vg.md)).
+5. **Keep `scrollbar`'s semantics; move its derived geometry out.** Resolves
+   [friction §3][friction] and eight of the eighteen fields in §4; justified by
+   F4. Publish `scrollbarThumb`, `scrollbarCell` and `ruleEndpoints` as helpers a
+   backend _may_ call ([piet](./piet.md)'s shape) and make the lowering the
+   default rather than every backend's obligation ([Skia](./skia-skpicture.md)'s).
+   Carry the degradation vocabulary the way [Ratatui](./ratatui.md) does — a
+   small glyph record — not as eight fields on every op.
+6. **Re-encode `DrawOp`: tag plus per-kind payload, in variable-stride storage
+   if the widest variant is unacceptable.** Resolves [friction §4][friction];
+   justified by F3. Keep the payload type visible so `RecordingCanvas` can still
+   compare it ([diagrams](./haskell-diagrams.md)'s existential is the warning),
+   hide the constructors so invariants hold ([Vty](./vty-image.md)), and expect
+   the encoding to remove _illegal_ combinations and not _rare_ ones
+   ([elm-canvas](./elm-canvas.md)).
+7. **Have `buildDisplayList` return the extent it already computed, and make the
+   target rect an input.** Resolves [friction §8][friction]; justified by F7.
+   Accumulate at construction, never scan
+   ([Vty](./vty-image.md), [Notty](./notty.md), [Flutter](./flutter-engine.md));
+   carry the scale beside the size ([Avalonia](./avalonia.md)); and consider
+   [libvaxis](./libvaxis.md)'s cheaper form — paint returns a size — before
+   adding any query to the seam.
+8. **Own `DrawOp.text`.** Resolves [friction §7][friction]; justified by F8. Copy
+   into the stream's own arena and hold an offset pair
+   ([SDL](./sdl-renderer.md), [WebRender](./webrender.md)) — cheap because a
+   run is cell-bounded — and let the finished list answer the thread question by
+   conjunction ([Flutter](./flutter-engine.md)) rather than constraining every
+   payload.
+9. **Drop `slot` or drop `visual`, and decide the stream-state fork explicitly.**
+   Resolves [friction §6][friction]; justified by F9. The tag-is-the-slot fusion
+   ([Qt Quick](./qt-quick-scenegraph.md)) composes with recommendation 6 into one
+   change; a symbolic-leaf `Visual` ([Ratatui](./ratatui.md),
+   [libvaxis](./libvaxis.md)) is the cheapest way to serve the HTML interpreter
+   without a second field. Do this last, because the alternative — appearance as
+   stream state — forecloses pairwise op comparison and therefore has to be
+   decided against the parity harness, not against the seam.
+10. **Replace `RuleEdge` with a queried device unit plus a named snap policy, and
+    add an accumulator for box-drawing joins.** Resolves
+    [friction §5][friction]; justified by F6. Last because it is the only entry
+    where the current design is better than the obvious alternative
+    ([imtui](./imtui.md)) and where removing before replacing makes things worse.
+
+All ten preserve the four properties the friction log recorded as working:
+structural typing with attribute inference, cell-space layout, `RecordingCanvas`
+as reference implementation and test seam, and the optional-primitive bargain —
+which F5 shows is not merely acceptable but the field's ordinary answer, just
+usually written down.
+
+## Sources
+
+Every claim above is carried by a subject file in this directory, and each of
+those pins its primary sources to a commit SHA per
+[Writing Research Docs][research-docs]. The friction entries under test are
+[`canvas-seam-friction.md`][friction]; the seam itself is
+[`libs/ui/src/sparkles/ui/canvas.d`][canvas]. The eight questions and the survey's
+scope are defined in the [umbrella](./index.md).
+
+<!-- References -->
+
+[friction]: ../../specs/ui-skia/canvas-seam-friction.md
+[canvas]: ../../../libs/ui/src/sparkles/ui/canvas.d
+[research-docs]: ../../guidelines/research-docs.md
