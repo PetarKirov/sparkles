@@ -19,6 +19,9 @@ import sparkles.base.term_color : Color, RgbColor;
 import sparkles.ui.canvas : DrawOp, fillRectOp, glyphOp, OpKind, ruleOp,
     RuleEdge;
 import sparkles.ui.geometry : Point, Rect;
+// The config carries its own editor metadata (`SET4`): one declaration, so a
+// settings pane over this type cannot describe a field the component dropped.
+import sparkles.ui.property_tree : Doc, Label, Range;
 import sparkles.ui.style : Palette, resolveSlot, Slot, Visual;
 
 @safe:
@@ -55,48 +58,81 @@ enum size_t dashCap = 8;
 /// One subdivision layer: visibility + world-cell interval (`GRD2`).
 struct AxisSubdivision
 {
+    @Label("Axes") @Doc("Which axes this layer paints.")
     AxisVisibility visibility = AxisVisibility.none;
-    int interval = 1; /// world cells; must be positive when the layer is on
+    /// world cells; must be positive when the layer is on
+    @Label("Interval")
+    @Doc("Spacing in world cells. Drives line spacing and stripe band width.")
+    @Range(1, 1024, 1)
+    int interval = 1;
 }
 
 /// Stroke / mark appearance for one lattice layer (`GRD3`).
 struct LatticeStyle
 {
+    @Label("Marks")
+    @Doc("Continuous rules, or marks only at intersections (graph paper).")
     MarkKind markKind;
+    @Label("Stroke slot")
+    @Doc("Theme slot the stroke resolves through — never a free colour.")
     Slot stroke = Slot.muted;
     /// Stroke width for `lines`, mark size for `dots` (1 = hairline / `·`).
+    @Label("Thickness") @Doc("Stroke width for lines, mark size for dots.")
+    @Range(1, 16, 1)
     int thickness = 1;
     /// On/off cell lengths for `lines`. `dashCount == 0` is solid.
+    @Label("Dash cells") @Doc("On/off cell lengths; ignored for dots.")
     ubyte[dashCap] dash;
+    @Label("Dash length") @Doc("How many dash entries are live. 0 is solid.")
+    @Range(0, dashCap, 1)
     ubyte dashCount;
 }
 
 /// One stripe-band fill: skip, or paint this slot's background (`GRD5`).
 struct StripeBrush
 {
+    @Label("Transparent") @Doc("Skip this band — paint nothing.")
     bool transparent = true;
+    @Label("Fill slot") @Doc("Theme slot whose background + bg alpha fills the band.")
     Slot slot = Slot.inherit;
 }
 
 /// Cyclic X and Y stripe brushes.
 struct StripeBrushes
 {
+    @Label("X cycle") @Doc("Bands along the X axis, cycled per interval.")
     StripeBrush[stripeBrushCap] x;
+    @Label("X entries") @Doc("How much of the X cycle is live.")
+    @Range(0, stripeBrushCap, 1)
     ubyte xCount;
+    @Label("Y cycle") @Doc("Bands along the Y axis; painted over X bands.")
     StripeBrush[stripeBrushCap] y;
+    @Label("Y entries") @Doc("How much of the Y cycle is live.")
+    @Range(0, stripeBrushCap, 1)
     ubyte yCount;
 }
 
-/// The whole backdrop configuration. `GridConfig.init` is the `RND4` default.
+/**
+The whole backdrop configuration. `GridConfig.init` is the `RND4` default.
+
+The fields carry their own $(MREF sparkles,ui,property_tree) metadata, so an
+editor over this type — `apps/diagram`'s settings pane (`SET4`), a gallery
+control — is generated from the declaration rather than re-describing it. A
+field added here is a row there; there is no second place to update.
+*/
 struct GridConfig
 {
+    @Label("Minor lattice") @Doc("The fine grid: every `interval` world cells.")
     AxisSubdivision minorLattice = AxisSubdivision(AxisVisibility.xy, 1);
+    @Label("Major lattice") @Doc("The accent grid, drawn over the minor one.")
     AxisSubdivision majorLattice = AxisSubdivision(AxisVisibility.xy, 8);
+    @Label("Minor stripes") @Doc("Narrow bands under the lattice.")
     AxisSubdivision minorStripes;
+    @Label("Major stripes") @Doc("Wide bands, painted under the minor ones.")
     AxisSubdivision majorStripes;
-    LatticeStyle minorStyle = LatticeStyle(MarkKind.lines, Slot.muted, 1);
-    LatticeStyle majorStyle = LatticeStyle(MarkKind.lines, Slot.border, 1);
-    StripeBrushes brushes;
+    @Label("Minor style") LatticeStyle minorStyle = LatticeStyle(MarkKind.lines, Slot.muted, 1);
+    @Label("Major style") LatticeStyle majorStyle = LatticeStyle(MarkKind.lines, Slot.border, 1);
+    @Label("Stripe brushes") StripeBrushes brushes;
 }
 
 /**
