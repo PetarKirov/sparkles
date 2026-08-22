@@ -30,7 +30,7 @@ import sparkles.core_cli.args;
 
 import sparkles.base.logger : LogLevel, warning;
 import sparkles.base.term_caps : isTerminal, StdStream;
-import sparkles.syntax.md.render_widgets : OverflowPolicy, ScrollOverflow,
+import sparkles.source_view.markdown : OverflowPolicy, ScrollOverflow,
     WrapAtOverflow, WrapOverflow;
 
 import ansi_model : BackgroundMode;
