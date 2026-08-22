@@ -207,8 +207,19 @@ server on `$XMODIFIERS` nothing changes. The evidence is end-to-end: the
 lane runs an in-tree test XIM server (xcb-imdkit's server API) that commits
 for one keycode and bounces everything else, so the chord, hold, and
 repeat properties incidentally prove the bounce path while the new IME
-property proves the commit path. Keymap-change events, callback-style XIM
-pre-edit, candidate-window placement, and raw input remain. The scale slice makes
+property proves the commit path. The NSTextInputClient slice completes the
+F07 column set: the content view adopts the protocol (registered through
+the Objective-C runtime, since `extern (Objective-C)` has no adoption
+syntax and NSView's input context is nil without conformance), keyDown
+routes every event through the input context after the physical key, and
+text arrives only as protocol calls — `insertText` commits validated
+UTF-8 and ends marked text, `setMarkedText` maps AppKit's UTF-16-unit
+selection to byte offsets with underline and selected segments. The shared
+IME-commit property runs on AppKit (a posted key comes back as committed
+text through the real input context) and an addendum drives the
+marked-text contract exactly as the input context does. Keymap-change
+events, callback-style XIM pre-edit, candidate-window placement, and raw
+input remain. The scale slice makes
 `SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
 window's scale is the maximum of its entered outputs, a change requests the
 matching buffer scale and reports one atomic metrics transition — verified at

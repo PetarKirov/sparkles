@@ -82,6 +82,34 @@ private extern class NSApplication : NSObject
     void postEvent(NSEvent event, bool atStart) @selector("postEvent:atStart:");
 }
 
+private extern (C) struct NSRange
+{
+    ulong location;
+    ulong length;
+}
+
+/*
+The backend's content view, seen through its NSTextInputClient surface:
+the addendum drives the protocol exactly as AppKit's input context would,
+so the marked-text translation is exercised without depending on a system
+IME being scriptable in this session.
+*/
+/*
+Declared as the real (linkable) NSView class: the handle's object is the
+backend's NSView subclass, and Objective-C dispatch resolves the protocol
+selectors on the instance, not the static type.
+*/
+private extern class NSView : NSObject
+{
+    void insertText(NSString text, NSRange replacementRange)
+        @selector("insertText:replacementRange:");
+    void setMarkedText(NSString text, NSRange selectedRange,
+        NSRange replacementRange)
+        @selector("setMarkedText:selectedRange:replacementRange:");
+    void unmarkText() @selector("unmarkText");
+    bool hasMarkedText() @selector("hasMarkedText");
+}
+
 private extern class NSCursor : NSObject
 {
     static NSCursor IBeamCursor() @selector("IBeamCursor");
@@ -159,6 +187,31 @@ private struct AppKitHooks
         post(keyDownType, shiftFlag, upper, lower, chordKeyCode);
         post(keyUpType, shiftFlag, upper, lower, chordKeyCode);
         post(flagsChangedType, 0, lower, lower, chordShiftCode);
+    }
+
+    // Text on AppKit only ever arrives through the NSTextInputClient
+    // protocol; for plain keys the input context commits the event's
+    // characters, so a posted "x" proves the whole route.
+    enum string imeCommittedText = "x";
+
+    void injectImeCommit()
+    {
+        enum ulong keyDownType = 10;
+        enum ulong keyUpType = 11;
+        enum ushort xKeyCode = 0x07; // kVK_ANSI_X
+        auto application = NSApplication.sharedApplication();
+        auto text = NSString.alloc().initWithUTF8String("x");
+        const number = nativeWindow.windowNumber();
+        void post(ulong type)
+        {
+            auto event = NSEvent.keyEventWithType(type, NSPoint(0, 0), 0,
+                0, number, null, text, text, false, xKeyCode);
+            assert(event !is null);
+            application.postEvent(event, false);
+        }
+
+        post(keyDownType);
+        post(keyUpType);
     }
 
     // NSWindow keeps routing the drag to the mouseDown view, so the
@@ -244,5 +297,86 @@ int main()
         "sparkles:wsi AppKit conformance");
     writeln("ok: AppKit WSI conformance (", outcome.checked, " checked, ",
         outcome.skipped, " skipped)");
+    checkMarkedText(wsi);
+    writeln("ok: AppKit marked-text round trip");
     return 0;
+}
+
+/// AppKit-only addendum: the NSTextInputClient marked-text contract on a
+/// fresh window, driven exactly as the input context drives it.
+private void checkMarkedText(ref AppKitWsi wsi)
+{
+    WindowConfig config;
+    assert(config.title.assign("sparkles:wsi AppKit text"));
+    config.logicalSize = LogicalSize(320, 200);
+    const id = wsi.createWindow(config).value;
+    ulong lastSequence;
+    bool ready;
+    auto readyDrain = wsi.drain((WindowEvent event) {
+        assert(event.sequence > lastSequence);
+        lastSequence = event.sequence;
+        if (event.window == id)
+            event.payload.match!((in ReadyEvent _) { ready = true; },
+                (_) {});
+    });
+    assert(!readyDrain.hasError && ready);
+    auto view = wsi.nativeHandles(id).value.window.match!(
+        (in AppKitWindowHandle handle) => cast(NSView) handle.view,
+        (_) => cast(NSView) null);
+    assert(view !is null);
+
+    // Composition: three kana with the middle one selected — UTF-16 units
+    // in, byte offsets out.
+    auto kana = NSString.alloc().initWithUTF8String("にほん");
+    view.setMarkedText(kana, NSRange(1, 1), NSRange(long.max, 0));
+    assert(view.hasMarkedText());
+    bool sawComposition;
+    auto compositionDrain = wsi.drain((WindowEvent event) {
+        assert(event.sequence > lastSequence);
+        lastSequence = event.sequence;
+        event.payload.match!(
+            (in CompositionEvent composition) {
+                assert(composition.preedit.value == "にほん");
+                assert(composition.cursor == 3);
+                assert(composition.selectionStart == 3
+                    && composition.selectionLength == 3);
+                assert(composition.segmentCount == 2);
+                sawComposition = true;
+            },
+            (_) {});
+    });
+    assert(!compositionDrain.hasError && sawComposition);
+
+    // The commit replaces the marked text: committed bytes, then exactly
+    // one empty composition-ended event.
+    auto nihon = NSString.alloc().initWithUTF8String("日本");
+    view.insertText(nihon, NSRange(long.max, 0));
+    assert(!view.hasMarkedText());
+    bool sawCommit;
+    bool sawEnd;
+    auto commitDrain = wsi.drain((WindowEvent event) {
+        assert(event.sequence > lastSequence);
+        lastSequence = event.sequence;
+        event.payload.match!(
+            (in TextCommittedEvent text) {
+                assert(text.text.value == "日本");
+                sawCommit = true;
+            },
+            (in CompositionEvent composition) {
+                assert(composition.preedit.empty);
+                sawEnd = true;
+            },
+            (_) {});
+    });
+    assert(!commitDrain.hasError && sawCommit && sawEnd);
+
+    // unmarkText with nothing marked stays silent.
+    view.unmarkText();
+    auto quietDrain = wsi.drain((WindowEvent event) {
+        assert(event.payload.match!(
+            (in CompositionEvent _) => false, (_) => true),
+            "unmarkText with no marked text emitted a composition");
+    });
+    assert(!quietDrain.hasError);
+    assert(!wsi.destroyWindow(id).hasError);
 }
