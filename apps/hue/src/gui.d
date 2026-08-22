@@ -2438,6 +2438,21 @@ int runGui(GuiArgs guiArgs) @system
         {
             // The settings pane is modal exactly like the picker (`SET*`).
             cast(void) currentSettingsGeometry();
+            // Bar hover comes from the FOLDED pointer, per frame: the window
+            // host synthesizes no bare motion events (RaylibEvents emits
+            // edges, drags and wheel only), so the machine's hover — the
+            // trackLit and the expand easing — must be fed the way the dock
+            // feeds its own bars. This is also what HUE_GUI_POINTER
+            // overrides, so a hover is photographable.
+            if (!inp.fin.buttons[PointerButton.left].down)
+            {
+                PointerEvent hover;
+                hover.action = PointerAction.move;
+                hover.pos = Point(cast(int) inp.fin.pos.x,
+                    cast(int) inp.fin.pos.y);
+                routeSettingsOverlay(Event(hover));
+            }
+            settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
             foreach (k; keyBuf)
                 applySettingsResult(settingsPane.handleKey(k));
         }
@@ -2574,8 +2589,6 @@ int runGui(GuiArgs guiArgs) @system
             // not depend on how fast this machine renders.
             ltnTick(pn.lantern, dur!"msecs"(frameMs(window.frameSeconds)),
                 guiLanternDelay());
-            if (settingsPane.active)
-                settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
 
             foreach (kev; keyBuf)
             {
@@ -3723,6 +3736,16 @@ int runGui(GuiArgs guiArgs) @system
             openFilePicker();
             foreach (ch; capture.picker)
                 cast(void) filePicker.get.handleKey(KeyEvent(Key.char_, ch));
+        }
+
+        // Debug/CI: the settings pane, open before the first frame, with the
+        // seed's keys typed — the modal's scroll geometry only exists while
+        // it shows.
+        if (capture.settingsSet)
+        {
+            openSettingsPane();
+            foreach (ch; capture.settings)
+                cast(void) settingsPane.handleKey(KeyEvent(Key.char_, ch));
         }
     }
 
