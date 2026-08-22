@@ -338,7 +338,8 @@ struct RaylibCanvas
             return;
         if (op.trackLit)
             DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
-                Color(op.trackColor.r, op.trackColor.g, op.trackColor.b, 255));
+                Color(op.trackColor.r, op.trackColor.g, op.trackColor.b,
+                    op.trackAlpha));
         DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
             rlFg(visualOf(op)));
     }

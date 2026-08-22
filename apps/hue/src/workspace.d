@@ -533,8 +533,10 @@ struct WorkspaceTui
         const panel = frames[view.root].rect;
         const x = (width - panel.width) / 2;
         const y = (height - panel.height) / 2;
+        // The viewer's tuned palette: its link-tinted track/thumb are what
+        // every other bar in the terminal paints with (SCV1).
         paintGrid(g, pageBg, buildDisplayList(view, frames,
-            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg,
+            viewer.vm.palette, pageFg,
             pageBg), x > 0 ? x : 0, y > 0 ? y : 0,
             Rect(0, 0, panel.width, panel.height));
     }
