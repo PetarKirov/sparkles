@@ -4,7 +4,8 @@ leaves `cfg` / `pal` untouched and writes a reason into `error`.
 */
 module grid_file;
 
-import sparkles.ui.components.grid_backdrop : GridConfig, parseGridConfigJson;
+import sparkles.ui.components.grid_backdrop : GridConfig, parseGridConfigJson,
+    writeGridConfigJson;
 import sparkles.ui.style : Palette;
 
 /// Parse `text` as grid config, applying slot overrides to `pal`.
@@ -47,6 +48,38 @@ bool loadGridConfigFile(string path, ref GridConfig cfg, ref Palette pal,
         return false;
     }
     return applyGridConfigText(text, cfg, pal, error);
+}
+
+/**
+Writes `cfg` to `path` in the schema $(LREF loadGridConfigFile) reads (`SET5`).
+
+$(B The same fail-closed contract, in the other direction): every way this can
+fail returns a reason rather than throwing, because the caller is a settings
+pane whose footer shows the reason — an exception there would leave the running
+board fine and the user with a stack trace instead of a sentence.
+
+The parent directory is created when missing: `$XDG_CONFIG_HOME/diagram/` does
+not exist until something writes there, and refusing the first save because of
+that would make the feature unreachable exactly once, confusingly.
+*/
+bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
+{
+    import std.file : FileException, mkdirRecurse, write;
+    import std.path : dirName;
+
+    try
+    {
+        const dir = dirName(path);
+        if (dir.length)
+            mkdirRecurse(dir);
+        write(path, writeGridConfigJson(cfg));
+    }
+    catch (FileException ex)
+    {
+        error = "diagram: cannot write config file: " ~ ex.msg;
+        return false;
+    }
+    return true;
 }
 
 @("diagram.grid_file.failClosedOnGarbage")
@@ -96,4 +129,49 @@ bool loadGridConfigFile(string path, ref GridConfig cfg, ref Palette pal,
     assert(applyGridConfigText(`{"preset":"dotPaper"}`, cfg, pal, err), err);
     assert(cfg.minorStyle.markKind == MarkKind.dots);
     assert(cfg.majorLattice.visibility == AxisVisibility.xy);
+}
+
+@("diagram.grid_file.saveRoundTripsThroughTheSameSchema")
+@system unittest
+{
+    import std.file : rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import sparkles.ui.components.grid_backdrop : GridPreset, gridPreset,
+        MarkKind;
+    import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
+
+    // What the pane saves is what `--config-file` loads (`SET5`/`GRD8`): one
+    // schema, asserted by driving both halves rather than by comment.
+    const dir = buildPath(tempDir, "diagram-grid-save-test");
+    scope (exit) rmdirRecurse(dir);
+    const path = buildPath(dir, "nested", "grid.json");
+
+    auto saved = gridPreset(GridPreset.dotPaper);
+    saved.minorLattice.interval = 5;
+    string err;
+    assert(saveGridConfigFile(path, saved, err), err);
+
+    GridConfig loaded;
+    auto pal = defaultTwoslashPalette(ColorScheme.dark);
+    assert(loadGridConfigFile(path, loaded, pal, err), err);
+    assert(loaded.minorStyle.markKind == MarkKind.dots);
+    assert(loaded.minorLattice.interval == 5);
+    assert(loaded == saved, "the schema round-trips the whole config");
+}
+
+@("diagram.grid_file.saveFailureIsAReasonNotAThrow")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+
+    // A directory where the file should be: `write` throws, and the pane's
+    // footer needs a sentence.
+    const dir = buildPath(tempDir, "diagram-grid-save-fail");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+
+    string err;
+    assert(!saveGridConfigFile(dir, GridConfig.init, err));
+    assert(err.length > 0);
 }
