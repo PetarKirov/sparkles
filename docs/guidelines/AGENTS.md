@@ -1029,6 +1029,30 @@ the usual code formatting.
   completed branch onto the current `origin/main`, resolve conflicts, and rerun the
   affected validation before pushing/opening. If the rebased branch was already
   pushed, update it with `--force-with-lease`, never plain `--force`.
+- **Rebase with `--update-refs`.** It carries every branch that points into the
+  rebased range along with the rewrite, which is what keeps a stacked PR series
+  intact — without it, the lower branches still point at the pre-rebase commits
+  and the stack silently comes apart. Pass the flag explicitly rather than
+  relying on `rebase.updateRefs`: it is a developer's personal git config here,
+  not the repository's, so a machine that does not set it rebases differently
+  from one that does.
+- **Back up a branch you are about to rewrite with a _tag_, never a branch.**
+  This follows directly from the rule above: `--update-refs` moves branches
+  pointing into the rebased range, and a backup branch is one of those — it
+  dutifully follows the rewrite and preserves nothing. That is the flag working
+  as designed, not a bug, and it is silent.
+
+  ```bash
+  git tag backup/<effort>-pre-rebase        # pinned; the rebase cannot move it
+  git rebase --update-refs --onto <new-base> <old-base>
+  # ... verify, then:
+  git tag -d backup/<effort>-pre-rebase
+  ```
+
+  The reflog still holds the pre-rebase commits either way, so a lost backup
+  branch is recoverable — but only if someone notices in time, and the point of
+  a backup is not having to.
+
 - **Keep commits atomic.** One logical change per commit, and each commit should
   pass build + test + lint _on its own_ so history stays bisectable. Use
   `git commit --fixup=<sha>` for tweaks that belong to an earlier commit instead
