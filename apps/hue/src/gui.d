@@ -1962,7 +1962,7 @@ int runGui(GuiArgs guiArgs) @system
             const sX = (cellsW - sPanel.width) / 2;
             const sY = (cellsH - sPanel.height) / 2;
             window.resetClip();
-            ltnOps.clear();
+            ltnOps.reset();
             buildDisplayListInto(sTree, sFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                 ltnOps);
