@@ -25,6 +25,9 @@ module settings_pane;
 
 import std.conv : text;
 
+import core.time : Duration;
+
+import sparkles.input.capability : InputCapabilities, mousePointer;
 import sparkles.input.events : Event, Key, KeyEvent, Point, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import std.sumtype : match;
@@ -33,8 +36,9 @@ import sparkles.ui.components.property_view : propertyView,
     PropertyViewOptions;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
-import sparkles.ui.geometry : Constraints, Insets, SizeSpec;
-import sparkles.ui.layout : layout;
+import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
+import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.state : CaptureState;
 import sparkles.ui.property_tree : applyEdit, Edit, EditPhase, editProperty,
     EditValue, finishPending, LeafKind, PropertyEditState, PropertyNode,
     PropertyTree, readValueAt, redoProperty, undoProperty;
@@ -116,6 +120,12 @@ SettingsGeometry settingsGeometryFor(int screenCols, int screenRows)
 /// The tree rows' hit ids start here (`node + hitBase`).
 private enum uint hitBase = 1;
 
+/// The tree area's widget key (pointer routing finds its rect by it) and
+/// the capture-id base the scrollbar grabs claim.
+private enum size_t settingsTreeKey = 0x5e77_ba55;
+/// ditto
+private enum size_t captureBase = 0x5e77_ba00;
+
 /// ditto
 struct SettingsPaneT(T)
 {
@@ -147,6 +157,12 @@ struct SettingsPaneT(T)
     string textBuf;              ///
 
     string status;               /// footer line: saves, refusals, apply notes
+
+    /// The scrollbar-grab capture and the pointer profile the hover-expand
+    /// easing follows (`SCV1` — the same machine the tree views ease with).
+    CaptureState capture;
+    /// ditto
+    InputCapabilities caps = mousePointer;
 
     private SettingsGeometry geom;
 
@@ -207,6 +223,13 @@ struct SettingsPaneT(T)
     {
         tree.rebuild(*subject, tv,
             edits.pendingActive ? edits.pendingPath : null);
+    }
+
+    /// Advances the scrollbar hover-expand easings; hosts call it once per
+    /// frame while the pane is open — the same cadence the guide ticks at.
+    void tickAnims(Duration elapsed) @safe pure nothrow @nogc
+    {
+        tv.tick(caps, cast(float) elapsed.total!"hnsecs" / 10_000_000.0f);
     }
 
     // ── keys ────────────────────────────────────────────────────────────────
@@ -341,45 +364,47 @@ struct SettingsPaneT(T)
 
     // ── pointer ─────────────────────────────────────────────────────────────
 
-    /// Routes an overlay-local event (the host already translated it).
+    /**
+    Routes an overlay-local event (the host already translated it) through
+    the tree machine: a press on the scrollbar is a grab that owns the
+    pointer, hover feeds the bar's expand easing, a wheel notch scrolls
+    leaving the cursor behind, and a press on a row selects (a second press
+    activates) — the same routing every tree view has.
+    */
     SettingsResult handleOverlay(in Event e, SettingsGeometry g)
     {
+        auto view = buildView(g);
+        auto frames = layout(view, Constraints(maxW: g.panelCols));
+        const area = treeArea(view, frames);
+
         SettingsResult result = consumed();
         e.match!(
             (in WheelEvent w) {
-                tv.top += w.dy * 3;
-                tv.clampBounds();
+                tv.scrollBy(w.dy * 3);
             },
             (in PointerEvent p) {
-                if (p.action != PointerAction.press
-                    || p.button != PointerButton.left)
-                    return;
-                auto view = buildView(g);
-                auto frames = layout(view, Constraints(maxW: g.panelCols));
-                import sparkles.ui.state : hoverTargets;
-
-                foreach (t; hoverTargets(view, frames))
-                {
-                    if (t.hitId < hitBase || !t.rect.contains(p.pos))
-                        continue;
-                    const node = cast(uint)(t.hitId - hitBase);
-                    foreach (i, ref const r; tv.rows)
-                        if (r.node == node)
-                        {
-                            if (tv.sel == cast(long) i)
-                                result = activateSel();
-                            else
-                            {
-                                tv.sel = cast(long) i;
-                                tv.clamp();
-                            }
-                            return;
-                        }
-                }
+                // Tree-local coordinates: the machine's frame is (0,0)-based
+                // at the tree area's origin — the SAME frame the paint pass
+                // laid the bar out from, so hit and paint cannot disagree.
+                PointerEvent local = p;
+                local.pos = Point(p.pos.x - area.x, p.pos.y - area.y);
+                if (tv.pointer(local, capture, captureBase)
+                    == TreeStep.activated)
+                    result = activateSel();
             },
             (e2) {},
         );
         return result;
+    }
+
+    /// The tree area's laid-out rect, found by its widget key.
+    private static Rect treeArea(in WidgetTree view,
+        scope const(Frame)[] frames) @safe pure nothrow @nogc
+    {
+        foreach (i, ref const node; view.nodes)
+            if (node.key == settingsTreeKey && i < frames.length)
+                return frames[i].rect;
+        return Rect.init;
     }
 
     // ── the edit engine ─────────────────────────────────────────────────────
@@ -681,9 +706,12 @@ struct SettingsPaneT(T)
             rangeBarCells: g.panelCols > 50 ? 8 : 4,
             needsEditorMarker: "⏎ edit",
         );
+        // The framed tree (rows + the machine-driven animated bar) carries
+        // its own fixed size now; the keyed wrapper is what pointer routing
+        // finds its origin by.
         const treeCol = propertyView(b, tree.data, tv, edits, opt, hitBase);
         body_ ~= b.add(Widget(kind: WidgetKind.column, children: [treeCol],
-            clipX: true, clipY: true, width: SizeSpec.grow(),
+            key: settingsTreeKey, width: SizeSpec.grow(),
             height: SizeSpec.grow()));
 
         // The line editor, while open.
@@ -1012,4 +1040,75 @@ version (unittest)
     assert(textView.canFind("⏎ edit") || textView.canFind("needs EDT")
         || textView.canFind("start-us") || textView.canFind("start"),
         textView);
+}
+
+@("settings_pane.scrollMachineRoutesTheOverlay")
+@system unittest
+{
+    import core.time : msecs;
+    import sparkles.ui.widget : WidgetKind;
+
+    auto cfg = new Fixture;
+    SettingsPaneT!Fixture p;
+    p.open(cfg, Fixture.init);
+    const g = SettingsGeometry(60, 12); // a short pane: the bar is live
+    p.resize(g);
+    // Open the nested section so the rows outgrow the window.
+    selectPath(p, "nested");
+    cast(void) p.handleKey(knk(Key.right));
+    assert(p.tv.rows.length > p.tv.bodyRows, "content outgrows the window");
+
+    // The built view carries the semantic scrollbar leaf — the same
+    // machine-driven bar every tree view paints.
+    auto view = p.buildView(g);
+    bool sawBar;
+    foreach (ref const n; view.nodes)
+        sawBar |= n.kind == WidgetKind.scrollbar;
+    assert(sawBar);
+
+    // A wheel notch scrolls the viewport and leaves the cursor behind.
+    p.tv.selHome();
+    p.tv.clamp();
+    const selBefore = p.tv.sel;
+    WheelEvent w;
+    w.dy = 1;
+    cast(void) p.handleOverlay(Event(w), g);
+    assert(p.tv.top > 0, "a notch scrolls (3 rows, clamped)");
+    assert(p.tv.sel == selBefore, "…and leaves the cursor behind");
+    p.tv.selHome();
+    p.tv.clamp(); // re-couple: the later halves assert against row 0
+
+    // A press on the bar's gutter is a grab, never a row click: the frame
+    // routes it to the machine, the selection stays, and the drag scrolls.
+    auto frames = layout(view, Constraints(maxW: g.panelCols));
+    const area = SettingsPaneT!Fixture.treeArea(view, frames);
+    const fr = p.tv.scrollFrame();
+    const barX = area.x + fr.vTrack.x;
+    PointerEvent press;
+    press.action = PointerAction.press;
+    press.button = PointerButton.left;
+    press.pos = Point(barX, area.y + fr.vTrack.y);
+    cast(void) p.handleOverlay(Event(press), g);
+    assert(p.tv.sel == 0, "a bar press never selects a row");
+    assert(p.tv.sb.dragging || p.tv.sb.hovered, "the machine owns the bar");
+    PointerEvent release = press;
+    release.action = PointerAction.release;
+    cast(void) p.handleOverlay(Event(release), g);
+
+    // The easing advances through the host tick — the animation the hue
+    // explorer's bars run on.
+    PointerEvent hover;
+    hover.action = PointerAction.move;
+    hover.pos = Point(barX, area.y + fr.vTrack.y + 1);
+    cast(void) p.handleOverlay(Event(hover), g);
+    const pctBefore = p.tv.scroll.vAnim.percent;
+    p.tickAnims(50.msecs);
+    assert(p.tv.scroll.vAnim.percent >= pctBefore,
+        "the hover-expand easing ticks");
+
+    // A press on a row selects it; pressing the selected row activates.
+    PointerEvent rowPress = press;
+    rowPress.pos = Point(area.x + fr.content.x + 1, area.y + fr.content.y);
+    cast(void) p.handleOverlay(Event(rowPress), g);
+    assert(p.tv.sel == p.tv.top, "the pressed row is selected");
 }

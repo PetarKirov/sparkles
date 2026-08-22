@@ -18,7 +18,7 @@ import std.conv : text;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : FlatTreeRow, Guide, nodeExpandable,
     TreeData, TreeGlyphs;
-import sparkles.ui.geometry : cellsOf;
+import sparkles.ui.geometry : cellsOf, SizeSpec;
 import sparkles.ui.property_tree : ByteSpan, LeafKind, MatchedField,
     PropertyEditState, PropertyNode, Refusal, RefusalKind, SearchRole;
 import sparkles.ui.style : Slot, TextStyle;
@@ -261,7 +261,35 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
         }
     }
 
-    return b.add(Widget(kind: WidgetKind.column, children: rowIds));
+    const rowsCol = b.add(Widget(kind: WidgetKind.column, children: rowIds));
+
+    // The scroll frame (`SCV1`/`SCV7`): when the state reserves a vertical
+    // gutter, the rows clip to the frame's content box and the machine-driven
+    // bar sits at the right — the SAME composition (and the same
+    // hover-expand easing, via `scroll.vAnim`) the tree views use, so a
+    // property tree and a file tree cannot look different while scrolling.
+    // A state with no gutter (a plain embedded listing) keeps the bare
+    // column, exactly as before.
+    const frame = s.scrollFrame();
+    if (frame.vTrack.width <= 0)
+        return rowsCol;
+
+    import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+
+    const content = b.add(Widget(kind: WidgetKind.column,
+        children: [rowsCol],
+        width: SizeSpec.fixed(frame.content.width),
+        height: SizeSpec.fixed(frame.content.height),
+        clipX: true, clipY: true));
+    const vbar = scrollbar(b, s.sb.scrolledTo(s.top),
+        frame.vExtents.content, frame.vExtents.viewport,
+        frame.vExtents.track, ScrollbarGlyphs('█', '░'),
+        expandPercent: cast(ubyte) s.scroll.vAnim.percent,
+        gutter: frame.vTrack.width,
+        trackLit: s.sb.hovered || s.sb.dragging);
+    return b.add(Widget(kind: WidgetKind.row, children: [content, vbar],
+        width: SizeSpec.fixed(frame.content.width + frame.vTrack.width),
+        height: SizeSpec.fixed(frame.vTrack.height)));
 }
 
 /// The refusal's presented text — one vocabulary for every target.
@@ -466,9 +494,12 @@ version (UiPropertyFixtures)
     const col = propertyView(b, f.pt.data, f.tv, f.es);
     auto wt = b.finish(col);
 
+    // Walk the whole tree: the view root is the scroll-framed row
+    // (content column + the vertical bar) whenever the state reserves the
+    // default gutter.
     bool sawRefusal;
-    foreach (c; wt.nodes[col].children)
-        foreach (ref const sp; wt.nodes[c].spans)
+    foreach (ref const node; wt.nodes)
+        foreach (ref const sp; node.spans)
             sawRefusal |= sp.slot == Slot.error
                 && sp.text.length > 2 && sp.text[0 .. 3] == "⚠";
     assert(sawRefusal);
@@ -501,8 +532,8 @@ version (UiPropertyFixtures)
     const col = propertyView(b, f.pt.data, f.tv, f.es);
     auto wt = b.finish(col);
     bool sawMatchSpan, sawMarker;
-    foreach (c; wt.nodes[col].children)
-        foreach (ref const sp; wt.nodes[c].spans)
+    foreach (ref const node; wt.nodes)
+        foreach (ref const sp; node.spans)
         {
             sawMatchSpan |= sp.slot == Slot.matched && sp.textStyle.bold
                 && sp.text == "width";
@@ -516,4 +547,47 @@ version (UiPropertyFixtures)
     assert(txt.canFind("(matched: label)"), "accessibility text");
     assert(txt.canFind("▾ "),
         "the text target carries the same disclosure meaning (PRT12)");
+}
+
+version (UiPropertyFixtures)
+@("ui.property_view.scrollFrameEmitsTheAnimatedBar")
+@safe unittest
+{
+    // A sized state with the default vertical gutter frames the rows and
+    // emits the semantic scrollbar leaf — the same machine-driven bar (and
+    // hover-expand easing) every tree view paints, driven by the SAME
+    // ScrollView the pointer routing eases (SCV1).
+    Fixture f;
+    f.build();
+    f.tv.height = 6; // a window far shorter than the rows: the bar is live
+    f.pt.rebuild(f.subject, f.tv);
+    f.tv.scrollBy(2);
+    f.tv.scroll.vAnim.percent = 40; // mid-easing, as a hover would leave it
+
+    auto b = Builder();
+    const root = propertyView(b, f.pt.data, f.tv, f.es);
+    auto wt = b.finish(root);
+
+    assert(wt.nodes[root].kind == WidgetKind.row, "content + bar, framed");
+    bool sawBar;
+    foreach (ref const node; wt.nodes)
+        if (node.kind == WidgetKind.scrollbar)
+        {
+            sawBar = true;
+            assert(node.barContent == cast(long) f.tv.rows.length);
+            assert(node.barViewport == f.tv.bodyRows);
+            assert(node.barOffset == f.tv.top, "the bar tracks the window");
+            assert(node.barExpandPercent == 40, "the easing reaches the leaf");
+        }
+    assert(sawBar);
+
+    // No reserved gutter — an embedded listing — keeps the bare column.
+    f.tv.scrollGutterV = 0;
+    f.pt.rebuild(f.subject, f.tv);
+    auto b2 = Builder();
+    const bare = propertyView(b2, f.pt.data, f.tv, f.es);
+    auto wt2 = b2.finish(bare);
+    assert(wt2.nodes[bare].kind == WidgetKind.column);
+    foreach (ref const node; wt2.nodes)
+        assert(node.kind != WidgetKind.scrollbar);
 }

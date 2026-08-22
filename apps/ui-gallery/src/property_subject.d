@@ -224,7 +224,10 @@ struct PropertyDemo
             tv.width = 64;
             tv.height = 14;
             tv.chromeRows = 0;
-            tv.scrollGutterV = 0;
+            // The default gutter stays reserved: propertyView frames the
+            // rows and emits the machine-driven animated bar (SCV1) — the
+            // same look every tree view scrolls with.
+            tv.scrollGutterV = 1;
             tv.scrollGutterH = 0;
             built = true;
         }
