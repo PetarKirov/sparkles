@@ -412,11 +412,16 @@ in
                 { id = "check-illegal-windows-names"; }
                 {
                   id = "end-of-file-fixer";
-                  # Test data files contain exact byte sequences — no trailing newline
-                  exclude = "^libs/ui/test/data/";
+                  # Test data files contain exact byte sequences — no trailing newline.
+                  # The DSV sample corpus's defect file deliberately lacks one (DSM3).
+                  exclude = "^(libs/ui/test/data/|apps/hue/samples/dsv/)";
                 }
                 { id = "file-contents-sorter"; }
-                { id = "fix-byte-order-marker"; }
+                {
+                  id = "fix-byte-order-marker";
+                  # The DSV corpus's defect file deliberately opens with a BOM.
+                  exclude = "^apps/hue/samples/dsv/";
+                }
                 { id = "check-json"; }
                 { id = "check-json5"; }
                 {
@@ -430,6 +435,8 @@ in
                 {
                   id = "mixed-line-ending";
                   args = [ "--fix=lf" ];
+                  # The DSV corpus's defect file is deliberately CRLF (DSD6).
+                  exclude = "^apps/hue/samples/dsv/";
                 }
                 { id = "check-symlinks"; }
                 { id = "destroyed-symlinks"; }

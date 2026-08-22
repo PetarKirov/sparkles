@@ -1,0 +1,201 @@
+sha	date	author	files	insertions	deletions	subject
+52ae3ee10	2026-08-22	Petar Kirov	1	9	9	docs(specs/hue/dsv-preview): DSB3 to full — the columns palette shipped
+f8cfd2841	2026-08-22	Petar Kirov	7	555	12	feat(hue/dsv): the columns palette — hide and reorder columns (DSB3)
+4b2faa8b9	2026-08-22	Petar Kirov	1	4	4	docs(specs/hue/dsv-preview): finalize the GUI-wiring evidence SHA against main
+6d72d9c6c	2026-08-19	Petar Kirov	1	23	22	docs(specs/hue/dsv-preview): record the GUI browser wiring
+95058b9d7	2026-08-19	Petar Kirov	3	89	5	feat(hue/dsv): the GUI browser wiring — header-click sort, filter bar, reset
+f20acad17	2026-08-19	Petar Kirov	1	39	39	docs(specs/hue): finalize DSV evidence SHAs against main's rebase-merged commits
+93524afe8	2026-08-22	Petar Kirov	4	177	81	fix(docs.page_shell): the docs/ node IS the docs nav — inlined groups, real file subtrees, relative hrefs
+8198b16fd	2026-08-21	Petar Kirov	3	26	22	docs(specs/hue): spec font bundling, symbol fallback, and the ligature non-goal
+81c788d2c	2026-08-22	Petar Kirov	5	12	12	docs(source-view): retarget references left behind by the split
+47a66b6fb	2026-08-22	Petar Kirov	1	1	1	fix(hue.cli): import OverflowPolicy from its post-split module
+d9f947268	2026-08-21	Petar Kirov	9	138	25	feat(hue/settings): tier-2 consumption — lantern, picker, scroll, timing, diff engine
+122740f9f	2026-08-21	Petar Kirov	1	19	0	docs(specs/hue/config): the settings pane requirements (SET1–SET8)
+3a2080e54	2026-08-21	Petar Kirov	2	156	2	feat(hue/gui): mount the settings pane in the window host
+2c2bf1831	2026-08-21	Petar Kirov	2	174	3	feat(hue/workspace): mount the settings pane in the terminal host
+f183013d3	2026-08-21	Petar Kirov	2	269	1	feat(hue/settings-store): ConfigStore — the shared runtime config + adapters
+2410b77e9	2026-08-21	Petar Kirov	1	1015	0	feat(hue/settings-pane): the pane component — edit engine, editor, view
+9b3a66347	2026-08-21	Petar Kirov	4	185	6	feat(hue/keymap): the settings pane's modality — scope, commands, rows
+acd8b6b5b	2026-08-21	Petar Kirov	1	83	30	docs(specs/hue/config): record the shipped core; fix the CFG6 example
+74ac0c975	2026-08-21	Petar Kirov	6	812	52	feat(hue/keymap-config): user-rebindable keys as a config overlay (CFG6)
+5e49e7042	2026-08-21	Petar Kirov	1	4	1	test(hue/settings_io): pid-unique fixture dir for the JSONC round-trip
+613ed9094	2026-08-21	Petar Kirov	1	194	2	feat(hue/settings): `config save` machinery — sparse rewrite, honest refusal
+532e43aaf	2026-08-21	Petar Kirov	3	308	9	feat(hue/config-cmd): `config show` with origins and `config write` starter
+34ec39947	2026-08-21	Petar Kirov	3	1152	687	feat(hue/cli): the CLI as CFG2's top layer; sinks read the config
+193880ca0	2026-08-21	Petar Kirov	3	493	0	feat(hue/settings): layer sources — user/project/env with located warnings
+4c612c093	2026-08-21	Petar Kirov	1	242	0	feat(hue/settings): derive the sparse overlay and the origin mirror (CFG2)
+f98f28515	2026-08-21	Petar Kirov	2	652	0	feat(hue/settings): the configuration schema — HueConfig as one aggregate
+3c4558a90	2026-08-21	Petar Kirov	1	110	3	feat(wired.json): decode/encode AA keys through a type-level `@WireConvert`
+34faec28a	2026-08-21	Petar Kirov	1	92	0	feat(core_cli.args): expose explicitly-passed options on CommandNode
+919f5d7ea	2026-08-22	Petar Kirov	1	270	0	fix(wsi.wayland): transcribe protocol request wrappers for dmd ImportC
+7cb84debf	2026-08-21	Petar Kirov	1	9	2	docs(specs/wsi): let seam-free Graphite work proceed in parallel
+848edc5a8	2026-08-21	Petar Kirov	13	168	48	feat(wsi): preserve drag releases outside the window
+a8c8ebecd	2026-08-21	Petar Kirov	19	1035	29	feat(wsi): apply standard cursor shapes on all four backends
+f37e14248	2026-08-21	Petar Kirov	11	302	38	feat(wsi.wayland): derive window scale from entered outputs
+208d14b83	2026-08-21	Petar Kirov	19	966	65	feat(wsi): deliver pointer and scroll on all four backends
+807065e0e	2026-08-21	Petar Kirov	19	359	43	feat(wsi): derive logical keys from the keyboard layout
+8fcb8cdcd	2026-08-21	Petar Kirov	10	239	217	refactor(vulkan-wsi): probe every backend through one conformance check
+bc4aa78ef	2026-08-21	Petar Kirov	10	470	785	refactor(wsi): reduce the ImportC bridges to includes
+c4765977d	2026-08-21	Petar Kirov	14	747	786	test(wsi): verify every backend against one conformance suite
+98716318c	2026-08-21	Petar Kirov	10	202	133	refactor(wsi): design out cast(void), __gshared, and manual teardown
+373a9908a	2026-08-21	Petar Kirov	6	276	24	feat(wsi.appkit): queue keys through the responder chain
+868e94a22	2026-08-21	Petar Kirov	11	642	72	feat(wsi.wayland): queue keyboard events from wl_seat
+7c893e05c	2026-08-21	Petar Kirov	8	290	27	feat(wsi.x11): queue physical keys from XCB
+62ec780ed	2026-08-22	Petar Kirov	14	35	5	fix(vulkan-wsi/examples): make the probe recipes and shaders nix-buildable
+a6ba5c5b5	2026-08-21	Petar Kirov	4	106	23	feat(vulkan-wsi): script the Wayland presentation gate
+77d94a56a	2026-08-21	Petar Kirov	7	308	23	feat(vulkan-wsi): probe X11 and Win32 runtime surfaces
+3ae9dbf07	2026-08-21	Petar Kirov	12	1143	577	feat(vulkan-wsi): draw the triangle on native Wayland
+d4f5b4b8e	2026-08-21	Petar Kirov	16	1491	1437	refactor(vulkan-wsi): share presentation primitives
+6f1354b71	2026-08-21	Petar Kirov	24	1146	32	feat(vulkan-wsi): create native presentation contexts
+2cbf124df	2026-08-22	Petar Kirov	1	9	0	build(nix/examples): enumerate only .d files with inline dub recipes
+4c3fc1814	2026-08-21	Petar Kirov	17	3846	37	feat(wsi.wayland): integrate configure with Event Horizon
+6dd1a94f5	2026-08-21	Petar Kirov	18	1142	52	feat(wsi.x11): attach XCB to Event Horizon
+a1bf36659	2026-08-21	Petar Kirov	17	1116	79	feat(wsi.appkit): host kqueue in the main run loop
+58d8dd408	2026-08-21	Petar Kirov	18	1496	99	feat(wsi.win32): integrate User32 with Event Horizon
+5706d2d5b	2026-08-21	Petar Kirov	5	346	13	feat(base.text): add bounded UTF-16 conversion
+c7d4f88fa	2026-08-20	Petar Kirov	13	1034	17	feat(wsi): add portable event and lifecycle core
+71ede3051	2026-08-20	Petar Kirov	1	13	1	fix(nix): provide CA bundle to xwin SDK fetch
+de7caa5ae	2026-08-20	Petar Kirov	10	97	50	refactor(input): share pixel producer primitives
+e66abea9d	2026-08-20	Petar Kirov	16	1036	16	docs(wsi): specify native window integration plan
+ac0ad2e82	2026-08-21	Petar Kirov	3	452	38	feat(test-runner): show syntax-highlighted code snippets for test failures
+9fe0693ea	2026-08-21	Petar Kirov	1	102	17	feat(base.source_uri): add file URI parsing and formatting helpers
+abcbede83	2026-08-21	Petar Kirov	74	364	214	refactor(syntax): split sparkles:source-view out of sparkles:syntax and decouple from sparkles:ui
+11e7e7c50	2026-08-21	Petar Kirov	4	123	92	refactor(docs-site): one DSC7 implementation — hue site emits the augmented sidebar, config.mts just reads it
+cf6acefea	2026-08-21	Petar Kirov	1	23	49	fix(event-horizon): use socketpair and bounded deadline in kqueue datapath test
+001782691	2026-08-21	Petar Kirov	2	3	2	fix(ci, test-runner): pass separate --DRT-covopt flags and filter all DRT options
+832071f2a	2026-08-21	Petar Kirov	2	41	24	fix(event-horizon): skip forkserver and pty tests on macOS
+17ecf4615	2026-08-21	Petar Kirov	1	1	2	fix(hue.format_preview): skip forkBackend test if zygote fails to start
+7d4c95bfe	2026-08-21	Petar Kirov	3	2	2	fix(ci): fix linkonce-templates in base, unittest config in code-instrumentation, and docsite build heap
+17f3f7648	2026-08-20	Petar Kirov	1	418	203	feat(ci): stream all `--test` logs live and report whole-run stats
+4641df46f	2026-08-20	Petar Kirov	5	102	21	feat(test-runner.reporting): recap failed tests after the summary
+943ecfd45	2026-08-20	Petar Kirov	1	526	1	feat(core-cli.process_utils): stream monitored child output as a line range
+16798205f	2026-08-20	Petar Kirov	1	74	39	feat(ci): put Δt and resource stats on the right of result boxes
+781ba4ee7	2026-08-20	Petar Kirov	1	205	26	feat(ui.components.box): dual-sided titleRight and footerRight labels
+efb92544c	2026-08-19	Petar Kirov	3	277	44	feat(ci): stream the result-box header before the command, with log Δt
+063d6725f	2026-08-19	Petar Kirov	1	2	16	fix(ci): drop logger lines that repeat the result boxes
+eede6f87f	2026-08-19	Petar Kirov	1	25	9	fix(base.hw_caps): probe Darwin RAM via sysctl, not `_SC_PHYS_PAGES`
+a8c002db9	2026-08-19	Petar Kirov	2	573	115	feat(ci): timestamped logs and per-test resource stats
+044a30cd5	2026-08-19	Petar Kirov	2	343	34	feat(base.hw_caps): derate parallelism for memory pressure, load, and swap
+6e57b7d12	2026-08-21	Petar Kirov	4	183	12	"fix(docs.site): the nested docs nav gets the DSC7 ""(source)"" entries too, and leaf links stack"
+26e69e6cc	2026-08-21	Petar Kirov	4	110	30	feat(docs-site): listing directories join the docs sidebar (DSC7) + DOC11/DSC7 spec rows
+569e703de	2026-08-21	Petar Kirov	4	374	9	feat(docs.page_shell): the explorer sidebar + unified directory pages (DOC11)
+8ebd1f836	2026-08-21	Petar Kirov	1	31	11	fix(docs.breadcrumbs): a segment opens ITS directory's index, not its parent's
+f93f5984e	2026-08-20	Petar Kirov	1	31	45	docs(specs/ui-sdl3): record that the X11-good loop is committed
+1631b1da1	2026-08-20	Petar Kirov	1	12	10	fix(ui-sdl3.events): disambiguate size_t on Darwin
+57a8d73e8	2026-08-20	Petar Kirov	3	548	125	feat(ui-sdl3): grow-only live resize with amortized reap
+ebc20e7a8	2026-08-20	Petar Kirov	2	768	0	docs(specs/ui-sdl3): hand off native Wayland live-resize
+ff06f0697	2026-08-19	Petar Kirov	2	24	48	feat(ui-sdl3/examples): spell present mode as a wired enum
+17ce3dd3a	2026-08-19	Petar Kirov	4	63	16	feat(core-cli.args): parse enums through sparkles:wired wire names
+5ae6e9d96	2026-08-19	Petar Kirov	3	112	7	feat(ui-sdl3): add --present-mode for the triangle swapchain
+75586b019	2026-08-19	Petar Kirov	1	15	3	fix(ui-sdl3/examples): release color-attachment read after the acquire barrier
+b3ef191bc	2026-08-19	Petar Kirov	1	156	29	feat(ui-sdl3/examples): dynamic-render the triangle and skip shrink rebuilds
+4c1be07ba	2026-08-19	Petar Kirov	4	128	21	feat(ui-sdl3): grow-only swapchains, dynamic rendering, idle before teardown
+90d6a5ea1	2026-08-19	Petar Kirov	2	28	0	feat(vulkan.dispatch): load optional dynamic-rendering commands
+e70faba59	2026-08-19	Petar Kirov	1	171	45	feat(ui-sdl3/examples): rebuild the triangle swapchain without idling
+56ca71f95	2026-08-19	Petar Kirov	2	349	8	feat(ui-sdl3): retire swapchain and present semaphores instead of idling
+93f144bfc	2026-08-19	Petar Kirov	5	1093	0	feat(ui-sdl3.events): translate SDL's queue into sparkles:input
+133ed3c17	2026-08-19	Petar Kirov	2	51	45	refactor(input.events): promote wheelSteps out of ui-raylib
+2e3a7a144	2026-08-21	Petar Kirov	3	38	21	docs(specs/docs): mark D2 done — hue site, the manifest, and the link rewriting shipped
+74517cbfb	2026-08-21	Petar Kirov	6	128	3	feat(docs-site): wire the hue-site listings into the VitePress build (DSC4)
+3b3c1b7c4	2026-08-21	Petar Kirov	2	521	1	feat(hue.site): the `hue site` subcommand — link-driven listings + manifest.json (DSC1-DSC3, DSC6)
+4a0bd6171	2026-08-21	Petar Kirov	4	494	89	feat(docs.site): the site-discovery vocabulary — config, links, skip policy, routes, manifest (DSC1-DSC3)
+c8ae0b694	2026-08-21	Petar Kirov	2	48	15	build(ui.property_tree): keep fuzzy out of dependency builds entirely
+11943fcaf	2026-08-21	Petar Kirov	3	91	77	docs(specs/ui): record the property-tree implementation status
+d0c4c369d	2026-08-21	Petar Kirov	3	19	15	build(ui/fuzzy): import-only fuzzy, with the seam fully templated
+0277bb560	2026-08-21	Petar Kirov	11	985	16	feat(ui-gallery): the Property tree page — the component, end to end
+9131bcb34	2026-08-21	Petar Kirov	2	520	4	feat(ui.components.property_view): the property presentation layer
+274aabae6	2026-08-21	Petar Kirov	2	1204	206	feat(ui.property_tree): ranked fuzzy search projections (PRT29-PRT34)
+37a371579	2026-08-21	Petar Kirov	1	902	0	feat(ui.property_tree): the write path — value edits and host-stored history
+e90f31a84	2026-08-21	Petar Kirov	1	1263	0	feat(ui.property_tree): the read core — metadata, paths, type-only walk
+554c4f6f2	2026-08-21	Petar Kirov	3	129	13	feat(ui.components.tree): share one nodeExpandable projection (PRT12)
+9ecb4e726	2026-08-21	Petar Kirov	2	21	21	docs(specs/docs): mark D1 done — DOC8 sidebar rendering and DOC10 escaping shipped
+100a10b1c	2026-08-21	Petar Kirov	5	304	10	feat(docs.sidebar): render the docs-site sidebar on generated pages (DOC8)
+36e7225b1	2026-08-21	Petar Kirov	3	16	19	refactor(docs.options): fold escapeInto into the shared five-entity writeHtmlEscaped (DOC10)
+c8d5e2ee4	2026-08-21	Petar Kirov	1	34	30	docs(specs/ui): register the property-tree spec in the overview
+89df76bf9	2026-08-21	Petar Kirov	1	150	105	docs(specs/ui): resolve the property-tree spec review findings
+9d0072f8b	2026-08-21	Petar Kirov	2	21	0	docs(research/property-tree): point the superseded survey claims forward
+d300feb7f	2026-08-21	Petar Kirov	2	128	24	docs(research/property-tree): prove element keys and quoted path segments
+1b7d2ce7e	2026-08-21	Petar Kirov	1	49	4	docs(research/property-tree): prove the symbol-based `@Editor` in the spike
+e387224db	2026-08-21	Petar Kirov	7	318	0	docs(specs/docs): specify the sparkles:docs SSG surface, site discovery, API doc generator, and flow-mode components
+cc71f5f68	2026-08-21	Petar Kirov	8	125	120	docs(specs/hue): repoint module references after the sparkles:docs extraction
+7ba00a0dd	2026-08-21	Petar Kirov	6	16	10	refactor(ci): consume the docs-sidebar schema from sparkles:docs
+754edcdd0	2026-08-21	Petar Kirov	14	879	759	feat(docs): extract the static doc-site library from hue as sparkles:docs
+86a218b9c	2026-08-21	Petar Kirov	2	168	104	refactor(build-primitives.glob_walk): extract the glob-filtered gitignore walk from hue's source_set
+f46d6ea60	2026-08-21	Petar Kirov	4	520	5	feat(hue.breadcrumbs): a path trail on every page of a mirrored gallery
+46cdbfd42	2026-08-20	Petar Kirov	1	10	10	docs(specs/hue): record the appearance toggle under HTM10
+9d41bbcea	2026-08-20	Petar Kirov	1	124	0	feat(hue.gallery): an appearance toggle, on VitePress's own key
+0013aafa0	2026-08-20	Petar Kirov	1	68	12	feat(hue.site_tree): give directory indexes the theme's chrome too
+181ea7198	2026-08-20	Petar Kirov	3	257	49	feat(hue.gallery): derive the whole page chrome from the theme
+c9de3cb92	2026-08-20	Petar Kirov	2	21	21	docs(specs/hue): repoint the status shas the rebase-merge orphaned
+bd868ab7d	2026-08-20	Petar Kirov	1	6	0	config(gitignore): ignore the gallery default output dir
+f2dbc4d01	2026-08-20	Petar Kirov	2	71	13	feat(hue.gallery): run the twoslash extractions in parallel (--jobs)
+fbfac2e8b	2026-08-20	Petar Kirov	1	209	20	fix(hue.live_types): capture the extractor's stderr and bound each run
+220252487	2026-08-20	Petar Kirov	7	268	21	feat(hue.gallery): batch-extract .d sources for --twoslash
+4b6c930e4	2026-08-20	Petar Kirov	1	158	56	docs(specs/ui): design ranked property filtering
+7ef9df3bb	2026-08-20	Petar Kirov	3	24	24	style(specs/hue): re-align the tree-view table prettier reflows
+05670ef57	2026-08-20	Petar Kirov	2	71	76	docs(specs/hue): repoint status shas and the renumbered CLI references
+8d17ccfab	2026-08-06	Petar Kirov	3	52	42	docs(specs/hue): record recursive sets and the mirrored gallery tree
+3f0a71055	2026-08-06	Petar Kirov	1	7	1	feat(hue): --recursive / --root for whole-tree galleries
+037e1e1a7	2026-08-06	Petar Kirov	2	625	59	feat(hue.site_tree): mirror the source tree in the gallery output
+42bb11815	2026-08-06	Petar Kirov	1	371	18	feat(hue.source_set): recursive, .gitignore-aware document sets
+09d9df889	2026-08-06	Petar Kirov	1	2	1	build(hue): depend on sparkles:build-primitives
+b6c5bb297	2026-08-05	Petar Kirov	2	32	26	docs(specs/hue): record the shared stylesheet and the scoped light/dark route
+8044e7397	2026-08-05	Petar Kirov	3	361	20	feat(hue): --dark-theme / --stylesheet / --emit-stylesheet, shared web assets
+1a653def3	2026-08-05	Petar Kirov	2	249	59	feat(hue.gallery): FragmentOptions, and take the page background explicitly
+58fd50147	2026-08-05	Petar Kirov	2	141	26	feat(syntax.render.html): scoped stylesheets for dual light/dark output
+a6c810926	2026-08-20	Petar Kirov	3	29	29	style(specs): re-align the requirement tables prettier reflows
+24ea7b8ba	2026-08-20	Petar Kirov	1	38	2	fix(nix/android): generate parser.c when a grammar ships none
+0bf2a456a	2026-08-20	Petar Kirov	1	1	0	fix(dmd_lsp.testing): close the importC unittest before the edition test
+cf7e2d667	2026-08-06	Petar Kirov	2	71	47	refactor(ci.fences): read srcExclude from the shared docs config
+6ba32ad06	2026-08-20	Petar Kirov	1	11	0	fix(nix/ci): give the ci package pkg-config and tree-sitter
+197b3216f	2026-08-05	Petar Kirov	3	1548	14	feat(ci.fences): add the ci --audit-fences subcommand
+735680592	2026-08-04	Petar Kirov	5	35	35	docs: migrate example output blocks to the ```ansi fence
+1e1e5de7f	2026-08-04	Petar Kirov	1	5	3	config(editorconfig): unset charset for the README too
+84537a91f	2026-08-04	Petar Kirov	1	25	21	docs(guidelines/move-semantics): convert the [Error] blocks to twoslash
+cd1f0bec8	2026-08-04	Petar Kirov	3	44	3	feat(dmd_lsp.init_): accept -edition=<year> in the @dflags subset
+1cfae7385	2026-08-04	Petar Kirov	3	44	20	docs(guidelines): make ```ansi the example-output convention
+2ddc64df6	2026-08-04	Petar Kirov	1	11	5	feat(ci): default new output blocks to the ```ansi fence
+c84bf357e	2026-08-04	Petar Kirov	3	20	16	docs(specs/hue): make grammar coverage a requirement (LNG2-LNG4, DEG5)
+c736beb53	2026-08-04	Petar Kirov	3	71	18	feat(hue.source_set): list extensionless files and name their language
+1611638c4	2026-08-06	Petar Kirov	1	8	2	test(syntax.ts.registry): expect sdl to keep its own grammar
+902d4bf99	2026-08-04	Petar Kirov	1	139	3	feat(syntax.ts.registry): fold every language label onto its own grammar
+c9c494e37	2026-08-04	Petar Kirov	3	276	105	feat(nix/ts-grammars): ship 44 more grammars from one shared language list
+815a14f81	2026-08-04	Petar Kirov	3	149	0	feat(syntax.label): resolve the captures the wider bundle emits
+24c7506d3	2026-08-20	Petar Kirov	1	12	1	ci(gh-actions): raise the test-job cap for the windowing demos
+bc51cc6b3	2026-08-20	Petar Kirov	1	13	0	config(lychee): exclude the freedesktop wiki, which 418s the spoofed UA
+501f196b4	2026-08-20	Petar Kirov	2	2	2	docs(research/os-apis): pin the fcitx5 and icewm citations to commit SHAs
+66a2a3d91	2026-08-20	Petar Kirov	9	5257	4318	refactor(docs/vitepress): make the sidebar a JSON data file both the site and D read
+91449a6e9	2026-07-11	Petar Kirov	1	6	1	fix(research): sync the deselect before the rival ButtonPress selection in x11 f11
+bf33d33a1	2026-07-11	Petar Kirov	1	20	20	docs(research): fill the F05/F06 Win32 and macOS feature-matrix cells
+f003e5f3a	2026-07-11	Petar Kirov	5	16	16	style(research): normalize table alignment and backtick identifiers for prettier
+4463503c5	2026-06-11	Petar Kirov	6	1432	2	docs(research): add os-apis synthesis layer (divergence map, event sequences, design constraints)
+508abb4c4	2026-06-11	Petar Kirov	3	540	2	docs(research): add os-apis appkit f16+f17 findings — THE MATRIX IS COMPLETE
+0b9a9ad1a	2026-06-11	Petar Kirov	4	572	20	docs(research): add os-apis win32 f16+f17 findings — win32 column complete
+bf24d0d8b	2026-06-11	Petar Kirov	11	2827	20	docs(research): add os-apis appkit f14+f15 demos + findings
+253fdc62d	2026-06-11	Petar Kirov	7	1635	11	docs(research): add os-apis wayland f15+f16 demos + findings
+a87e4a134	2026-06-11	Petar Kirov	14	2632	5	docs(research): add os-apis appkit f10+f11 demos + findings
+cf8a18783	2026-06-11	Petar Kirov	14	3109	83	docs(research): add os-apis win32 f14+f15 demos + findings
+a11be55c6	2026-06-11	Petar Kirov	20	3803	4	docs(research): add os-apis wayland f17 threading demo + findings — wayland column complete
+705cd92b8	2026-06-11	Petar Kirov	22	3268	20	docs(research): add os-apis wayland f13+f14 demos + findings
+86bd06118	2026-06-11	Petar Kirov	14	2203	2	docs(research): add os-apis win32 f10+f11 demos + findings
+24f316364	2026-06-11	Petar Kirov	13	2054	2	docs(research): add os-apis x11 f16+f17 demos + findings — x11 column complete
+2fbe69750	2026-06-11	Petar Kirov	9	2108	20	docs(research): add os-apis appkit f09+f12 demos + findings
+682ebaa06	2026-06-11	Petar Kirov	17	3208	20	docs(research): add os-apis wayland f10+f11 demos + findings
+7168a64e1	2026-06-11	Petar Kirov	1	12	0	docs(research): queue win32 f09/f12 real-hardware confirmations
+d6f1ee33b	2026-06-11	Petar Kirov	9	1611	2	docs(research): add os-apis win32 f09+f12 demos + findings
+7e7a5f38b	2026-06-11	Petar Kirov	13	1830	3	docs(research): add os-apis x11 f14+f15 demos + findings
+fa63410cc	2026-06-11	Petar Kirov	13	1916	20	docs(research): add os-apis x11 f10+f11 demos + findings
+f157274f3	2026-06-11	Petar Kirov	15	2771	20	docs(research): add os-apis wayland f09+f12 demos + findings
+1d98457a3	2026-06-11	Petar Kirov	13	1627	2	docs(research): add os-apis x11 f09+f12 demos + findings
+f76e58954	2026-06-11	Petar Kirov	10	1955	20	docs(research): add os-apis win32 f07+f08 demos + findings
+0ac8ff0d1	2026-06-11	Petar Kirov	10	2314	21	docs(research): add os-apis appkit f07+f08 demos + findings
+6f6ce51bf	2026-06-11	Petar Kirov	6	713	20	docs(research): add os-apis x11 f08 dpi-scaling demo + findings
+16b140c4e	2026-06-11	Petar Kirov	7	1388	0	docs(research): add os-apis x11 f07 text-input demo + findings
+3957186bc	2026-06-11	Petar Kirov	9	1305	20	docs(research): add os-apis wayland f08 dpi-scaling demo + findings
+8962689f4	2026-06-11	Petar Kirov	6	1444	0	docs(research): add os-apis wayland f07 text-input demo + findings
+0aaf750c0	2026-06-11	Petar Kirov	5	934	0	docs(research): add os-apis appkit f06 keyboard demo + findings
+e7b1dab6e	2026-06-11	Petar Kirov	4	821	0	docs(research): add os-apis appkit f05 loop-wakeup demo + findings
+4e0ae8c56	2026-06-11	Petar Kirov	6	897	0	docs(research): add os-apis win32 f06 keyboard demo + findings
+074ff017a	2026-06-11	Petar Kirov	4	683	0	docs(research): add os-apis win32 f05 loop-wakeup demo + findings
+d4ad68c28	2026-06-11	Petar Kirov	7	828	25	docs(research): add os-apis win32 f04 frame-pacing demo + findings
+a4f1a14bf	2026-06-11	Petar Kirov	4	974	0	docs(research): add os-apis win32 f03 modal-loop demo + findings
