@@ -27,6 +27,8 @@ import std.conv : text;
 
 import core.time : Duration;
 
+import sparkles.base.term_control : PointerShape;
+
 import sparkles.input.capability : InputCapabilities, mousePointer;
 import sparkles.input.events : Event, Key, KeyEvent, Point, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
@@ -231,6 +233,13 @@ struct SettingsPaneT(T)
     {
         tv.tick(caps, cast(float) elapsed.total!"hnsecs" / 10_000_000.0f);
     }
+
+    /// The pointer shape the bar machine wants — ns-resize while hovering
+    /// or grabbing the bar, default elsewhere. The hosts' one-per-frame
+    /// shape input while the modal owns the pointer, exactly as every other
+    /// bar in the app reports through its host (`DCK9`).
+    PointerShape pointerShape() const @safe pure nothrow @nogc
+        => tv.scroll.shape();
 
     // ── keys ────────────────────────────────────────────────────────────────
 
@@ -1105,6 +1114,15 @@ version (unittest)
     p.tickAnims(50.msecs);
     assert(p.tv.scroll.vAnim.percent >= pctBefore,
         "the hover-expand easing ticks");
+
+    // Over the bar the machine wants ns-resize — the hosts report it as
+    // the frame's pointer shape, like every other bar in the app.
+    assert(p.pointerShape() == PointerShape.nsResize);
+    PointerEvent away = hover;
+    away.pos = Point(area.x + 2, area.y + 2);
+    cast(void) p.handleOverlay(Event(away), g);
+    assert(p.pointerShape() == PointerShape.default_,
+        "off the bar the shape returns to default");
 
     // A press on a row selects it; pressing the selected row activates.
     PointerEvent rowPress = press;
