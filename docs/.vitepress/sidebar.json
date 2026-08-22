@@ -4960,7 +4960,33 @@
       },
       {
         "text": "UI backend seam",
-        "link": "/research/ui-backend-seam/"
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/research/ui-backend-seam/"
+          },
+          {
+            "text": "Comparison",
+            "link": "/research/ui-backend-seam/comparison"
+          },
+          {
+            "text": "Slint",
+            "link": "/research/ui-backend-seam/slint"
+          },
+          {
+            "text": "Qt QPaintEngine",
+            "link": "/research/ui-backend-seam/qt-qpaintengine"
+          },
+          {
+            "text": "Notcurses",
+            "link": "/research/ui-backend-seam/notcurses"
+          },
+          {
+            "text": "egui",
+            "link": "/research/ui-backend-seam/egui"
+          }
+        ]
       }
     ]
   }

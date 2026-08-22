@@ -1,6 +1,7 @@
-# The UI backend seam — survey plan
+# The UI backend seam
 
-**Status:** planned. No subject surveyed yet; this document is the brief.
+**Status:** in progress — 4 of 11 subjects surveyed; the synthesis in
+[`comparison.md`](./comparison.md) reports findings from those four only.
 **Last reviewed:** August 22, 2026
 
 `sparkles:ui` draws through one seam, the Design-by-Introspection concept
@@ -52,19 +53,19 @@ not have an answer to a question is a finding, not a gap in the notes.
 Grouped by what they can teach, not by popularity. **Category** is the axis the
 synthesis will re-cut on.
 
-| Subject          | Category                | Why it is on the list                                                                                          | Status  |
-| ---------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------- | ------- |
-| Slint            | spans the range         | Software renderer for MCUs _and_ Skia/femtovg GPU backends behind one `ItemRenderer` trait — the closest peer  | planned |
-| GTK4 / GSK       | retained render tree    | `GskRenderNode` tree with Vulkan, GL and Cairo renderers; node kinds are semantic (`GskBorderNode`)            | planned |
-| Flutter engine   | retained scene          | `SceneBuilder` / `Picture`; the layer tree is the seam and `dart:ui` is deliberately narrow                    | planned |
-| egui             | backend gets geometry   | Emits `ClippedPrimitive` meshes — the backend receives triangles, not commands. The opposite extreme           | planned |
-| Zed GPUI         | primitive scene         | A `Scene` of quads, shadows, glyphs and paths; text measurement is a first-class service                       | planned |
-| Qt QPaintEngine  | virtual paint device    | The classic answer: an abstract paint engine with an explicitly declared feature set                           | planned |
-| WebRender        | display list → batching | Browser display lists; how a semantic list is lowered to GPU work, and what it refuses to carry                | planned |
-| Vello            | encoding, not commands  | The scene is an encoded buffer consumed by compute shaders — asks whether "commands" is the right shape at all | planned |
-| Ratatui          | cell-only               | The terminal end done well; what a cell backend genuinely needs, so the seam does not over-serve it            | planned |
-| Notcurses        | cell-only, sub-cell     | Sextants, quadrants and pixel protocols — a cell target that _does_ address below the cell (tests Q5)          | planned |
-| Cairo / Direct2D | device abstraction      | The prior generation of "one drawing API, many devices"; where it leaks                                        | planned |
+| Subject                                 | Category                | Why it is on the list                                                                                          | Status       |
+| --------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------- | ------------ |
+| [Slint](./slint.md)                     | spans the range         | Software renderer for MCUs _and_ Skia/femtovg GPU backends behind one `ItemRenderer` trait — the closest peer  | **surveyed** |
+| GTK4 / GSK                              | retained render tree    | `GskRenderNode` tree with Vulkan, GL and Cairo renderers; node kinds are semantic (`GskBorderNode`)            | planned      |
+| Flutter engine                          | retained scene          | `SceneBuilder` / `Picture`; the layer tree is the seam and `dart:ui` is deliberately narrow                    | planned      |
+| [egui](./egui.md)                       | backend gets geometry   | Emits `ClippedPrimitive` meshes — the backend receives triangles, not commands. The opposite extreme           | **surveyed** |
+| Zed GPUI                                | primitive scene         | A `Scene` of quads, shadows, glyphs and paths; text measurement is a first-class service                       | planned      |
+| [Qt QPaintEngine](./qt-qpaintengine.md) | virtual paint device    | The classic answer: an abstract paint engine with an explicitly declared feature set                           | **surveyed** |
+| WebRender                               | display list → batching | Browser display lists; how a semantic list is lowered to GPU work, and what it refuses to carry                | planned      |
+| Vello                                   | encoding, not commands  | The scene is an encoded buffer consumed by compute shaders — asks whether "commands" is the right shape at all | planned      |
+| Ratatui                                 | cell-only               | The terminal end done well; what a cell backend genuinely needs, so the seam does not over-serve it            | planned      |
+| [Notcurses](./notcurses.md)             | cell-only, sub-cell     | Sextants, quadrants and pixel protocols — a cell target that _does_ address below the cell (tests Q5)          | **surveyed** |
+| Cairo / Direct2D                        | device abstraction      | The prior generation of "one drawing API, many devices"; where it leaks                                        | planned      |
 
 **Deliberately not surveyed**: React/DOM-style retained trees where the
 "backend" is a browser, and game engines whose text story is a texture atlas
@@ -72,8 +73,8 @@ with no shaping. Both answer a different question.
 
 ## What the survey must produce
 
-1. **`comparison.md`** — the capstone. One row per subject against Q1–Q8, plus
-   the taxonomy re-cuts (by unit model, by command shape, by who owns payloads).
+1. **[`comparison.md`](./comparison.md)** — the capstone. Written against the
+   four surveyed subjects; extend it as more land.
 2. **`concepts.md`** — shared vocabulary, because the field does not agree on
    terms. "Display list", "scene", "render node" and "command buffer" are used
    for at least three different things across these subjects, and the synthesis
