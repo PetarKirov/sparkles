@@ -114,6 +114,54 @@ struct WsiConfig
     ActivationPolicy activation;
 }
 
+/**
+Interactive-resize edge for compositor-driven resizing, with
+`xdg_toplevel`'s `resize_edge` values (a vertical|horizontal bitfield the
+other platforms can map). Client affordances need this wherever no server
+decoration exists to grab — GNOME draws none.
+*/
+enum ResizeEdge : uint
+{
+    none = 0,
+    top = 1,
+    bottom = 2,
+    left = 4,
+    topLeft = 5,
+    bottomLeft = 6,
+    right = 8,
+    topRight = 9,
+    bottomRight = 10,
+}
+
+/**
+Maps a position to the border zone it lands in — the shared client-side
+affordance for `startInteractiveResize`, sized by `grip` logical units.
+*/
+ResizeEdge resizeEdgeAt(in SurfaceMetrics metrics, double x, double y,
+    double grip = 16) pure nothrow @nogc
+{
+    const width = metrics.logicalSize.width;
+    const height = metrics.logicalSize.height;
+    uint edge;
+    if (y < grip) edge |= ResizeEdge.top;
+    else if (y > height - grip) edge |= ResizeEdge.bottom;
+    if (x < grip) edge |= ResizeEdge.left;
+    else if (x > width - grip) edge |= ResizeEdge.right;
+    return cast(ResizeEdge) edge;
+}
+
+@("wsi.types.resizeEdgeAt.zonesAndCorners")
+pure nothrow @nogc
+unittest
+{
+    const metrics = SurfaceMetrics(LogicalSize(200, 100),
+        PhysicalSize(200, 100), ScaleFactor(1));
+    assert(resizeEdgeAt(metrics, 100, 50) == ResizeEdge.none);
+    assert(resizeEdgeAt(metrics, 8, 50) == ResizeEdge.left);
+    assert(resizeEdgeAt(metrics, 195, 95) == ResizeEdge.bottomRight);
+    assert(resizeEdgeAt(metrics, 100, 5) == ResizeEdge.top);
+}
+
 enum DecorationPreference : ubyte
 {
     automatic,

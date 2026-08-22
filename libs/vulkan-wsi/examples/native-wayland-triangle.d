@@ -36,6 +36,7 @@ import sparkles.base.logger : LogLevel, initLogger, trace;
 import sparkles.base.prettyprint : PrettyPrintOptions, prettyPrint;
 import sparkles.core_cli.args;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
+import sparkles.input.events : PointerButton;
 import sparkles.event_horizon.errors : IoError;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi;
@@ -176,6 +177,9 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     bool sizeChanged;
     bool exposed;
 
+    bool wantMove;
+    ResizeEdge wantResize;
+
     auto drainEvents = () {
         sizeChanged = false;
         exposed = false;
@@ -194,9 +198,40 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
                 (in FrameReadyEvent _) { frameReady = true; },
                 (in ExposedEvent _) { exposed = true; },
                 (in CloseRequestedEvent _) { closeRequested = true; },
+                (in PointerEvent value) {
+                    // GNOME draws no server decorations, so a bare toplevel
+                    // has nothing to grab: a press near a border hands the
+                    // drag to the compositor as an interactive resize, and
+                    // an alt-press anywhere as a move. Recorded here, sent
+                    // after the drain — the sink stays platform-call-free.
+                    if (value.phase != PointerPhase.pressed
+                        || value.button != PointerButton.left)
+                        return;
+                    if (value.modifiers.alt)
+                        wantMove = true;
+                    else
+                        wantResize = resizeEdgeAt(metrics,
+                            value.logicalPosition.x,
+                            value.logicalPosition.y);
+                },
                 (_) {});
         });
     };
+
+    void applyPointerRequests()
+    {
+        if (wantMove)
+        {
+            wantMove = false;
+            wsi.startInteractiveMove(window);
+        }
+        if (wantResize != ResizeEdge.none)
+        {
+            const edge = wantResize;
+            wantResize = ResizeEdge.none;
+            wsi.startInteractiveResize(window, edge);
+        }
+    }
 
     while (!ready)
     {
@@ -207,6 +242,7 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
         auto drained = drainEvents();
         if (drained.hasError)
             return err!void(describe(drained.error));
+        applyPointerRequests();
         if (MonoTime.currTime >= startupDeadline)
             return err!void("initial Wayland configure timed out");
     }
@@ -422,6 +458,7 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
             auto drained = drainEvents();
             if (drained.hasError)
                 return err!void(describe(drained.error));
+            applyPointerRequests();
             const dispatchMs =
                 (MonoTime.currTime - dispatchStarted).total!"usecs" / 1_000.0;
             if (dispatchMs > maxDispatchMs)

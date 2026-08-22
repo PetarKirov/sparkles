@@ -238,7 +238,16 @@ kqueue hands armed ops to the kernel only at the next wait — so the
 property steps once between arming and the phase, the shape a real app
 has, and AppKit's `stopModal` needs a posted wake event when called from
 a source callout. Interactive move/size traces and dialog loops
-(`WM_ENTERIDLE`) remain. The scale slice makes
+(`WM_ENTERIDLE`) remain. Two UAT-driven additions follow: `wsi-input-echo`
+(`libs/wsi/examples/`) opens one window on the platform's native backend
+and prints every queued event - the standing interactive acceptance
+program, and the vehicle for the owed live-IME runtime evidence on a
+text-input-v3 compositor - and F13's first sliver,
+`startInteractiveMove`/`startInteractiveResize` over `xdg_toplevel`'s
+move/resize with the shared `ResizeEdge`/`resizeEdgeAt` affordance,
+because GNOME draws no server decorations and a bare toplevel is
+otherwise unmovable and unresizable there; the native triangle and the
+echo both grow border-drag resize and alt-drag move on it. The scale slice makes
 `SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
 window's scale is the maximum of its entered outputs, a change requests the
 matching buffer scale and reports one atomic metrics transition — verified at
