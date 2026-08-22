@@ -33,3 +33,14 @@ sed -i \
     "$repo/libs/wsi/src/wayland_cursor_shape_protocol.c"
 # The client header forward-declares the tablet interface for the same
 # unused request; the declaration is harmless and stays.
+
+# IME text input (unstable text-input-v3): commit strings, pre-edit with
+# byte-range cursor/selection, and surrounding-text/change-cause requests.
+text_xml="$(pkg-config --variable=pkgdatadir wayland-protocols)/unstable/text-input/text-input-unstable-v3.xml"
+
+wayland-scanner client-header "$text_xml" \
+    "$repo/libs/wsi/src/wayland_text_input_client_protocol.h"
+wayland-scanner private-code "$text_xml" \
+    "$repo/libs/wsi/src/wayland_text_input_protocol.c"
+sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
+    "$repo/libs/wsi/src/wayland_text_input_protocol.c"

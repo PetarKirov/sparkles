@@ -184,7 +184,18 @@ flight (retarget and teardown reap it deterministically), and a shared
 hold-a-repeating-key conformance property verifies the platform repeat
 channel on X11 (detectable auto-repeat under Xvfb) and the synthesized one
 through the kiosk-Weston lane, where Weston filters the X server's own
-repeat so every observed repeat is the client's. Keymap-change events, XIM,
+repeat so every observed repeat is the client's. The Wayland text-input
+slice starts F07's third column: `zwp_text_input_manager_v3` binds whenever
+the compositor offers it (the manager and the seat arrive in either
+registry order), the per-seat text input auto-enables on the compositor's
+enter — the always-on role IMM32 already plays — and the double-buffered
+protocol state is applied as one pure batch on `done`: commit string before
+the new pre-edit, byte-offset cursor/selection mapped to the shared
+composition vocabulary with the conventional underline segment, and an
+active composition ended by exactly one empty event. The batch and mapping
+semantics are model-tested; live compositor IME evidence is owed to a
+text-input-v3 compositor, because this Weston implements only text-input-v1
+and never advertises the v3 manager. Keymap-change events, XIM,
 candidate-window placement, and raw input remain. The scale slice makes
 `SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
 window's scale is the maximum of its entered outputs, a change requests the

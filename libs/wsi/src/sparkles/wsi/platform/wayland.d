@@ -11,7 +11,7 @@ module sparkles.wsi.platform.wayland;
 version (linux):
 
 import core.stdc.errno : EAGAIN, errno;
-import core.stdc.string : strcmp;
+import core.stdc.string : strcmp, strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
@@ -103,6 +103,11 @@ struct WaylandWsi
     private bool pendingScroll_;
     private const(wl_surface)* keyboardFocus_;
     private Mods keyboardMods_;
+    private zwp_text_input_manager_v3* textInputManager_;
+    private zwp_text_input_v3* textInput_;
+    private const(wl_surface)* textInputFocus_;
+    private PendingTextInput pendingText_;
+    private bool compositionActive_;
     private int keyRepeatRate_;
     private int keyRepeatDelayMs_;
     private OpHandle repeatTimer_;
@@ -634,6 +639,17 @@ struct WaylandWsi
             bootstrapSync_ = null;
         }
         releasePointer();
+        if (textInput_ !is null)
+        {
+            zwp_text_input_v3_destroy(textInput_);
+            textInput_ = null;
+            textInputFocus_ = null;
+        }
+        if (textInputManager_ !is null)
+        {
+            zwp_text_input_manager_v3_destroy(textInputManager_);
+            textInputManager_ = null;
+        }
         if (cursorShapeManager_ !is null)
         {
             wp_cursor_shape_manager_v1_destroy(cursorShapeManager_);
@@ -882,7 +898,34 @@ struct WaylandWsi
                 owner.remember(wsiError(WsiErrorKind.nativeFailure,
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install wl_seat listener"));
+            owner.ensureTextInput();
         }
+        else if (strcmp(interfaceName,
+            zwp_text_input_manager_v3_interface.name) == 0
+            && owner.textInputManager_ is null)
+        {
+            owner.textInputManager_ = cast(zwp_text_input_manager_v3*)
+                wl_registry_bind(registry, name,
+                    &zwp_text_input_manager_v3_interface, 1);
+            owner.ensureTextInput();
+        }
+    }
+
+    /// The manager and the seat arrive in either registry order; the
+    /// per-seat text-input object exists once both are bound.
+    private void ensureTextInput() nothrow @nogc
+    {
+        if (textInput_ !is null || textInputManager_ is null
+            || seat_ is null)
+            return;
+        textInput_ = zwp_text_input_manager_v3_get_text_input(
+            textInputManager_, seat_);
+        if (textInput_ !is null
+            && zwp_text_input_v3_add_listener(textInput_,
+                listenerPtr(textInputListener), &this) != 0)
+            remember(wsiError(WsiErrorKind.nativeFailure,
+                WsiOperation.dispatch, BackendKind.wayland, 0,
+                "failed to install zwp_text_input_v3 listener"));
     }
 
     private extern (C) static void onRegistryGlobalRemove(void* data,
@@ -1576,6 +1619,103 @@ struct WaylandWsi
         armRepeatOp();
     }
 
+    /*
+    text-input-v3 is double-buffered: preedit/commit/delete events stash
+    pending state and `done` applies one atomic batch (fields not sent in a
+    cycle reset to empty). This window layer plays the always-enabled role
+    IMM32 already plays on Win32 — enable on the compositor's enter, disable
+    on leave — until an explicit per-window text-input opt-in API exists.
+    */
+
+    private extern (C) static void onTextInputEnter(void* data,
+        zwp_text_input_v3* textInput, wl_surface* surface) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.textInputFocus_ = surface;
+        zwp_text_input_v3_enable(textInput);
+        zwp_text_input_v3_commit(textInput);
+    }
+
+    private extern (C) static void onTextInputLeave(void* data,
+        zwp_text_input_v3* textInput, wl_surface* surface) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        zwp_text_input_v3_disable(textInput);
+        zwp_text_input_v3_commit(textInput);
+        if (owner.compositionActive_)
+        {
+            const index = owner.indexOfSurface(surface);
+            if (index != size_t.max)
+                owner.emit(owner.idAt(index), CompositionEvent());
+            owner.compositionActive_ = false;
+        }
+        if (owner.textInputFocus_ is surface)
+            owner.textInputFocus_ = null;
+        owner.pendingText_ = PendingTextInput();
+    }
+
+    private extern (C) static void onTextInputPreedit(void* data,
+        zwp_text_input_v3*, const(char)* text, int cursorBegin,
+        int cursorEnd) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        // An oversized pre-edit degrades to none rather than to a cut
+        // multi-byte sequence; InlineUtf8.assign rejects overflow whole.
+        owner.pendingText_.preedit.clear();
+        if (text !is null)
+        {
+            const assigned =
+                owner.pendingText_.preedit.assign(text.spanFromZ);
+            if (!assigned)
+                owner.pendingText_.preedit.clear();
+        }
+        owner.pendingText_.cursorBegin = cursorBegin;
+        owner.pendingText_.cursorEnd = cursorEnd;
+    }
+
+    private extern (C) static void onTextInputCommit(void* data,
+        zwp_text_input_v3*, const(char)* text) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        owner.pendingText_.commit.clear();
+        if (text !is null)
+        {
+            const assigned =
+                owner.pendingText_.commit.assign(text.spanFromZ);
+            if (!assigned)
+                owner.pendingText_.commit.clear();
+        }
+    }
+
+    private extern (C) static void onTextInputDelete(void* data,
+        zwp_text_input_v3*, uint beforeLength, uint afterLength)
+        nothrow @nogc
+    {
+        // Surrounding-text deletion needs a vocabulary event of its own;
+        // stash it so the batch shape is complete when that lands.
+        auto owner = cast(WaylandWsi*) data;
+        owner.pendingText_.deleteBefore = beforeLength;
+        owner.pendingText_.deleteAfter = afterLength;
+    }
+
+    private extern (C) static void onTextInputDone(void* data,
+        zwp_text_input_v3*, uint) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        const batch = textInputBatch(owner.pendingText_,
+            owner.compositionActive_);
+        owner.pendingText_ = PendingTextInput();
+        owner.compositionActive_ = batch.compositionActiveAfter;
+        const index = owner.indexOfSurface(owner.textInputFocus_);
+        if (index == size_t.max)
+            return;
+        const id = owner.idAt(index);
+        if (batch.emitCommit)
+            owner.emit(id, batch.committed);
+        if (batch.emitComposition)
+            owner.emit(id, batch.composition);
+    }
+
     private extern (C) static void onBootstrapDone(void* data,
         wl_callback* callback, uint) nothrow @nogc
     {
@@ -1741,11 +1881,153 @@ private immutable wl_pointer_listener pointerListener = {
     &WaylandWsi.onPointerAxisDiscrete, &WaylandWsi.onPointerAxisValue120,
     &WaylandWsi.onPointerAxisRelativeDirection, &WaylandWsi.onPointerWarp
 };
+private immutable zwp_text_input_v3_listener textInputListener = {
+    &WaylandWsi.onTextInputEnter, &WaylandWsi.onTextInputLeave,
+    &WaylandWsi.onTextInputPreedit, &WaylandWsi.onTextInputCommit,
+    &WaylandWsi.onTextInputDelete, &WaylandWsi.onTextInputDone
+};
 private immutable wl_keyboard_listener keyboardListener = {
     &WaylandWsi.onKeyboardKeymap, &WaylandWsi.onKeyboardEnter,
     &WaylandWsi.onKeyboardLeave, &WaylandWsi.onKeyboardKey,
     &WaylandWsi.onKeyboardModifiers, &WaylandWsi.onKeyboardRepeatInfo
 };
+
+/// One text-input-v3 batch, stashed between events and applied on `done`.
+struct PendingTextInput
+{
+    InlineUtf8!512 preedit;
+    InlineUtf8!256 commit;
+    int cursorBegin = -1;
+    int cursorEnd = -1;
+    uint deleteBefore;
+    uint deleteAfter;
+}
+
+/// Borrow a NUL-terminated C string as a span (never null).
+private const(char)[] spanFromZ(const(char)* text) @system nothrow @nogc
+    => text[0 .. strlen(text)];
+
+/**
+Maps one applied pre-edit batch to the shared composition vocabulary:
+`cursor_begin`/`cursor_end` are byte offsets into the pre-edit (`-1` hides
+the cursor — mapped to the end, where new text lands), an ordered non-empty
+range is the selection, and the whole pre-edit carries the conventional
+underline segment (text-input-v3 has no per-segment attributes).
+*/
+CompositionEvent compositionFromPreedit(scope const(char)[] preedit,
+    int cursorBegin, int cursorEnd) @safe pure nothrow @nogc
+{
+    CompositionEvent event;
+    if (!event.preedit.assign(preedit))
+        return event;
+    const length = cast(int) preedit.length;
+    const begin = cursorBegin >= 0
+        ? (cursorBegin < length ? cursorBegin : length) : length;
+    event.cursor = cast(ushort) begin;
+    if (cursorBegin >= 0 && cursorEnd > cursorBegin)
+    {
+        const end = cursorEnd < length ? cursorEnd : length;
+        event.selectionStart = cast(ushort) cursorBegin;
+        event.selectionLength = cast(ushort) (end - cursorBegin);
+    }
+    if (preedit.length != 0)
+    {
+        event.segments[0] = CompositionSegment(0,
+            cast(ushort) preedit.length, CompositionSegmentStyle.underline);
+        event.segmentCount = 1;
+    }
+    return event;
+}
+
+/// What one applied `done` batch emits, in protocol order.
+struct TextInputBatch
+{
+    bool emitCommit;
+    TextCommittedEvent committed;
+    bool emitComposition;
+    CompositionEvent composition;
+    bool compositionActiveAfter;
+}
+
+/**
+Applies text-input-v3's `done` semantics to one pending batch: the commit
+string is inserted before the new pre-edit replaces the old one, fields
+not sent in the cycle are empty, and an empty pre-edit ends an active
+composition with exactly one empty `CompositionEvent` — never a stream of
+them while no composition is active.
+*/
+TextInputBatch textInputBatch(in PendingTextInput pending,
+    bool compositionActive) @safe pure nothrow @nogc
+{
+    TextInputBatch batch;
+    if (!pending.commit.empty)
+    {
+        batch.emitCommit = true;
+        batch.committed.text = pending.commit;
+    }
+    if (!pending.preedit.empty)
+    {
+        batch.emitComposition = true;
+        batch.composition = compositionFromPreedit(pending.preedit.value,
+            pending.cursorBegin, pending.cursorEnd);
+        batch.compositionActiveAfter = true;
+    }
+    else if (compositionActive)
+        batch.emitComposition = true;
+    return batch;
+}
+
+@("wsi.wayland.textInputBatch.commitThenPreeditAndSingleEnd")
+@safe pure nothrow @nogc
+unittest
+{
+    // Mid-composition batch: pre-edit only.
+    PendingTextInput typing;
+    assert(typing.preedit.assign("に"));
+    typing.cursorBegin = 3;
+    typing.cursorEnd = 3;
+    const mid = textInputBatch(typing, false);
+    assert(!mid.emitCommit && mid.emitComposition);
+    assert(mid.compositionActiveAfter);
+
+    // Conversion accepted: commit lands and the composition ends in the
+    // same batch — the empty composition event tells the window so.
+    PendingTextInput accepted;
+    assert(accepted.commit.assign("日本"));
+    const done = textInputBatch(accepted, true);
+    assert(done.emitCommit && done.committed.text.value == "日本");
+    assert(done.emitComposition && done.composition.preedit.empty);
+    assert(!done.compositionActiveAfter);
+
+    // A done with nothing pending and no active composition is silent.
+    const idle = textInputBatch(PendingTextInput(), false);
+    assert(!idle.emitCommit && !idle.emitComposition);
+}
+
+@("wsi.wayland.compositionFromPreedit.cursorSelectionAndUnderline")
+@safe pure nothrow @nogc
+unittest
+{
+    // A visible cursor between the bytes of a multi-byte pre-edit.
+    const plain = compositionFromPreedit("にほん", 3, 3);
+    assert(plain.preedit.value == "にほん");
+    assert(plain.cursor == 3 && plain.selectionLength == 0);
+    assert(plain.segmentCount == 1);
+    assert(plain.segments[0] == CompositionSegment(0, 9,
+        CompositionSegmentStyle.underline));
+
+    // An ordered cursor range is the selection; out-of-range ends clamp.
+    const selected = compositionFromPreedit("abcd", 1, 99);
+    assert(selected.selectionStart == 1 && selected.selectionLength == 3);
+
+    // A hidden cursor (-1) lands at the end, where new text is inserted.
+    const hidden = compositionFromPreedit("ab", -1, -1);
+    assert(hidden.cursor == 2 && hidden.selectionLength == 0);
+
+    // An empty pre-edit is the composition-ended shape: no segments.
+    const ended = compositionFromPreedit("", 0, 0);
+    assert(ended.preedit.empty && ended.segmentCount == 0);
+}
 
 /**
 Whether `wl_keyboard.repeat_info` enables client-side repeat: `rate` is
@@ -2051,4 +2333,50 @@ private void wp_cursor_shape_device_v1_destroy()(wp_cursor_shape_device_v1* self
 {
     wl_proxy_marshal_flags(cast(wl_proxy*) self, WP_CURSOR_SHAPE_DEVICE_V1_DESTROY, null,
         wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private zwp_text_input_v3* zwp_text_input_manager_v3_get_text_input()(
+        zwp_text_input_manager_v3* self, wl_seat* seat)
+    => cast(zwp_text_input_v3*) wl_proxy_marshal_flags(
+        cast(wl_proxy*) self, ZWP_TEXT_INPUT_MANAGER_V3_GET_TEXT_INPUT,
+        &zwp_text_input_v3_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null,
+        seat);
+
+private void zwp_text_input_manager_v3_destroy()(
+        zwp_text_input_manager_v3* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        ZWP_TEXT_INPUT_MANAGER_V3_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private int zwp_text_input_v3_add_listener()(zwp_text_input_v3* self,
+        const(zwp_text_input_v3_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void zwp_text_input_v3_enable()(zwp_text_input_v3* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_ENABLE,
+        null, wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void zwp_text_input_v3_disable()(zwp_text_input_v3* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_DISABLE,
+        null, wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void zwp_text_input_v3_commit()(zwp_text_input_v3* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_COMMIT,
+        null, wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void zwp_text_input_v3_destroy()(zwp_text_input_v3* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_DESTROY,
+        null, wl_proxy_get_version(cast(wl_proxy*) self),
+        WL_MARSHAL_FLAG_DESTROY);
 }

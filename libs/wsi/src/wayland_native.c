@@ -21,8 +21,10 @@
 #include <xkbcommon/xkbcommon.h>
 #include "wayland_xdg_shell_client_protocol.h"
 #include "wayland_cursor_shape_client_protocol.h"
+#include "wayland_text_input_client_protocol.h"
 #pragma attribute(pop)
 
 /* Generated request/event signature tables (no second translation unit). */
 #include "wayland_xdg_shell_protocol.c"
 #include "wayland_cursor_shape_protocol.c"
+#include "wayland_text_input_protocol.c"
