@@ -128,7 +128,7 @@ enum MdDiffStatus : ubyte
 /// Source-anchored identity rather than a tree path — the same convention
 /// folds, code tabs and table cells already use, and the reason a decoration
 /// survives a rebuild. The producer is hue's `md_diff`; the consumer is
-/// $(MREF sparkles,syntax,md,render_widgets), which is why the vocabulary
+/// $(MREF sparkles,source_view,markdown), which is why the vocabulary
 /// lives here with the model rather than in either of them.
 struct MdDecoration
 {

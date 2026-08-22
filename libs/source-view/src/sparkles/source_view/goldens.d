@@ -2,14 +2,14 @@
 Golden fixture tests for the markdown widget view: every markdown feature the
 preview renders, exercised individually and composed, each fixture rendered
 through the production pipeline (`extractMarkdown` → $(REF viewMarkdown,
-sparkles,syntax,md,render_widgets) → `layout` → `CellGrid`) at a fixed width
+sparkles,source_view,markdown) → `layout` → `CellGrid`) at a fixed width
 and compared as a plain glyph grid.
 
 Fixtures and goldens live side by side under `libs/source-view/test/data/md/goldens/`
 (`<name>.md` + `<name>.txt`). The glyph grid ignores color on purpose: it is the
 $(B layout) oracle — indentation, borders, wrapping, panel geometry — and reads
 well in a diff; color/style assertions stay with the `RecordingCanvas` tests in
-$(MREF sparkles,syntax,md,render_widgets).
+$(MREF sparkles,source_view,markdown).
 
 To regenerate after an intended rendering change:
 
