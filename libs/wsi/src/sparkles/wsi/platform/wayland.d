@@ -93,6 +93,7 @@ struct WaylandWsi
     private wp_cursor_shape_manager_v1* cursorShapeManager_;
     private wp_cursor_shape_device_v1* cursorShapeDevice_;
     private uint pointerEnterSerial_;
+    private uint pointerButtonSerial_;
     private const(wl_surface)* pointerFocus_;
     private LogicalPosition pointerPosition_;
     private double pendingScrollDx_ = 0;
@@ -301,6 +302,54 @@ struct WaylandWsi
             return wsiErr!WindowId(rearmed.error);
         }
         return wsiOk(idAt(index));
+    }
+
+    /*
+    Compositor-driven interactive move/resize, the first sliver of F13's
+    window controls: GNOME draws no server-side decorations, so without a
+    client affordance calling these a toplevel cannot be moved or resized
+    at all there. Both must answer a pointer press — the compositor
+    validates the serial — so the affordance is "start on button down".
+    */
+
+    /// Hands the current pointer drag to the compositor as a window move.
+    WsiResult!void startInteractiveMove(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (seat_ is null || pointerButtonSerial_ == 0)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "interactive move needs a recent pointer press",
+                WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        xdg_toplevel_move(windows_[checked.value].toplevel, seat_,
+            pointerButtonSerial_);
+        return prepareAndArm();
+    }
+
+    /// ditto, as a resize from the given edge or corner.
+    WsiResult!void startInteractiveResize(WindowId id, ResizeEdge edge)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (seat_ is null || pointerButtonSerial_ == 0)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "interactive resize needs a recent pointer press",
+                WsiErrorKind.invalidArgument);
+        if (edge == ResizeEdge.none)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "interactive resize needs an edge",
+                WsiErrorKind.invalidArgument);
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        xdg_toplevel_resize(windows_[checked.value].toplevel, seat_,
+            pointerButtonSerial_, edge);
+        return prepareAndArm();
     }
 
     WsiResult!void setMaximized(WindowId id, bool maximized)
@@ -1282,9 +1331,11 @@ struct WaylandWsi
     }
 
     private extern (C) static void onPointerButton(void* data, wl_pointer*,
-        uint, uint, uint button, uint state) nothrow @nogc
+        uint serial, uint, uint button, uint state) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
+        if (state != 0)
+            owner.pointerButtonSerial_ = serial;
         owner.emitPointer(state != 0
             ? PointerPhase.pressed : PointerPhase.released,
             waylandPointerButton(button));
@@ -2282,6 +2333,20 @@ private void xdg_toplevel_set_fullscreen()(xdg_toplevel* self, wl_output* output
 {
     wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_SET_FULLSCREEN, null,
         wl_proxy_get_version(cast(wl_proxy*) self), 0, output);
+}
+
+private void xdg_toplevel_move()(xdg_toplevel* self, wl_seat* seat,
+        uint serial)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_MOVE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, seat, serial);
+}
+
+private void xdg_toplevel_resize()(xdg_toplevel* self, wl_seat* seat,
+        uint serial, uint edges)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, XDG_TOPLEVEL_RESIZE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, seat, serial, edges);
 }
 
 private void xdg_toplevel_set_maximized()(xdg_toplevel* self)
