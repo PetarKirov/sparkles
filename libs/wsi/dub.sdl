@@ -9,7 +9,7 @@ targetType "library"
 
 dflags "-preview=in" "-preview=dip1000"
 libs "imm32" platform="windows"
-libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xkbcommon" "xkbcommon-x11" platform="linux"
+libs "wayland-client" "xcb" "xcb-xkb" "xcb-xtest" "xcb-imdkit" "xkbcommon" "xkbcommon-x11" platform="linux"
 lflags "-framework" "AppKit" "-framework" "CoreFoundation" platform="osx"
 
 sourceFiles "src/xcb_native.c" platform="linux"

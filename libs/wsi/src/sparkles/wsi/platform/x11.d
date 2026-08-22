@@ -46,6 +46,8 @@ struct X11Wsi
         bool ready;
         SurfaceMetrics metrics;
         uint cursor;
+        ushort xic;
+        bool xicReady;
     }
 
     private struct Bootstrap
@@ -81,6 +83,9 @@ struct X11Wsi
     private int pollResult_;
     private bool detaching_;
     private ulong[4] pressedKeys_;
+    private xcb_xim_t* xim_;
+    private bool ximConnected_;
+    private size_t pendingIcSlot_ = size_t.max;
 
     /** Connects to the process' selected X display on the calling UI thread. */
     static WsiResult!void open(out X11Wsi wsi)
@@ -298,6 +303,8 @@ struct X11Wsi
         ++slot.generation;
         if (slot.generation == 0)
             ++slot.generation;
+        slot.xic = 0;
+        slot.xicReady = false;
         slot.window = window;
         slot.live = true;
         slot.ready = true;
@@ -305,6 +312,7 @@ struct X11Wsi
             LogicalSize(width, height), PhysicalSize(width, height),
             ScaleFactor(1));
         auto id = idAt(index);
+        requestNextIc();
         const hadSticky = hasStickyError_;
         emit(id, ReadyEvent(slot.metrics));
         if (!hadSticky && hasStickyError_)
@@ -324,6 +332,10 @@ struct X11Wsi
         if (checked.hasError)
             return wsiErr!void(checked.error);
         ref slot = windows_[checked.value];
+        if (slot.xicReady && xim_ !is null)
+            xcb_xim_destroy_ic(xim_, slot.xic, null, null);
+        slot.xic = 0;
+        slot.xicReady = false;
         const error = destroyNative(slot.window);
         if (error != 0)
             return x11Failure!void(WsiOperation.close, error,
@@ -499,7 +511,8 @@ struct X11Wsi
             if (generic is null)
                 break;
             ++count;
-            handleNative(generic);
+            if (xim_ is null || !xcb_xim_filter_event(xim_, generic))
+                handleNative(generic);
             free(generic);
         }
         const connectionError = xcb_connection_has_error(connection_);
@@ -525,7 +538,148 @@ struct X11Wsi
                     WsiErrorKind.invalidArgument);
         loop_ = &loop;
         detaching_ = false;
+        openXim();
         return armPoll();
+    }
+
+    /*
+    XIM rides the same XCB connection: xcb-imdkit's client speaks the XIM
+    wire protocol through ClientMessage events that `xcb_xim_filter_event`
+    consumes inside the ordinary pump, so the hosted single wait stays the
+    only wait. Registration happens here, at attach, because the callbacks
+    borrow this struct — by attach time it lives at the address the driver
+    keeps it at. Everything is best-effort: with no XIM server on
+    `$XMODIFIERS`, keys flow exactly as before.
+    */
+    private void openXim() nothrow
+    {
+        if (xim_ !is null || connection_ is null)
+            return;
+        xim_ = xcb_xim_create(connection_, bootstrap_.screenIndex, null);
+        if (xim_ is null)
+            return;
+        xcb_xim_set_use_utf8_string(xim_, true);
+        xcb_xim_set_im_callback(xim_, listenerPtr(ximListener), &this);
+        if (!xcb_xim_open(xim_, &onXimOpened, true, &this))
+        {
+            xcb_xim_destroy(xim_);
+            xim_ = null;
+        }
+    }
+
+    /// Whether IME text input is live for this window (an XIM server is
+    /// connected and the window's input context exists).
+    bool textInputReady(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return false;
+        return ximConnected_ && windows_[checked.value].xicReady;
+    }
+
+    private extern (C) static void onXimOpened(xcb_xim_t*, void* data)
+        nothrow @nogc
+    {
+        auto owner = cast(X11Wsi*) data;
+        owner.ximConnected_ = true;
+        owner.requestNextIc();
+    }
+
+    private extern (C) static void onXimDisconnected(xcb_xim_t*, void* data)
+        nothrow @nogc
+    {
+        auto owner = cast(X11Wsi*) data;
+        owner.ximConnected_ = false;
+        owner.pendingIcSlot_ = size_t.max;
+        foreach (ref slot; owner.windows_)
+        {
+            slot.xic = 0;
+            slot.xicReady = false;
+        }
+    }
+
+    /*
+    Input contexts are created one at a time: the create-ic reply carries no
+    window, so a single in-flight request keeps the reply attributable.
+    */
+    private void requestNextIc() nothrow @nogc
+    {
+        if (!ximConnected_ || pendingIcSlot_ != size_t.max)
+            return;
+        foreach (i, ref slot; windows_)
+        {
+            if (!slot.live || slot.xicReady || slot.xic != 0)
+                continue;
+            pendingIcSlot_ = i;
+            uint style = XCB_IM_PreeditNothing | XCB_IM_StatusNothing;
+            uint window = slot.window;
+            // Attribute names are XCB_XIM_XNInputStyle etc.; spelled out
+            // because ImportC exposes only integer macros.
+            if (!xcb_xim_create_ic(xim_, &onIcCreated, &this,
+                "inputStyle".ptr, &style,
+                "clientWindow".ptr, &window,
+                "focusWindow".ptr, &window,
+                cast(void*) null))
+                pendingIcSlot_ = size_t.max;
+            return;
+        }
+    }
+
+    private extern (C) static void onIcCreated(xcb_xim_t*, ushort ic,
+        void* data) nothrow @nogc
+    {
+        auto owner = cast(X11Wsi*) data;
+        const index = owner.pendingIcSlot_;
+        owner.pendingIcSlot_ = size_t.max;
+        if (index < owner.windows_.length && owner.windows_[index].live)
+        {
+            owner.windows_[index].xic = ic;
+            owner.windows_[index].xicReady = true;
+        }
+        owner.requestNextIc();
+    }
+
+    private extern (C) static void onXimForwardEvent(xcb_xim_t*, ushort ic,
+        xcb_key_press_event_t* event, void* data) nothrow @nogc
+    {
+        // A key the input method chose not to consume: deliver it exactly
+        // as an unfiltered key.
+        auto owner = cast(X11Wsi*) data;
+        if (event is null)
+            return;
+        const pressed = (event.response_type & 0x7F) == XCB_KEY_PRESS;
+        owner.deliverKey(event, pressed);
+    }
+
+    private extern (C) static void onXimCommit(xcb_xim_t*, ushort ic,
+        uint flag, char* str, uint length, uint*, size_t, void* data)
+        nothrow @nogc
+    {
+        auto owner = cast(X11Wsi*) data;
+        if ((flag & XCB_XIM_LOOKUP_CHARS) == 0 || str is null
+            || length == 0)
+            return;
+        const index = owner.indexOfIc(ic);
+        if (index == size_t.max)
+            return;
+        // xcb_xim_set_use_utf8_string negotiated UTF-8 payloads; reject
+        // anything else whole rather than queue invalid bytes.
+        const bytes = str[0 .. length];
+        if (validateUtf8(bytes).hasError)
+            return;
+        TextCommittedEvent committed;
+        if (committed.text.assign(bytes))
+            owner.emit(owner.idAt(index), committed);
+    }
+
+    private size_t indexOfIc(ushort ic) const nothrow @nogc
+    {
+        if (ic == 0)
+            return size_t.max;
+        foreach (i, ref slot; windows_)
+            if (slot.live && slot.xicReady && slot.xic == ic)
+                return i;
+        return size_t.max;
     }
 
     /**
@@ -647,6 +801,13 @@ struct X11Wsi
             xkb_context_unref(xkbContext_);
             xkbContext_ = null;
         }
+        if (xim_ !is null)
+        {
+            xcb_xim_close(xim_);
+            xcb_xim_destroy(xim_);
+            xim_ = null;
+            ximConnected_ = false;
+        }
         if (connection_ !is null)
         {
             xcb_disconnect(connection_);
@@ -754,6 +915,27 @@ struct X11Wsi
             ? 0 : xcb_connection_has_error(connection_);
     }
 
+    /// One unfiltered key: repeat detection, translation, and the queue.
+    private void deliverKey(const xcb_key_press_event_t* event,
+        bool pressed) nothrow @nogc
+    {
+        const index = indexOfWindow(event.event);
+        if (index == size_t.max)
+            return;
+        const keycode = cast(uint) event.detail;
+        const repeated = pressed && keyIsDown(keycode);
+        setKeyDown(keycode, pressed);
+        KeyboardEvent keyboard;
+        keyboard.physical = PhysicalKey(keycode, 0);
+        keyboard.logical = logicalForKey(keycode, event.state);
+        keyboard.location = x11KeyLocation(keycode);
+        keyboard.action = pressed
+            ? (repeated ? KeyAction.repeat : KeyAction.press)
+            : KeyAction.release;
+        keyboard.modifiers = x11Mods(event.state);
+        emit(idAt(index), keyboard);
+    }
+
     private void handleNative(const xcb_generic_event_t* generic)
     {
         const responseType = generic.response_type & 0x7F;
@@ -807,18 +989,16 @@ struct X11Wsi
                 if (index == size_t.max)
                     return;
                 const pressed = responseType == XCB_KEY_PRESS;
-                const keycode = cast(uint) event.detail;
-                const repeated = pressed && keyIsDown(keycode);
-                setKeyDown(keycode, pressed);
-                KeyboardEvent keyboard;
-                keyboard.physical = PhysicalKey(keycode, 0);
-                keyboard.logical = logicalForKey(keycode, event.state);
-                keyboard.location = x11KeyLocation(keycode);
-                keyboard.action = pressed
-                    ? (repeated ? KeyAction.repeat : KeyAction.press)
-                    : KeyAction.release;
-                keyboard.modifiers = x11Mods(event.state);
-                emit(idAt(index), keyboard);
+                // With a live input context the IM sees every key first:
+                // it either commits text or bounces the key back through
+                // onXimForwardEvent, which delivers it unchanged.
+                if (ximConnected_ && windows_[index].xicReady)
+                {
+                    xcb_xim_forward_event(xim_, windows_[index].xic,
+                        cast(xcb_key_press_event_t*) event);
+                    return;
+                }
+                deliverKey(event, pressed);
                 break;
             case XCB_BUTTON_PRESS:
             case XCB_BUTTON_RELEASE:
@@ -887,8 +1067,18 @@ struct X11Wsi
                 auto event = cast(const xcb_focus_in_event_t*) generic;
                 const index = indexOfWindow(event.event);
                 if (index != size_t.max)
-                    emit(idAt(index),
-                        FocusChangedEvent(responseType == XCB_FOCUS_IN));
+                {
+                    const focused = responseType == XCB_FOCUS_IN;
+                    ref slot = windows_[index];
+                    if (ximConnected_ && slot.xicReady)
+                    {
+                        if (focused)
+                            xcb_xim_set_ic_focus(xim_, slot.xic);
+                        else
+                            xcb_xim_unset_ic_focus(xim_, slot.xic);
+                    }
+                    emit(idAt(index), FocusChangedEvent(focused));
+                }
                 break;
             case XCB_DESTROY_NOTIFY:
                 auto event = cast(const xcb_destroy_notify_event_t*) generic;
@@ -992,7 +1182,7 @@ struct X11Wsi
         ++nextSequence_;
     }
 
-    private void remember(WsiError error) nothrow
+    private void remember(WsiError error) nothrow @nogc
     {
         if (!hasStickyError_)
         {
@@ -1002,6 +1192,17 @@ struct X11Wsi
         }
     }
 }
+
+/// ImportC drops C `const`, so handing an immutable callback table to the
+/// client API needs this documented un-const (same as the Wayland bridge).
+private T* listenerPtr(T)(ref immutable T listener) @system pure nothrow @nogc
+    => cast(T*) &listener;
+
+private immutable xcb_xim_im_callback ximListener = {
+    forward_event: &X11Wsi.onXimForwardEvent,
+    commit_string: &X11Wsi.onXimCommit,
+    disconnected: &X11Wsi.onXimDisconnected,
+};
 
 private WsiResult!T x11Failure(T)(WsiOperation operation, long nativeCode,
     scope const(char)[] diagnostic,

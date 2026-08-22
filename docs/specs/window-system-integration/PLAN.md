@@ -195,8 +195,20 @@ composition vocabulary with the conventional underline segment, and an
 active composition ended by exactly one empty event. The batch and mapping
 semantics are model-tested; live compositor IME evidence is owed to a
 text-input-v3 compositor, because this Weston implements only text-input-v1
-and never advertises the v3 manager. Keymap-change events, XIM,
-candidate-window placement, and raw input remain. The scale slice makes
+and never advertises the v3 manager. The XIM slice closes M2's last open
+integration question the right way round: XIM is an Xlib API, but
+xcb-imdkit's client speaks the XIM wire protocol over the backend's one XCB
+connection — `xcb_xim_filter_event` consumes its ClientMessages inside the
+ordinary pump, so the hosted single wait stays the only wait. With a live
+per-window input context every key forwards to the input method first and
+either commits (queued as `TextCommittedEvent`, UTF-8 negotiated and
+validated) or bounces back through the unchanged delivery path; without a
+server on `$XMODIFIERS` nothing changes. The evidence is end-to-end: the
+lane runs an in-tree test XIM server (xcb-imdkit's server API) that commits
+for one keycode and bounces everything else, so the chord, hold, and
+repeat properties incidentally prove the bounce path while the new IME
+property proves the commit path. Keymap-change events, callback-style XIM
+pre-edit, candidate-window placement, and raw input remain. The scale slice makes
 `SurfaceMetrics` real on Wayland: outputs are bound with their scales, each
 window's scale is the maximum of its entered outputs, a change requests the
 matching buffer scale and reports one atomic metrics transition — verified at

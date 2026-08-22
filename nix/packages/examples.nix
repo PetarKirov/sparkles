@@ -295,6 +295,9 @@
           pkgs.libxkbcommon.dev
           pkgs.libxcb
           pkgs.libxcb.dev
+          pkgs.xcb-imdkit
+          pkgs.xorg.xcbutil
+          pkgs.xorg.xcbutil.dev
         ];
       };
 
