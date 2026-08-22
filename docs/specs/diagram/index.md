@@ -98,13 +98,15 @@ read instead of once per notch.
 
 `<AREA><n>`, unique within this tree:
 
-| Area  | Meaning                                                   |
-| ----- | --------------------------------------------------------- |
-| `DIA` | architecture, package graph, backend isolation            |
-| `CAM` | the camera: world↔screen mapping, zoom, pan, minimap math |
-| `WLD` | the world: ECS columns, entities, groups, edges, labels   |
-| `IXN` | interaction: tools, capture, menus, bindings              |
-| `RND` | rendering: the op streams, culling, glyph choices         |
+| Area  | Meaning                                                     |
+| ----- | ----------------------------------------------------------- |
+| `DIA` | architecture, package graph, backend isolation              |
+| `CAM` | the camera: world↔screen mapping, zoom, pan, minimap math   |
+| `WLD` | the world: ECS columns, entities, groups, edges, labels     |
+| `IXN` | interaction: tools, capture, menus, bindings                |
+| `RND` | rendering: the op streams, culling, glyph choices           |
+| `GRD` | the grid backdrop: subdivisions, mark kinds, stripe brushes |
+| `SET` | the settings pane: the property tree over the live config   |
 
 Status scheme identical to the
 [`sparkles:ui` scheme](../ui/index.md#status-scheme).

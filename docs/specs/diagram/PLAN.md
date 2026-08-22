@@ -42,3 +42,15 @@ dub run :diagram -- --tui
 dub run :diagram -- --gui --window-width 120 --window-height 40
 rg -n "ui_tui|ui_raylib|sparkles\.tui|import raylib" apps/diagram/   # no matches
 ```
+
+## Series 3 — the settings pane
+
+| Step | Deliverable                                                                                                                        | IDs                   |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| D3.1 | `GridConfig` carries its own property-tree metadata (`@Label`/`@Doc`/`@Range`) in `sparkles:ui`; `settings.d` declares the subject | `SET4`, `SET7`        |
+| D3.2 | `settings_pane.d`: the modal `PropertyTree` component + the `settings` keymap scope, replacing the three-fixture stand-in          | `SET1`–`SET3`, `SET6` |
+| D3.3 | Persist through the `GRD8` schema; the pane paints on the board's op buffer                                                        | `SET5`, `SET8`        |
+
+Gate: `dub test :diagram` green; both configurations build; the isolation grep
+(`DIA2`) still finds nothing; the pane opens, edits, undoes and saves in a
+manual `--tui` and `--gui` pass.
