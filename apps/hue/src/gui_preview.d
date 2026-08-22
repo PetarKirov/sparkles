@@ -2,7 +2,7 @@
 // resolve every fenced code block's contents once at file load
 // (`buildPreviewModel`), plus the small theme-derived helpers the widget
 // views and painters share (`quoteBarColors`, `stripSgr`). All raylib-free;
-// rendering is the composable widget views' job (sparkles.syntax.md.render_widgets).
+// rendering is the composable widget views' job (sparkles.source_view.markdown).
 module gui_preview;
 
 import ansi_model : AnsiLine;
@@ -303,7 +303,7 @@ unittest
 
     // The GUI supplies the off-screen-VT decoder for ` ```ansi ` fences.
     // (The rendering itself is the markdown widget view's responsibility —
-    // covered by sparkles.syntax.md.render_widgets' tests.)
+    // covered by sparkles.source_view.markdown' tests.)
     auto m = buildPreviewModel(reg, cache, src, &decodeAnsi);
     assert(m.present);
     assert(m.fences.length == 2);

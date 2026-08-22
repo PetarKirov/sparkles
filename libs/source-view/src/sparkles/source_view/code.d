@@ -1,6 +1,6 @@
 /**
 The raw highlighted document as one widget tree — the code counterpart of
-$(MREF sparkles,syntax,md,render_widgets)'s markdown view and the code-line
+$(MREF sparkles,source_view,markdown)'s markdown view and the code-line
 core of the twoslash document view: every source line is a rich run of
 resolved-color spans carrying the identity channel (`srcStart`/`srcEnd`), so
 any backend gets char-precise selection ($(REF sourceOffsetAt,
@@ -182,7 +182,7 @@ WidgetTree viewCodeDocument(const(char)[] source,
 
 /**
 As $(LREF viewCodeDocument), but appended to an existing builder and returning
-its root — the shape $(REF viewMarkdownInto, sparkles,syntax,md,render_widgets)
+its root — the shape $(REF viewMarkdownInto, sparkles,source_view,markdown)
 and hue's `viewDiffInto` already use.
 
 A caller composing around the document needs this: a file's gutter is built
