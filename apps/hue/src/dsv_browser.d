@@ -29,11 +29,16 @@ struct DsvBrowser
     string queryText;      /// the filter bar's applied text
     string[] fuzzyParts;   /// the query's fuzzy remainder (`DSF3`)
     uint[] hiddenCols;     /// hidden data columns, ascending
+    /// `DSB3`: the display order of ALL data columns (a permutation);
+    /// empty = source order. Kept empty while the order IS source order,
+    /// so `pristine` stays a length check.
+    uint[] colOrder;
     string filterError;    /// `DSF5`: non-empty = the last apply failed
 
     bool pristine() const @safe pure nothrow @nogc
         => sortKeys.length == 0 && constraints.length == 0
-            && fuzzyParts.length == 0 && hiddenCols.length == 0;
+            && fuzzyParts.length == 0 && hiddenCols.length == 0
+            && colOrder.length == 0;
 
     /// `DSB2`: back to source order, no filter, all columns.
     void reset() @safe pure nothrow
@@ -43,6 +48,7 @@ struct DsvBrowser
         queryText = null;
         fuzzyParts = null;
         hiddenCols = null;
+        colOrder = null;
         filterError = null;
     }
 
@@ -108,6 +114,57 @@ struct DsvBrowser
         return true;
     }
 
+    /// The display order of all data columns (`DSB3`'s reorder half):
+    /// `colOrder` when materialized, else the identity.
+    uint[] displayOrder(uint totalCols) const scope @safe pure nothrow
+    {
+        if (colOrder.length == totalCols)
+            return colOrder.dup;
+        auto order = new uint[](totalCols);
+        foreach (c; 0 .. totalCols)
+            order[c] = c;
+        return order;
+    }
+
+    /// Moves data column `col` by `delta` steps in the display order
+    /// (`DSB3`): `false` when it would leave the row range. The order
+    /// de-materializes back to empty when a move restores source order,
+    /// so `pristine`/`reset` stay symmetric.
+    bool moveColumn(uint col, int delta, uint totalCols) @safe pure nothrow
+    {
+        if (delta == 0 || totalCols == 0)
+            return false;
+        auto order = displayOrder(totalCols);
+        ptrdiff_t at = -1;
+        foreach (i, c; order)
+            if (c == col)
+            {
+                at = i;
+                break;
+            }
+        if (at < 0)
+            return false;
+        const to = at + delta;
+        if (to < 0 || to >= cast(ptrdiff_t) order.length)
+            return false;
+        const step = delta > 0 ? 1 : -1;
+        for (auto i = at; i != to; i += step)
+        {
+            const tmp = order[i];
+            order[i] = order[i + step];
+            order[i + step] = tmp;
+        }
+        bool identity = true;
+        foreach (i, c; order)
+            if (c != i)
+            {
+                identity = false;
+                break;
+            }
+        colOrder = identity ? null : order;
+        return true;
+    }
+
     /// `DSF1`/`DSF5`: parses and applies `query`. On a parse error the
     /// previous filter stays and `filterError` carries the message.
     bool setFilter(string query, const(char[])[] headerNames) @safe pure
@@ -133,10 +190,10 @@ struct DsvBrowser
     {
         DsvProjection p;
         p.spec = ProjectionSpec(sortKeys.dup, constraints.dup);
-        if (hiddenCols.length)
+        if (hiddenCols.length || colOrder.length)
         {
             auto cols = new uint[](0);
-            outer: foreach (c; 0 .. totalCols)
+            outer: foreach (c; displayOrder(totalCols))
             {
                 foreach (h; hiddenCols)
                     if (h == c)
@@ -171,8 +228,42 @@ struct DsvBrowser
         if (hiddenCols.length)
             seg(text(hiddenCols.length, hiddenCols.length == 1
                 ? " col hidden" : " cols hidden"));
+        if (colOrder.length)
+            seg("cols reordered");
         return s;
     }
+}
+
+// ── The columns palette (`DSB3`) ────────────────────────────────────────────
+
+/// One palette row: a data column in display order with its visibility.
+struct PaletteRow
+{
+    uint col;       /// the data-column index (source order)
+    string name;    /// its header name (synthetic letters included)
+    bool visible;
+}
+
+/// The palette's rows — every data column in the browser's display order,
+/// hidden ones included (that is what the palette is for).
+PaletteRow[] paletteRows(in DsvBrowser b, const(char[])[] headerNames,
+    uint totalCols) @safe pure nothrow
+{
+    auto rows = new PaletteRow[](0);
+    rows.reserve(totalCols);
+    foreach (c; b.displayOrder(totalCols))
+    {
+        bool vis = true;
+        foreach (h; b.hiddenCols)
+            if (h == c)
+            {
+                vis = false;
+                break;
+            }
+        rows ~= PaletteRow(c,
+            c < headerNames.length ? headerNames[c].idup : "", vis);
+    }
+    return rows;
 }
 
 // ── The filter query parser (`DSF1`/`DSF2`) ─────────────────────────────────
@@ -481,6 +572,36 @@ private bool containsNoCase(scope const(char)[] hay, scope const(char)[] needle)
     assert(!b.toggleColumn(1, 3)); // the last visible column stays
     assert(b.toggleColumn(0, 3)); // un-hide
     assert(b.hiddenCols == [2u]);
+}
+
+@("dsv_browser.columns.moveAndDematerialize")
+@safe unittest
+{
+    DsvBrowser b;
+    assert(!b.moveColumn(0, -1, 3)); // off the top
+    assert(b.colOrder.length == 0 && b.pristine);
+    assert(b.moveColumn(0, 2, 3)); // 0,1,2 → 1,2,0
+    assert(b.colOrder == [1u, 2, 0]);
+    assert(!b.pristine && b.chromeNote == "cols reordered");
+    assert(b.projection(3).columns == [1u, 2, 0]); // order flows through
+    assert(b.moveColumn(0, -2, 3)); // back to source order
+    assert(b.colOrder.length == 0 && b.pristine); // de-materialized
+    assert(b.projection(3).columns is null);
+}
+
+@("dsv_browser.columns.orderComposesWithHiding")
+@safe unittest
+{
+    DsvBrowser b;
+    assert(b.moveColumn(3, -3, 4)); // 3,0,1,2
+    assert(b.toggleColumn(1, 4));
+    assert(b.projection(4).columns == [3u, 0, 2]); // ordered, minus hidden
+    const rows = paletteRows(b, ["a", "b", "c", "d"], 4);
+    assert(rows.length == 4); // hidden columns still listed
+    assert(rows[0].col == 3 && rows[0].name == "d" && rows[0].visible);
+    assert(rows[2].col == 1 && !rows[2].visible);
+    b.reset();
+    assert(b.colOrder.length == 0 && b.projection(4).columns is null);
 }
 
 @("dsv_browser.filter.parseAndApply")

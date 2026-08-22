@@ -73,7 +73,7 @@ import sparkles.ui.components.tree_view : viewSlice;
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
-import dsv_browser : DsvBrowser, fuzzyRowMask;
+import dsv_browser : DsvBrowser, fuzzyRowMask, PaletteRow, paletteRows;
 import dsv_view : adaptDsv, DsvCopy, DsvInfo, dsvStatusNote, flagsOf,
     resolveTableCopy, serializeGridCopy;
 
@@ -374,6 +374,8 @@ int runGui(GuiArgs guiArgs) @system
     GuiRunState gs;
     DsvCopy dsvCopy; // the current document's grid-copy state (DSC2/DSC4)
     DsvBrowser dsvBrowser; // the data-browser projection state (DSB)
+    bool dsvPalOpen;   // the columns palette (DSB3), modal while open
+    uint dsvPalCursor; // ditto: the selected palette row
     with (gs)
     {
     import std.string : toStringz;
@@ -821,6 +823,7 @@ int runGui(GuiArgs guiArgs) @system
         vm.docPath = path; // .editorconfig discovery + {path} (format preview)
         dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
         dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)
+        dsvPalOpen = false;
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         inp.query.clear();
         inp.mode = Mode.normal;
@@ -859,6 +862,16 @@ int runGui(GuiArgs guiArgs) @system
         vm.docPath = path;
         dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
         cm.tableFmt = fmt;
+    }
+
+    /// The palette's rows (`DSB3`), derived fresh from the browser + the
+    /// open document's headers.
+    PaletteRow[] dsvPalRows()
+    {
+        if (!dsvCopy.present)
+            return null;
+        return paletteRows(dsvBrowser, dsvCopy.headerNames,
+            dsvCopy.info.columns);
     }
 
     // Enter/l/double-click on a tree row opens a file (or toggles a dir).
@@ -1972,6 +1985,34 @@ int runGui(GuiArgs guiArgs) @system
             paint(sCanvas, ltnOps[]);
         }
 
+        // The DSV columns palette (`DSB3`) — the same shared widget tree
+        // the terminal paints, centred both ways.
+        if (dsvPalOpen)
+        {
+            import dsv_palette : viewDsvPalette;
+
+            const rows = dsvPalRows();
+            if (rows.length)
+            {
+                const cellsW = screenW / cellW;
+                const cellsH = screenH / cellH;
+                auto pTree = viewDsvPalette(rows, dsvPalCursor);
+                auto pFrames = layout(pTree, Constraints(maxW: cellsW));
+                const pPanel = pFrames[pTree.root].rect;
+                const pX = (cellsW - pPanel.width) / 2;
+                const pY = (cellsH - pPanel.height) / 2;
+                window.resetClip();
+                ltnOps.clear();
+                buildDisplayListInto(pTree, pFrames,
+                    themes[vm.themeIdx].effectivePalette, vm.pageFg,
+                    vm.pageBg, ltnOps);
+                auto pCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
+                    cast(float)((pX > 0 ? pX : 0) * cellW),
+                    cast(float)((pY > 0 ? pY : 0) * cellH));
+                paint(pCanvas, ltnOps[]);
+            }
+        }
+
         window.resetClip(); // never let a scissor survive the frame
         }
         painted = true;
@@ -2567,6 +2608,7 @@ int runGui(GuiArgs guiArgs) @system
                 showPreview: vm.showPreview,
                 formatPreviewActive: formatPreviewActive(vm),
                 hasDsvGrid: vm.showPreview && dsvCopy.present,
+                dsvPaletteActive: dsvPalOpen,
             );
 
             // The key sequence's delay runs on wall time, not a frame count:
@@ -2892,6 +2934,55 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.dsvReset:
                     dsvBrowser.reset();
                     applyDsvBrowser();
+                    break;
+                case Command.dsvColumns:
+                    // `DSB3`: open over the grid; cursor on the first row.
+                    if (dsvPalRows().length)
+                    {
+                        dsvPalOpen = true;
+                        dsvPalCursor = 0;
+                    }
+                    break;
+                case Command.dsvPalDown:
+                    if (dsvPalCursor + 1 < dsvPalRows().length)
+                        dsvPalCursor++;
+                    break;
+                case Command.dsvPalUp:
+                    if (dsvPalCursor > 0)
+                        dsvPalCursor--;
+                    break;
+                case Command.dsvPalToggle:
+                {
+                    const rows = dsvPalRows();
+                    if (dsvPalCursor < rows.length && dsvBrowser.toggleColumn(
+                            rows[dsvPalCursor].col, dsvCopy.info.columns))
+                        applyDsvBrowser();
+                    break;
+                }
+                case Command.dsvPalMoveDown:
+                {
+                    const rows = dsvPalRows();
+                    if (dsvPalCursor < rows.length && dsvBrowser.moveColumn(
+                            rows[dsvPalCursor].col, +1, dsvCopy.info.columns))
+                    {
+                        dsvPalCursor++;
+                        applyDsvBrowser();
+                    }
+                    break;
+                }
+                case Command.dsvPalMoveUp:
+                {
+                    const rows = dsvPalRows();
+                    if (dsvPalCursor < rows.length && dsvBrowser.moveColumn(
+                            rows[dsvPalCursor].col, -1, dsvCopy.info.columns))
+                    {
+                        dsvPalCursor--;
+                        applyDsvBrowser();
+                    }
+                    break;
+                }
+                case Command.dsvPalClose:
+                    dsvPalOpen = false;
                     break;
                 case Command.startSearch:
                     inp.mode = Mode.search;
