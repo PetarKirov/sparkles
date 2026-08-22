@@ -182,12 +182,12 @@ if (isArena!Arena)
         int offset, Slot slot = Slot.inherit, in Visual thumb = Visual.init,
         RgbColor trackColor = RgbColor.init, bool trackLit = false,
         ubyte expandPercent = 0, dchar trackGlyph = '│',
-        dchar thumbGlyph = '█')
+        dchar thumbGlyph = '█', ubyte trackAlpha = 0xFF)
     {
         _ops ~= DrawOp(Scrollbar(
             rect: rect, content: content, viewport: viewport, offset: offset,
             fg: thumb.fg, fgAlpha: thumb.fgAlpha,
-            trackColor: trackColor, trackLit: trackLit,
+            trackColor: trackColor, trackAlpha: trackAlpha, trackLit: trackLit,
             expandPercent: expandPercent, edge: edge, slot: slot,
             trackGlyph: trackGlyph, thumbGlyph: thumbGlyph,
         ));

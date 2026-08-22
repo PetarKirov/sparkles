@@ -1774,9 +1774,11 @@ int runGui(GuiArgs guiArgs) @system
                     children: [iv], width: SizeSpec.fixed(ir.width),
                     clipX: true);
                 auto iwt = ib.finish(ib.add(ipane));
+                // vm.palette, not the raw theme palette: it carries the
+                // link-tinted sbTrack/sbThumb every other bar in the window
+                // is painted with — one scrollbar look (SCV1).
                 auto iOps = buildDisplayList(iwt, layout(iwt),
-                    themes[vm.themeIdx].effectivePalette, vm.pageFg,
-                    vm.pageBg);
+                    vm.palette, vm.pageFg, vm.pageBg);
                 auto iCanvas = RaylibCanvas(fontsP, &buf, cellW,
                     cellH, cast(float)(ir.x * cellW),
                     cast(float)(ir.y * cellH));
@@ -1963,9 +1965,10 @@ int runGui(GuiArgs guiArgs) @system
             const sY = (cellsH - sPanel.height) / 2;
             window.resetClip();
             ltnOps.reset();
+            // vm.palette for the same reason as the inspector's: the bar
+            // must be the same chrome as every other bar in the window.
             buildDisplayListInto(sTree, sFrames,
-                themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
-                ltnOps);
+                vm.palette, vm.pageFg, vm.pageBg, ltnOps);
             auto sCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 cast(float)((sX > 0 ? sX : 0) * cellW),
                 cast(float)((sY > 0 ? sY : 0) * cellH));

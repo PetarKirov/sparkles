@@ -191,7 +191,8 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             ops.scrollbar(rect, node.barEdge,
                 barInt(node.barContent), barInt(node.barViewport),
                 barInt(node.barOffset), Slot.thumb, thumbVis,
-                trackColor: trackVis.fg, trackLit: node.barTrackLit,
+                trackColor: trackVis.fg, trackAlpha: trackVis.fgAlpha,
+                trackLit: node.barTrackLit,
                 expandPercent: node.barExpandPercent,
                 trackGlyph: node.barTrackGlyph,
                 thumbGlyph: node.barThumbGlyph);
