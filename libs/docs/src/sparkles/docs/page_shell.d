@@ -22,6 +22,7 @@ import sparkles.syntax;
 
 import sparkles.docs.fragment : withLineNumbers;
 import sparkles.docs.options;
+import sparkles.docs.sidebar : SidebarItem;
 import sparkles.docs.site_tree : DirNode;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 
@@ -396,19 +397,30 @@ directory a `<details>` (open along the current page's path), its name a link
 to that directory's page inside the `<summary>` (the marker toggles, the name
 navigates), every page a link $(B relative to the current page) — the
 `file://` discipline of `GAL12`/`GAL14` — with the current one highlighted.
-The docs-site nav (`opt.docsNavHtml`) nests under the `docs/` node, so the
-site's two navigation worlds meet where the reader expects them to.
+
+The `docs/` node is special: when `docsNav` (the $(B augmented) sidebar tree,
+`sidebar.SidebarItem[]`) is supplied, its groups render $(B inline) as the
+node's children — no wrapper, and no parallel copy of `docs/`' raw file
+subtree, whose listing directories already sit inside their owning nav groups
+(`DSC7`). A nav entry that is a listing-directory route renders as the actual
+$(B file subtree) of that directory — a `<details>` of page-relative links,
+exactly like the rest of the explorer — never as a site-absolute link, which
+would 404 anywhere but the deployed site root. Ordinary page routes resolve
+against `siteBase`, as the docs nav always has.
 
 `currentOut` is the current page's output path (`a/b/c.d.html`, or a
 directory's `a/b/index.html`); `entries` are the pages that exist — pass what
 was actually written, so the explorer never links a hole.
 */
 string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
-    string docsNavHtml = null) @safe pure
+    scope const SidebarItem[] docsNav = null,
+    scope const(char)[] siteBase = null) @safe pure
 {
     import std.algorithm.searching : startsWith;
+    import std.string : endsWith, lastIndexOf;
 
-    import sparkles.docs.site_tree : buildSiteTree, DirNode;
+    import sparkles.docs.site : siteRoutePrefix;
+    import sparkles.docs.site_tree : buildSiteTree;
 
     auto tree = buildSiteTree(entries);
     size_t[string] at;
@@ -423,42 +435,107 @@ string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
     auto w = appender!string;
     w ~= "<aside class=\"site-sidebar site-explorer\"><nav aria-label=\"Files\">\n";
 
+    // `walk` and the nav renderer are mutually recursive (a nav entry can
+    // open a file subtree); local functions cannot forward-reference, so the
+    // later one is reached through this delegate.
+    void delegate(ref const DirNode) @safe pure walkFn;
+
+    void dirDetails(string childRel, scope const(char)[] label) @safe pure
+    {
+        const childOut = childRel ~ "/index.html";
+        const open = currentDir.startsWith(childRel ~ "/");
+        const active = childOut == currentOut;
+        w ~= "<details class=\"sb-group\"";
+        if (open)
+            w ~= " open";
+        w ~= "><summary><a class=\"sb-link sb-dir";
+        if (active)
+            w ~= " active";
+        w ~= "\" href=\"";
+        escapeInto(w, pageHref(currentOut, childOut));
+        w ~= "\"";
+        if (active)
+            w ~= " aria-current=\"page\"";
+        w ~= ">";
+        escapeInto(w, label);
+        w ~= "</a></summary><div class=\"sb-items\">\n";
+        if (auto idx = childRel in at)
+            walkFn(tree.nodes[*idx]);
+        w ~= "</div></details>\n";
+    }
+
+    // The route of a listing directory this site holds, or null — the shape
+    // `augmentWithListingDirs` emits: `/src/<dir>/index.html`.
+    string listingDirOf(scope const(char)[] link) @safe pure
+    {
+        if (!link.startsWith(siteRoutePrefix) || !link.endsWith("/index.html"))
+            return null;
+        const rel = link[siteRoutePrefix.length .. $ - "/index.html".length].idup;
+        return rel in at ? rel : null;
+    }
+
+    void renderNav(scope const SidebarItem[] items) @safe pure
+    {
+        foreach (ref const it; items)
+        {
+            if (it.items.length)
+            {
+                w ~= "<details class=\"sb-group\"";
+                if (!it.collapsed)
+                    w ~= " open";
+                w ~= "><summary>";
+                escapeInto(w, it.text);
+                w ~= "</summary><div class=\"sb-items\">\n";
+                renderNav(it.items);
+                w ~= "</div></details>\n";
+                continue;
+            }
+            if (const dirRel = listingDirOf(it.link))
+            {
+                // A listing directory renders as its real file subtree, its
+                // label the directory's own name — never a "(source)" link.
+                const slash = dirRel.lastIndexOf('/');
+                dirDetails(dirRel,
+                    dirRel[slash < 0 ? 0 : cast(size_t) slash + 1 .. $] ~ "/");
+                continue;
+            }
+            if (it.link.length)
+            {
+                w ~= "<a class=\"sb-link\" href=\"";
+                if (!it.link.startsWith("http://", "https://") && siteBase.length)
+                    escapeInto(w, siteBase);
+                escapeInto(w, it.link);
+                w ~= "\">";
+                escapeInto(w, it.text);
+                w ~= "</a>\n";
+            }
+            else
+            {
+                w ~= "<span class=\"sb-text\">";
+                escapeInto(w, it.text);
+                w ~= "</span>\n";
+            }
+        }
+    }
+
     // Explicit `@safe`: a self-recursive nested function gets no inference.
     void walk(ref const DirNode node) @safe pure
     {
-        if (node.relPath == "docs" && docsNavHtml.length)
-        {
-            w ~= "<details class=\"sb-group sb-docs\"><summary>site pages</summary>"
-                ~ "<div class=\"sb-items\">\n";
-            w ~= docsNavHtml;
-            w ~= "</div></details>\n";
-        }
-        foreach (ref const d; node.dirs)
-        {
-            const bare = d.label[0 .. $ - 1]; // "name/" → "name"
-            const childRel = node.relPath.length
-                ? node.relPath ~ "/" ~ bare : bare.idup;
-            const childOut = childRel ~ "/index.html";
-            const open = currentDir.startsWith(childRel ~ "/");
-            const active = childOut == currentOut;
-            w ~= "<details class=\"sb-group\"";
-            if (open)
-                w ~= " open";
-            w ~= "><summary><a class=\"sb-link sb-dir";
-            if (active)
-                w ~= " active";
-            w ~= "\" href=\"";
-            escapeInto(w, pageHref(currentOut, childOut));
-            w ~= "\"";
-            if (active)
-                w ~= " aria-current=\"page\"";
-            w ~= ">";
-            escapeInto(w, d.label);
-            w ~= "</a></summary><div class=\"sb-items\">\n";
-            if (auto idx = childRel in at)
-                walk(tree.nodes[*idx]);
-            w ~= "</div></details>\n";
-        }
+        // The docs node IS the docs nav (`DSC7`/`DOC11`): its groups inline,
+        // its raw directory children suppressed — their listing subtrees
+        // already sit inside the owning groups. Loose files directly under
+        // docs/ (rare) still render below.
+        const navHere = node.relPath == "docs" && docsNav.length != 0;
+        if (navHere)
+            renderNav(docsNav);
+        if (!navHere)
+            foreach (ref const d; node.dirs)
+            {
+                const bare = d.label[0 .. $ - 1]; // "name/" → "name"
+                const childRel = node.relPath.length
+                    ? node.relPath ~ "/" ~ bare : bare.idup;
+                dirDetails(childRel, d.label);
+            }
         foreach (ref const f; node.files)
         {
             const fileOut = node.relPath.length
@@ -478,6 +555,7 @@ string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
         }
     }
 
+    walkFn = &walk;
     if (auto root = "" in at)
         walk(tree.nodes[*root]);
     w ~= "</nav></aside>";
@@ -539,7 +617,8 @@ out of the indices, so no index ever links a page that was not written.
 Returns the number of pages written.
 */
 size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
-    scope string delegate(in SourceEntry) renderOne) @system
+    scope string delegate(in SourceEntry) renderOne,
+    scope const SidebarItem[] docsNav = null) @system
 {
     import std.file : mkdirRecurse, write;
     import std.path : buildPath, dirName;
@@ -550,7 +629,7 @@ size_t writeGallery(in SourceSet set, string outDir, in GalleryOptions opt,
     mkdirRecurse(outDir);
 
     if (opt.explorerSidebar)
-        return writeExplorerGallery(set, outDir, opt, renderOne);
+        return writeExplorerGallery(set, outDir, opt, renderOne, docsNav);
 
     SourceEntry[] written;
     foreach (i, ref const e; set.entries)
@@ -612,7 +691,8 @@ per-page explorer and the directory pages — a failed render (`GAL9`) is a
 missing entry, never a dead link in every sidebar.
 */
 private size_t writeExplorerGallery(in SourceSet set, string outDir,
-    in GalleryOptions opt, scope string delegate(in SourceEntry) renderOne) @system
+    in GalleryOptions opt, scope string delegate(in SourceEntry) renderOne,
+    scope const SidebarItem[] docsNav) @system
 {
     import std.file : mkdirRecurse, write;
     import std.path : buildPath, dirName;
@@ -659,7 +739,7 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
 
         GalleryOptions pageOpt = opt;
         pageOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(e.outPath));
-        pageOpt.sidebarHtml = explorerNav(written, e.outPath, opt.docsNavHtml);
+        pageOpt.sidebarHtml = explorerNav(written, e.outPath, docsNav, opt.siteBase);
 
         const dest = buildPath(outDir, e.outPath);
         const destDir = dest.dirName;
@@ -682,7 +762,7 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
             ? node.relPath ~ "/index.html" : "index.html";
         GalleryOptions dirOpt = opt;
         dirOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(dirOut));
-        dirOpt.sidebarHtml = explorerNav(written, dirOut, opt.docsNavHtml);
+        dirOpt.sidebarHtml = explorerNav(written, dirOut, docsNav, opt.siteBase);
 
         const dest = buildPath(outDir, dirOut);
         mkdirRecurse(dest.dirName);
@@ -1046,21 +1126,40 @@ unittest
         SourceEntry(name: "e.d", relPath: "docs/ex/e.d", outPath: "docs/ex/e.d.html"),
     ];
 
+    const docsNav = [
+        SidebarItem(text: "Overview", link: "/overview"),
+        SidebarItem(text: "Research", collapsed: true, items: [
+            SidebarItem(text: "ex/ (source)", link: "/src/docs/ex/index.html"),
+        ]),
+    ];
+
     // Seen from libs/a/x.d.html: its own chain is open, the sibling closed,
     // every href page-relative, and the current page highlighted.
-    const fromX = explorerNav(entries, "libs/a/x.d.html", "<a href=\"/overview\">Overview</a>");
+    const fromX = explorerNav(entries, "libs/a/x.d.html", docsNav, "https://docs.example");
     assert(fromX.canFind(`<a class="sb-link active" href="x.d.html" aria-current="page">x.d</a>`), fromX);
     assert(fromX.canFind(`href="../b/y.d.html"`), fromX);
-    assert(fromX.canFind(`href="../../docs/ex/e.d.html"`), fromX);
     // Open along the current path only — `libs/` and `a/` open, `b/` closed —
     // with each directory's name a link to ITS index inside the summary (the
     // page sits in `a/`, so `a/`'s index is right beside it).
     assert(fromX.canFind(`<details class="sb-group" open><summary><a class="sb-link sb-dir" href="../index.html">libs/</a>`), fromX);
     assert(fromX.canFind(`<details class="sb-group" open><summary><a class="sb-link sb-dir" href="index.html">a/</a>`), fromX);
     assert(fromX.canFind(`<details class="sb-group"><summary><a class="sb-link sb-dir" href="../b/index.html">b/</a>`), fromX);
-    // The docs-site nav nests under docs/.
-    assert(fromX.canFind(`<details class="sb-group sb-docs"><summary>site pages</summary>`), fromX);
-    assert(fromX.canFind(`<a href="/overview">Overview</a>`), fromX);
+
+    // The docs/ node IS the docs nav: its groups inline — no "site pages"
+    // wrapper — page routes resolved against the base, and the listing entry
+    // rendered as the real file subtree with RELATIVE hrefs and no
+    // "(source)" suffix (a site-absolute link 404s anywhere but the site).
+    assert(!fromX.canFind("site pages"), fromX);
+    assert(fromX.canFind(`<a class="sb-link" href="https://docs.example/overview">Overview</a>`), fromX);
+    assert(fromX.canFind(`<summary><a class="sb-link sb-dir" href="../../docs/ex/index.html">ex/</a></summary>`), fromX);
+    assert(fromX.canFind(`href="../../docs/ex/e.d.html"`), fromX);
+    assert(!fromX.canFind("(source)"), fromX);
+    assert(!fromX.canFind(`href="/src/`), fromX);
+    // …and docs/' raw directory children are suppressed: `ex/` appears once,
+    // inside the nav, not again as a parallel file-tree node.
+    import std.algorithm.searching : count;
+
+    assert(fromX.count(">ex/</a>") == 1, fromX);
 
     // A directory page is the active node of its own explorer.
     const fromDir = explorerNav(entries, "libs/a/index.html");
