@@ -456,6 +456,13 @@ struct GuiCapture
     /// the pane's arrangement (its bar beside the document's) is exactly the
     /// kind of thing only a screenshot catches.
     bool inspect;
+    /// `HUE_GUI_SETTINGS`: open the settings pane before the first frame,
+    /// with the value's keys typed into it (same reason: the modal only
+    /// exists between keystrokes, and its scrollbar geometry is exactly what
+    /// a screenshot catches). An empty (but set) value just opens it.
+    string settings;
+    /// ditto
+    bool settingsSet;
 
     /// ditto
     static GuiCapture fromEnv(scope string delegate(string, string) @safe get) @safe
@@ -493,6 +500,9 @@ struct GuiCapture
         const p = get("HUE_GUI_PICKER", null);
         c.pickerSet = p !is null;
         c.picker = p;
+        const st = get("HUE_GUI_SETTINGS", null);
+        c.settingsSet = st !is null;
+        c.settings = st;
         try
             c.forceHover = get("HUE_GUI_HOVER", null).length
                 ? get("HUE_GUI_HOVER", null).to!int : -1;
