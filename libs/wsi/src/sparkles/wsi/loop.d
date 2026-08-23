@@ -40,6 +40,46 @@ if (Capacity > 0)
     }
 
     /**
+    Push, coalescing over $(LREF supersedes): scans the queue's trailing
+    run of superseded-kind events and, when one of this event's kind and
+    window is found there, removes it before appending — so bounded
+    capacity survives native event floods whose intermediate observations
+    no consumer needs (a resize drag interleaves metrics and expose
+    events, hundreds per dispatch). The scan stops at the first event
+    that must keep its place, and removal happens behind append, keeping
+    drained sequences strictly increasing.
+    */
+    WsiResult!void pushCoalesced(WindowEvent event) pure nothrow @nogc
+    {
+        size_t scanned;
+        while (scanned < count_)
+        {
+            ref candidate =
+                events_[(head_ + count_ - 1 - scanned) % Capacity];
+            if (supersedes(candidate, event))
+            {
+                // Compact the run over the superseded slot, then append.
+                foreach (offset; 0 .. scanned)
+                {
+                    const to = (head_ + count_ - 1 - scanned + offset)
+                        % Capacity;
+                    const from = (to + 1) % Capacity;
+                    assignEvent(events_[to], events_[from]);
+                }
+                clearEvent(events_[(head_ + count_ - 1) % Capacity]);
+                --count_;
+                break;
+            }
+            // Only events that themselves could coalesce with something may
+            // be scanned past; anything else anchors the queue's order.
+            if (!coalescible(candidate) || candidate.window != event.window)
+                break;
+            ++scanned;
+        }
+        return push(event);
+    }
+
+    /**
     Drain the events present at entry. Events appended by the sink are deferred
     to the next drain, and a recursive drain is rejected.
     */
@@ -63,6 +103,48 @@ if (Capacity > 0)
         }
         return wsiOk(available);
     }
+}
+
+@("wsi.loop.eventQueueSurvivesAResizeFloodByCoalescing")
+@safe pure nothrow @nogc
+unittest
+{
+    // The shape a resize drag produces: alternating metrics and expose
+    // events, far more than the queue holds. Coalescing keeps the newest
+    // of each kind instead of failing on capacity.
+    EventQueue!8 queue;
+    const window = WindowId(1, 1);
+    ulong sequence = 1;
+    foreach (i; 0 .. 100)
+    {
+        const metrics = SurfaceMetrics(LogicalSize(100 + i, 100),
+            PhysicalSize(100 + i, 100), ScaleFactor(1));
+        assert(!queue.pushCoalesced(WindowEvent(sequence++, window,
+            WindowEventPayload(SurfaceMetricsChangedEvent(metrics))))
+            .hasError);
+        assert(!queue.pushCoalesced(WindowEvent(sequence++, window,
+            WindowEventPayload(ExposedEvent()))).hasError);
+    }
+    assert(queue.length == 2);
+
+    // Keyboard events anchor the order: nothing coalesces across them,
+    // and drained sequences stay strictly increasing.
+    assert(!queue.pushCoalesced(WindowEvent(sequence++, window,
+        WindowEventPayload(KeyboardEvent()))).hasError);
+    const metrics = SurfaceMetrics(LogicalSize(1, 2), PhysicalSize(1, 2),
+        ScaleFactor(1));
+    assert(!queue.pushCoalesced(WindowEvent(sequence++, window,
+        WindowEventPayload(SurfaceMetricsChangedEvent(metrics))))
+        .hasError);
+    assert(queue.length == 4);
+    ulong last;
+    size_t drained;
+    auto result = queue.drain((WindowEvent event) @safe pure nothrow @nogc {
+        assert(event.sequence > last);
+        last = event.sequence;
+        ++drained;
+    });
+    assert(!result.hasError && drained == 4);
 }
 
 /// Headless implementation used for lifecycle and host tests.

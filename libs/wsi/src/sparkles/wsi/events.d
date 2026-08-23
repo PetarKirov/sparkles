@@ -265,6 +265,61 @@ struct WindowEvent
     WindowEventPayload payload;
 }
 
+/**
+Whether `next` supersedes `tail` at the back of a bounded event queue: the
+same window and a payload kind where only the newest observation matters —
+surface metrics, window position, and expose opportunities. This is the
+bounded queue's answer to native event floods: an interactive resize can
+batch hundreds of configures into one dispatch, and during a Win32 or
+AppKit modal phase the application cannot drain at all, so keeping the
+latest observation beats failing on capacity. Input, text, focus, and
+lifecycle events never coalesce.
+*/
+bool supersedes(in WindowEvent tail, in WindowEvent next)
+    @safe pure nothrow @nogc
+{
+    if (tail.window != next.window)
+        return false;
+    static bool bothAre(Payload)(in WindowEvent a, in WindowEvent b)
+        => isKind!Payload(a) && isKind!Payload(b);
+    return bothAre!SurfaceMetricsChangedEvent(tail, next)
+        || bothAre!MovedEvent(tail, next)
+        || bothAre!ExposedEvent(tail, next);
+}
+
+// match, not std.sumtype.has: `has!T` on a const sum answers for `const T`
+// only, and these events arrive through `in` parameters.
+private bool isKind(Payload)(in WindowEvent event) @safe pure nothrow @nogc
+    => event.payload.match!((in Payload _) => true, _ => false);
+
+/// Whether this event's kind can ever be superseded — the queue may scan
+/// past it when coalescing; everything else anchors ordering.
+bool coalescible(in WindowEvent event) @safe pure nothrow @nogc
+    => isKind!SurfaceMetricsChangedEvent(event) || isKind!MovedEvent(event)
+        || isKind!ExposedEvent(event);
+
+@("wsi.events.supersedesCoalescesOnlyLatestObservationKinds")
+@safe pure nothrow @nogc
+unittest
+{
+    const window = WindowId(1, 1);
+    const other = WindowId(2, 1);
+    const metrics = SurfaceMetrics(LogicalSize(1, 1), PhysicalSize(1, 1),
+        ScaleFactor(1));
+    auto resizeA = WindowEvent(1, window,
+        WindowEventPayload(SurfaceMetricsChangedEvent(metrics)));
+    auto resizeB = WindowEvent(2, window,
+        WindowEventPayload(SurfaceMetricsChangedEvent(metrics)));
+    assert(supersedes(resizeA, resizeB));
+    // Never across windows, kinds, or for input.
+    assert(!supersedes(WindowEvent(1, other, resizeA.payload), resizeB));
+    assert(!supersedes(resizeA,
+        WindowEvent(2, window, WindowEventPayload(ExposedEvent()))));
+    assert(!supersedes(
+        WindowEvent(1, window, WindowEventPayload(KeyboardEvent())),
+        WindowEvent(2, window, WindowEventPayload(KeyboardEvent()))));
+}
+
 @("wsi.events.textAndCompositionOwnTheirBytes")
 @safe
 pure nothrow @nogc
