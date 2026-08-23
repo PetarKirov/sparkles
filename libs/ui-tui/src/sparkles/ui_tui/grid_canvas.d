@@ -238,9 +238,11 @@ struct GridCanvas
         if (v.hasBg)
         {
             // An opaque fill is a *surface*: it hides what it covers, so the
-            // cell's glyph goes with its background. A translucent one is a
-            // tint over content that must stay legible (the highlight band,
-            // the error line), so it keeps the glyph.
+            // cell's glyph AND its decoration go with its background. A
+            // translucent one is a tint over content that must stay legible
+            // (the highlight band, the error line), so it keeps both — a
+            // selection band over an error squiggle must not erase the
+            // squiggle.
             const opaque = v.bgAlpha == 0xFF;
             foreach (y; r.y .. r.y + r.height)
             {
@@ -256,6 +258,16 @@ struct GridCanvas
                             c.bytes[0] = ' ';
                             c.len = 1;
                             c.width = 1;
+                            // …and its DECORATION goes too. An underline is
+                            // an attribute of the cell, not of the character
+                            // in it, so blanking the glyph alone leaves the
+                            // line painted: $(LREF GridCanvas.line) draws a
+                            // horizontal rule AS an underline, so a surface
+                            // laid over one kept a stripe running through
+                            // itself, full width, at every ruled row.
+                            c.style.underline = UnderlineStyle.none;
+                            c.style.underlineColor = Color.init;
+                            c.style.attrs = TextAttr.none;
                         }
                     }
             }
@@ -832,4 +844,60 @@ static assert(isCanvas!GridCanvas);
                             "the two semantic-scrollbar cell fallbacks disagree");
                     }
             }
+}
+
+@("ui_tui.grid_canvas.anOpaqueSurfaceHidesTheDecorationBeneathIt")
+@safe unittest
+{
+    // A horizontal rule reaches the cell grid as an UNDERLINE (`line` has no
+    // sub-cell resolution to draw one with), which makes it an attribute of
+    // the cell rather than of the character in it. So a surface drawn over a
+    // rule has to clear the attribute as well as the glyph — `apps/diagram`'s
+    // settings pane over a lined grid backdrop showed the rule striping
+    // straight through the panel, at full width, on every ruled row.
+    Grid g;
+    g.resize(20, 3);
+    auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
+
+    Visual rule;
+    rule.fg = RgbColor(0x80, 0x80, 0x80);
+    canvas.line(Point(0, 1), Point(20, 1), rule, LineStyle.solid);
+    assert(g[5, 1].style.underline == UnderlineStyle.single, "the rule is drawn");
+
+    Visual surface;
+    surface.hasBg = true;
+    surface.bg = RgbColor(0x20, 0x20, 0x28);
+    surface.bgAlpha = 0xFF;
+    canvas.fillRect(Rect(2, 0, 10, 3), surface);
+
+    assert(g[5, 1].style.underline == UnderlineStyle.none,
+        "the surface hides the rule under it");
+    assert(g[15, 1].style.underline == UnderlineStyle.single,
+        "…and only the part it actually covers");
+}
+
+@("ui_tui.grid_canvas.aTranslucentTintKeepsTheDecorationBeneathIt")
+@safe unittest
+{
+    // The other half of the same rule, and the reason it is a conditional
+    // rather than an unconditional reset: a selection band or a diff-row tint
+    // is drawn OVER content that has to stay legible. Erasing the undercurl
+    // under a highlighted error line would delete the error.
+    Grid g;
+    g.resize(20, 3);
+    auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
+
+    Visual squiggle;
+    squiggle.fg = RgbColor(0xD4, 0x56, 0x56);
+    canvas.line(Point(0, 1), Point(20, 1), squiggle, LineStyle.wavy);
+    assert(g[5, 1].style.underline == UnderlineStyle.curly);
+
+    Visual tint;
+    tint.hasBg = true;
+    tint.bg = RgbColor(0x40, 0x40, 0x60);
+    tint.bgAlpha = 0x40;
+    canvas.fillRect(Rect(0, 0, 20, 3), tint);
+
+    assert(g[5, 1].style.underline == UnderlineStyle.curly,
+        "a tint is not a surface: the squiggle under it survives");
 }
