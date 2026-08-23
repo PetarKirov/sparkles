@@ -30,8 +30,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # npm ci + the wasm nix build + VitePress build + Cloudflare deploy run ~5m.
-    timeout-minutes: 15
+    # npm ci + the wasm nix build + VitePress build + Cloudflare deploy ran ~5m
+    # until `sourceRoots` (`DSC8`) put `apps`/`libs` in the listings: twoslash
+    # extraction over 919 D files is ~25m on a 2-core runner and blew the old
+    # 15m cap. Raised with headroom; the lasting fix is scoping extraction.
+    timeout-minutes: 45
 
     permissions:
       contents: read
