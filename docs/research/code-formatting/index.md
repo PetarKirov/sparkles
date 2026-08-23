@@ -167,7 +167,7 @@ depth-1 clones. See [the theory index's footnote](./theory/index.md#milestones).
 [The substrate][baseline] first — it changes the assumptions — then
 [the D landscape][d-landscape], [comparison's delta table][delta], and
 [the proposal][proposal]. To argue about individual rules rather than architecture,
-[prettier's decisions, extracted][prettier-decisions] — 134 rows, each scored for D.
+[prettier's decisions, extracted][prettier-decisions] — 160 rows, each scored for D.
 
 **"I have five minutes."**
 [The Hughes remark][hughes-remark], [the incompleteness budget][budget], and
