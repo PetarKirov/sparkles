@@ -238,20 +238,80 @@ int effectiveStripeStep(in AxisSubdivision layer, in GridView view)
 /**
 Appends the backdrop into `ops` (`GRD1`, `GRD6`): major then minor stripes
 (X under Y), then minor then major lattice. Slots resolve through `pal`.
+
+$(B `maxOps` is a real budget, and a lattice that will not fit it is dropped
+whole.) A `lines` layer costs one op per visible row or column; a `dots` layer
+costs one per lattice $(I intersection), so the same config that is a hundred
+ops as lines is tens of thousands as graph paper on a large surface. A host
+that appends this into a bounded frame buffer therefore has to be able to say
+how much of it the backdrop may spend — otherwise the backdrop spends the
+frame and whatever the host draws afterwards (its chrome, its content) is what
+disappears.
+
+Dropped $(B whole), never truncated: half a lattice would put marks in some
+places and not others at the same interval, which is a lie about where the
+lattice is (`GRD6`) rather than a degradation of it. The major layer is
+charged for first, so when a dense minor lattice cannot fit it is the fine
+layer that goes and the coarse accents that survive — the way a board thins
+its grid as it zooms out.
 */
 void appendGridBackdrop(Sink)(
     ref Sink ops, in GridConfig cfg, in GridView view,
-    in Palette pal, in RgbColor pageFg, in RgbColor pageBg)
+    in Palette pal, in RgbColor pageFg, in RgbColor pageBg,
+    size_t maxOps = size_t.max)
 {
     if (view.screen.empty || view.world.empty)
         return;
 
+    const minorStep = effectiveMinorStep(cfg, view);
+    const majorStep = effectiveMajorStep(cfg, view);
+    const majorCost = latticeCost(cfg.majorLattice, cfg.majorStyle,
+        majorStep, view);
+    const minorRoom = maxOps > majorCost ? maxOps - majorCost : 0;
+
     paintStripes(ops, cfg.majorStripes, cfg.brushes, view, pal, pageFg, pageBg);
     paintStripes(ops, cfg.minorStripes, cfg.brushes, view, pal, pageFg, pageBg);
-    paintLattice(ops, cfg.minorLattice, cfg.minorStyle,
-        effectiveMinorStep(cfg, view), view, pal, pageFg, pageBg);
-    paintLattice(ops, cfg.majorLattice, cfg.majorStyle,
-        effectiveMajorStep(cfg, view), view, pal, pageFg, pageBg);
+    if (latticeCost(cfg.minorLattice, cfg.minorStyle, minorStep, view)
+            <= minorRoom)
+        paintLattice(ops, cfg.minorLattice, cfg.minorStyle, minorStep, view,
+            pal, pageFg, pageBg);
+    if (majorCost <= maxOps)
+        paintLattice(ops, cfg.majorLattice, cfg.majorStyle, majorStep, view,
+            pal, pageFg, pageBg);
+}
+
+/**
+An upper bound on the ops one lattice layer will append (`GRD1`).
+
+Never an underestimate — both emitters de-duplicate by screen cell, so the
+screen's own extent bounds them, and the world span bounds them again when the
+interval is coarse. `lines` is a sum (rows plus columns); `dots` is a product
+(one mark per intersection), which is the whole reason a budget exists.
+*/
+size_t latticeCost(in AxisSubdivision layer, in LatticeStyle style, int step,
+    in GridView view) @safe pure nothrow @nogc
+{
+    if (layer.visibility == AxisVisibility.none || step <= 0)
+        return 0;
+    const gx = showsX(layer.visibility);
+    const gy = showsY(layer.visibility);
+
+    static size_t spans(int worldSpan, int screenSpan, int step_)
+        @safe pure nothrow @nogc
+    {
+        if (worldSpan <= 0 || screenSpan <= 0)
+            return 0;
+        const byWorld = cast(size_t)((worldSpan + step_ - 1) / step_);
+        const byScreen = cast(size_t) screenSpan;
+        return byWorld < byScreen ? byWorld : byScreen;
+    }
+
+    const cols = spans(view.world.width, view.screen.width, step);
+    const rows = spans(view.world.height, view.screen.height, step);
+
+    if (style.markKind == MarkKind.dots)
+        return (gx ? cols : 1) * (gy ? rows : 1);
+    return (gx ? cols : 0) + (gy ? rows : 0);
 }
 
 /// Dot glyph for a mark size: `·` (U+00B7) at 1, `•` (U+2022) when thicker.
