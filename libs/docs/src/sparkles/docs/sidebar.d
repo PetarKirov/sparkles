@@ -223,7 +223,7 @@ string sidebarNav(in SidebarItem[] items, scope const(char)[] siteBase = null) @
 
 /// The tree's items alone — no `<aside>`/`<nav>` wrapper — for embedding
 /// inside another nav: the explorer sidebar nests this under its `docs/`
-/// node (`page_shell.explorerNav`, `DOC11`).
+/// node (`explorer.explorerScript`, `DOC11`/`DOC12`).
 string sidebarItemsHtml(in SidebarItem[] items, scope const(char)[] siteBase = null) @safe pure
 {
     auto w = appender!string;
@@ -291,6 +291,10 @@ string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init
     import std.conv : text;
 
     auto w = appender!string;
+    // An explorer aside arrives empty and is filled by its client module
+    // (`DOC12`). Without JavaScript it stays empty, and a 16.5em blank column
+    // reads as a broken sidebar — so an empty one takes no space at all.
+    w ~= "  .site-sidebar:empty { display: none; }\n";
     w ~= "  .site-sidebar { flex: none; width: 16.5em; overflow-y: auto;\n";
     w ~= text("                  padding: 0.9em 1.1em 1.5em; box-sizing: border-box;\n");
     w ~= text("                  background: ", c.surface, "; border-right: 1px solid ",

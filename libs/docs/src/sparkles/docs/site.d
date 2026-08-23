@@ -486,7 +486,7 @@ string manifestJson(string[] files, string[] dirs, SkippedFile[] skipped) @safe 
 
 /// A JSON string literal for a path: quotes, backslashes, and control bytes
 /// escaped (paths carry nothing else that needs it).
-private void writeJsonString(ref Appender!string w, scope const(char)[] s) @safe pure
+package void writeJsonString(ref Appender!string w, scope const(char)[] s) @safe pure
 {
     w ~= '"';
     foreach (char c; s)
