@@ -29,9 +29,10 @@ $(LIST
 The adapter never retains `T*`: it receives `ref T` per rebuild and edit
 (`PRT2`), and presents the result through the shipped tree components —
 `TreeData!PropertyNode`, `TreeViewState!string`, `flatten`, and the
-`nodeExpandable` projection. Consumers that use the fuzzy search projection
-link `sparkles:fuzzy` (this package reaches it import-only, like
-`sparkles:math`, to keep the dub graph acyclic).
+`nodeExpandable` projection. The search projection is built on
+`sparkles:fuzzy` — a real dependency: DMD bakes speculative fuzzy-struct
+TypeInfo into this module's object for mere imports, so import-only linking
+was never sound here (see the dub recipe's note).
 
 Spec: `docs/specs/ui/property-tree.md`.
 */
@@ -979,9 +980,7 @@ private struct DisclosureVisitor
 /// Compile-time bound of the search heap; the match target clamps here.
 private enum size_t searchHeapCapacity = 1024;
 
-/// One query part, prepared once per rebuild (`PRT30`). A template (like
-/// every fuzzy-touching entity here) so no fuzzy TypeInfo chain anchors in
-/// this package's own objects — see the dub recipe's import-only note.
+/// One query part, prepared once per rebuild (`PRT30`).
 private struct PartMatcher(Caps = DefaultFuzzyCaps)
 {
     string text;
