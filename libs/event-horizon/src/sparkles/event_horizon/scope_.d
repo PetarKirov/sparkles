@@ -357,16 +357,35 @@ private template runScope(alias fn, E)
                 exec.armDeadline(&sc.node, timeout);
 
         alias T = typeof(fn(sc));
-        static if (is(T == void))
-            fn(sc);
-        else
-            auto value = fn(sc);
+        static if (!is(T == void))
+            T value; // the Slot precedent (schedule.timeout): T default-constructs
+        Throwable defect;
+        try
+        {
+            static if (is(T == void))
+                fn(sc);
+            else
+                value = fn(sc);
+        }
+        catch (Throwable t)
+        {
+            // A body defect must not skip the join/disarm/unlink below: the
+            // unwinding path used to leak the armed deadline (a second
+            // use-after-free route) and leave dangling tree links. This is
+            // an explicit handler rather than scope(exit) deliberately — an
+            // Error unwinding a nothrow frame may elide scope(exit)/finally
+            // cleanup, but a catch still runs.
+            defect = t;
+            sc.fail(Cause!E.fromDefect(t)); // cancelSiblings ends the children
+        }
 
         // Restore the joiner's membership before reaping/joining.
         sc.node.removeFiber(joiner);
         if (outerNode !is null)
             outerNode.addFiber(joiner);
 
+        // The deadline stays armed through the join — it bounds a join
+        // stuck on a wedged child.
         sc.joinPhase();
 
         static if (hasDeadlineTimer!X)
@@ -375,6 +394,14 @@ private template runScope(alias fn, E)
         if (outerNode !is null)
             outerNode.removeChild(&sc.node);
         sc.node.state = CancelContext.State.finished;
+
+        // The defect propagates only after the scope fully unwound: it
+        // reaches the fiber shell and the outer scope's Cause.die routing
+        // exactly once. (Deliberately not folded into the returned Outcome —
+        // a failed assert in a body must not become an ignorable Expected
+        // error.)
+        if (defect !is null)
+            throw defect;
 
         // A deadline that swept the scope surfaces as its cause even when
         // no child recorded one.
