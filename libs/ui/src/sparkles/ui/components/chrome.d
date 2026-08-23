@@ -17,6 +17,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
 import sparkles.ui.components.dock : DockDrag, dockHintRect;
+import sparkles.ui.components.scroll_view : ScrollLayout, ScrollView;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
 import sparkles.ui.style : Slot, TextStyle;
@@ -137,6 +138,128 @@ uint scrollbar(ref Builder b, in ScrollbarState sb, long content,
         glyphs: glyphs,
         hitId: hitId,
     ), track);
+}
+
+/**
+One axis' bar presentation for a frame (`SCV4`): where the pane is actually
+scrolled to, how far its hover-expand easing has run, whether the track is lit,
+and the charset to paint it with.
+
+The offset is passed rather than read off the machine because the machine's
+copy is a $(I mirror): a pane whose authority is its own `top` syncs the bar in
+its pointer step, so between a wheel notch and the next pointer event
+`ScrollbarState.offset` legitimately lags. Building this value from
+$(LREF vBar)/$(LREF hBar) keeps the "lit" rule — hovered $(B or) dragging —
+written once instead of at every bar.
+*/
+struct ScrollbarView
+{
+    long offset;
+    ubyte expandPercent;
+    bool lit;
+    ScrollbarGlyphs glyphs;
+    size_t hitId;
+}
+
+/// The vertical bar's presentation, read off the machine that animates it.
+ScrollbarView vBar(in ScrollView sv, long offset,
+    ScrollbarGlyphs glyphs = ScrollbarGlyphs('█', '░'), size_t hitId = 0)
+    pure nothrow @nogc
+    => ScrollbarView(offset, cast(ubyte) sv.vAnim.percent,
+        sv.v.hovered || sv.v.dragging, glyphs, hitId);
+
+/// ditto, for the horizontal bar (row glyphs by default).
+ScrollbarView hBar(in ScrollView sv, long offset,
+    ScrollbarGlyphs glyphs = ScrollbarGlyphs('━', '─'), size_t hitId = 0)
+    pure nothrow @nogc
+    => ScrollbarView(offset, cast(ubyte) sv.hAnim.percent,
+        sv.h.hovered || sv.h.dragging, glyphs, hitId);
+
+/**
+The scroll-frame composition (`SCV10`): `content` clipped to the frame's
+content box, with the machine-driven bars in the gutters `scrollLayout` already
+reserved.
+
+$(B This is the one place the composition is written.) Every pane that
+scrolls had assembled it by hand — a fixed-size `clipX`/`clipY` box, a bar
+sibling per live axis, the expand percent cast out of the easing, the lit flag
+recomputed from hover-or-drag — once per pane, per axis, and the copies had
+drifted: some passed no `expandPercent` and never animated, some set no
+`trackLit` and never lit. Geometry comes from the $(I same) `ScrollLayout` the
+pointer routing consumes, so paint and hit cannot disagree (`SCV7`).
+
+A gutter of zero width is an axis this frame does not paint, and the box
+degrades to the bare content — an embedded listing keeps its plain column.
+
+$(B `contentOffset` is `LAY7`'s child offset, not a parameter producers read)
+(`GUT1`). Pass `Point.init` when the caller already sliced its children to the
+window, which is what a row-slicing tree view does.
+
+$(B Pinned chrome must be a sibling, never a child) (`GUT10`): everything
+inside the box scrolls with the content, so a line-number gutter placed within
+it travels off the left edge. Compose it beside the box instead.
+*/
+uint scrollBox(ref Builder b, uint content, in ScrollLayout frame,
+    in ScrollbarView v, in ScrollbarView h,
+    Point contentOffset = Point.init, size_t key = 0)
+{
+    const box = b.add(Widget(
+        kind: WidgetKind.column,
+        children: [content],
+        width: SizeSpec.fixed(frame.content.width),
+        height: SizeSpec.fixed(frame.content.height),
+        clipX: true,
+        clipY: true,
+        childOffset: contentOffset,
+    ));
+
+    uint body_ = box;
+    if (frame.hTrack.height > 0)
+    {
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: frame.hExtents.content,
+            viewport: frame.hExtents.viewport,
+            offset: h.offset,
+            axis: ScrollAxis.horizontal,
+            expandPercent: h.expandPercent,
+            gutter: frame.hTrack.height,
+            trackLit: h.lit,
+            glyphs: h.glyphs,
+            hitId: h.hitId,
+        ), frame.hExtents.track);
+        body_ = b.add(Widget(
+            kind: WidgetKind.column,
+            children: [box, bar],
+            width: SizeSpec.fixed(frame.content.width),
+            height: SizeSpec.fixed(frame.vTrack.height),
+        ));
+    }
+
+    if (frame.vTrack.width <= 0)
+    {
+        if (key != 0)
+            b.nodes[body_].key = key;
+        return body_;
+    }
+
+    const bar = scrollbar(b, ScrollbarSpec(
+        content: frame.vExtents.content,
+        viewport: frame.vExtents.viewport,
+        offset: v.offset,
+        axis: ScrollAxis.vertical,
+        expandPercent: v.expandPercent,
+        gutter: frame.vTrack.width,
+        trackLit: v.lit,
+        glyphs: v.glyphs,
+        hitId: v.hitId,
+    ), frame.vExtents.track);
+    return b.add(Widget(
+        kind: WidgetKind.row,
+        children: [body_, bar],
+        width: SizeSpec.fixed(frame.content.width + frame.vTrack.width),
+        height: SizeSpec.fixed(frame.vTrack.height),
+        key: key,
+    ));
 }
 
 /**
@@ -755,4 +878,108 @@ version (unittest)
     assert(etree.nodes[none].visibility == Visibility.collapsed);
     import sparkles.ui.state : hoverTargets;
     assert(hoverTargets(etree, layout(etree)).length == 0);
+}
+
+@("ui.components.chrome.scrollBox.framesContentBesideItsBars")
+@safe unittest
+{
+    import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+        ScrollAreaAxis;
+    import sparkles.ui.geometry : Rect;
+    import sparkles.ui.layout : layout;
+
+    // 200 rows in a 12-row window, 80 columns in 38: both axes live.
+    const frame = scrollLayout(ScrollArea(
+        rect: Rect(0, 0, 40, 13),
+        v: ScrollAreaAxis(content: 200, viewport: 12, gutter: 2),
+        h: ScrollAreaAxis(content: 80, viewport: 38, gutter: 1),
+    ));
+
+    ScrollView sv;
+    sv.v = sv.v.hoveredNow(true);
+    sv.vAnim.percent = 40; // mid-easing, as a hover would leave it
+
+    auto b = Builder();
+    const rows = b.add(Widget(kind: WidgetKind.column));
+    const root = scrollBox(b, rows, frame, vBar(sv, 7), hBar(sv, 3), key: 55);
+    auto tree = b.finish(root);
+    auto frames = layout(tree);
+
+    assert(tree.nodes[root].kind == WidgetKind.row, "content beside the bar");
+    assert(tree.nodes[root].key == 55, "the frame is addressable by name");
+
+    uint vSeen, hSeen;
+    foreach (i, ref const node; tree.nodes)
+        if (node.kind == WidgetKind.scrollbar)
+        {
+            if (node.barEdge == RuleEdge.right)
+            {
+                ++vSeen;
+                assert(node.barContent == 200 && node.barViewport == 12);
+                assert(node.barOffset == 7, "the pane's authority, not the mirror");
+                assert(node.barExpandPercent == 40, "the easing reaches the leaf");
+                assert(node.barTrackLit, "hovered lights the track");
+            }
+            else
+            {
+                ++hSeen;
+                assert(node.barContent == 80 && node.barViewport == 38);
+                assert(node.barOffset == 3);
+                assert(!node.barTrackLit, "the idle axis stays unlit");
+            }
+        }
+    assert(vSeen == 1 && hSeen == 1, "one bar per reserved gutter");
+
+    // The clip box is the frame's content rect — the same rect the pointer
+    // routing hit-tests against (`SCV7`), so paint and hit cannot disagree.
+    bool sawBox;
+    foreach (i, ref const node; tree.nodes)
+        if (node.clipX && node.clipY)
+        {
+            sawBox = true;
+            assert(frames[i].rect.width == frame.content.width);
+            assert(frames[i].rect.height == frame.content.height);
+        }
+    assert(sawBox);
+}
+
+@("ui.components.chrome.scrollBox.noGutterKeepsTheBareContent")
+@safe unittest
+{
+    import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+        ScrollAreaAxis;
+    import sparkles.ui.geometry : Rect;
+
+    // An embedded listing reserves nothing: no bar is painted and the
+    // composition degrades to the content box alone.
+    const frame = scrollLayout(ScrollArea(
+        rect: Rect(0, 0, 20, 5),
+        v: ScrollAreaAxis(content: 100, viewport: 5, gutter: 0),
+        h: ScrollAreaAxis(content: 100, viewport: 20, gutter: 0),
+    ));
+
+    ScrollView sv;
+    auto b = Builder();
+    const rows = b.add(Widget(kind: WidgetKind.column));
+    const root = scrollBox(b, rows, frame, vBar(sv, 0), hBar(sv, 0));
+    auto tree = b.finish(root);
+
+    foreach (ref const node; tree.nodes)
+        assert(node.kind != WidgetKind.scrollbar,
+            "a dormant gutter paints nothing, but an absent one emits nothing");
+    assert(tree.nodes[root].kind == WidgetKind.column);
+}
+
+@("ui.components.chrome.scrollBox.litFollowsHoverOrDrag")
+@safe unittest
+{
+    // The rule every hand-rolled site recomputed, written once: a grab lights
+    // the track even when the pointer has strayed off it.
+    ScrollView sv;
+    assert(!vBar(sv, 0).lit);
+    sv.v = sv.v.hoveredNow(true);
+    assert(vBar(sv, 0).lit, "hover lights it");
+    sv.v = sv.v.hoveredNow(false).pressed(0, 400, 100, 400);
+    assert(sv.v.dragging && !sv.v.hovered);
+    assert(vBar(sv, 0).lit, "so does a grab with the pointer elsewhere");
 }
