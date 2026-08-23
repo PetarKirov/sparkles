@@ -336,7 +336,12 @@ struct RaylibCanvas
             cast(int) originX, cast(int) originY);
         if (!r.live)
             return;
-        if (op.trackLit)
+        // A bar that owns its rule paints the track on every frame (`SCV11`):
+        // it IS the panel border it sits on, so letting the pointer's
+        // departure erase it would erase the border. A bar in a reserved lane
+        // keeps the conscious-scrollbar look — the rail appears under the
+        // pointer (`SCB2`) — which is the difference placement makes.
+        if (op.trackLit || op.paintsIdleTrack)
             DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
                 Color(op.trackColor.r, op.trackColor.g, op.trackColor.b,
                     op.trackAlpha));

@@ -216,6 +216,10 @@ struct Scrollbar
     RgbColor trackColor;    /// the optional painted track behind the thumb
     ubyte trackAlpha = 0xFF; /// ...at this alpha (the palette dims the track)
     bool trackLit;          /// paint that track?
+    /// Paint it even when idle (`SCV11`): the bar owns its rule, because
+    /// nothing beneath it paints one — a bar mounted on a panel border IS
+    /// that border and must survive the pointer leaving.
+    bool paintsIdleTrack;
     ubyte expandPercent;    /// rail expansion: 0 idle, 100 expanded
     RuleEdge edge;
     Slot slot = Slot.inherit;

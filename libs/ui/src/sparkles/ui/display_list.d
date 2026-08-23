@@ -195,7 +195,8 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 trackLit: node.barTrackLit,
                 expandPercent: node.barExpandPercent,
                 trackGlyph: node.barTrackGlyph,
-                thumbGlyph: node.barThumbGlyph);
+                thumbGlyph: node.barThumbGlyph,
+                paintsIdleTrack: node.barPaintsIdleTrack);
             break;
         case box:
             break; // background (if any) already emitted

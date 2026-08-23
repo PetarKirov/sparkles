@@ -103,6 +103,9 @@ struct Widget
     RuleEdge barEdge = RuleEdge.right;
     ubyte barExpandPercent;
     bool barTrackLit;
+    /// The bar owns its rule, so every target paints the track even when idle
+    /// (`SCV11`) — a bar mounted on a panel border IS that border.
+    bool barPaintsIdleTrack;
     dchar barTrackGlyph = '│';
     dchar barThumbGlyph = '█';
     RgbColor barTrackFgOverride;

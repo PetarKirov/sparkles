@@ -174,24 +174,37 @@ pure nothrow @nogc:
 
     /// Converts a pointer event through the exact vertical track painters use.
     ScrollPointer vPointer(in PointerEvent p) const
-        => axisPointer(p, vTrack, true, vLive);
+        => barPointer(p, vTrack, ScrollAxis.vertical, vLive);
 
     /// ditto for the horizontal track.
     ScrollPointer hPointer(in PointerEvent p) const
-        => axisPointer(p, hTrack, false, hLive);
+        => barPointer(p, hTrack, ScrollAxis.horizontal, hLive);
+}
 
-    private static ScrollPointer axisPointer(in PointerEvent p, in Rect track,
-        bool vertical, bool live)
-    {
-        const primary = p.button == PointerButton.left;
-        return ScrollPointer(
-            over: live && p.action != PointerAction.leave
-                && track.contains(p.pos),
-            pressed: primary && p.action == PointerAction.press,
-            released: primary && p.action == PointerAction.release,
-            trackPos: vertical ? p.pos.y - track.y : p.pos.x - track.x,
-        );
-    }
+/**
+One axis' pointer input against $(B any) track rect (`SCV11`).
+
+$(LREF ScrollLayout)'s `vPointer`/`hPointer` are the two bindings of this to a
+frame's own reserved lanes. A bar the caller placed elsewhere — on a panel
+border, in an overlay band, in a contextual gizmo — passes the rect it was
+$(I painted) at instead, recovered by its `Widget.key` through
+$(REF rectOfKey, sparkles,ui,state). That is what keeps arbitrary placement
+honest rather than a special case: the hit zone is derived from the frames the
+painter used, so it cannot drift from the drawing (`IXR27`), and the backends
+already resolve the thumb from the same rect.
+*/
+ScrollPointer barPointer(in PointerEvent p, in Rect track, ScrollAxis axis,
+    bool live) pure nothrow @nogc
+{
+    const primary = p.button == PointerButton.left;
+    const vertical = axis == ScrollAxis.vertical;
+    return ScrollPointer(
+        over: live && p.action != PointerAction.leave
+            && track.contains(p.pos),
+        pressed: primary && p.action == PointerAction.press,
+        released: primary && p.action == PointerAction.release,
+        trackPos: vertical ? p.pos.y - track.y : p.pos.x - track.x,
+    );
 }
 
 /// Resolves one area's content and both reserved scrollbar tracks (`SCV7`).
@@ -605,4 +618,57 @@ unittest
     assert(a.tick(r, Point(40, 10), 0.25f) == Point(2, -2),
         "outside positions saturate, and rate is linear in dt");
     assert(a.tick(r, Point(40, 10), 0.5f) == Point(4, -4));
+}
+
+@("ui.scrollView.aPlacedBarRoutesAgainstThePaintedRect")
+@safe unittest
+{
+    // `SCV11`: a bar the caller put somewhere of its own choosing — here
+    // indented behind a spacer, as a border-mounted or gizmo-mounted bar would
+    // be — is routed from the rect it was PAINTED at, recovered by its key.
+    // Nothing re-derives that geometry, so paint and hit cannot drift
+    // (`IXR27`), and the container never learns that this placement exists.
+    import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : rectOfKey, ScrollAxis;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    enum size_t barKey = 4242;
+    const e = ScrollExtents(content: 400, viewport: 100, track: 10);
+
+    auto b = Builder();
+    const spacer = b.add(Widget(kind: WidgetKind.box,
+        width: SizeSpec.fixed(7), height: SizeSpec.fixed(10)));
+    const bar = scrollbar(b, ScrollbarSpec(
+        content: e.content, viewport: e.viewport, offset: 0,
+        axis: ScrollAxis.vertical, key: barKey), e.track);
+    const root = b.add(Widget(kind: WidgetKind.row, children: [spacer, bar]));
+    auto tree = b.finish(root);
+    auto frames = layout(tree);
+
+    const at = rectOfKey(tree, frames, barKey);
+    assert(at.ok, "the placed bar is addressable by name (`ANC7`)");
+    assert(at.rect.x == 7, "…wherever the caller put it");
+
+    // A press two rows down the track, in surface coordinates.
+    PointerEvent press;
+    press.action = PointerAction.press;
+    press.button = PointerButton.left;
+    press.pos = Point(at.rect.x, at.rect.y + 2);
+
+    const sp = barPointer(press, at.rect, ScrollAxis.vertical, true);
+    assert(sp.over && sp.pressed);
+    assert(sp.trackPos == 2, "track position is relative to the painted rect");
+
+    ScrollView sv;
+    CaptureState cap;
+    cap = sv.stepV(cap, 1, true, sp, 0, e);
+    assert(sv.v.dragging, "the machine grabs a bar it never placed");
+
+    // The same press one column left of the bar is not over it — the hit zone
+    // is the painted rect, not the pane's right edge.
+    PointerEvent beside = press;
+    beside.pos = Point(at.rect.x - 1, at.rect.y + 2);
+    assert(!barPointer(beside, at.rect, ScrollAxis.vertical, true).over);
 }

@@ -68,6 +68,26 @@ struct ScrollbarSpec
     RuleEdge edge;
     bool hasEdge;
     size_t hitId;
+    /**
+    Element identity (`WGT5`), so a bar the caller placed can be found again.
+
+    A bar in a reserved lane needs none — its rect is the frame's `vTrack`. One
+    mounted on a border or dropped into a gizmo has no such lane, so it is
+    named here and its painted rect recovered through
+    $(REF rectOfKey, sparkles,ui,state) to route against (`SCV11`).
+    */
+    size_t key;
+    /**
+    Paint the track even when the bar is idle.
+
+    The two canvases differ here for a reason, and the reason is placement. A
+    bar in a reserved lane leaves this clear: the cell target fills its gutter
+    column regardless, and the pixel target's rail appearing only under the
+    pointer is the intended look (`SCB2`). A bar mounted on a panel border
+    $(I is) that border, so it must survive the pointer leaving — set this and
+    both targets paint the track always.
+    */
+    bool paintsIdleTrack;
     RgbColor trackFg;
     bool hasTrackFg;
     RgbColor thumbFg;
@@ -92,6 +112,7 @@ uint scrollbar(ref Builder b, in ScrollbarSpec spec, int track)
         barEdge: edge,
         barExpandPercent: spec.expandPercent,
         barTrackLit: spec.trackLit,
+        barPaintsIdleTrack: spec.paintsIdleTrack,
         barTrackGlyph: spec.glyphs.track,
         barThumbGlyph: spec.glyphs.thumb,
         barTrackFgOverride: spec.trackFg,
@@ -99,6 +120,7 @@ uint scrollbar(ref Builder b, in ScrollbarSpec spec, int track)
         fgOverride: spec.thumbFg,
         hasFgOverride: spec.hasThumbFg,
         hitId: spec.hitId,
+        key: spec.key,
     ));
 }
 
