@@ -905,9 +905,40 @@ failures travel via `Scope.fail`.
 ### 8.3 Deadlines
 
 A deadline **is** a cancel scope (Trio): `withDeadline(exec, timeout, fn)`
-arms the executor's deadline timer (an in-ring `TIMEOUT` whose expiry calls
-`cancelTree(node, Interrupt(deadline))`), runs `withScope`, disarms. Expiry
-surfaces as `Cause.interrupted` with `InterruptKind.deadline`.
+arms a deadline on the scope's own `CancelContext`, runs `withScope`,
+disarms. Expiry surfaces as `Cause.interrupted` with
+`InterruptKind.deadline`.
+
+Deadlines are a **scheduler service, never kernel ops**. An armed node sits
+on an intrusive list the `Sched` owns; the tick clamps its wait to the
+earliest armed expiry (sleeping the clamp out itself when nothing is in
+flight and no waker is armed — `runOnce` reports drained instantly on an
+empty slab) and sweeps expired subtrees between dispatches
+(`cancelTree(node, Interrupt(deadline))`, entry and exit of every tick).
+Arming is infallible, needs no backend timer — the service exists on every
+backend, IOCP included — and `disarmDeadline(node)` is a **synchronous
+severance**: it unlinks on the calling thread, so after it returns no sweep
+can ever observe the node.
+
+The severance invariant is load-bearing for memory safety. The v1 design
+armed an in-ring `TIMEOUT` carrying the frame-pinned node as raw userdata
+and disarmed with a fire-and-forget `ASYNC_CANCEL`; an expiry CQE already
+queued at disarm time was still delivered after the scope frame died, and
+the sweep ran over freed fiber stack (and, in tight arm/disarm loops, over
+the _next_ scope's live node in the same stack slot). §8.1's pinning
+argument covers only references the join can see — **the kernel must never
+hold a frame pointer**, which is the same conclusion
+[open-issues](./open-issues.md) O28 reached for kqueue udata and O18
+anticipated for timer representation. Because sweeps run only between
+dispatches on the owning thread, an armed node is always alive: the arming
+scope cannot exit without disarming (a body defect included — `runScope`
+joins, disarms, and unlinks under an explicit `catch (Throwable)` before
+rethrowing).
+
+One consequence for embedders: an armed deadline does not make the ring fd
+readable. Only `Sched.tick`/`tickHosted` sweep — a host must call the tick
+on its own cadence rather than gate it on ring-fd readiness, and loop-level
+drivers (`EventLoop.run`, `cancelAndWait`) never deliver deadlines.
 
 ### 8.4 Interrupt delivery and checkpoints
 
