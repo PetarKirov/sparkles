@@ -52,6 +52,8 @@ $(LIST
         but the binary deny-list, `excludeGlobs`, and `maxFileSize` still
         apply — a failure is recorded as skipped, never silently published)
     $(ITEM the size cap applies to every candidate)
+    $(ITEM `cfg.sourceRoots` join the linked-directory set unconditionally,
+        so an opted-in subtree publishes whether or not the docs mention it)
 )
 
 Targets outside the repository, and links that do not resolve to an existing
@@ -64,6 +66,17 @@ SiteDiscovery discoverSite(string repoRoot, in SiteConfig cfg,
 
     bool[string] directFiles;
     bool[string] dirTargets;
+
+    // `sourceRoots` (`DSC8`): standing links. A configured root enters the
+    // same set a linked directory does, so it inherits the whole policy —
+    // the `.gitignore` walk, the allow-list, the globs, the size cap — and
+    // nothing downstream needs to know it was not written in a page.
+    foreach (rootRel; cfg.sourceRoots)
+    {
+        const abs = buildPath(absRoot, rootRel);
+        if (abs.exists && abs.isDir)
+            dirTargets[rootRel] = true;
+    }
 
     foreach (rootRel; cfg.linkRoots)
     {
@@ -292,4 +305,35 @@ unittest
     sk.sort!((a, b) => a.path < b.path);
     assert(sk.map!(s => s.path ~ ":" ~ s.reason).array
         == ["big.txt:size", "logo.png:ext", "x.log:excluded"], sk.text);
+}
+
+/// `sourceRoots` publish a subtree the docs never link (`DSC8`), through the
+/// same policy a linked directory gets: allow-list, `.gitignore`, globs.
+@("site.discoverSite.sourceRootsPublishUnlinkedSubtrees")
+@system
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.file : rmdirRecurse;
+
+    const root = makeSiteTree([
+        ["libs/a/.gitignore", "build/\n"],
+        ["docs/index.md", "no links here\n"],
+        ["libs/a/src/x.d", "module x;\n"],
+        ["libs/a/src/y.rs", "fn y() {}\n"],   // allow-list miss, as when linked
+        ["libs/a/build/out.d", "ignored\n"],  // gitignored
+        ["apps/b/main.d", "void main() {}\n"],
+        ["other/z.d", "module z;\n"],         // outside the roots
+    ]);
+    scope (exit)
+        rmdirRecurse(root);
+
+    auto cfg = SiteConfig(sourceRoots: ["apps", "libs", "absent"]).withDefaults;
+    auto d = discoverSite(root, cfg, null);
+
+    assert(d.set.entries.map!(e => e.relPath).array
+        == ["apps/b/main.d", "libs/a/src/x.d"],
+        d.set.entries.map!(e => e.relPath).array.idup.text);
+    assert(d.skipped.length == 0, d.skipped.text);
 }
