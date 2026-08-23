@@ -357,70 +357,103 @@ private template runScope(alias fn, E)
                 exec.armDeadline(&sc.node, timeout);
 
         alias T = typeof(fn(sc));
-        static if (!is(T == void))
-            T value; // the Slot precedent (schedule.timeout): T default-constructs
-        Throwable defect;
-        try
+
+        // The joiner is the fiber running this frame, not a member to be
+        // interrupted: it leaves the node before the join — and before a
+        // defect's own cancellation sweep, which would otherwise latch an
+        // interrupt on it and poison whatever the caller does next.
+        void restoreMembership()
         {
+            if (joiner.cancelContext is &sc.node)
+            {
+                sc.node.removeFiber(joiner);
+                if (outerNode !is null)
+                    outerNode.addFiber(joiner);
+            }
+        }
+
+        bool sweptByDeadline;
+        bool unwound;
+
+        void unwind()
+        {
+            if (unwound)
+                return;
+            unwound = true;
+
+            restoreMembership();
+
+            // The deadline stays armed through the join — it bounds a join
+            // stuck on a wedged child.
+            sc.joinPhase();
+
+            static if (hasDeadlineTimer!X)
+                exec.disarmDeadline(&sc.node); // synchronous severance
+
+            if (outerNode !is null)
+                outerNode.removeChild(&sc.node);
+
+            // The node's own cause is the evidence that a deadline swept
+            // this scope. Asking whether the *joiner* was interrupted
+            // misses every expiry that lands during the join, where the
+            // joiner is deliberately no longer a member.
+            sweptByDeadline = sc.node.state == CancelContext.State.cancelling
+                && sc.node.cause.kind == InterruptKind.deadline;
+            sc.node.state = CancelContext.State.finished;
+
+            // An expiry that swept the body latched on the joiner; consume
+            // it here, so an interrupt this scope produced never leaks past
+            // the scope that reports it.
+            if (sweptByDeadline && joiner.interrupted
+                && joiner.pendingInterrupt.kind == InterruptKind.deadline)
+                joiner.interrupted = false;
+        }
+
+        auto runBody()
+        {
+            // Direct initialization, never default-construct-then-assign: a
+            // move-only or non-default-constructible T is a legitimate
+            // scope result.
             static if (is(T == void))
                 fn(sc);
             else
-                value = fn(sc);
+                auto value = fn(sc);
+
+            unwind();
+
+            // A deadline that swept the scope surfaces as its cause even
+            // when no child recorded one.
+            if (!sc._failed && sweptByDeadline)
+                return outcomeErr!(T, E)(
+                    Cause!E.fromInterrupt(Interrupt(InterruptKind.deadline)));
+            if (sc._failed)
+                return outcomeErr!(T, E)(sc._firstCause);
+            static if (is(T == void))
+                return outcomeOk!E();
+            else
+                return outcomeOk!E(move(value));
         }
+
+        try
+            return runBody();
         catch (Throwable t)
         {
-            // A body defect must not skip the join/disarm/unlink below: the
+            // A body defect must not skip the join/disarm/unlink: the
             // unwinding path used to leak the armed deadline (a second
             // use-after-free route) and leave dangling tree links. This is
             // an explicit handler rather than scope(exit) deliberately — an
             // Error unwinding a nothrow frame may elide scope(exit)/finally
             // cleanup, but a catch still runs.
-            defect = t;
+            restoreMembership(); // before the sweep: see the note above
             sc.fail(Cause!E.fromDefect(t)); // cancelSiblings ends the children
+            unwind();
+            // The defect propagates only after the scope fully unwound: it
+            // reaches the fiber shell and the outer scope's Cause.die
+            // routing exactly once. (Deliberately not folded into the
+            // returned Outcome — a failed assert in a body must not become
+            // an ignorable Expected error.)
+            throw t;
         }
-
-        // Restore the joiner's membership before reaping/joining.
-        sc.node.removeFiber(joiner);
-        if (outerNode !is null)
-            outerNode.addFiber(joiner);
-
-        // The deadline stays armed through the join — it bounds a join
-        // stuck on a wedged child.
-        sc.joinPhase();
-
-        static if (hasDeadlineTimer!X)
-            exec.disarmDeadline(&sc.node); // synchronous severance; idempotent
-
-        if (outerNode !is null)
-            outerNode.removeChild(&sc.node);
-        sc.node.state = CancelContext.State.finished;
-
-        // The defect propagates only after the scope fully unwound: it
-        // reaches the fiber shell and the outer scope's Cause.die routing
-        // exactly once. (Deliberately not folded into the returned Outcome —
-        // a failed assert in a body must not become an ignorable Expected
-        // error.)
-        if (defect !is null)
-            throw defect;
-
-        // A deadline that swept the scope surfaces as its cause even when
-        // no child recorded one.
-        if (!sc._failed && sc.node.state == CancelContext.State.finished
-            && sc.node.cause.kind == InterruptKind.deadline
-            && joiner.interrupted
-            && joiner.pendingInterrupt.kind == InterruptKind.deadline)
-        {
-            joiner.interrupted = false; // consumed by this scope
-            return outcomeErr!(T, E)(
-                Cause!E.fromInterrupt(Interrupt(InterruptKind.deadline)));
-        }
-
-        if (sc._failed)
-            return outcomeErr!(T, E)(sc._firstCause);
-        static if (is(T == void))
-            return outcomeOk!E();
-        else
-            return outcomeOk!E(move(value));
     }
 }
 
@@ -741,6 +774,120 @@ unittest
     while (s.liveFibers > 0)
         cast(void) s.tick(Duration.zero);
     assert(bodyEnded);
+}
+
+@("scope.deadline.firesAcrossASingleYield")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // CPU work past the deadline, then exactly one yieldNow: the fiber is
+    // re-dequeued inside the same resume budget, so a tick that swept only
+    // at entry (and after the backend wait) never noticed the expiry and
+    // the scope returned success.
+    auto r = s.run(() {
+        auto o = withDeadline!((ref sc) {
+            const until = MonoTime.currTime + 20.msecs;
+            while (MonoTime.currTime < until)
+            {
+            }
+            s.yieldNow();
+            return 7;
+        })(s, 5.msecs);
+        assert(o.hasError && o.error.isTimeout,
+            "an expiry observed between two resumes must still time out");
+    });
+    assert(!r.hasError);
+}
+
+@("scope.deadline.expiresDuringTheJoin")
+@safe
+unittest
+{
+    import core.time : minutes, msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The body returns immediately; the join waits on a long-sleeping
+    // child, and the deadline expires there. The joiner has already left
+    // the node by then, so "was the joiner interrupted?" is the wrong
+    // question — the node's own cause is the evidence.
+    bool childInterrupted;
+    auto r = s.run(() {
+        auto o = withDeadline!((ref sc) {
+            sc.spawn(() { childInterrupted = sleep(s, 1.minutes).hasError; });
+            return 7;
+        })(s, 10.msecs);
+        assert(o.hasError && o.error.isTimeout,
+            "a deadline that bounds the join must surface as the outcome");
+    });
+    assert(!r.hasError);
+    assert(childInterrupted, "and it did cancel the child");
+}
+
+@("scope.result.moveOnlyUnassignable")
+@safe
+unittest
+{
+    import core.time : minutes;
+
+    // Move-only and non-assignable — the shape a scope body legitimately
+    // returns (an owning handle). (`@disable this()` is a separate matter:
+    // `expected`'s payload union cannot hold a non-default-constructible
+    // value, so `Outcome!T` rejects it independently of this code.)
+    static struct Answer
+    {
+        int v;
+        @disable this(this);
+        @disable void opAssign(Answer);
+    }
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The body's result is direct-initialized, never default-constructed
+    // and then assigned.
+    auto r = s.run(() {
+        auto o = withDeadline!((ref sc) => Answer(42))(s, 1.minutes);
+        assert(!o.hasError && o.value.v == 42);
+        auto p = withScope!((ref sc) => Answer(7))(s);
+        assert(!p.hasError && p.value.v == 7);
+    });
+    assert(!r.hasError);
+}
+
+@("scope.defect.doesNotPoisonTheCatchingCaller")
+@safe
+unittest
+{
+    import core.time : minutes;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The scope cancels itself to end its children when the body throws.
+    // That interrupt is internal bookkeeping: a caller that catches the
+    // defect must not find its own next checkpoint cancelled.
+    bool poisoned = true;
+    auto r = s.run(() {
+        try
+            cast(void) withDeadline!((ref sc) {
+                throw new Exception("boom");
+            })(s, 1.minutes);
+        catch (Exception e)
+        {
+        }
+        poisoned = checkCancellation(s).hasError;
+    });
+    assert(!r.hasError);
+    assert(!poisoned,
+        "a scope's own defect sweep must not latch on the calling fiber");
 }
 
 @("scope.defect.bodyThrowStillJoinsAndDisarms")
