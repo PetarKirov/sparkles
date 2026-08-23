@@ -600,35 +600,28 @@ struct ExplorerTui
         auto ht = b.finish(b.add(hdrCol));
         paintGrid(g, pageBg, buildDisplayList(ht, layout(ht),
             palette, pageFg, pageBg));
+        // The tree body and both bars are one frame (`SCV10`), blitted at the
+        // frame's own origin: inside it the rects `scrollFrame` resolved are
+        // already relative to that origin, so content, the bottom track and
+        // the right-hand track all land where the pointer routing looks for
+        // them. The horizontal offset rides `LAY7`'s child offset and the box
+        // clips itself, retiring the origin-shift-plus-clip-rect pair this
+        // used to stack (`GUT1`).
+        import sparkles.ui.components.chrome : hBar, scrollBox, vBar;
+
         auto tb = Builder();
         const tree2 = viewSlice(tb, data, tv,
             (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
             explorerGlyphs, selBg, hasSelectionBg: true);
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));
-        auto wt = tb.finish(tb.add(colW));
+        const framed = scrollBox(tb, tb.add(colW), scrollFrame,
+            vBar(tv.scroll, top), hBar(tv.scroll, hsb.offset),
+            contentOffset: Point(-hx, 0));
+        auto wt = tb.finish(framed);
         paintGrid(g, pageBg, buildDisplayList(wt, layout(wt),
             palette, pageFg, pageBg),
-            -hx, scrollFrame.content.y,
-            Rect(hx, 0, scrollFrame.content.width,
-                scrollFrame.content.height));
-
-        // The horizontal bar, one row above the status bar, when live —
-        // the SAME component/machine as the vertical bar (IXB2).
-        if (scrollFrame.hLive)
-        {
-            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
-
-            auto hb = Builder();
-            const bar2 = scrollbar(hb, hsb,
-                scrollFrame.hExtents.content, scrollFrame.hExtents.viewport,
-                scrollFrame.hExtents.track, ScrollbarGlyphs('━', '─'),
-                gutter: scrollFrame.hTrack.height);
-            auto hbt = hb.finish(bar2);
-            paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
-                palette, pageFg, pageBg),
-                scrollFrame.hTrack.x, scrollFrame.hTrack.y);
-        }
+            0, scrollFrame.content.y);
 
         // The status bar pinned to the bottom row (its own one-row pipeline).
         auto sb = Builder();
@@ -646,24 +639,6 @@ struct ExplorerTui
             palette, pageFg, pageBg),
             0, height > 0 ? height - 1 : 0);
 
-        // Scrollbar in the pane's last column when the tree overflows —
-        // the one component (WGT10) over the one machine (STM9), tinted by
-        // the palette's track/thumb entries (B-1).
-        if (scrollFrame.vLive && width >= 2
-            && width <= g.cols)
-        {
-            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
-
-            auto vb = Builder();
-            const vbar = scrollbar(vb, this.sb.scrolledTo(top),
-                scrollFrame.vExtents.content, scrollFrame.vExtents.viewport,
-                scrollFrame.vExtents.track, ScrollbarGlyphs('█', '░'),
-                gutter: scrollFrame.vTrack.width);
-            auto vbt = vb.finish(vbar);
-            paintGrid(g, pageBg, buildDisplayList(vbt, layout(vbt),
-                palette, pageFg, pageBg),
-                scrollFrame.vTrack.x, scrollFrame.vTrack.y);
-        }
     }
 
     // Returns false to quit the explorer (picked empty = quit for good).
