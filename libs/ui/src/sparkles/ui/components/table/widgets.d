@@ -641,7 +641,12 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             parts ~= b.add(clip);
         }
         else
-            parts ~= ruleRun(centerRun.to!string);
+            // The fits-horizontally case still carves the cutout from the
+            // segment that owns the right edge — without this the icon is
+            // APPENDED and the border row runs `iconW` cells past the box,
+            // skewing the whole row (the missing-`╭` defect).
+            parts ~= ruleRun(
+                centerRun[0 .. $ - (rightW > 0 ? 0 : carve)].to!string);
         if (rightW > 0)
             parts ~= ruleRun(rightRun[0 .. $ - carve].to!string);
         if (withCutout)
@@ -1336,6 +1341,43 @@ version (unittest)
     auto tree = b.finish(res.root);
     foreach (ref const n; tree.nodes)
         assert(!n.clipX && !n.clipY && n.kind != WidgetKind.scrollbar);
+}
+
+@("table.widgets.viewport.cutoutCarvesWhenTableFitsHorizontally")
+@safe unittest
+{
+    // The regression: a FRAMED table (vertical overflow) that FITS
+    // horizontally, with the cutout present and no frozen right columns.
+    // The icon must replace the last fill cells before the corner — not be
+    // appended after the full center run, which ran the top border 3 cells
+    // past the box and shifted the row (the missing-`╭` defect).
+    auto rows = new string[][](9);
+    rows[0] = ["name", "qty"];
+    foreach (r; 1 .. 9)
+        rows[r] = ["a", "1"];
+    TableWidgetStyle style = {
+        cutout: TableCutout(present: true, hitId: 777,
+            icon: TextSpan(" + ", Slot.gutter, noBreak: true)),
+    };
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells(rows), TableProps(), style,
+        TableViewportSpec(availWidth: 60, maxLines: 4));
+    assert(!res.hBar && res.vBar, "framed by vertical overflow alone");
+
+    auto tree = b.finish(res.root);
+    auto frames = layout(tree, Constraints(maxW: res.viewWidth));
+    bool sawIcon;
+    foreach (i, ref n; tree.nodes)
+        if (n.hitId == 777)
+        {
+            sawIcon = true;
+            assert(frames[i].rect
+                == Rect(cast(int) res.viewWidth - 4, 0, 3, 1),
+                "the icon pins just before the top-right corner");
+        }
+    assert(sawIcon);
+    assert(frames[res.root].rect.width == cast(int) res.viewWidth,
+        "the border row must not widen the box");
 }
 
 @("table.widgets.cutoutPinsIconInTopBorder")
