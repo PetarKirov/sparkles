@@ -25,8 +25,8 @@ module sparkles.docs.explorer;
 import std.array : appender, Appender;
 
 import sparkles.docs.sidebar : SidebarItem;
-import sparkles.docs.site : writeJsonString;
 import sparkles.docs.site_tree : DirNode, SiteTree;
+import sparkles.wired.policy : WireOptional, WireSkip;
 
 /// The site's client layer, verbatim (`views/site.js`): the explorer renderer
 /// plus the soft navigation that keeps it alive across a click (`DOC13`). A
@@ -35,115 +35,89 @@ import sparkles.docs.site_tree : DirNode, SiteTree;
 enum siteScript = import("site.js");
 
 /++
-The site tree plus the docs nav as the JSON $(LREF explorerScript) reads.
+The tree the client reads, as $(B types) — `sparkles:wired` encodes them
+(`DOC12`). Short keys: this file ships to every reader.
 
-Shape (short keys — this file ships to every reader):
-$(LIST
-    $(ITEM `base` — the prefix a docs-nav page route resolves against)
-    $(ITEM `root` — `{ path, name, dirs: [node…], files: [{label, href}…] }`,
-        `path` repo-relative (`""` at the root), `href` the page's file name
-        inside its directory)
-    $(ITEM `nav` — the augmented sidebar tree (`DSC7`), rendered inline as the
-        `docs/` node's children)
-)
+`@WireOptional(WireSkip.whenDefault)` is what keeps it small: an empty `dirs`,
+`files` or `nav` is omitted rather than written as `[]`, which for a tree of
+2,300 nodes is most of the leaves.
 +/
-string explorerJson(in SiteTree tree, scope const SidebarItem[] nav,
+struct ExplorerFile
+{
+    string label; /// the page's name, as shown
+    string href;  /// its file name inside the directory
+}
+
+/// One directory: its repo-relative path (`""` at the root) and what is in it.
+struct ExplorerNode
+{
+    string path;
+    @WireOptional(WireSkip.whenDefault) ExplorerNode[] dirs;
+    @WireOptional(WireSkip.whenDefault) ExplorerFile[] files;
+}
+
+/// The whole asset: the prefix a docs-nav page route resolves against, the
+/// tree, and the augmented sidebar tree (`DSC7`) the client renders inline as
+/// the `docs/` node's children.
+struct ExplorerData
+{
+    string base;
+    ExplorerNode root;
+    @WireOptional(WireSkip.whenDefault) const(SidebarItem)[] nav;
+}
+
+/// $(LREF ExplorerData) for a site tree — the shape, without the encoding.
+ExplorerData explorerData(const SiteTree tree, const SidebarItem[] nav,
     scope const(char)[] base) @safe pure
 {
     size_t[string] at;
     foreach (idx, ref const n; tree.nodes)
         at[n.relPath] = idx;
 
-    auto w = appender!string;
-    w ~= "{\"base\":";
-    writeJsonString(w, base);
-    w ~= ",\"root\":";
-    if (auto root = "" in at)
-        writeNode(w, tree, at, tree.nodes[*root]);
-    else
-        w ~= "{\"path\":\"\"}";
-    if (nav.length)
+    // Explicit attributes: a self-recursive nested function gets no inference.
+    static ExplorerNode buildAt(const SiteTree tree, const size_t[string] at,
+        const DirNode node) @safe pure
     {
-        w ~= ",\"nav\":";
-        writeNav(w, nav);
-    }
-    w ~= "}\n";
-    return w[];
-}
-
-private void writeNode(ref Appender!string w, in SiteTree tree,
-    in size_t[string] at, in DirNode node) @safe pure
-{
-    import std.algorithm.searching : startsWith;
-
-    w ~= "{\"path\":";
-    writeJsonString(w, node.relPath);
-    if (node.dirs.length)
-    {
-        w ~= ",\"dirs\":[";
-        bool first = true;
+        ExplorerNode out_;
+        out_.path = node.relPath;
         foreach (ref const d; node.dirs)
         {
             const bare = d.label[0 .. $ - 1]; // "name/" → "name"
             const childRel = node.relPath.length
                 ? node.relPath ~ "/" ~ bare : bare;
-            auto idx = childRel in at;
-            if (idx is null)
-                continue;
-            w ~= first ? "" : ",";
-            first = false;
-            writeNode(w, tree, at, tree.nodes[*idx]);
+            if (auto idx = childRel in at)
+                out_.dirs ~= buildAt(tree, at, tree.nodes[*idx]);
         }
-        w ~= "]";
+        foreach (ref const f; node.files)
+            out_.files ~= ExplorerFile(label: f.label, href: f.href);
+        return out_;
     }
-    if (node.files.length)
-    {
-        w ~= ",\"files\":[";
-        foreach (i, ref const f; node.files)
-        {
-            w ~= i ? ",{\"label\":" : "{\"label\":";
-            writeJsonString(w, f.label);
-            w ~= ",\"href\":";
-            writeJsonString(w, f.href);
-            w ~= "}";
-        }
-        w ~= "]";
-    }
-    w ~= "}";
+
+    auto root = "" in at;
+    return ExplorerData(base: base.idup,
+        root: root ? buildAt(tree, at, tree.nodes[*root]) : ExplorerNode.init,
+        nav: nav);
 }
 
-private void writeNav(ref Appender!string w, scope const SidebarItem[] items) @safe pure
+/++
+$(LREF explorerData) as the minified JSON written to
+`assets/tree-<hash>.json`.
+
+Not `@safe pure`: `sparkles:wired`'s encoder is neither, and one shared
+serializer is worth more than the attributes on a function that runs once per
+site build.
++/
+string explorerJson(const SiteTree tree, const SidebarItem[] nav,
+    scope const(char)[] base)
 {
-    w ~= "[";
-    foreach (i, ref const it; items)
-    {
-        w ~= i ? ",{\"text\":" : "{\"text\":";
-        writeJsonString(w, it.text);
-        if (it.link.length)
-        {
-            w ~= ",\"link\":";
-            writeJsonString(w, it.link);
-        }
-        if (it.collapsed)
-            w ~= ",\"collapsed\":true";
-        if (it.target.length)
-        {
-            w ~= ",\"target\":";
-            writeJsonString(w, it.target);
-        }
-        if (it.rel.length)
-        {
-            w ~= ",\"rel\":";
-            writeJsonString(w, it.rel);
-        }
-        if (it.items.length)
-        {
-            w ~= ",\"items\":";
-            writeNav(w, it.items);
-        }
-        w ~= "}";
-    }
-    w ~= "]";
+    import sparkles.wired.json : writeJSON;
+
+    auto w = appender!string;
+    const r = writeJSON(explorerData(tree, nav, base), w);
+    if (r.hasError)
+        throw new Exception("explorer tree does not encode: " ~ r.error.reason);
+    w ~= "\n";
+    return w[];
 }
 
 /++
@@ -186,7 +160,7 @@ string rootPrefix(size_t depth) @safe pure nothrow
 /// The JSON carries the tree the client renders: nested directories, the
 /// files in each, and the docs nav under its own key.
 @("docs.explorer.explorerJson.shape")
-@safe pure
+@system
 unittest
 {
     import sparkles.docs.site_tree : buildSiteTree;
@@ -199,6 +173,8 @@ unittest
     const json = explorerJson(buildSiteTree(entries),
         [SidebarItem(text: "Overview", link: "/overview")], "/src/");
 
+    // Empty `dirs`/`files`/`nav` members are omitted, not written as `[]`
+    // (`WireSkip.whenDefault`) — most of a 2,300-node tree is leaves.
     assert(json ==
         `{"base":"/src/","root":{"path":"","dirs":[{"path":"libs","dirs":`
         ~ `[{"path":"libs/a","files":[{"label":"x.d","href":"x.d.html"}]}]}],`
