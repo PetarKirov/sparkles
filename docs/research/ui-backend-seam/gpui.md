@@ -145,12 +145,14 @@ resolves a `GlyphId` to a raster, inserts it into the sprite atlas, and emits a
 `MonochromeSprite`/`SubpixelSprite` holding an `AtlasTile` ([`window.rs`][window]).
 
 This is the fifth surveyed subject to keep measurement off the painter, so
-[F1][comparison] holds. But it **complicates F1's second clause**. Slint lets
-each backend answer in its own `Font::Length`; GPUI fixes one unit —
-`Pixels`, a newtype over `f32` — for the framework, the text system and the
-scene alike, and converts to `ScaledPixels` exactly once, at paint time, by
-multiplying by the window's scale factor. Backend-chosen units are not the
-consensus; _not putting measurement on the renderer_ is.
+[F1][comparison] holds. What it settles is only the placement question, and
+[F2][comparison] is the reminder that placement is one decision of six. On the
+unit decision GPUI is the opposite of Slint: Slint lets each backend answer in
+its own `Font::Length`, while GPUI fixes one unit — `Pixels`, a newtype over
+`f32` — for the framework, the text system and the scene alike, and converts to
+`ScaledPixels` exactly once, at paint time, by multiplying by the window's scale
+factor. Backend-chosen units are not the consensus; _not putting measurement on
+the renderer_ is.
 
 ## Q2 — is the contract stated in one place?
 
@@ -159,7 +161,8 @@ Yes, and this is the cleanest answer in the survey. The drawing contract is
 variants and writes eight match arms; Rust's exhaustiveness check enforces the
 surface, so there is nothing to probe for and nothing to discover at a call
 site. Compare `isCanvas`, which advertises five methods while the interpreter
-discovers three more by `__traits(compiles)` ([friction §2][friction]).
+probes for four more with `__traits(compiles)` at each call site — five methods,
+eight kinds ([friction §2][friction]).
 
 Capability variation is handled by two mechanisms outside the primitive
 vocabulary:
@@ -178,9 +181,9 @@ vocabulary:
 > [!NOTE]
 > That is Qt's `hasFeature` idea with the negotiation moved up a level: the
 > _framework_ asks, once, and lowers to a different primitive; the backend is
-> never asked to degrade anything. It supports [F4][comparison]'s "stated floor"
-> half — seven of eight variants are mandatory — while showing that the
-> negotiable set can be one query, not a bitmask.
+> never asked to degrade anything. It supports [F5][comparison]'s "floor" tier —
+> seven of eight variants are mandatory — while showing that the refusable tier
+> can be one query, not a bitmask.
 
 ## Q3 — semantic widgets, or primitives?
 
@@ -217,11 +220,13 @@ branch, not a different primitive. Where the shader runs out, the _framework_
 lowers: `PathBuilder` tessellates through `lyon` into `PathVertex` triangles
 ([`path_builder.rs`][pathbuilder]), and `paint_svg` rasterises into the atlas.
 
-So GPUI answers [F3][comparison]'s "who degrades" with **neither**: it picks a
-vocabulary that needs no degradation and pre-lowers the rest. That option exists
-only because every target is a GPU, so it is unavailable to `sparkles:ui` — our
-`scrollbar` op exists because a cell backend and a pixel backend genuinely
-disagree, a situation GPUI designed itself out of rather than solved.
+So GPUI answers [F4][comparison]'s "where does the lowering live" with
+**nowhere**: it picks a vocabulary that needs no lowering at the seam and
+pre-lowers the rest in the framework. That option exists only because every
+target is a GPU, so it is unavailable to `sparkles:ui` — our optional
+`scrollbar` primitive exists because a cell backend and a pixel backend
+genuinely disagree about what a scrollbar looks like, a situation GPUI designed
+itself out of rather than solved.
 
 ## Q4 — command shape
 
@@ -241,17 +246,26 @@ reason we share: `Scene::replay(range, prev_scene)` (Q7) needs commands to be
 _values_.
 
 > [!IMPORTANT]
-> **This partially falsifies [F2][comparison].** F2 concludes that the fix for
-> `DrawOp` is "a `SumType`, not the removal of `DrawOp`". GPUI shows that the
-> choice is per-layer, not global. Its _authoring_ type is a sum type; its
-> _GPU-facing_ payload is exactly the tag-plus-dead-fields record F2 rejects —
+> **GPUI prices both sides of [F3][comparison]'s live trade at once, and shows
+> that the choice is per-layer rather than global.** Its _authoring_ type is a
+> closed sum, like `DrawOp`. Its _GPU-facing_ payload is the flat
+> tag-plus-dead-fields record a closed sum is supposed to make unnecessary:
 > `Background` is a `#[repr(C)]` record of `tag: BackgroundTag`, `color_space`,
 > `solid`, `gradient_angle_or_pattern_height`, `colors: [LinearColorStop; 2]`
 > and `pad: u32` ([`color.rs`][color]), where a solid colour leaves five fields
 > dead. That is deliberate: the struct is memcpy'd into an instance buffer for a
 > shader that reads the tag and branches, and a discriminated union with
-> per-variant payloads cannot be that. Any re-encoding of `DrawOp` should expect
-> a flat record at whatever boundary faces a GPU, with the sum type above it.
+> per-variant payloads cannot be that. The two encodings are not competitors —
+> the seam's `SumType` buys the comparable, walkable values a recorder needs,
+> and a flat record buys a byte layout a shader can read. A Skia or Graphite
+> path should expect one at whatever boundary faces a GPU, beneath the sum
+> rather than instead of it.
+
+The width side of that trade is where the two seams differ. GPUI's
+struct-of-arrays storage gives each kind its own vector, so a `Quad` costs a
+quad; a `DrawOp` costs the widest payload — `TextRun` — under a `static
+assert(DrawOp.sizeof <= 64)` budget, which is what makes a uniform `DrawOp[]`
+walkable and pairwise-comparable in the first place ([friction §4][friction]).
 
 Two second-order notes: reification plus batching costs an explicit order key
 (our `DrawOp[]` is ordered implicitly by array position — cheaper, and strictly
@@ -261,8 +275,9 @@ history stay meaningful across frames.
 
 ## Q5 — sub-unit placement
 
-Coordinates are continuous (`Pixels`, an `f32` newtype), so GPUI has no
-`RuleEdge` problem. What it does have — and this is the transferable part — is
+Coordinates are continuous (`Pixels`, an `f32` newtype), so GPUI never spells a
+position as a compass direction the way our `rule` op names a `RuleEdge`. What
+it does have — and this is the transferable part — is
 an explicit, _role-differentiated_ rounding policy at the moment continuous
 logical units meet discrete device pixels ([`window.rs`][window]):
 
@@ -277,8 +292,14 @@ logical units meet discrete device pixels ([`window.rs`][window]):
 asked for never rounds away to nothing, only down to the thinnest thing the
 device has. That is exactly the guarantee our `rule` op provides by naming an
 edge — and it needs no enumerators, only a _stroke_ concept plus a rounding rule
-per role. It refines [F5][comparison]: the "fidelity" to name is a rounding
-policy attached to the kind of thing being placed.
+per role.
+
+GPUI is therefore [F6][comparison]'s case in point rather than a counter-example:
+a float seam does not dissolve the sub-unit problem, it relocates it into a
+snapping policy that has to be written down. And it sharpens the second half of
+F6's answer — the fidelity to name is a rounding policy attached to the kind of
+thing being placed, and the device unit it rounds against is the scale factor
+the window already knows.
 
 ## Q6 — resolved appearance, semantic role, or both?
 
@@ -291,8 +312,14 @@ crates.
 
 Nothing re-resolves downstream because nothing could: every backend is a shader
 pipeline. That is the fifth subject to pay for one representation rather than
-two, leaving [friction §6][friction] unchallenged — while confirming _why_ we
-pay: the HTML interpreter is a re-resolving consumer none of these projects has.
+two, and one more instance of [F9][comparison]'s count — nobody else carries a
+resolved appearance and a semantic role together. Ours does: six of the eight
+payloads store a `Slot` beside the resolved colours their primitive paints from,
+which is [friction §6][friction]. Reconstructing a `Visual` on demand instead of
+storing one makes that hedge cheaper without making it a decision. What GPUI
+confirms is _why_ we pay it at all: the HTML interpreter re-resolves from the
+role to emit class names, and a re-resolving consumer is something none of these
+projects has.
 
 ## Q7 — payload ownership, and outliving the frame
 
@@ -323,11 +350,17 @@ self.next_frame.scene.replay(
 — [`window.rs`][window], alongside `self.text_system.reuse_layouts(...)` for the
 matching shaped lines.
 
-That is impossible with a borrowed payload, and it is a sharper argument than
-[F6][comparison] currently makes: `DrawOp.text` being a borrowed slice that
-"must outlive the op" ([friction §7][friction]) is not merely a hygiene problem,
-it forecloses the biggest paint-time optimisation available to a
-retained-output frame loop — one `sparkles:ui` cannot even prototype today.
+That is impossible with a frame-scoped payload, and it sharpens
+[F8][comparison] in a way the count alone does not. Our seam is already on
+F8's side of the line: `CmdBuffer.textRun` **copies** the run into a frame
+arena, so nothing borrows from the caller and a `scope` source is safe. The
+arena is one of the three mechanisms F8 enumerates. What the copy does not buy
+is a retain boundary — the rule stated on the type is that _an operation is
+valid while the buffer that built it is alive and unreset_
+([friction §7][friction]), and `reset()` lands once a frame. So the cost is not
+hygiene, which the arena already pays for; it is that the biggest paint-time
+optimisation available to a retained-output frame loop sits on the far side of
+that reset. `UI-O4` is open on exactly this question.
 
 ## Q8 — can a backend ask the scene its extent?
 
@@ -345,9 +378,15 @@ from the surface:
   ([`platform.rs`][platform]) — and `TestWindow` computes it from the window
   bounds, not the scene ([`platform/test/window.rs`][testwindow]).
 
-This is the strongest confirmation of [F7][comparison] in the survey: the one
-consumer [friction §8][friction] identified as needing a scene-derived extent —
-an offscreen golden — is exactly the case GPUI serves by passing the size in.
+GPUI is therefore one of the minority [F7][comparison] identifies: it answers
+all three extent questions — surface, layout and ink — from somewhere other than
+the scene, and declines both sides of F7's maintained-versus-scanned axis by
+never asking the question. The consumer [friction §8][friction] names as needing
+a scene-derived extent — an offscreen golden — is exactly the case GPUI serves
+by passing the size in, which is worth weighing against the majority: our
+`skia-canvas-render.d` scans every operation's rect for that number, and the
+scan works only because a `TextRun`'s `rect.width` happens to be its advance in
+cells.
 
 ## Strengths
 
@@ -392,48 +431,55 @@ an offscreen golden — is exactly the case GPUI serves by passing the size in.
 
 ## Bearing on the proposal
 
-1. **Own the payload — the argument is frame reuse, not hygiene.**
-   [Friction §7][friction] and [F6][comparison] treat `DrawOp.text` as a safety
-   and threading problem; `Scene::replay` shows the real cost, which is losing
-   the ability to splice an unchanged subtree's ops forward from last frame.
-2. **Keep the sum type — but expect a flat record at the GPU boundary.**
-   This qualifies [F2][comparison]: `Background` is a tagged struct with dead
-   fields _on purpose_, being instance-buffer memory. Re-encode `DrawOp` as a
-   `SumType` for authoring and recording; treat whatever a Skia or Graphite path
-   uploads as a separate, deliberately flat type.
-3. **State the contract as one enum, not five methods plus three probes.**
+1. **Move the retain boundary, not the copy — the argument is frame reuse.**
+   The frame arena already satisfies [F8][comparison]; what
+   [friction §7][friction] records is that the borrow expires at `reset()`.
+   `Scene::replay` names the price of that expiry: no splicing an unchanged
+   subtree's operations forward from the previous frame. That is the case
+   `UI-O4` should be decided on.
+2. **Keep the sum type — and expect a flat record at the GPU boundary.**
+   This prices one side of [F3][comparison]'s live trade: `Background` is a
+   tagged struct with dead fields _on purpose_, being instance-buffer memory.
+   `DrawOp` stays a closed sum for authoring, recording and comparison; whatever
+   a Skia or Graphite path uploads is a separate, deliberately flat type
+   underneath it, not a replacement for it.
+3. **State the contract in one place, not five methods plus four probes.**
    [Friction §2][friction] is confirmed by the cleanest counter-example here:
    eight variants, one `match`, compiler-enforced. Whatever we keep of the
    optional-primitive bargain belongs _outside_ the drawing vocabulary — a query
    the framework consults, like `is_subpixel_rendering_supported`, not a
    `__traits(compiles)` at a call site.
 4. **Replace `RuleEdge` with a stroke plus a per-role rounding policy.**
-   [F5][comparison] says "name a fidelity"; GPUI names three
-   (`snap_bounds`/`snap_stroke`/`cover_bounds`) and gives the one that matters a
-   rule we can copy verbatim: a non-zero stroke never rounds to zero. That is
-   the whole content of our hairline degradation, without six enumerators.
+   [F6][comparison] asks for a named fidelity and a queried device unit; GPUI
+   names three fidelities (`snap_bounds`/`snap_stroke`/`cover_bounds`) and gives
+   the one that matters a rule we can copy verbatim: a non-zero stroke never
+   rounds to zero. That is the whole content of `ruleEndpoints`' hairline
+   degradation, without six enumerators.
 5. **Adopt a backend-owned, key-addressed raster cache.** `PlatformAtlas::get_or_insert_with`
-   with a hashable params key generalises Slint's `draw_cached_pixmap` and is the
-   answer to glyph and image payloads that [F6][comparison] recommends.
+   with a hashable params key generalises Slint's `draw_cached_pixmap`. Our
+   `Glyph` op carries a `dchar` and leaves the raster backend-side already; the
+   key idea is what [F8][comparison] recommends for whatever image payload a
+   Skia or Graphite path grows.
 6. **Do not read GPUI as evidence that semantic ops are wrong.** It has none,
    but only because it has designed away the situation that produces them: with
    every target a GPU, no primitive ever needs degrading. That does not
    generalise to a seam that must also paint into character cells, so it neither
    supports nor undermines [friction §3][friction] — it narrows the claim in
-   [F3][comparison] to "when all targets share a rendering model, pick a
-   vocabulary that needs no degradation."
+   [F4][comparison] to "when all targets share a rendering model, the lowering
+   can live nowhere, because a vocabulary exists that needs none."
 7. **Note what reification costs once you want batching.** If `sparkles:ui`
    ever sorts ops by kind (a plausible Skia/Graphite optimisation), it inherits
-   GPUI's problem: an explicit draw order derived from overlap. Today our
-   implicit array order is a feature; it is worth recording as a constraint
-   rather than rediscovering it.
+   GPUI's problem: an explicit draw order derived from overlap. Our implicit
+   array order is a feature; it is worth recording as a constraint rather than
+   rediscovering it.
 
 > [!WARNING]
-> One F1 nuance to carry into the proposal: GPUI keeps measurement off the
-> _renderer_ but fixes the unit at `Pixels` for the entire framework. So the
-> unanimity behind [F1][comparison] covers only the first half of the
-> recommendation — "move `measure` off the canvas" is unanimous; "with a
-> backend-chosen unit" is Slint's answer, not the field's.
+> One nuance to carry into the proposal: GPUI keeps measurement off the
+> _renderer_ but fixes the unit at `Pixels` for the entire framework. The
+> unanimity behind [F1][comparison] is therefore about placement alone — "move
+> `measure` off the canvas" is unanimous, while "with a backend-chosen unit" is
+> Slint's answer to one of the five further decisions [F2][comparison]
+> enumerates, not the field's.
 
 ## Sources
 
@@ -456,7 +502,7 @@ exist at that revision with `git cat-file -e`:
   [`gpui_macos`][macwindow] / [`gpui_windows`][winwindow] window impls
 - [`README.md`][readme], [`Cargo.toml`][cargo]
 
-Related: the [umbrella][index] (Q1-Q8), the [synthesis][comparison] (F1-F7), the
+Related: the [umbrella][index] (Q1-Q8), the [synthesis][comparison] (F1-F12), the
 peers argued with — [Slint][slint], [egui][egui], [Qt][qt],
 [Notcurses][notcurses] — the seam itself ([`canvas.d`][canvas]) and the
 [friction log][friction].

@@ -252,6 +252,16 @@ renderer to determine how underlines are rendered, such as rounding the
 thickness to a whole pixel in GDI-compatible modes"
 ([`ns-dwrite-dwrite_underline.md`][dwrite-underline]).
 
+`sparkles:ui` makes the second move. `scrollbar` is one of four primitives the
+interpreter probes for with `__traits(compiles)`, and the payload it hands a
+canvas that takes it carries content extent, viewport, offset, colours, a
+rail-expansion percentage, an edge and two fallback glyphs — semantics plus a
+degradation hint, exactly DirectWrite's shape. The difference is which hint.
+`DWRITE_UNDERLINE`'s `measuringMode` names a fidelity every renderer can
+interpret; `trackGlyph` and `thumbGlyph` are one backend's answer, riding past
+every backend that will never need them
+([friction §3](../../specs/ui-skia/canvas-seam-friction.md)).
+
 ## Q4 — command shape
 
 Cairo's recording surface reifies, and it reifies as a **tagged union**:
@@ -279,30 +289,41 @@ typedef union _cairo_command {
 
 — [`cairo-recording-surface-private.h`][cairo-rec-h]. Six kinds; each payload
 struct embeds the header and adds only its own live fields. `stroke` carries
-`cairo_stroke_style_t` and two matrices; `fill` does not. This is a C
-implementation of exactly what [F2](./comparison.md) recommends, confirmed from
-a second, independent direction: egui reached the sum type through a Rust
-`enum`, Cairo reached it by hand in a language that has none.
+`cairo_stroke_style_t` and two matrices; `fill` does not. That is the
+closed-sum arm of [F3](./comparison.md) reached from a third direction: egui
+gets there through a Rust `enum`, `sparkles:ui` through `SumType!(FillRect,
+TextRun, Glyph, Line, Rule, Scrollbar, PushClip, PopClip)`, and Cairo by hand in
+a language with no sum type at all.
 
 The header is the part worth stealing. It is the fields that are live for
 _every_ kind — operator, clip, and a per-command `extents` — which is what
 makes the recording surface's `bbtree` spatial index and its replay culling
-possible without re-deriving geometry.
+possible without re-deriving geometry. `DrawOp` has no counterpart: clip is
+spelled as two arms of the sum (`PushClip`/`PopClip`) rather than a field every
+op carries, and no arm carries an extent at all — which is Q8's gap below.
 
 Direct2D's `ID2D1CommandList` is deliberately opaque: the recorded stream has
 no public value type and is read only by streaming it to an
 `ID2D1CommandSink`, where "Not all methods implemented by `ID2D1DeviceContext`
 are present" ([`nn-d2d1_1-id2d1commandsink.md`][d2d-sink]). So recording also
 **normalises** — the replay vocabulary is a narrowed subset of the drawing
-vocabulary. `sparkles:ui`'s `DrawOp` set and `isCanvas` set are the same set,
-and Direct2D suggests they need not be.
+vocabulary. In `sparkles:ui` the two vocabularies coincide: the eight `DrawOp`
+kinds are the canvas's eight drawing primitives, four of them named by
+`isCanvas` and four discovered by introspection at the call site
+([friction §2](../../specs/ui-skia/canvas-seam-friction.md)). Direct2D suggests
+they need not coincide — a narrowed replay set is a place to put the lowerings
+each backend would otherwise repeat.
 
 ## Q5 — sub-unit placement
 
-Neither has the problem, for the usual reason: coordinates are continuous
-(`double` user space in Cairo, `FLOAT` DIPs in Direct2D), with a device
-transform applied underneath. That is a third and fourth confirmation of
-[F5](./comparison.md).
+Neither has the problem in the shape a cell toolkit has it: coordinates are
+continuous (`double` user space in Cairo, `FLOAT` DIPs in Direct2D), with a
+device transform applied underneath. Both are confirmations of
+[F6](./comparison.md) rather than counter-examples to it — the sub-unit question
+reappears one layer down, as `CAIRO_HINT_METRICS_ON` quantizing metrics to
+integer device space and as `DWRITE_MEASURING_MODE` rounding an underline's
+thickness to a whole pixel. A continuous seam buys the ability to say where the
+rounding happens; it does not remove the rounding.
 
 Two mechanisms remain transferable to a toolkit whose unit is coarse.
 **`cairo_surface_set_device_scale`** is a hidden per-surface multiplier so
@@ -323,9 +344,18 @@ Resolved, and only resolved. A drawing op carries a `cairo_pattern_t` or an
 `ID2D1Brush` and **no semantic role field**. The role travels separately — in a
 bracket around the ops (Cairo's `tag`, see Q3 above)
 or in the method name plus a metadata-bearing struct (`DWRITE_UNDERLINE`'s
-`localeName` and `measuringMode`). Neither subject pays for `visual` _and_
-`slot` on every op, and Cairo's arrangement is the one that would serve
-`sparkles:ui`'s re-resolving HTML interpreter: a tag bracket is emitted once per
+`localeName` and `measuringMode`). Both subjects therefore land where
+[F9](./comparison.md) puts every surveyed project: one channel, not two.
+
+`sparkles:ui` runs two. Each payload stores the resolved fields its own
+primitive paints from — an `Ink` for the four content primitives, colour fields
+plus a `const(BoxChrome)*` for a fill — and six of the eight payloads store a
+`Slot` beside it, so pixel backends read the resolved half while the HTML
+interpreter re-resolves from the role
+([friction §6](../../specs/ui-skia/canvas-seam-friction.md)). Reconstructing a
+`Visual` from those fields on demand rather than storing one keeps the bytes
+down, but the hedge is the two channels, not their width. Cairo's arrangement is
+the one that would serve that interpreter: a tag bracket is emitted once per
 styled region rather than per primitive, and a pixel backend that leaves the
 `tag` slot `NULL` ignores it at no cost.
 
@@ -360,13 +390,23 @@ target can create drawing resources", [`render-targets-overview.md`][d2d-rt]),
 so the backend owns them by construction — Slint's backend-owned cache,
 generalised to every resource.
 
+`sparkles:ui` pays the first half of that bill. `CmdBuffer.textRun` copies a
+run's bytes into a frame arena, so a `scope` source is safe to draw from and no
+operation points into a caller's buffer; the rule the type states is that an
+operation is valid while the buffer that built it is alive and unreset
+([friction §7](../../specs/ui-skia/canvas-seam-friction.md)). What Cairo adds is
+the second half — reference-counting the scaled font and snapshotting the source
+pattern, so a recorded command answers a stronger question than "are the bytes
+still there". That stronger question is the one `UI-O4` holds open: what must a
+command own to outlive the frame that produced it, or to be handed to another
+thread?
+
 ## Q8 — can a backend ask the scene its extent?
 
-**Yes — and this is where the survey's existing synthesis is wrong.**
-
-[F7](./comparison.md) says extent belongs to the surface, not the scene, and
-that friction §8's need is narrow. Cairo has both, and names the second one after friction §8's exact use
-case:
+**Yes, and Cairo ships both of [F7](./comparison.md)'s mechanisms side by
+side** — one maintained by the surface, one derived by scanning the scene —
+naming the second after
+[friction §8](../../specs/ui-skia/canvas-seam-friction.md)'s exact use case:
 
 - The surface answers when it can: `get_extents` on the backend, and if the
   slot is `NULL` or returns `FALSE` the surface "is considered to be boundless
@@ -383,11 +423,13 @@ surface and replays the whole scene into it**, then reads
 `_cairo_analysis_surface_get_bounding_box`. Extent is computed by replaying the
 display list into a conforming backend that measures instead of painting —
 which is precisely `RecordingCanvas`'s role, generalised into a measurement
-service. `skia-canvas-render.d`'s hand-rolled scan over `op.rect` is the right
-idea implemented in the wrong place.
+service. `sparkles:ui` answers the same question on the derived-by-scan side of
+F7's axis, but at the call site: `CmdBuffer` reports `length` and a run's
+`measure` and nothing else, so `skia-canvas-render.d` folds `op.rect` over the
+stream itself. The idea is right and the place is not.
 
-Direct2D confirms it from the other side, and adds a wrinkle F7 does not
-model. `ID2D1DeviceContext::GetImageLocalBounds` takes any `ID2D1Image` —
+Direct2D confirms it from the other side, and adds a wrinkle to F7's axis.
+`ID2D1DeviceContext::GetImageLocalBounds` takes any `ID2D1Image` —
 a command list included — and returns its bounds. It is a method on the
 **context**, not on the image, because "They do reflect the current DPI, unit
 mode, and interpolation mode of the context"
@@ -445,16 +487,18 @@ scene _and_ the device, so neither owning it alone is correct.
 
 ## Bearing on the proposal
 
-1. **Q8: revise F7.** Extent is not simply the surface's. Cairo ships both
-   `get_extents` (surface-owned, `NULL` ⇒ unbounded) _and_
-   `cairo_recording_surface_ink_extents` (scene-owned), and `GetImageLocalBounds`
-   shows extent is a function of the scene **and** the device's DPI and unit
-   mode. Friction §8 is a real gap, not the narrow one F7 describes.
-2. **Implement that gap as a measuring backend, not as a field.** Cairo derives
-   ink extents by replaying into a null surface behind an analysis surface.
+1. **Q8: F7's two mechanisms, both shipped, and the second one named.** Cairo
+   has `get_extents` (surface-owned, maintained at construction, `NULL` ⇒
+   unbounded) _and_ `cairo_recording_surface_ink_extents` (scene-owned, derived
+   by scan), and `GetImageLocalBounds` adds that a derived answer is a function
+   of the scene **and** the device's DPI and unit mode. Friction §8 wants the
+   second, so whatever answers it needs a device to be asked of.
+2. **Answer it with a measuring backend, not with a field.** Cairo derives ink
+   extents by replaying into a null surface behind an analysis surface.
    `sparkles:ui` already has the conforming backend that would do it — let
-   `RecordingCanvas` (or a sibling `MeasuringCanvas`) answer `extent()`, and
-   delete `skia-canvas-render.d`'s ad-hoc scan over `op.rect`.
+   `RecordingCanvas` (or a sibling `MeasuringCanvas`) answer `extent()`, so
+   `skia-canvas-render.d` asks for the number instead of folding `op.rect` to
+   get it.
 3. **Q1: `Size measure(text)` is under-specified twice over.** Beyond F1's
    "wrong place", both subjects return the inked box _and_ the advance
    separately. Whatever replaces `measure` returns a record, not a `Size`.
@@ -467,24 +511,28 @@ scene _and_ the device, so neither owning it alone is correct.
    from a primitive is strictly more expressive than a static capability set,
    it is what a golden test wants when it asks for a hairline, and it subsumes
    `__traits(compiles)` probing: a canvas that cannot clip _this_ rect can say
-   so at the call. This gives F4's "refusable degrade" a mechanism.
+   so at the call. That gives [F5](./comparison.md)'s refusable arm a mechanism.
 6. **Q2: order the fallbacks as data.** The ten-line `delegate` loop in
    `cairo-compositor.c` is the whole of Cairo's degradation policy. If
-   `sparkles:ui` keeps degradation in the backends (F3's first camp), a delegate
-   chain is how to stop it being scattered across them.
-7. **Q4: F2 confirmed from a second direction — and the header is the lesson.**
-   Cairo hand-built a tagged union in a language without sum types. Copy
-   `cairo_command_header_t`: fields live for _every_ op (clip, and a per-op
-   extent) in a shared header, the rest in per-kind payloads. That answers §4
-   and item 1 at once.
-8. **Q3/Q6: stop paying for `visual` and `slot` on every op.** Neither subject
-   does. Cairo's `tag` bracket is the cheaper shape for the HTML interpreter's
-   re-resolution — emit `pushSlot`/`popSlot` bracket ops that pixel backends
-   ignore, instead of a field on all eighteen.
-9. **Q7: F6 gains a third technique — snapshot at record time.** Cairo neither
-   borrows nor interns: it copies bytes and reference-counts resources at the
-   moment of recording, which is exactly what would make a `DrawOp` safe to
-   move to another thread (friction §7, `UI-O4`).
+   `sparkles:ui` keeps its lowerings in the backends — [F4](./comparison.md)'s
+   backend camp — a delegate chain is how to stop them being scattered across
+   them.
+7. **Q4: the header is the lesson.** Cairo hand-built the same closed sum in a
+   language that has none, so F3's first arm holds on a third subject. What it
+   has that `DrawOp` does not is `cairo_command_header_t` — the fields live for
+   _every_ kind (clip, and a per-op extent) gathered in one place, the rest in
+   per-kind payloads. `DrawOp` spells clip as two arms of the sum and carries no
+   extent, so a shared header would answer item 1 and put the bytes every arm
+   pays for to work.
+8. **Q3/Q6: stop running a resolved channel and a role channel at once.**
+   Neither subject does. Cairo's `tag` bracket is the cheaper shape for the HTML
+   interpreter's re-resolution — emit `pushSlot`/`popSlot` bracket ops that pixel
+   backends ignore, instead of a `Slot` on six of the eight payloads.
+9. **Q7: [F8](./comparison.md) gains a third technique — snapshot at record
+   time.** Cairo neither borrows nor interns: it copies the bytes _and_
+   reference-counts the resources at the moment of recording. The frame arena
+   does the first half for `DrawOp.text`; the second is what would make an
+   operation safe to move to another thread (friction §7, `UI-O4`).
 10. **The closed-seam caveat cuts against the friction log's framing.** Both
     subjects afford wide seams because nobody outside implements them, and
     `sparkles:ui` is in that position too. §2's complaint that a _backend

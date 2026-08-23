@@ -1,9 +1,7 @@
 # Comparison — thirty-eight seams, and what they decide for `isCanvas`
 
-**Coverage:** 38 of 38 subjects surveyed — the four that opened the survey
-(Slint, Qt `QPaintEngine`, Notcurses, egui) plus the 34 added in the completing
-pass. Every subject file is cited below; no question is answered from an
-unsurveyed subject.
+**Coverage:** 38 of 38 subjects surveyed. Every subject file is cited below; no
+question is answered from an unsurveyed subject.
 **Last reviewed:** August 23, 2026.
 
 The subjects were chosen to bound a space, not to sample a population: they run
@@ -19,18 +17,9 @@ streams ([Vello](./vello.md)). Eight questions, `Q1`–`Q8`, are defined in the
 
 Where the 38 agree, the agreement is reported as a finding and the absence of
 dissent is stated explicitly, because unanimity across 38 subjects is a much
-stronger claim than across four. Where they disagree, the disagreement is the
-finding, and the axis that separates the camps is what the proposal has to
-choose on.
-
-> [!NOTE]
-> This document replaces a synthesis written against four subjects. Three of its
-> seven findings did not survive: the old `F5` (continuous coordinates dissolve
-> the sub-unit problem) is falsified twice over, the old `F7` (extent belongs to
-> the surface) is contradicted by twelve subjects, and the old `F1`'s second
-> clause (measurement belongs behind a backend-chosen abstraction) is Slint's
-> answer rather than the field's. The new numbering is `F1`–`F12` and does not
-> correspond to the old one.
+stronger claim than unanimity across a handful. Where they disagree, the
+disagreement is the finding, and the axis that separates the camps is what the
+proposal has to choose on.
 
 ---
 
@@ -38,8 +27,7 @@ choose on.
 
 38 rows by 8 columns is unreadable. Each question below is a table of **distinct
 answers**, with the subjects that give each one. Grouping by answer is what makes
-38 subjects legible where four were not — and the size of a group is itself
-evidence.
+38 subjects legible — and the size of a group is itself evidence.
 
 ### Q1 — what unit does measurement return, and who answers?
 
@@ -68,7 +56,7 @@ evidence.
 | Answer                                          | Subjects                                                                                                                                                                                                                                                                                                                                                                                                                                        | Note                                                                                                                                                                                            |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Semantic operations live in the seam**        | [Slint](./slint.md) (8, incl. `draw_box_shadow`), [GSK](./gtk4-gsk.md) (`GskBorderNode`, `GskInsetShadowNode`), [Qt Quick](./qt-quick-scenegraph.md) (private node kinds), [Skia](./skia-skpicture.md) (`DrawShadowRec`), [Flutter](./flutter-engine.md) (`drawShadow`), [Vello](./vello.md), [piet](./piet.md) (`blurred_rect`), [Pango](./pango-harfbuzz.md) (`draw_error_underline`), [Godot](./godot-textserver.md) (`CommandNinePatch`)    | Every one stops far below a widget. GSK's admission test is "do the backends disagree about how to draw it?"; Godot's and Vello's is "does lowering need knowledge only the backend has?"       |
-| **Identity travels with no appearance**         | [WebRender](./webrender.md) (`IS_SCROLLBAR_CONTAINER`, one bit), [Chromium](./chromium-paintop.md) (`DrawScrollingContentsOp`, `CustomDataOp`, `AnnotateOp`), [Cairo](./cairo-direct2d.md) (`tag` bracket), [Masonry/imaging](./parley-xilem.md) (`push_context`), [GSK](./gtk4-gsk.md) (`GskDebugNode`)                                                                                                                                        | One bit on a shared header buys WebRender a tile-cache slice barrier. Our eight scrollbar fields on every `DrawOp` buy less.                                                                    |
+| **Identity travels with no appearance**         | [WebRender](./webrender.md) (`IS_SCROLLBAR_CONTAINER`, one bit), [Chromium](./chromium-paintop.md) (`DrawScrollingContentsOp`, `CustomDataOp`, `AnnotateOp`), [Cairo](./cairo-direct2d.md) (`tag` bracket), [Masonry/imaging](./parley-xilem.md) (`push_context`), [GSK](./gtk4-gsk.md) (`GskDebugNode`)                                                                                                                                        | One bit on a shared header buys WebRender a tile-cache slice barrier. The `Scrollbar` payload carries a whole widget's state on its own arm and buys less.                                      |
 | **Primitive seam, semantics resolved above it** | [Java2D](./java2d.md), [SDL](./sdl-renderer.md), [Godot](./godot-textserver.md), [iced](./iced.md) (`fill_quad`), [GPUI](./gpui.md), [egui](./egui.md), [Avalonia](./avalonia.md), [Monomer](./monomer.md), [gloss](./gloss-picture.md), [Vg](./ocaml-vg.md), [diagrams](./haskell-diagrams.md), [Notty](./notty.md), [Vty](./vty-image.md), [Mosaic](./mosaic.md), [Ratatui](./ratatui.md), [Textual](./textual.md), [libvaxis](./libvaxis.md) | Ratatui, libvaxis and Textual each degrade a scrollbar in the widget, in the toolkit's own vocabulary, in 33–60 lines. libvaxis's whole `Scrollbar.zig` is 33 lines with one `character` field. |
 | **Zero semantics — and the problem inverts**    | [imtui](./imtui.md)                                                                                                                                                                                                                                                                                                                                                                                                                             | With nothing semantic in the seam, the scrollbar has to know what the target is. The bill was a permanent fork of ImGui's widget layer.                                                         |
 
@@ -98,15 +86,15 @@ evidence.
 
 ### Q6 — resolved appearance, semantic role, or both?
 
-| Answer                                                            | Subjects                                                                                                                                                                                                                                                                                                     | Note                                                                                                                                                                         |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Resolved only, on the op**                                      | [Flutter](./flutter-engine.md), [Chromium](./chromium-paintop.md), [GPUI](./gpui.md), [GSK](./gtk4-gsk.md), [Vello](./vello.md), [egui](./egui.md), [Godot](./godot-textserver.md), [Monomer](./monomer.md), [Doodle](./scala-doodle.md), [Vg](./ocaml-vg.md), [Notty](./notty.md), [Vty](./vty-image.md)    | The majority answer, and every one of them lacks a re-resolving consumer. Broadway is GSK's Browser target and gets _no_ semantic help at all.                               |
-| **Resolved, but the leaves are symbolic**                         | [Ratatui](./ratatui.md), [libvaxis](./libvaxis.md), [Vty](./vty-image.md) (`Color = Default \| Indexed \| Rgb`)                                                                                                                                                                                              | One 4-byte field holds either a role or a value; the terminal re-resolves against the user palette past every backend. One field doing what `visual` + `slot` does with two. |
-| **Role by op identity, value in state**                           | [Qt Quick](./qt-quick-scenegraph.md) (node type + `QSGMaterial`), [Pango](./pango-harfbuzz.md) (`PangoRenderPart` per call, colour in renderer state)                                                                                                                                                        | In a sum type the **tag is the slot**. Qt's `NodeType` is too coarse and the software backend pays a five-deep `dynamic_cast` per node per frame.                            |
-| **Appearance as stream or device state, not op payload**          | [SDL](./sdl-renderer.md) (`SDL_RENDERCMD_SETDRAWCOLOR`, deduplicated), [Racket](./racket-dc.md), [Java2D](./java2d.md) (pipe recompiled per state change), [Flutter](./flutter-engine.md) (delta-encoded `setColor`)                                                                                         | Cheapest per op, and structurally incompatible with an order-independent, pairwise-comparable op stream — i.e. with `RecordingCanvas`. A genuine fork, not a defect.         |
-| **A late-bound handle into a per-frame table**                    | [Masonry/imaging](./parley-xilem.md) (`BrushIndex`), [WebRender](./webrender.md) (`PropertyBinding`)                                                                                                                                                                                                         | "Enables updating of brush details without performing relayouts." Strictly better than carrying both channels.                                                               |
-| **Style as a scope, not a field**                                 | [gloss](./gloss-picture.md) (`Color c p` wraps a subtree), [elm-canvas](./elm-canvas.md) (`mergeDrawOp` lattice join, `save`/`restore` bracketing), [Mosaic](./mosaic.md) (`Unspecified` sentinels compose in the cell)                                                                                      | Per-op `visual` is a cost of **flatness**, not of hedging. Adopting this requires the display list to retain grouping structure, which a flat `DrawOp[]` discards.           |
-| **A second channel that buys something the first cannot express** | [wgpu](./wgpu.md) (`Limits` + `DownlevelFlags`), [Avalonia](./avalonia.md) (`ServerPen` + `ClientPen`, by thread affinity), [Vg](./ocaml-vg.md) (`glyphs` + `text`, on one constructor of five), [Skia](./skia-skpicture.md) (`SkPaintFilterCanvas` decorator), [Cairo](./cairo-direct2d.md) (`tag` bracket) | The rule is not "never two channels" — it is **never the same fact twice**. Avalonia's second field buys a capability; ours buys a consumer.                                 |
+| Answer                                                            | Subjects                                                                                                                                                                                                                                                                                                     | Note                                                                                                                                                                                               |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Resolved only, on the op**                                      | [Flutter](./flutter-engine.md), [Chromium](./chromium-paintop.md), [GPUI](./gpui.md), [GSK](./gtk4-gsk.md), [Vello](./vello.md), [egui](./egui.md), [Godot](./godot-textserver.md), [Monomer](./monomer.md), [Doodle](./scala-doodle.md), [Vg](./ocaml-vg.md), [Notty](./notty.md), [Vty](./vty-image.md)    | The majority answer, and every one of them lacks a re-resolving consumer. Broadway is GSK's Browser target and gets _no_ semantic help at all.                                                     |
+| **Resolved, but the leaves are symbolic**                         | [Ratatui](./ratatui.md), [libvaxis](./libvaxis.md), [Vty](./vty-image.md) (`Color = Default \| Indexed \| Rgb`)                                                                                                                                                                                              | One 4-byte field holds either a role or a value; the terminal re-resolves against the user palette past every backend. One field doing what a stored `Slot` beside a resolved `Ink` does with two. |
+| **Role by op identity, value in state**                           | [Qt Quick](./qt-quick-scenegraph.md) (node type + `QSGMaterial`), [Pango](./pango-harfbuzz.md) (`PangoRenderPart` per call, colour in renderer state)                                                                                                                                                        | In a sum type the **tag is the slot**. Qt's `NodeType` is too coarse and the software backend pays a five-deep `dynamic_cast` per node per frame.                                                  |
+| **Appearance as stream or device state, not op payload**          | [SDL](./sdl-renderer.md) (`SDL_RENDERCMD_SETDRAWCOLOR`, deduplicated), [Racket](./racket-dc.md), [Java2D](./java2d.md) (pipe recompiled per state change), [Flutter](./flutter-engine.md) (delta-encoded `setColor`)                                                                                         | Cheapest per op, and structurally incompatible with an order-independent, pairwise-comparable op stream — i.e. with `RecordingCanvas`. A genuine fork, not a defect.                               |
+| **A late-bound handle into a per-frame table**                    | [Masonry/imaging](./parley-xilem.md) (`BrushIndex`), [WebRender](./webrender.md) (`PropertyBinding`)                                                                                                                                                                                                         | "Enables updating of brush details without performing relayouts." Strictly better than carrying both channels.                                                                                     |
+| **Style as a scope, not a field**                                 | [gloss](./gloss-picture.md) (`Color c p` wraps a subtree), [elm-canvas](./elm-canvas.md) (`mergeDrawOp` lattice join, `save`/`restore` bracketing), [Mosaic](./mosaic.md) (`Unspecified` sentinels compose in the cell)                                                                                      | Per-op resolved appearance is a cost of **flatness**, not of hedging. Adopting this requires the display list to retain grouping structure, which a flat `DrawOp[]` discards.                      |
+| **A second channel that buys something the first cannot express** | [wgpu](./wgpu.md) (`Limits` + `DownlevelFlags`), [Avalonia](./avalonia.md) (`ServerPen` + `ClientPen`, by thread affinity), [Vg](./ocaml-vg.md) (`glyphs` + `text`, on one constructor of five), [Skia](./skia-skpicture.md) (`SkPaintFilterCanvas` decorator), [Cairo](./cairo-direct2d.md) (`tag` bracket) | The rule is not "never two channels" — it is **never the same fact twice**. Avalonia's second field buys a capability; ours buys a consumer.                                                       |
 
 ### Q7 — who owns a command's payload?
 
@@ -128,10 +116,10 @@ evidence.
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Yes — cached on every node, maintained at construction** | [GSK](./gtk4-gsk.md) (`bounds` on the base node), [Vty](./vty-image.md) (`imageWidth`/`imageHeight`, O(1)), [Notty](./notty.md) (`dim` per composite), [Racket](./racket-dc.md) (pict's eager `width`/`height`/`ascent`/`descent`), [Avalonia](./avalonia.md) (`Rect? Bounds` per node, union cached behind `_boundsValid`), [diagrams](./haskell-diagrams.md) (`Envelope`) | Cheap because it was never _derived_: the constructor is the only place it could be computed, so it costs one addition per node.                                                                                                                                              |
 | **Yes — accumulated during recording**                     | [Flutter](./flutter-engine.md) (`AccumulateOpBounds`), [Cairo](./cairo-direct2d.md) (`cairo_recording_surface_ink_extents`), [Godot](./godot-textserver.md) (`Item::get_rect()` behind `rect_dirty`), [Chromium](./chromium-paintop.md) (`DisplayItemList::bounds()` from producer-declared visual rects)                                                                   | Cairo computes it by replaying the scene into a measuring backend — `RecordingCanvas`'s role generalised into a measurement service.                                                                                                                                          |
-| **Yes — layout already knew it**                           | [Doodle](./scala-doodle.md) (`Finalized.boundingBox` → `Size.FitToImage`), [Mosaic](./mosaic.md) (the measured root sizes the surface), [libvaxis](./libvaxis.md) (`Widget.draw` _returns_ a `Surface.size`), [Textual](./textual.md) (`get_optimal_width`/`get_height`), [Ratatui](./ratatui.md) (`Buffer::with_lines`), [Monomer](./monomer.md) (`widgetGetSizeReq`)      | libvaxis's is the cheapest mechanism in the survey: make paint return a size. Mosaic's terminal size is _not_ used to size the surface — content decides.                                                                                                                     |
+| **Yes — layout already knew it**                           | [Doodle](./scala-doodle.md) (`Finalized.boundingBox` → `Size.FitToImage`), [Mosaic](./mosaic.md) (the measured root sizes the surface), [libvaxis](./libvaxis.md) (`Widget.draw` _returns_ a `Surface.size`), [Textual](./textual.md) (`get_optimal_width`/`get_height`), [Ratatui](./ratatui.md) (`Buffer::with_lines`), [Monomer](./monomer.md) (`widgetGetSizeReq`)      | libvaxis's is the cheapest mechanism in the survey: make paint return a size. Mosaic's terminal size never sizes the surface — content decides.                                                                                                                               |
 | **Deliberately refused**                                   | [Skia](./skia-skpicture.md) (`cullRect()` is the caller's argument), [GPUI](./gpui.md) (`BoundsTree` private), [WebRender](./webrender.md), [Vello](./vello.md) (root), [Vg](./ocaml-vg.md), [Masonry/imaging](./parley-xilem.md)                                                                                                                                           | Skia is the strongest witness _for_ refusing: it holds per-op bounds **and** a spatial index of them and still exposes only `approximateOpCount()`. WebRender's reason is stronger — items are explicitly allowed to be logically infinite, so extent-by-scanning is unsound. |
 | **The extent is an input to the scene**                    | [Vg](./ocaml-vg.md) (`renderable = size2 * box2 * image`), [functional images](./functional-images.md) (`p(a,b,c)`), [elm-canvas](./elm-canvas.md) (`toHtml (width, height) …`)                                                                                                                                                                                             | Henderson makes the box an argument, so the query can never arise. That is the fix for §8 stated as an architecture rather than an API.                                                                                                                                       |
-| **The surface declares it and nothing else does**          | [Qt `QPaintEngine`](./qt-qpaintengine.md), [Notcurses](./notcurses.md), [SDL](./sdl-renderer.md), [Java2D](./java2d.md), [iced](./iced.md), [gloss](./gloss-picture.md), [imtui](./imtui.md), [egui](./egui.md), [elm-ui](./elm-ui.md), [piet](./piet.md)                                                                                                                   | egui derives extent from primitives — which is what `skia-canvas-render.d` had to do, and it was the _only_ member of the old four-subject survey to do so.                                                                                                                   |
+| **The surface declares it and nothing else does**          | [Qt `QPaintEngine`](./qt-qpaintengine.md), [Notcurses](./notcurses.md), [SDL](./sdl-renderer.md), [Java2D](./java2d.md), [iced](./iced.md), [gloss](./gloss-picture.md), [imtui](./imtui.md), [egui](./egui.md), [elm-ui](./elm-ui.md), [piet](./piet.md)                                                                                                                   | egui derives extent from primitives, which is what `skia-canvas-render.d` does — and egui is the only subject in this camp that reaches the number the same way.                                                                                                              |
 
 ---
 
@@ -229,73 +217,139 @@ correctness are independent: perfect placement, and a code-point count with no
 `wcwidth`, no East Asian Width table and no grapheme segmentation anywhere in the
 repository.
 
-### F3. Reification is right; "sum type" is one of eight encodings, and not the one the largest subjects chose
+### F3. Reification is right; the encoding is a live trade
 
-**Support for keeping it:** [Henderson](./functional-images.md) shows the cost of
-dropping it — with no comparable stream he relies on idempotent overdraw ("it
-doesn't matter if we draw the same object twice"), which is fine for a plotter
-and useless for a golden test. [piet](./piet.md) is the empirical case: nothing
-is reified, its trait doc anticipates a recording context nobody wrote, and
-cross-backend verification degraded to tolerant per-OS PNG diffs against an
-out-of-tree snapshot submodule.
+**Reifying buys four separable properties, and `sparkles:ui` cashes all four.**
+Recording, replay, culling and comparison: `RecordingCanvas` collects a
+`DrawOp[]` of plain values, `interp/immediate.d` replays one against any
+conforming canvas, the display list culls hidden subtrees before a backend sees
+them, and the op-stream parity harness compares two targets' streams pairwise.
+That the four are separable is [Monomer](./monomer.md)'s lesson — a queue of
+`IO ()` closures is reified and buys ordering alone — and
+[elm-canvas](./elm-canvas.md)'s: proper sum types above the seam, lowered to a
+stringly-typed `{type, name, args}` at it, cash replay and nothing else.
 
-**Against the prescribed encoding:** the three largest reifying subjects —
-[Flutter](./flutter-engine.md) (68 exactly-sized records in a byte arena),
-[Chromium](./chromium-paintop.md) (36 `final` subclasses at
+**Not reifying is expensive, and no subject argues otherwise.**
+[Henderson](./functional-images.md) shows the cost of dropping it — with no
+comparable stream he relies on idempotent overdraw ("it doesn't matter if we draw
+the same object twice"), which is fine for a plotter and useless for a golden
+test. [piet](./piet.md) is the empirical case: nothing is reified, its trait doc
+anticipates a recording context nobody wrote, and cross-backend verification
+degraded to tolerant per-OS PNG diffs against an out-of-tree snapshot submodule.
+
+**The encoding is the live trade, and the field is split down it.** `DrawOp` is a
+closed sum: a `struct` over `SumType!(FillRect, TextRun, Glyph, Line, Rule,
+Scrollbar, PushClip, PopClip)`, dispatched by `op.match!`, with `kind` derived
+through those same eight arms and `static assert(DrawOp.sizeof <= 64)` bounding
+every operation by the widest payload, `TextRun`. Twelve subjects encode the same
+way, from [WebRender](./webrender.md)'s `#[repr(u8)]` display item to
+[Vty](./vty-image.md)'s image constructors. The three largest reifying subjects
+encode the other way — [Flutter](./flutter-engine.md) (68 exactly-sized records in
+a byte arena), [Chromium](./chromium-paintop.md) (36 `final` subclasses at
 `ComputeOpAlignedSize<T>()` bytes) and [Skia](./skia-skpicture.md) (`SkRecord`
-over an `SkArenaAlloc`) — all chose **tag plus per-op struct in variable-stride
-storage**, and all three generate the enum, the structs and the visitors from one
-macro list. A closed `SumType!(...)[]` is a fixed-size cell; Chromium tolerates
-that cost in exactly one place, the deserialisation scratch buffer
-(`LargestPaintOp`).
+over an `SkArenaAlloc`), joined by [Godot](./godot-textserver.md)
+(placement-`new`ed subclasses in 4 KiB blocks that "always grow but never
+shrink") — and all four generate the enum, the structs and the visitors from one
+macro list.
 
-Five further complications:
+| Property             | Closed sum ([`sparkles:ui`][canvas], [WebRender](./webrender.md), [SDL](./sdl-renderer.md), [egui](./egui.md), [Vty](./vty-image.md), [Doodle](./scala-doodle.md), …) | Variable-stride per-op records ([Flutter](./flutter-engine.md), [Chromium](./chromium-paintop.md), [Skia](./skia-skpicture.md), [Godot](./godot-textserver.md)) |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Illegal combinations | Unspellable: an arm holds only its own fields, so there is no `trackGlyph` to read on a `Line`                                                                        | Unspellable per record too, but tag and bytes are separate artifacts joined by a cast                                                                           |
+| Cost per operation   | The widest payload's, always — a `PopClip` carrying no fields occupies what a `TextRun` occupies                                                                      | Its own, exactly. Chromium's union over all op types exists once, as a deserialisation scratch buffer                                                           |
+| Comparison           | Pairwise and structural, for free — which is what makes `RecordingCanvas` a parity oracle                                                                             | A walk of tag-and-offset cursors; Flutter buys equality back with a bulk `memcmp` in `DisplayList::Equals`                                                      |
+| Exhaustiveness       | The compiler's, through `match!` and `final switch`                                                                                                                   | A hand-maintained switch, guarded by `static_assert(kNumOpTypes == TYPES(M))`                                                                                   |
+| Adding an operation  | Every walker and every accessor goes non-exhaustive at once                                                                                                           | A new record leaves existing visitors compiling                                                                                                                 |
 
-- **The defect in `DrawOp` is the tag, not the width.** [wgpu](./wgpu.md) keeps a
+**The stride objection is priced, and at our scale the budget answers it.**
+[Flutter](./flutter-engine.md), [Godot](./godot-textserver.md) and
+[Chromium](./chromium-paintop.md) each argue that a flat arena of exactly-sized
+records is the better encoding, with real mechanism behind it —
+`ComputeOpAlignedSize<T>()`, `alloc_command<T>`, `Push<T>` with variable-length
+text inline after the record. What the objection recovers here is the spread
+between the narrowest arm and 64 bytes, because the widest payload fits the
+budget; what it spends is an operation's value semantics, and those are what
+`RecordingCanvas` and the parity harness are built on — the friction log lists
+both among the things that are working. The trade reads differently at four
+thousand operations bump-allocated and reset inside a frame than at a page's
+display list serialised across a process boundary: the bytes Chromium recovers
+pay for an IPC, and the value semantics it gives up it does not need, because its
+parity story is pixels. [Masonry/imaging](./parley-xilem.md) reaches the same
+objection from storage rather than stride — a tag plus one index into typed side
+arenas, sized per kind, `Scene: PartialEq` over the whole thing — and the budget
+does not answer that half: what it costs is that an operation stops being
+self-contained, so pairwise comparison becomes a scene walk and composing two
+streams means rebasing ids.
+
+**Five refinements the split does not settle.**
+
+- **Width is not the defect; a tag over width is.** [wgpu](./wgpu.md) keeps a
   ~60-field flat `Limits` record where most fields are zero on any target, and it
   is fine, because it is **tagless** (0 means "none available", not "garbage for
   this variant"), its field list exists once in `with_limits!`, and a test proves
-  the macro exhaustive. "Wide records are bad" would also condemn the capability
-  record the proposal is about to introduce.
-- **Dead fields are an expensive enough problem to duplicate op types over.**
-  Chromium ships `DrawLineLiteOp`/`DrawArcLiteOp`, differing from their siblings
-  only by carrying a smaller `CorePaintFlags`, each with an open TODO. Flutter
-  splits `DrawPoints`/`DrawLines`/`DrawPolygon` rather than widen a record:
-  "The point type is packed into 3 different OpTypes to avoid expanding the fixed
-  payload beyond the 8 bytes."
-- **A sum type does not make illegal states unrepresentable — it relocates
-  them.** [elm-canvas](./elm-canvas.md) is a total language with proper unions
-  and still documents settings that silently do nothing: `maxWidth` matches all
-  five `Drawable` constructors and returns four untouched.
+  the macro exhaustive. A closed sum reaches the same place from the other side:
+  each arm holds only its own fields, so there are no dead bytes under a
+  discriminant. What it pays is uniform stride, not waste per field.
+- **A few bytes are worth a whole op type to the other camp.** Chromium ships
+  `DrawLineLiteOp`/`DrawArcLiteOp`, differing from their siblings only by
+  carrying a smaller `CorePaintFlags`, each with an open TODO. Flutter splits
+  `DrawPoints`/`DrawLines`/`DrawPolygon` rather than widen a record: "The point
+  type is packed into 3 different OpTypes to avoid expanding the fixed payload
+  beyond the 8 bytes." Uniform stride is a real cost to people who measure it.
+- **A sum relocates illegal states rather than eliminating them.**
+  [elm-canvas](./elm-canvas.md) is a total language with proper unions and still
+  documents settings that silently do nothing: `maxWidth` matches all five
+  `Drawable` constructors and returns four untouched. The residue here has the
+  same shape and is visible in the accessors — `DrawOp.slot` answers
+  `Slot.inherit` for the clip pair, the `bar*` readers answer neutrally on arms
+  that are not scrollbars, and `visualOf` is lossy on purpose. That is a caveat
+  about what any sum can promise, not an argument against choosing one.
   [Textual](./textual.md)'s one-variant `Segment` grew a tag-shaped dead field
-  (`control`, `None` on every drawing segment, filtered before measuring).
-  [libvaxis](./libvaxis.md)'s tag-free `Cell` carries `image` and `scale` that
-  are null and identity for nearly every cell. A sum type removes _illegal_
+  (`control`, `None` on every drawing segment, filtered before measuring) and
+  [libvaxis](./libvaxis.md)'s tag-free `Cell` carries `image` and `scale` that are
+  null and identity for nearly every cell: an encoding removes _illegal_
   combinations, not _rare_ ones.
-- **Untagged is worse than tagged-with-dead-fields.** [imtui](./imtui.md)'s
-  `ImDrawCmd` has no dead fields because it has one variant, and the discriminant
-  relocates into a UV-equality heuristic plus an unchecked `i += 3` assumption
-  about the producer's tessellation.
-- **An open hierarchy extends better than a closed sum.** [GSK](./gtk4-gsk.md)
-  added twelve node kinds since 4.0 without touching a backend, because a `NULL`
-  vtable entry degrades automatically; a closed sum type makes every backend
-  non-exhaustive on each addition. The countervailing cost is
-  [Qt Quick](./qt-quick-scenegraph.md)'s: a seven-value `NodeType` too coarse to
-  dispatch on, and a five-deep `dynamic_cast` ladder per node per frame ending in
-  `// We dont know, so skip`.
+- **Arm count is its own axis, and the budget does not answer it.**
+  [SDL](./sdl-renderer.md) groups eleven command tags over four union arms;
+  [diagrams](./haskell-diagrams.md) pushes variability into a `Prim` existential
+  under four constructors; [Masonry/imaging](./parley-xilem.md) runs seven
+  variants over five side arenas. Eight arms means eight `match!` arms in every
+  walker and in each of the seventeen member accessors, each written out because
+  a non-answering arm's neutral value is a per-accessor decision that no field
+  list implies. `FillRect`, `TextRun`, `Glyph` and `Line` differ little enough
+  that SDL's shape would fit them, with `Scrollbar` the one payload that genuinely
+  does not. What collapsing costs is exhaustiveness — the discriminant moves
+  inside an arm, where the compiler stops checking it — and, if a payload is
+  type-erased in the process, `RecordingCanvas`'s pairwise comparison. What it
+  does not buy is size: `TextRun` sets the budget either way.
+- **Untagged is worse than tagged.** [imtui](./imtui.md)'s `ImDrawCmd` has no dead
+  fields because it has one variant, and the discriminant relocates into a
+  UV-equality heuristic plus an unchecked `i += 3` assumption about the producer's
+  tessellation. A heuristic can be wrong where a tag cannot.
 
-**Two shapes worth naming that the old finding could not see.**
-[Vty](./vty-image.md) exports its sum type **abstractly** — constructors hidden,
+**And an open hierarchy extends better than either.** [GSK](./gtk4-gsk.md) added
+twelve node kinds since 4.0 without touching a backend, because a `NULL` vtable
+entry degrades automatically; a closed sum makes every walker non-exhaustive on
+each addition, which is a compile error rather than a silent gap and is the
+reason the eight arms are a maintenance cost worth naming. The countervailing
+cost is [Qt Quick](./qt-quick-scenegraph.md)'s: a seven-value `NodeType` too
+coarse to dispatch on, and a five-deep `dynamic_cast` ladder per node per frame
+ending in `// We dont know, so skip`.
+
+**Two shapes worth taking whichever encoding wins.**
+[Vty](./vty-image.md) exports its sum **abstractly** — constructors hidden,
 `horizJoin` pads with `BGFill` before building — so an unequal-height join is
-unconstructible. Without a constructor boundary, invariants like "a `textRun`'s
-`rect.width` is its advance in cells" stay conventions.
-[Racket](./racket-dc.md) generates the recorder _from the method set_, so the
-seam and the reified stream cannot drift.
+unconstructible. `DrawOp`'s payloads are publicly constructible, so "a `TextRun`'s
+`rect.width` is its advance in cells" and the `PushClip`/`PopClip` pairing are
+conventions rather than invariants; both are load-bearing, the first for every
+consumer that folds `op.rect`, the second for every clip-aware backend.
+[Racket](./racket-dc.md) generates the recorder _from the method set_, so the seam
+and the reified stream cannot drift.
 
-### F4. The axis is not semantic-vs-primitive but where the lowering lives — and there are six places, not two
+### F4. The axis is not semantic-vs-primitive but where the lowering lives
 
-The old finding named two camps (backend, framework). The survey found six, and
-several subjects occupy more than one.
+The question a seam actually decides is not whether an operation is semantic but
+where its degradation is written. The survey finds six answers, and several
+subjects occupy more than one.
 
 | Where degradation lives | Subjects                                                                                                                                                 | Mechanism                                                                                                                                        |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -320,15 +374,29 @@ backend has?" [Doodle](./scala-doodle.md): "an operation that is semantic _and_
 unserviceable by some backends becomes its own capability, not another member of
 the shared seam."
 
-Applied to `scrollbar`: the **semantics pass** every test — a cell backend
-genuinely degrades a scrollbar differently, and
+Applied to `scrollbar`: the **semantics pass** every test. A cell backend
+genuinely degrades a scrollbar differently from a pixel backend, which is why
+content extent, viewport, offset and edge cross the seam at all, and
 [Qt Quick](./qt-quick-scenegraph.md) proves geometry-only vocabularies are
-portable only among like backends (its software renderer silently drops a custom
-`QSGGeometryNode`, the documented public way to add content). The **eight
-derived-geometry fields fail** every test: `scrollbarThumb` already computes the
-rail once, above the seam, and GSK's semantic nodes carry geometry and colour but
-never a fallback glyph. [Friction §3][friction] is therefore half right — right
-about the layering smell, wrong about which half is the smell.
+portable only among like backends — its software renderer silently drops a custom
+`QSGGeometryNode`, the documented public way to add content. The lowering sits
+where the tests want it, too: `scrollbarThumb` in `sparkles.ui.state` is the one
+rail formula, `canvas.d` re-exports `scrollbarCellCount`, `scrollbarCell` and
+`ruleEndpoints` over it, and `interp/immediate.d` applies `paintScrollbarCells`
+glyph-per-cell for any backend that declines the primitive — [piet](./piet.md)'s
+published-fallback shape and [Skia](./skia-skpicture.md)'s framework-default shape
+at the same time. Every geometric field the payload carries is an input to that
+formula rather than a result of it: no rail rectangle crosses the seam.
+
+What **fails** the tests is `trackGlyph` and `thumbGlyph`. They are not inputs to
+a shared lowering; they are one target's lowering already performed — the cell
+answer, chosen above the seam and then carried past every backend that will never
+read it. GSK's semantic nodes carry geometry and colour and never a fallback
+glyph, and [Ratatui](./ratatui.md) keeps exactly that vocabulary, a small glyph
+record, in the widget. The rule the field applies is that a semantic operation may
+cross a drawing seam and a particular target's resolved answer may not.
+[Friction §3][friction] is therefore half right about the layering smell, and
+exact in its own closing sentence about which half it is.
 
 **And zero semantics is not the safe choice.** [imtui](./imtui.md) is the
 experiment: retarget a pure-geometry seam to cells and degradation has nowhere to
@@ -340,8 +408,9 @@ second fork.
 
 ### F5. Optional capability is cheap, and D already has every construct it needs
 
-The old finding asked for "a stated floor and a refusable degrade" on the model
-of Qt's `PaintEngineFeature`. Two things changed.
+The obvious model for "a stated floor and a refusable degrade" is Qt's
+`PaintEngineFeature` — a bitmask of what a backend will draw. Two results argue
+against reaching for it.
 
 **Qt itself abandoned the model.** [Qt Quick](./qt-quick-scenegraph.md) deleted
 `PaintEngineFeature` and did not replace it: `QSGRendererInterface` reports API
@@ -418,8 +487,8 @@ anybody.
 
 ### F6. Continuous coordinates relocate the sub-unit problem; they do not dissolve it
 
-The old finding claimed float coordinates make [friction §5][friction]
-disappear. Two independent falsifications, and six corroborations.
+Floating the coordinates is the obvious escape from [friction §5][friction].
+Two subjects falsify it outright, and six corroborate the falsification.
 
 - **[GSK](./gtk4-gsk.md)** has had float coordinates since 4.0 and GTK is
   _adding_ `GskSnapDirection` (`NONE`/`FLOOR`/`CEIL`/`ROUND`) to the seam at
@@ -476,9 +545,9 @@ performed _above_ the seam; [Racket](./racket-dc.md)'s `set-smoothing` /
 
 ### F7. Extent is three questions, and most subjects answer at least one of them from the scene
 
-The old finding said extent belongs to the surface and called the offscreen case
-narrow. Twelve subjects contradict it, and the reconciliation is a different axis
-entirely.
+Extent looks like the surface's property, and the offscreen case looks narrow.
+Twelve subjects publish extent from the scene instead, and the axis that separates
+them from those that refuse is a different one entirely.
 
 **Scene-side extent ships in:** [GSK](./gtk4-gsk.md) (`bounds` on the base node;
 `gsk_renderer_render_texture(renderer, root, NULL)` is documented "NULL to use
@@ -490,7 +559,7 @@ entirely.
 [Mosaic](./mosaic.md), [libvaxis](./libvaxis.md).
 
 **And is deliberately refused by:** [Skia](./skia-skpicture.md) — the strongest
-possible witness for the old finding, since it computes conservative per-op
+possible witness for the surface-only answer, since it computes conservative per-op
 bounds _and_ builds a spatial index of them and still exposes only
 `approximateOpCount()` and `approximateBytesUsed()`, with `cullRect()` returning
 "bounds passed when SkPicture was created" — plus [GPUI](./gpui.md) (its
@@ -516,7 +585,7 @@ layout already had. That is the derived-by-scan failure mode, and
 `drawTriangle`'s bounding box seeds `ymin` with `screen->size()` (the cell count)
 where `screen->ny` was meant, and it is harmless only by accident.
 
-**Two details the old finding could not see.** Extent without its scale is not
+**Two details the friction entry does not name.** Extent without its scale is not
 actionable at a seam that spans units — [Avalonia](./avalonia.md)'s
 `RenderTargetSceneInfo` carries `PixelSize`, `Scaling` and `LogicalSize`
 together, and Direct2D's `GetImageLocalBounds` is a method on the _context_, not
@@ -540,33 +609,57 @@ out of band; the ones for which the question dissolves do so because their
 language is garbage-collected. There is no counter-example.
 
 The eight mechanisms are tabulated in the Q7 section of the matrix above.
-Three results bear on `DrawOp.text` directly.
+`sparkles:ui` is in the first of them. `CmdBuffer.textRun` **copies** each run
+into a frame arena — `FrameArena` bump-allocates over never-moving `pureMalloc`
+chunks and keeps them across `reset()`, `GcArena` `idup`s and treats `reset` as a
+no-op — and
+`RecordingCanvas` interns on the collected heap so its operations outlive the call
+that drew them. Nothing in the stream points at a caller's buffer, which is what
+makes a `scope` source safe to draw from. What the operation holds is a 16-byte
+`const(char)[]` into that arena, valid while the buffer that built it is alive and
+unreset: a rule stated on the type and enforced by the buffer being move-only, so
+a copy cannot hand out a second set of live pointers.
 
-- **Performance is not a defence.** [Skia](./skia-skpicture.md) stores `SkPath`
-  by value and copies POD arrays into the record's own arena; Skia's own
-  accounting is that appending costs `8 + sizeof(T)` bytes. The most
+Four results bear on that anchor.
+
+- **Performance is not what the choice is about.** [Skia](./skia-skpicture.md)
+  stores `SkPath` by value and copies POD arrays into the record's own arena;
+  Skia's own accounting is that appending costs `8 + sizeof(T)` bytes. The most
   performance-obsessed 2-D library in existence pays a copy or an atomic bump on
-  every op rather than borrow.
-- **Owning buys capabilities we do not have yet.** [GPUI](./gpui.md)'s
+  every op. The copy is not the cost to defend against; the question is what the
+  payload points _with_.
+- **The stronger form of the same copy is an offset pair.**
+  [WebRender](./webrender.md) writes its payload inline and reads it back as an
+  `ItemRange` into the list; [SDL](./sdl-renderer.md) copies into a per-frame
+  arena and hands out `(first, count)`. An operation that names a position rather
+  than an address is trivially copyable, needs no cast to survive a lifetime
+  analysis, and travels to another thread with its arena.
+  [imtui](./imtui.md)'s `VtxOffset`/`IdxOffset` are the same property in a library
+  with no lifetime analysis to satisfy — which is exactly the property the two
+  `@trusted` islands of [friction §4][friction] exist to stand in for.
+- **The anchor decides what else becomes possible.** [GPUI](./gpui.md)'s
   `Window::reuse_paint` splices an unchanged element's primitives forward out of
   the _previous_ frame's scene by index range; [Vty](./vty-image.md) retains the
-  reified result across frames in `prevOutputOps` and diffs against it. Both are
-  structurally impossible with a borrowed slice.
+  reified result across frames in `prevOutputOps` and diffs against it. Both need
+  a payload that outlives a reset, which is the boundary `UI-O4` holds open:
+  `CmdBufferT!(FrameArena!())` and `CmdBufferT!GcArena` yield the same `DrawOp`,
+  so a walker's signature cannot say which kind of text it was handed
+  ([libvaxis](./libvaxis.md), [wgpu](./wgpu.md) both press this from their own
+  mechanisms).
 - **The thread question can be answered by the artifact.**
   [Flutter](./flutter-engine.md)'s `DisplayList::isUIThreadSafe()` is conjoined
   during recording from each payload's own declaration — the seam does not force
   everything to be shareable, it lets payloads declare their constraint and lets
   the finished list answer one question. That is precisely what `UI-O4` /
-  friction §7 asks for at `M7/T5`.
+  [friction §7][friction] asks for at `M7/T5`.
 
 The cheapest answer depends on the payload. For a cell-bounded grapheme,
 [Ratatui](./ratatui.md) copies into inline small-string storage. For
-variable-length runs, [WebRender](./webrender.md) and [SDL](./sdl-renderer.md)
-copy into the stream's own arena and hand out an offset pair, which is what makes
-a command trivially copyable and thread-transferable. For anything that must
-cross a process boundary, only the out-of-band-key answers survive.
+variable-length runs, the offset pair. For anything that must cross a process
+boundary, only the out-of-band-key answers survive — and no surveyed subject
+retains a raw pointer into storage it does not control.
 
-### F9. Nobody carries resolved appearance and semantic role on every op — but the requirement behind ours is real
+### F9. Nobody carries resolved appearance and semantic role on every op
 
 **No dissent:** not one of the 38 pays for both channels per operation. The
 seven cheaper encodings are tabulated in the Q6 section of the matrix above.
@@ -575,15 +668,17 @@ Three deserve naming because they fit `sparkles:ui` specifically.
 1. **The tag is the slot.** [Qt Quick](./qt-quick-scenegraph.md) carries the role
    as the node's _type_ and the value as its material. Fused with F3 this becomes
    one change instead of two: a variant per semantic op makes the discriminant
-   carry the role and leaves `visual` as the only styling field. Qt also shows the
-   failure mode — a `NodeType` too coarse to dispatch on forces a `dynamic_cast`
-   ladder, so the variant set has to be fine enough to be the role.
+   carry the role and leaves the resolved fields as the only styling channel. Qt
+   also shows the failure mode — a `NodeType` too coarse to dispatch on forces a
+   `dynamic_cast` ladder, so the variant set has to be fine enough to be the
+   role.
 2. **Resolved values whose leaves are symbolic.** [Ratatui](./ratatui.md),
    [libvaxis](./libvaxis.md) and [Vty](./vty-image.md) all use one colour type
    that can hold `Default`, a palette index, a named ANSI colour, or an RGB
    triple. One field holds either a role or a value, and the terminal
-   re-resolves against the user's theme past every backend. That is what `Slot`
-   would be if `Visual` could name a palette entry.
+   re-resolves against the user's theme past every backend. That is what one
+   channel looks like when a resolved colour can name a palette entry instead of
+   a triple.
 3. **A separate, ignorable channel.** [Cairo](./cairo-direct2d.md)'s `tag` is its
    own vtable slot, its own recorded command kind and its own public API, emitted
    once per styled region rather than per primitive; a backend leaving the slot
@@ -598,18 +693,39 @@ because its two consumers run on different threads; [Vg](./ocaml-vg.md) carries
 glyphs _and_ text on one constructor out of five, with a named failure
 (`` `Textless_glyph_cut ``) when a backend needed the channel it did not get. The
 rule is **never the same fact twice**, and a second channel must buy something the
-first cannot express. `visual` is derivable from `slot` plus a theme; `slot` is
-not derivable from `visual`. The redundant field is `visual`, not `slot` — which
-inverts the intuition [friction §6][friction] was written with.
+first cannot express.
 
-> [!IMPORTANT]
-> The cheapest answers — appearance as **stream state** ([SDL](./sdl-renderer.md)'s
-> deduplicated `SDL_RENDERCMD_SETDRAWCOLOR`, [Racket](./racket-dc.md)'s device
-> state, [Java2D](./java2d.md)'s pipe recompilation, [Flutter](./flutter-engine.md)'s
-> delta-encoded `setColor`) — are structurally incompatible with an
-> order-independent, pairwise-comparable op stream, i.e. with `RecordingCanvas`
-> and the parity harness. That makes friction §6 a genuine fork to decide, not a
-> defect to fix.
+**The asymmetry decides which channel is the redundant one, and the seam
+demonstrates it in both directions.** Each payload stores the resolved fields its
+own primitive paints from — a 16-byte `Ink` on the four content primitives,
+`FillRect`'s own colour fields plus a `const(BoxChrome)*` that is null unless the
+box has a border, shadow, radius or arrow — and `DrawOp.visual` reconstructs a
+whole `Visual` from them on demand through `visualOf`, documented lossy on
+purpose: a fill reports box chrome, a run reports text chrome, and the
+combinations no backend reads take defaults. So a resolved appearance is
+recoverable from what a payload keeps, and the seam does not store one. A `Slot`
+is not recoverable the other way — a role plus a theme yields a colour, and a
+colour never yields the role that produced it — so `Slot` _is_ stored, on six of
+the eight payloads, with `DrawOp.slot` answering `Slot.inherit` for the clip pair
+that carries none. The consumer that spends it is the HTML interpreter, which
+re-resolves the role into class names; no other surveyed subject has that consumer
+except [GSK](./gtk4-gsk.md)'s Broadway, and GSK gives Broadway no semantic help at
+all.
+
+That is what makes [friction §6][friction] a fork rather than a defect. The
+channel with a cheaper encoding is the resolved one, and the cheapest encodings in
+the survey put it in the stream instead of the op —
+[SDL](./sdl-renderer.md)'s deduplicated `SDL_RENDERCMD_SETDRAWCOLOR`,
+[Racket](./racket-dc.md)'s device state, [Java2D](./java2d.md)'s pipe
+recompilation, [Flutter](./flutter-engine.md)'s delta-encoded `setColor`. Every
+one of those is structurally incompatible with an order-independent,
+pairwise-comparable op stream, i.e. with `RecordingCanvas` and the parity harness,
+and Racket prices its own version at fourteen state settings saved and restored
+per replay. The two encodings that spend the resolved channel without a device
+state machine are the tag-is-the-slot fusion — available only if F3's arms are
+made fine enough to _be_ roles — and a symbolic-leaf colour type in which one
+field holds either a role or a value ([Ratatui](./ratatui.md),
+[libvaxis](./libvaxis.md), [Vty](./vty-image.md)).
 
 ### F10. Almost every friction entry is the invoice for spanning two target classes
 
@@ -634,16 +750,24 @@ a capability vocabulary ([Qt](./qt-qpaintengine.md), [wgpu](./wgpu.md),
 So the friction log is not primarily a list of mistakes. It is the price of the
 span, and a proposal can hope to reduce it, not to eliminate it. The entries that
 are genuinely _defects_ rather than _invoice items_ are the ones no subject with
-our constraints pays: the eight derived-geometry fields (F4), the dual styling
-channel (F9), the borrowed payload (F8), and the four artifacts that can disagree
-about the contract (F11).
+our constraints pays: a target's own resolved answer riding the drawing
+vocabulary (F4), the dual styling channel (F9), a payload anchored to an address
+rather than a position (F8), and the contract written in three places that can
+disagree (F11).
 
 ### F11. State the contract once and derive the rest
 
-[Friction §2][friction] records that `isCanvas` names five methods, `OpKind` has
-eight members, and `rule` / `scrollbar` / `pushClip` / `popClip` are discovered by
-`__traits(compiles)` at each interpreter call site. That is four artifacts that
-can disagree, and they already do.
+[Friction §2][friction] records that `isCanvas` names five methods while the real
+vocabulary is eight kinds, with `rule`, `scrollbar`, `pushClip` and `popClip`
+discovered by `__traits(compiles)` at each interpreter call site and each
+degradation — `ruleEndpoints` plus a cell-aligned `line`, `paintScrollbarCells`
+glyph-per-cell, nothing at all for the clip pair — stated in prose beside its
+probe. That is one contract written in three places: the concept, the probe
+sites, and the prose. `DrawOp.kind` is the remedy already applied once — an
+eight-arm `match!` over the payloads rather than a stored tag, so the kind view
+and the payloads cannot drift apart. Nothing else in the contract is derived that
+way, and the three that are not are exactly the three a backend author reads in
+the wrong order.
 
 Every large subject that reifies generates them from one declaration:
 [Skia](./skia-skpicture.md) (`SK_RECORD_TYPES(M)` emits the enum, the structs and
@@ -662,7 +786,7 @@ by _property_ instead of enumerating kinds; [Flutter](./flutter-engine.md)'s
 the node so adding an operation cannot leave the extent walker behind. In D that
 property is recoverable only if the walkers are written as `final switch`.
 
-### F12. Reification pays only while the value stays inspectable — and the op stream is the parity oracle, not the golden
+### F12. Reification pays only while the value stays inspectable
 
 Three subjects reify and cash nothing. [elm-canvas](./elm-canvas.md) has proper
 sum types above the seam and lowers to a stringly-typed `{type, name, args}` at
@@ -698,23 +822,25 @@ decline some optional capabilities on purpose rather than implement everything.
 
 ## Verdicts on the eight friction entries
 
-| #   | Friction entry                    | Verdict                              | Decided by | What actually changes                                                                                                                                                                                     |
-| --- | --------------------------------- | ------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| §1  | `measure` denominated in cells    | **Confirmed, and enlarged**          | F1, F2     | Placement is right (35/38, one priced dissenter). But relocation alone fixes nothing: unit, oracle, return shape, device parameters and the identity of the measured artifact are five further decisions. |
-| §2  | five methods, eight kinds         | **Confirmed, reframed**              | F5, F11    | The defect is four artifacts that can disagree, not an under-specified concept. Optionality itself is cheap and already expressible in D.                                                                 |
-| §3  | `scrollbar` in the drawing seam   | **Half-refuted, half-confirmed**     | F4         | The semantics survive every admission test the field uses; the eight derived-geometry fields fail all of them. Zero-semantics is _worse_ (imtui).                                                         |
-| §4  | `DrawOp`'s eighteen fields        | **Confirmed; prescription wrong**    | F3         | The defect is the tag, not the width (wgpu). "Sum type" is one of eight encodings, and the three largest reifying subjects chose variable-stride per-op structs.                                          |
-| §5  | `RuleEdge` as a compass           | **Reframed, not refuted**            | F6         | Continuous coordinates relocate the problem (GSK 4.24, Pango, imtui). The replacement is a queried device unit + a named snap policy + an accumulator — three mechanisms, not more enumerators.           |
-| §6  | `visual` _and_ `slot` on every op | **Confirmed, with a fork**           | F9         | No dissent: nobody pays both per op. But the redundant field is `visual`, and the cheapest alternatives (stream state) are incompatible with `RecordingCanvas`.                                           |
-| §7  | borrowed `DrawOp.text`            | **Confirmed, unanimous**             | F8         | 38/38. Copy into the stream's arena for cell-bounded payloads; declare thread-safety on the finished list (Flutter) rather than on every payload.                                                         |
-| §8  | no extent query                   | **Confirmed; old synthesis refuted** | F7         | Twelve subjects publish scene extent. The axis is maintained-at-construction vs derived-by-scan, and `buildDisplayList` is discarding a number layout already computed.                                   |
+One row per entry, each a judgement about the seam as it stands.
+
+| §   | Friction entry                                                | Verdict                                        | Decided by | The judgement                                                                                                                                                                                                                                                                           |
+| --- | ------------------------------------------------------------- | ---------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §1  | `measure` is denominated in cells                             | **Confirmed, and enlarged**                    | F1, F2     | Measurement does not belong on the painter: 35 of 38 put it elsewhere, and the one dissenter prices it. Placement is one decision of six — unit, oracle authority, return shape, device parameterisation and the identity of the measured artifact are all still open.                  |
+| §2  | five methods, eight kinds                                     | **Confirmed, reframed**                        | F5, F11    | Optionality is not the defect; probing is the field's ordinary answer and D already expresses floor / defaulted / refusable. The defect is one contract written in three places that can disagree, where `DrawOp.kind` shows the derived alternative working.                           |
+| §3  | `scrollbar` is a widget concept in the drawing seam           | **Half-confirmed**                             | F4         | The semantics pass every admission test the field uses, the lowering already lives once above the backends, and a semantics-free seam is worse (imtui). What fails is `trackGlyph`/`thumbGlyph` — a cell target's own answer riding past backends that cannot read it.                  |
+| §4  | the encoding is neither `@safe` nor variable-width            | **Confirmed on safety; a live trade on width** | F3, F8     | The two `@trusted` islands are load-bearing, and an offset-pair payload retires both. Uniform stride is a genuine trade, not a defect: it buys comparable values and compiler-checked exhaustiveness for the spread between the narrowest arm and 64 bytes. Arm count is the open axis. |
+| §5  | sub-cell placement as a compass direction                     | **Reframed, not refuted**                      | F6         | Continuous coordinates relocate the problem rather than dissolving it (GSK 4.24, Pango, imtui), so a float seam is not the answer. The replacement is three mechanisms — a queried device unit, a named snap policy, an accumulator for joins — not more enumerators.                   |
+| §6  | a resolved appearance and a semantic role on every drawing op | **Confirmed, with a fork**                     | F9         | No dissent: nobody carries both per op. The seam already derives the recoverable channel and stores the unrecoverable one, so the channel to spend is the resolved appearance — and its cheapest encoding, stream state, forecloses pairwise op comparison.                             |
+| §7  | `DrawOp.text` is borrowed, and the borrow is not expressible  | **Confirmed, unanimous**                       | F8         | 38 of 38 anchor a payload in storage that outlives the operation. The copy into the arena is right; the anchor is the question — an offset pair makes the operation trivially copyable and thread-transferable, and the finished list can answer the thread question by conjunction.    |
+| §8  | no extent query                                               | **Confirmed**                                  | F7         | Twelve subjects publish extent from the scene. The axis is maintained-at-construction versus derived-by-scan, and `buildDisplayList` discards a number layout already computed, which leaves `skia-canvas-render.d` folding `op.rect` over a finished stream.                           |
 
 ---
 
 ## The open question: should the terminal and GPU targets share one seam?
 
 The [umbrella](./index.md) asks this and says the survey may not settle it. It
-now can, partially, and the part it settles is the part that matters.
+settles it partially, and the part it settles is the part that matters.
 
 **The evidence against one _drawing_ seam spanning both is strong and, unusually
 for this survey, includes failures rather than only designs.**
@@ -779,7 +905,8 @@ invoice item gets cheaper the more the shared vocabulary moves up.
 reading: enumerate every use of every `OpKind` in `sparkles:ui`'s widget set and
 ask whether the widget could emit cells and rects instead. Ratatui, Textual and
 libvaxis answer _yes_ for scrollbars, rules, meters and trees, in a few dozen
-lines of widget code each — libvaxis's whole `widgets/Scrollbar.zig` is 33 lines. The open cases are exactly two — clipping (where
+lines of widget code each — libvaxis's whole `widgets/Scrollbar.zig` is 33 lines.
+The open cases are exactly two — clipping (where
 [WebRender](./webrender.md)'s `CLIPPING_AND_POSITIONING.md` documents a
 hierarchical clip stack failing against real content, replaced by out-of-band
 clip and spatial trees) and the re-resolving HTML interpreter, which is a
@@ -790,8 +917,8 @@ and GSK gives Broadway no semantic help at all.
 
 ## Recommendations
 
-Input to a proposal in `docs/specs/ui/`, not decisions. Ordered by what the
-proposal should do first: each is cheap, and each unblocks the next.
+Input to a proposal in `docs/specs/ui/`, not decisions. Ordered so that each is
+cheap on its own and unblocked by the ones before it.
 
 1. **Delete `measure` from `isCanvas`.** Resolves [friction §1][friction];
    justified by F1. This is nearly free: `layout` is already parameterised on
@@ -802,20 +929,27 @@ proposal should do first: each is cheap, and each unblocks the next.
    [diagrams](./haskell-diagrams.md) is the warning about deleting rather than
    relocating.
 2. **Name the measurement regime and make layout and paint call one oracle.**
-   Resolves the rest of §1; justified by F2. Follow
-   [Ratatui](./ratatui.md)'s failure (two width functions that disagree) and
-   [Vty](./vty-image.md)'s remedy (one authoritative table), and adopt
-   [Racket](./racket-dc.md)'s `get-font-metrics-key` idea — a small comparable
-   tag identifying the metric universe — so a mismatched measurer is detectable.
-   Widen the return type past `Size` (F2.4) only when a proportional consumer
-   exists.
-3. **Generate `OpKind`, `DrawOp`, the concept and the interpreter's probes from
-   one declaration.** Resolves [friction §2][friction]; justified by F11. This is
-   the change that makes the rest safe, because it removes the possibility of the
-   four artifacts drifting again. Write every walker as `final switch` so a new
-   kind cannot leave the extent or hit-test pass behind (F11, F3).
+   Resolves the rest of §1; justified by F2, and unblocked by 1 because the
+   painter has stopped being a second answer. Follow [Ratatui](./ratatui.md)'s
+   failure (two width functions that disagree) and [Vty](./vty-image.md)'s remedy
+   (one authoritative table), and adopt [Racket](./racket-dc.md)'s
+   `get-font-metrics-key` idea — a small comparable tag identifying the metric
+   universe — so a mismatched measurer is detectable. Widen the return type past
+   `Size` (F2.4) only when a proportional consumer exists.
+3. **Derive the concept and the interpreter's probe sites from the declaration
+   `DrawOp.kind` is already derived from.** Resolves [friction §2][friction];
+   justified by F11. `kind` is an eight-arm `match!`, so the kind view cannot
+   drift from the payloads; the five named methods, the four probe sites and their
+   stated degradations are derived from nothing, and that is where drift lives.
+   D's `static foreach` and CTFE make one declaration cheaper than the macro lists
+   [Skia](./skia-skpicture.md), [Flutter](./flutter-engine.md),
+   [Chromium](./chromium-paintop.md) and [Racket](./racket-dc.md) maintain by
+   hand. Write every walker as a `final switch` over `op.kind` or an eight-arm
+   `match!`, so a ninth kind cannot leave the extent or hit-test pass behind
+   (F11, F3).
 4. **State the capability contract as floor / defaulted / refusable, using
-   constructs D already has.** Resolves the rest of §2; justified by F5. A
+   constructs D already has.** Resolves the rest of §2; justified by F5, and
+   unblocked by 3 because the declaration is the place to say it. A
    `mixin template` of default lowerings is [Java2D](./java2d.md)'s
    unforgettable-superclass floor; an `Expected`-returning method is
    [Ratatui](./ratatui.md)'s typed refusal; a stream-scoped deferred error is
@@ -824,52 +958,76 @@ proposal should do first: each is cheap, and each unblocks the next.
    ([Mosaic](./mosaic.md)), not at each call site. Generate the written contract
    from a `RecordingCanvas` conformance run rather than writing prose that rots
    ([Vg](./ocaml-vg.md)).
-5. **Keep `scrollbar`'s semantics; move its derived geometry out.** Resolves
-   [friction §3][friction] and eight of the eighteen fields in §4; justified by
-   F4. Publish `scrollbarThumb`, `scrollbarCell` and `ruleEndpoints` as helpers a
-   backend _may_ call ([piet](./piet.md)'s shape) and make the lowering the
-   default rather than every backend's obligation ([Skia](./skia-skpicture.md)'s).
-   Carry the degradation vocabulary the way [Ratatui](./ratatui.md) does — a
-   small glyph record — not as eight fields on every op.
-6. **Re-encode `DrawOp`: tag plus per-kind payload, in variable-stride storage
-   if the widest variant is unacceptable.** Resolves [friction §4][friction];
-   justified by F3. Keep the payload type visible so `RecordingCanvas` can still
-   compare it ([diagrams](./haskell-diagrams.md)'s existential is the warning),
-   hide the constructors so invariants hold ([Vty](./vty-image.md)), and expect
-   the encoding to remove _illegal_ combinations and not _rare_ ones
-   ([elm-canvas](./elm-canvas.md)).
-7. **Have `buildDisplayList` return the extent it already computed, and make the
-   target rect an input.** Resolves [friction §8][friction]; justified by F7.
-   Accumulate at construction, never scan
-   ([Vty](./vty-image.md), [Notty](./notty.md), [Flutter](./flutter-engine.md));
-   carry the scale beside the size ([Avalonia](./avalonia.md)); and consider
-   [libvaxis](./libvaxis.md)'s cheaper form — paint returns a size — before
-   adding any query to the seam.
-8. **Own `DrawOp.text`.** Resolves [friction §7][friction]; justified by F8. Copy
-   into the stream's own arena and hold an offset pair
-   ([SDL](./sdl-renderer.md), [WebRender](./webrender.md)) — cheap because a
-   run is cell-bounded — and let the finished list answer the thread question by
-   conjunction ([Flutter](./flutter-engine.md)) rather than constraining every
-   payload.
-9. **Drop `slot` or drop `visual`, and decide the stream-state fork explicitly.**
-   Resolves [friction §6][friction]; justified by F9. The tag-is-the-slot fusion
-   ([Qt Quick](./qt-quick-scenegraph.md)) composes with recommendation 6 into one
-   change; a symbolic-leaf `Visual` ([Ratatui](./ratatui.md),
-   [libvaxis](./libvaxis.md)) is the cheapest way to serve the HTML interpreter
-   without a second field. Do this last, because the alternative — appearance as
-   stream state — forecloses pairwise op comparison and therefore has to be
-   decided against the parity harness, not against the seam.
+5. **Keep `scrollbar`'s semantics; take the cell target's own answer out of the
+   payload.** Resolves [friction §3][friction]; justified by F4, and unblocked by
+   4 because "declines the primitive" needs a spelling. The lowering is already
+   published and already applied — `scrollbarThumb` in `sparkles.ui.state`,
+   `scrollbarCellCount`/`scrollbarCell`/`ruleEndpoints` re-exported from
+   `canvas.d`, `paintScrollbarCells` applied by the interpreter for a backend that
+   does not implement it — which is [piet](./piet.md)'s published-fallback shape
+   and [Skia](./skia-skpicture.md)'s framework-default shape at once; keep both.
+   What moves is `trackGlyph`/`thumbGlyph`: carry the degradation vocabulary the
+   way [Ratatui](./ratatui.md) does, as a small glyph record the cell target owns,
+   rather than as two fields every backend is handed.
+6. **Keep the closed sum, and buy the two things it does not give for free.**
+   Answers the width half of [friction §4][friction]; justified by F3, and
+   unblocked by 3 because the arms and the concept then come from one place. The
+   64-byte budget answers the variable-stride objection at our scale
+   ([Flutter](./flutter-engine.md), [Chromium](./chromium-paintop.md) and
+   [Godot](./godot-textserver.md) argue the other side with real mechanism and are
+   answered on comparability, not dismissed), and pairwise value comparison is
+   what `RecordingCanvas` spends. Two additions carry their own weight: **hide the
+   payload constructors** ([Vty](./vty-image.md)) so "a `TextRun`'s `rect.width`
+   is its advance in cells" and the `PushClip`/`PopClip` pairing become invariants
+   rather than conventions two consumers already rely on; and **keep every payload
+   a plain comparable value** — [diagrams](./haskell-diagrams.md)'s existential is
+   the warning, since type-erasing a payload takes the parity oracle with it.
+   Expect the encoding to remove _illegal_ combinations and not _rare_ ones
+   ([elm-canvas](./elm-canvas.md)): the neutral accessor answers and `visualOf`'s
+   deliberate lossiness are that residue. Arm granularity ([SDL](./sdl-renderer.md),
+   [diagrams](./haskell-diagrams.md), [Masonry/imaging](./parley-xilem.md)) stays
+   open, and is decided against exhaustiveness, not against size.
+7. **Hold `DrawOp.text` as an offset pair into the stream's own arena.** Resolves
+   [friction §7][friction] and the safety half of §4; justified by F8, and
+   unblocked by 6 because it is a payload change behind a constructor boundary.
+   The copy is already right — `CmdBuffer.textRun` interns into the frame arena,
+   so nothing points at a caller's buffer. What an offset pair changes is the
+   anchor: [WebRender](./webrender.md)'s `ItemRange` and [SDL](./sdl-renderer.md)'s
+   `(first, count)` name a position rather than an address, which retires the
+   `launder` cast and the `@trusted` assignment, makes the operation trivially
+   copyable, and lets it travel to another thread with its arena. Then let the
+   finished list answer the thread question by conjunction
+   ([Flutter](./flutter-engine.md)'s `isUIThreadSafe()`) rather than constraining
+   every payload — that is `UI-O4` at `M7/T5`.
+8. **Have `buildDisplayList` return the extent its `Frame[]` already carries,
+   and make the target rect an input.** Resolves [friction §8][friction]; justified by F7, and
+   unblocked by 7 because it lands in the same builder. Accumulate at
+   construction, never scan ([Vty](./vty-image.md), [Notty](./notty.md),
+   [Flutter](./flutter-engine.md)); carry the scale beside the size
+   ([Avalonia](./avalonia.md)); and consider [libvaxis](./libvaxis.md)'s cheaper
+   form — paint returns a size — before adding any query to the seam.
+9. **Spend the resolved channel, and decide the stream-state fork explicitly.**
+   Resolves [friction §6][friction]; justified by F9, and unblocked by 6 because
+   the tag-is-the-slot fusion ([Qt Quick](./qt-quick-scenegraph.md)) is an
+   arm-granularity change. `Slot` is the channel to keep: it is stored precisely
+   because a role cannot be recovered from a colour, while `DrawOp.visual` already
+   demonstrates the other direction by reconstructing a whole `Visual` on demand.
+   A symbolic-leaf colour type ([Ratatui](./ratatui.md),
+   [libvaxis](./libvaxis.md)) serves the HTML interpreter with one field. Do this
+   late, because the cheapest alternative — appearance as stream state — forecloses
+   pairwise op comparison and therefore has to be decided against the parity
+   harness, not against the seam.
 10. **Replace `RuleEdge` with a queried device unit plus a named snap policy, and
     add an accumulator for box-drawing joins.** Resolves
-    [friction §5][friction]; justified by F6. Last because it is the only entry
-    where the current design is better than the obvious alternative
+    [friction §5][friction]; justified by F6. Last because it is the one entry
+    where the current design beats the obvious alternative
     ([imtui](./imtui.md)) and where removing before replacing makes things worse.
 
-All ten preserve the four properties the friction log recorded as working:
-structural typing with attribute inference, cell-space layout, `RecordingCanvas`
-as reference implementation and test seam, and the optional-primitive bargain —
-which F5 shows is not merely acceptable but the field's ordinary answer, just
-usually written down.
+All ten preserve the five properties the friction log records as working:
+structural typing with attribute inference, cell-space layout, reification
+itself, `RecordingCanvas` as reference implementation and test seam, and the
+optional-primitive bargain — which F5 shows is not merely acceptable but the
+field's ordinary answer, just usually written down.
 
 ## Sources
 

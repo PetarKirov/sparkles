@@ -138,12 +138,13 @@ explicit ZWJ / VS16 pass ([`rich/cells.py`][richcells]). No font, no device, no
 injection point, no backend parameter. `Strip.cell_length` is `sum(cell_len(...))`
 over its segments, computed on demand and memoised.
 
-This lands somewhere uncomfortable for **F1**. F1 concluded that measurement does
+This lands somewhere uncomfortable for **F1**. F1 concludes that measurement does
 not belong on the painter — Textual agrees, emphatically, and goes further: it
-does not belong on anything that a backend can substitute. But the survey's
-implicit corollary, that the toolkit should therefore let a shaping backend
-answer in its own unit, is precisely what Textual refuses. The SVG exporter — the
-one target with real pixels — is handed cells and made to comply:
+does not belong on anything that a backend can substitute. But placement is only
+the first of the six decisions [**F2**](./comparison.md) separates out, and
+Textual answers the next one — the unit — the other way: a shaping backend never
+gets to reply in its own. The SVG exporter — the one target with real pixels — is
+handed cells and made to comply:
 
 ```python
 char_height = 20
@@ -186,12 +187,14 @@ defaults** — `Driver.flush`, `Driver.close`, `Driver.suspend_application_mode`
 and the `is_headless` / `is_inline` / `is_web` / `can_suspend` properties that
 each default to `False`. A caller asks "are you inline?", never "can you do X?".
 
-That is a stronger position than **F4** allows for. Textual has neither a
+That is a stronger position than **F5** allows for. Textual has neither a
 declared floor nor a refusable degrade, and does not appear to want one, because
 the seam is narrow enough that there is nothing to negotiate: everyone can write
-a string. The lesson for [friction §2][friction] is not "declare your
-capabilities" but "a seam small enough not to need capability declaration is
-available, if the reified artifact carries the work instead."
+a string. The lesson for [friction §2][friction] — where four optional primitives
+are probed with `__traits(compiles)` at each interpreter call site rather than
+named in the concept — is not "declare your capabilities" but "a seam small
+enough not to need capability declaration is available, if the reified artifact
+carries the work instead."
 
 ## Q3 — semantic widgets at the seam
 
@@ -201,13 +204,12 @@ They never reach it. A scrollbar in Textual is an ordinary
 directly. By the time anything is composited, a scrollbar is indistinguishable
 from a paragraph of text.
 
-This is the opposite of Slint's answer, and it is direct support for
-[friction §3][friction]'s instinct — the one **F3** talked us out of. The
-reconciliation is that F3's axis ("who degrades") is correct but its two camps
-are incomplete. Textual is a third camp: **the widget degrades, in the toolkit's
-own vocabulary, before any target exists.** `ScrollBarRender` reaches 1/8-cell
-resolution by choosing among eight block glyphs, and `ScrollBar.validate_position`
-documents the consequence:
+This is the opposite of Slint's answer, and it is the priced example of the
+**widget** camp in [**F4**](./comparison.md)'s enumeration of the places a
+lowering can live: **the widget degrades, in the toolkit's own vocabulary, before
+any target exists.** `ScrollBarRender` reaches 1/8-cell resolution by choosing
+among eight block glyphs, and `ScrollBar.validate_position` documents the
+consequence:
 
 ```python
 def validate_position(self, position: float) -> float:
@@ -217,8 +219,12 @@ def validate_position(self, position: float) -> float:
 
 Because every target is a cell grid, a degradation decided once is correct
 everywhere. `sparkles:ui` cannot copy this wholesale — its GPU target could do
-better than eight steps — but it shows that `DrawOp`'s eight scrollbar fields
-buy backend-specific degradation that Textual simply does not need.
+better than eight steps — but it shows that the fourteen fields of `DrawOp`'s
+`Scrollbar` payload buy backend-specific degradation that Textual simply does not
+need. F4's distinction survives the comparison: a semantic scrollbar operation is
+legitimate, and what [friction §3][friction] objects to is narrower — the cell
+backend's own answer, `trackGlyph` and `thumbGlyph`, riding past every backend
+that will never read it.
 
 ## Q4 — command shape
 
@@ -232,15 +238,18 @@ class Segment(NamedTuple):
     control: Optional[Sequence[ControlCode]] = None
 ```
 
-One variant. No tag. The question "sum type or tag plus dead fields?" does not
-arise, because there is only one kind of thing a widget can produce.
+One variant. No tag. The trade [**F3**](./comparison.md) frames — a closed sum
+whose every value costs the widest arm, against variable-stride per-op records
+that pay only for what each one uses — does not arise, because there is only one
+kind of thing a widget can produce.
 
-Two observations complicate **F2**. First, even a one-variant record grew a
+Two observations bear on that trade. First, even a one-variant record grew a
 tag-shaped field: `control` is `None` for every drawing segment, `is_control`
 exists to test it, and both `get_line_length` and `Console.export_svg` must
 filter control segments out (`Segment.filter_control`) before they can measure or
 export. Dead fields appear the moment two unlike things share a type, regardless
-of how few variants there are.
+of how few variants there are — which is the argument for `sparkles:ui` deriving
+`OpKind` from the arm that answers rather than storing a tag beside the payload.
 
 Second, and more importantly, reifying the _result_ buys properties that
 reifying _commands_ does not. A `Strip` is immutable and therefore cacheable, and
@@ -253,10 +262,10 @@ those cuts and keeps the first (frontmost) occupant of each chop, and
 `render_strips` joins the survivors. None of that is expressible over a
 `DrawOp[]` without first rasterising it.
 
-**F2 stands but narrows:** the reified stream is worth keeping, and the choice
-is not "tagged struct versus sum type" but "commands versus results".
-`sparkles:ui` reified commands because a canvas is the thing it abstracts;
-Textual reified results because a cell is.
+**F3 stands but narrows:** the reified stream is worth keeping, and the sharpest
+choice is not how one operation is encoded but "commands versus results".
+`sparkles:ui` reifies commands because a canvas is the thing it abstracts;
+Textual reifies results because a cell is.
 
 ## Q5 — sub-unit placement
 
@@ -308,7 +317,10 @@ That is the honest answer to [friction §6][friction]. Carrying appearance _and_
 semantics on the same artifact is not a hedge; the semantics pay for themselves
 by making the display list queryable. What Textual does differently is that the
 semantic payload is opaque to the drawing path — no target reads `_meta` — and
-it rides on the `Style`, which is interned and shared, not on every op.
+it rides on the `Style`, which is interned and shared, not on every op. That is
+one of the cheaper encodings [**F9**](./comparison.md) counts: the role travels
+on a shared value, and the resolved appearance each cell paints from is produced
+from it on the way out.
 
 ## Q7 — payload ownership
 
@@ -319,19 +331,24 @@ returns a new `Strip` that shares the same underlying `str` objects. Styles are
 shared the same way, with `lru_cache` on `monochrome_style`, `render_ansi` and
 `Segment._split_cells`.
 
-Nothing is borrowed, so nothing has a lifetime problem: strips outlive the frame
-by design, and `_StylesCache` keeps them per line across frames, invalidating
-only dirty lines ([`_styles_cache.py`][stylescache]). This confirms **F6**
-without qualification, and confirms it in the language where it is cheapest —
-which is worth noting, because in D reference-counting a text payload is not
-free. The transferable half is the _shape_: an immutable, self-measuring,
-splittable line object owned by a per-widget cache, rather than a borrowed slice
-inside a per-frame op.
+Nothing is borrowed across a frame, so nothing has a lifetime problem: strips
+outlive the frame by design, and `_StylesCache` keeps them per line across
+frames, invalidating only dirty lines ([`_styles_cache.py`][stylescache]). This
+is **F8**'s refcounting mechanism, in the language where it is cheapest — worth
+noting, because in D reference-counting a text payload is not free.
+`sparkles:ui` sits in F8's other camp: `CmdBuffer.textRun` copies each run into a
+frame arena, which is what makes a `scope` source safe to draw from, and the rule
+stated on the type is that an operation is valid while the buffer that built it
+is alive and unreset. The transferable half of Textual's answer is the _shape_:
+an immutable, self-measuring, splittable line object owned by a per-widget cache,
+rather than a slice borrowed from a per-frame arena — the retain boundary
+[friction §7][friction] describes and `UI-O4` leaves open.
 
 ## Q8 — extent query
 
-The surface declares extent, and there is a separate layout query for the
-offscreen case — exactly the split **F7** recommends.
+Textual separates two of **F7**'s three extent questions and never meets the
+third: surface extent comes from the driver, layout extent is a query on the
+content, and ink extent has no meaning on a grid.
 
 `Compositor.render_strips(size)` takes the size; `App.export_screenshot` reads
 `width, height = self.size`, which the driver derives from the terminal
@@ -340,8 +357,10 @@ offscreen case — exactly the split **F7** recommends.
 Independently, `Visual.get_optimal_width(rules, container_width)`,
 `get_minimal_width(rules)` and `get_height(rules, width)` answer "how big does
 this content want to be" without rendering it — a content-sizing query on the
-content, not on the painter and not on the display list. `skia-canvas-render.d`'s
-op-scan ([friction §8][friction]) is the thing Textual never has to do.
+content, not on the painter and not on the display list. Both answers are
+maintained or queried, never derived by scanning a built result: Textual sits at
+one pole of F7's axis, and `skia-canvas-render.d`'s op-scan
+([friction §8][friction]) at the other.
 
 ## The second and third targets, concretely
 
@@ -417,50 +436,60 @@ the toolkit is correct is the same artifact a user exports.
 
 1. **`SkiaCanvas.measure` returning `cellsOf(text)` is defensible, not
    necessarily an error.** Textual's pixel target does the same thing on purpose
-   and ships it. This complicates [**F1**](./comparison.md):
-   the unanimous part of F1 is "measurement is not on the painter", which
-   Textual confirms; the part F1 assumed follows — that a shaping backend should
-   answer in its own unit — Textual explicitly rejects. The real decision behind
+   and ships it. [**F1**](./comparison.md) is confirmed — measurement is not on
+   the painter — but the argument actually sits in [**F2**](./comparison.md): of
+   its six decisions Textual agrees on _placement_ and answers the _unit_ against
+   ever letting a shaping backend reply in pixels. The real decision behind
    [friction §1][friction] is whether `sparkles:ui` wants a proportional-font
    future at all. If it does not, cells everywhere is coherent.
 2. **Consider reifying the result rather than the commands.** Every property
    `RecordingCanvas` and the op-stream parity harness exist to provide falls out
    of a reified _result_, and compositing, incremental repaint and hit-testing
-   fall out too. This is a genuine alternative to
-   [**F2**](./comparison.md)'s
-   "re-encode `DrawOp` as a sum type", and it is the one that would let the HTML
-   interpreter, the golden tests and the terminal share one artifact.
+   fall out too. This is a genuine alternative to both encodings
+   [**F3**](./comparison.md) weighs against each other, and the one that would
+   let the HTML interpreter, the golden tests and the terminal share one
+   artifact. It satisfies [**F12**](./comparison.md)'s condition too — a `Strip`
+   is as inspectable a value as a `DrawOp`, so the parity oracle survives the
+   move. What it gives up is re-rendering the same scene at a different
+   fidelity.
 3. **Replace `RuleEdge` with a per-cell accumulator, not more enumerators.**
    `combine_quads` over a `Quad` per cell composes where an edge-per-op cannot,
    and resolves to a glyph once. This is a concrete mechanism for
-   [**F5**](./comparison.md)'s
-   "name a fidelity, not a position" — cheaper than it sounds, and already
-   half-present in `sparkles:ui`'s box-drawing code.
-4. **`scrollbar` in the drawing seam is not obviously right.** Textual keeps the
+   [**F6**](./comparison.md)'s conclusion that a float seam only relocates the
+   sub-unit problem, and that the answer is a named fidelity rather than a
+   position — cheaper than it sounds, and already half-present where
+   `GridCanvas` picks a box-drawing glyph for a border.
+4. **The scrollbar's lowering could sit one layer higher.** Textual keeps the
    scrollbar entirely above the seam and degrades it to eighth-blocks inside the
-   widget. That is [friction §3][friction]'s instinct vindicated, against Slint,
-   and it means [**F3**](./comparison.md)
-   needs a third camp: degrade _in the widget_, in the toolkit's vocabulary,
-   before targets exist. `sparkles:ui` is closer to being able to do this than
-   the friction log assumes — `scrollbarThumb` already computes the geometry
-   once.
+   widget — [**F4**](./comparison.md)'s widget camp, chosen deliberately and
+   priced. `sparkles:ui` is closer to that than [friction §3][friction] suggests:
+   `scrollbarThumb` in `sparkles.ui.state` is the one formula every backend
+   renders, and `canvas.d` re-exports the lowerings built on it —
+   `scrollbarCellCount` and `scrollbarCell` for a cell track, `ruleEndpoints` for
+   a hairline. What crosses the seam without needing to is the cell answer:
+   `trackGlyph` and `thumbGlyph` on a payload a pixel backend never reads.
 5. **Carry the semantic role, but on the shared style, not on every op.**
    `Style._meta` makes the composited result queryable for hit-testing, which is
-   a use `DrawOp.slot` does not yet have. Before deleting one of `visual` /
-   `slot` per [friction §6][friction], check whether the semantic half could pay
-   for itself the way `_meta` does.
-6. **Confirms [**F6**](./comparison.md) and
-   [**F7**](./comparison.md) without
-   qualification.** Payloads are immutable and shared; extent comes from the
-   surface; content sizing is a separate query on the content
-   (`get_optimal_width` / `get_height`) — precisely the "layout query for the
-   offscreen case" F7 proposes.
+   a use `DrawOp.slot` does not have. `Slot` rides on six of the eight payloads
+   beside the resolved fields each primitive paints from; before
+   [friction §6][friction] decides which half the seam keeps, check whether the
+   semantic half could pay for itself the way `_meta` does.
+   [**F9**](./comparison.md) points the same way — a role plus a theme yields an
+   appearance, and Textual carries the role on an interned value rather than on
+   every operation.
+6. **Confirms [**F8**](./comparison.md), and answers two of
+   [**F7**](./comparison.md)'s three extent questions — one from the surface, one
+   from the scene.** Payloads are immutable and refcounted, never borrowed across
+   a frame; surface extent comes from the driver, and layout extent is a separate
+   query on the content
+   (`get_optimal_width` / `get_height`). Both are maintained or queried rather
+   than derived by scanning — the opposite pole from the op-scan in
+   [friction §8][friction].
 7. **A capability declaration may be unnecessary rather than missing.** Textual
    ships a wide target set with zero capability negotiation because its seam is
-   one method. Before building the two-part answer
-   [**F4**](./comparison.md)
-   recommends, ask whether a narrower seam would make [friction §2][friction]
-   moot.
+   one method. Before building the floor-plus-refusable answer
+   [**F5**](./comparison.md) recommends, ask whether a narrower seam would make
+   [friction §2][friction] moot.
 
 ## Sources
 

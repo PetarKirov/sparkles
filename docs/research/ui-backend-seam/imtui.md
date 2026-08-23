@@ -171,9 +171,9 @@ the direction of flow: unit and extent originate at the device
 (`getmaxyx` → `io.DisplaySize`) and propagate up.
 
 This is the strongest confirmation of [F1][comparison] arrived at from the
-opposite direction. Four subjects put measurement somewhere other than the
-painter; imtui leaves it there and survives only by making every unit
-degenerate.
+opposite direction. Thirty-five of thirty-eight subjects put measurement
+somewhere other than the painter; imtui leaves it there and survives only by
+making every unit degenerate.
 
 ## Q2 — is the contract stated?
 
@@ -204,7 +204,9 @@ channel to say so, the refusals migrate upward twice over:
    becomes `AddCircleFilled(center, 0.1f, col, 12)`, a circle of radius one
    tenth of a cell, drawn to be invisible ([`imgui_widgets.cpp`][imgui-widgets]).
 
-That is [F4][comparison] at maximum cost. Its price is not a worse-looking
+That is [F5][comparison] at maximum cost — a floor with no defaulted tier above
+it and no refusable one below it, so what the backend cannot do is settled by
+editing the producer. Its price is not a worse-looking
 frame; it is a **permanently unmergeable fork**, because every edit is a
 terminal-specific regression for every other backend.
 
@@ -233,17 +235,20 @@ Sources: [`imgui_draw.cpp`][imgui-draw] (`RenderArrow`, `RenderBullet`,
 [`imgui_tables.cpp`][imgui-tables] (`TableDrawBorders`, `TableEndRow`),
 [`imgui.cpp`][imgui-cpp] / [`imgui.h`][imgui-h] (`WindowBorderAscii`).
 
-Every entry in the left column is a semantic operation `sparkles:ui` would
-spell as a named op. `isCanvas` has `rule` and `scrollbar` for exactly this
-reason.
+Every entry in the left column is a semantic operation `sparkles:ui` spells as
+a named op. `isCanvas` carries `rule` and `scrollbar` as optional primitives for
+exactly this reason: a cell backend degrades a scrollbar differently from a
+pixel backend, so the semantics have to survive the seam.
 
 > [!IMPORTANT]
-> [Friction §3][friction] calls `scrollbar` in the drawing seam a layering
-> violation. imtui is the counter-experiment: a seam with **zero** semantic
-> operations does not remove the layering problem, it inverts it. Instead of
-> the drawing seam knowing what a scrollbar is, the scrollbar has to know what
-> the drawing target is — and that is not pluggable. A second cell backend with
-> different capabilities would need a second fork.
+> [Friction §3][friction] records the consequence of that choice — "draw" and
+> "what a scrollbar is" end up the same layer, and a cell backend's own answer
+> (`trackGlyph`, `thumbGlyph`) rides in the drawing vocabulary past every
+> backend that will never read it. imtui is the counter-experiment: a seam with
+> **zero** semantic operations does not remove the layering problem, it inverts
+> it. Instead of the drawing seam knowing what a scrollbar is, the scrollbar has
+> to know what the drawing target is — and that is not pluggable. A second cell
+> backend with different capabilities would need a second fork.
 
 Two further losses are invisible at the API. Because a fill blanks any glyph
 under it, the fork rewrites table row and cell backgrounds to a
@@ -255,26 +260,36 @@ which is meaningless when the quad is only a carrier — so it is disabled with
 
 ## Q4 — command shape
 
-`ImDrawCmd` has **no dead fields because it has no variants**. That sounds like
-what [friction §4][friction] wants — `DrawOp` is a tag plus eighteen fields,
-most dead — and it is worth saying why it is not.
+`ImDrawCmd` has **one shape because it has no variants**. That is uniform stride
+with no widest-payload cost, which is the half of [friction §4][friction] a
+fixed-size `DrawOp` pays: every operation is as wide as the widest payload, so a
+`PopClip` that carries nothing costs what a `TextRun` costs. It is worth saying
+why the trade is not one to take.
 
 The discriminant does not disappear; it moves into the **data**, recovered by
-the UV heuristic rather than read from a tag. A heuristic can be wrong; a tag
-cannot. The `i += 3` quad assumption is an unchecked invariant about how the
-_producer_ tessellates — a far tighter coupling than any `DrawOp` field, and
-entirely undocumented at the seam. `UserCallback` is the only door out, and
-imtui never uses it.
+the UV heuristic rather than read from a case. A heuristic can be wrong; a
+closed sum's arms cannot. The `i += 3` quad assumption is an unchecked invariant
+about how the _producer_ tessellates — a far tighter coupling than anything
+`DrawOp` states, and entirely undocumented at the seam. `UserCallback` is the
+only door out, and imtui never uses it.
 
-So imtui and [egui](./egui.md) bracket [F2][comparison]: egui reifies as a sum
-type and gets values that can be culled, replayed and compared; ImGui reifies
-as an untagged buffer and gets values whose _meaning_ must be guessed. A tagged
-struct with dead fields is a bad encoding; an untagged one is not an
-improvement on it.
+The other half of §4 imtui simply does not have. `VtxOffset` and `IdxOffset` are
+indices into buffers the context owns, not pointers into them, so a command is
+plain data all the way down: no indirection to make assignment `@system`, and
+nothing for a lifetime analysis to confine. That property is bought by having no
+payload worth pointing at.
+
+So imtui and [egui](./egui.md) bracket [F3][comparison]: egui reifies into named
+cases and gets values that can be culled, replayed and compared; ImGui reifies
+into an untagged buffer and gets values whose _meaning_ must be guessed. F3
+leaves the encoding open between a closed sum and variable-stride per-op
+records; imtui prices a third option that is neither, and it is the worst of the
+three — the stride saving is real, and it is paid for in the one property
+reification exists to provide.
 
 ## Q5 — sub-unit placement
 
-**imtui is the counter-example to [F5][comparison].** ImGui's coordinates are
+**imtui is [F6][comparison]'s extreme case.** ImGui's coordinates are
 continuous floats and its device unit is a cell — and the sub-unit problem does
 not dissolve. It becomes untypeable, and is answered with scattered constants:
 `ScrollbarSize = 0.5f` and `GrabMinSize = 0.1f` ([`imtui-impl-text.cpp`][text]);
@@ -285,23 +300,29 @@ cursor drawn as a zero-length `AddLine` offset by `ImVec2(0.6f, -0.5f)`
 ([`imgui_widgets.cpp`][imgui-widgets]).
 
 Those numbers are not geometry, they are rounding steering — nudges chosen so a
-float truncates to the intended cell. F5 concludes that continuous coordinates
-dissolve §5; that holds for Slint, Qt and egui because their _devices_ are
-continuous too. Over a discrete device they relocate the problem from the
-vocabulary into per-call-site constants, which is worse than `RuleEdge`'s
-finite, named, greppable set. [Notcurses'](./notcurses.md) answer — name a
-fidelity, not a position — is unavailable here, because a fidelity is a
-semantic concept and this seam carries none.
+float truncates to the intended cell. F6 concludes that continuous coordinates
+relocate the sub-unit problem rather than dissolving it, and imtui is where the
+relocation is easiest to see: over a discrete device the problem moves out of
+the vocabulary and into per-call-site constants, which is strictly worse than
+`RuleEdge`'s six finite, named, greppable enumerators. F6's answer — a named
+fidelity plus a queried device unit, [Notcurses'](./notcurses.md) move — is
+unavailable here, because a fidelity is a semantic concept and this seam carries
+none. Floating the coordinates buys `sparkles:ui` the same nothing unless the
+fidelity is named alongside them.
 
 ## Q6 — resolved or semantic styling
 
 **Fully resolved, then resolved again at the seam, and the role destroyed twice
 over.** A vertex carries `ImU32 col` and nothing else, quantised per triangle
 to the xterm-256 cube. imtui therefore pays for neither of the two things
-[friction §6][friction] makes `DrawOp` carry — and cannot theme: colours are
-absolute cube indices, so a light-background terminal still gets ImGui's dark
-greys, and the emscripten backend inherits the quantisation even though a
-browser canvas has 24-bit colour.
+[friction §6][friction] has a `DrawOp` carry — the resolved fields the primitive
+paints from, and the `Slot` that says what the operation _is_ — and cannot
+theme: colours are absolute cube indices, so a light-background terminal still
+gets ImGui's dark greys, and the emscripten backend inherits the quantisation
+even though a browser canvas has 24-bit colour. Which is [F9][comparison]'s
+asymmetry seen from the losing end: resolved colour cannot be run backwards into
+a role, so the target that keeps only the resolved half keeps the half that
+cannot be recovered.
 
 The sharper observation is that the alpha byte means _alpha_ for a fill and _a
 code point_ for a glyph, which is why `rgbToAnsi256` needs a `doAlpha`
@@ -313,8 +334,13 @@ entirely by having no field to put the character in.
 **Q7: borrowed for exactly one frame, stated in the header** — `ImDrawData`'s
 `Valid` is documented "Only valid after `Render()` is called and before the next
 `NewFrame()` is called", and its `ImDrawList` objects "are owned by
-ImGuiContext and only pointed to from here" ([`imgui.h`][imgui-h]). That is
-precisely [friction §7][friction]'s lifetime.
+ImGuiContext and only pointed to from here" ([`imgui.h`][imgui-h]). That is the
+same shape as [friction §7][friction]'s: a `DrawOp`'s bytes live in a frame
+arena, and the rule stated on the type is that an operation is valid while the
+buffer that built it is alive and unreset. Stating it is what makes it
+enforceable — ImGui states it in a header comment, `sparkles:ui` states it on
+the type — and in neither case does the statement let the value cross a thread
+or outlive the frame.
 
 imtui's answer is **borrow the frame, own the raster**: rasterise into a
 backend-owned `TScreen`, after which the draw data can be discarded and the
@@ -325,16 +351,20 @@ which is exactly why §7 bites `DrawOp.text` and not `DrawOp.rect`. There is no
 text payload here to own: a character is four bytes of vertex colour, once, at
 rasterisation time.
 
-**Q8: the device answers, decisively.** `TScreen` declares `nx`/`ny`, resized
-from `io.DisplaySize`, which came from `getmaxyx` — terminal → toolkit →
-clipping, every frame, resize handled for free. This is [F7][comparison] from a
-third target class. The one place imtui derives anything from geometry is
-`drawTriangle`'s bounding box, and even that line carries a live copy-paste
-error, seeding the minimum with `screen->size()` — the cell **count**, `nx*ny`
-— where `screen->ny` was meant. It is harmless only because `nx*ny` always
-exceeds any on-screen `y`, so the seed never wins. Small illustration of the
-larger point: deriving extent from geometry is easy to get subtly wrong and
-hard to notice, which is what happened in [friction §8][friction].
+**Q8: the surface question is answered by the device, decisively.** `TScreen`
+declares `nx`/`ny`, resized from `io.DisplaySize`, which came from `getmaxyx` —
+terminal → toolkit → clipping, every frame, resize handled for free. On
+[F7][comparison]'s three questions imtui answers surface extent at construction
+and never asks the other two, which is the cheapest position on that axis and
+available only because the target is a fixed grid. The one place imtui derives
+anything by scanning geometry is `drawTriangle`'s bounding box, and even that
+line carries a live copy-paste error, seeding the minimum with `screen->size()`
+— the cell **count**, `nx*ny` — where `screen->ny` was meant. It is harmless
+only because `nx*ny` always exceeds any on-screen `y`, so the seed never wins.
+A small illustration of the larger point: a derived-by-scan extent is easy to
+get subtly wrong and hard to notice. [Friction §8][friction] is the same
+mistake with teeth — an offscreen surface sized by a guess cropped its own
+text, and the golden pinned the crop.
 
 ## Strengths
 
@@ -374,32 +404,37 @@ hard to notice, which is what happened in [friction §8][friction].
 
 1. **The extreme [friction §3][friction] gestures at is measured here, and it
    is expensive.** Removing semantics from the drawing seam does not remove the
-   need to degrade; it moves degradation into the widget layer, where it is not
-   pluggable. Keep semantic ops; the live question stays [F3][comparison]'s —
-   _who_ degrades.
+   need to lower; it moves the lowering into the widget layer, where it is not
+   pluggable. Keep semantic ops — [F4][comparison] already finds them legitimate
+   — and spend the argument on _where_ the lowering sits, which for `scrollbar`
+   is the live question `trackGlyph` and `thumbGlyph` answer badly.
 2. **A seam that carries no semantics forces a fork of the producer**: six
    ImGui files, +157/−91 lines, unmergeable upstream. That is the price list
    for "push the seam down to primitives", to be weighed against `DrawOp`'s
    eight kinds.
-3. **[F5][comparison] needs a qualifier.** Continuous coordinates dissolve §5
-   only when the _device_ is continuous. Over a cell device they relocate the
-   problem into per-call-site rounding constants — worse than `RuleEdge`. Do
-   not read F5 as licence to float the coordinates and stop.
-4. **[F2][comparison] sharpens.** The alternative to a tagged struct with dead
-   fields is not "no tag": an untagged buffer moves the discriminant into a
-   heuristic over the data. Confirms the `SumType` recommendation.
-5. **Confirms [F4][comparison] at maximum cost, and [F7][comparison] from a
-   third target class** — refusals with nowhere to go become source edits;
-   extent belongs to the surface, and the one geometry-derived bound in this
-   file carries a bug nothing catches.
+3. **[F6][comparison] gets its extreme case.** Continuous coordinates dissolve
+   §5 only when the _device_ is continuous. Over a cell device they relocate the
+   problem into per-call-site rounding constants — worse than `RuleEdge`. Float
+   the coordinates only together with a named fidelity and a queried device
+   unit; floating them alone buys nothing.
+4. **[F3][comparison] gains its lower bound.** The alternative to a closed sum
+   is not "no discriminant": an untagged buffer moves the discriminant into a
+   heuristic over the data, and the uniform stride it buys is not worth values
+   whose meaning has to be guessed. The live encoding trade stays between the
+   closed sum and variable-stride records.
+5. **Confirms [F5][comparison] at maximum cost, and prices [F7][comparison]'s
+   cheapest answer** — refusals with nowhere to go become source edits; a
+   surface extent taken from the device costs nothing, and the one bound this
+   subject derives by scanning carries a bug nothing catches.
 6. **Steal "borrow the frame, own the raster" for [friction §7][friction], with
    a boundary.** Right when the retained form is small and self-contained
    (`RecordingCanvas`, a golden surface); it does not answer `DrawOp.text`,
-   which still wants [F6][comparison]'s reference counting or a backend-owned
-   cache.
+   whose retain boundary — crossing a thread, outliving the frame — is what
+   [F8][comparison]'s stronger form, an offset pair in place of a slice,
+   addresses and `UI-O4` leaves open.
 7. **`ImDrawCmd::UserCallback` is a third independent sighting of a single
    escape hatch**, after egui's `Shape::Callback` and Qt's fallback path —
-   worth adopting alongside the sum type.
+   worth adopting alongside the named cases.
 
 > [!NOTE]
 > The README calls imtui "99.9% based on" Dear ImGui. Measured at the seam

@@ -219,15 +219,16 @@ Ten fields, every default the pessimistic one, and the field set is the contract
 This is the [Qt `PaintEngineFeature`](./qt-qpaintengine.md) model — a declared
 capability set — with the declaration moved from the backend author to the
 **target itself**, discovered at runtime. `sparkles:ui` has neither: `isCanvas`
-names five methods, `OpKind` has eight members, and the remaining three are
-discovered by `__traits(compiles)` at each call site, which is friction §2.
+names five methods, `OpKind` has eight members, and the other four — `rule`,
+`scrollbar`, `pushClip` and `popClip` — are probed with `__traits(compiles, …)`
+at each call site in the immediate interpreter, which is friction §2.
 
 Three properties are worth taking separately.
 
 **Refusal exists, but only for the expensive half.** Every image entry point
 opens with `if (!self.caps.kitty_graphics) return error.NoGraphicsCapability;` —
 `transmitLocalImagePath`, `transmitPreEncodedImage`, `transmitImage`, `loadImage`.
-That is [F4][comparison]'s refusable degrade, obtained from the return type as in
+That is [F5][comparison]'s refusable degrade, obtained from the return type as in
 Ratatui, without a `NODEGRADE` flag. Text fidelity gets no such treatment: the
 renderer silently takes the lesser branch when `caps.explicit_width` is false, and
 the caller is never told. So even here, refusal is granted where the fallback
@@ -240,7 +241,7 @@ precisely the asymmetry a golden test trips over.
 several of those _downgrade_ an already-detected capability (`VHS_RECORD` clears
 `kitty_keyboard` and forces `.wcwidth`). No other subject surveyed lets an
 operator pin the negotiated result. For a repository that ships golden GUI and
-PTY oracles, that is the more interesting half of F4: a capability model needs a
+PTY oracles, that is the more interesting half of F5: a capability model needs a
 **pin**, not only a refusal.
 
 **Negotiation costs a blocking wait.** `queryTerminal` blocks on
@@ -264,10 +265,14 @@ view_size: usize,
 ```
 
 The rail geometry — `bar_height`, `bar_top` — is derived once, in the widget,
-from `win.height`. Compare `DrawOp`'s eight scrollbar fields, which exist so each
-backend can re-derive the same rail. `sparkles:ui` pays eight fields on **every**
-op, for every kind, to defer a computation that both Ratatui and libvaxis perform
-once.
+from `win.height`. Compare the fourteen fields of `DrawOp`'s `Scrollbar` payload,
+which travel so that each backend can lower the same rail for its own target.
+The sum keeps that cost on the arm that needs it — a `PopClip` carries no fields
+at all — and the lowering is shared rather than reinvented: `scrollbarThumb` in
+`sparkles.ui.state` is the one formula every backend renders through, with
+`scrollbarCellCount`, `scrollbarCell` and `ruleEndpoints` re-exported from
+`canvas.d`. What libvaxis shows is that the derivation can finish a layer
+earlier, so that nothing about a rail crosses the seam at all.
 
 The framework's `ScrollBars` ([`src/vxfw/ScrollBars.zig`][scrollbars]) makes the
 point sharper by going further in the same direction: it exposes **six**
@@ -275,8 +280,9 @@ configurable thumb cells — vertical and horizontal × idle, hover and drag —
 a whole `vaxis.Cell` with its own style, plus `estimated_content_height`/`_width`
 for thumb sizing. Interaction state (`is_hovering_vertical_thumb`,
 `is_dragging_horizontal_thumb`, `mouse_offset_into_thumb`) lives in the widget,
-never in the seam. Our `expandPercent` and `barTrackLit` are that same state,
-pushed down a layer.
+never in the seam. The `Scrollbar` payload's `expandPercent` and `trackLit` —
+read back through the `DrawOp.expandPercent` and `DrawOp.barTrackLit` accessors —
+are that same interaction state, pushed down a layer.
 
 This is the second independent falsification of the _necessity_ argument behind
 friction §3 (Ratatui was the first): a cell target degrades a scrollbar perfectly
@@ -288,8 +294,11 @@ that a scrollbar is not that kind of operation.
 ## Q4 — command shape
 
 **No commands.** As in Ratatui, the reified thing is a cell array, and `Cell` is a
-tag-free product type — so the illegal-combination problem `sparkles.input.events`
-rejects, and `DrawOp` inherits, cannot arise.
+tag-free product type — so the illegal-combination problem that
+`sparkles.input.events` rejects by construction cannot arise here either. `DrawOp`
+reaches the same place from the other side: it is a closed
+`SumType!(FillRect, TextRun, Glyph, Line, Rule, Scrollbar, PushClip, PopClip)`,
+so a combination that no primitive paints from has no arm to live in.
 
 But libvaxis is the one cell subject where the tag-free shape still carries dead
 fields, and it is instructive that it does:
@@ -306,12 +315,16 @@ scale: Scale = .{},
 
 `image` is `null` for essentially every cell on screen; `scale` is the identity
 for essentially every cell. They are cheap — `Scale` is a `packed struct` that
-`eql` bitcasts to a `u13` — but they are the same trade `DrawOp` makes, and they
-land here for the same reason: the escape hatches of Q5
-have to be reachable from wherever content is expressed, and content is expressed
-per cell. **Optional per-element payloads are what a sub-cell escape hatch costs,
-in any shape.** The lesson for `DrawOp` is that a sum type removes the _illegal_
-combinations, not the _rare_ ones.
+`eql` bitcasts to a `u13` — but they are the same trade the seam's size budget
+makes, and they land here for the same reason: the escape hatches of Q5 have to
+be reachable from wherever content is expressed, and content is expressed per
+cell. `static assert(DrawOp.sizeof <= 64)` sizes every operation to the widest
+payload, `TextRun`, so a `PopClip` that carries nothing costs what a text run
+costs (friction §4). **Optional per-element payloads are what a sub-cell escape
+hatch costs, in any shape.** The lesson for `DrawOp` is that a sum type removes
+the _illegal_ combinations, not the _rare_ ones — it relocates the rare case into
+an arm nobody has to read, which is cheaper than a dead field but is not the same
+thing as eliminating it.
 
 ## Q5 — sub-unit placement
 
@@ -383,12 +396,12 @@ way in as well as on the way out, gated on `caps.sgr_pixels`.
 > behind putting it on the list. Notcurses answers "how finely may I draw here?"
 > with a named blitter; libvaxis answers "how many pixels is a cell?" with a
 > number, and then routes anything finer through a negotiated protocol
-> (Kitty graphics, OSC 66) that carries real device units. [F5][comparison]
-> should be restated: the alternatives to naming positions are _at least two_ —
-> name a fidelity, or publish the conversion factor and let a capability decide
-> whether the fine path is available. The second requires no new toolkit
-> vocabulary, which for a seam already carrying eighteen fields is the cheaper
-> of the two.
+> (Kitty graphics, OSC 66) that carries real device units. [F6][comparison] names
+> both halves — a named fidelity _and_ a queried device unit — and libvaxis is the
+> survey's evidence for the second: publish the conversion factor and let a
+> capability decide whether the fine path is available at all. That half requires
+> no new toolkit vocabulary, which for a seam whose entire sub-cell spelling is
+> `RuleEdge`'s six compass points is the cheaper place to start.
 
 ## Q6 — resolved or semantic styling
 
@@ -415,21 +428,26 @@ The `no_color` capability then gates emission wholesale: every colour branch in
 a frame with structure and no colour, decided at the writer rather than at
 every call site.
 
-The bearing on friction §6 is direct. `DrawOp` carries `visual` _and_ `slot`
-because the HTML interpreter re-resolves into class names. libvaxis shows the
-cheap version of the same hedge: make the resolved type _itself_ able to hold an
-unresolved name, so the op carries one field, and let the backend that can
-re-resolve read the name out of it. `Slot` is richer than a palette index, so
-this does not transfer unchanged — but "one field that can be either" is a
-different design point from "two fields, always both", and it is the one nobody
-in the survey has paid for twice.
+The bearing on friction §6 is direct. Each `DrawOp` payload stores the resolved
+fields its own primitive paints from — an `Ink` for the four content primitives,
+colour fields plus a `const(BoxChrome)*` for `FillRect` — and six of the eight
+store a `Slot` beside them, because the HTML interpreter re-resolves the role
+into class names. `DrawOp.visual` reconstructs a `Visual` from the stored halves
+through `visualOf` rather than keeping one, which makes the hedge cheaper without
+making it a decision. libvaxis shows the cheap version of that hedge:
+make the resolved type _itself_ able to hold an unresolved name, so the op carries
+one field, and let the backend that can re-resolve read the name out of it.
+`Slot` is richer than a palette index, so this does not transfer unchanged — but
+"one field that can be either" is a different design point from "a resolved half
+and a role, always both", and per [F9][comparison] it is the one nobody in the
+survey has paid for twice.
 
 ## Q7 — payload ownership
 
 **Two cell types: one that borrows for the frame, one that owns across frames.**
 `Cell.Character.grapheme` and `Cell.Hyperlink.uri` are `[]const u8` borrowed from
-the caller — exactly `DrawOp.text`'s bargain, and exactly friction §7. What makes
-it safe is that the retained screen is a _different type_:
+the caller — the same bargain `DrawOp.text` strikes, and the subject of friction
+§7. What makes it safe is that the retained screen is a _different type_:
 `InternalScreen.InternalCell` holds `char`, `uri` and `uri_id` as
 `std.ArrayList(u8)` allocated from an arena owned by the screen, and
 `InternalScreen.writeCell` does `clearRetainingCapacity` + `appendSlice` on each.
@@ -443,9 +461,30 @@ survive the queue.
 
 This is the third distinct answer to §7 in the survey, alongside reference
 counting ([egui](./egui.md), Qt) and a backend-owned cache (Slint), and it is the
-one that fits a `@nogc` toolkit best: it costs one extra type and one copy at the
-retain boundary, needs no atomics, and makes "can this outlive the frame?" a
-question the type system answers rather than a doc comment.
+one closest to what a `@nogc` toolkit can afford: no atomics, one copy at the
+retain boundary, and "can this outlive the frame?" answered by the type system
+rather than by a doc comment.
+
+`sparkles:ui` already pays libvaxis's copy. `DrawOp.text` is a `const(char)[]`
+borrowed from a frame arena rather than from the caller, because
+`CmdBuffer.textRun` interns the run into `sparkles.ui.arena`'s `FrameArena` — a
+bump allocator over never-moving `pureMalloc` chunks — before the operation is
+built, which is exactly what makes a `scope` source safe; `RecordingCanvas`
+interns on the collected heap, so its operations outlive the call that drew them.
+That places it inside [F8][comparison] rather than outside it: the payload is
+arena-allocated, not shared across a frame boundary.
+
+What the toolkit does not have is libvaxis's _type_ distinction. `DrawOp` is one
+type in both regimes, and the rule that separates them — an operation is valid
+while the buffer that built it is alive and unreset — is stated on
+`sparkles.ui.cmd_buffer` and backed by the buffer being move-only, so a copy
+cannot hand out a second set of live pointers. It is enforceable, but it is
+enforced by the buffer rather than by the operation's type, and the compiler is
+told about the borrow through the `launder` cast that stops `dip1000` confining
+the slice to the operation's lifetime instead of the arena's (friction §4 and
+§7). libvaxis's split is the argument that the retain boundary belongs in the
+type, where a walker cannot be handed the wrong kind of operation at all. That
+argument is taken up, and priced, under "Bearing on the proposal".
 
 ## Q8 — extent query
 
@@ -473,12 +512,18 @@ to a smaller extent without redrawing.
 
 So a scene here **is** self-describing about its extent, per node, and it costs
 nothing extra because the number is the draw call's return value rather than a
-separate query. That complicates [F7][comparison]: extent does belong to the
-surface at the low level (`Screen` declares `width`/`height`/`width_pix`/
-`height_pix`, as Qt's device does), but for the offscreen case F7 concedes —
-sizing a surface to content — libvaxis shows the answer is not a new query on the
-display list. It is **making paint return a size**, which `buildDisplayList` is
-already in a position to do.
+separate query. That is [F7][comparison]'s three questions kept apart and its
+axis answered at one end: surface extent is declared by the device (`Screen`
+carries `width`/`height`/`width_pix`/`height_pix`, as Qt's does), while the
+content extent a caller needs in order to size an offscreen target is
+**maintained at construction** rather than derived by a scan. `sparkles:ui` sits
+at the other end of that axis — nothing on `CmdBuffer`, the display list or the
+arena reports how much a built stream covers, and a caller that wants painted
+bounds folds `op.rect` over the operations itself (friction §8). libvaxis's
+answer is not a new query on the display list. It is **making paint return a
+size**, which the `view → layout → buildDisplayList → paint` pipeline is already
+in a position to do: `buildDisplayList` knows every rect it emits at the moment
+it emits it, and `CmdBuffer` already exposes `length` and `measure`.
 
 ## Strengths
 
@@ -536,41 +581,70 @@ already in a position to do.
 ## Bearing on the proposal
 
 1. **Take the capability struct, and let the backend fill it in** (friction §2,
-   [F4][comparison]). A single `CanvasCaps` value — `hairline`, `clip`,
-   `subCell`, `proportionalText` — is legible where `__traits(compiles)` at eight
-   call sites is not, and it costs nothing that the DbI probe does not already
-   cost: a backend can still _derive_ it at compile time from what it implements.
-   libvaxis shows the negotiated version; ours would be the declared version, and
-   the shape is the same.
-2. **Add the override channel, not just the refusal.** F4 asked for a refusable
+   [F5][comparison]). A single `CanvasCaps` value — `hairline`, `clip`,
+   `subCell`, `proportionalText` — is legible where a `__traits(compiles, …)`
+   probe repeated at every call site in the immediate interpreter is not, and it
+   costs nothing that the DbI probe does not already cost: a backend can still
+   _derive_ it at compile time from what it implements. libvaxis shows the
+   negotiated version; ours would be the declared version, and the shape is the
+   same.
+2. **Add the override channel, not just the refusal.** F5 asks for a refusable
    degrade. libvaxis has `VAXIS_FORCE_WCWIDTH`/`VAXIS_FORCE_UNICODE` as well, and
    for a repository whose golden oracles are PTY and GUI recordings, _pinning_ a
    capability is the more valuable of the two. Refusal tells a test it cannot
    have fidelity; a pin makes two machines produce the same bytes.
-3. **Publish the conversion factor instead of enumerating positions** (friction
-   §5). This **complicates [F5][comparison]**, which generalised Notcurses'
-   ladder into "name a fidelity, not a position". A second sub-cell cell library
-   independently chose something else: hand layout the device size of a cell
+3. **Publish the conversion factor, not only a fidelity name** (friction §5).
+   [F6][comparison] concludes that continuous coordinates relocate the sub-unit
+   problem rather than dissolving it, and that the answer is a named fidelity
+   _plus_ a queried device unit. libvaxis is the evidence for the second half,
+   arrived at independently of Notcurses: hand layout the device size of a cell
    (`cell_size` in `DrawContext`) and let anything finer travel as real device
-   units under a capability gate. For `sparkles:ui` that is a smaller change than
-   a fidelity vocabulary — `GridCanvas` reports 1×1, `SkiaCanvas` and
-   `RaylibCanvas` report their real cell pitch — and it dissolves the "two-pixel
-   focus ring" case §5 records as unspellable.
-4. **Reduce `visual` + `slot` to one field that can be either** (friction §6).
+   units under a capability gate. For `sparkles:ui` that is the smaller of the
+   two halves to build — `GridCanvas` reports 1×1, `SkiaCanvas` and
+   `RaylibCanvas` report their real cell pitch — and on its own it dissolves the
+   "two-pixel focus ring" case §5 records as unspellable.
+4. **Let the stored appearance hold an unresolved name** (friction §6).
    `Color`'s `default | index | rgb` union is the pattern: a resolved type that
-   can also hold an unresolved name. Whether `Slot` fits inside `Visual` is an
-   open question, but "one sum-typed field" is strictly cheaper than "two fields,
-   both always present", and no subject surveyed pays for both.
-5. **Solve `DrawOp.text` with a second type, not an interner** (friction §7).
-   `Cell` borrows; `InternalCell` owns; the copy happens once, at the retain
-   boundary. That is the `@nogc`-friendliest of the three answers in the survey
-   and it makes the lifetime question static.
-6. **Make `paint` return an extent** (friction §8). This **complicates
-   [F7][comparison]**, which concluded that extent belongs to the surface and the
-   offscreen case wants a _layout_ query. `vxfw.Surface.size` shows a third
-   option that is cheaper than either: the draw call already knows how much it
-   covered, so it should say so. `skia-canvas-render.d`'s op-scan disappears
-   without a new query being added anywhere.
+   can also hold a role. Six payloads store a `Slot` beside the resolved fields
+   their primitive paints from; whether `Slot` fits inside the `Ink` those
+   payloads already carry is an open question, but "one sum-typed field" is
+   strictly cheaper than a resolved half and a role on the same payload, and no
+   subject surveyed pays for both.
+5. **Make the retain boundary a second type, not a property of the arena the
+   buffer was built over** (friction §7). `sparkles:ui` draws the line between a
+   frame-local operation and a retained one at the arena — `CmdBuffer` is
+   `CmdBufferT!(FrameArena!())`, `GcCmdBuffer` is `CmdBufferT!GcArena` — while
+   `DrawOp` is the same type on both sides of it, so a walker's signature says
+   nothing about which one it was handed. libvaxis draws the same line as two
+   types: `Cell.Character.grapheme` is a borrowed `[]const u8`,
+   `InternalCell.char` is a `std.ArrayList(u8)` from the screen's own arena, and
+   `InternalScreen.writeCell` is the single place the copy happens — which makes
+   "can this outlive the frame?" a question the compiler answers.
+
+   The price is specific and it is not small. A `DrawOp` and a retained twin are
+   two closed sums of eight arms each: `visualOf`, `translate` and every one of
+   the seventeen accessors from `kind` through `barThumbGlyph` either gains a
+   second instantiation or becomes a template over the text payload's type, and
+   the `final switch` exhaustiveness that turns a ninth arm into a compile error
+   has to hold in both. `RecordingCanvas` compares operations pairwise as plain
+   values, which is how the op stream serves as the parity oracle; across two
+   types that comparison needs a conversion or it stops being an equality. And
+   the 64-byte budget is per type — an owning text payload is wider than the
+   slice it replaces, and `TextRun` is already the arm that sets the budget.
+
+   The claim narrows accordingly. The frame arena is not an interner in
+   libvaxis's sense: it copies per run and does not dedupe, so the objection to
+   interning does not land here. What survives, in its strongest form, is the
+   retain-boundary question — whether an operation that outlives its frame should
+   be a different type from one that does not — and `UI-O4` is open on exactly
+   that.
+
+6. **Make `paint` return an extent** (friction §8). [F7][comparison] separates
+   surface, layout and ink extent and puts the axis at maintained-at-construction
+   versus derived-by-scan; `vxfw.Surface.size` is the maintained end at zero
+   marginal cost, because the draw call already knows how much it covered and
+   simply says so. `skia-canvas-render.d`'s op-scan disappears without a new
+   query being added anywhere.
 7. **Do not conclude from Notcurses that a fidelity ladder is the cell answer.**
    Two cell libraries, two different sub-cell designs, neither of them a position
    enum — the shared finding is only the negative one: **`RuleEdge` is the outlier
@@ -578,9 +652,11 @@ already in a position to do.
 8. **A scrollbar is a widget parameter, not a seam operation** (friction §3).
    Second independent confirmation after Ratatui: libvaxis's low-level scrollbar
    is 33 lines with a single `character` field, and its framework version carries
-   six configurable thumb cells — all above the seam. This narrows
-   [F3][comparison]'s "semantic operations are legitimate" to the cases Slint
-   actually justifies (a box shadow), and excludes ours.
+   six configurable thumb cells — all above the seam. [F4][comparison] draws the
+   line at derived geometry rather than at semantic operations, and the
+   `Scrollbar` payload's `content`, `viewport` and `offset` are on the wrong side
+   of it: they travel so a rail can be derived below the seam, from a formula
+   (`scrollbarThumb`) that already lives above it in `sparkles.ui.state`.
 
 ## Sources
 

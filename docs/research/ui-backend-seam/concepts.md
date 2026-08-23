@@ -46,7 +46,7 @@ of them:
 | Cairo recording surface ([cairo/D2D][cairo-md])          | instructions           | flat (union of six payload structs) |
 | SDL `SDL_RenderCommand` queue ([SDL][sdl-md])            | instructions           | flat (11 tags over 4 union arms)    |
 | Vello `Encoding` ([vello][vello-md])                     | instructions           | flat (six parallel streams)         |
-| `sparkles:ui` `DrawOp[]` ([canvas.d][canvas])            | instructions           | flat                                |
+| `sparkles:ui` `DrawOp[]` ([canvas.d][canvas])            | instructions           | flat (closed sum, uniform stride)   |
 | GSK `GskRenderNode` ([GTK4/GSK][gsk-md])                 | instructions           | **tree**                            |
 | Qt Quick `QSGNode` ([Qt Quick][qtquick-md])              | instructions           | **tree**                            |
 | Avalonia `IRenderDataItem` ([Avalonia][avalonia-md])     | instructions           | **tree** (`RenderDataPushNode`)     |
@@ -546,17 +546,25 @@ via `__traits(compiles)` at each interpreter call site — which is
 Six answers, all shipped somewhere, to "who owns a command's text, image or
 vertex data, and may the command outlive the frame".
 
-| Term              | Definition used here                                                                   | Grounded in                                                                                                                                                                            |
-| ----------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **borrowed**      | The command holds a slice into memory it does not own; validity ends with the frame    | `DrawOp.text` ([`canvas.d`][canvas]); ImGui's `ImDrawData::Valid` ([imtui][imtui-md]); libvaxis `Cell.grapheme`; imaging's `*Ref<'a>` payloads                                         |
-| **owned**         | The command copies the payload into storage it controls                                | Skia `SkRecord::alloc<T>` and `SkPath` by value; Cairo's recording surface `memcpy`s glyphs and clusters; Ratatui's `CompactString` per cell                                           |
-| **arena**         | Payloads are copied into one contiguous per-artifact allocation; commands hold offsets | Flutter `DisplayListStorage`; Chromium `PaintOpBuffer`; Godot's 4 KiB `CommandBlock`s; SDL's `SDL_AllocateRenderVertices` with `(first, count)`                                        |
-| **refcounted**    | The payload is shared by an atomic or non-atomic count and may outlive any one holder  | GSK's `gatomicrefcount` (which is what makes the deferred Cairo fallback legal); Flutter's `sk_sp`/`shared_ptr`; egui's `Arc`; Avalonia's `IRef` ([`Ref.cs`][av-ref])                  |
-| **interned**      | Repeated payloads are stored once in a side table and referenced by a small id         | Masonry's `record::Scene` (labels and file names interned once); Chromium's mirrored `ClientPaintCache`/`ServicePaintCache` keyed by `PaintCacheId` ([`paint_cache.h`][cr-paintcache]) |
-| **shared handle** | The command carries a key; the payload lives in a store owned by the consumer          | WebRender's `ImageKey`/`FontInstanceKey` with bytes on a separate `ResourceUpdate` channel; Slint's `draw_cached_pixmap`; GPUI's `AtlasTile` into a `PlatformAtlas`                    |
+| Term              | Definition used here                                                                                     | Grounded in                                                                                                                                                                                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **borrowed**      | The command holds a slice into memory it does not own; validity ends with the frame                      | ImGui's `ImDrawData::Valid` ([imtui][imtui-md]); libvaxis `Cell.grapheme`; imaging's `*Ref<'a>` payloads                                                                                                                                                         |
+| **owned**         | The command copies the payload into storage it controls                                                  | Skia `SkRecord::alloc<T>` and `SkPath` by value; Cairo's recording surface `memcpy`s glyphs and clusters; Ratatui's `CompactString` per cell                                                                                                                     |
+| **arena**         | Payloads are copied into one contiguous per-artifact allocation; commands hold offsets or slices into it | Flutter `DisplayListStorage`; Chromium `PaintOpBuffer`; Godot's 4 KiB `CommandBlock`s; SDL's `SDL_AllocateRenderVertices` with `(first, count)`; `DrawOp.text`, which `CmdBuffer.textRun` copies into a `FrameArena` and holds as a slice ([`canvas.d`][canvas]) |
+| **refcounted**    | The payload is shared by an atomic or non-atomic count and may outlive any one holder                    | GSK's `gatomicrefcount` (which is what makes the deferred Cairo fallback legal); Flutter's `sk_sp`/`shared_ptr`; egui's `Arc`; Avalonia's `IRef` ([`Ref.cs`][av-ref])                                                                                            |
+| **interned**      | Repeated payloads are stored once in a side table and referenced by a small id                           | Masonry's `record::Scene` (labels and file names interned once); Chromium's mirrored `ClientPaintCache`/`ServicePaintCache` keyed by `PaintCacheId` ([`paint_cache.h`][cr-paintcache])                                                                           |
+| **shared handle** | The command carries a key; the payload lives in a store owned by the consumer                            | WebRender's `ImageKey`/`FontInstanceKey` with bytes on a separate `ResourceUpdate` channel; Slint's `draw_cached_pixmap`; GPUI's `AtlasTile` into a `PlatformAtlas`                                                                                              |
 
-Two refinements the survey adds that the six labels do not capture:
+Three refinements the survey adds that the six labels do not capture:
 
+- **Offset pair versus slice.** Both forms name bytes an arena owns, and they
+  are not equally strong. A command holding `(first, count)` — SDL's vertex
+  ranges, WebRender's byte-stream cursors, Flutter's offset table — is trivially
+  copyable and transferable to another thread, because it names a position and
+  not an address. A command holding a slice, as `DrawOp.text` does, is bound to
+  the arena's address for as long as it lives: the rule _an operation is valid
+  while the buffer that built it is alive and unreset_ is stated on the type,
+  and `UI-O4` is open on where the retain boundary should sit.
 - **Weak plus inline geometry.** iced's recorded layer stores a
   `paragraph::Weak` carrying `min_bounds`, `align_x` and `align_y` _beside_ the
   weak pointer, so a dropped payload degrades to "nothing drawn" while damage
@@ -585,11 +593,17 @@ Two refinements the survey adds that the six labels do not capture:
 The toolkit already uses three of the contested words. Fixing their meaning here
 is half the point of the page.
 
-- **`DrawOp`** — one element of `sparkles:ui`'s display list: a `kind` tag plus
-  eighteen fields, most dead for any given kind ([`canvas.d`][canvas]). It is an
-  _instruction_, not a result; _flat_, not a tree; and — by the definitions
-  above — the elements of a **display list**, not of a command buffer, because
-  `RecordingCanvas` keeps them.
+- **`DrawOp`** — one element of `sparkles:ui`'s display list: a `struct`
+  wrapping a closed `SumType` over eight per-kind payloads (`FillRect`,
+  `TextRun`, `Glyph`, `Line`, `Rule`, `Scrollbar`, `PushClip`, `PopClip`), with
+  `alias payload this`, dispatched by `op.match!(…)` ([`canvas.d`][canvas]).
+  Each arm carries only the fields its own primitive paints from, and every
+  operation is as wide as the widest arm — `static assert(DrawOp.sizeof <= 64)`,
+  a budget rather than an equality, bounded by `TextRun`. `OpKind` is derived
+  through an eight-arm `match!` rather than stored, so the tag and the arm
+  cannot disagree. It is an _instruction_, not a result; _flat_, not a tree;
+  and — by the definitions above — the elements of a **display list**, not of a
+  command buffer, because `RecordingCanvas` keeps them.
 - **display list** — the `DrawOp[]` that `buildDisplayList` emits and a painter
   walks once. Flat and position-independent except for the `pushClip`/`popClip`
   bracket convention, which is a stream convention rather than structure —
@@ -601,8 +615,15 @@ is half the point of the page.
   rather than declared.
 - **`RecordingCanvas`** — a **recording** in the Skia/Cairo/Racket sense: a
   conforming backend that captures instead of drawing.
-- **`Slot` and `Visual`** — the semantic role and the resolved appearance,
-  carried on every op ([friction §6][friction]). Note the vocabulary collision:
+- **`Slot` and `Visual`** — the semantic role and the resolved appearance. Each
+  payload stores the resolved fields its own primitive paints from: an `Ink` for
+  the four content primitives, and `FillRect`'s own colour fields beside a
+  `const(BoxChrome)*` that is null unless the box has a border, shadow, radius
+  or arrow. `DrawOp.visual` reconstructs a `Visual` on demand through
+  `visualOf`, lossy by design, so the seam speaks `Visual` end to end while the
+  payloads store the split. A `Slot` is stored, on six of the eight payloads;
+  `PushClip` and `PopClip` carry none, and `DrawOp.slot` reports `Slot.inherit`
+  for them ([friction §6][friction]). Note the vocabulary collision:
   imaging's `ContextKindRef::Slot` is also called `Slot`, and is in the channel
   explicitly documented as _not_ reaching the rasterizer ([Parley/Xilem][parley-md]).
 - **`RuleEdge`** — a _position enumeration_, which is what this survey's

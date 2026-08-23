@@ -44,7 +44,8 @@ constraint:
 
 That is the whole subject in one paragraph: **the least-common-denominator seam
 was tried, abandoned, and replaced with a decomposed one.** `isCanvas` is a
-least-common-denominator seam.
+least-common-denominator seam with four optional primitives probed at the call
+sites that want them.
 
 ### Design philosophy
 
@@ -255,18 +256,19 @@ probing"; it is a _set_ of traits, and a backend's supported set is a type:
 mechanical: a picture that calls `.gaussianBlur` has `Filter` in its type, no
 `Renderer[…Filter…, _, _]` exists for Java2D, and `draw()` does not compile.
 
-Three properties follow, and they map onto [F4][comparison] almost point by point:
+Three properties follow, and they map onto [F5][comparison] almost point by point:
 
 - **The floor is a named type.** `Basic` is the set every backend implements;
   everything above it is negotiated by implicit search rather than by
-  convention. `sparkles:ui` has no such name — `isCanvas` checks five of the
-  eight `OpKind` members and the rest is `__traits(compiles)` at call sites
-  ([friction §2][friction]).
-- **Degradation is refusable by construction, because it does not exist.** F4
-  wanted a way to "ask for a hairline and be told no". Doodle's answer is
-  stronger and cheaper: an unsupported capability is a **compile error at the
-  call site that asked for it**, naming the operation, before a surface is
-  allocated. Nobody silently paints a fallback.
+  convention. `sparkles:ui` has no such name — `isCanvas` names five methods,
+  and the four optional primitives above them (`rule`, `scrollbar`, `pushClip`,
+  `popClip`) are discovered by `__traits(compiles)` at each call site in
+  `interp/immediate.d` ([friction §2][friction]).
+- **Degradation is refusable by construction, because it does not exist.** F5's
+  ladder tops out at a refusable method — a way to "ask for a hairline and be
+  told no". Doodle's answer is stronger and cheaper: an unsupported capability
+  is a **compile error at the call site that asked for it**, naming the
+  operation, before a surface is allocated. Nobody silently paints a fallback.
 - **The check is at the call site, not at backend registration.** Because `Alg`
   accumulates through the syntax, the requirement is derived from the drawing
   rather than declared by hand. There is no capability list to keep in sync
@@ -288,8 +290,8 @@ semantic (`circle`, `triangle`, `square`) and [`Path`][path] is primitive
 (`ClosedPath`/`OpenPath` of `PathElement`s); a backend implements whichever it
 can serve well. The SVG backend maps `rectangle` to an SVG `rect` element and
 `triangle` to a `path` — the semantic op survives where the target has a
-matching concept and lowers where it does not, **inside the backend**, exactly
-the arrangement [F3][comparison] identified as Slint's camp.
+matching concept and lowers where it does not, **inside the backend** — the
+first of the six places [F4][comparison] enumerates for a lowering to live.
 
 Two operations are more semantic still: [`Debug`][debug] draws "the bounding box
 and origin of the given picture on top of the picture", a developer affordance
@@ -301,9 +303,12 @@ There is no widget vocabulary at all — Doodle has no scrollbars, so it cannot
 falsify [friction §3][friction] directly. What it does show is the _placement_
 rule the friction log is groping for: when an operation is semantic **and**
 some backends cannot serve it, it becomes its own algebra rather than another
-member of the common one. Under that rule `scrollbar` would not be an eighth
-`OpKind` on the one seam; it would be a separate capability, and a backend that
-did not implement it would refuse the drawing rather than degrade it.
+member of the common one. `scrollbar` is already an optional primitive on our
+side — probed, with a stated degradation to `paintScrollbarCells` — but it is
+still one of the eight kinds the display list can hold, so its fourteen fields
+are part of the drawing vocabulary. Under Doodle's rule it would be a separate
+capability outright, and a backend that did not implement it would refuse the
+drawing rather than degrade it.
 
 ## Q4 — command shape
 
@@ -325,8 +330,11 @@ object Reified {
 ```
 
 Each variant carries only its own fields — `FillCircle` has a `diameter` and no
-`points`; `Text` has a `font` and a `bounds`. That is [F2][comparison]'s
-recommendation, independently arrived at.
+`points`; `Text` has a `font` and a `bounds`. That is the encoding `DrawOp`
+uses, arrived at independently: a closed sum whose arms are per-kind payloads,
+so `Scrollbar`'s fourteen fields ride on the scrollbar arm and `PopClip` carries
+none. [F3][comparison] holds the encoding open between exactly this and
+variable-stride per-op storage; Doodle is a second vote for the closed sum.
 
 The file's header comment is the most valuable paragraph this survey has found
 on the tag-versus-sum question, because it argues both sides:
@@ -347,11 +355,20 @@ on the tag-versus-sum question, because it argues both sides:
 >
 > — [`Reified.scala`][reified]
 
-`DrawOp` is the first approach _without_ the sum type: eighteen fields, all
-present on every op, and the "amount of context grows" failure already realised
-(eight of the eighteen are the scrollbar's). Doodle predicts our exact symptom
-and identifies the trade — independence per instruction, paid for in fields —
-which is the case _for_ keeping the reified stream while re-encoding it.
+`DrawOp` takes the first approach, and takes it the way Doodle does: every
+operation carries its own geometry and its own resolved
+appearance, and nothing is inherited from a preceding op, so a walker can start
+anywhere in the stream. That independence is what makes the op stream a parity
+oracle and `RecordingCanvas` a comparable value.
+
+The bill Doodle names — "each instruction needs to have additional fields
+added" — falls on the arm rather than on the stream, but it does not vanish. A
+sum is as wide as its widest alternative, so the budget
+`static assert(DrawOp.sizeof <= 64)` prices every operation at what a `TextRun`
+costs, `PopClip` included ([friction §4][friction]). Doodle pays the same tax in
+a heavier currency: `Reified` variants are boxed case classes, so the width is a
+pointer and the cost is an allocation per instruction. The trade is the same
+one, priced for a language with a GC.
 
 ## Q5 — sub-unit placement
 
@@ -363,10 +380,13 @@ matrix. Screen mapping is a single transform computed per frame
 size and a `Center` policy. A hairline is `strokeWidth(1)`; a two-pixel focus
 ring is `strokeWidth(2)`; there is no vocabulary to extend.
 
-This is the third independent confirmation of [F5][comparison]: `RuleEdge` is a
-symptom of integer cell coordinates. Doodle adds one nuance — it is _only_
-continuous, has no cell target, and therefore is not evidence that a
-terminal-capable toolkit can go continuous.
+This is the third independent confirmation of [F6][comparison]: `RuleEdge`
+([friction §5][friction]) is a symptom of integer cell coordinates, and a
+continuous seam does not have to spell one. But Doodle also supplies F6's
+caveat, because it is _only_ continuous and has no cell target: it never has to
+land a hairline on a grid, so it is no evidence that going continuous dissolves
+the sub-unit problem for a terminal-capable toolkit rather than moving it to the
+snap policy.
 
 ## Q6 — resolved or semantic styling
 
@@ -384,11 +404,21 @@ comment saying so: "We use strokeWidth to determine if there is a stroke or
 not". Nothing re-resolves downstream, including the SVG backend, which emits a
 CSS `style` string from the resolved `Fill`/`Stroke` rather than a class name.
 
-So Doodle pays for one channel, like every other surveyed subject.
-[Friction §6][friction] — `visual` _and_ `slot` on every op — remains unmatched
-in the field; the reason ours exists (an HTML backend that re-resolves to class
-names) is a requirement Doodle deliberately does not have, since its "HTML
-backend" resolves to inline style.
+So Doodle pays for one channel, like every other surveyed subject — which is
+[F9][comparison] on one more subject. Our seam pays for both:
+[friction §6][friction] is the resolved appearance a primitive paints from
+_plus_ a `Slot`, on six of the eight payloads. The reason it exists is a
+requirement Doodle deliberately does not have — an HTML interpreter that
+re-resolves the role into class names, where Doodle's SVG backend emits the
+resolved `Fill`/`Stroke` as an inline style string and never looks back.
+
+The half of the hedge our seam does not pay for is the one Doodle's
+`DrawingContext` also avoids: `Visual` is not a stored field. `DrawOp.visual`
+reconstructs one through `visualOf`, lossy on purpose, from whichever fields the
+payload's own primitive uses — a fill reports its box chrome, a run reports its
+text chrome. That is the same economy as folding the context into each leaf
+before painting: keep what the primitive reads, derive the rest. It makes the
+dual channel cheaper without making it a decision.
 
 ## Q7 — payload ownership
 
@@ -403,8 +433,15 @@ expensive, backend-specific measurement result is computed once during layout
 and **travels inside the backend's own command type** to paint time. This is
 only possible because the command type is per-backend — a shared `DrawOp` could
 not carry a `TextMetrics` for one backend and a `Rectangle2D` for another. It is
-a third answer alongside [F6][comparison]'s reference-counting and
-backend-owned cache: **let the backend's command type be the cache**.
+a further answer alongside the reference-counting, copying and arena allocation
+[F8][comparison] enumerates: **let the backend's command type be the cache**.
+
+Ours is the arena branch of that enumeration. `TextRun.text` is a
+`const(char)[]` of sixteen bytes borrowed from a frame arena, and
+`CmdBuffer.textRun` copies the run in on the way past, which is what makes a
+`scope` source safe to draw from. What the arena cannot do is what `Bounds`
+does: it holds bytes, not a backend-typed measurement, so a shaped run's metrics
+have nowhere to ride to paint time.
 
 > [!WARNING]
 > Doodle cannot answer the cross-thread half of [friction §7][friction] on our
@@ -412,8 +449,11 @@ backend-owned cache: **let the backend's command type be the cache**.
 > `RenderRequest` is documented as the "Event that is passed into Java2DPanel to
 > request rendering of a Picture. This crosses the boundary between the Cats
 > Effect and Swing threading model" ([`RenderRequest.scala`][renderrequest]) —
-> but the payloads are GC references, so nothing is proven about a borrowed
-> slice under `dip1000`.
+> but the payloads are GC references, so nothing is proven about a slice whose
+> lifetime rule is _valid while the buffer that built it is alive and unreset_.
+> That rule is stated on the type and the buffer is move-only, so it is
+> enforceable rather than advisory; it is still a borrow, and `UI-O4` stays open
+> on exactly the retain-and-transfer question Doodle answers for free.
 
 ## Q8 — extent query
 
@@ -428,8 +468,9 @@ final case class Finalized[F[_], A](f: Transforms => Eval[(BoundingBox, Renderab
 }
 ```
 
-The Java2D renderer uses that value to size its surface, which is exactly the
-offscreen case [F7][comparison] identified as the real gap:
+The Java2D renderer uses that value to size its surface — the first of the three
+questions [F7][comparison] separates, answered from the scene rather than from
+the device:
 
 ```scala
 // java2d/effect/RenderRequest.scala
@@ -448,7 +489,9 @@ def size(bb: BoundingBox, size: Size): (Double, Double) =
 `Size.FitToImage` is "size the surface to the content"; `Size.FixedSize` is
 "the surface chose". Both are expressible because extent is available before
 painting, and neither requires scanning the command stream — which is what
-`skia-canvas-render.d` had to do ([friction §8][friction]).
+`skia-canvas-render.d` does, folding `op.rect` across every operation, because
+nothing on `CmdBuffer`, the display list or the arena reports the extent of a
+built stream ([friction §8][friction]).
 
 Separately, the user-facing [`Size`][size] algebra exposes `width`, `height`,
 `size` and `boundingBox` as _drawing operations returning values_
@@ -456,13 +499,15 @@ Separately, the user-facing [`Size`][size] algebra exposes `width`, `height`,
 [`GenericSize`][genericsize] as a read of the already-computed box. Asking is a
 capability like any other: `.width` returns a `Picture[Alg with Size, Double]`.
 
-This **complicates [F7][comparison]**, which concluded that extent belongs to
-the surface and the display list should not be self-describing. Doodle's scene
-_is_ self-describing, at no cost, because bounding boxes are computed by the
-layout phase for their own reasons and simply not thrown away. The finding
-should be narrowed: extent should not be _derived from painted commands_
-(egui's and our situation), but a layout that already computes boxes should
-publish the root one.
+This is [F7][comparison]'s axis at its cleanest. Doodle's extent is
+**maintained at construction**: bounding boxes are computed by the layout phase
+for its own reasons, and the root one is simply not thrown away, so the scene is
+self-describing at no cost. Ours is **derived by scan**, and derived from the
+wrong artifact — not from the layout that computed the rects, but from the
+painted commands afterwards, which works only because a `TextRun`'s `rect.width`
+happens to be its advance in cells. The transferable rule is the axis, not the
+answer: a pipeline whose layout already knows the box should publish it, and
+only a pipeline that has no layout should be scanning ops for it.
 
 ## Strengths
 
@@ -521,12 +566,12 @@ publish the root one.
    capability set a set of concepts, and let the requirement be derived from the
    drawing.** [Friction §2][friction] says `isCanvas` describes five methods
    while the real contract is eight. Doodle's structure suggests splitting
-   `isCanvas` into `isCanvas` (the floor: fills, text runs, glyphs, lines) plus
-   `hasClip`, `hasRule`, `hasScrollbar` — named concepts a backend either
-   satisfies or does not, and which a _display-list builder_ can be constrained
-   on. This is `__traits(compiles)` probing given a name and a single home, and
-   it costs nothing D does not already do.
-2. **A named floor is the cheap half of [F4][comparison], and Doodle confirms it
+   `isCanvas` into `isCanvas` (the floor: fills, text runs, glyphs, lines,
+   measurement) plus `hasClip`, `hasRule`, `hasScrollbar` — named concepts a
+   backend either satisfies or does not, and which a _display-list builder_ can
+   be constrained on. The probing already happens; this gives it a name and a
+   single home, and it costs nothing D does not already do.
+2. **A named floor is the cheap half of [F5][comparison], and Doodle confirms it
    is the half that matters.** `Basic` is one line of code and does most of the
    work of a capability system.
 3. **`measure` should return a backend-chosen type, not just live elsewhere.**
@@ -537,25 +582,33 @@ publish the root one.
    `measure` to a font object that still answers in cells, and it is what
    `SkiaCanvas` would need in order to use shaping at all
    ([friction §1][friction]).
-4. **Keep the reified stream, re-encode as a sum type — Doodle's `Reified`
-   comment is the argument.** It names our exact failure ("doesn't scale as the
-   amount of context grows, as each instruction needs to have additional fields
-   added") while defending the property we depend on (each instruction
-   independent of any other). [F2][comparison] is confirmed with a primary
-   source that reasoned about the trade rather than just picking a side.
-5. **Contradicts [F7][comparison]:** extent does _not_ have to belong to the
-   surface. `Finalized` publishes the scene's bounding box before painting
-   because layout computed it anyway, and `Size.FitToImage` uses it to size a
-   surface to content. Our layout also computes rects; [friction §8][friction]'s
-   real defect is that `buildDisplayList` discards the root extent, not that
-   display lists cannot describe themselves. Publishing one number from layout
-   is cheaper than either scanning ops or adding a query API.
-6. **Complicates [F3][comparison]:** the useful axis is not only _who degrades_
-   but _whether the operation is common at all_. Doodle's rule — an operation
-   that some backends cannot serve becomes its own capability rather than
-   another member of the common seam — would move `scrollbar` and `rule` out of
-   `OpKind` and into named optional concepts, which simultaneously fixes
-   [friction §3][friction] and the eight dead fields of [friction §4][friction].
+4. **The reified stream and the closed sum are the right pair, and Doodle's
+   `Reified` comment is the argument for keeping them together.** It names the
+   cost we carry ("doesn't scale as the amount of context grows, as each
+   instruction needs to have additional fields added") while defending the
+   property we depend on (each instruction independent of any other). That is
+   why the residual complaint in [friction §4][friction] is a stride, not a
+   design: a `PopClip` costs what a `TextRun` costs. [F3][comparison] keeps the
+   encoding open between a closed sum and variable-stride storage, and Doodle is
+   the primary source that reasoned about the trade rather than just picking a
+   side.
+5. **Confirms [F7][comparison], and names which artifact should answer.**
+   `Finalized` publishes the scene's bounding box before painting because layout
+   computed it anyway, and `Size.FitToImage` uses it to size a surface to
+   content — extent maintained at construction. Our layout also computes rects;
+   [friction §8][friction]'s defect is that `buildDisplayList` keeps none of
+   them, so the number has to be recovered by scanning painted ops. Publishing
+   one rect from layout is cheaper than either the scan or a query API bolted to
+   the seam.
+6. **Sharpens [F4][comparison]:** the useful axis is not only _where the
+   lowering lives_ but _whether the operation belongs to the common seam at
+   all_. Doodle's rule — an operation that some backends cannot serve becomes
+   its own capability rather than another member of the common one — would move
+   `scrollbar` and `rule` out of the eight kinds and into named optional
+   concepts. That fixes [friction §3][friction] outright and takes `Scrollbar`'s
+   fourteen fields out of the drawing vocabulary; it leaves
+   [friction §4][friction] untouched, since `TextRun` sets the stride either
+   way.
 7. **Reject the all-or-nothing part.** A terminal backend must approximate, not
    refuse. Doodle's compile-time refusal works because both its targets are
    pixel targets and the differing capabilities are luxuries (filters, blends,

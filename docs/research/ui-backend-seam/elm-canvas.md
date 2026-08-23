@@ -5,10 +5,10 @@ Pinned at [`4b8b07eb`][rev].
 
 A 2 000-line Elm package that draws to a DOM `<canvas>`. It is on this list
 because it is the smallest complete statement of the reification
-[`comparison.md`](./comparison.md)'s **F2** recommends — draw commands as plain,
+[`comparison.md`](./comparison.md)'s **F3** describes — draw commands as plain,
 immutable, pattern-matchable values in a total language — and because the value
 stream has to cross a real boundary into JavaScript to become pixels. Reading it
-closely produces two results that complicate F2 rather than confirming it.
+closely produces two results that qualify F3 rather than simply confirming it.
 
 |                      |                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------- |
@@ -51,7 +51,9 @@ actually crosses the boundary.
 ## How it works
 
 The seam's defining declaration is 67 lines, and every type in it is a proper
-sum type with no dead fields — the shape [friction §4][friction] wants:
+sum type whose constructors are exactly as wide as their payloads — the
+variable-width encoding [friction §4][friction] weighs `sparkles:ui`'s
+uniform-width operations against:
 
 ```elm
 type Renderable
@@ -193,8 +195,9 @@ idiom, and a cell grid has nowhere to put a constraint.
 `Canvas/Internal/CustomElementJsonApi.elm`'s exposing list is the complete
 contract — 40-odd operations, each one Elm function wrapping one DOM name — and
 a reader learns the whole surface from that header. That is better than
-`isCanvas`, whose five checked members understate an eight-kind `OpKind`
-([friction §2][friction]).
+`isCanvas`, whose five checked members understate a contract of eight operation
+kinds, four of which the interpreter probes with `__traits(compiles)` at each
+call site ([friction §2][friction]).
 
 But there is no capability query, no default, and no degradation, because there
 is exactly one backend and it is the DOM. `this.context[cmd.name](...cmd.args)`
@@ -219,12 +222,14 @@ which takes a `Shadow` record and expands to four DOM field-sets
 grouping exists in the _author-facing_ type and is destroyed before the seam.
 Slint puts `draw_box_shadow` on the renderer precisely so a backend can degrade
 it; elm-canvas, with one backend that supports shadows natively, has no reason
-to. This is consistent with **F3**'s reframing — the axis is _who degrades_, and
-a seam with nobody to degrade for keeps nothing semantic.
+to. This is consistent with **F4**'s reframing — the axis is not
+semantic-versus-primitive but _where the lowering lives_. A seam with one backend
+and nobody to degrade for puts every lowering in the author-facing layer and
+keeps nothing semantic below it.
 
 ## Q4 — sum type, or tag plus dead fields?
 
-Above the seam, elm-canvas is the clean sum type F2 asks for. Below it, the seam
+Above the seam, elm-canvas is the clean closed sum F3 describes. Below it, the seam
 is stringly typed. That split is the first of this subject's two contributions.
 
 The second is more uncomfortable. **A sum type does not eliminate illegal
@@ -260,12 +265,17 @@ ignores `drawOp` entirely, since [`renderClear`][render] emits a single
 
 So a project that reified its commands as sum types in a total language _still_
 ended up with dead fields and no-op settings, one layer up. That does not
-invalidate **F2** — re-encoding `DrawOp` as a `SumType` remains right — but it
-falsifies the implicit promise that doing so makes illegal states
-unrepresentable. Ours has eighteen fields, eight of them for `scrollbar`; the sum
-type will move that into `Scrollbar(...)` and the ops will stop carrying dead
-words, but the "which settings apply to which op" question is not addressed by
-the encoding at all.
+disturb **F3** — a closed sum is the right encoding, and `DrawOp` shows what one
+buys: a `PopClip` carries no fields at all, `Scrollbar`'s fourteen are reachable
+only through the scrollbar arm, and no operation carries another arm's words. But
+it falsifies the implicit promise that a sum makes illegal states
+unrepresentable. `sparkles:ui` keeps the same residue somewhere else: the
+sum-level accessors span arms that cannot answer, so `DrawOp.slot` reports
+`Slot.inherit` for the clip pair, the bar accessors answer neutrally on arms that
+have no bar, and `visualOf` is lossy on purpose — a fill reports box chrome, a
+run reports text chrome, and the combinations no backend reads get defaults.
+"Which style input applies to which operation" is a question the encoding does
+not address, in Elm or in D.
 
 ## Q5 — sub-unit placement
 
@@ -275,10 +285,13 @@ entirely inside the shim, which reads `window.devicePixelRatio`, sizes the
 backing store, and applies `context.scale(dpr, dpr)`
 ([`elm-canvas/elm-canvas.js`][dpr]). Elm never sees a device pixel.
 
-This re-confirms **F5** — `RuleEdge` is a symptom of integer cell coordinates —
-and adds that the _unit conversion_ can live wholly in the shim. That is already
-our arrangement between cells and pixels; the difference is that CSS pixels and
-device pixels are related by a scalar, and cells and glyphs are not.
+This is **F6** in miniature: continuous coordinates relocate the sub-unit
+problem rather than dissolving it. elm-canvas relocates the whole of it into the
+shim, where `devicePixelRatio` is a single scalar and the move costs one
+`context.scale` call. `sparkles:ui` keeps its unit conversion in the backends the
+same way, but cells and glyphs are not related by a scalar, so the same move buys
+much less: the sub-cell positions the toolkit has no unit for stay unspellable,
+and `rule`'s six `RuleEdge` compass points remain the vocabulary (friction §5).
 
 ## Q6 — resolved appearance, semantic role, or both?
 
@@ -295,7 +308,8 @@ setting can leak into a sibling.
 
 This is exactly the split the survey brief flagged — settings attach to a
 _renderable_, not to every primitive inside it — and it is the direct opposite
-of `DrawOp` carrying both `visual` and `slot` on all eighteen fields of every op
+of every `DrawOp` payload storing the resolved appearance its own primitive
+paints from beside a `Slot`, on six of the eight arms
 ([friction §6][friction]). Two observations follow:
 
 1. **Paint is deferred; everything else is eagerly lowered.** `addSettingsToRenderable`
@@ -309,12 +323,13 @@ of `DrawOp` carrying both `visual` and `slot` on all eighteen fields of every op
    backend to want one — the closest thing, the HTML interpreter's class names,
    has no counterpart in a library whose only backend is a raster context.
 
-The `sparkles:ui` reading: **F3**/§6's cost is real, and elm-canvas shows the
+The `sparkles:ui` reading: **F9**/§6's cost is real, and elm-canvas shows the
 alternative works — a paint state that scopes over a subtree and merges down a
-group hierarchy is fewer bytes and fewer decisions than resolved-plus-semantic on
-every op. Whether we can adopt it depends on whether the display list keeps any
-grouping structure, which today it does not: `buildDisplayList` emits a flat
-`DrawOp[]`.
+group hierarchy is fewer bytes and fewer decisions than a resolved appearance
+plus a `Slot` on every operation. Deriving `Visual` on demand through `visualOf`
+instead of storing one takes part of that cost off the operation; taking the
+rest depends on the display list keeping grouping structure, which it does not —
+`buildDisplayList` returns a flat `DrawOp[]`.
 
 ## Q7 — payload ownership and lifetime
 
@@ -322,11 +337,12 @@ grouping structure, which today it does not: `buildDisplayList` emits a flat
 
 `Text` holds `text : String` by value, `Shape` holds `Point` tuples of `Float`,
 and Elm values are immutable and garbage-collected, so nothing in
-[friction §7][friction] — the borrowed `const(char)[]` that cannot cross a thread
-or outlive the frame — has any analogue. This is the null result the category
-predicts, and it is worth stating: **`DrawOp.text`'s lifetime hazard is a
-consequence of choosing a borrowed slice, not of reifying a command.** A reified
-command stream and owned payloads are independent choices.
+[friction §7][friction] — the `const(char)[]` borrowed from a frame arena, valid
+only while the buffer that built it is alive and unreset — has any analogue. It
+is **F8**'s copy-or-own result read at the far end, and it is worth stating:
+**`DrawOp.text`'s lifetime hazard is a consequence of borrowing the arena's
+bytes, not of reifying a command.** A reified command stream and owned payloads
+are independent choices; `UI-O4` stays open on exactly that boundary.
 
 Two things complicate the "pure data" reading, though:
 
@@ -353,13 +369,14 @@ Float }`, and `json` is the live DOM `<img>` element, captured by
   the comparison never succeeds, the `set cmds` setter fires, and
   `render()` replays the entire scene.
 
-That second point matters for **F2**, whose justification for a reified stream is
-that commands are values and can therefore be "collected, culled, replayed and
-compared". elm-canvas reifies as thoroughly as anything here and cashes exactly
+That second point matters for **F12**, whose justification for a reified stream
+is that commands are values and can therefore be collected, culled, replayed and
+compared. elm-canvas reifies as thoroughly as anything here and cashes exactly
 one of the four: replay. It never culls, never diffs, and cannot compare (the
 commands are opaque `Value`s). **Reification is necessary for those properties
 but nowhere near sufficient** — they need the commands to stay _inspectable_,
-which is what lowering to `{ type, name, args }` gives up.
+which is what lowering to `{ type, name, args }` gives up, and what keeping
+`DrawOp` a plain-data value in the toolkit's own language preserves.
 
 ## Q8 — can a backend ask the scene its extent?
 
@@ -369,19 +386,23 @@ and `toHtmlWith` takes it as a record field ([`Canvas.elm`][tohtml]). The shim
 reads those back off the element's attributes and sizes the backing store
 ([`elm-canvas/elm-canvas.js`][dpr]).
 
-This is **F7** again: the surface's size is an _input_ to the scene, not a
-derivable property of it. Nothing in the `Renderable` tree reports its bounds,
-even though `Shape`'s constructors are pattern-matchable enough that a
-`bounds : Shape -> Rect` would be trivial — it is absent because no consumer
-wants it.
+Of **F7**'s three questions elm-canvas answers only the surface one, and answers
+it by argument: the size is an _input_ to the scene, neither maintained at
+construction nor derived by a scan. Nothing in the `Renderable` tree reports
+layout or ink extent, even though `Shape`'s constructors are pattern-matchable
+enough that a `bounds : Shape -> Rect` would be trivial — it is absent because no
+consumer wants it. `sparkles:ui` sits one notch along the same axis: neither
+`CmdBuffer` nor the display list reports extent, and a caller that needs painted
+bounds folds `op.rect` itself (friction §8).
 
 ## Strengths
 
 - **The contract fits on one screen** — 67 lines of type declarations, against
   `isCanvas` plus `OpKind` plus the interpreter's `__traits(compiles)` sites.
 - **Constructor-shaped payloads.** `Rect Point Float Float` and `Circle Point
-Float` carry what they need and nothing else — [friction §4][friction]'s
-  encoding, demonstrated at small scale.
+Float` carry what they need and nothing else — the variable-width encoding
+  [friction §4][friction] weighs a uniform 64-byte operation against,
+  demonstrated at small scale.
 - **Paint state scopes over a subtree** and merges down groups, instead of being
   stamped onto every primitive; `save`/`restore` makes that scope structural
   rather than conventional.
@@ -397,7 +418,7 @@ Float` carry what they need and nothing else — [friction §4][friction]'s
 - **Sum types did not make illegal states unrepresentable.** The
   setting × drawable cross-product is unconstrained; the excess is
   documented-silent no-ops.
-- **No diffing and no culling** — the scene is re-encoded and re-replayed every
+- **No diffing and no culling** — the scene is rebuilt and replayed every
   view by construction; the author lists "Rendering vía hacky interop rather than
   json encoding?" under performance improvements in [`TODO.md`][todomd].
 - **One backend**, so every question about negotiating with a second one is
@@ -417,28 +438,46 @@ Float` carry what they need and nothing else — [friction §4][friction]'s
 
 ## Bearing on the proposal
 
-1. **F2 survives, but its stated payoff needs a second condition.** Reifying the
-   command stream is right, and a sum type is the right encoding — but elm-canvas
-   reifies fully and gets only _replay_ out of it, because the commands stop being
-   inspectable at the boundary. The property that makes our reification pay is
-   that `DrawOp` values remain **comparable and introspectable in the toolkit's
-   own language** (`RecordingCanvas`, the op-stream parity harness). Whatever
-   `SumType` encoding replaces `DrawOp` must preserve that, not merely be a union.
+1. **F3 survives, but its stated payoff needs a second condition — F12.**
+   Reifying the command stream is right, and a closed sum is the right encoding —
+   but elm-canvas reifies fully and gets only _replay_ out of it, because the
+   commands stop being inspectable at the boundary. What makes `sparkles:ui`'s
+   reification pay is that `DrawOp` values are **comparable and introspectable in
+   the toolkit's own language**: eight plain-data payloads under one `SumType`,
+   dispatched by `match!`, which is what lets `RecordingCanvas` hold two op
+   streams side by side and the parity harness read them. Price any change to the
+   encoding against that property, not against the union alone.
 
-2. **A sum type does not make illegal states unrepresentable — it relocates
-   them.** This contradicts the implicit reading of F2 and of
-   [friction §4][friction]. elm-canvas is a total language with proper unions and
-   still ships a documented set of settings that silently do nothing on four of
-   five drawables. Expect the same in `sparkles:ui`: `Scrollbar(...)` will stop
-   carrying dead words, but "which style inputs apply to which op" is a separate
-   problem the encoding will not solve.
+2. **A sum type relocates illegal states; it does not eliminate them.** This is
+   a caveat about `DrawOp`'s encoding, and it stands as one — against the
+   implicit reading of F3 and of [friction §4][friction]. `DrawOp` is a closed
+   `SumType` over eight payloads and it does what such an encoding is supposed to
+   do: a `PopClip` carries nothing, `Scrollbar`'s fourteen fields are reachable
+   only through the scrollbar arm, and `match!` keeps every walker exhaustive.
+   What it does not do is make "which style input applies to which operation" a
+   typed question. elm-canvas is the evidence — a total language with proper
+   unions that still ships a documented set of settings doing nothing on four of
+   five drawables, `maxWidth` pattern-matching all five `Drawable` constructors
+   and returning four of them untouched, documented as intended behaviour.
+   The toolkit's residue of the same shape is the neutral answer: `DrawOp.slot`
+   reports `Slot.inherit` for the clip pair, the bar accessors answer neutrally
+   on arms that have no bar, and `visualOf` is lossy by design, handing defaults
+   to the combinations no backend reads. The price of eliminating that residue:
+   the seventeen sum-level accessors give way to per-arm ones, so every walker
+   that reads `op.slot`, `op.rect` or `op.visual` grows its own eight-arm
+   `match!` and `translate` loses the one place that knows which arms carry
+   geometry; `Visual` splits into per-primitive types, so the seam stops speaking
+   one `Visual` end to end; and none of it moves the 64-byte budget or improves
+   `RecordingCanvas` comparability, which the uniform accessor surface is what
+   makes practical. So this is a caveat on the encoding, not a complaint about it:
+   the sum buys what it claims to buy, and this is the thing it does not buy.
 
 3. **Scope paint over a subtree instead of stamping it on every op.** elm-canvas's
    single inherited `DrawOp` per `Renderable`, merged down groups by a total
-   lattice join, is the concrete alternative to friction §6's `visual` _and_
-   `slot` on all eighteen fields. It requires the display list to keep grouping
-   structure, which today's flat `DrawOp[]` does not — that is the cost to weigh,
-   and it is a bigger change than swapping the op encoding.
+   lattice join, is the concrete alternative to friction §6's resolved appearance
+   _and_ `Slot` on every operation. It requires the display list to keep grouping
+   structure, which the flat `DrawOp[]` `buildDisplayList` returns does not — that
+   is the cost to weigh, and it is a bigger change than the op encoding itself.
 
 4. **F1's fix must stay synchronous.** elm-canvas and `elm-ui` both lose text
    measurement for the same reason and both replace it with constraint-passing
@@ -447,12 +486,14 @@ Float` carry what they need and nothing else — [friction §4][friction]'s
    backend that may decline — would push cell-grid layout into the same idiom, and
    a cell grid has nowhere to put the constraint.
 
-5. **F7 is confirmed from the other end.** The extent is an argument to
-   `toHtml`, not a query on the scene. Nothing in a scene of pattern-matchable
-   shapes reports its bounds, though such a function would be trivial to write —
-   because only an offscreen consumer wants it. Do not make the display list
-   self-describing for `skia-canvas-render.d`'s sake; give the offscreen case its
-   own layout query.
+5. **F7 read from the far end of its axis.** The extent is an argument to
+   `toHtml`, neither maintained on the scene nor derived from it. Nothing in a
+   scene of pattern-matchable shapes reports its bounds, though such a function
+   would be trivial to write — because only an offscreen consumer wants it. That
+   is a reason to leave `DrawOp` alone: `skia-canvas-render.d` folding `op.rect`
+   is the derive-by-scan half of F7's axis, and the gap friction §8 records is
+   better closed by a layout query for that consumer than by making every
+   operation self-describing.
 
 6. **Q2 is not a question a single-backend seam has to answer.** elm-canvas states
    its contract as an exposing list and stops, which works because the only backend

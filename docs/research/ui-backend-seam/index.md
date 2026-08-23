@@ -46,16 +46,16 @@ Every question is answered across all 38 subjects in
 [`comparison.md`](./comparison.md), which groups the subjects by **distinct
 answer** rather than listing them — the size of each group is itself evidence.
 
-| #   | Question                                                                                               | Friction entry it tests              | Verdict in `comparison.md`              |
-| --- | ------------------------------------------------------------------------------------------------------ | ------------------------------------ | --------------------------------------- |
-| Q1  | What unit does text measurement return, and can a backend answer in its own unit?                      | §1 `measure` is denominated in cells | Confirmed, and enlarged (`F1`, `F2`)    |
-| Q2  | Is the backend contract stated in one place, or discovered by the caller probing for optional methods? | §2 five methods, eight kinds         | Confirmed, reframed (`F5`, `F11`)       |
-| Q3  | Do semantic widgets (a scrollbar, a focus ring) reach the backend as themselves, or as primitives?     | §3 `scrollbar` in the drawing seam   | Half-refuted, half-confirmed (`F4`)     |
-| Q4  | Is a draw command a sum type, or a tag plus fields that are dead for most tags?                        | §4 `DrawOp`'s eighteen fields        | Confirmed; prescription wrong (`F3`)    |
-| Q5  | How is sub-unit placement expressed when the toolkit's unit is coarser than the device's?              | §5 `RuleEdge` as a compass           | Reframed, not refuted (`F6`)            |
-| Q6  | Does a command carry resolved appearance, semantic role, or both — and who re-resolves?                | §6 `visual` _and_ `slot`             | Confirmed, with a fork (`F9`)           |
-| Q7  | Who owns a command's payload (text, images), and can a command outlive the frame that made it?         | §7 borrowed `DrawOp.text`            | Confirmed, unanimous 38/38 (`F8`)       |
-| Q8  | Can a backend ask the scene its extent before allocating a surface?                                    | §8 no extent query                   | Confirmed; old synthesis refuted (`F7`) |
+| #   | Question                                                                                                             | Friction entry it tests                                          | Verdict in `comparison.md`                                |
+| --- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
+| Q1  | What unit does text measurement return, and can a backend answer in its own unit?                                    | §1 `measure` is denominated in cells                             | Confirmed, and enlarged (`F1`, `F2`)                      |
+| Q2  | Is the backend contract stated in one place, or discovered by the caller probing for optional methods?               | §2 five methods, eight kinds                                     | Confirmed, reframed (`F5`, `F11`)                         |
+| Q3  | Do semantic widgets (a scrollbar, a focus ring) reach the backend as themselves, or as primitives?                   | §3 `scrollbar` is a widget concept in the drawing seam           | Half-refuted, half-confirmed (`F4`)                       |
+| Q4  | How is a draw command encoded, and what does the encoding charge the operations that do not need the widest payload? | §4 the encoding is neither `@safe` nor variable-width            | Reification affirmed; the encoding is a live trade (`F3`) |
+| Q5  | How is sub-unit placement expressed when the toolkit's unit is coarser than the device's?                            | §5 sub-cell placement as a compass direction                     | Reframed, not refuted (`F6`)                              |
+| Q6  | Does a command carry resolved appearance, semantic role, or both — and who re-resolves?                              | §6 a resolved appearance and a semantic role on every drawing op | Confirmed, with a fork (`F9`)                             |
+| Q7  | Who owns a command's payload (text, images), and can a command outlive the frame that made it?                       | §7 `DrawOp.text` is borrowed, and the borrow is not expressible  | Confirmed, unanimous 38/38 (`F8`)                         |
+| Q8  | Can a backend ask the scene its extent before allocating a surface?                                                  | §8 no extent query                                               | Confirmed, and split three ways (`F7`)                    |
 
 > [!NOTE]
 > The verdict column summarises; it does not substitute. Each verdict turns on a
@@ -169,9 +169,23 @@ algebra that lowers to `SpanOp` rows, and [imtui](./imtui.md) and
 [elm-canvas](./elm-canvas.md) each reify and then cash nothing.
 [wgpu](./wgpu.md) has no 2-D command vocabulary and is not placed here.
 
-**The three largest reifying subjects all chose variable-stride per-op structs,
-not a sum type** — which is why [`comparison.md`](./comparison.md)'s `F3` accepts
-friction §4's diagnosis and rejects its prescription.
+`sparkles:ui` sits in the first row: `DrawOp` is a closed sum over eight
+per-kind payloads, and its size budget is governed by the widest of them.
+**The three largest reifying subjects sit in the second** — Flutter, Chromium
+and Skia each encode a per-op struct at variable stride, so an operation is
+charged for its own fields and nothing else.
+
+[`comparison.md`](./comparison.md)'s `F3` holds the two halves of the question
+apart. Reifying the stream at all is what buys recording, replay, culling and
+comparison, and every subject in the first four rows is evidence for it; the
+survey affirms that much. How the stream is encoded is the part that stays
+open: a closed sum eliminates illegal field combinations and leaves each
+operation an independently comparable value, while variable stride prices each
+operation at its own width. Four subjects — [diagrams](./haskell-diagrams.md),
+[SDL](./sdl-renderer.md), [Masonry/imaging](./parley-xilem.md) and
+[elm-canvas](./elm-canvas.md) — press a third axis under the same heading: how
+many arms a sum should carry, and what a sum guarantees when an illegal state
+can still be spelled inside one of them.
 
 ### By how capability is declared (`Q2`)
 
@@ -195,8 +209,7 @@ friction §4's diagnosis and rejects its prescription.
 
 ### By who degrades (`Q3`, and `F4`)
 
-The old four-subject synthesis named two camps. There are seven, plus one
-project where degradation escaped the seam altogether.
+Seven camps, plus one project where degradation escaped the seam altogether.
 
 | Where the lowering lives                                           | Subjects                                                                                                                                                                                                                                                  |
 | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -229,10 +242,9 @@ stream declares its own needs and nobody probes anybody — and
 | **Only the surface declares it**                           | [Qt `QPaintEngine`](./qt-qpaintengine.md), [Notcurses](./notcurses.md), [SDL](./sdl-renderer.md), [Java2D](./java2d.md), [Iced](./iced.md), [Gloss](./gloss-picture.md), [imtui](./imtui.md), [egui](./egui.md), [elm-ui](./elm-ui.md), [piet](./piet.md) |
 
 [Slint](./slint.md), [Qt Quick](./qt-quick-scenegraph.md) and [wgpu](./wgpu.md)
-give no clear answer and are not placed. **Twelve subjects publish scene extent**,
-which is what refutes the old synthesis's `F7`; the live axis is
-maintained-at-construction versus derived-by-scan, and nobody who publishes it
-derives it by scanning.
+give no clear answer and are not placed. **Twelve subjects publish scene extent**, and
+the live axis is maintained-at-construction versus derived-by-scan: nobody who
+publishes it derives it by scanning.
 
 ---
 
@@ -266,8 +278,9 @@ decision; the rest are corroboration. Read them in this order, against
    optional-capability contract expressed in language constructs, and the
    unforgettable floor.
 5. [Chromium `cc::PaintOpBuffer`](./chromium-paintop.md) and
-   [Flutter](./flutter-engine.md) — what `DrawOp` should be re-encoded as, and
-   how a stream stays comparable while every op pays only for its own fields.
+   [Flutter](./flutter-engine.md) — how a reified stream stays comparable and
+   replayable while each operation pays only for its own fields, read at the two
+   scales where that trade bites hardest.
 6. [GSK](./gtk4-gsk.md) — the admission test for a semantic operation, and the
    node kind that carries its own fallback.
 7. [libvaxis](./libvaxis.md) — the cheapest answers in the survey to both §5
@@ -332,8 +345,6 @@ their reasons.
 1. **[`comparison.md`](./comparison.md)** — **done.** The capstone, rewritten
    against all 38 subjects. Findings `F1`–`F12`, a verdict per friction entry, a
    partial answer to the open question below, and ten ordered recommendations.
-   The numbering does not correspond to the old four-subject `F1`–`F7`; three of
-   those seven did not survive.
 2. **[`concepts.md`](./concepts.md)** — **done.** The shared vocabulary, because
    the field does not agree on terms: "display list", "scene", "render node" and
    "command buffer" name at least three different artifacts each across this
@@ -348,8 +359,7 @@ their reasons.
 
 Recorded from [`canvas-seam-friction.md`][friction]'s "what did not cause
 friction" section so the proposal does not spend its budget re-litigating things
-that work. All four survived the 38-subject evidence; three were strengthened
-and one was sharpened.
+that work. All four are carried by the evidence across the 38 subjects.
 
 - **Structural typing over an interface.** Attribute inference is load-bearing:
   a `@system` GPU canvas and a `@safe @nogc` recorder satisfy one seam with

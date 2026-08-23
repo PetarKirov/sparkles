@@ -281,7 +281,7 @@ let cap_for_fd =
 
 — [`src-unix/notty_unix.ml:20`][capforfd]
 
-**Bearing on friction §2 and F4:** this is a third model beside Qt's declared
+**Bearing on friction §2 and F5:** this is a third model beside Qt's declared
 feature set and our probing — a **total contract with null implementations**. It
 is strictly cheaper than either, and it is affordable exactly because every
 primitive in the seam degrades to nothing without breaking the frame. It does not
@@ -305,26 +305,39 @@ vocabulary: `<|>`, `<->`, `</>`, crop, pad, snap and `tabulate` are what
 [Nottui](../tui-libraries/nottui.md) builds boxes and tables from, and none of it
 reaches the backend.
 
-**Bearing on F3:** F3 recast the question as "who degrades". Notty's answer is
-**nobody, because nothing needs to** — the seam sits below the level at which
-fidelity is a question. A genuine option, bought by having exactly one class of
-target; `sparkles:ui` cannot buy it while a cell grid and Skia share a seam,
-which sharpens the umbrella's open question rather than answering it.
+**Bearing on F4:** F4 recasts the question as _where the lowering lives_, and
+enumerates "nobody" as one of the six answers. Notty is that answer's clearest
+witness: nothing is lowered because nothing above a styled cell run is ever
+named, so the seam sits below the level at which fidelity is a question. It is a
+genuine option, bought by having exactly one class of target; `sparkles:ui`
+cannot buy it while a cell grid and Skia share a seam, which sharpens the
+umbrella's open question rather than answering it.
 
 ## Q4 — command shape
 
 **Two sum types, at two levels, and only one of them is durable.** `I.t` is an
 8-constructor variant; `Operation.t` is a 3-constructor variant. Neither is a tag
-plus fields that are dead for most tags — the exact encoding `sparkles.input.events`
-rejected and [friction §4](../../specs/ui-skia/canvas-seam-friction.md) records
-`DrawOp` as using.
+plus fields that are dead for most tags, which is the same encoding decision
+`sparkles.input.events` and `DrawOp` both make — a closed sum over per-kind
+payloads, with each arm carrying only what its own case needs.
 
-This confirms F2's prescription (a sum type, not a tagged struct) with a second
-witness, and **complicates F2's framing**. F2 says "reifying the command stream is
-ours to keep". Notty reifies _above_ it: the image is what is retained, compared,
-cached and passed between layers, while the flat op stream is derived per row,
-per viewport, and discarded. The recordable, comparable artefact —
-`RecordingCanvas`'s whole purpose — is available on the _scene_:
+That makes Notty a second witness for the side of F3's live trade `sparkles:ui`
+sits on: a closed sum eliminates the illegal combinations and keeps the values
+comparable. What Notty does not pay is the cost
+[friction §4](../../specs/ui-skia/canvas-seam-friction.md) records against a sum
+held **by value**. OCaml's constructors are boxed blocks sized per arm, so
+`Skip` is a two-field block and `Text` a three-field one; a `SumType` stored
+inline in a flat `DrawOp[]` is as wide as its widest arm, so a `PopClip` that
+carries nothing costs what a text run costs. Variable stride is free to a
+language that already indirects every arm, and is the whole trade for one that
+does not.
+
+Notty also **complicates F3's framing**. F3 holds that reifying the command
+stream is what buys recording, replay, culling and comparison. Notty reifies
+_above_ it: the image is what is retained, compared, cached and passed between
+layers, while the flat op stream is derived per row, per viewport, and discarded.
+The recordable, comparable artefact — `RecordingCanvas`'s whole purpose — is
+available on the _scene_:
 
 > `equal t1 t2` is `true` iff `t1` and `t2` are constructed by the same term.
 >
@@ -392,19 +405,25 @@ its own documented monoid:
 [`src/notty.ml:219`][attr-cat], with `empty` short-circuited by physical
 equality.
 
-For [friction §6](../../specs/ui-skia/canvas-seam-friction.md): `sparkles:ui`
-carries both `visual` and `slot` on every op because one backend re-resolves.
-Notty carries one and gets _cascading_ anyway, because "unset falls through to
-the outer attribute" is a law on the value type rather than a lookup at paint
-time. The one place a role could still be reinterpreted is `Cap.sgr`, the single
-function turning an attribute into bytes — `dumb` sets it to `no1` and every
-colour evaporates ([`notty.ml:569`][cap-dumb]).
+For [friction §6](../../specs/ui-skia/canvas-seam-friction.md): where Notty
+puts one value on the constructor, `sparkles:ui` writes two into most of its
+arms — the resolved fields a primitive paints from, and, on six of the eight
+payloads, the `Slot` those fields were resolved out of — because one interpreter
+re-resolves the role into class names while the pixel backends read the resolved
+half. Notty carries the resolved half alone and gets _cascading_ anyway,
+because "unset falls through to the outer attribute" is a law on the value type
+rather than a lookup at paint time — a seventh cheap encoding beside the ones F9
+enumerates, and the only one that buys inheritance without a role. The one
+place a role could still be reinterpreted is `Cap.sgr`, the single function
+turning an attribute into bytes — `dumb` sets it to `no1` and every colour
+evaporates ([`notty.ml:569`][cap-dumb]).
 
-The honest limit: Notty's attributes are fully resolved colours, so an HTML
-backend could not recover a class name from one. Like Slint, it has no
-re-resolving consumer and pays for one representation, not two. What it shows is
-that a _composable_ resolved type absorbs some of the work a semantic slot
-carries.
+The honest limit is the direction F9 names: Notty's attributes are fully
+resolved colours, so an HTML backend could not recover a class name from one.
+Like Slint, it has no re-resolving consumer and pays for one representation, not
+two. What it shows is that a _composable_ resolved type absorbs some of the work
+a semantic slot carries — not all of it, and not the part `sparkles:ui` keeps
+`Slot` for.
 
 ## Q7 — payload ownership
 
@@ -430,11 +449,17 @@ Two mechanisms are directly transferable:
    therefore total, always available, and composes — the opposite of an optional
    `pushClip`/`popClip` pair discovered by introspection.
 
-**Bearing on friction §7 and F6:** F6 said share, do not borrow. Notty is the
-strongest confirmation, and adds _why_ our borrow hurts: `DrawOp.text` is
-borrowed because the display list is a per-frame artefact. Where the scene is the
-durable value, the payload's lifetime is the scene's and the question of
-outliving the frame disappears rather than being managed.
+**Bearing on friction §7 and F8:** F8 finds that every one of thirty-eight
+subjects copies, refcounts or arena-allocates a payload rather than borrowing it
+across a frame. `sparkles:ui` is on that list by the third mechanism —
+`CmdBuffer.textRun` copies the run into a frame arena, which is what makes a
+`scope` source safe to draw from — and Notty is the survey's purest case of the
+second. What Notty adds is _where the remaining cost sits_. `DrawOp.text` is a
+slice of arena bytes, valid while the buffer that built it is alive and unreset,
+so the rule is stated on the type and the buffer is move-only to keep it true.
+Where the scene is the durable value, the payload's lifetime is the scene's, and
+the retain-and-transfer question `UI-O4` holds open — recording on one thread and
+submitting on another — does not arise to be answered.
 
 ## Q8 — can a backend ask the scene its extent?
 
@@ -459,20 +484,22 @@ at application level: a line that stretches end-to-end is
 `I.(i1 <|> void (w - width i1 - width i2) 1 <|> i2)`
 ([`src/notty.mli:833`][mli-stretch]).
 
-**This contradicts F7.** F7 concluded that "extent belongs to the surface, not the
-scene", from Qt's paint device and the Notcurses plane declaring their own size
-while only egui derives extent from primitives. Notty does **both**: the surface
-still supplies the viewport (`to_buffer`'s `(w, h)`, and
+**This is F7's three questions, answered separately in one library.** Surface
+extent comes from outside: `to_buffer` takes the viewport `(w, h)`, and
 `Notty_unix.output_image_size` hands the application the terminal size so it can
-build an image to fit, [`notty_unix.mli:160`][mli-unix-size]) — and the scene
-still answers its own extent in constant time, because each smart constructor
-maintains it incrementally.
+build an image to fit ([`notty_unix.mli:160`][mli-unix-size]). Layout and ink
+extent coincide in a cell algebra with no overhang, and the scene answers them
+itself, in constant time, because each smart constructor maintains `dim`
+incrementally. Notty is therefore the survey's sharpest case for F7's axis —
+**maintained-at-construction versus derived-by-scan** — and it lands on the
+maintained side without giving the surface up.
 
-The distinction F7 missed is **derived-by-scan versus maintained-at-construction**.
-`skia-canvas-render.d` scanning every op is expensive and fragile precisely
-because `DrawOp[]` is a flat array built by an interpreter that never computed a
-bound. A builder that accumulated a bounding rect as it appended would answer in
-O(1), with no new backend query at all.
+`sparkles:ui` sits on the other side of that axis. `skia-canvas-render.d` folds
+every operation's rect because nothing on `CmdBuffer`, the display list or the
+arena reports the extent of a built stream, and the scan is fragile precisely
+because `DrawOp[]` is a flat array whose builder never computed a bound. A
+builder that accumulated a bounding rect as it appended would answer in O(1),
+with no new backend query at all.
 
 ## Strengths
 
@@ -502,7 +529,7 @@ O(1), with no new backend query at all.
 - **Width is a build-time constant** — Unicode 13 baked in; a terminal on another
   version disagrees and nothing in the design can detect it.
 - **No capability negotiation.** `Cap.dumb` is the entire fallback ladder; there
-  is no way to ask for something and be told no (F4's refusable degrade).
+  is no way to ask for something and be told no (F5's refusable degrade).
 - **The laws are unverified** — no property tests at this revision; the monoid is
   an assertion in a comment.
 
@@ -521,32 +548,36 @@ O(1), with no new backend query at all.
 
 ## Bearing on the proposal
 
-1. **Extent should be maintained, not queried or scanned — F7 is too strong.**
-   Notty answers Q8 in O(1) because every composite caches its dimensions at
-   construction. `buildDisplayList` can accumulate a bounding `Rect` as it appends
-   and expose it on the display list, closing
+1. **Extent should be maintained, not queried or scanned.** Notty answers Q8 in
+   O(1) because every composite caches its dimensions at construction, which puts
+   it on the maintained side of F7's axis while the surface still supplies the
+   viewport. `buildDisplayList` can accumulate a bounding `Rect` as it appends and
+   expose it on the display list, closing
    [friction §8](../../specs/ui-skia/canvas-seam-friction.md) with no new backend
-   method and no scan. This **contradicts** F7's "extent belongs to the surface":
-   the real axis is derived-by-scan versus maintained-at-construction, and F7 only
-   saw the first.
-2. **State laws for whatever replaces `DrawOp`.** The transferable part is not
-   OCaml variants — F2 already prescribes a sum type — but that a documented
+   method and no scan — and the display list's own layout extent is exactly the
+   question a backend allocating an offscreen surface is asking.
+2. **State laws for the op stream.** The transferable part is not OCaml
+   variants — `DrawOp` is already the closed sum F3 weighs — but that a documented
    identity and associativity let the _builder_ re-associate, batch and elide
    neutral elements without asking anyone. `sparkles:ui` has an op-stream parity
-   harness and no stated algebra for the stream it compares.
+   harness and no stated algebra for the stream it compares, which is the gap F11
+   names: the contract is stated in one place or the artifacts disagree.
 3. **Compute a run's advance once, at display-list construction.** Q1 generalises
-   past F1: moving `measure` off the canvas is necessary, but the stronger move is
-   making measurement a constructor postcondition rather than a query, so no two
-   backends can answer differently. `DrawOp.textRun` already stores the advance in
-   `rect.width`; the gap is that `isCanvas.measure` remains a second,
-   independently answerable source of truth.
+   past F1 and settles one of F2's six decisions: moving `measure` off the canvas
+   is necessary, but the stronger move is making measurement a constructor
+   postcondition rather than a query, so no two backends can answer differently. A
+   `TextRun`'s `rect.width` already carries the advance in cells; the gap is that
+   `measure` remains a second, independently answerable source of truth on every
+   conforming canvas.
 4. **A total backend record with no-op fields is a third option for §2** — viable
    only for a seam narrow enough that every primitive degrades to nothing.
-   `scrollbar` disqualifies ours, which argues that [F3](./comparison.md)'s
-   "decide where degradation lives" is the prior question, not a parallel one.
+   `scrollbar` disqualifies ours, which argues that [F4](./comparison.md)'s
+   "decide where the lowering lives" is the prior question, not a parallel one.
 5. **Content-keyed memoization of measurement** (`memo ~eq:String.equal`) is a
-   cheap, proven answer under F6, distinct from Slint's item-keyed backend cache.
-   Segmentation is our expensive step too (`cellsOf`).
+   cheap, proven answer within F8's copy-or-arena discipline, distinct from
+   Slint's item-keyed backend cache: the frame arena copies each run and dedupes
+   nothing, so a repeated run pays segmentation every frame. Segmentation is our
+   expensive step too (`cellsOf`).
 6. **Reject the no-sub-cell option knowingly.** A cell toolkit can refuse to
    address below the cell and lose nothing, so `RuleEdge`'s cost is attributable
    to Skia sharing the seam rather than to cell geometry — evidence for the

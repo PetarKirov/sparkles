@@ -5,10 +5,10 @@ Pinned at [`817caae3`][rev].
 
 GSK ("the GTK Scene Kit") is the survey's clearest case of a **reified,
 semantic, self-describing scene** consumed by four independent renderers. It is
-the subject that most directly contradicts the current synthesis: where
-[`comparison.md`][comparison]'s **F7** concluded that extent belongs to the
-surface rather than the scene, GSK puts a `bounds` rectangle on the base class
-of every node and builds three separate fallback paths on top of it.
+also the survey's strongest evidence for [`comparison.md`][comparison]'s **F7**,
+which finds that most subjects answer at least one extent question from the
+scene: GSK puts a `bounds` rectangle on the base class of every node, maintains
+it at construction, and builds three separate fallback paths on top of it.
 
 | Field                | Value                                                                                     |
 | -------------------- | ----------------------------------------------------------------------------------------- |
@@ -152,8 +152,9 @@ agree on a node's bounds** regardless of how any of them will rasterize it.
 
 That is a sharper statement of **F1** than any prior subject supplies. It is not
 merely that measurement lives above the painter; it is that a scene shared by
-disagreeing rasterizers requires a measurement _no rasterizer influences_. Our
-`isCanvas.measure` fails on both counts: it is on the painter, and its answer
+disagreeing rasterizers requires a measurement _no rasterizer influences_.
+`Size measure(const(char)[])` is one of the five methods `isCanvas` requires,
+and it fails on both counts: it sits on the painter, and its answer
 (`cellsOf(text)`) is a property of one target's grid.
 
 The unit is device-independent logical pixels, arrived at from Pango units
@@ -166,8 +167,11 @@ Stated in one place, but that place is an **enum of node kinds**, not a
 capability list. `GskRenderNodeType` ([`gskenums.h`][enums] L159–L197) is the
 whole vocabulary: 37 kinds, publicly documented, versioned with `Since:`
 annotations, and — crucially — the same enum a backend switches over. Compare
-our `OpKind`'s eight members plus three primitives discovered by
-`__traits(compiles)` at scattered call sites ([friction §2][friction]).
+`isCanvas`'s five required methods, the eight `DrawOp` arms behind them
+(`OpKind` is derived from the sum by an eight-arm `match!`, never stored), and
+four further primitives — `rule`, `scrollbar`, `pushClip`, `popClip` — each
+discovered by `__traits(compiles)` at the call site that wants it
+([friction §2][friction]).
 
 **There is no capability query.** `GskRendererClass` carries exactly one
 capability boolean, `supports_offload`, and it is about Wayland subsurfaces, not
@@ -212,10 +216,10 @@ ladder**, and the layering is the interesting part:
    group "Fallbacks (=> leaf for now" (L299).
 
 > [!IMPORTANT]
-> This is a genuinely different answer from the two **F4** identified. Qt
-> emulates in the _framework_ and hands the engine an image; Slint degrades in
-> the _backend_. GSK degrades in the **node kind** — a third location, and the
-> only one where adding a node kind cannot break an existing backend, because
+> This is the subject behind the **node kind** entry in **F4**'s list of places
+> a lowering can live. Qt emulates in the _framework_ and hands the engine an
+> image; Slint degrades in the _backend_. GSK degrades in the **node kind** —
+> the one location where adding a kind cannot break an existing backend, because
 > the fallback ships with the kind rather than with either the framework or the
 > renderer.
 
@@ -241,18 +245,20 @@ resolves widget semantics into CSS boxes _above_ the seam:
 turns a resolved CSS style into `gtk_snapshot_add_border` calls. The layering is
 explicit and one-directional — widget → CSS style → render node → renderer.
 
-This is the useful correction to **F3**. Slint proved that semantic operations
-are legitimate; GSK adds _where to stop_. The test GSK applies is not "is this
-meaningful to a user" but **"do the backends disagree about how to draw it?"** A
-border is a node because a GPU can do it in one shader pass and Cairo cannot; a
-scrollbar is not a node because every backend would draw one identically once the
-CSS is resolved.
+This is the sharpest available statement of **F4**'s second half. F4 holds that
+semantic operations are legitimate and that derived geometry in the seam is not;
+GSK supplies the test for _where to stop_. That test is not "is this meaningful
+to a user" but **"do the backends disagree about how to draw it?"** A border is a
+node because a GPU can do it in one shader pass and Cairo cannot; a scrollbar is
+not a node because every backend would draw one identically once the CSS is
+resolved.
 
 By that test, `sparkles:ui`'s `scrollbar` op is defensible only because a _cell_
-backend genuinely draws a scrollbar differently — but its eight `DrawOp` fields
-(`barContent`, `barViewport`, `barOffset`, `expandPercent`, `barTrackLit`,
-`barTrackColor`, `barTrackGlyph`, `barThumbGlyph`) push widget policy
-(`barThumbGlyph = '█'`) into the seam in a way GSK never does. GSK's semantic
+backend genuinely draws a scrollbar differently — but the `Scrollbar` payload's
+fourteen fields run from content extent, viewport extent and offset through
+track colour, alpha and a lit-track flag to a rail-expansion percentage, and
+they end in two fallback glyphs. `trackGlyph` and `thumbGlyph` are widget policy
+riding in the drawing vocabulary, which is what GSK never does: its semantic
 nodes carry _geometry and colour_, never a fallback glyph.
 
 One node exists purely to carry meaning with no rendering effect at all:
@@ -280,10 +286,10 @@ The extensibility matters: twelve of the 37 kinds carry a post-4.0 `Since:`
 marker (4.10 through 4.22, [`gskenums.h`][enums] L61–L157), and each addition
 cost existing backends nothing — the new kind arrives with its own `draw`, and
 every GPU backend's `NULL` table entry degrades it automatically. A closed sum
-type would have made every backend non-exhaustive on each addition. **This
-complicates F2**: reifying the stream is right, but a `SumType` is only one of
-the shapes that buys the properties we want, and it is the shape with the worst
-extension story.
+type makes every backend non-exhaustive on each addition. **This is a third
+entry in F3's live trade**: reifying the stream is right, and the closed sum
+that `DrawOp` is built on buys real properties, but an open per-kind hierarchy
+buys them too, and it is the shape with the best extension story.
 
 The reification is real enough to be a **file format**. `gsk_render_node_serialize`
 / `gsk_render_node_deserialize` ([`gskrendernode.h`][rendernode-h] L118, L124)
@@ -315,8 +321,9 @@ Per-renderer known failures are an explicit data table, `compare_xfails`
 ## Q5 — sub-unit placement
 
 GSK's coordinates are continuous `float`s throughout (`graphene_rect_t`,
-`GskRoundedRect`), which by **F5**'s reasoning should dissolve the problem. **It
-does not.** A per-edge pixel-snapping policy was added to the seam, annotated
+`GskRoundedRect`), which a naive reading would expect to dissolve the problem.
+**It does not** — and **F6** is the general statement of why. A per-edge
+pixel-snapping policy was added to the seam, annotated
 `Since: 4.24` (the pinned tree is `4.23.1`, so this is pre-release API)
 ([`gskrectsnap.h`][rectsnap], `GskSnapDirection` at [`gskenums.h`][enums]
 L631–L651):
@@ -341,12 +348,12 @@ useful to avoid seams but can lead to overlap with adjacent content"; shrink
 makes the rect "fit into the allocated area"; round is for rects "placed next to
 each other at the same coordinate … without any seams".
 
-This is the survey's most important amendment to **F5**. Continuous coordinates
-do not remove the sub-device-unit problem; they _relocate_ it, from "where do I
-put this hairline" to "which way does this edge round when the renderer lands it
-on a device grid". And GSK's answer has exactly the shape F5 recommends for
-`RuleEdge`: the scene **names an intent per edge**, and the renderer resolves it
-at its own scale. `GSK_SNAP_GROW` and a `RuleEdge` are the same species of
+This is the survey's primary evidence for **F6**. Continuous coordinates do not
+remove the sub-device-unit problem; they _relocate_ it, from "where do I put this
+hairline" to "which way does this edge round when the renderer lands it on a
+device grid". And GSK's answer has the shape F6 recommends: the scene **names a
+fidelity per edge**, and the renderer resolves it against a device unit only the
+renderer knows. `GSK_SNAP_GROW` and a `RuleEdge` are the same species of
 declaration — a compass with a policy attached instead of a position.
 
 > [!WARNING]
@@ -378,10 +385,15 @@ to map the roughly fifteen kinds whose resolved form it can express
 `_BORDER`, `_INSET_SHADOW`, `_LINEAR_GRADIENT`, `_ROUNDED_CLIP`, …) and
 rasterize the rest.
 
-That is evidence against carrying both `visual` and `slot` on every op
-([friction §6][friction]): a real re-resolving backend was served adequately by
-resolved values plus semantic _kinds_, without a parallel role field. Our `slot`
-is doing work the _op kind_ could do, if the kinds were finer-grained.
+That is evidence against carrying a semantic role beside a resolved appearance
+([friction §6][friction]) — the hedge **F9** finds nobody else making. Each
+`DrawOp` payload stores the resolved fields its own primitive paints from: an
+`Ink` on the four content primitives, and colours plus a `const(BoxChrome)*` on a
+fill, out of which `visualOf` reconstructs the `Visual` the seam speaks. Six of
+the eight payloads then store a `Slot` as well. Broadway is a real re-resolving
+backend, and resolved values plus semantic _kinds_ served it adequately without a
+parallel role field. `Slot` is doing work the _op kind_ could do, if the kinds
+were finer-grained.
 
 ## Q7 — payload ownership
 
@@ -396,21 +408,25 @@ retain a caller slice: it `g_object_ref`s the `PangoFont` and its font map, and
 filtering `PANGO_GLYPH_EMPTY` ([`gsktextnode.c`][textnode-c] L251–L280). The
 node is thereafter self-sufficient.
 
-That ownership is what makes the GPU fallback path legal at all:
-`gsk_gpu_node_processor_add_cairo_node` passes `gsk_render_node_ref (node)` into
-an upload op with `gsk_render_node_unref` as its destroy-notify
-([`gskgpunodeprocessor.c`][gpu-processor] L728–L732) — the node deliberately
-**outlives the frame walk** so the rasterization can happen later. With a
-borrowed `DrawOp.text`, that entire pattern is unavailable, which is precisely
-the record-on-one-thread / submit-on-another problem [friction §7][friction]
-anticipates.
+The copy is not the difference. `CmdBuffer.textRun` copies into a frame arena
+too, which is what makes a `scope` source safe to draw from. The difference is
+the _retention boundary_: a node's refcount is atomic and unbounded in time,
+while a `DrawOp` is valid while the buffer that built it is alive and unreset.
+That boundary is what makes the GPU fallback path legal for GSK and closed to
+us: `gsk_gpu_node_processor_add_cairo_node` passes `gsk_render_node_ref
+(node)` into an upload op with `gsk_render_node_unref` as its destroy-notify
+([`gskgpunodeprocessor.c`][gpu-processor] L728–L732), so the node deliberately
+**outlives the frame walk** and the rasterization happens later. That is
+precisely the record-on-one-thread / submit-on-another problem
+[friction §7][friction] anticipates, and the question `UI-O4` leaves open.
 
-**F6** stands and is strengthened: refcounting, not interning, and the
-refcount is atomic so deferred work is expressible.
+**F8** stands, at its strongest setting: refcounting rather than an arena, with
+an atomic count, so deferred work is expressible.
 
 ## Q8 — extent query
 
-**GSK answers Q8 affirmatively, at three levels, and this contradicts F7.**
+**GSK answers Q8 affirmatively, at three levels, and it is F7's cleanest case of
+an extent maintained at construction rather than derived by a scan.**
 
 `graphene_rect_t bounds` is a field of the _base_ node struct, populated at
 construction by every kind, and publicly readable
@@ -421,7 +437,7 @@ children at query time; it is computed once, bottom-up, when the node is built.
 
 Three consumers depend on it:
 
-1. **The offscreen-sizing case F7 called "narrow".**
+1. **Surface extent, the first of F7's three questions.**
    `gsk_renderer_render_texture`'s `viewport` parameter is documented
    "(nullable): the section to draw or `NULL` to use @root's bounds", and the
    implementation does exactly that ([`gskrenderer.c`][renderer-c] L377–L417):
@@ -447,9 +463,9 @@ Three consumers depend on it:
    ([`gskgpunodeprocessor.c`][gpu-processor] L3827) — whole-subtree
    rejection before any dispatch.
 
-F7 argued that "a backend allocating a surface generally knows the size because
-it chose it." That is true for a window and false for everything else GSK does
-with bounds. The correct generalisation is narrower and more useful: **a
+A backend that allocates a window knows its size because it chose it, and that
+is the one case where the scene need not answer. It is false for everything else
+GSK does with bounds, and the generalisation GSK adds to F7 is this: **a
 self-describing extent is what makes partial backend support cheap.** Without
 it, "rasterize this subtree I do not understand" has no surface to rasterize
 into.
@@ -503,33 +519,39 @@ into.
 
 ## Bearing on the proposal
 
-1. **Q8 / [friction §8][friction]: put an extent on the op — F7 is wrong as
-   stated.** GSK carries `bounds` on the base of every node and gets offscreen
-   sizing, subtree culling and fallback rasterization from that one field.
+1. **Q8 / [friction §8][friction]: put an extent on the op.** GSK carries
+   `bounds` on the base of every node and gets offscreen sizing, subtree culling
+   and fallback rasterization out of that one field.
    `gsk_renderer_render_texture (…, viewport: NULL)` is precisely
-   `skia-canvas-render.d`'s scan, replaced by a lookup. Report this as a
-   **contradiction of F7** in the synthesis, not a refinement.
+   `skia-canvas-render.d`'s scan, replaced by a lookup. Nothing on `CmdBuffer`,
+   the display list or the arena answers the question, so a caller that needs
+   painted bounds folds `op.rect` itself. Report GSK as F7's
+   maintained-at-construction pole.
 
-2. **Q4 / [friction §4][friction]: the extension story should decide the
-   encoding, not just the dead fields — F2 is incomplete.** GSK gets every
-   property `RecordingCanvas` needs (values, comparable, serializable,
-   replayable) from an _open_ hierarchy, and has added twelve kinds without
-   breaking a backend. If `DrawOp` becomes a closed `SumType`, price the fact
-   that each new kind then makes every backend non-exhaustive.
+2. **Q4 / [friction §4][friction]: let the extension story weigh in F3's
+   trade.** GSK gets every property `RecordingCanvas` needs (values, comparable,
+   serializable, replayable) from an _open_ hierarchy, and has added twelve kinds
+   without breaking a backend. `DrawOp` is a closed sum of eight payloads, so a
+   ninth arm makes every walker and every accessor non-exhaustive at once. Price
+   that against what the closed sum buys: illegal combinations cannot be
+   spelled, and the operations stay comparable values.
 
-3. **Q2 / [friction §2][friction]: move the fallback onto the op kind.** GSK's
-   third location for degradation — neither framework (Qt) nor backend (Slint)
-   but **the kind itself** — is the one that makes optional support cheap.
-   `ruleEndpoints` and `scrollbarCell` in [`canvas.d`][canvas] are already
-   exactly this pattern: a kind-owned degradation a backend may call. Finish the
-   job: make _every_ optional op carry its own fallback, and let the concept say
-   so, instead of scattering `__traits(compiles)`.
+3. **Q2 / [friction §2][friction]: move the fallback onto the op kind.** F4's
+   node-kind location for degradation — neither framework (Qt) nor backend
+   (Slint) but **the kind itself** — is the one that makes optional support
+   cheap. `ruleEndpoints` and `scrollbarCell` in [`canvas.d`][canvas] are exactly
+   that pattern, and each of the four optional primitives has a degradation
+   stated for it: `rule` falls back to `ruleEndpoints` plus a cell-aligned
+   `line`, `scrollbar` to `paintScrollbarCells` glyph-per-cell, and the clip pair
+   to nothing at all, because the display list has already culled the hidden
+   subtrees. What GSK has and the concept lacks is one place to _say_ that,
+   instead of scattering `__traits(compiles)` across the interpreter.
 
 4. **Q3 / [friction §3][friction]: keep semantic ops, but apply GSK's test.** A
    kind earns its place when **backends disagree about how to draw it**. By that
    test `scrollbar` survives (a cell backend really is different) but its
-   `barTrackGlyph` / `barThumbGlyph` fields do not — those are widget policy,
-   and GSK's semantic nodes carry only geometry and colour.
+   `trackGlyph` / `thumbGlyph` fields do not — those are widget policy, and
+   GSK's semantic nodes carry only geometry and colour.
 
 5. **Q1 / [friction §1][friction]: F1 confirmed, and sharpened.** Measurement
    must not merely live off the painter; in a multi-backend scene it must be
@@ -537,21 +559,24 @@ into.
    hinting off. A `sparkles:ui` font abstraction should return a unit no backend
    can perturb.
 
-6. **Q5 / [friction §5][friction]: F5 needs amending.** Continuous coordinates
+6. **Q5 / [friction §5][friction]: GSK is F6's proof.** Continuous coordinates
    did **not** dissolve the sub-unit problem for GTK; 4.24 added a per-edge
-   `GskSnapDirection` to the node. The transferable form is "the scene names an
-   intent per edge, the backend resolves it at its own scale" — which is what
-   `RuleEdge` already does, and an argument for giving `RuleEdge` a _policy_
-   (grow / shrink / round) rather than replacing it with more positions.
+   `GskSnapDirection` to the node. The transferable form is F6's named fidelity
+   plus a device unit the backend queries — which is half of what `RuleEdge`
+   does, and an argument for giving `RuleEdge` a _policy_ (grow / shrink /
+   round) rather than replacing it with more positions.
 
-7. **Q7 / [friction §7][friction]: F6 confirmed at the strongest setting.**
+7. **Q7 / [friction §7][friction]: F8 confirmed at the strongest setting.**
    Nodes copy their payloads and hold an _atomic_ refcount, and that is exactly
-   what lets the GPU renderer defer rasterization past the frame walk — the
-   M7/T5 record-here-submit-there case.
+   what lets the GPU renderer defer rasterization past the frame walk. The frame
+   arena copies too; what it does not supply is a lifetime outlasting the buffer,
+   which is the M7/T5 record-here-submit-there case and the open half of
+   `UI-O4`.
 
 8. **Adopt the golden corpus shape.** 279 serialized scenes × four renderers ×
    nine transformation variants, with per-renderer known failures as a data
-   table. Our op-stream parity harness is the same idea one backend short; the
+   table. Our op-stream parity harness is the same idea one backend short, and
+   the same idea as **F12**: the stream is the oracle, the image is not. The
    `serialize` variant (round-trip the scene, re-render, compare) is a free test
    we do not yet run.
 

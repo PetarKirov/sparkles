@@ -7,10 +7,10 @@ The text stack GTK actually measures with, read on its own so that
 [`gtk4-gsk.md`][gtk] can stay about `GskRenderNode`. It is the survey's most
 mature witness for **F1** — a measurement layer with its own units, its own
 pluggable backends and a hard boundary against drawing — and it is the subject
-that complicates F1 most sharply, because Pango's answers are **not**
-device-independent by default. They are device-_parameterised_: hinting and
-resolution are declared inputs to measurement, carried on `PangoContext`, and
-the font map is keyed by them.
+that prices **F2**'s device-parameterisation decision most sharply, because
+Pango's answers are **not** device-independent by default. They are
+device-_parameterised_: hinting and resolution are declared inputs to
+measurement, carried on `PangoContext`, and the font map is keyed by them.
 
 | Field                | Value                                                                                                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -162,9 +162,9 @@ boxes, while the logical rect accumulates `logical_rect->width += geometry->widt
 (L241) — advance, not ink. A zero-ink glyph still reserves width.
 
 That two-channel answer is what our `Size measure(scope const(char)[] text)`
-cannot express at all. It returns one number, in cells, and
-[friction §1][friction] records `SkiaCanvas.measure` discarding Skia to produce
-it.
+cannot express at all. It returns one `Size`, denominated in cells, and
+[friction §1][friction] records `SkiaCanvas.measure` ignoring Skia entirely —
+returning `cellsOf(text)`, the Unicode width — to produce it.
 
 **Now the complication.** `PangoFont` is obtained from a `PangoFontMap` _given a
 `PangoContext`_, and for the cairo font maps the context key **is** the merged
@@ -199,10 +199,12 @@ comments ([`pangocairo-context.c`][cairo-ctx] L146–L150):
 > with `CAIRO_HINT_STYLE_NONE` before measuring, as [`gtk4-gsk.md`][gtk] records.
 > GTK had to _opt out_ of Pango's default to make four renderers agree.
 
-So the transferable rule is stronger than F1 as written: a measurement layer
-needs its device parameters (resolution, hinting, transform) as an **explicit,
-comparable key**, because they change the answer and because a multi-backend
-scene must be able to demand a setting where they do not. Pango supplies both
+So the transferable rule reaches past F1's placement claim and into **F2**: a
+measurement layer needs its device parameters (resolution, hinting, transform)
+as an **explicit, comparable key**, because they change the answer and because a
+multi-backend scene must be able to demand a setting where they do not. Device
+parameterisation is one of F2's six decisions, and Pango is the subject that
+shows what it costs to leave it implicit. Pango supplies both
 halves — `pango_cairo_context_set_resolution` (a scale factor "between points
 specified in a `PangoFontDescription` and Cairo units", default 96,
 [`pangocairo-context.c`][cairo-ctx] L183–L200) and
@@ -220,8 +222,8 @@ that [func@update_context] derives from the target surface" (L230–L242).
   small: `draw_trapezoid` plus `draw_glyphs`/`draw_glyph` is enough, because
   the default `draw_rectangle` decomposes a rectangle under an arbitrary matrix
   into one to three trapezoids ([`pango-renderer.c`][renderer-c] L961–L1035).
-  This is Qt's model from [F3][comparison] — degradation in the framework, once
-  — reached without a `hasFeature` enum.
+  This is Qt's model from [F4][comparison] — the lowering lives in the
+  framework, once — reached without a `hasFeature` enum.
 
 - **The device is queried at draw time, not declared.** The cairo renderer
   caches `cairo_surface_has_show_text_glyphs (cairo_get_target (cr))`
@@ -245,7 +247,8 @@ trait defaults: **named, enumerable, swappable implementations**, selectable at
 runtime and overridable by environment. It answers "what is available" without
 answering "what can this one do", and it makes an A/B comparison between two
 implementations of the same seam a two-line change — which is exactly what our
-op-stream parity harness wants.
+op-stream parity harness wants, and [F12][comparison] is the reason it wants it:
+the reified stream earns its keep as the cross-target oracle, not as a golden.
 
 ## Q3, Q6 — semantic operations, and where the role lives
 
@@ -263,17 +266,20 @@ resolved colour is not on the call. It lives in renderer state, set by
 run through the `prepare_run` vmethod.
 
 > [!NOTE]
-> This is a direct answer to [friction §6][friction] that no previously surveyed
-> subject supplies, and it complicates **F6**. `DrawOp` carries `visual` _and_
-> `slot` on every op, and the synthesis reads that as hedging. Pango shows a
-> third arrangement: put the **role on the operation** (one enum member, one
-> byte) and the **resolved value in painter state** (set once per run). A
-> re-resolving backend reads the part; a pixel backend reads its own state. The
-> op pays for the role only, and nothing is duplicated.
+> This is a direct answer to [friction §6][friction] that no other surveyed
+> subject supplies, and it is one of the cheaper encodings **F9** counts. Each
+> `DrawOp` payload stores the resolved fields its primitive paints from, and six
+> of the eight store a `Slot` beside them; the seam hedges rather than deciding.
+> Pango takes the other route: put the **role on the operation** (one enum
+> member, one byte) and the **resolved value in painter state** (set once per
+> run). A re-resolving backend reads the part; a pixel backend reads its own
+> state. The op pays for the role only, and nothing is duplicated — which is
+> F9's asymmetry exactly: resolved appearance follows from a role plus a theme,
+> and a role does not follow from resolved appearance.
 
 There is one genuinely semantic operation, and it is ours:
 `draw_error_underline` — "draws a squiggly line that approximately covers the
-given rectangle in the style of an underline used to indicate a spelling error"
+given rectangle in the style of an underline … to indicate a spelling error"
 ([`pango-renderer.h`][renderer-h] L97–L99). That is `LineStyle.wavy`, named as
 an intent rather than as a geometry. Pango also ships the framework fallback:
 the default implementation tiles the squiggle out of `draw_rectangle` calls
@@ -290,18 +296,22 @@ for four render backends over two decades.
 
 **Pango has no reified command stream; HarfBuzz reifies its input and output as
 one mutable value.** `PangoRenderer` dispatches through GObject vmethods, so
-there is no tagged union to get wrong — the same result as Slint and Qt, and it
-leaves **F2** untouched.
+there is no stream to encode at all — the same result as Slint and Qt, and it
+leaves **F3**'s live trade unadjudicated.
 
-The interesting artefact is one layer down. `PangoGlyphString` is exactly the
-shape our `DrawOp` is not: a `num_glyphs`/`glyphs`/`log_clusters` triple whose
+The interesting artefact is one layer down. `PangoGlyphString` is the uniform
+counterpart to our `DrawOp`: a `num_glyphs`/`glyphs`/`log_clusters` triple whose
 element is three fields, all live for every element
-([`pango-glyph.h`][glyph] L140–L148). Where `DrawOp` spends eighteen fields so
-that one of eight tags can use them ([friction §4][friction]), the text stack's
-per-item record is a fixed POD and the _variation_ is carried by having several
+([`pango-glyph.h`][glyph] L140–L148). `DrawOp` is a closed sum over eight
+per-kind payloads, so no operation carries a field that belongs to another kind
+— but every operation is as wide as the widest payload
+([friction §4][friction]), so a `popClip` that carries nothing costs what a text
+run costs. The text stack answers the same pressure the other way: the per-item
+record is a fixed POD, and the _variation_ is carried by having several
 different arrays — `PangoGlyphString`, `PangoGlyphItem`, `PangoLayoutLine`,
 `PangoLayout` — each with its own extents call. Specialised containers rather
-than one polymorphic record.
+than one polymorphic record, which is F3's variable-stride camp reached from the
+measurement side.
 
 `hb_buffer_t` is the other half: it goes into `hb_shape` holding Unicode and
 comes out holding glyphs, with `hb_buffer_get_content_type` distinguishing the
@@ -310,9 +320,9 @@ caller-owned.
 
 ## Q5 — sub-unit placement
 
-Pango's coordinates are continuous in the sense F5 means — 1/1024 of a device
-unit — and by F5's logic the sub-unit problem should not arise. **It arises
-anyway, and Pango's answer is a policy function, not a position.**
+Pango's coordinates are continuous — 1/1024 of a device unit — which is the
+setting in which one might expect the sub-unit problem to disappear. **It
+arises anyway, and Pango's answer is a policy function, not a position.**
 
 `pango_quantize_line_geometry (int *thickness, int *position)` "Quantizes the
 thickness and position of a line to whole device pixels … The purpose of this
@@ -322,7 +332,7 @@ this function returns" ([`pango-utils.c`][utils] L949–L985). The body rounds
 thickness to whole pixels, clamps zero to one, and then recentres the line
 differently for odd and even pixel thicknesses.
 
-Two details make this the sharpest F5 datum in the survey. First, the function
+Two details make this the sharpest **F6** datum in the survey. First, the function
 is _public API in the units layer_, `pango-utils.c`, not in a renderer: the
 hairline-minimum policy is stated where the measurement is, so every backend
 that opts in agrees. Second, it is not applied by default — the only in-tree
@@ -330,13 +340,13 @@ callers are in `pangocairo-win32font.c` (L148, L150), the backend whose platform
 hints. The policy is available, named, and _elective per device_.
 
 > [!WARNING]
-> This contradicts **F5** as written. Continuous coordinates did not dissolve
-> the hairline problem for Pango any more than they did for GTK
+> This is **F6** at its sharpest. Continuous coordinates do not dissolve the
+> hairline problem for Pango any more than they do for GTK
 > ([`gtk4-gsk.md`][gtk] records 4.24 adding a per-edge `GskSnapDirection`).
-> Both subjects converge on the same shape: **a named snapping policy, applied
-> per device, with a guaranteed one-pixel floor.** That is a better description
-> of what `RuleEdge` should become than either "more enumerators" or "go
-> continuous".
+> Both subjects converge on the shape F6 names: **a named fidelity, applied per
+> device against a queried device unit, with a guaranteed one-pixel floor.**
+> That describes the destination for `RuleEdge` better than either "more
+> enumerators" or "go continuous".
 
 ## Q7 — payload ownership
 
@@ -355,10 +365,14 @@ Everything above that is refcounted GObject or HarfBuzz `hb_object_t`
 `hb_font_funcs_is_immutable` ([`hb-font.h`][hb-font-h] L86–L89) let a shared
 vtable be frozen and then shared without locking.
 
-**F6 is confirmed a third time**, and the failing case is ours: `DrawOp.text` is
-a borrowed slice that "must outlive the op" ([friction §7][friction]). No
-subject surveyed does that, and the text stack — the layer with the most
+**F8 is confirmed a third time**, and the dissenting case is ours:
+`DrawOp.text` is a `const(char)[]` borrowed from a frame arena, valid while the
+buffer that built it is alive and unreset ([friction §7][friction]). No subject
+surveyed borrows across a frame, and the text stack — the layer with the most
 performance pressure to do it — copies at every one of three boundaries.
+`CmdBuffer.textRun` copies into the arena as well, which is what makes a `scope`
+source safe; what F8's stronger form buys and an arena borrow does not is an
+operation that can cross a thread.
 
 ## Q8 — extent query
 
@@ -371,14 +385,14 @@ in Pango units; each has a `_pixel_` twin that rounds outward so "the rounded
 rectangles fully contain the unrounded one"
 ([`pango-layout.c`][layout-c] L3126–L3134).
 
-This complicates **F7** in a different direction from GSK's. GSK put `bounds` on
-the _scene node_ and thereby made the display list self-describing; Pango puts
-extents on the _text object_, which is upstream of any display list. Both refute
-"only the surface knows", but Pango refutes it in the way F7's own remedy
-already proposed: an offscreen consumer that wants to size a surface to content
-asks the **layout**, not the command stream. Our `skia-canvas-render.d` scanned
-`DrawOp` rects to derive an extent ([friction §8][friction]) precisely because
-`sparkles:ui` has no layout-side query to ask.
+This is **F7**'s split answered from a fourth place. GSK maintains `bounds` on
+the _scene node_ and thereby makes the display list self-describing; Pango
+maintains extents on the _text object_, upstream of any display list. Neither
+leaves the question to the surface, and both sit on the
+maintained-at-construction side of the axis F7 names. Our `skia-canvas-render.d` derives an extent by
+scanning every operation's rect ([friction §8][friction]) precisely because
+nothing reports one: `CmdBuffer` exposes `length` and `measure`, and a caller
+that wants painted bounds folds `op.rect` itself.
 
 ## Strengths
 
@@ -434,51 +448,62 @@ asks the **layout**, not the command stream. Our `skia-canvas-render.d` scanned
 ## Bearing on the proposal
 
 1. **Split `measure` off `isCanvas`, and make the device parameters an explicit
-   input to what replaces it** ([friction §1][friction], **F1**). Pango's
-   `PangoContext` is the model: resolution and hinting are set on a context, the
-   font map is _keyed_ by them, and two devices therefore get two fonts rather
-   than one font giving two answers. F1 as currently written ("measurement does
-   not belong on the painter") is right but incomplete — it must add "and the
-   device parameters must be a declared, comparable part of the query".
+   input to what replaces it** ([friction §1][friction], **F1**, **F2**).
+   Pango's `PangoContext` is the model: resolution and hinting are set on a
+   context, the font map is _keyed_ by them, and two devices therefore get two
+   fonts rather than one font giving two answers. F1 settles the placement; F2
+   names the five decisions placement leaves open, and this is the subject that
+   prices device parameterisation: the parameters have to be a declared,
+   comparable part of the query.
 
 2. **Provide a way to demand rasterizer-independent metrics.** GTK had to reach
    past Pango's default to get four renderers to agree ([`gtk4-gsk.md`][gtk]);
-   our `RecordingCanvas` parity harness has the same requirement. A metrics API
-   with an explicit "unhinted" mode costs one flag and removes a class of
-   golden-test drift.
+   our `RecordingCanvas` parity harness has the same requirement, and **F12**
+   says why it matters — the op stream is the cross-target parity oracle, which
+   it cannot be if two backends legitimately measure the same string
+   differently. A metrics API with an explicit "unhinted" mode costs one flag
+   and removes a class of golden-test drift.
 
 3. **Return two channels, not one.** Whatever replaces `Size measure(…)` should
-   answer advance and ink separately, as `PangoRectangle` ink/logical does.
-   `DrawOp`'s current convention — "`rect.width` = advance in cells" for a
-   `textRun` — is the one-channel answer, and [friction §8][friction] records
-   `skia-canvas-render.d` relying on the coincidence that it happens to bound
-   the ink too.
+   answer advance and ink separately, as `PangoRectangle` ink/logical does. The
+   convention that a `TextRun`'s `rect.width` is its advance in cells is the
+   one-channel answer, and [friction §8][friction] records `skia-canvas-render.d`
+   relying on the coincidence that the advance happens to bound the ink too.
+   That is F2's return-shape decision, taken by default rather than made.
 
 4. **Move the resolved colour off the op and put the role on it**
-   ([friction §6][friction], **complicates F6**). `PangoRenderPart` +
-   `pango_renderer_set_color(part, colour)` is a cheaper factoring than carrying
-   `visual` _and_ `slot` on all eighteen fields' worth of every `DrawOp`. The
-   cost is a stateful painter, which our recorded-stream requirement (**F2**)
+   ([friction §6][friction], **F9**). `PangoRenderPart` +
+   `pango_renderer_set_color(part, colour)` is one of the cheaper encodings F9
+   counts: cheaper than storing an `Ink` on each of the four content payloads
+   and a `Slot` on six of the eight, which is the arrangement that makes
+   `DrawOp.visual` a reconstruction rather than a decision. The cost is a
+   stateful painter, which our reified-stream requirement (**F3**, **F12**)
    makes non-free — so this is a trade to evaluate, not to adopt blindly.
 
 5. **Replace `RuleEdge` with a named snapping policy that guarantees one device
-   pixel** ([friction §5][friction], **contradicts F5**). Pango is a continuous
-   coordinate system that still needed
-   `pango_quantize_line_geometry`, whose contract is "at least one pixel".
+   pixel** ([friction §5][friction], **F6**). Pango is a continuous coordinate
+   system that still needs `pango_quantize_line_geometry`, whose contract is "at
+   least one pixel".
    Together with GTK 4.24's `GskSnapDirection`, that is two independent subjects
    agreeing that continuity does not dissolve the hairline problem. Keep the
    per-edge intent; add the policy; state the floor.
 
-6. **Copy or refcount `DrawOp.text`; do not borrow it** ([friction §7][friction],
-   **F6 confirmed**). Three separate boundaries in the most
-   allocation-sensitive layer of the stack all copy.
+6. **Settle the retain boundary for `DrawOp.text`** ([friction §7][friction],
+   **F8 confirmed**). The copy is already there — `CmdBuffer.textRun` interns
+   into the frame arena — so the open question is the retain: an operation valid
+   only while its buffer is alive and unreset cannot cross a thread or outlive
+   the frame, which is what `UI-O4` asks. Three separate boundaries in the most
+   allocation-sensitive layer of the stack all copy, and each hands back a value
+   that outlives its producer.
 
-7. **Add a layout-side extent query rather than making the display list
-   self-describing** ([friction §8][friction], **F7**). Pango answers extent at
-   run, line and block level, all upstream of any painter — which is the shape
-   F7 already recommended and GSK's node `bounds` is the alternative to.
+7. **Answer extent where it is maintained, rather than scanning for it**
+   ([friction §8][friction], **F7**). Pango answers extent at run, line and
+   block level, all upstream of any painter and all maintained at construction;
+   GSK's node `bounds` is the same answer taken one layer down. F7's three
+   questions — surface, layout, ink — are exactly the ones a layout-side query
+   can keep apart and a rect scan cannot.
 
-8. **Consider named, enumerable backends for the metrics seam** (**F4**).
+8. **Consider named, enumerable backends for the metrics seam** (**F5**).
    HarfBuzz's `hb_font_list_funcs` / `HB_FONT_FUNCS` is a third capability model
    beside Qt's feature bits and Slint's trait defaults, and it is the one that
    most directly serves a parity harness: run the same op stream against two

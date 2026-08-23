@@ -253,10 +253,11 @@ one named `hasSkia` is not.
 ## Q4 — command shape, and the wide-record question
 
 Not a command seam. It nevertheless produces the survey's most awkward
-evidence for [F2](./comparison.md)
+evidence for [F3](./comparison.md)
 and friction §4, because `Limits` **is** a sixty-field flat record where most
 fields are zero on any given target — precisely the shape `sparkles.input.events`
-rejected and friction §4 indicts.
+rejects, and the shape friction §4's second complaint describes when it observes
+that every operation is as wide as the widest payload.
 
 `wgpu` keeps it, and pays for it in three specific ways rather than
 apologising:
@@ -269,14 +270,24 @@ apologising:
 
 The distinction that rescues it: `Limits` has **no tag**. Every field is live
 for every instance; a `0` means "none available", not "this field is garbage
-for this variant". `DrawOp`'s eighteen fields fail on exactly that point —
-`barThumbGlyph` is not "zero scrollbar" on a `fillRect`, it is meaningless, and
-`==` compares it anyway. So the correct reading is narrower than F2's: **a wide
-flat record is fine when it is tagless and its field list is generated from one
-place; it is wrong when a tag makes most fields dead.** That refines F2 rather
-than contradicting it, and it supplies the missing rationale for why a
-`SumType` is the fix for `DrawOp` but would be the wrong fix for a capability
-record.
+for this variant". A closed sum reaches the same place from the opposite
+direction. `DrawOp` wraps a `SumType` over eight payloads, each holding exactly
+the fields its primitive paints from, so `barThumbGlyph` lives on the one arm
+that has a track to draw and a `fillRect` does not carry it at all; there is no
+dead field for `==` to compare. Set beside `Limits`, that says width is not the
+axis F3 leaves open: **a wide flat record is fine when it is tagless and its
+field list is generated from one place; a tag is what turns width into dead
+bytes.** It also supplies the rationale for why a sum is right for a drawing
+operation and would be the wrong shape for a capability record, where every
+number is live at once.
+
+What `Limits` still charges the seam for is the other half of that sentence —
+the _enumeration point_. Sixty fields are written down once, in `with_limits!`,
+and `check_limits`, `or_better_values_from` and the rest are generated from that
+one list, with `with_limits_exhaustive` proving the list complete. The seam
+enumerates its eight arms by hand instead, in `DrawOp.kind`, in `visual`, in
+`slot`, in `translate` and in every walker that switches on a kind. That is the
+standing objection this subject makes, priced in "Bearing on the proposal" below.
 
 ## Q5 — sub-unit placement, and the tiering answer
 
@@ -294,7 +305,7 @@ continuously?_ — and both beat enumerating positions the way `RuleEdge` does:
   of distinct capability configurations an application can encounter to
   something enumerable and testable.
 
-This is [F5](./comparison.md)'s
+This is [F6](./comparison.md)'s
 "name a fidelity, not a position" arriving from a completely unrelated domain,
 with an extra clause: _and quantise the fidelities, so the set of behaviours you
 must test stays finite._
@@ -307,10 +318,15 @@ sharper reading than friction §6 assumes.
 `Limits` carries resolved numbers; `DownlevelFlags` carries semantics — not "how
 much" but "in what way this platform is not the standard". They are not two
 encodings of one fact, so nothing is duplicated and no consumer must decide which
-to trust. Friction §6's `visual` _and_ `slot` **are** two encodings of one fact,
-one resolved from the other by the theme. The sin is therefore not carrying two
-channels; it is carrying the same information twice while hedging about which is
-authoritative.
+to trust. Friction §6's two channels **are** two encodings of one fact: six of
+the eight payloads travel with both the semantic name and the answer the theme
+already gave it — a `Slot` riding alongside the concrete ink and colours that
+slot resolved to — so the second channel is derivable from the first. The seam
+keeps that cheap — `DrawOp.visual` reconstructs a `Visual` through `visualOf`
+rather than storing one, so a payload holds only what its own primitive reads —
+but cheapness is not a decision, and nothing in the type says which channel a
+backend should believe. The sin is therefore not carrying two channels; it is
+carrying the same information twice while hedging about which is authoritative.
 
 ## Q7 — payload ownership across the frame
 
@@ -324,17 +340,51 @@ generic over its label type with a `map_label` adapter, so the borrowed part of 
 descriptor is isolated in one type parameter instead of smeared across the
 struct.
 
-That last move is the structural lesson for friction §7 (`DrawOp.text` borrowed,
-must outlive the op): a `DrawOp` generic over its text-payload type would let the
-recorder own strings and the immediate painter borrow them, without the whole op
-becoming `@system` under `dip1000`.
+That last move is the structural lesson for friction §7. `DrawOp.text` is a
+`const(char)[]` borrowed from a frame arena, and the rule that keeps it valid —
+_an operation is valid while the buffer that built it is alive and unreset_ — is
+stated on the buffer, not on the operation. The parameter that decides ownership
+sits there too: `CmdBuffer` is `CmdBufferT!(FrameArena!())`, `GcCmdBuffer` is
+`CmdBufferT!GcArena`, and both hand back the same `DrawOp`. **This subject's
+claim is that the parameter belongs on the operation** — a `DrawOp` generic over
+its text payload lets a recorder own its strings and an immediate painter borrow
+them, each saying so in its own type rather than in the buffer's documentation.
+
+The mechanism is `DeviceDescriptor<L>`. `wgpu` isolates the borrowed part of a
+descriptor in one type parameter with a `map_label` adapter, then copies the
+negotiated `Features` and `Limits` into the `Device`, so no later
+`require_features` reads the descriptor at all. Ownership is a property of the
+value that outlives the call, spelled once, in the type.
+
+The price, against this seam: `DrawOp` becomes `DrawOp!Text`. `buildDisplayList`
+returns a plain `DrawOp[]`, and every consumer that walks one — the member
+accessors `kind`, `rect`, `text`, `slot`, `visual` and the rest, `visualOf`,
+`translate`, and each interpreter's eight-arm `match!` — instantiates once per
+text payload, so the eight arms are enumerated twice over rather than once.
+`RecordingCanvas` pays most: its value is that a recorded stream and a live one
+are the _same_ type and compare pairwise, and two instantiations are not. The
+64-byte budget matters here as well — `TextRun` is the widest payload with a
+16-byte slice in it, and an owning handle spends headroom the sum keeps in hand.
+Set against that, the borrow costs exactly two constructs: the `@trusted`
+`opAssign` island and the `launder` cast of friction §4.
+
+The claim therefore narrows rather than falls. The ownership parameter is real
+and already in the design, one level out from where `wgpu` puts it. What stands
+is that an operation cannot say which kind of text it holds — the retain
+boundary friction §7 records as open. A backend that records on one thread and
+submits on another meets it immediately, and neither `@trusted` island answers
+it.
 
 ## Q8 — extent query
 
-Answered on the **surface**, never on the workload — [F7](./comparison.md) again,
-now from a third independent subject. `max_texture_dimension_2d` is a limit you
-consult before allocating; `SurfaceCapabilities` reports what a given
-surface/adapter pair can do.
+Answered on the **surface**, and only there. Of [F7](./comparison.md)'s three
+extent questions `wgpu` has exactly one: it holds no scene, so layout extent and
+ink extent do not arise for it, and the surface question is the whole of its
+answer. `max_texture_dimension_2d` is a limit you consult before allocating;
+`SurfaceCapabilities` reports what a given surface/adapter pair can do. Both are
+maintained at construction and read, not derived by scanning a workload — which
+is what friction §8 leaves a backend doing when it folds every operation's rect
+to find the bounds it is about to paint into.
 
 `SurfaceCapabilities` also demonstrates a capability shape none of the other
 subjects use: a **preference-ordered list**. `formats` is documented as "List of
@@ -395,7 +445,7 @@ survivor.
 ## Bearing on the proposal
 
 1. **Split our one "optional" bucket into two _types_, not two values**
-   (friction §2, [F4](./comparison.md)).
+   (friction §2, [F5](./comparison.md)).
    `wgpu`'s clean line is between capabilities a caller may _demand_ (and be
    refused) and capabilities it may only _observe_. Our `pushClip`/`popClip`
    pair is the second kind — probe and degrade. `rule` at hairline fidelity is
@@ -419,12 +469,38 @@ survivor.
    equivalent — a `SkiaCanvas` that refuses everything `GridCanvas` cannot do —
    would catch terminal/GPU divergence during development instead of in a
    golden diff.
-6. **Refines [F2](./comparison.md), and this contradicts the flat reading of friction §4.**
+6. **Refines [F3](./comparison.md), and this contradicts the flat reading of friction §4.**
    `Limits` is a sixty-field flat record and is _not_ a design error, because it
    is **tagless** and its field list is generated from one macro with an
-   exhaustiveness test. The defect in `DrawOp` is the tag, not the width. The
-   proposal should say so, because "wide records are bad" would also condemn the
-   capability record it is about to introduce.
+   exhaustiveness test. The proposal should say so, because "wide records are
+   bad" would also condemn the capability record it is about to introduce.
+
+   The claim the refinement leaves standing is about **arm granularity**, and it
+   is a claim about this seam as it stands: eight payloads mean eight `match!`
+   arms in every walker, and seventeen member accessors that must each say
+   something for the arms that cannot answer. Every one of those enumerations is
+   written out by hand. `with_limits!` shows the alternative — one list, from
+   which `check_limits`, `or_better_values_from` and the merge operations are
+   generated, with `with_limits_exhaustive` reconstructing `Limits::unlimited()`
+   through the same macro to prove the list whole. Nothing in the seam plays
+   that role.
+
+   The price is what a single generated enumeration cannot express. The
+   accessors are not uniform: an arm that cannot answer returns a neutral value
+   chosen per accessor — `DrawOp.slot` reports `Slot.inherit` for `PushClip` and
+   `PopClip`, `visual` reconstructs through `visualOf` with the defaults each
+   payload's own fields do not pin down, `translate` moves only the arms that
+   carry geometry. A field list generates none of those decisions, so a
+   generated enumeration either drops them or carries per-arm exceptions the
+   size of the code it replaces. `match!` already buys at compile time what
+   `with_limits_exhaustive` buys at test time: an unhandled arm is a build
+   failure, not a red test. And the eight arms are what keeps the payloads plain
+   comparable values, which is what `RecordingCanvas` compares pairwise.
+
+   So the transferable sentence is narrower than "the width is the defect": the
+   defect is the tag, and here that bears on how many arms the seam asks every
+   consumer to enumerate, not on any record being wide.
+
 7. **Complicates [F1](./comparison.md) not at all, but sharpens it.**
    `wgpu` publishes both a portable default (`min_uniform_buffer_offset_alignment`
    = 256) and the device's real value, and never converts one into the other.

@@ -230,15 +230,16 @@ The design note on its `Default` impl is the part worth stealing:
 
 That is a **declared floor plus a divergence list**: a new backend states only
 where it differs, and adding a capability does not break existing backends.
-[F4](./comparison.md)
-asked for a stated floor; this is the cheapest known encoding of one, and it is
-cheaper than both `PaintEngineFeature`'s bitfield and our
-`__traits(compiles)` probing.
+[F5](./comparison.md)
+puts a stated floor at the bottom of its floor / defaulted / refusable ladder;
+this is the cheapest known encoding of one, and it is cheaper than both
+`PaintEngineFeature`'s bitfield and the `__traits(compiles)` probing
+`sparkles:ui` does at each interpreter call site (friction §2).
 
 ## Q3 — semantic widgets, or primitives?
 
 **Both, on different channels — and this is the finding that most complicates
-[F3](./comparison.md).**
+[F4](./comparison.md).**
 
 The item vocabulary is _presentational_, not widget-level: `Border`,
 `BoxShadow`, `Gradient`, `BackdropFilter` are CSS concepts, but there is no
@@ -276,11 +277,13 @@ if set_tile_cache_barrier {
 ```
 
 So the renderer knows "this is a scrollbar" — for a caching decision — while
-the scrollbar's _appearance_ arrives as ordinary rects. Our friction §3 assumes
-a binary: either `scrollbar` is an op kind carrying eight fields, or the
-semantics are lost. WebRender demonstrates a third position: **semantics as a
-flag on a primitive, worth one bit, consumed by the backend for its own
-purposes and ignorable by any backend that has no use for it.**
+the scrollbar's _appearance_ arrives as ordinary rects. Friction §3 —
+`scrollbar` is a widget concept in the drawing seam — reads as a binary: either
+`scrollbar` is an op kind whose payload carries the whole widget's state — all
+fourteen fields of it — or the semantics are lost. WebRender demonstrates a
+third position: **semantics as a flag on a primitive, worth one bit, consumed
+by the backend for its own purposes and ignorable by any backend that has no
+use for it.**
 
 `HitTest` is the same idea taken further — a display item with no appearance at
 all, carrying only a rect and an `ItemTag`, described as "A minimal
@@ -292,17 +295,28 @@ RectangleDisplayItem (no color)".
 The same mechanism answers both, so they are treated together.
 
 **Q4 (shape).** `DisplayItem` is a sum type at the type level and a
-variable-width tagged encoding on the wire. The `#[repr(u8)]` enum with a
-per-variant struct is exactly the shape
-[F2](./comparison.md)
-recommends and exactly what our `DrawOp` is not; WebRender additionally proves
-the encoding is not a cost, because `poke_into_vec` writes the discriminant plus
-_that variant's_ payload. The eighteen-field-record encoding would have made
-every display list pay its widest item. `MAX_TEXT_RUN_LENGTH = 2040` — a text
-run is split rather than allowed to grow unbounded — is the only length cap in
-the format, and it exists for a GPU texture-width reason, not a format one.
+variable-width tagged encoding on the wire. The type-level half is the shape
+`DrawOp` also takes — a closed sum over per-kind payloads, dispatched by
+`match!`, so an illegal field combination is unrepresentable in either seam. The
+wire half is where the two part, and it is exactly the live trade
+[F3](./comparison.md)
+records. `poke_into_vec` writes the discriminant plus _that variant's_ payload,
+so a display list never pays for its widest item; `DrawOp` is one width for
+every arm, bounded by `static assert(DrawOp.sizeof <= 64)` and set by `TextRun`,
+so a `PopClip` that carries nothing costs what a text run costs (friction §4).
 
-WebRender also documents the residual dead field, and it is friction §4 in
+What variable stride buys WebRender is what WebRender needs and `sparkles:ui`
+does not: the widest-variant tax is paid per byte shipped across a process
+boundary, rather than per slot in an array that never leaves the frame. What the
+single width buys back is a `DrawOp[]` whose elements are plain comparable
+values — which is what lets `RecordingCanvas` serve as a pairwise-comparable
+parity oracle, and the friction log records that as working.
+
+`MAX_TEXT_RUN_LENGTH = 2040` — a text run is split rather than allowed to grow
+unbounded — is the only length cap in the format, and it exists for a GPU
+texture-width reason, not a format one.
+
+WebRender also documents the residual dead field, and it is friction §3 in
 miniature. `LineDisplayItem` carries a `wavy_line_thickness: f32` whose doc says
 "Value irrelevant for non-wavy lines", followed by:
 
@@ -313,7 +327,11 @@ miniature. `LineDisplayItem` carries a `wavy_line_thickness: f32` whose doc says
 ```
 
 A field dead for three of four `LineStyle` values, with an in-tree note that it
-should be a variant payload. `DrawOp` has eighteen such fields and no such note.
+should be a variant payload. Splitting the sum by kind is what keeps that class
+of field out of most of `DrawOp` — but not out of all of it. The `Scrollbar`
+payload carries `trackGlyph` and `thumbGlyph`, a cell backend's answer, past
+every pixel backend that will never read them; WebRender's note is the same
+observation, written by someone who already knows where the field belongs.
 
 **Q7 (ownership).** Nothing large is ever borrowed by an item.
 
@@ -333,22 +351,30 @@ should be a variant payload. `DrawOp` has eighteen such fields and no such note.
   > the transaction that contains the `DeleteImage` message and subsequent
   > transactions.
 
-This is a fourth answer to friction §7, distinct from the three
-[F6](./comparison.md) found:
-not borrowing, not reference counting, not a backend-owned cache, but
+This is the strong form of
+[F8](./comparison.md):
 **copy-inline for small payloads and an out-of-band keyed store for large
-ones**. It is the only one of the four that survives a thread hop and an IPC
-boundary, which is precisely the case `M7/T5` walks into.
+ones**, with the in-stream reference held as a window into bytes the stream
+itself owns. `sparkles:ui` copies too — `CmdBuffer.textRun` interns each run
+into the frame arena, which is what makes a `scope` source safe to draw — but
+the reference it then carries is a `const(char)[]` into that arena, not an
+offset into the operation stream. That difference is friction §7: an operation
+is valid while the buffer that built it is alive and unreset, so it does not
+survive a thread hop or an IPC boundary — precisely the case `M7/T5` walks into,
+and the retain boundary `UI-O4` leaves open.
 
 ## Q5 — sub-unit placement
 
-Not a problem WebRender has, for the same reason it is not one for Slint, Qt or
-egui: `LayoutRect` is `Box2D<f32, LayoutPixel>` and hairlines are just thin
-rects. `LineDisplayItem` carries a `wavy_line_thickness: f32` and a
-`LineStyle` (`Solid`, `Dotted`, `Dashed`, `Wavy`) — a fidelity vocabulary, not
-a position vocabulary, which is the shape
-[F5](./comparison.md)
-recommends.
+Relocated rather than dissolved, which is
+[F6](./comparison.md)'s
+point. `LayoutRect` is `Box2D<f32, LayoutPixel>` and hairlines are just thin
+rects, so the sub-unit question stops being a placement vocabulary and becomes a
+snapping question in `DevicePixel` space, answered by the party that knows the
+device scale. What the seam carries instead is `LineDisplayItem`'s
+`wavy_line_thickness: f32` and a `LineStyle` (`Solid`, `Dotted`, `Dashed`,
+`Wavy`) — a fidelity vocabulary, not a position vocabulary, which is the named
+half of what F6 recommends. `RuleEdge` is the other kind: a position
+vocabulary, six enumerators wide, which is friction §5.
 
 The adjacent finding is about clipping rather than sub-unit placement, and it
 bears on friction §2's clip pair. WebRender **abandoned hierarchical clipping**
@@ -363,8 +389,8 @@ demanding content model outgrows.
 ## Q6 — resolved appearance, semantic role, or both
 
 Predominantly **resolved**: colors are `ColorF`, geometry is final, gradients
-arrive as computed stop arrays. WebRender has no equivalent of our `slot`
-because it has no re-resolving consumer — there is exactly one backend.
+arrive as computed stop arrays. WebRender has no equivalent of `sparkles:ui`'s
+`Slot` because it has no re-resolving consumer — there is exactly one backend.
 
 But it is not fully resolved, and the exception is worth recording.
 `RectangleDisplayItem.color` is not a `ColorF`; it is a
@@ -385,9 +411,13 @@ pub enum PropertyBinding<T> {
 So a display item may carry a **late-bound handle plus a fallback value**, and
 the renderer resolves it per frame from a property table updated by transaction
 — which is how an animation runs without rebuilding the display list. That is a
-sharper version of the choice friction §6 describes as hedging: not "carry both
-the resolved and the semantic value on every op", but "carry a two-variant
-value where the second variant names a table the consumer already has".
+sharper version of the choice friction §6 describes as hedging. `sparkles:ui`
+stores a `Slot` on six of its eight payloads, beside the resolved colour the
+primitive paints from, and reconstructs a whole `Visual` on demand through
+`visualOf` rather than storing one — which makes the hedge cheap without making
+it a decision. `PropertyBinding` is a decision: one two-variant value whose
+second variant names a table the consumer already holds, and one of the cheaper
+encodings [F9](./comparison.md) enumerates.
 
 The other half of Q6 is where high-level constructs get lowered.
 `DisplayListBuilder::push_shadow`/`pop_all_shadows` accept a semantic `Shadow`
@@ -400,10 +430,11 @@ offset, recolored copies of the shadowed content, so the consumer never sees a
 >
 > — [`display_list.rs`][dlist]
 
-F3's axis is "who degrades: the backend or the framework". WebRender adds a
-third site and, over time, migrated toward it: **the producer's own builder,
-before the value is serialized.** The construct is semantic at the call site
-and primitive on the wire.
+[F4](./comparison.md)
+counts six places a lowering can live, and the producer is one of them.
+WebRender is that entry's strongest instance, and it migrated toward it over
+time: **the producer's own builder, before the value is serialized.** The
+construct is semantic at the call site and primitive on the wire.
 
 ## Q8 — extent query
 
@@ -413,12 +444,16 @@ takes no size at all; the viewport is set independently by
 `Transaction::set_document_view(device_rect: DeviceIntRect)` ([`render_api.rs`][rapi]).
 `BuiltDisplayListDescriptor` holds IPC timestamps and node counts, not bounds.
 
-This is [F7](./comparison.md)
-exactly: extent belongs to the surface, and the surface is configured by the
-party that owns the window. Notably, items are also _not_ required to be within
-any bound — `clip_rect` exists because "Many items are logically infinite".
-A scene whose primitives are individually unbounded cannot have its extent
-derived by scanning them, which is what `skia-canvas-render.d` does today.
+That is [F7](./comparison.md)'s
+three questions kept apart: **surface** extent is configured by the party that
+owns the window, **layout** extent stays with the engine that built the list,
+and **ink** extent is not offered at all. Notably, items are also _not_ required
+to be within any bound — `clip_rect` exists because "Many items are logically
+infinite". A scene whose primitives are individually unbounded cannot have its
+extent derived by scanning them — and derive-by-scan is the arm `sparkles:ui`
+lands on: nothing on `CmdBuffer`, the display list or the arena reports extent,
+so `skia-canvas-render.d` folds every operation's rect to obtain one
+(friction §8).
 
 ## Strengths
 
@@ -472,47 +507,65 @@ derived by scanning them, which is what `skia-canvas-render.d` does today.
 
 1. **Name the floor, then let a backend declare only its divergences.**
    `CompositorCapabilities`'s defaults-plus-divergence pattern is a better
-   answer to friction §2 and F4 than either a Qt bitfield or our
+   answer to friction §2 and F5 than either a Qt bitfield or the
    `__traits(compiles)` probes: a `CanvasCaps` struct with a documented
    default means adding a capability does not break `GridCanvas`, and a golden
    test can read the struct instead of guessing.
-2. **Encode `DrawOp` as a sum type — and note that the wire cost objection is
-   answered.** WebRender shows a tagged union that is _cheaper_ than a flat
-   record precisely because it is variable-width. This strengthens F2 and
-   removes the last argument for the eighteen-field encoding of friction §4.
+2. **Price the single width, and keep it for a reason rather than by default.**
+   `DrawOp` is already the closed sum `DisplayItem` is; the question friction §4
+   leaves open is the second half — that every arm is as wide as `TextRun`.
+   WebRender shows what variable stride buys, and where: on a wire, per byte
+   shipped, not per slot in a frame-local array. Record the trade
+   [F3](./comparison.md) names, and record that the budget is a ceiling the
+   widest payload fits under, so the tax is bounded and the operations stay
+   comparable values.
 3. **Carry semantics as flags on a primitive where a boolean suffices.**
-   `IS_SCROLLBAR_CONTAINER` is the cheapest thing in this survey. Our
-   `scrollbar` op needs _geometry_, so it cannot collapse to a flag entirely —
-   but the eight scrollbar fields on every `DrawOp` could become one
-   `ScrollbarOp` variant plus a role flag, and the flag is what a backend with
-   no scrollbar opinion actually reads. This complicates F3's binary framing.
-4. **Solve friction §7 by copying inline, not by borrowing or interning.**
-   A `DrawOp` stream that owns its own bytes and hands out `ItemRange`-style
-   borrows _into the stream_ is `@safe` under `dip1000`, crosses a thread, and
-   costs one copy of the text — which we already pay when a cell backend
-   rasterizes it. This is a fourth option F6 does not list, and the only one
-   that satisfies `M7/T5`.
+   `IS_SCROLLBAR_CONTAINER` is the cheapest thing in this survey. The
+   `Scrollbar` arm needs _geometry_, so it cannot collapse to a flag entirely —
+   but its cell-only fields (`trackGlyph`, `thumbGlyph`) are exactly the part a
+   pixel backend never reads, and a role flag beside plain rects is what a
+   backend with no scrollbar opinion wants in their place. That widens friction
+   §3's binary, and gives [F4](./comparison.md) a cheaper spelling of its
+   backend-lowered arm: a bit the consumer is free to ignore.
+4. **Move the borrow's anchor from the arena to the stream.** The copy is not
+   the open question: `CmdBuffer.textRun` already copies each run into the frame
+   arena. What friction §7 records is that the resulting `const(char)[]` is
+   anchored to a buffer's liveness, and needs the `launder` cast to be
+   expressible under `dip1000` at all. An `ItemRange`-style window into bytes
+   the operation stream itself owns is the offset-pair form
+   [F8](./comparison.md) names as the stronger one — `@safe`, trivially
+   copyable, transferable between threads — which is what `M7/T5` and `UI-O4`
+   are both asking for.
 5. **Consider a `PropertyBinding`-shaped answer to friction §6** instead of
-   carrying `visual` _and_ `slot` on every op: one two-variant value, resolved
-   or late-bound to a table the consumer already holds. The HTML interpreter is
-   exactly a consumer that holds such a table.
-6. **Do not add extent to the display list.** WebRender confirms F7 and adds a
-   reason we had not stated: items may be _logically infinite_ and bounded only
-   by their clip, so scanning primitives for an extent is unsound in general,
-   not merely inconvenient. The offscreen case wants a layout query.
+   storing a resolved colour and a `Slot` side by side: one two-variant value,
+   resolved or late-bound to a table the consumer already holds. The HTML
+   interpreter is exactly such a consumer, and it is the only one that reads the
+   role at all.
+6. **Answer extent beside the display list, not by scanning it.** WebRender
+   separates [F7](./comparison.md)'s three extents cleanly, and adds a reason
+   friction §8 does not state: items may be _logically infinite_ and bounded
+   only by their clip, so scanning primitives for an extent is unsound in
+   general, not merely inconvenient. The scan in `skia-canvas-render.d` works
+   only because a `TextRun`'s `rect.width` happens to be its advance in cells.
+   The offscreen case wants a layout query, or an extent maintained as the
+   stream is built.
 7. **Reconsider `pushClip`/`popClip` as the clip model, not just as an optional
    primitive.** [`CLIPPING_AND_POSITIONING.md`][clipdoc] is a written record of
    a hierarchical clip stack failing against real content. `sparkles:ui` may
-   never need non-hierarchical clipping — but the friction log treats the pair
-   as settled, and this is evidence that it is a model choice with a known
-   failure mode.
+   never need non-hierarchical clipping — but the friction log questions only
+   how the pair is discovered, not whether hierarchy is the right model, and
+   this is evidence that the model is a choice with a known failure mode.
 8. **Decide, explicitly, what the seam refuses to carry — and name the escape.**
    This is WebRender's largest transferable idea and the one no other surveyed
    subject states. A closed vocabulary is only affordable because `blob.md`
-   names the fallback in one sentence. `sparkles:ui` has an unstated version of
-   the same thing (`RuleEdge` degradation, glyph fallback, unclipped painting)
-   scattered across call sites. Whatever shape the new seam takes, it should
-   have a paragraph like `blob.md`'s.
+   names the fallback in one sentence. `sparkles:ui` states each degradation at
+   the point it is probed — `ruleEndpoints` plus a cell-aligned `line` for a
+   missing `rule`, `paintScrollbarCells` glyph-per-cell for a missing
+   `scrollbar`, and nothing at all for the clip pair, since the display list has
+   already culled what a clip would hide. What it states nowhere is the boundary
+   those degradations sit inside: which content the vocabulary declines to
+   carry, and what a producer is expected to do with it. That is one paragraph,
+   and it belongs beside `isCanvas`.
 
 ## Sources
 

@@ -207,7 +207,7 @@ function either typechecks or does not.
 
 The price is that there is **nothing to declare and nothing to degrade**. Qt's
 emulation floor and Notcurses' `NCVISUAL_OPTION_NODEGRADE`
-([F4](./comparison.md))
+([F5](./comparison.md))
 have no counterpart here, because a device that cannot draw what the function
 denotes has no way to say so: the function has already produced its answer and
 the renderer is downstream of it. Henderson has exactly one concession, and it
@@ -220,25 +220,28 @@ is a global cutoff rather than a capability:
 ## Q3 — semantic operations, and where they live
 
 **Both are primitive at the seam and semantic above it — the split `sparkles:ui`
-has not made.** Henderson's renderer receives a set of line segments and beziers
+does not make.** Henderson's renderer receives a set of line segments and beziers
 and knows nothing of fish, quartets or Square Limit; the semantics live entirely
 in the algebra, where they are named, composable and law-checked. `Pan`'s
 renderer (such as it is) receives a colour per point; `Region`, `annulus`,
 `wedgeAnnulus` and `crop` are all definitions above it.
 
 This is the opposite of Slint's bet
-([F3](./comparison.md)),
+([F4](./comparison.md)),
 and it works only because nothing degrades: the model has no target that could
 fail to render an `annulus`. As soon as a target exists that must approximate,
 the semantics have to survive to the point of approximation — which is exactly
-why `scrollbar` is in our drawing seam. Functional images do not refute
-friction §3; they show that friction §3 is _caused by_ having heterogeneous
-targets, not by careless layering.
+why `scrollbar` is in our drawing seam, and why the `scrollbarThumb` formula its
+lowerings are computed through is one shared definition rather than one per
+backend. Functional images do not refute friction §3; they show that friction §3
+is _caused by_ having heterogeneous targets, not by careless layering.
 
 Henderson's `rot45` verdict is nevertheless the transferable part: **an operator
 whose laws are ugly is telling you it does not belong in the vocabulary.**
-`RuleEdge` and `scrollbar`'s eight fields are our `rot45` — application-specific
-operations that were admitted to a general algebra.
+`RuleEdge` and the `Scrollbar` payload's fourteen fields are our `rot45` —
+application-specific operations sitting in a general algebra, two of them
+(`trackGlyph`, `thumbGlyph`) a cell backend's answer riding past every backend
+that never reads it.
 
 ## Q4 — command shape
 
@@ -249,8 +252,13 @@ concatenation of two op streams. `Pan` composes by `lift2` and `(.)`.
 
 So a functional image cannot be recorded, culled, replayed or compared —
 `RecordingCanvas` and the op-stream parity harness have no analogue, because the
-only way to observe a function is to _apply_ it. Henderson's implementation note
-makes the consequence explicit: rather than materialise the denoted set,
+only way to observe a function is to _apply_ it. `DrawOp` is the other extreme: a
+closed sum over eight payloads inside a `<= 64`-byte budget, dispatched by
+`match!`, and comparable as a value — which is what lets a recorded stream serve
+as the parity oracle instead of a golden image
+([F12](./comparison.md)).
+Henderson's implementation note makes the consequence of giving that up
+explicit: rather than materialise the denoted set,
 
 > we want to draw each basic graphical object … as we construct it and rely upon
 > the fact that it doesn't matter if we draw the same object twice because the
@@ -258,25 +266,27 @@ makes the consequence explicit: rather than materialise the denoted set,
 
 Idempotent overdraw substitutes for a comparable stream. That is a defensible
 trade for a plotter and an indefensible one for a golden test, which strengthens
-[F2](./comparison.md):
+[F3](./comparison.md):
 reification is not an accident of our design, it is the price of observability,
 and the subjects that dispense with it dispense with observability too.
 
 ## Q5 — sub-unit placement
 
-**Dissolved, and it names the replacement for `RuleEdge`.** Both domains are
-continuous; `Pan`'s is continuous _and_ infinite, so there is no smallest
-addressable unit to fall below. This confirms
-[F5](./comparison.md)
-from the extreme end.
+**Deferred rather than dissolved, and it names the replacement for `RuleEdge`.**
+Both domains are continuous; `Pan`'s is continuous _and_ infinite, so there is no
+smallest addressable unit to fall below. What the pair actually demonstrates is
+[F6](./comparison.md)
+from the extreme end: continuity relocates the sub-unit question onto the
+renderer rather than removing it. Henderson has to write the rule back in as a
+render-time cutoff, and `Pan` hands it to whoever chooses the window.
 
 The transferable detail is Henderson's `ε`. Device resolution enters the system
 **once, as a scalar supplied at render time**, and its only effect is to prune:
 below `ε` a picture denotes nothing. It is not a coordinate, not an enumerated
 position, and not a per-operation flag. That is the same shape as Notcurses'
 blitter ladder — _name a fidelity, let the renderer own it_ — reached
-independently in 1982, and it is a stronger argument for F5 than continuity
-alone.
+independently in 1982, and it is the 1982 form of the named fidelity F6 asks for
+alongside a queried device unit.
 
 ## Q6 — resolved or semantic styling
 
@@ -293,22 +303,34 @@ appearance would force ordering:
 > order in which the graphical objects are rendered. ([`funcgeo2.pdf`][fg2], §5)
 
 So the two hedges available at friction §6 — resolved, semantic, or both — are
-here reduced to "resolved" and "absent". Neither model pays for both, and
-Henderson shows that dropping appearance from the vocabulary buys
+here reduced to "resolved" and "absent". `sparkles:ui` takes the third option:
+an operation carries the numbers its own primitive will paint with and, on six
+of the eight payloads, the `Slot` that says what those numbers meant, while a
+whole `Visual` is reconstructed through `visualOf` at the few call sites that
+want one rather than stored on every operation. That
+makes the hedge cheap without making it a decision, and
+[F9](./comparison.md)
+records that no surveyed subject makes it either. Neither model here pays for
+both, and Henderson shows that dropping appearance from the vocabulary buys
 order-independence, which is a real property and not merely an omission.
 
 ## Q7 — payload ownership
 
 **Dissolved by purity.** A payload _is_ a function: immutable, freely shareable,
-with no frame lifetime and no thread affinity. `DrawOp.text`'s borrowed slice
-(friction §7) has no counterpart, because there is nothing to borrow from.
+with no frame lifetime and no thread affinity. `DrawOp.text` (friction §7) has no
+counterpart, because there is nothing to borrow from: our bytes are copied into a
+frame arena by `CmdBuffer.textRun`, and the operation carries a `const(char)[]`
+into that arena, valid while the buffer that built it is alive and unreset.
 
 The sharp version is `Pan`'s `Array2 Int Int ((Int, Int) -> α)`: even an
 imported photograph is stored as its **subscripting function**, with format
-conversion performed during subscripting rather than at load. This is
-[F6](./comparison.md)'s "share it,
-do not borrow it" taken to its limit — the payload's owner is the closure, and
-the question of who frees it is the host language's.
+conversion performed during subscripting rather than at load. This is the limit
+case of [F8](./comparison.md) —
+no subject borrows a payload across a frame; each of them copies, refcounts or
+arena-allocates. Here the payload's owner is the closure, and the question of who
+frees it is the host language's. We arena-allocate, which puts us inside that
+consensus and leaves the retain boundary, not the copy, as the open question
+(`UI-O4`).
 
 ## Q8 — extent query
 
@@ -317,19 +339,24 @@ the question of who frees it is the host language's.
 Henderson: extent is **pushed down, never queried up**. `p(a,b,c)` receives its
 box; a picture has no extent to be asked for, and every combinator's job is to
 subdivide the box it was given (`beside` halves `b`, `above` halves `c`). This
-is [F7](./comparison.md) —
-"extent belongs to the surface, not the scene" — as an architectural law rather
-than an observation: the surface picks the parallelogram and the scene is a
-function of it.
+is the limit case of [F7](./comparison.md):
+extent is three questions — surface, layout and ink — and Henderson collapses all
+three by making the surface's box an input, so nothing is maintained at
+construction and nothing is derived by scan. The surface picks the parallelogram
+and the scene is a function of it.
 
 `Pan`: extent is **undefined in principle**. Images are total over infinite
 space; a window is a viewing decision made outside the model. Asking a `Pan`
 image how big it is is a type error, not a missing method.
 
-Together they say friction §8 is the wrong request. `skia-canvas-render.d`
-scanning every op's rect to recover an extent is a symptom of building the
-display list _before_ knowing the box; Henderson's answer is to make the box an
-input to the build.
+Together they say friction §8 is the wrong request. Our build runs the other way
+round: the display list is assembled with no box in hand, and afterwards neither
+the buffer that built it, nor the list itself, nor the arena behind it can say
+what box would have contained it — `CmdBuffer` answers only how many operations
+it holds and what a single run measures. So `skia-canvas-render.d` recovers the
+box the one way left to it, by folding every operation's rect — F7's
+derived-by-scan arm, and a symptom of building the display list _before_ knowing
+the box. Henderson's answer is to make the box an input to the build.
 
 ## Strengths
 
@@ -375,30 +402,34 @@ input to the build.
 ## Bearing on the proposal
 
 1. **Pass the box down; delete the extent scan (friction §8, F7).** Henderson's
-   `p(a,b,c)` is F7 stated as a rule. `buildDisplayList` should take the target
-   rect the way a picture takes its parallelogram, so the offscreen consumer that
-   forced `skia-canvas-render.d` to scan every op never needs to. This is the
+   `p(a,b,c)` answers all three of F7's extent questions from the surface, by
+   construction. `buildDisplayList` should take the target rect the way a picture
+   takes its parallelogram, so the offscreen consumer that makes
+   `skia-canvas-render.d` fold every operation's rect never needs to. This is the
    single directly copyable idea.
-2. **`ε`, not more enumerators (friction §5, F5).** A render-time fidelity
-   scalar is the 1982 form of Notcurses' blitter ladder. It corroborates F5's
-   recommendation to replace `RuleEdge` with a fidelity rather than a seventh
-   compass point — from a subject with no cells at all, which makes the
-   convergence meaningful.
+2. **`ε`, not more enumerators (friction §5, F6).** A render-time fidelity
+   scalar is the 1982 form of Notcurses' blitter ladder. It corroborates F6's
+   recommendation to replace `RuleEdge` with a named fidelity rather than a
+   seventh compass point — and it comes from a subject with no cells at all,
+   which is what makes the convergence meaningful. Continuity on its own would
+   not have got there; F6's whole point is that it relocates the question, and
+   Henderson is the subject that says where it lands.
 3. **Adopt law-checking above the seam, not the model below it.** `sparkles:ui`
    cannot be a picture algebra, but its _layout_ combinators can have laws worth
    testing (`above`/`beside` associativity, rotation identities on box-flow).
    Henderson's `rot45` verdict gives the admission test for new vocabulary: if an
    operator has no simple law, it is application-specific and belongs in the
-   application. `scrollbar`'s eight `DrawOp` fields fail that test.
+   application. The `Scrollbar` payload's fourteen fields fail that test.
 4. **Do not read F1 as licence to delete measurement.** These subjects have no
    `measure` because they have no text. F1's evidence is about _placement_; this
    doc adds no support for eliminating a metrics service, and `RND6`'s monospace
    cell advance is precisely the property a `Point -> Colour` model cannot carry.
 5. **Reification is the price of observability, and we are right to pay it
-   (F2).** The strongest argument against the functional-image seam is that
+   (F3).** The strongest argument against the functional-image seam is that
    Henderson has to fall back on idempotent overdraw because there is no stream
-   to compare. `RecordingCanvas` exists for exactly the property this model
-   gives up.
+   to compare. `RecordingCanvas` exists for exactly the property this model gives
+   up, and F12 states the condition attached to it: the stream pays while the
+   value stays inspectable.
 6. **Why `sparkles:ui` cannot take this route, stated plainly.** Three blockers,
    each independent: (a) the toolkit's unit is a Unicode grapheme cell whose
    advance is a property of the text (`RND6`), and a function from continuous
@@ -410,12 +441,12 @@ input to the build.
    answer.
 
 > [!NOTE]
-> **Where this contradicts the synthesis.** Nothing here overturns F1–F7, but
-> two are narrowed. F1 is narrowed to a placement claim (Q1, above). F3's "the
-> axis is _where_ degradation lives" gains a third position — _no degradation at
-> all_ — which is available only to a seam with one target class, and is
-> therefore evidence that our semantic operations are forced by our target
-> spread rather than chosen.
+> **Where this contradicts the synthesis.** Nothing here overturns F1–F12, but
+> two are narrowed. F1 is narrowed to a placement claim (Q1, above). F4 already
+> lists _nobody_ among the six places a lowering can live; these two subjects are
+> what that position looks like when it is the only one on offer — a seam with a
+> single target class — and are therefore evidence that our semantic operations
+> are forced by our target spread rather than chosen.
 
 ## Sources
 

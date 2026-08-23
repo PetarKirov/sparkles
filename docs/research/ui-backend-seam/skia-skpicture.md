@@ -163,13 +163,13 @@ all possibilities"_ ([`SkRecordDraw.h`][recorddraw]).
 still, in a separate module (`modules/skshaper`, `modules/skparagraph`).
 
 The unit is `SkScalar` — device-independent float, one number, no policy about
-what a "cell" is. That makes Skia the fifth consecutive subject to put
-measurement somewhere other than the painter, and the first one in the survey
-where _our own binding already does it that way_: `sparkles:skia`'s C shim
-exposes `sparkles_skia_font_measure_utf8` on `SkFont*`, while
-[`isCanvas`][canvas-d]'s `measure` still returns cells. Friction §1 is
-therefore not a Skia limitation we inherited; it is a seam decision we made on
-top of a library that had already made the other one.
+what a "cell" is. That puts Skia with the large majority
+[F1](./comparison.md) counts, and makes it the one subject where _our own
+binding does it that way_: `sparkles:skia`'s C shim exposes
+`sparkles_skia_font_measure_utf8` on `SkFont*`, while the fifth method of
+[`isCanvas`][canvas-d] — `Size measure(const(char)[])` — is denominated in
+cells. Friction §1 is therefore not a Skia limitation we inherited; it is a
+seam decision we make on top of a library that answers the other way.
 
 ## Q2 — is the contract stated, or probed?
 
@@ -192,14 +192,18 @@ For genuinely optional _semantics_ the answer is silence, stated as policy —
 not support annotations, this call is safely ignored."_
 
 > [!IMPORTANT]
-> This is the shape [F4](./comparison.md#f4-optional-capabilities-need-a-stated-floor-and-a-refusable-degrade)
-> asked for, achieved with **no capability enum and no query at all** — no
-> `hasFeature`, no `PaintEngineFeature` bitmask. Qt declares capability as
-> data; Skia encodes the identical distinction in three C++ constructs the
-> compiler already checks. `sparkles:ui` has the same three constructs available
-> (`static assert` for the floor, a `static if` default in a mixin or free
-> function for the lowering, `Expected`/`bool` for refusal) without inventing a
-> vocabulary.
+> This is the shape [F5](./comparison.md) asks for, achieved with **no
+> capability enum and no query at all** — no `hasFeature`, no
+> `PaintEngineFeature` bitmask. Qt declares capability as data; Skia encodes the
+> identical distinction in three C++ constructs the compiler already checks.
+> `sparkles:ui` holds two of the three: `isCanvas!T`'s five methods are the
+> floor, and each of the four optional primitives carries a stated degradation
+> that `interp/immediate.d` applies where `__traits(compiles, …)` reports the
+> backend has no better answer. The third rung — a way for a backend that _does_
+> implement a primitive to hand one call back, the way `drawBlurredRRect`
+> returns `false` — has no spelling in the seam. And the whole ladder is learned
+> by reading the interpreter rather than the concept, which is friction §2
+> ("five methods, eight kinds") stated from the other side.
 
 What Skia does _not_ have is a way for a **caller** to ask a device what it
 supports; `recordingContext()`, `recorder()` and `baseRecorder()` returning
@@ -222,9 +226,15 @@ hyperlinks and every raster backend drops on the floor.
 So Skia's answer to "does a semantic concept belong in the drawing seam" is:
 **yes, when a backend could do something genuinely different with it, and the
 default lowering exists in the framework so no backend is obliged to care.**
-That is `scrollbar` in `DrawOp`, judged by Skia's criterion, minus the default
-lowering — which `sparkles:ui` also has (`scrollbarThumb`, `scrollbarCell`) but
-does not _apply_ on the backend's behalf.
+Judged by that criterion, `scrollbar` in `DrawOp` passes: a cell backend
+degrades a scrollbar differently from a pixel backend, and the framework does
+ship the default lowering — `scrollbarThumb` in `sparkles.ui.state`, with
+`scrollbarCellCount` and `scrollbarCell` re-exported from `canvas.d`, which the
+interpreter paints glyph-per-cell for any backend that declines the primitive.
+The distance from Skia is one of _declaration_, not of behaviour:
+`SkDevice::drawShadow` is a virtual with a body, so the lowering sits on the
+type a backend author is subclassing, while ours is a branch taken inside
+`interp/immediate.d`.
 
 ## Q4 — command shape
 
@@ -243,7 +253,11 @@ Three properties follow that our `DrawOp[]` does not have:
 
 1. **Variable-size payloads.** `PODArray<SkPoint>` and `Optional<SkPaint>` are
    arena-backed handles, so `DrawPoints` stores `n` points inline in the same
-   allocation rather than pointing at a caller's slice.
+   allocation. `TextRun` reaches the same safety by a different route —
+   `CmdBuffer.textRun` copies the bytes into a frame arena and the operation
+   holds a 16-byte `const(char)[]` into it — but the operation itself stays
+   fixed-width, and a `PopClip` that carries nothing costs what a `TextRun`
+   costs.
 2. **Op-level metadata as data.** Each record declares `kTags` —
    `kDraw_Tag`, `kHasImage_Tag`, `kHasText_Tag`, `kHasPaint_Tag`,
    `kMultiDraw_Tag` — so a pass can select "ops that contain text" generically
@@ -256,21 +270,26 @@ Three properties follow that our `DrawOp[]` does not have:
 > [!NOTE]
 > The macro-list trick is the C++ substitute for what D gives directly.
 > `SK_RECORD_TYPES(M)` exists to keep the enum, the structs and the dispatch
-> `switch` from drifting; in D a `SumType` over a `struct` per kind gets the
-> same guarantee from the language, and `kTags` becomes a UDA or an `enum`
-> member the visitor reads with `__traits`. Skia is spending a macro to buy
-> what a D sum type is.
+> `switch` from drifting. `DrawOp` is that sum written in the language instead:
+> a `SumType` over eight per-kind structs, `match!` in place of the visitor,
+> exhaustiveness checked by the compiler, and `OpKind` derived from the arm
+> rather than stored beside it so the tag and the payload cannot disagree. Skia
+> spends a macro to buy what a D sum type is. What the macro buys and the sum
+> does not is `kTags` — which in D is a UDA on each payload struct, read with
+> `__traits`.
 
 ## Q5 — sub-unit placement
 
-Does not arise: `SkScalar` is float throughout, and the device transform is an
-`SkM44`. A hairline is `SkPaint::setStrokeWidth(0)` — a documented special
-case meaning "thinnest line the device can draw", which is _exactly_ the
-"name a fidelity, not a position" answer
-[F5](./comparison.md)
-extracted from Notcurses, arrived at independently in a continuous-coordinate
-system. `RuleEdge`'s six enumerators have no counterpart because a caller who
-wants a band two pixels below the top edge simply writes the rect.
+`SkScalar` is float throughout and the device transform is an `SkM44`, so there
+is no enumerated vocabulary of positions: a caller who wants a band two pixels
+below the top edge writes the rect, and `RuleEdge`'s six enumerators have no
+counterpart. What the float seam does not do is make the sub-unit question
+disappear — it moves it, which is the point [F6](./comparison.md) makes. Skia's
+answer at the relocated site is a _named fidelity_: a hairline is
+`SkPaint::setStrokeWidth(0)`, a documented special case meaning "thinnest line
+the device can draw". Friction §5's compass directions are the cell-space form
+of the same pressure; a continuous coordinate would spell the position and
+still need the fidelity named.
 
 ## Q6 — resolved appearance, semantic role, or both?
 
@@ -295,10 +314,16 @@ protected:
 these are how Skia gets overdraw visualisation, debug capture and paint
 overrides without a second field on every op.
 
-That is a real alternative to friction §6's hedge: **carry one representation
-and put the other in a decorator canvas**. It costs a virtual call per op — but
-`sparkles:ui` is already structurally typed, so the D equivalent is a
-`FilteringCanvas!(Inner, hook)` template with the call inlined.
+That is a real alternative to friction §6, "a resolved appearance and a semantic
+role on every drawing op". `DrawOp` stores the resolved half as an `Ink` — or,
+on `FillRect`, as its own colour fields plus a `const(BoxChrome)*` that is null
+unless the box has a border, shadow, radius or arrow — and keeps a `Slot` on six
+of its eight payloads; `Visual` is reconstructed through `visualOf` rather than
+stored, which makes the hedge cheap without making it a decision. Skia's route
+is to **carry one representation and put the other in a decorator canvas**. It
+costs a virtual call per op — but `sparkles:ui` is structurally typed, so the D
+equivalent is a `FilteringCanvas!(Inner, hook)` template with the call
+inlined.
 
 ## Q7 — payload ownership
 
@@ -316,10 +341,16 @@ its own `bounds()` and `uniqueID()`. It is the equivalent of egui's `Galley`,
 and it is what makes `finishRecordingAsPicture()` able to promise an
 **immutable** picture that outlives its recorder and crosses threads.
 
-Friction §7 — `DrawOp.text` as a borrowed slice that cannot outlive the frame —
-has no analogue anywhere in `SkRecord`. Skia pays a copy or a refcount bump on
-every single op to avoid it, in the most performance-obsessed 2-D library in
-existence.
+Friction §7 — "`DrawOp.text` is borrowed, and the borrow is not expressible" —
+meets Skia at a narrower place than it first looks. The copy is not the
+difference: `CmdBuffer.textRun` copies its bytes into a frame arena exactly as
+`SkRecord::alloc<T>` copies POD arrays into the record's, and that copy is what
+makes a `scope` source safe to draw from. The difference is the _retain
+boundary_. `SkRecord` owns its arena for the life of the picture, so
+`finishRecordingAsPicture()` hands out an immutable value that crosses threads;
+`DrawOp` states its rule on the type — an operation is valid while the buffer
+that built it is alive and unreset — and that buffer resets at frame end.
+`UI-O4` is open on exactly that boundary.
 
 ## Q8 — extent query
 
@@ -343,7 +374,8 @@ the extent before recording; the picture repeats it back.
 Skia is fully capable of deriving content bounds — `SkRecordFillBounds`
 computes a conservative identity-space rect **per op** to fill an
 `SkBBoxHierarchy` for culling. But that machinery is clamped by the declared
-rect, not used to discover it ([`SkRecordDraw.cpp`][filldraw]):
+rect rather than being the means of discovering it
+([`SkRecordDraw.cpp`][filldraw]):
 
 ```cpp
         // Nothing can draw outside the cull rect.
@@ -412,46 +444,67 @@ declared rect at the end of recording, still with a number the caller computed.
 
 ## Bearing on the proposal
 
-1. **Adopt the floor / lowering / refusal ladder verbatim.** This is the
-   concrete mechanism [F4](./comparison.md#f4-optional-capabilities-need-a-stated-floor-and-a-refusable-degrade)
-   asked for and it needs no capability enum: make `isCanvas` assert only the
-   floor (`fillRect`, `textRun`, `glyph`, `line`); ship the eight-kind
-   interpreter's `rule`/`scrollbar`/clip handling as **framework lowerings** a
-   backend may override; and give a backend a way to _refuse_ by returning
-   `false`. Friction §2 dissolves — the concept states the floor, and the
-   lowering table states the rest.
-2. **`DrawOp` should be a sum type of per-kind structs, plus tags.** Friction §4
-   is confirmed; Skia adds two refinements over egui's flat `enum Shape`: an
-   **arena** so a kind may carry variable-length payload, and **`kTags` on each
-   kind** so passes select by property. Our scrollbar's eight fields go into a
-   `Scrollbar` struct nobody else pays for.
-3. **Contradicts the premise, and complicates
-   [F7](./comparison.md#f7-extent-belongs-to-the-surface-not-the-scene): Q8 is
-   not merely unanswered, it is _declined_.** Skia computes per-op bounds and
-   keeps them private, exposing only the rect the caller declared. F7's
-   conclusion — extent belongs to the surface — is strengthened by the strongest
-   possible witness. The narrow remaining gap (an offscreen consumer sizing to
-   content) is what `finishRecordingAsPictureWithCull` addresses: measure, then
-   _declare_, as a distinct step from recording.
-4. **Complicates [F1](./comparison.md) only by making it embarrassing.** The unanimity is now five of five,
-   and the fifth is the library we already link. `sparkles_skia_font_measure_utf8`
-   exists in-tree; `SkiaCanvas.measure` calling `cellsOf` is a choice our seam
-   forces, not one Skia imposes.
-5. **Refines [F3](./comparison.md):
-   semantic ops are legitimate _when the framework ships the default lowering_.**
-   Skia is in Qt's camp (degrade once, centrally) while looking like Slint's
-   (semantic ops in the seam). `sparkles:ui` already owns the lowering
-   (`ruleEndpoints`, `scrollbarCellCount`, `scrollbarCell`) but makes each
-   backend call it. Making the lowering the default and the override the
-   exception moves us into Skia's position without changing the vocabulary.
-6. **Replace friction §6's double payload with a decorator canvas.** The HTML
-   interpreter's need for `slot` is `SkPaintFilterCanvas`'s use case exactly.
-   Carrying `Visual` alone and letting a re-resolving backend wrap costs one
-   template layer, not two fields on every op.
-7. **Confirms [F6](./comparison.md#f6-payload-ownership-share-it-do-not-borrow-it) at the limit.** Skia copies or refcounts every payload into the
-   record; `sk_sp<const SkTextBlob>` is the shaped-text analogue of the interned
-   payload friction §7 wants. If Skia will pay that per op, `DrawOp.text` as a
-   borrowed slice is not a performance decision worth defending.
+1. **Adopt the floor / lowering / refusal ladder as a _declaration_.** This is
+   the concrete mechanism [F5](./comparison.md) asks for, and it needs no
+   capability enum. Two rungs are in place: `isCanvas!T` states a floor, and the
+   interpreter carries a lowering for each of the four optional primitives —
+   `ruleEndpoints` plus a cell-aligned `line` for `rule`, `paintScrollbarCells`
+   for `scrollbar`, and nothing at all for the clip pair, because the display
+   list has culled hidden subtrees before a backend sees it. What Skia has and
+   the seam does not is a place a backend author can _read_ them: the lowerings
+   are selected by `__traits(compiles, …)` at each interpreter call site rather
+   than declared beside the concept — friction §2 — and a backend that
+   implements a primitive has no way to hand one call back the way
+   `drawBlurredRRect` returns `false`.
+2. **Take `kTags`; leave the arena.** `DrawOp` is the sum of per-kind structs
+   `SK_RECORD_TYPES` is emulating: eight arms, `match!` for dispatch,
+   exhaustiveness from the language, `Scrollbar`'s fourteen fields confined to
+   the one arm that paints a scrollbar. The arena refinement does not transfer.
+   Variable stride buys nothing once the widest payload — `TextRun` — fits
+   inside `static assert(DrawOp.sizeof <= 64)`, and it costs `RecordingCanvas`
+   the pairwise-comparable value semantics the friction log lists among the
+   things that work. `kTags` is the part with no equivalent: a pass that wants
+   "every op that carries text" or "every op that carries a `Slot`" has to
+   enumerate arms, where a UDA per payload struct read with `__traits` gives
+   Skia's property-selection without touching the encoding.
+3. **Skia is the extreme point of [F7](./comparison.md), and worth stating as
+   one.** F7 splits extent into three questions — surface, layout and ink — and
+   finds most subjects answering at least one of them from the scene. Skia
+   answers none of them that way: it computes a conservative per-op bound to
+   fill its `SkBBoxHierarchy`, keeps it private, and exposes only the rect the
+   caller declared. `sparkles:ui` sits at the same point by omission rather than
+   by decision — `CmdBuffer` reports `length` and `measure` and nothing about
+   extent, so a backend allocating its own surface folds `op.rect` itself
+   (friction §8). `finishRecordingAsPictureWithCull` is the shape of the fix
+   that keeps Skia's discipline: measure, then _declare_, as a step distinct
+   from recording.
+4. **Confirms [F1](./comparison.md), from inside our own dependency.** Skia puts
+   measurement on `SkFont` and shaping further out still, in `skshaper` and
+   `skparagraph`. `sparkles_skia_font_measure_utf8` is in-tree and reachable;
+   `SkiaCanvas.measure` answers `cellsOf(text)` regardless, because the seam's
+   fifth method is denominated in cells (friction §1). That is a vocabulary
+   decision of ours, not a limit of the library underneath.
+5. **Refines [F4](./comparison.md): semantic ops are legitimate _when the
+   framework ships the default lowering_.** F4's axis is where the lowering
+   lives, and Skia's lives in the framework — `SkDevice::drawArc` and
+   `drawShadow` are virtuals with working bodies, so a backend overrides for
+   speed and never for correctness. `sparkles:ui` puts its lowerings in the same
+   place; the difference is visibility, not location. Skia's default is a method
+   on the type a backend author subclasses, ours is a `static if` branch inside
+   `interp/immediate.d` — which is why item 1 asks for a declaration rather than
+   a relocation.
+6. **Answer friction §6 with a decorator canvas.** The HTML interpreter's need
+   for `slot` is `SkPaintFilterCanvas`'s use case exactly. Carrying the resolved
+   half alone and letting a re-resolving backend wrap costs one template layer,
+   against a `Slot` stored on six of the eight payloads.
+7. **Confirms [F8](./comparison.md) at the limit — and locates the real
+   difference.** F8 finds no subject borrowing a payload across a frame, and
+   Skia is the strongest witness for it: a copy or an atomic bump per op, in the
+   most performance-obsessed 2-D library in existence. The seam is on the same
+   side of that line, since `CmdBuffer.textRun` copies into a frame arena. What
+   separates the two is how long the arena lives: `sk_sp<const SkTextBlob>`
+   outlives its recorder, while a `DrawOp` is valid only while the buffer that
+   built it is alive and unreset. `UI-O4` holds that question open.
 8. **`SkTextBlob` is the shape of a `textRun` payload that survives the frame.**
    Immutable, refcounted, pre-shaped, with its own `bounds()` and `uniqueID()`
    for caching. That is the thing to build if `sparkles:ui` ever records on one

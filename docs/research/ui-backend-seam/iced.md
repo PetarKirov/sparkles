@@ -162,9 +162,10 @@ coordinates logical and, therefore, maintain linearity."
 > **An associated measurement type makes heterogeneous backend composition
 > impossible unless the backends agree on it exactly.**
 
-That is the sharpest transferable warning for friction §1: moving `measure` off
-the canvas is right, but making its _type_ backend-chosen has a cost Slint's
-design does not pay because Slint never composes two renderers into one.
+That is the sharpest transferable warning for friction §1, and it lands squarely
+on the decision F2 separates from placement: moving `measure` off the canvas is
+right, but making its _return type_ backend-chosen has a cost Slint's design
+does not pay, because Slint never composes two renderers into one.
 
 ## Q2 — where the contract is stated
 
@@ -175,8 +176,10 @@ widget will not compile against a backend that does not.
 
 This is the cleanest answer in the survey to friction §2, and it is the
 structural cousin of what `isCanvas` gestures at: instead of one concept whose
-five clauses under-describe an eight-member `OpKind`, there are five concepts,
-each complete, each named at the point of demand.
+five required methods, plus four optional primitives probed with
+`__traits(compiles)` at each interpreter call site, under-describe the eight
+kinds the display list actually carries, there are five concepts, each complete,
+each named at the point of demand.
 
 Runtime negotiation survives in exactly three typed places:
 `image::Error::Unsupported` ("loading images is unsupported", returnable from
@@ -216,7 +219,8 @@ constants**, not calls. `text::Renderer` declares `ICON_FONT` plus
 `CHECKMARK_ICON`, `ARROW_DOWN_ICON`, `SCROLL_UP_ICON`, `SCROLL_DOWN_ICON`,
 `SCROLL_LEFT_ICON`, `SCROLL_RIGHT_ICON` and `ICED_LOGO`. The backend answers
 "which glyph means _scroll up_ in your icon font"; the widget draws. That is far
-cheaper than handing a backend eight scrollbar fields per op.
+cheaper than handing a backend the fourteen fields of a `Scrollbar` payload and
+expecting it to know what a scrollbar is.
 
 ## Q4 — command shape
 
@@ -246,9 +250,13 @@ record primitives together and defer grouping until the end" (`flush`).
 
 So the shape is neither Slint's pure dispatch nor egui's single `Shape` sum
 type: it is **structure-of-arrays by primitive class, one array per kind, chosen
-by the backend that will batch it**. Under that encoding our `DrawOp`'s
-eighteen-fields-mostly-dead problem does not arise, because no record ever has
-to be wide enough for every kind.
+by the backend that will batch it**. It is a third answer beside our own, and
+the trade F3 holds open is visible in it whole. `DrawOp` is a closed sum over
+eight per-kind payloads, so every operation is as wide as the widest of them —
+`TextRun`, under a `static assert(DrawOp.sizeof <= 64)` budget — and a `PopClip`
+that carries nothing costs what a text run costs (friction §4). Iced never makes
+a record wide enough for every kind, and pays for it by having no single stream
+a second backend could replay.
 
 ## Q5 — sub-unit placement
 
@@ -283,8 +291,9 @@ none: it _queries_ the smallest addressable unit and clamps to it.
 A second ladder belongs to the same friction entry: `text::Shaping` is
 `Auto | Basic | Advanced`, documented as "No shaping and no font fallback …
 very cheap" versus "Advanced text shaping and font fallback … expensive".
-**The caller names a fidelity and the backend delivers it** — F5's move for
-hairlines, applied to shaping.
+**The caller names a fidelity and the backend delivers it** — the first half of
+F6's answer, applied to shaping rather than to hairlines, with the queried
+device unit above supplying the second.
 
 ## Q6 — resolved appearance, semantic role, or both
 
@@ -306,10 +315,15 @@ computed. The one semantic thing reaching the seam is
 `renderer::Style { text_color: Color }` — the _inherited_ default threaded
 through `Widget::draw`, consulted when a widget's own style says `color: None`.
 
-`sparkles:ui` pays for `visual` _and_ `slot` on every op (friction §6) because
-its HTML interpreter re-resolves. Iced has no re-resolving backend and no role
-field, which confirms the mechanism's cost rather than contradicting it: the
-second channel exists only where somebody re-resolves.
+`sparkles:ui` carries both halves (friction §6) because its HTML interpreter
+re-resolves: six of the eight payloads store a `Slot` beside the resolved fields
+their primitive paints from — an `Ink` for the four content kinds, `FillRect`'s
+own colours plus a `const(BoxChrome)*` for a fill — and `DrawOp.visual`
+reconstructs a `Visual` from those on demand rather than storing one. Iced has
+no re-resolving backend and no role field, which confirms F9's account of the
+cost rather than contradicting it: resolved appearance is what a painter needs,
+a role is what only a re-resolver reads, and the second channel earns its place
+only where somebody re-resolves.
 
 ## Q7 — payload ownership
 
@@ -335,8 +349,9 @@ Images go further, with an explicit, documented ownership contract
 `Allocation` is `Arc<Memory>` with `downgrade`/`upgrade`, and
 `Renderer::allocate_image` takes a
 `callback: impl FnOnce(Result<Allocation, Error>) + Send + 'static` — the
-`Send + 'static` bound is precisely the thread-crossing guarantee that
-`DrawOp.text`'s borrowed slice cannot give (friction §7, `UI-O4`). The
+`Send + 'static` bound is precisely the thread-crossing guarantee that a
+`TextRun.text` borrowed from the frame arena cannot give (friction §7,
+`UI-O4`). The
 synchronous `load_image` exists too and is documented as blocking: "If the image
 is not already loaded, this method will block!"
 
@@ -364,7 +379,12 @@ let rgba = self.renderer.screenshot(physical_size, scale_factor, style.backgroun
 
 Content-derived extent, when wanted, is a **layout** result:
 `Widget::layout(...) -> layout::Node` and `paragraph.min_bounds()`. Iced
-confirms F7 outright.
+therefore answers all three of the questions F7 separates, each in a different
+place and each maintained at construction: the surface is told its size, layout
+reports the layout extent, and the primitives below the seam keep their own ink
+bounds. Our display list sits at the other end of that axis — nothing on it,
+on `CmdBuffer` or on the arena reports an extent, so `skia-canvas-render.d`
+derives one by folding every operation's rect (friction §8).
 
 The one place primitives _are_ self-describing is damage, not allocation:
 `graphics::text::Text::visible_bounds()` and the [`layer::Layer`][layer] trait's
@@ -418,56 +438,84 @@ The one place primitives _are_ self-describing is damage, not allocation:
 ## Bearing on the proposal
 
 1. **Split `isCanvas` into a base concept plus capability concepts, and make
-   widgets name what they need** (friction §2, finding F4). This is the single
+   widgets name what they need** (friction §2, F5, F11). This is the single
    most transferable structure here, and D expresses it more cheaply than Rust:
    `isCanvas!T`, `isTextCanvas!T`, `isClippingCanvas!T` as separate `enum bool`
-   concepts, each `static assert`ed where it is used, replaces
-   `__traits(compiles)` scattered across interpreter call sites without
-   introducing a type parameter anywhere.
+   concepts, each `static assert`ed where it is used, replaces the
+   `__traits(compiles)` probes scattered across interpreter call sites without
+   introducing a type parameter anywhere. It also states the floor once, in the
+   concepts, instead of leaving it to be reconstructed from the call sites —
+   F11's requirement, and F5's point that D already has every construct the
+   floor / defaulted / refusable ladder needs.
 2. **Do not make the measurement _unit_ backend-chosen** — contradicting the
    reading of F1 that Slint's `Font::Length` invites. Iced moves the shaper off
    the painter (agreeing with F1's core claim) but keeps the unit fixed at
    logical pixels, and [`fallback::Renderer`][fallback] shows why: the moment
    two backends must compose, an associated unit forces them to be the same
    type. Move `measure` off the canvas into a font abstraction; keep its return
-   type in the toolkit's own unit.
+   type in the toolkit's own unit. Placement and return shape are two of the six
+   decisions F2 separates, and iced settles them in opposite directions.
 3. **A scale hint is a better reconciliation than a unit change** (friction §1,
    §5). `hint(Scale)` / `hint_factor()` lets layout stay in one unit while a
    backend lays out in device coordinates. A cell-space toolkit could hand a
    backend the cell-to-device factor by the same route.
 4. **Replace `RuleEdge` with a queried device unit, not more enumerators**
-   (friction §5, F5). `1.0 / hint_factor()` plus a per-op `snap` flag covers
+   (friction §5, F6). `1.0 / hint_factor()` plus a per-op `snap` flag covers
    every case our six enumerators cover, and the ones they do not — a two-pixel
-   focus ring, a badge inset. This is the concrete mechanism behind F5's
-   "name a fidelity"; `Shaping::{Basic, Advanced}` is the same move on a second
-   axis.
+   focus ring, a badge inset. Continuous coordinates on their own would only
+   move the problem, which is F6's point; iced settles it by _asking_, and that
+   pairing — a named fidelity plus a queried device unit — is exactly F6's
+   answer. `Shaping::{Basic, Advanced}` is the same move on a second axis.
 5. **Reconsider `scrollbar` after all — but keep a semantic channel that is not
-   a draw call** (friction §3, F3). Iced contradicts Slint here: its scrollbar
+   a draw call** (friction §3, F4). Iced contradicts Slint here: its scrollbar
    is quads emitted by a widget, and the seam is unharmed. What it keeps are
    associated _constants_ (`SCROLL_UP_ICON`, `CHECKMARK_ICON`) by which a
-   backend declares its own glyph vocabulary. A `DrawOp`-free equivalent — the
-   canvas exposing `trackGlyph`/`thumbGlyph` as backend-owned data while
-   `scrollbarThumb` does the geometry once — would delete eight of `DrawOp`'s
-   eighteen fields without losing the degradation.
-6. **Encode the op stream structure-of-arrays by kind, not as one sum type**
-   (friction §4, F2). F2 concluded "the fix is a `SumType`". Iced is a third
-   answer: separate vectors per primitive class, which removes dead fields _and_
-   is what a batching backend wants. If `RecordingCanvas` keeps a portable
-   stream, note that iced pays for its per-backend encoding by having no
-   cross-backend parity harness at all — that is a cost we should decline.
-7. **Share payloads and record weak handles with inline geometry** (friction §7,
-   F6). `paragraph::Weak { raw, min_bounds, align_x, align_y }` is the exact
-   shape to copy: a recorded op that cannot extend a payload's lifetime but
-   still knows its extent. And an allocation callback bounded `Send + 'static`
-   is the direct answer to M7/T5's record-here-submit-there requirement.
-8. **Leave extent to the surface** (friction §8, F7) — confirmed a third time.
-   `create_surface(w, h)`, `reset(new_bounds)` and
-   `Headless::screenshot(size, …)` all take the size; content-derived extent is
-   a layout query (`min_bounds`). Give `skia-canvas-render.d` a layout-side
-   extent, not a self-describing display list.
+   backend declares its own glyph vocabulary. F4's question is not
+   semantic-versus-primitive but where the lowering lives, and ours already
+   lives in one place: `scrollbarThumb` in `sparkles.ui.state`, with
+   `scrollbarCellCount`, `scrollbarCell` and `ruleEndpoints` built on it. The
+   seam then restates it. A `DrawOp`-free equivalent — the canvas exposing
+   `trackGlyph`/`thumbGlyph` as backend-owned data while `scrollbarThumb` does
+   the geometry once — would shrink the fourteen-field `Scrollbar` payload to
+   the geometry a backend paints and retire one of the eight arms that every
+   `match!` walker and every accessor spells out, without losing the
+   degradation.
+6. **Weigh structure-of-arrays by kind against the closed sum** (friction §4,
+   F3). F3 leaves the encoding a live trade, and iced is a third answer beside
+   the two it names: separate vectors per primitive class, which pays only for
+   what each kind uses _and_ is what a batching backend wants. At our scale the
+   trade still falls the other way — the widest payload fits inside the seam's
+   64-byte budget, so variable stride buys little, and a closed sum keeps every
+   operation a comparable value, which is what makes `RecordingCanvas` a
+   pairwise-diffable oracle. Iced pays for its per-backend encoding by having no
+   cross-backend parity harness at all; that is a cost we should decline (F12).
+   The part of friction §4 iced genuinely answers is the other half: a
+   `Vec<Item<Text>>` needs no `@trusted` island and no `launder` cast, because
+   the payload it holds is owned rather than borrowed.
+7. **Record a handle with inline geometry instead of a borrow** (friction §7,
+   F8). F8 finds no subject anywhere that borrows a payload across a frame; the
+   frame arena is our version of that discipline — `CmdBuffer.textRun` copies
+   into it, and the rule stated on the type is that an operation is valid while
+   the buffer that built it is alive and unreset. What that discipline does not
+   settle is the retain boundary, which `UI-O4` keeps open, and
+   `paragraph::Weak { raw, min_bounds, align_x, align_y }` is the shape to copy
+   for it: a recorded op that cannot extend a payload's lifetime, carries its
+   own extent, and crosses a thread. An allocation callback bounded
+   `Send + 'static` is the direct answer to M7/T5's record-here-submit-there
+   requirement.
+8. **Answer each of F7's three extent questions in its own place** (friction
+   §8). `create_surface(w, h)`, `reset(new_bounds)` and
+   `Headless::screenshot(size, …)` all take the size, so the surface question
+   never reaches the scene; `min_bounds()` answers the layout question; and
+   `visible_bounds()` answers the ink question for damage — each maintained at
+   construction rather than recovered by a scan. Give `skia-canvas-render.d` a
+   layout-side extent instead of making it fold every operation's rect, and
+   leave ink extent where damage tracking would want it, rather than loading all
+   three onto a self-describing display list.
 9. **A null backend that only type-checks is not enough.** `impl Renderer for ()`
    proves conformance and nothing else. `RecordingCanvas` — a conforming backend
-   that _records_ — is a capability iced does not have, and the friction log's
+   that _records_ — is a capability iced does not have, and it is what makes the
+   op stream a parity oracle rather than a golden (F12). The friction log's
    "did not cause friction" list is right to keep it.
 
 ## Sources

@@ -216,11 +216,13 @@ need" rather than "what can you do", and it is consumed by the recorder, so a
 backend never has to ask.
 
 > [!NOTE]
-> This is the strongest available counter-model to friction §2. The
-> `sparkles:ui` seam probes with `__traits(compiles)` at interpreter call sites
-> because the concept under-describes the contract. Flutter's contract is
-> total; the cost is that a minimal backend must write 49 method bodies, and
-> the mixins exist precisely to make that bearable.
+> This is the strongest available counter-model to friction §2. `isCanvas`
+> requires five methods; `rule`, `scrollbar` and the `pushClip`/`popClip` pair
+> are probed with `__traits(compiles)` at each call site in
+> `interp/immediate.d`, so the concept states less than the contract. Flutter's
+> contract is total, and finding **F5** is the reason that is a choice rather
+> than a necessity: the cost here is that a minimal backend writes 49 method
+> bodies, and the mixins exist precisely to make that bearable.
 
 ## Q3 — semantic operations, and where degradation lives
 
@@ -254,9 +256,10 @@ _appearance_ with a backend-chosen realisation; its semantic _structure_
 
 ## Q4 — command shape
 
-Reified, immutable, comparable — and **not** a tagged union. Flutter gets the
-properties `sparkles:ui` wants from `DrawOp` (a stream you can record, replay,
-cull, cache, and diff) with a per-op struct type rather than a common record.
+Reified, immutable, comparable — and **not** a closed sum. Flutter reaches the
+properties `DrawOp` delivers — a stream that records, replays, culls, caches and
+diffs — through one struct type per op rather than through one record with eight
+arms.
 
 The replay/compare machinery is the payoff. `DisplayList::Equals` compares two
 lists by walking offsets and letting most ops fall through to a **bulk
@@ -267,13 +270,44 @@ bulk run. That is only sound because every record is exactly its own payload —
 a tag-plus-dead-fields encoding would compare uninitialised bytes.
 
 > [!IMPORTANT]
-> This complicates finding **F2**. F2 concluded that `DrawOp` should become a
-> `SumType`. Flutter shows a third option that fits a `@nogc` toolkit better
-> than either: a **flat byte arena of heterogeneous exactly-sized records with
-> a side table of offsets**, dispatched by a generated switch. It keeps the
-> value semantics and the comparability, pays no padding for the largest
-> variant, and lets a variable-length payload (points, glyph runs, text) live
-> inline immediately after its record instead of in a borrowed slice.
+> **Flutter's standing argument against the encoding `sparkles:ui` uses.**
+> `DrawOp` wraps a closed `SumType` over eight payloads under `static
+assert(DrawOp.sizeof <= 64)`, so a `PopClip` that carries no fields is as wide
+> as `TextRun`, the widest arm. Flutter's position is that the sum is the wrong
+> container: a **flat byte arena of heterogeneous exactly-sized records with a
+> side table of offsets**, dispatched by a generated switch, keeps value
+> semantics and comparability, pays no widest-variant padding, and lets a
+> variable-length payload live inline immediately after its record instead of in
+> a slice.
+>
+> The mechanism is its own, and it is real. `DisplayListBuilder::Push<T>`
+> placement-news each record at `SkAlignPtr(sizeof(T) + pod)`;
+> [`dl_op_records.h`][dl-op-records] splits a payload rather than widen one
+> ("packed into 3 different OpTypes to avoid expanding the fixed payload beyond
+> the 8 bytes"); `DisplayList::Equals` still bulk-`memcmp`s across contiguous
+> runs. In D the shape is a byte `SmallBuffer` plus a `size_t[]` and a `switch`
+> on a stored tag.
+>
+> The price is four things at once. The recovered bytes are only the spread
+> between the narrowest arm and 64, on a stream whose text already lives in a
+> frame arena. `OpKind` is derived — `DrawOp.kind` is an eight-arm `match!`, so
+> the tag and the payload cannot disagree — and a stored tag makes the tag the
+> truth again; the exhaustiveness goes with it, since a ninth arm breaks every
+> `match!` at compile time where a ninth record type in an arena breaks a
+> dispatch at run time. The seventeen accessor members (`kind`, `rect`, `text`,
+> `visual`, `slot`, `barContent`, …) are written once against the sum and return
+> a neutral value on an arm that cannot answer, and `visualOf` reconstructs a
+> `Visual` from whichever resolved fields the payload it is looking at keeps —
+> both dispatch on arm identity that a byte range does not have. And two
+> `DrawOp`s compare as values, which is what makes `RecordingCanvas` a pairwise
+> oracle rather than a golden; an arena compares byte ranges of unequal length
+> through a pair of offset tables.
+>
+> **Answered on that last point.** Variable stride buys nothing once the widest
+> payload fits the 64-byte budget, and it costs `RecordingCanvas` its
+> pairwise-comparable value semantics — which the friction log lists among the
+> things that are working. The evidence stands, and it is why finding **F3** keeps the encoding a live
+> trade rather than a settled question.
 
 Two smaller facts transfer. Each record declares `kRenderOpInc` and `kDepthInc`
 as `static constexpr`, so the builder accumulates op counts and a Z-depth
@@ -284,10 +318,11 @@ replay.
 
 ## Q5 — sub-unit placement
 
-Flutter's coordinates are continuous `DlScalar` floats, so the enumerate-a-
-position problem `RuleEdge` solves does not arise. But Flutter _does_ face the
-hairline half of friction §5, and its answer is exactly the "name a fidelity"
-shape that finding **F5** recommends:
+Flutter's coordinates are continuous `DlScalar` floats, so the six-position
+enumeration `RuleEdge` spells out does not arise. The hairline does, which is
+the same sub-unit question standing in a different place — finding **F6**'s
+point that continuous coordinates relocate the problem rather than dissolve it.
+Flutter's answer is F6's second half, a named fidelity:
 
 > Defaults to 0.0, which correspond to a hairline width.
 >
@@ -334,10 +369,17 @@ colour and is resolved by the backend against the destination surface. Even
 that is a _numeric_ deferral, not a semantic role.
 
 Flutter can afford this because it has no re-resolving backend: there is no
-HTML/CSS receiver in-tree that wants class names instead of colours. This
-confirms rather than contradicts the survey's reading of friction §6 — the
-cost of carrying both `visual` and `slot` is a cost of having a re-resolving
-backend, not an intrinsic property of a drawing seam.
+HTML/CSS receiver in-tree that wants class names instead of colours.
+`sparkles:ui` has one, so its operations cannot be purely numeric the way a
+delta-encoded attribute stream is: alongside the values a primitive actually
+paints with — an `Ink`, or `FillRect`'s own colours and its
+`const(BoxChrome)*` — six of the eight payloads still name the role those
+values were resolved from, in a stored `Slot`. That confirms finding **F9**
+rather than contradicting it: no surveyed subject carries both, and the
+cost of carrying both is the cost of owning a backend that re-resolves, not an
+intrinsic property of a drawing seam. Deriving the `Visual` on demand through
+`visualOf` instead of storing one keeps the hedge cheap, which is exactly
+friction §6's complaint — cheap is not the same as decided.
 
 ## Q7 — payload ownership
 
@@ -347,9 +389,10 @@ backend, not an intrinsic property of a drawing seam.
 non-trivially-destructible records on teardown, so the refcounts are released
 exactly once.
 
-Then Flutter does the thing friction §7 actually needs and no other surveyed
-subject does: it **computes whether the recorded list may cross a thread**, as
-a property of the list.
+That is the refcount arm of finding **F8**'s eight ownership mechanisms. Then
+Flutter does the thing friction §7 actually needs and no other surveyed subject
+does: it **computes whether the recorded list may cross a thread**, as a
+property of the list.
 
 ```cpp
 bool isUIThreadSafe() const { return is_ui_thread_safe_; }
@@ -363,7 +406,11 @@ arrangements have already been made to forward that image to the correct thread
 upon deletion)".
 
 Friction §7 is about a GPU backend recording on one thread and submitting on
-another. Flutter's answer is not "make everything shareable" but "let each
+another. `DrawOp.text` is a `const(char)[]` borrowed from a frame arena that
+`CmdBuffer.textRun` copies into, under a rule stated on the type — an operation
+is valid while the buffer that built it is alive and unreset — and `UI-O4` is
+open on exactly where the retain boundary goes. Flutter's answer is not "make
+everything shareable" but "let each
 payload declare its own constraint, conjoin the answers during recording, and
 let the consumer ask the finished list one question". `DisplayList` carries
 several other conjoined summaries computed the same way —
@@ -373,7 +420,8 @@ each so the compositor can pick a surface kind without walking the ops.
 
 ## Q8 — extent query
 
-**Answered on both sides, which the survey's F7 did not anticipate.**
+**Answered on the surface, on the scene and on every layer — and maintained at
+construction in all three.**
 
 The scene knows its extent: `DisplayList::GetBounds()` returns bounds
 accumulated during recording, not scanned afterwards. `AccumulateOpBounds`
@@ -406,14 +454,19 @@ layer tree has a third answer: every `flutter::Layer` carries a `paint_bounds()`
 established during `Preroll`.
 
 > [!IMPORTANT]
-> This is a direct complication of finding **F7** ("extent belongs to the
-> surface, not the scene"). Flutter puts it on both, because the two answer
-> different questions: the surface's extent is "how much can I paint", the
-> scene's is "how much did I paint" — and the second is what culling, caching,
-> layer sizing and `skia-canvas-render.d`'s offscreen sizing all need. The
-> decisive detail is that Flutter never _scans_ for it. Bounds are accumulated
-> at record time, on a stream that is being built anyway, using a flags table
-> the recorder already consults for a different purpose.
+> This is the survey's sharpest confirmation of finding **F7**. F7 separates
+> surface, layout and ink extent and sorts the answers by
+> maintained-at-construction versus derived-by-scan; Flutter answers all three
+> and maintains every one. The surface's extent is "how much can I paint", the
+> scene's is "how much did I paint", and the second is what culling, caching,
+> layer sizing and `skia-canvas-render.d`'s offscreen sizing all need.
+> `sparkles:ui` answers none of the three: no figure for how much a finished
+> stream covers is kept by the buffer that built it, by the display list it
+> produced, or by the arena its text lives in — `CmdBuffer` has `length` and
+> `measure` and stops there — so friction §8 sits squarely on the
+> derived-by-scan side. Flutter never scans: bounds accumulate at record time,
+> on a stream that is being built anyway, through a flags table the recorder
+> already consults for a different purpose.
 
 ## Strengths
 
@@ -464,48 +517,60 @@ established during `Preroll`.
 
 ## Bearing on the proposal
 
-1. **Take Q1 as settled.** Five of five surveyed subjects put measurement off
-   the painter, and Flutter is the strongest form: the seam accepts only an
-   already-measured object. Whatever replaces `measure` should be an _object_
+1. **Take Q1 as settled.** Finding **F1** puts 35 of 38 subjects' measurement
+   somewhere other than the painter, and Flutter is the strongest form: the seam
+   accepts only an already-measured object. Whatever takes over from `measure` —
+   the fifth of the five methods `isCanvas` requires — should be an _object_
    carrying baselines, intrinsic widths, per-range boxes and hit-testing, not a
    function returning a size.
-2. **Reconsider F2's recommendation.** F2 said "re-encode `DrawOp` as a
-   `SumType`". Flutter demonstrates a third option — a **flat arena of
-   heterogeneous exactly-sized records plus an offsets table** — that preserves
-   everything a `SumType` gives (value semantics, no illegal combinations,
-   comparability), pays no widest-variant padding, and additionally solves
-   friction §7 for variable-length payloads, since text lives inline after its
-   record rather than in a borrowed slice. In D: a byte `SmallBuffer` plus a
-   `size_t[]`, dispatched by a generated `final switch` on a type tag — no GC,
-   no vtable, and `RecordingCanvas` comparison becomes a `memcmp`.
-3. **Adopt "a boolean variant becomes another op type"** as the answer to §3's
-   real complaint. `DrawOp`'s eight scrollbar fields are the tag-plus-fields
-   encoding failing under one semantic op; splitting variants into types is how
-   Flutter keeps 68 ops with zero dead bytes.
+2. **The encoding argument, and where it stops.** Flutter's position is that
+   `DrawOp` should not be a closed sum at all — a **flat arena of heterogeneous
+   exactly-sized records plus an offsets table** keeps value semantics and
+   comparability, pays no widest-variant padding, and puts a variable-length
+   payload inline after its record rather than in a slice, which is friction §7
+   from the other end. In D that is a byte `SmallBuffer` plus a `size_t[]` and a
+   `switch` on a stored tag. It is **answered**: variable stride buys nothing
+   once the widest payload fits the `<= 64`-byte budget, and it costs
+   `RecordingCanvas` the pairwise-comparable value semantics the friction log
+   records as working, along with the derivation of `OpKind` from the payload
+   and the compile-time exhaustiveness of every `match!` walker. Finding **F3**
+   holds the trade open on this evidence; this file is the arm arguing for
+   stride.
+3. **Take the layering answer to §3, not the arm-splitting one.** The
+   `Scrollbar` payload carries fourteen fields, two of them (`trackGlyph`,
+   `thumbGlyph`) a cell backend's answer riding past every backend that will
+   never read them. Flutter's own split is the more useful lesson than its
+   record-per-variant discipline: leaf-level _appearance_ with a
+   backend-chosen realisation (`drawShadow`) belongs in the drawing seam, and
+   semantic _structure_ belongs in a tree above it. That is finding **F4**'s
+   axis — where the lowering lives — applied to the one primitive that carries
+   both.
 4. **Declare op metadata as data, `constexpr`, next to the op** (§2). Flutter's
    flags table is the counter-model to `__traits(compiles)` probing: it states
    what an op needs, is read by the recorder rather than the backend, and is
    reused for bounds accumulation. It does not, however, answer "can this
-   backend do it" — so F4's second half (a floor plus refusable degradation)
-   still has no support from this subject.
-5. **`strokeWidth == 0` means hairline is F5's "name a fidelity" already
-   shipping.** A `rule` in `sparkles:ui` should say "thinnest you can draw
-   along this geometry" and let a backend answer in device pixels (Impeller:
-   clamp to one pixel, pay the difference in alpha), rather than enumerating
-   six `RuleEdge` positions.
-6. **Contradicts F7.** F7 concluded extent belongs to the surface, and that
-   friction §8 was really a narrow offscreen-sizing gap. Flutter puts extent on
-   the surface (`GetBaseLayerDimensions`), on the scene (`DisplayList::GetBounds`)
-   _and_ on every layer (`Layer::paint_bounds`), because they answer different
-   questions. Accumulate the scene's bounds during `buildDisplayList` — the
-   pass already exists — instead of leaving `skia-canvas-render.d` to scan.
+   backend do it" — so finding **F5**'s refusable arm (a stated floor, a
+   defaulted middle, a degrade a backend may decline) gets no support from this
+   subject.
+5. **`strokeWidth == 0` means hairline is F6's "name a fidelity" already
+   shipping.** `rule` is one of the four optional primitives, and its
+   stated degradation is `ruleEndpoints` plus a cell-aligned `line`. A fidelity
+   name — "thinnest you can draw along this geometry", answered by the backend
+   in device pixels (Impeller: clamp to one pixel, pay the difference in alpha)
+   — carries more than six `RuleEdge` positions can.
+6. **Confirms F7 on all three of its questions.** Flutter puts extent on the
+   surface (`GetBaseLayerDimensions`), on the scene (`DisplayList::GetBounds`)
+   _and_ on every layer (`Layer::paint_bounds`), and maintains each at
+   construction. Accumulate the scene's bounds during `buildDisplayList` — the
+   pass already walks every operation — instead of leaving `skia-canvas-render.d`
+   to fold `op.rect` for itself.
 7. **Steal `isUIThreadSafe` wholesale** for friction §7 / `UI-O4`: a display
    list that answers "may I cross a thread", conjoined from its payloads during
    recording, is cheaper than interning or reference-counting everything and is
    exactly the question M7/T5 asks. Generalise it — `total_depth`,
    `can_apply_group_opacity`, `root_is_unbounded` are all conjunctions
    accumulated for free, so any query `sparkles:ui`'s display list grows should
-   be a field the builder sets, not a walk.
+   be a field `CmdBuffer` sets beside `length`, not a walk.
 8. **Do not copy the total-contract shape without pricing it.** 49 pure
    virtuals works because Flutter has two backends and a large team. The
    transferable part is that the contract should be _stated somewhere

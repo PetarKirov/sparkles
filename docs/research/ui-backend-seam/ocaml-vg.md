@@ -6,12 +6,14 @@
 The one subject in this survey whose capability contract is **prose someone took
 seriously**: each of the four shipped renderers ends with a
 `Render warnings and limitations` section naming the exact images it will refuse
-to draw correctly. That artifact is what
-[`canvas-seam-friction.md`][friction] §2 says `isCanvas` lacks, and Vg is the
-proof it can be written by hand for a real backend set.
+to draw correctly. That artifact is the one
+[`canvas-seam-friction.md`][friction] §2 wants: `isCanvas` names five methods
+while the interpreter probes for four more, so no single document tells a
+backend author what the real surface is. Vg is the proof such a document can be
+written by hand for a real backend set.
 
 Vg is also the purest statement of the position [`comparison.md`][comparison]'s
-**F2** circles: the thing handed to a backend is not a command list at all but an
+**F3** circles: the thing handed to a backend is not a command list at all but an
 algebraic value denoting a function from the plane to colours.
 
 |                         |                                                                                                          |
@@ -250,12 +252,19 @@ type warn = warning -> unit
 
 A warning **carries the offending image back to the client**, so a caller can
 identify what degraded rather than merely that something did. This is a third
-position beyond the two F4 records: not Qt's queryable feature bitmask and not
-Notcurses' refusable `NCVISUAL_OPTION_NODEGRADE`, but _degrade-and-report_, with
-the report identifying the exact value. Note what it still cannot do: there is
-no way to ask **in advance** whether an image will render faithfully, and no way
-to demand failure instead of degradation. F4's "refusable degrade" half is
-unmet here.
+position beyond the two **F5** records: not Qt's queryable feature bitmask and
+not Notcurses' refusable `NCVISUAL_OPTION_NODEGRADE`, but _degrade-and-report_,
+with the report identifying the exact value. Note what it still cannot do: there
+is no way to ask **in advance** whether an image will render faithfully, and no
+way to demand failure instead of degradation. F5's refusable tier is unmet here.
+
+`sparkles:ui` sits one step behind even that. Each of the four optional
+primitives has a stated degradation — `ruleEndpoints` plus a cell-aligned `line`
+for `rule`, `paintScrollbarCells` glyph-per-cell for `scrollbar`, and nothing at
+all for `pushClip`/`popClip`, since the display list has already culled the
+hidden subtrees — but the degradation is a property of the call site, not a
+report a backend can raise. A caller learns that a canvas lacks `scrollbar` only
+by not seeing one.
 
 ## Q3 — semantic operations or primitives?
 
@@ -265,11 +274,16 @@ backend — nothing resembling `draw_text_input`, `draw_box_shadow` or our
 problem of a target that cannot honour an intent, and its answer is **not** a
 semantic operation but a semantic _field on an existing primitive_: see Q6.
 
-The finding for [friction §3][friction] is a third option the survey had not yet
-named: where Slint promotes intent to an operation and egui erases
-it entirely, Vg keeps the operation primitive and attaches the intent as an
-optional payload field, with a named warning for the case where a backend needed
-it and it was absent.
+[Friction §3][friction] is the entry this bears on: the optional `scrollbar`
+primitive hands a backend content extent, viewport extent, offset, thumb and
+track colours with their alphas, a lit-track flag, a rail-expansion percentage,
+an edge and two cell-backend fallback glyphs, and expects it to know what a
+scrollbar is and how to degrade one. Vg names a third option the survey had not
+yet reached, and it lands on **F4**'s axis — where the lowering lives — rather
+than on semantic-versus-primitive: where Slint promotes intent to an operation
+and egui erases it entirely, Vg keeps the operation primitive and attaches the
+intent as an optional payload field, with a named warning for the case where a
+backend needed it and it was absent.
 
 ## Q4 — command shape
 
@@ -277,14 +291,17 @@ it and it was absent.
 constructors, `primitive` four, `tr` four, `segment` six polymorphic-variant
 cases. Nothing anywhere in the seam is a tag plus dead fields. `Blend` carries
 its two operands as children; `Tr` carries its subtree; `Cut` carries the image
-it cuts. Structure that `DrawOp` would have to encode by ordering conventions is
-carried by the type.
+it cuts. Structure that a flat stream encodes by ordering convention — a
+`PushClip` that must find its `PopClip` — is carried by the type.
 
-That is F2 confirmed on the encoding question and **complicated on the shape
-question**. F2 says "re-encode `DrawOp` as a sum type, keeping the reified
-stream". Vg reifies a _scene expression_, and the linearisation into a work
-queue happens **in the backend** ([`src/vgr_svg.ml`][svgml]'s `todo : cmd list`),
-which is precisely what buys the resumable `` `Partial `` continuation and the
+That is **F3** confirmed on the encoding question and **complicated on the shape
+question**. F3 holds that reifying the stream is what buys recording, replay,
+culling and comparison, and that a closed sum eliminates illegal combinations and
+keeps values comparable — which is the bargain `DrawOp` takes, eight per-kind
+payloads under one `SumType` with a `<= 64` byte budget. Vg agrees about the sum
+and disagrees about the shape. It reifies a _scene expression_, and the
+linearisation into a work queue happens **in the backend**
+([`src/vgr_svg.ml`][svgml]'s `todo : cmd list`), which is precisely what buys the resumable `` `Partial `` continuation and the
 `Set gstate` push/pop pairing: the backend can suspend mid-traversal because it
 owns the stack. A flat pre-linearised op array cannot be suspended that way
 without the framework owning an explicit cursor.
@@ -308,8 +325,16 @@ mapping to physical reality is **supplied per render**, as the `size2` in
 millimetres inside `renderable` — "the corners of the specified view rectangle
 are mapped on a rectangular area of the given physical size on the target"
 ([`doc/tutorial.mld`][tutorial]). Vg's answer to "what is a device pixel" is
-_the caller decides at render time, in millimetres_. A fourth confirmation of
-F5's diagnosis that `RuleEdge` is a symptom of integer cell coordinates.
+_the caller decides at render time, in millimetres_.
+
+That is **F6** rather than a refutation of it. Continuous coordinates do not
+dissolve the sub-unit question; they relocate it to the render call, and Vg's
+contribution is to make answering it mandatory there. `RuleEdge` enumerates six
+edge positions because the toolkit has no unit below one cell, and each backend
+decides what a band along an edge means — one device pixel on `SkiaCanvas`, a
+whole cell on `GridCanvas`. A float seam inherits the same obligation in a
+different place: it must still say what one unit is worth on this device, and Vg
+discharges that by making the physical size an argument rather than a query.
 
 ## Q6 — resolved appearance, semantic role, or both
 
@@ -336,31 +361,43 @@ channel, and only when the client resolved the font to `` `Otf otf ``. A backend
 that needs the semantic channel and does not get it emits
 `` `Textless_glyph_cut ``.
 
-**This complicates F3 and vindicates [friction §6][friction].** The friction log
-records carrying `visual` _and_ `slot` as the seam "hedging rather than
-deciding". Vg hedges in the same way, for the same reason — some backends can
-consume the resolved form and some can only consume the intent — and treats it
-as a design, with a named failure for the missing case. The transferable
-refinement is that Vg pays the dual channel on **one constructor**, not on every
-op: the redundancy is scoped to the primitive that actually has two consumers.
-`DrawOp` pays it eighteen fields wide.
+**This complicates F4, and it qualifies F9 from [friction §6][friction]'s side.**
+F9 records that no surveyed subject carries a resolved appearance and a semantic
+role on every operation; Vg carries both on exactly one constructor out of five,
+which is the qualified form of the same position. The friction log reads our
+version as hedging rather than deciding: where Vg opens the second channel on the
+one constructor that has two kinds of consumer, `DrawOp` opens it on six arms of
+eight — every payload but the clip pair carries a `Slot` alongside the `Ink` or
+colour fields its primitive actually paints with — and only the HTML interpreter
+ever reads the role back. Deriving `Visual` on demand instead of storing it
+makes that hedge cheaper without making it a decision. Vg hedges for
+the same reason — some backends consume the resolved form and some can only
+consume the intent — and treats it as a design, with a named failure for the
+missing case. The transferable refinement is that Vg scopes the dual channel to
+the one primitive that actually has two consumers, rather than spreading it
+across six payloads of eight.
 
 ## Q7 — payload ownership
 
 **Immutable persistent values under a garbage collector; nothing is borrowed.**
 An `image` is a value, so it outlives any frame, can be stored, compared with
 `I.equal`, printed with `I.pp`, and rendered again to a different target. The
-question friction §7 asks — can a command outlive the frame that made it —
-is not a question here.
+question friction §7 asks — `TextRun.text` is a slice borrowed from a frame
+arena, valid while the buffer that built it is alive and unreset, and the type
+system cannot express that borrow without a `launder` cast — does not arise
+here, because there is no borrow to express.
 
 The interesting part is what backends do on top. [`src/vgr_svg.ml`][svgml]
 keeps `fonts`, `prims`, `paths` and `clips` hash tables **inside the renderer's
 own state**, keyed by the internal data values, resetting them when the worklist
 empties — Slint's `draw_cached_pixmap` bargain reached independently: the party
 that knows how expensive a payload is to materialise in _this_ format owns the
-cache. **F6** is confirmed by a subject with no reference counting at all, which
-strengthens it: the finding is "share, do not borrow", and a GC is one way to
-share.
+cache. **F8** is confirmed by a subject with no reference counting at all, which
+strengthens it: the finding is that nothing borrows a payload across a frame, and
+a garbage-collected persistent value is one more way to avoid it. Vg reaches the
+retain boundary `UI-O4` leaves open — an operation that can be held, compared and
+replayed after the frame that built it — by making the payload a value from the
+start.
 
 ## Q8 — extent query
 
@@ -372,11 +409,19 @@ mandatory — and [`doc/tutorial.mld`][tutorial] states the rule: "An infinite
 image alone cannot be rendered. We need a finite view rectangle and a
 specification of that view's physical size on the render target."
 
-This is the strongest available confirmation of **F7**. Extent belongs to the
-surface, and Vg puts it in the _type_ of what you hand a renderer, so the
-`skia-canvas-render.d` failure mode — scan every op's rect and hope — cannot
-occur. `Vgr_htmlc.target`'s `?resize:bool` shows the flow direction: by default
-the backend **sets the canvas CSS size from the renderable's physical size**;
+**F7** splits extent into three questions — surface, layout and ink — and finds
+most subjects answering at least one of them from the scene. Vg is the limit case
+at the far end of that axis: none of the three can be answered from an image, so
+the surface question moves into the _type_ of what you hand a renderer. The
+`skia-canvas-render.d` pattern is the inverse case: a built stream is finite and
+has a perfectly good bounding box, but nobody is asked to hand it in and nobody
+keeps it — a `CmdBuffer` answers how many operations it holds and how wide a run
+measures, never where the stream painted, and neither the display list nor the
+arena behind it knows either — so the renderer recovers the box by folding
+`op.rect` across every operation. That fold has no counterpart here, not because
+Vg maintains the number at construction but because it demands it as an
+argument. `Vgr_htmlc.target`'s `?resize:bool` shows the flow direction: by
+default the backend **sets the canvas CSS size from the renderable's physical size**;
 pass `resize:false` and the surface's own size wins and the view is mapped onto
 it. Either way the extent comes from outside the scene.
 
@@ -429,12 +474,16 @@ it. Either way the extent comes from outside the scene.
 
 ## Bearing on the proposal
 
-1. **Write the limitations section.** [Friction §2][friction] says the contract
-   is unstated; Vg shows the minimum viable artifact is a per-backend prose
-   section written **in the seam's own vocabulary** — naming `OpKind` members
-   and `RuleEdge` values, not "some clipping is approximate". `GridCanvas`,
-   `RaylibCanvas` and `SkiaCanvas` each need one, and `SkiaCanvas.measure`
-   returning `cellsOf(text)` is its first entry.
+1. **Write the limitations section.** [Friction §2][friction] is that the concept
+   states five methods while the real contract is eight kinds, with `rule`,
+   `scrollbar` and the clip pair discovered by `__traits(compiles)` at each
+   interpreter call site. Each of those four has a stated degradation at the
+   seam, but nothing says what any one backend does with it. Vg shows the
+   minimum viable artifact is a per-backend prose section written **in the
+   seam's own vocabulary** — naming `OpKind` members and `RuleEdge` values, not
+   "some clipping is approximate". `GridCanvas`, `RaylibCanvas` and `SkiaCanvas`
+   each need one, and `SkiaCanvas.measure` returning `cellsOf(text)` is its
+   first entry.
 2. **Separate reported degradations from silent divergences.** Vg's htmlc
    section does this and it is the part a capability enum cannot reach: gradient
    interpolation in non-linear sRGB is a divergence no `hasFeature` bit could
@@ -443,30 +492,37 @@ it. Either way the extent comes from outside the scene.
 3. **A degradation report should carry the value that degraded.** Vg's
    `warning` cases each carry the offending `I.t`. A `sparkles:ui` equivalent
    should carry the `DrawOp`, which makes it usable from `RecordingCanvas` in a
-   test. This is the half of **F4** Vg supplies; it does not supply the
-   refusable half, so Notcurses' `NCVISUAL_OPTION_NODEGRADE` remains the model
+   test. This is the half of **F5** Vg supplies; it does not supply the
+   refusable tier, so Notcurses' `NCVISUAL_OPTION_NODEGRADE` remains the model
    there.
-4. **Scope the dual resolved/semantic channel to the ops that have two
-   consumers.** [Friction §6][friction] is not wrong that carrying `visual` and
-   `slot` is a hedge — Vg hedges identically on `Cut_glyphs` — but Vg pays it on
-   **one constructor out of five**. Under a `SumType` re-encoding (**F2**), the
-   HTML interpreter's `slot` need only ride on the variants it actually
-   re-resolves.
-5. **Contradicts the flat-stream assumption inside F2.** F2 concludes "sum
-   type, keeping the reified stream". Vg reifies a _tree_ and gets suspension,
-   push/pop pairing and structural equality from it. `sparkles:ui`'s
-   `buildDisplayList` already flattens `pushClip`/`popClip` into a stream; that
-   is a real cost (the pairing is a convention the type does not enforce) and
-   the proposal should state the choice rather than inherit it.
-6. **F7 confirmed at the type level.** Make extent an input to painting rather
-   than a query on the display list: the `renderable` triple is the shape to
-   copy — surface size, view rectangle, scene — and it makes
-   [friction §8][friction]'s scan-every-rect workaround unconstructible.
+4. **Scope the dual resolved/semantic channel to the payloads that have two
+   consumers.** [Friction §6][friction] is not wrong that carrying resolved
+   appearance and a semantic role on one operation is a hedge — Vg hedges
+   identically on `Cut_glyphs` — but Vg pays it on **one constructor out of
+   five**, where `DrawOp` stores a `Slot` on six of its eight payloads. The sum
+   is already per-kind, so `Slot` can ride on exactly the arms the HTML
+   interpreter re-resolves, and the rest can answer `Slot.inherit` the way
+   `PushClip` and `PopClip` already do (**F9**).
+5. **The flat stream inside F3 is a choice, not a consequence.** F3 settles that
+   the stream is reified and leaves the encoding live, but the _shape_ of what
+   is reified is a third axis it does not touch. Vg reifies a tree and gets
+   suspension, push/pop pairing and structural equality out of it.
+   `buildDisplayList` returns a flat `DrawOp[]` in which `PushClip` and
+   `PopClip` are ordinary arms, so their pairing is a convention the type does
+   not enforce. That is a real cost, and the proposal should state the choice
+   rather than inherit it.
+6. **F7's third answer: make extent an input.** Between deriving extent by
+   scanning and maintaining it at construction there is a third option — demand
+   it at the call. The `renderable` triple is the shape to copy — surface size,
+   view rectangle, scene — and it makes [friction §8][friction]'s fold over
+   every operation's rect unnecessary rather than merely cheaper.
 7. **Do not copy the prose-only contract on its own.** Vg's sections are
-   excellent and entirely unchecked. `RecordingCanvas` already exists as the
-   reference backend; a limitations section that is _generated from_, or at
-   least diffed against, a recorded op-stream conformance run is strictly better
-   than one maintained by hand.
+   excellent and entirely unchecked, which is **F11**'s point: artifacts that
+   can disagree with the code will. `RecordingCanvas` already exists as the
+   reference backend, and the op stream is already the parity oracle (**F12**),
+   so a limitations section that is _generated from_, or at least diffed
+   against, a recorded op-stream conformance run is strictly better than one
+   maintained by hand.
 8. **The `Gg` split is prior art for `sparkles:math`.** Vg depends on a
    geometry/colour library it does not own, and so does its SVG renderer. That
    arrangement is already ours; nothing here argues for changing it.

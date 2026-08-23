@@ -10,7 +10,7 @@ setting — and it does **no** scene drawing. [`RendererCanvasRender`][rcr-h] is
 the 2-D drawing seam, and it has **no** text primitive at all. That split is the
 strongest statement of [`comparison.md`][cmp]'s F1 anywhere in this survey, and
 it comes with a more awkward second finding: the capability-declaration
-machinery F4 asks for lives on the **measurement** seam, while the same
+machinery F5 asks for lives on the **measurement** seam, while the same
 mechanism on the rendering seam is deprecated and hardwired to `false`.
 
 | Field            | Value                                                                                                                    |
@@ -158,7 +158,7 @@ and a painter cannot answer.
 ## Q2 — is the contract stated in one place?
 
 **Yes on the measurement seam, and the statement is machine-readable** — F1 and
-F4 in one API. It is used three ways:
+F5 in one API. It is used three ways:
 
 1. **Backend selection**, by population count of the feature bitmask:
 
@@ -241,10 +241,11 @@ The one command that keeps semantics is `CommandNinePatch`, carrying
 _stretch policy_ the backend interprets. It survives because resolving it needs
 the texture's runtime size, which lives on the backend's side of the seam.
 
-That puts Godot in Qt's camp on F3's "who degrades" axis, and opposite Slint.
-Note the split follows the same line as everything else: **drawing degrades in
-the framework; text degrades in the caller** (`editor_settings.cpp` above),
-because only the caller knows whether Arabic is worth offering at all.
+That puts Godot on F4's framework rung — the lowering lives one level above the
+backend, in Qt's camp and opposite Slint. Note the split follows the same line as
+everything else: **drawing degrades in the framework; text degrades in the
+caller** (`editor_settings.cpp` above), because only the caller knows whether
+Arabic is worth offering at all.
 
 ## Q4 — command shape
 
@@ -279,21 +280,30 @@ coherence. blocks always grow but never shrink."_ The first command of an item
 is heap-allocated alone, "As the most common use case of canvas items is to use
 only one command".
 
-So a command is **variable-size and pays only for its own fields** — the
-property [friction §4][friction] wants — without a discriminated union, at the
-cost of a vtable pointer plus a redundant `type` tag. Consumers switch on the tag
-and `static_cast`; the only virtual is the destructor. This is a third point in
-the design space that F2 does not name, and in D it maps onto a tagged arena of
-variably-sized records rather than onto `SumType`.
+So a command is **variable-size and pays only for its own fields** — the axis
+[friction §4][friction] names — without a discriminated union, at the cost of a
+vtable pointer plus a redundant `type` tag. Consumers switch on the tag and
+`static_cast`; the only virtual is the destructor.
+
+F3 poses the encoding as a live trade between a closed sum and variable-stride
+per-op records, and Godot sits between the poles rather than at either: the
+stride varies as Flutter's and Chromium's do, but the discrimination is a
+hand-maintained tag beside a vtable rather than a checked union, so no consumer
+`switch` is exhaustiveness-checked. `sparkles:ui` takes the closed-sum pole —
+`DrawOp` wraps a `SumType` over eight payloads, dispatches through `match!`, and
+keeps every operation inside `static assert(DrawOp.sizeof <= 64)`, whose widest
+arm is `TextRun`. Godot's arena is what the other pole costs to build by hand.
 
 ## Q5 — sub-unit placement
 
-Coordinates are continuous `Vector2` / `Rect2` floats, so the compass-direction
-problem does not arise — more confirmation that [`RuleEdge`][canvas] is a symptom
-of integer cell coordinates (F5).
+Coordinates are continuous `Vector2` / `Rect2` floats, so nothing in the drawing
+seam ever spells a position as a compass direction — confirmation that
+[`RuleEdge`][canvas] is a symptom of integer cell coordinates. What Godot does
+not do is escape the sub-unit question: it relocates it, exactly as F6 says
+continuous coordinates do, onto a named quantization ladder one seam over.
 
-What Godot adds is a **declared quantization ladder that lives on the
-measurement seam, not the drawing one**:
+That ladder is **declared, and it lives on the measurement seam, not the drawing
+one**:
 
 ```cpp
 	enum SubpixelPositioning {
@@ -316,8 +326,11 @@ cache separately, with `FontLCDSubpixelLayout` in bits 24–26 of the same key
 `bool p_snap_2d_vertices_to_pixel` parameter of `canvas_render_items`.
 
 This is Notcurses' "name a fidelity, not a position" applied to text placement,
-expressed as _font policy_ — which is where a `sparkles:ui` hairline fidelity
-would most plausibly want to live too, given the toolkit's cell grid.
+expressed as _font policy_ — F6's prescription, a named fidelity paired with a
+queried device unit, in a shipping engine. It is also where a `sparkles:ui`
+hairline fidelity would most plausibly want to live, given the toolkit's cell
+grid: `RuleEdge` names six positions on that grid, and the thing a backend
+actually needs told is how much of a cell a hairline may occupy.
 
 ## Q6 — resolved appearance, semantic role, or both?
 
@@ -328,10 +341,23 @@ semantic; the item accumulates `Color final_modulate` and
 reach the server as triangles ([`style_box_flat.cpp`][sbf-cpp]). `Item::material`
 is the escape hatch: a resolved handle to a shader, not a role name.
 
-Godot pays for one because it has no re-resolving backend — no HTML target.
-[Friction §6][friction]'s "the seam hedges rather than deciding" stands, but
-Godot offers no way to carry both cheaply; it shows what it costs _not_ to need
-both.
+Godot pays for one because it has no re-resolving backend — no HTML target. That
+is the whole distance between its encoding and ours. `sparkles:ui` has such a
+target, so the role cannot be spent above the seam the way `StyleBox` is: a
+`Slot` rides across the seam on six of the eight payloads, in company with
+whatever appearance that primitive was resolved to, and only `PushClip`/`PopClip`
+— which no interpreter re-resolves — travel without one, `DrawOp.slot` answering
+`Slot.inherit` in their place. The resolved half is split the other way: each payload
+keeps the `Ink` or colour fields its own primitive reads, and `DrawOp.visual`
+reconstructs a `Visual` through `visualOf`, documented lossy on purpose because
+a payload keeps only what it paints from.
+
+F9 is the count behind [friction §6][friction]: no surveyed subject carries a
+resolved appearance and a semantic role on the same operation. Deriving one half
+rather than storing it makes the hedge cheap — nothing on the operation pays for
+`Visual` — but "the seam hedges rather than deciding" stands, because the role is
+stored and the derivation is what lets both consumers be served at once. Godot
+offers no way to carry both cheaply; it shows what it costs _not_ to need both.
 
 ## Q7 — payload ownership
 
@@ -350,15 +376,19 @@ the server's, not the display list's; derived GPU resources get RAII
 (`Polygon::create()` calls `request_polygon`, `~Polygon()` calls `free_polygon`);
 and text payloads do not exist here at all.
 
-This reinforces F6 from a fourth direction and adds a motive our friction log
+This reinforces F8 from a fourth direction and adds a motive our friction log
 only anticipates: you stop borrowing the moment a queue might sit in the seam.
+Godot reaches F8's stronger form by a different route — an `RID` is an index into
+a server-side owner table, which makes a command trivially copyable and
+thread-transferable for the same reason an offset pair would.
 
 ## Q8 — extent query
 
-**This is where Godot contradicts the synthesis.** F7 concluded extent belongs to
-the surface and that `skia-canvas-render.d`'s op-scan was a workaround for a
-missing surface size. Godot does the op-scan _by design_, per canvas item, as a
-cached and overridable property:
+**Godot answers the scene-side half of F7, and answers it on the
+derived-by-scan axis.** F7 separates surface extent from layout extent from ink
+extent and asks, of each, whether it is maintained at construction or derived by
+a walk. Godot derives ink extent per canvas item by walking that item's own
+commands — _by design_, as a cached and producer-overridable property:
 
 ```cpp
 const Rect2 &RendererCanvasRender::Item::get_rect() const {
@@ -400,6 +430,15 @@ Three details make it a design rather than a workaround:
 `Polygon::create()` even pre-computes `rect_cache` by expanding over its points
 at construction, so per-command extent is cached where it is expensive.
 
+`sparkles:ui` sits on the same axis, one step further back: it has the walk and
+none of the three things that make Godot's cheap. There is no `rect` field to
+cache into, no `rect_dirty` to invalidate, and no producer override. `CmdBuffer`
+answers `length` and a run's `measure`, and "how far does this stream paint" is
+a question neither it, nor the display list, nor the arena will answer at all —
+so a caller that needs painted bounds folds `op.rect` over the operations
+itself, from scratch, and writes that fold out again at the next call site
+([friction §8][friction]).
+
 ## Strengths
 
 - **The clearest available demonstration that measurement is a service** — not
@@ -423,7 +462,7 @@ at construction, so per-command extent is cached where it is expensive.
   casually conforms to.
 - **Degradation is silent-ignore, with no refusal.** There is no analogue of
   Notcurses' `NCVISUAL_OPTION_NODEGRADE`; asking a fallback server for RTL yields
-  LTR and no error. F4's second half is missing, and Godot ships without it.
+  LTR and no error. F5's refusable rung is missing, and Godot ships without it.
 - **The capability mechanism rotted on the rendering seam** — the enum is marked
   _"Never actually used"_ while the virtual stays for compatibility. A capability
   query survives only where a caller has a decision to make with it.
@@ -458,40 +497,78 @@ at construction, so per-command extent is cached where it is expensive.
    — line breaking, ellipsis, caret rects, grapheme navigation — not just width.
    The direct fix for [friction §1][friction].
 2. **Put the declared capability set on the measurement seam, not only on the
-   canvas.** This complicates F4, which reads Qt's `PaintEngineFeature` as a
+   canvas.** This complicates F5, which reads Qt's `PaintEngineFeature` as a
    _renderer_ pattern. In the one surveyed subject with both seams, the
    capability query is alive on the measurer and formally deprecated on the
    renderer. A cell metrics backend (`cellsOf`) and a shaped metrics backend
    differ in capability exactly as `Advanced` and `Fallback` do.
 3. **Add the refusable degrade Godot lacks.** Silent-ignore is defensible for an
    engine that must always draw something; it is wrong for a toolkit with a
-   golden-image suite. Keep F4's second half; take only the declaration half.
+   golden-image suite. Keep F5's refusable rung; take only the declaration half.
 4. **Do not adopt popcount selection.** It ranks `FEATURE_UNICODE_SECURITY`
    equal to `FEATURE_SHAPING`. If `sparkles:ui-app` ever auto-selects a metrics
    backend, rank by a stated preference order.
-5. **[Friction §4][friction] has a third fix.** F2 proposes a `SumType`; Godot
-   shows a tagged arena of variably-sized records, which is what
-   `sparkles.ui.arena` already is for text and chrome payloads. Either removes
-   the dead fields; the arena form also removes the "every op is as large as the
-   largest op" cost a `SumType` keeps.
-6. **Reconsider F7.** It concluded extent belongs to the surface and that a
-   scanning consumer was the anomaly. Godot scans, caches behind a dirty bit and
-   lets the producer override — for culling, per frame. The narrow claim survives
-   (a backend allocating a surface usually chose its size), but "make the display
-   list self-describing" is not exotic: it is what a shipping engine does, for
-   one bit. [Friction §8][friction] should be answered with a cached extent plus
-   a producer override, not deferred to the surface.
+5. **An arena of variably-sized records avoids the widest-variant cost, and
+   `DrawOp` pays that cost.** The claim is about the encoding as it stands:
+   `DrawOp` is a closed sum over eight payloads, so a `PopClip` that carries no
+   fields at all occupies what a `TextRun` occupies — the second half of
+   [friction §4][friction], and Godot's standing position on the trade F3
+   describes. Godot's mechanism is the alternative in working form:
+   `alloc_command<T>` placement-news each command at its own size into 4 KiB
+   `CommandBlock`s that "always grow but never shrink", and one `Type` tag beside
+   the vtable is all a consumer needs to `static_cast`
+   ([`renderer_canvas_render.h`][rcr-h]). `sparkles.ui.arena` already supplies
+   the storage half of that shape, for text and for box chrome.
+
+   The price is what settles it. `static assert(DrawOp.sizeof <= 64)` is a
+   budget, not an equality, and the widest arm — `TextRun`, at four fields —
+   fits inside it, so the waste variable stride would recover is bounded by the
+   gap between two small records rather than by anything that grows with the
+   vocabulary. Against that bounded gain: an operation addressed by an offset
+   into a byte arena is not a value, and `DrawOp` is one, which is what lets
+   `RecordingCanvas` collect operations and compare them pairwise — the item the
+   friction log records as working rather than as friction. Every member
+   accessor — `kind`, `rect`, `text`, `slot`, `visual`, `translate`, the eight
+   scrollbar readers — is an eight-arm `match!` whose exhaustiveness the compiler
+   checks, and `OpKind` is derived through one of them precisely so a stored tag
+   cannot disagree with the payload; over a byte arena each accessor becomes a
+   hand-written `switch` on a tag plus a cast, unchecked for completeness, which
+   is Godot's own listed weakness relocated into our source tree. `visualOf`
+   would reconstruct a `Visual` from bytes reached through a pointer rather than
+   from a typed alternative, and every `final switch` a consumer writes over
+   `op.kind` would lose its guarantee. Variable stride buys nothing once the
+   widest payload fits the budget, and it costs comparable value semantics: the
+   claim is **answered** on that ground, not withdrawn.
+
+6. **Answer [friction §8][friction] with a cached extent and a producer
+   override.** F7 splits extent into surface, layout and ink and asks, of each,
+   whether it is maintained at construction or derived by a walk. Godot picks
+   the walk for ink extent and then makes it cheap: `alloc_command` sets
+   `rect_dirty`, `get_rect()` clears it, and `canvas_item_set_custom_rect` lets a
+   producer that knows its own bounds skip the walk entirely — for culling, every
+   frame. `CmdBuffer` is the only thing that appends to a stream, so the dirty
+   bit has an obvious home, and the override has an obvious caller in a widget
+   that already knows its rect. Making the display list self-describing is not
+   exotic; it is what a shipping engine does, for one bit.
 7. **`scrollbar` in the drawing seam: apply Godot's test.** Godot lowers
    everything widget-shaped to triangles in the framework and keeps exactly one
    policy-carrying command, `CommandNinePatch`, because resolving it needs
-   information only the backend has. A scrollbar's rail geometry is already
-   computed once by `scrollbarThumb`, so by that test it does not qualify —
-   strengthening F3's observation that we pay Qt's price while sitting in
-   Slint's camp ([friction §3][friction]).
-8. **Thread-crossing settles [friction §7][friction].** Godot's borrowing
+   information only the backend has. `scrollbarThumb` in `sparkles.ui.state` is
+   the one formula every backend renders, and `canvas.d` re-exports
+   `scrollbarCellCount` and `scrollbarCell` on top of it, so the rail geometry is
+   settled above the seam — and by Godot's test the fourteen-field `Scrollbar`
+   payload does not qualify. That sharpens F4's placement question: we pay Qt's
+   price, lowering once in the framework, and then hand a semantic operation
+   across the seam anyway, which is Slint's camp ([friction §3][friction]).
+8. **Thread-crossing is what decides [friction §7][friction].** Godot's borrowing
    question never arises because a `CommandQueueMT` sits in the middle.
-   `sparkles:ui`'s M7/T5 wants that shape, which makes `DrawOp.text`'s borrowed
-   slice a blocker rather than a wart.
+   `DrawOp.text` is a 16-byte slice borrowed from a frame arena; `CmdBuffer.textRun`
+   copies into that arena, the buffer is move-only so a copy cannot hand out a
+   second set of live pointers, and the rule — an operation is valid while the
+   buffer that built it is alive and unreset — is stated on the type, which makes
+   the borrow enforceable within a frame. It does not make it transferable.
+   `sparkles:ui`'s M7/T5 wants Godot's shape, and that is exactly the
+   retain-boundary question `UI-O4` holds open.
 
 ## Sources
 

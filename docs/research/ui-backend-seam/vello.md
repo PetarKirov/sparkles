@@ -6,11 +6,11 @@ Pinned at [`3fabef93`][rev].
 The one subject whose renderer seam is neither virtual methods nor command
 values: a [`Scene`][scene] is a group of parallel, append-only `Vec`s consumed
 by a chain of compute shaders. It is the strongest available test of whether "a
-drawing command" is the right unit for a backend boundary at all — and it is a
-repository that already tried the tag-plus-fixed-fields record `DrawOp` uses
-today, and wrote down why it stopped. Section numbers below (§1-§8) refer to
-[`canvas-seam-friction.md`][friction]; F1-F7 refer to the findings in
-[`comparison.md`][comparison].
+drawing command" is the right unit for a backend boundary at all — and it is the
+one subject that shipped a fixed-width element record, wrote down why it stopped,
+and replaced it with something that is neither a record nor a sum. Section
+numbers below (§1-§8) refer to [`canvas-seam-friction.md`][friction]; F1-F12
+refer to the findings in [`comparison.md`][comparison].
 
 | Field                | Value                                                                                                                                  |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
@@ -64,7 +64,7 @@ by the algorithm that consumes it, not by what reads nicely at a call site.
 ### Design philosophy
 
 [`doc/pathseg.md`][pathseg] records the move away from a fixed-size command
-record, in terms that read as a direct verdict on `DrawOp`:
+record, in terms that bear directly on the width half of `DrawOp`'s budget:
 
 > By way of motivation, in the old scene encoding, all elements take a fixed
 > amount of space, currently 36 bytes, but that's at risk of expanding if a new
@@ -72,10 +72,10 @@ record, in terms that read as a direct verdict on `DrawOp`:
 > compaction. The input is separated into multiple streams, so in particular
 > path segment data gets its own stream. Further, that stream can be packed.
 
-Vello hit friction §4 — a tagged record whose width is set by its greediest
-member — and answered it not with a sum type but by splitting the record into
-per-field streams, each entry's payload variable-width and recoverable by
-prefix sum over the tag byte alone.
+Vello hit the second half of friction §4 — an element whose width is set by its
+greediest member — and answered it not with a closed sum but by splitting the
+record into per-field streams, each entry's payload variable-width and
+recoverable by prefix sum over the tag byte alone.
 
 > [!NOTE]
 > `doc/pathseg.md` is dated November 2021 and has drifted in one detail: it
@@ -228,11 +228,13 @@ exceptions that are exactly the cases a backend must own**:
 The rule this suggests is sharper than "semantic or primitive": an operation
 stays semantic precisely when lowering it would require the caller to know
 something only the backend knows — the fine-rasterizer's analytic blur, the
-outlines behind skip-ink. `sparkles:ui`'s `scrollbar` op fails that test in one
-direction and passes in the other: rail geometry is computed by
-`scrollbarThumb` above the seam, while the cell-vs-pixel degradation is
-genuinely backend knowledge. Friction §3's real defect is that the op carries
-both.
+outlines behind skip-ink. That is [F4][comparison]'s axis — where the lowering
+lives — argued from the backend's side. `sparkles:ui`'s `scrollbar` op sits on
+both sides of the test at once: the rail geometry comes from `scrollbarThumb` in
+`sparkles.ui.state`, the one formula every backend renders, while the
+cell-vs-pixel degradation is genuinely backend knowledge. Friction §3's defect is
+that the op carries both, so `trackGlyph` and `thumbGlyph` — a cell backend's
+answer — ride past every backend that will never read them.
 
 ## Q4 — command shape
 
@@ -240,22 +242,26 @@ both.
 [`doc/pathseg.md`][pathseg] states the tagged record was the thing being
 escaped. The comparison is worth making precisely:
 
-| Property       | `sparkles:ui` `DrawOp`        | Vello `Encoding`                            | Vello `Command`                                |
-| -------------- | ----------------------------- | ------------------------------------------- | ---------------------------------------------- |
-| Shape          | `OpKind` tag + 18 fields      | 6 parallel streams + late-bound `Resources` | Rust `enum`, 10 variants (+1 behind a feature) |
-| Per-entry cost | fixed, set by the widest kind | tag byte + exactly the words used           | per-variant                                    |
-| Dead fields    | most, for any given kind      | none                                        | none                                           |
-| Consumer       | a painter walking a slice     | a prefix sum over a tag stream              | a GPU engine                                   |
-| Random access  | yes                           | only after the prefix sum                   | yes                                            |
+| Property       | `sparkles:ui` `DrawOp`                        | Vello `Encoding`                            | Vello `Command`                                |
+| -------------- | --------------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
+| Shape          | closed sum over eight payloads                | 6 parallel streams + late-bound `Resources` | Rust `enum`, 10 variants (+1 behind a feature) |
+| Per-entry cost | one width for all eight arms, budget 64 bytes | tag byte + exactly the words used           | per-variant                                    |
+| Dead fields    | none inside an arm; padding to the widest     | none                                        | none                                           |
+| Consumer       | a painter `match!`ing over a slice            | a prefix sum over a tag stream              | a GPU engine                                   |
+| Random access  | yes                                           | only after the prefix sum                   | yes                                            |
 
 The same repository chose the enum where the consumer walks sequentially and
-dispatches, and the streams where the consumer is data-parallel. This
-**complicates F2**: "reify as a sum type" is right for the consumer
-`sparkles:ui` actually has — `RecordingCanvas`, the op-stream parity harness, a
-painter walking a slice once — but is not a universal, because the one subject
-with a data-parallel consumer chose otherwise for stated reasons. Two
-`Encoding` properties are worth wanting regardless of shape: an entry costs
-what it uses (`DrawTag::info_size`), and unchanged state is not re-encoded.
+dispatches, and the streams where the consumer is data-parallel. That is
+[F3][comparison]'s trade seen from both sides in one project: `sparkles:ui`'s
+`DrawOp` and Vello's `Command` are the same shape for the same reason — a
+consumer that walks once and dispatches — while `Encoding` is the variable-stride
+alternative F3 names, and Vello picks it only where the consumer is a prefix sum.
+The evidence does not decide the encoding question; it says the consumer decides
+it, and `sparkles:ui`'s consumers are `RecordingCanvas`, the op-stream parity
+harness, and a painter walking a slice once. Two `Encoding` properties are worth
+wanting regardless of shape: an entry costs what it uses
+(`DrawTag::info_size`), and identical consecutive state is written once rather
+than per operation.
 
 ## Q5 — sub-unit placement
 
@@ -288,6 +294,20 @@ with degenerate cases collapsed at encode time (one stop becomes
 `Style` packs fill rule or stroke caps/join/miter into one `u32` plus an `f32`
 width. No semantic role travels, and nothing downstream could re-resolve
 because nothing is left to re-resolve from.
+
+That is [F9][comparison]'s majority position, and it prices friction §6 exactly.
+`sparkles:ui` stores the resolved half too — an `Ink` on the four content
+primitives, `FillRect`'s own colour fields beside a `BoxChrome` pointer that is
+null unless the box has a border, shadow, radius or arrow — and stores a `Slot`
+alongside it on six of the eight payloads, because the HTML interpreter resolves
+from the role to emit class names while the pixel backends read the colours.
+Vello shows what the resolved half alone buys: a colour reduced to one
+premultiplied word at encode time, and a downstream that needs no theme to paint.
+It also shows the boundary of that bargain — a scene with no role in it can only
+ever be painted, never restyled, which is the trade a second, role-reading
+consumer makes unavailable. Deriving `Visual` on demand from what each payload
+keeps makes carrying both cheaper; only dropping one of the two halves makes it a
+decision.
 
 The wider repository shows both sides of a second axis, though. `Scene` is
 **stateless** — `fill(style, transform, brush, brush_transform, shape)` passes
@@ -331,10 +351,17 @@ will _not_ clear it, which should be done in a separate step, by calling
 reset "will likely quickly increase the complexity of the render result,
 leading to crashes or potential host system instability".
 
-This is the direct rebuttal of friction §7. [`DrawOp.text`][canvas] is a borrowed slice
-that cannot cross a thread; an `Encoding` is owned, `Send + Sync`, appendable,
-transformable and replayable — and the price is one copy of the text's
-_positioned glyph ids_, not of the text.
+This is the answer friction §7 is missing. `sparkles:ui` is on the same side of
+[F8][comparison] as every other subject — [`DrawOp.text`][canvas] is a
+`const(char)[]` that `CmdBuffer.textRun` **copies** into a frame arena, so a
+`scope` source is safe and no caller's buffer is captured. What the arena does not
+supply is a boundary: the rule is that an operation is valid while the buffer
+that built it is alive and unreset, so the op cannot cross a thread and cannot
+outlive the reset, and `dip1000` has to be talked out of confining it further
+still. An `Encoding` is owned, `Send + Sync`, appendable, transformable and
+replayable, and the price it pays for that is one copy of the text's _positioned
+glyph ids_ — the same copy, with none of the constraint. `UI-O4` is open on
+exactly this boundary.
 
 ## Q8 — can the scene report its extent?
 
@@ -356,8 +383,8 @@ returns a `BumpAllocatorMemory`, a conservative estimate of the GPU bump
 buffers this content needs. The scene is asked "how much will you cost", never
 "how big are you".
 
-The sparse-strips family complicates this usefully, and **complicates F7**. Its
-recording layer defines
+The sparse-strips family separates [F7][comparison]'s three questions cleanly,
+inside one repository. Its recording layer defines
 
 ```rust
 pub trait Drawable {
@@ -373,9 +400,10 @@ Its scheduler therefore needs the complete layer hierarchy and bounds before it
 can allocate intermediate textures", and "filter layers might have different
 dimensions than the main viewport". So extent-from-content is not a nicety a
 scene can decline; it is mandatory the moment anything renders to an
-**intermediate** surface rather than to the window. F7's "extent belongs to the
-surface" holds for the root surface and fails for every offscreen one — which
-is precisely the case `skia-canvas-render.d` hit.
+**intermediate** surface rather than to the window. Surface extent is an input
+here and ink extent is derived by a scan — F7's maintained-versus-derived axis,
+with the root window on one side and every offscreen layer on the other. That
+second case is precisely the one `skia-canvas-render.d` hit.
 
 Note also that the sparse-strips context is _constructed_ with its extent
 (`RenderContext::new(width, height)`, with `width()`/`height()` on the shared
@@ -408,7 +436,7 @@ of it.
   `pub`, `encoding_mut` documented as a way to "create invalid scenes", the
   ordering rule living only in a doc comment.
 - **No random access and no editing.** Reading entry _n_ requires the prefix
-  sum; there is `reset`-and-re-encode or `append`, and nothing else.
+  sum; there is `reset`-and-build-again or `append`, and nothing else.
 - **Debuggability is bytes** — six buffers of packed `u32`, with no `serde`
   support in `vello_encoding` at this revision.
 - **Text is entirely the caller's problem**, including which shaper's advances
@@ -429,48 +457,65 @@ of it.
 
 ## Bearing on the proposal
 
-1. **The tag-plus-fixed-fields record has a documented obituary.** Cite
-   [`doc/pathseg.md`][pathseg] against friction §4: the objection is not
-   aesthetic ("illegal states representable") but budgetary — every entry pays
-   for the widest kind, and each new kind widens it. That is `DrawOp`'s eight
-   scrollbar fields, exactly. **But do not read Vello as endorsing a sum
-   type**: it chose streams because its consumer is a prefix sum, so F2's
-   recommendation survives only as a consumer-driven choice. Adopt the two
-   properties that _are_ universal — an entry costs what it uses, and unchanged
-   state is not re-encoded.
-2. **Ownership: copy the `Encoding` answer for friction §7.** An owned,
-   `Send + Sync` op stream with `append(other, transform)` and an explicit
-   `reset` is a better target than either interning or reference-counting every
-   payload. It is also what makes M7/T5's record-on-one-thread,
-   submit-on-another possible without a lifetime argument.
+1. **The fixed-width element record has a documented obituary.** Cite
+   [`doc/pathseg.md`][pathseg] against the second half of friction §4: the
+   objection is not aesthetic but budgetary — every entry pays for the widest
+   kind, and each new kind widens it, which is why a `popClip` that carries
+   nothing costs what a `TextRun` costs. `sparkles:ui` feels the same pressure
+   from the same direction: `Scrollbar` carries fourteen fields, and the budget
+   holds only because `TextRun` is still the widest arm. **But do not read Vello
+   as endorsing variable stride for us**: it chose streams because its consumer
+   is a prefix sum, so [F3][comparison] stays a consumer-driven choice rather
+   than a ranking. Adopt the two properties that _are_ universal — an entry
+   costs what it uses, and identical consecutive state is written once.
+2. **Ownership: `Encoding` is the shape `UI-O4` is looking for.** The frame
+   arena already supplies the copy [F8][comparison] says every subject makes;
+   what it does not supply is a stream that outlives the buffer that built it.
+   An owned, `Send + Sync` op stream with `append(other, transform)` and an
+   explicit `reset` answers friction §7 without either interning or
+   reference-counting a payload, and it is what makes M7/T5's
+   record-on-one-thread, submit-on-another a matter of moving a value rather
+   than of arguing about a lifetime.
 3. **Adopt sub-scene composition.** `Arc<Encoding>` per cached glyph, spliced
    into the parent stream, shows that the display list should be able to embed
-   another display list. A `sparkles:ui` equivalent — a recorded op-slice
-   stamped with a transform/offset — would serve repeated chrome and cached
-   subtrees without a second concept.
-4. **F7 needs splitting, on this evidence.** "Extent belongs to the surface" is
-   true of the root surface (`RenderParams` carries it; the encoding cannot
-   know it) and false of every intermediate one (`Drawable::bbox`,
-   `RecordedLayer::bbox` exist because a scheduler must size offscreen
-   textures). Friction §8's real requirement is a **content-bounds query for
-   offscreen consumers**, and Vello supplies both halves of that argument in
-   one repository.
+   another display list. `DrawOp.translate(dx, dy)` is already the stamping
+   half of that — a recorded op-slice replayed at an offset would serve repeated
+   chrome and cached subtrees without a second concept, once the ops may outlive
+   their builder.
+4. **[F7][comparison] holds, and Vello supplies both of its halves.** Surface
+   extent is an input the scene cannot derive (`RenderParams` carries it; the
+   viewport is unknowable at insertion time); ink extent is derived by scan and
+   is mandatory for offscreen work (`Drawable::bbox`, `RecordedLayer::bbox`
+   exist because a scheduler must size intermediate textures). Friction §8's
+   requirement is the second one: a **content-bounds query for offscreen
+   consumers**. Folding `op.rect` over a built stream is the derived-by-scan
+   answer and is available to any caller; the open question is whether
+   `CmdBuffer` should maintain the bounds as it builds instead.
 5. **Semantic ops: keep the two that only a backend can lower.** The test
    `draw_blurred_rounded_rect` and `render_decoration` pass — the caller cannot
    compute the result without backend-private data — is a usable rule for
-   friction §3. Applied to `scrollbar`, it says: keep a `scrollbar` op for the
-   degradation decision, drop the eight geometry fields the toolkit already
-   computes.
+   friction §3, and it is [F4][comparison]'s "where does the lowering live"
+   stated as a decision procedure. Applied to `scrollbar`, it says: keep the op
+   for the degradation decision, and let a backend reach the geometry through
+   the lowerings `canvas.d` re-exports — `scrollbarCellCount`, `scrollbarCell`,
+   `ruleEndpoints` — rather than carrying rail extents and two cell-backend
+   glyphs on every operation.
 6. **Q1 gains a caveat.** F1 (measurement does not belong on the painter) is
    confirmed in its strongest form — Vello has no `measure` at all. But
    [`glifo`][glifo]'s stated goal of sharing "the hinting instance and hinted
    advance" between shaper and renderer warns that a font abstraction which
    only _returns a number_ is not enough; the measurer and the painter must be
    able to share resolved font state, or they will disagree at hinted sizes.
-7. **The cost of an implicit contract is a whole pipeline.** Friction §2 asks
-   for a stated contract; Vello is the case where not stating one made a second
-   backend a second architecture. Whatever replaces `isCanvas`, the surface a
-   backend must implement should be enumerable in one place.
+7. **The cost of an implicit contract is a whole pipeline.** Vello is the case
+   where leaving the contract implicit made a second backend a second
+   architecture. Friction §2 is the milder form of the same bill: `isCanvas`
+   names five methods, while `rule`, `scrollbar` and the clip pair are probed
+   with `__traits(compiles)` at each interpreter call site, so a backend author
+   cannot read the real surface off the concept. The mechanism is not the
+   problem — [F5][comparison] finds optional capability cheap everywhere, and
+   the probe-and-degrade bargain works. [F11][comparison] is: state the surface,
+   floor and optional together in one place, and let the call sites derive from
+   it.
 
 ## Sources
 

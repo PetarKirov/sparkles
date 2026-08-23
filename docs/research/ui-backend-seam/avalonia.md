@@ -182,7 +182,7 @@ equivalent question never reaches a canvas.
 
 **No — it is stated in four places, at four different scopes, and that is
 deliberate.** This is the subject's most transferable finding and it
-_complicates_ [F4](./comparison.md).
+_complicates_ [F5](./comparison.md).
 
 | Scope                        | Mechanism                                | Declared where                         | Example                                                                                                                                    |
 | ---------------------------- | ---------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -227,8 +227,10 @@ implementations. Skia's whole answer is one comparison against
 > The lesson for friction §2 is not "declare your capabilities" but
 > **"a capability has a scope"**. `pushClip` is a property of a canvas type;
 > "does this surface retain last frame" is a property of one render target on
-> one frame. `sparkles:ui` currently has one undifferentiated optional bucket
-> and no vocabulary for the difference.
+> one frame. `sparkles:ui` probes four optional primitives — `rule`,
+> `scrollbar`, `pushClip` and `popClip` — with `__traits(compiles)` at the
+> interpreter call site: one undifferentiated bucket, with no vocabulary for the
+> difference.
 
 ## Q3 — semantic or primitive operations?
 
@@ -255,17 +257,23 @@ public void DrawRectangle(IExperimentalAcrylicMaterial material, RoundedRect rec
 — [`PlatformDrawingContext.cs`][platformctx]
 
 Three things are worth taking from those six lines. The degradation lives
-**once, in the framework** — Qt's camp in [F3](./comparison.md), not Slint's.
+**once, in the framework** — Qt's camp in [F4](./comparison.md), not Slint's.
 The fallback is **carried by the semantic value itself**
 (`material.FallbackColor`), so the framework need not invent an approximation.
 And the semantic operation **is not in the core interface at all**: a new
 backend implements `IDrawingContextImpl` and gets acrylic-as-solid-colour free.
 
-That is a direct answer to friction §3. Our `scrollbar` op forces every backend
-to know what a scrollbar is because the degradation is the backend's job. The
-Avalonia shape would be: keep the semantic op, put it behind an optional
-interface, give the semantic payload a declared degradation, and perform that
-degradation in the interpreter once.
+That is a direct answer to friction §3. `sparkles:ui` has the outline of the
+same arrangement: `scrollbar` sits outside the five-method concept, and a canvas
+that declines it gets a stated degradation — `paintScrollbarCells`, one glyph per
+cell — from the interpreter. What differs is where the fallback is written and
+what accepting the op costs. The degradation is the toolkit's reconstruction of
+what a scrollbar looks like in cells, not something the value carries, and a
+canvas that does take the primitive takes all fourteen `Scrollbar` fields with
+it, `trackGlyph` and `thumbGlyph` included, plus the obligation to know what a
+scrollbar is. The Avalonia shape is: keep the semantic op, put it behind a
+declared optional interface, give the semantic payload its own fallback, and let
+the interpreter apply that fallback once.
 
 The corresponding extension point for applications is `ICustomDrawOperation`,
 which requires the caller to supply exactly the things `IRenderDataItem`
@@ -277,20 +285,25 @@ requires — `Rect Bounds`, `bool HitTest(Point)`, `void Render(ImmediateDrawing
 **A polymorphic class per operation, not a tag plus fields.** Nine node types
 share a three-member interface; `RenderDataRectangleNode` has exactly `Rect` and
 `BoxShadows` beyond its brush/pen base, `RenderDataLineNode` has exactly `P1`
-and `P2`, `RenderDataGlyphRunNode` has exactly a glyph-run reference. There is
-no `DrawOp` with eighteen fields and no `OpKind` enum over the drawing verbs.
+and `P2`, `RenderDataGlyphRunNode` has exactly a glyph-run reference. Nothing in
+the tree corresponds to one record wide enough for every verb, and there is no
+enum over the drawing verbs at all: a node's class _is_ its tag.
 
-This confirms [F2](./comparison.md)
-from a second, independent direction: egui reifies as a Rust `enum Shape`,
-Avalonia reifies as a C# class hierarchy, and neither reaches for tag-plus-dead-
-fields. It also **complicates** F2's recommended fix. A `SumType` is the D
-analogue of egui's `enum`, but the property Avalonia buys with dispatch is one a
-sum type does not give for free: every node answers `Bounds` and `HitTest`
-_itself_, so adding an operation cannot forget to teach the extent and hit-test
-walkers about it. In D, that is a `final switch` over a sum type — which the
-compiler does enforce — so the property is recoverable, but only if the extent
-query is written as an exhaustive switch rather than as `if (op.kind == …)`
-chains.
+This is [F3](./comparison.md) from a third independent direction: egui reifies
+as a Rust `enum Shape`, `sparkles:ui` as a closed `SumType` over eight per-kind
+payloads, Avalonia as a C# class hierarchy. One idea, three encodings — and the
+trade between them is precisely what F3 holds open. Avalonia's variant pays an
+allocation per command and buys exact width, so a push node costs what a push
+node needs; `DrawOp` pays the widest payload on every operation and buys
+comparable value semantics, which is what makes a recorded stream diffable
+pairwise.
+
+What Avalonia buys with virtual dispatch is a property the sum does not give for
+free: every node answers `Bounds` and `HitTest` _itself_, so adding an operation
+cannot forget to teach the extent and hit-test walkers about it. In D that
+property is recoverable — an exhaustive `match!` over `DrawOp`'s eight arms is
+compiler-checked the same way — but only where the query is written as one,
+rather than as a chain of tests against the derived `kind`.
 
 One place Avalonia _does_ use tag-plus-union is instructive about when that
 encoding is correct: the compositor's deferred state stack stores pending
@@ -341,13 +354,15 @@ _semantic role_ versus _resolved appearance_; it is **the same appearance held
 at two thread affinities**, because the two consumers of a node run on different
 threads.
 
-Friction §6 says our seam "hedges rather than deciding" by carrying `visual` and
-`slot`. Avalonia hedges too, and pays the same per-op cost — but its second
-field buys thread-safe hit testing, a capability, rather than serving a second
-backend. The question friction §6 should ask is therefore sharper than "which
-one?": _what does the second field buy, and is that thing a capability or a
-consumer?_ If the HTML interpreter is the only consumer of `slot`, it is a
-consumer and the cost is misplaced; if `slot` were what makes a display list
+Friction §6 says `sparkles:ui` "hedges rather than deciding": six of `DrawOp`'s
+eight payloads store a `Slot` beside the resolved colours the primitive actually
+paints from, and reconstructing `Visual` on demand instead of storing it makes
+the hedge cheaper without making it a decision. Avalonia hedges too, and pays a
+comparable per-node cost — but its second field buys thread-safe hit testing, a
+capability, rather than serving a second backend. The question friction §6 should
+ask is therefore sharper than "which one?": _what does the second field buy, and
+is that thing a capability or a consumer?_ If the HTML interpreter is the only consumer of `slot`, it is a
+consumer and the cost is misplaced; if `slot` is what makes a display list
 re-themeable without re-layout, it is a capability and it is earning its space.
 
 ## Q7 — payload ownership
@@ -367,20 +382,24 @@ capture: `GlyphRun = glyphRun.PlatformImpl.Clone()`.
 Nothing is borrowed for the duration of a call. Commands are explicitly built to
 **outlive the frame and cross a thread**: `CompositionRenderData.SerializeChanges`
 writes the node objects into a `BatchStreamWriter` and marks `_itemsSent = true`,
-after which the client side no longer disposes them
+after which the client side stops disposing them
 ([`CompositionRenderData.cs`][renderdata]) — an ownership transfer, spelled out
 in one flag.
 
-This is [F6](./comparison.md)
-confirmed and extended. Friction §7 notes that "a GPU backend that wants to
-record on one thread and submit on another meets it immediately"; Avalonia's
-entire architecture is that arrangement, and it cost a refcounted handle type
-plus a transfer flag, not an interning table.
+This is [F8](./comparison.md) confirmed and extended, and it is the axis on
+which `sparkles:ui` stands apart: `TextRun.text` is a `const(char)[]` borrowed
+from a frame arena, and the rule stated on the type — an operation is valid while
+the buffer that built it is alive and unreset — is a frame-scoped borrow, not a
+share. Friction §7 notes that "a GPU backend that wants to record on one thread
+and submit on another meets it immediately"; Avalonia's entire architecture is
+that arrangement, and it costs a refcounted handle type plus a transfer flag,
+neither an interning table nor a copy per run. `UI-O4` stays open on exactly that
+retain boundary.
 
 ## Q8 — can a backend ask the scene its extent?
 
-**Yes, in both directions, and this contradicts
-[F7](./comparison.md).**
+**Yes, in both directions — [F7](./comparison.md)'s scene-side camp at its most
+complete.**
 
 Scene → extent: every node declares `Rect? Bounds`, and the recorded list folds
 them:
@@ -399,9 +418,10 @@ private LtrbRect? CalculateRenderBounds()
 — [`ServerCompositionRenderData.cs`][servrenderdata]
 
 The result is cached behind a `_boundsValid` flag and rounded outward
-(`Math.Floor`/`Math.Ceiling`). This is the same scan `skia-canvas-render.d` had
-to write by hand in friction §8 — except it is a first-class, cached, per-node
-API rather than a caller reaching into `rect` fields, and it is what makes
+(`Math.Floor`/`Math.Ceiling`). This is the same union `skia-canvas-render.d`
+folds by hand in friction §8 — except that each node contributes its own bounds
+as it is built, so the union is a cached, first-class API rather than a caller
+walking `op.rect` across the whole stream, and it is what makes
 `ISceneBrushContent.Rect` ([`ISceneBrush.cs`][scenebrush]) possible: recorded
 content used as a brush must know its own extent.
 
@@ -420,9 +440,10 @@ public record struct RenderTargetSceneInfo(PixelSize Size, double Scaling, Size 
 
 — [`IRenderTarget.cs`][irt]
 
-F7 concluded that "a backend allocating a surface generally knows the size
-because it chose it". Avalonia inverts that: the _scene_ proposes a size, the
-surface may decline, and the answer comes back as
+F7 separates surface, layout and ink extent, and separates
+maintained-at-construction from derived-by-scan. Avalonia lands on the maintained
+side of both: bounds accumulate as the stream is recorded, and the scene's size
+then travels forward to the surface, which may decline it and say so through
 `RenderTargetDrawingContextProperties` on the same call. That the parameter
 carries `PixelSize`, `Scaling` **and** `LogicalSize` together is the detail worth
 copying — extent without its scale is not actionable at a seam that spans units.
@@ -477,30 +498,35 @@ copying — extent without its scale is not actionable at a seam that spans unit
    be stated. Avalonia shows that one statement is not enough: split
    `sparkles:ui`'s single optional bucket into _type-level_ (does this canvas
    have `pushClip`?) and _instance/frame-level_ (does this surface retain the
-   previous frame? what is its scale?). This **complicates F4**, which framed the
-   fix as "a floor plus a negotiable set" — the missing axis is lifetime, not
-   just severity.
+   previous frame? what is its scale?). This **complicates
+   [F5](./comparison.md)**, whose floor / defaulted / refusable ladder sorts
+   primitives by severity — the missing axis is lifetime, not just severity.
 2. **Give optional probes a declared type.** Replace bare `__traits(compiles)` at
    interpreter call sites with named capability traits or a `getFeature`-style
    lookup keyed by a declared type, so the probeable surface is enumerable from
    one place. This is the cheap half of §2 and does not require abandoning
    structural typing.
-3. **Keep `scrollbar` semantic, but move its degradation into the interpreter and
-   let the op carry its own fallback.** Avalonia's acrylic path — optional
+3. **Keep `scrollbar` semantic, but let the op carry its own fallback instead of
+   the interpreter reconstructing one.** Avalonia's acrylic path — optional
    interface, framework-level degrade, fallback carried by the value — is the
-   shape friction §3 is groping for. It removes seven of `DrawOp`'s eight
-   scrollbar fields from every backend's concern without removing the semantics.
-4. **When re-encoding `DrawOp` as a sum type (F2), make extent and hit testing
-   exhaustive switches over it.** Avalonia gets "you cannot add an operation and
-   forget its bounds" from virtual dispatch; D gets the same guarantee from
-   `final switch`, but only if the extent query is written that way. This is the
-   part of F2 the recommendation currently leaves implicit.
-5. **F7 is wrong as stated — a scene-side extent query is normal, and it should
-   carry scale.** Avalonia computes a cached `Bounds` by unioning per-node
-   bounds, uses it for scene brushes, _and_ passes
+   shape friction §3 is groping for. It takes the cell-only half of `Scrollbar`'s
+   fourteen fields, `trackGlyph` and `thumbGlyph`, off every pixel backend's
+   concern, and leaves the remaining twelve to one degradation written once,
+   without giving up the semantics.
+4. **Write extent and hit testing as exhaustive matches over `DrawOp`.**
+   Avalonia gets "you cannot add an operation and forget its bounds" from virtual
+   dispatch; D gets the same guarantee from an exhaustive `match!` over the sum's
+   eight arms, but only where the query is written that way rather than as tests
+   against the derived `kind`. That is the guarantee
+   [F3](./comparison.md)'s endorsement of reification leaves implicit.
+5. **A scene-side extent query is normal, and it must carry its scale.**
+   Avalonia computes a cached `Bounds` by unioning per-node bounds, uses it for
+   scene brushes, _and_ passes
    `RenderTargetSceneInfo(PixelSize, Scaling, LogicalSize)` forward to the
-   surface. Friction §8's hand-rolled scan in `skia-canvas-render.d` is not a
-   symptom of asking the wrong question; it is the right query, unimplemented.
+   surface — [F7](./comparison.md)'s maintained-at-construction camp, on both
+   axes. Friction §8's hand-rolled fold in `skia-canvas-render.d` is not a
+   symptom of asking the wrong question; it is the right query, unimplemented,
+   and therefore asked the expensive way.
 6. **`IRef`-style refcounting is the confirmed answer to §7, and the handoff must
    be explicit.** `SerializeChanges`' `_itemsSent` flag is a one-bit ownership
    transfer between threads — exactly what M7/T5's record-here-submit-there plan
