@@ -25,7 +25,7 @@ import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.base.text.width : codepointWidth;
 
 import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, OpKind,
-    ruleEndpoints, RuleEdge, Scrollbar, scrollbarCell, scrollbarCellCount,
+    ruleSpan, RuleEdge, Scrollbar, scrollbarCell, scrollbarCellCount,
     textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
@@ -73,7 +73,7 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 // The cell backend has no sub-cell resolution: a hairline
                 // becomes the box-drawing line along the same edge (UIA2).
                 Point rf, rt;
-                ruleEndpoints(op.rect, op.ruleEdge, rf, rt);
+                ruleSpan(op.rect, op.ruleEdge, rf, rt);
                 canvas.line(rf, rt, op.visual, LineStyle.solid);
                 break;
             case scrollbar:
@@ -507,14 +507,33 @@ struct GridCanvas
     /// beneath keep their own foreground.
     void line(in Point from, in Point to, in Visual v, LineStyle style) scope
     {
-        const y = from.y;
-        foreach (x; from.x .. to.x)
+        if (from.y == to.y || from.x != to.x)
+        {
+            const y = from.y;
+            foreach (x; from.x .. to.x)
+                if (inBounds(x, y))
+                {
+                    auto c = &cell(x, y);
+                    c.style.underline = style == LineStyle.wavy
+                        ? UnderlineStyle.curly : UnderlineStyle.single;
+                    c.style.underlineColor = Color.fromRgb(v.fg);
+                }
+            return;
+        }
+        // Vertical: no underline can express it, so it degrades to the cell's
+        // own left edge — the eighth-block the accent borders already use, so
+        // a rule and a border of the same weight agree. This REPLACES the
+        // glyph where an underline rides alongside it; that asymmetry is the
+        // cell grid's, not this function's.
+        const x = from.x;
+        const g = accentGlyph(1, left: true);
+        foreach (y; from.y .. to.y)
             if (inBounds(x, y))
             {
                 auto c = &cell(x, y);
-                c.style.underline = style == LineStyle.wavy
-                    ? UnderlineStyle.curly : UnderlineStyle.single;
-                c.style.underlineColor = Color.fromRgb(v.fg);
+                auto st = c.style;
+                st.fg = Color.fromRgb(v.fg);
+                c.setCodepoint(g, 1, st);
             }
     }
 
@@ -900,4 +919,51 @@ static assert(isCanvas!GridCanvas);
 
     assert(g[5, 1].style.underline == UnderlineStyle.curly,
         "a tint is not a surface: the squiggle under it survives");
+}
+
+@("tui_canvas.aVerticalRuleIsDrawnAtAll")
+@safe unittest
+{
+    import sparkles.ui.canvas : ruleOp, RuleEdge;
+    import sparkles.ui.style : Slot;
+
+    // A cell grid has no sub-cell resolution, so a rule degrades to the cell
+    // edge along it: a horizontal one to an underline, a vertical one to a
+    // left eighth-block. The vertical case was not degraded — it was DROPPED:
+    // `line` read `from.y` as the row and walked `from.x .. to.x`, which for a
+    // vertical segment is an empty range. `apps/diagram`'s board showed it as
+    // a lattice with horizontal rules and no verticals at all.
+    Grid g;
+    g.resize(6, 4);
+    auto ops = [ruleOp(Rect(2, 0, 1, 4), RuleEdge.left, Slot.border,
+        Visual(fg: RgbColor(0x88, 0x88, 0x88)))];
+    paintGrid(g, RgbColor(0, 0, 0), ops);
+
+    foreach (y; 0 .. 4)
+        assert(g[2, cast(ushort) y].grapheme == "▏",
+            "the whole column is stroked");
+    assert(g[1, 0].grapheme == " ", "…and only that column");
+    assert(g[3, 0].grapheme == " ");
+}
+
+@("tui_canvas.aHorizontalRuleReachesItsLastCell")
+@safe unittest
+{
+    import sparkles.ui.canvas : ruleOp, RuleEdge;
+    import sparkles.ui.style : Slot;
+
+    // `ruleEndpoints` names the last cell ON the rule; `line` takes a
+    // half-open span (a widget's `lineTo` is exclusive, which the undercurl
+    // test above pins). The degradation passed one to the other unchanged, so
+    // every rule came up one cell short of its own rect — a full-width board
+    // rule stopped a column before the right edge.
+    Grid g;
+    g.resize(6, 2);
+    auto ops = [ruleOp(Rect(0, 1, 6, 1), RuleEdge.top, Slot.border,
+        Visual(fg: RgbColor(0x88, 0x88, 0x88)))];
+    paintGrid(g, RgbColor(0, 0, 0), ops);
+
+    foreach (x; 0 .. 6)
+        assert(g[cast(ushort) x, 1].style.underline == UnderlineStyle.single,
+            "the rule covers its whole rect, last cell included");
 }

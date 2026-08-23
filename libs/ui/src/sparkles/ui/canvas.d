@@ -640,6 +640,26 @@ void ruleEndpoints(in Rect rect, RuleEdge edge, out Point from, out Point to)
     }
 }
 
+/**
+The same rule as a HALF-OPEN span, for a cell backend's `line` primitive.
+
+$(LREF ruleEndpoints) names the last cell that is $(I on) the rule, which is
+what a pixel backend wants — it strokes from one endpoint to the other. A cell
+`line` is half-open instead (a widget's `lineTo` is exclusive), so handing it
+`ruleEndpoints`' output unchanged draws every rule one cell short of its own
+rect. This converts once, where the two conventions actually meet, rather than
+at each of the callers that used to get it wrong.
+*/
+void ruleSpan(in Rect rect, RuleEdge edge, out Point from, out Point to)
+    @safe pure nothrow @nogc
+{
+    ruleEndpoints(rect, edge, from, to);
+    if (to.y == from.y)
+        ++to.x; // horizontal
+    else
+        ++to.y; // vertical
+}
+
 /// Number of columns/rows a cell backend uses for a semantic scrollbar rail.
 /// The continuous px animation degrades to the gallery's shipped threshold:
 /// idle through 49% is one cell; 50% through fully expanded is two.
