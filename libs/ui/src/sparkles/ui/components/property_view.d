@@ -263,33 +263,15 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
 
     const rowsCol = b.add(Widget(kind: WidgetKind.column, children: rowIds));
 
-    // The scroll frame (`SCV1`/`SCV7`): when the state reserves a vertical
-    // gutter, the rows clip to the frame's content box and the machine-driven
-    // bar sits at the right — the SAME composition (and the same
-    // hover-expand easing, via `scroll.vAnim`) the tree views use, so a
-    // property tree and a file tree cannot look different while scrolling.
-    // A state with no gutter (a plain embedded listing) keeps the bare
-    // column, exactly as before.
-    const frame = s.scrollFrame();
-    if (frame.vTrack.width <= 0)
-        return rowsCol;
+    // The scroll frame (`SCV10`): the rows clip to the frame's content box and
+    // the machine-driven bar sits in the gutter the state reserved — the one
+    // composition every scrolling pane emits, so a property tree and a file
+    // tree cannot look different while scrolling. Rows are already sliced to
+    // the window, so the box takes no child offset.
+    import sparkles.ui.components.chrome : hBar, scrollBox, vBar;
 
-    import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
-
-    const content = b.add(Widget(kind: WidgetKind.column,
-        children: [rowsCol],
-        width: SizeSpec.fixed(frame.content.width),
-        height: SizeSpec.fixed(frame.content.height),
-        clipX: true, clipY: true));
-    const vbar = scrollbar(b, s.sb.scrolledTo(s.top),
-        frame.vExtents.content, frame.vExtents.viewport,
-        frame.vExtents.track, ScrollbarGlyphs('█', '░'),
-        expandPercent: cast(ubyte) s.scroll.vAnim.percent,
-        gutter: frame.vTrack.width,
-        trackLit: s.sb.hovered || s.sb.dragging);
-    return b.add(Widget(kind: WidgetKind.row, children: [content, vbar],
-        width: SizeSpec.fixed(frame.content.width + frame.vTrack.width),
-        height: SizeSpec.fixed(frame.vTrack.height)));
+    return scrollBox(b, rowsCol, s.scrollFrame(),
+        vBar(s.scroll, s.top), hBar(s.scroll, s.hsb.offset));
 }
 
 /// The refusal's presented text — one vocabulary for every target.

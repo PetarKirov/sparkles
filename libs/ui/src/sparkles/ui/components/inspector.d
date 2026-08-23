@@ -99,51 +99,18 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
         textStyle: TextStyle(bold: true)));
     rows ~= rule(b, innerWidth);
 
-    // The tree body and both bars consume the SAME frame as pointer routing:
-    // content first, H below its remainder, V at the right owning the corner.
-    // The stable vertical gutter stays present when dormant; the semantic op
-    // simply paints nothing while the rows fit.
+    // The tree body and both bars consume the SAME frame as pointer routing
+    // (`SCV7`), through the one composition every scrolling pane emits
+    // (`SCV10`): content first, H below its remainder, V at the right owning
+    // the corner. The stable vertical gutter stays present when dormant; the
+    // semantic op simply paints nothing while the rows fit.
     {
-        import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+        import sparkles.ui.components.chrome : hBar, scrollBox, vBar;
 
-        const frame = state.scrollFrame();
-        const treeCol = b.add(Widget(kind: WidgetKind.column,
-            children: [viewSlice(b, data, state, isOpen, glyphs,
-                hitBase: hitBase)],
-            width: SizeSpec.fixed(frame.content.width),
-            height: SizeSpec.fixed(frame.content.height),
-            clipX: true, clipY: true));
-
-        uint body = treeCol;
-        if (frame.hTrack.height > 0)
-        {
-            const hbar = scrollbar(b, state.hsb,
-                frame.hExtents.content, frame.hExtents.viewport,
-                frame.hExtents.track, ScrollbarGlyphs('━', '─'),
-                expandPercent: cast(ubyte) state.scroll.hAnim.percent,
-                gutter: frame.hTrack.height,
-                trackLit: state.hsb.hovered || state.hsb.dragging);
-            body = b.add(Widget(kind: WidgetKind.column,
-                children: [treeCol, hbar],
-                width: SizeSpec.fixed(frame.hTrack.width),
-                height: SizeSpec.fixed(frame.vTrack.height)));
-        }
-
-        if (frame.vTrack.width > 0)
-        {
-            const vbar = scrollbar(b, state.sb.scrolledTo(state.top),
-                frame.vExtents.content, frame.vExtents.viewport,
-                frame.vExtents.track, ScrollbarGlyphs('█', '░'),
-                expandPercent: cast(ubyte) state.scroll.vAnim.percent,
-                gutter: frame.vTrack.width,
-                trackLit: state.sb.hovered || state.sb.dragging);
-            rows ~= b.add(Widget(kind: WidgetKind.row,
-                children: [body, vbar],
-                width: SizeSpec.fixed(innerWidth),
-                height: SizeSpec.fixed(frame.vTrack.height)));
-        }
-        else
-            rows ~= body;
+        rows ~= scrollBox(b,
+            viewSlice(b, data, state, isOpen, glyphs, hitBase: hitBase),
+            state.scrollFrame(),
+            vBar(state.scroll, state.top), hBar(state.scroll, state.hsb.offset));
     }
 
     // The details pane, when the adapter supplied rows for the selection.
