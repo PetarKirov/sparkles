@@ -564,9 +564,7 @@ struct SettingsPaneT(T)
         TextSpan[] spans;
         if (!tv.searching && tv.filterQuery.length == 0)
         {
-            spans ~= TextSpan(text: "/ filter · ⏎ open · +/- value · v drag "
-                ~ "· u undo · r reset · 1-3 fixture · s save · Esc close",
-                slot: Slot.muted);
+            spans ~= TextSpan(text: hintText(), slot: Slot.muted);
             return spans;
         }
         spans ~= TextSpan(text: "/", slot: Slot.chromeAccent);
@@ -589,6 +587,34 @@ struct SettingsPaneT(T)
                 spans ~= TextSpan(text: "  incomplete", slot: Slot.warn);
         }
         return spans;
+    }
+
+    /**
+    The pane's key hint — sized to fit, never clipped.
+
+    $(B This line is the only place the pane's keys are advertised.) The key
+    guide (`LTN`) cannot open over a modal surface: `?` is a board row, and the
+    settings scope hides the board's (`SET2`). So a hint whose tail is cut
+    teaches every key except how to leave — which is exactly what an 88-column
+    panel did to `Esc close`. Two tiers, both measured against the panel's
+    inner width, rather than one string that happens to fit the author's
+    terminal.
+    */
+    private string hintText() const @safe pure nothrow @nogc
+    {
+        // Border (2 each side) plus padding (2 each side) is what the frame
+        // keeps for itself.
+        const inner = _geom.cols - 8;
+        // 71, 38 and 27 display columns; the strings are ASCII plus `·` and
+        // `⏎`, both single-width, so a byte count would overstate them.
+        if (inner >= 71)
+            return "/ filter · ⏎ open · +/- edit · u undo · 1-3 preset "
+                ~ "· s save · Esc close";
+        if (inner >= 38)
+            return "⏎ open · +/- edit · s save · Esc close";
+        if (inner >= 27)
+            return "⏎ open · s save · Esc close";
+        return "Esc close";
     }
 
     private TextSpan[] footerSpans() @safe
@@ -921,4 +947,30 @@ unittest
     foreach (ref n; tree.nodes)
         panel |= n.kind == WidgetKind.panel;
     assert(panel, "the pane is a framed surface, not loose rows");
+}
+
+@("diagram.settings_pane.theKeyHintAlwaysSaysHowToLeave")
+@safe unittest
+{
+    import std.algorithm.searching : canFind, endsWith;
+    import std.uni : byGrapheme;
+    import std.range : walkLength;
+
+    // The pane hides the key guide, so this line is where its keys live. It
+    // was clipped at the widest panel the geometry allows, which cut exactly
+    // the key a stuck reader needs. Assert the fit rather than eyeballing it.
+    DiagramSettings s;
+    foreach (viewportW; [40, 60, 80, 100, 120, 200])
+    {
+        SettingsPane pane;
+        const g = paneGeometryFor(Size(viewportW, 30));
+        pane.ensure(s, g);
+        const hint = pane.hintText();
+        const cols = hint.byGrapheme.walkLength;
+        assert(cols <= g.cols - 8,
+            "the hint overflows the panel at viewport width "
+            ~ (viewportW < 100 ? "small" : "large"));
+        assert(hint.endsWith("Esc close"), "…and it never loses the exit");
+        assert(hint.canFind("s save"));
+    }
 }
