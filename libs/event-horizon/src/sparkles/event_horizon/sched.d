@@ -336,9 +336,11 @@ struct Sched
     IoResult!RunStatus tick(Duration timeout = Duration.zero) @trusted
     in (_running is null, "tick from inside a fiber")
     {
-        // Entry sweep: deliver an already-expired deadline before resuming
-        // fibers — a continuously-ready workload never reaches the wait
-        // below, and the woken checkpoints should observe the interrupt now.
+        // Sweep before resuming, and again after every resume: a fiber that
+        // overruns its deadline in CPU work and then yields is re-dequeued
+        // within this same budget, so sweeping only at the edges of the
+        // loop would let it finish (and disarm) unnoticed. The sweep costs
+        // a null check while nothing is armed.
         cast(void) sweepDeadlines();
 
         uint ran;
@@ -349,6 +351,7 @@ struct Sched
                 break;
             resume(t);
             ++ran;
+            cast(void) sweepDeadlines();
         }
         if (ran > 0 || _readyHead !is null)
             return ioOk(RunStatus.dispatched);
@@ -430,6 +433,7 @@ struct Sched
                     break;
                 resume(t);
                 ++ran;
+                cast(void) sweepDeadlines();
             }
             if (ran > 0 || _readyHead !is null)
                 return ioOk(RunStatus.dispatched);
