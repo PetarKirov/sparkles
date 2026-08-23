@@ -570,6 +570,215 @@ unittest
     assert(!r.hasError);
 }
 
+@("scope.deadline.expiryRacesScopeExit")
+@safe
+unittest
+{
+    import core.time : MonoTime, usecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // Bodies that finish right around their own deadline, in a tight loop
+    // on one fiber stack: both orderings must be clean — a value or a
+    // timeout, never corruption. (The retired kernel-timer design let a
+    // queued expiry outlive the disarm and sweep the NEXT iteration's node
+    // in the same stack slot.)
+    auto r = s.run(() {
+        foreach (i; 0 .. 200)
+        {
+            const spin = ((i % 40) * 25).usecs; // 0 .. ~1 ms spread
+            auto o = withDeadline!((ref sc) {
+                const until = MonoTime.currTime + spin;
+                while (MonoTime.currTime < until)
+                    s.yieldNow();
+                return 1;
+            })(s, 500.usecs);
+            assert(!o.hasError || o.error.isTimeout);
+            if (!o.hasError)
+                assert(o.value == 1);
+        }
+    });
+    assert(!r.hasError);
+}
+
+@("scope.deadline.parkGatedByClampAlone")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.channel : Channel;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // A fiber parked on a channel with NOTHING in flight and no waker: the
+    // armed deadline is the only wait source, so the tick must sleep the
+    // clamp out itself (runOnce reports drained instantly on an empty
+    // slab) — and run()'s deadlock assert must accept the state.
+    Channel!(int, 2) ch;
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        auto o = withDeadline!((ref sc) {
+            cast(void) ch.take(s); // parks: nothing ever puts
+        })(s, 30.msecs);
+        assert(o.hasError && o.error.isTimeout);
+    });
+    assert(!r.hasError);
+    const elapsed = MonoTime.currTime - before;
+    assert(elapsed >= 25.msecs, "the deadline actually gated the park");
+    assert(elapsed < 5.seconds, "bounded: no deadlock, no unbounded wait");
+}
+
+@("scope.deadline.firesUnderContinuouslyReadyFibers")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // A body that never parks on the ring — only the tick's entry sweep
+    // can deliver its deadline; without it this loop never ends.
+    auto r = s.run(() {
+        auto o = withDeadline!((ref sc) {
+            while (!interruptRequested(*s.currentContext()))
+                s.yieldNow();
+        })(s, 20.msecs);
+        assert(o.hasError && o.error.isTimeout);
+    });
+    assert(!r.hasError);
+}
+
+@("scope.deadline.nestedEarliestFires")
+@safe
+unittest
+{
+    import core.time : minutes, msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // Two concurrently armed deadlines: the inner (earlier) fires; the
+    // outer disarms clean and keeps its value.
+    auto r = s.run(() {
+        auto outer = withDeadline!((ref o) {
+            auto inner = withDeadline!((ref i) {
+                cast(void) sleep(s, 1.minutes);
+            })(s, 10.msecs);
+            assert(inner.hasError && inner.error.isTimeout);
+            return 5;
+        })(s, 1.minutes);
+        assert(!outer.hasError && outer.value == 5);
+    });
+    assert(!r.hasError);
+}
+
+@("scope.deadline.hugeFiniteTimeoutDoesNotWrap")
+@safe
+unittest
+{
+    import core.time : Duration, msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        auto o = withDeadline!((ref sc) {
+            cast(void) sleep(s, 2.msecs);
+            return 3;
+        })(s, Duration.max - 1.msecs);
+        assert(!o.hasError && o.value == 3,
+            "a huge finite timeout saturates instead of wrapping into the past");
+    });
+    assert(!r.hasError);
+}
+
+@("scope.deadline.zeroTickNonBlockingAndStopSurfaces")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.loop : RunStatus;
+
+    Sched s;
+    schedOrSkip(s);
+
+    Channel!(int, 2) ch;
+    bool bodyEnded;
+    assert(!s.spawn(() {
+        cast(void) withDeadline!((ref sc) {
+            cast(void) ch.take(s);
+        })(s, 30.seconds);
+        bodyEnded = true;
+    }).hasError);
+
+    // First tick runs the fiber to its park; the deadline is now armed and
+    // nothing is in flight.
+    cast(void) s.tick(Duration.zero);
+
+    // tick(0) — the default — must stay non-blocking even though the armed
+    // deadline is the only wait source.
+    const before = MonoTime.currTime;
+    cast(void) s.tick(Duration.zero);
+    assert(MonoTime.currTime - before < 5.seconds, "tick(0) did not sleep");
+
+    // stop() surfaces promptly through the sleep arm (the zero-time probe
+    // runs before any sleep).
+    s.loop.stop();
+    const b2 = MonoTime.currTime;
+    auto st = s.tick(25.seconds);
+    assert(st.hasValue && st.value == RunStatus.stopped);
+    assert(MonoTime.currTime - b2 < 5.seconds, "stop preempted the sleep");
+
+    // Unwind: wake the parked taker via close (no ring involved), then let
+    // the fiber finish so destroy()'s contracts hold.
+    ch.close();
+    while (s.liveFibers > 0)
+        cast(void) s.tick(Duration.zero);
+    assert(bodyEnded);
+}
+
+@("scope.defect.bodyThrowStillJoinsAndDisarms")
+@safe
+unittest
+{
+    import core.time : minutes;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // A body defect inside a deadline scope with a parked child: the old
+    // unwind skipped the join, the disarm, and the unlink (leaking the
+    // armed node — a second use-after-free route). Now the child is
+    // cancelled and joined, the node disarmed (destroy()'s contract
+    // asserts the armed list is empty at teardown), and the defect still
+    // reaches the outer scope as Cause.die exactly once.
+    bool childInterrupted;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref outer) {
+            outer.spawn(() {
+                cast(void) withDeadline!((ref sc) {
+                    sc.spawn(() {
+                        childInterrupted = sleep(s, 1.minutes).hasError;
+                    });
+                    throw new Exception("body defect");
+                })(s, 1.minutes);
+            });
+        })(s);
+        assert(outcome.hasError);
+        assert(outcome.error.kind == Cause!IoError.Kind.die);
+        assert(outcome.error.defect.msg == "body defect");
+    });
+    assert(!r.hasError);
+    assert(childInterrupted, "the defect cancelled and joined the child");
+}
+
 @("scope.race.completionWins")
 @safe
 unittest

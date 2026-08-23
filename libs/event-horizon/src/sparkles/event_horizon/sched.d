@@ -730,6 +730,39 @@ unittest
     assert(!onScheduler, "the run is over");
 }
 
+@("sched.deadline.disarmIsSynchronousSeverance")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The crash shape of the retired kernel-timer design: a deadline that
+    // has ALREADY expired when the disarm runs. The fire-and-forget cancel
+    // lost that race — the queued expiry CQE was delivered after the scope
+    // frame died and swept freed stack. Disarm is now a synchronous
+    // severance: once it returns, no sweep can observe the node, however
+    // late the disarm was.
+    // (`@trusted` address-taking: the node provably outlives every armed
+    // interval in this frame — the same pinning contract runScope keeps.)
+    CancelContext node;
+    (() @trusted => s.armDeadline(&node, 1.msecs))();
+    (() @trusted { Thread.sleep(5.msecs); })(); // expire without a sweep
+    (() @trusted => s.disarmDeadline(&node))();
+
+    cast(void) s.tick(Duration.zero);
+    assert(node.state == CancelContext.State.on,
+        "a disarmed node is never swept, even after its expiry passed");
+    assert(!node.deadlineArmed);
+
+    // Idempotent, and re-arming after a disarm works.
+    (() @trusted => s.disarmDeadline(&node))();
+    (() @trusted => s.armDeadline(&node, 1.msecs))();
+    (() @trusted => s.disarmDeadline(&node))();
+}
+
 @("sched.capability.deadlineServiceProbe")
 @safe pure nothrow @nogc
 unittest
