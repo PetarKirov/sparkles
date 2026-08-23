@@ -367,60 +367,17 @@ Field-for-field the loader's schema: `link` omitted when empty, `collapsed`
 only when `true`, `items` only when non-empty — the exact subset VitePress's
 `DefaultTheme.SidebarItem` consumes, proved by the round-trip test below.
 +/
-string sidebarJson(scope const(SidebarItem)[] items) @safe pure
+string sidebarJson(const SidebarItem[] items)
 {
+    import sparkles.wired.json : writeJSON;
+    import sparkles.wired.json.writer : JsonWriteOptions;
+
     auto w = appender!string;
-    writeSidebarItemsJson(w, items, 0);
+    const r = writeJSON!(JsonWriteOptions(pretty: true))(items, w);
+    if (r.hasError)
+        throw new Exception("sidebar does not encode: " ~ r.error.reason);
     w ~= "\n";
     return w[];
-}
-
-private void writeSidebarItemsJson(ref Appender!string w,
-    scope const(SidebarItem)[] items, size_t depth) @safe pure
-{
-    void indent(size_t n) @safe pure
-    {
-        foreach (_; 0 .. n)
-            w ~= "  ";
-    }
-
-    w ~= "[";
-    foreach (i, ref const it; items)
-    {
-        w ~= i ? ",\n" : "\n";
-        indent(depth + 1);
-        w ~= "{ \"text\": ";
-        writeJsonString(w, it.text);
-        if (it.link.length)
-        {
-            w ~= ", \"link\": ";
-            writeJsonString(w, it.link);
-        }
-        if (it.collapsed)
-            w ~= ", \"collapsed\": true";
-        if (it.target.length)
-        {
-            w ~= ", \"target\": ";
-            writeJsonString(w, it.target);
-        }
-        if (it.rel.length)
-        {
-            w ~= ", \"rel\": ";
-            writeJsonString(w, it.rel);
-        }
-        if (it.items.length)
-        {
-            w ~= ", \"items\": ";
-            writeSidebarItemsJson(w, it.items, depth + 1);
-        }
-        w ~= " }";
-    }
-    if (items.length)
-    {
-        w ~= "\n";
-        indent(depth);
-    }
-    w ~= "]";
 }
 
 // ── manifest.json (DSC2) ────────────────────────────────────────────────────
@@ -440,76 +397,41 @@ interface the VitePress side reads (`DSC4`).
 Deterministic by construction — each section is sorted by path — so the file
 is diffable across runs and the build is reproducible modulo page content.
 +/
-string manifestJson(string[] files, string[] dirs, SkippedFile[] skipped) @safe pure
+struct Manifest
+{
+    /// repo-relative path → its listing route
+    string[string] files;
+    /// directory → its index route
+    string[string] dirs;
+    /// what discovery rejected, and why (`DSC2`)
+    SkippedFile[] skipped;
+}
+
+string manifestJson(string[] files, string[] dirs, SkippedFile[] skipped)
 {
     import std.algorithm.sorting : sort;
 
-    auto fs = files.dup;
-    fs.sort;
-    auto ds = dirs.dup;
-    ds.sort;
-    auto sk = skipped.dup;
-    sk.sort!((a, b) => a.path < b.path);
+    import sparkles.wired.json : writeJSON;
+    import sparkles.wired.json.writer : JsonWriteOptions;
+
+    Manifest m;
+    foreach (f; files)
+        m.files[f] = listingRoute(f);
+    foreach (d; dirs)
+        m.dirs[d] = directoryRoute(d);
+    m.skipped = skipped.dup;
+    // Objects sort by key inside the encoder; the array does not, so it is
+    // sorted here — the whole file has to be byte-stable across runs.
+    m.skipped.sort!((a, b) => a.path < b.path);
 
     auto w = appender!string;
-    w ~= "{\n  \"files\": {";
-    foreach (i, f; fs)
-    {
-        w ~= i ? ",\n    " : "\n    ";
-        writeJsonString(w, f);
-        w ~= ": ";
-        writeJsonString(w, listingRoute(f));
-    }
-    w ~= fs.length ? "\n  },\n" : "},\n";
-    w ~= "  \"dirs\": {";
-    foreach (i, d; ds)
-    {
-        w ~= i ? ",\n    " : "\n    ";
-        writeJsonString(w, d);
-        w ~= ": ";
-        writeJsonString(w, directoryRoute(d));
-    }
-    w ~= ds.length ? "\n  },\n" : "},\n";
-    w ~= "  \"skipped\": [";
-    foreach (i, s; sk)
-    {
-        w ~= i ? ",\n    " : "\n    ";
-        w ~= "{ \"path\": ";
-        writeJsonString(w, s.path);
-        w ~= ", \"reason\": ";
-        writeJsonString(w, s.reason);
-        w ~= " }";
-    }
-    w ~= sk.length ? "\n  ]\n}\n" : "]\n}\n";
+    const r = writeJSON!(JsonWriteOptions(pretty: true))(m, w);
+    if (r.hasError)
+        throw new Exception("manifest does not encode: " ~ r.error.reason);
+    w ~= "\n";
     return w[];
 }
 
-/// A JSON string literal for a path: quotes, backslashes, and control bytes
-/// escaped (paths carry nothing else that needs it).
-package void writeJsonString(ref Appender!string w, scope const(char)[] s) @safe pure
-{
-    w ~= '"';
-    foreach (char c; s)
-        switch (c)
-        {
-            case '"': w ~= `\"`; break;
-            case '\\': w ~= `\\`; break;
-            case '\n': w ~= `\n`; break;
-            case '\t': w ~= `\t`; break;
-            default:
-                if (c < 0x20)
-                {
-                    import sparkles.base.text.writers : writeHexByte;
-
-                    w ~= `\u00`;
-                    writeHexByte(w, c);
-                }
-                else
-                    w ~= c;
-                break;
-        }
-    w ~= '"';
-}
 
 // ---------------------------------------------------------------------------
 
@@ -577,7 +499,7 @@ unittest
 }
 
 @("site.manifestJson.sortedAndEscaped")
-@safe pure
+@system
 unittest
 {
     import std.algorithm.searching : canFind;
@@ -594,10 +516,10 @@ unittest
     assert(json.canFind(`"b.d": "/src/b.d.html"`), json);
     assert(json.canFind(`"": "/src/index.html"`), json);
     assert(json.canFind(`"libs": "/src/libs/index.html"`), json);
-    assert(json.canFind(`{ "path": "big.txt", "reason": "size" }`), json);
+    assert(json.canFind(`"path": "big.txt"`) && json.canFind(`"reason": "size"`), json);
 
     // Empty sections stay valid JSON.
-    assert(manifestJson(null, null, null).canFind(`"files": {},`));
+    assert(manifestJson(null, null, null).canFind(`"files": {}`));
 }
 
 @("site.augmentWithListingDirs.deepOwnerImmediateChildrenOnly")
