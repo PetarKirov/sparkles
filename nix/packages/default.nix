@@ -121,6 +121,13 @@
       # (transitively: base, core-cli, ghostty, math, and the test-runner
       # shim+impl) and supplies the shared dub plumbing, so only the raylib +
       # libghostty-vt build inputs and the fontconfig runtime wrapper remain.
+      # The site post-pass (`DOC12`): one minifier for HTML, CSS, JS and JSON,
+      # exposed as a flake output so `docs/scripts/build-source-listings.sh`
+      # gets the nixpkgs-pinned version rather than whatever a registry lookup
+      # or an `npx` would resolve to. tdewolff/minify leaves `<pre>` content
+      # byte-for-byte alone, which a source-listing site depends on.
+      packages.minify = pkgs.minify;
+
       packages.terminal = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "terminal";
         version = "0.1.0";
