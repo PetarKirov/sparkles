@@ -8,6 +8,8 @@ mechanical. The scheduler participates through plain function pointers
 */
 module sparkles.event_horizon.cause;
 
+import core.time : MonoTime;
+
 import expected : Expected, err, ok;
 
 import sparkles.event_horizon.errors : IoError, NoGcHook;
@@ -180,6 +182,16 @@ struct CancelContext
     FiberContext* firstFiber;     /// intrusive member-fiber list
     uint fiberCount;              /// live member fibers (incl. daemons)
     uint daemonCount;             /// live daemon members
+
+    // The scheduler's deadline service (SPEC §8.3): a deadline IS a cancel
+    // scope, so the armed state lives on the node itself. The scheduler
+    // owns the intrusive armed list and is the only writer; arming and
+    // disarming are synchronous, so — unlike the retired kernel-timer
+    // design — nothing asynchronous ever holds this node's address.
+    MonoTime deadlineAt;          /// expiry instant; valid while armed
+    CancelContext* prevArmed;     /// intrusive armed-deadline-list links,
+    CancelContext* nextArmed;     /// owned by the arming scheduler
+    bool deadlineArmed;           /// membership in the armed list
 
     /// Links `child` under this node. (`@trusted`: the intrusive tree
     /// stores addresses of scope-frame-pinned nodes — the owning scope's
