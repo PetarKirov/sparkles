@@ -272,8 +272,10 @@ Two further details bear on [friction §1][friction]:
   "Note that the advance of a `String` is not necessarily the sum of the
   advances of its characters measured in isolation because the width of a
   character can vary depending on its context." That is a direct statement that
-  `sparkles:ui`'s [`cellsOf(text)`][canvas] — a per-grapheme width sum — is not a
-  measurement primitive that generalises.
+  a per-grapheme width sum does not generalise as a measurement primitive — and
+  a per-grapheme width sum is precisely what `sparkles:ui`'s `Size
+measure(const(char)[])` returns, `Size(cellsOf(text), 1)` over
+  [`cellsOf`][canvas], the toolkit's one width authority.
 
 ## Q2 — is the contract stated, or discovered?
 
@@ -281,7 +283,9 @@ Two further details bear on [friction §1][friction]:
 
 1. **Role interfaces.** A pipe declares what it can be asked by which of the
    eight `sun.java2d.pipe` interfaces it implements. This is Java's version of
-   `sparkles:ui`'s optional-primitive probing, made explicit at the type level:
+   the `__traits(compiles, …)` probe `sparkles:ui` applies to its four optional
+   primitives — `rule`, `scrollbar`, `pushClip`, `popClip` — made explicit at
+   the type level:
    `LoopPipe implements PixelDrawPipe, PixelFillPipe, ParallelogramPipe,
 ShapeDrawPipe, LoopBasedPipe`, and the marker interface `LoopBasedPipe`
    carries no methods at all — `SurfaceData.validatePipe` ends with
@@ -358,11 +362,14 @@ primitive one.
 
 **Not answered here, and the reason is instructive.** Java2D never reifies a
 drawing command. Dispatch is a virtual call on `sg2d.drawpipe`; the "command" is
-the frame on the Java stack. There is consequently no tagged union to get wrong,
-no `DrawOp`, and — importantly — no way to record, replay, cull or diff a scene.
-`GraphicsPrimitive.traceWrap()` exists (a debug wrapper installed when
-`traceflags != 0`, [`GraphicsPrimitive.java`][gprim]) precisely because there is
-nothing to inspect otherwise.
+the frame on the Java stack. There is consequently no encoding to get wrong —
+neither a closed sum like `DrawOp` nor a variable-stride record, the two options
+[F3][comparison] holds open — and, importantly, no way to record, replay, cull
+or diff a scene. `GraphicsPrimitive.traceWrap()` exists (a debug wrapper
+installed when `traceflags != 0`, [`GraphicsPrimitive.java`][gprim]) precisely
+because there is nothing to inspect otherwise. Java2D is the control case for
+F3's first half: reification is what buys those properties, and a subject that
+skips it has to bolt on a tracer to get any of them back.
 
 What Java2D reifies instead is the **state**, not the commands: the five
 ordinals plus the six pipe fields _are_ the value that would otherwise be
@@ -371,11 +378,12 @@ for friction §4 and §6 — see Q6.
 
 ## Q5 — sub-unit placement
 
-Java2D's coordinates are continuous `double`s in user space, so it does not have
-`sparkles:ui`'s problem directly. What it does have is the _inverse_ problem —
-a continuous request landing on a discrete grid — and its answer is the shape
-friction §5 is looking for: **a named tolerance and a named minimum, never a
-named position.**
+Java2D's coordinates are continuous `double`s in user space, so it does not meet
+`sparkles:ui`'s problem in the same form. It meets the _inverse_ problem instead
+— a continuous request landing on a discrete grid — which is [F6][comparison]'s
+point that going continuous relocates the sub-unit question rather than
+dissolving it. Java2D's answer is the shape [friction §5][friction] is looking
+for: **a named tolerance and a named minimum, never a named position.**
 
 - **A minimum, for dropout.**
   [`PixelToParallelogramConverter`][p2pgram] takes a `minPenSize` constructor
@@ -402,9 +410,9 @@ named position.**
   `sg2d.strokeHint != SunHints.INTVAL_STROKE_PURE`.
 
 So the vocabulary is `(minimum feature size, snap policy, snap tolerance)`. This
-supports F5's recommendation to replace `RuleEdge` with a fidelity — and adds
-that the fidelity is naturally a **pair**: how thin a thing may get, and how far
-it may move to look right.
+supports F6's answer — a named fidelity plus a queried device unit, in place of
+`RuleEdge`'s six compass positions — and adds that the fidelity is naturally a
+**pair**: how thin a thing may get, and how far it may move to look right.
 
 ## Q6 — resolved appearance, semantic role, or both?
 
@@ -428,20 +436,31 @@ Appearance lives in the graphics state and is resolved in two stages:
    and then composes tile by tile.
 
 The _unresolved_ `Paint` object is thus carried all the way to the bottom, while
-a _classification_ of it is carried as a lookup key. `sparkles:ui` carries
-`visual` (resolved) and `slot` (semantic) on **every op**, at eighteen fields
-apiece. Java2D carries the equivalent pair **once per state change**, memoized
-in a 30-entry `RenderCache` keyed by `(src, comp, dst)`
-([`SurfaceData.getRenderLoops`][surfacedata]).
+a _classification_ of it is carried as a lookup key. `sparkles:ui` puts both
+halves on every operation instead, and so pays for both every time: the pixels a
+primitive needs sit in its own payload — a 16-byte `Ink` on the four content
+primitives, and on `FillRect` its own colour fields plus a `const(BoxChrome)*`
+left null unless the box has a border, shadow, radius or arrow — while the
+classification rides along as a `Slot`, carried by six of the eight payloads and
+absent only from the clip pair. (`Visual` is derived from those fields on demand by `DrawOp.visual`,
+lossily and deliberately so; the seam speaks `Visual` end to end, and the
+`Ink`/`BoxChrome` split is internal to the payloads.) Java2D carries the
+equivalent pair **once per state change**, memoized in a 30-entry `RenderCache`
+keyed by `(src, comp, dst)` ([`SurfaceData.getRenderLoops`][surfacedata]).
 
-Friction §6 records the seam "hedging rather than deciding". Java2D hedges too —
-and shows that the hedge is affordable when it is amortised over a state span
-rather than replicated per command.
+[Friction §6][friction] records the seam hedging rather than deciding, and
+[F9][comparison] finds that nobody else in the survey carries both on every
+operation. Java2D hedges too — and shows that the hedge is affordable when it is
+amortised over a state span rather than replicated per command. It also lands on
+F9's side of the derivability argument: the token that survives to the bottom is
+the _classification_, and the pixels are produced from it at the destination,
+never the reverse.
 
 ## Q7 — payload ownership
 
-Java (a GC'd language) removes the lifetime question that makes friction §7
-sharp, but Java2D still runs into it twice, and the two answers are different:
+Java (a GC'd language) removes the lifetime question that makes
+[friction §7][friction] sharp, but Java2D still runs into it twice, and the two
+answers are different:
 
 - **Glyph runs are pooled and explicitly disposed.** [`GlyphList`][glyphlist]
   holds native pointers and "is not marked as finalizable since it is intended
@@ -469,18 +488,35 @@ sharp, but Java2D still runs into it twice, and the two answers are different:
   bargain reached independently: the party that knows the payload's device
   lifetime owns the cache.
 
+All three are copies, pools or strong references — no borrow of a producer's
+buffer survives the call — which is [F8][comparison]'s unanimous result reached
+by a third route. `sparkles:ui`'s frame arena is in that family: `CmdBuffer.textRun`
+copies the run's bytes into the arena, and the rule stated on the type is that an
+operation is valid while the buffer that built it is alive and unreset. What the
+strike passage above adds is the case the arena does not cover — a backend that
+records on one thread and submits on another needs the payload to travel with the
+operation, and that is exactly what `UI-O4` leaves open.
+
 ## Q8 — can a backend ask the scene its extent?
 
-**No — and it never needs to, because the surface is the authority.**
-[`SurfaceData`][surfacedata] declares `public abstract Rectangle getBounds();`
-and `public abstract GraphicsConfiguration getDeviceConfiguration();`. Extent
-flows _down_ from the destination, never _up_ from the drawing.
+**No — because Java2D keeps the three extent questions apart and answers each
+somewhere else.** [`SurfaceData`][surfacedata] declares
+`public abstract Rectangle getBounds();` and
+`public abstract GraphicsConfiguration getDeviceConfiguration();`: **surface**
+extent flows _down_ from the destination, never _up_ from the drawing.
+**Layout** and **ink** extent are answered above the seam, by
+`TextLayout`/`Font.getStringBounds` for text and `Shape.getBounds2D()` for
+geometry — pure model queries needing no painter, and derived by scanning the
+model rather than maintained as the model is built.
 
-The offscreen case that friction §8 actually cares about — "size a surface to
-its content" — is not a Java2D question at all: it is answered above the seam by
-`TextLayout`/`Font.getStringBounds` (for text) or `Shape.getBounds2D()` (for
-geometry), both of which are pure model queries needing no painter. This is [F7][comparison],
-independently confirmed by a fourth subject.
+That is [F7][comparison]'s three-way split, from a subject that never confuses
+the three: two of them come from the scene, and only the first belongs to the
+surface. [Friction §8][friction] is the same split left unmade: put the extent question
+to a finished `sparkles:ui` stream and none of the three places it could live
+answers — not the `CmdBuffer` that built it, not the display list, not the arena
+holding its text — so a backend that allocates its own surface folds `op.rect` over every operation
+to recover the one number it needs. The fold is a legitimate derived-by-scan
+answer; what is missing is somewhere to ask for it.
 
 ## Strengths
 
@@ -528,7 +564,8 @@ independently confirmed by a fourth subject.
   and src into 32 bits; `makePrimTypeID` throws `InternalError("primitive id
 overflow")` past 255. The registry is not open-ended.
 - **No reified command stream**, so no recording, replay, culling, or op-stream
-  parity testing — the properties `RecordingCanvas` exists to provide.
+  parity testing — the properties `RecordingCanvas` exists to provide, and the
+  ones [F12][comparison] identifies as reification's actual payoff.
 - **Hints are unobservable.** `getRenderingHint` echoes the request. An
   application cannot tell whether antialiasing happened.
 
@@ -548,64 +585,91 @@ overflow")` past 255. The registry is not open-ended.
 ## Bearing on the proposal
 
 1. **Move appearance off the command and onto a state span.** This is the
-   sharpest transferable idea here and it **complicates F2 and F6**. The
-   [comparison] recommends re-encoding `DrawOp` as a sum type (F2) and deciding
-   between `visual` and `slot` (F6); Java2D suggests a third move that makes
-   both cheaper — a `setVisual`/`setSlot` state op in the stream, with the
-   geometry ops carrying only geometry. `sparkles:ui` already reifies its
-   stream, so unlike Java2D it can keep recording and replay while paying
-   appearance once per span. Friction §4 and §6, jointly.
+   sharpest transferable idea here, and it bears on [F3][comparison] and
+   [F9][comparison] at once. F3 leaves the encoding of a reified stream a live
+   trade — a closed sum that keeps operations comparable, against variable-stride
+   records that pay only for what each operation uses. F9 finds that nobody
+   carries a resolved appearance and a semantic role on every operation. Java2D
+   suggests a move that answers both without picking a winner: a
+   `setVisual`/`setSlot` state operation in the stream, with the geometry
+   operations carrying only geometry. That drains the payloads pressing hardest
+   against the `DrawOp.sizeof <= 64` budget ([friction §4][friction]) and retires
+   the per-operation hedge ([friction §6][friction]) — and because `sparkles:ui`
+   reifies its stream where Java2D does not, it keeps recording, replay and
+   op-stream parity while paying appearance once per span. The price is the one
+   the decisions table above names: an operation that carries no appearance is
+   not self-describing, so every walker — `RecordingCanvas`'s pairwise
+   comparison included — has to carry the span state to interpret one.
 
-2. **Make the software backend the base, not a peer.** `SkiaCanvas`,
-   `GridCanvas` and `RecordingCanvas` are three independent implementations of
-   one concept, so a new optional primitive silently means "each backend
-   forgot it separately". Java2D's `super.validatePipe(sg2d)` shows the
-   alternative: a default implementation expressed in terms of the mandatory
-   primitives that a backend _delegates to_, rather than a `__traits(compiles)`
-   probe that skips the operation entirely. This is [friction §2][friction]'s real fix and
-   it is compatible with structural typing (a `mixin template` of defaults, not
-   an interface).
+2. **Make the fallback delegable, not just centralised.** `sparkles:ui` already
+   states a degradation for each of its four optional primitives — `ruleEndpoints`
+   plus a cell-aligned `line` for `rule`, `paintScrollbarCells` glyph-per-cell for
+   `scrollbar`, and nothing at all for `pushClip`/`popClip`, because the display
+   list has already culled the subtrees a clip would hide. What it does not have
+   is Java2D's placement: those fallbacks live at the call site in
+   `interp/immediate.d`, behind `__traits(compiles, …)`, so a backend can take
+   them or leave them but cannot wrap or extend them. `super.validatePipe(sg2d)`
+   shows the alternative — a default written in terms of the mandatory primitives
+   that a backend _delegates to_. That is [F5][comparison]'s middle rung, the
+   defaulted one, and in D it is a `mixin template` of defaults rather than an
+   interface, so it stays compatible with structural typing.
+   [Friction §2][friction] — five methods, eight kinds — is the readability half
+   of the same complaint.
 
-3. **Fidelity is a pair, not a scalar.** F5 recommends replacing `RuleEdge`
-   with a fidelity. Java2D's is `(minPenSize, normPosition)` plus a
-   `STROKE_PURE`/`STROKE_NORMALIZE` policy switch with a documented half-pixel
-   bound. `sparkles:ui`'s equivalent would be "this band is at least _f_ of a
-   cell thick, and you may move it up to _t_ of a cell to make it look right" —
-   which a cell backend reads as "one cell, snapped" and Skia as "one device
-   pixel, unsnapped", with no compass anywhere.
+3. **Fidelity is a pair, not a scalar.** [F6][comparison] answers the sub-unit
+   question with a named fidelity plus a queried device unit. Java2D's fidelity
+   is `(minPenSize, normPosition)` plus a `STROKE_PURE`/`STROKE_NORMALIZE` policy
+   switch with a documented half-pixel bound. `sparkles:ui`'s equivalent would be
+   "this band is at least _f_ of a cell thick, and you may move it up to _t_ of a
+   cell to make it look right" — which `GridCanvas` reads as "one cell, snapped"
+   and `SkiaCanvas` as "one device pixel, unsnapped", with no compass anywhere.
 
-4. **Q1: F1 holds, but its unit answer is incomplete.** F1 says measurement does
-   not belong on the painter — Java2D agrees, making a fifth unanimous subject.
-   But it adds a constraint the other four do not: the answer legitimately
-   depends on the destination _and its rendering hints_, and the way to express
-   that without coupling is a small immutable **measurement context value**
-   passed to the font layer. A `sparkles:ui` `TextMeasure` abstraction should
-   take something FRC-shaped (cell metrics, or a scale factor plus a
-   hinting/AA policy), not be a bare `Font`.
+4. **Q1: F1 holds, and Java2D settles one of F2's six decisions.**
+   [F1][comparison] puts measurement outside the painter in 35 of 38 subjects,
+   and Java2D is one of them; [friction §1][friction]'s complaint is that
+   `Size measure(const(char)[])` sits on `isCanvas` denominated in cells. But
+   relocating it is only one of the six decisions [F2][comparison] enumerates,
+   and Java2D settles **device parameterisation** outright: the answer
+   legitimately depends on the destination _and its rendering hints_, and the way
+   to express that without coupling is a small immutable **measurement context
+   value** passed to the font layer. A `sparkles:ui` `TextMeasure` should take
+   something FRC-shaped (cell metrics, or a scale factor plus a hinting/AA
+   policy), not be a bare `Font`.
 
-5. **F3 gains a datapoint in the primitive camp, with a caveat.** Java2D is
-   framework-side emulation _with a primitive seam_ — the combination F3's two
-   camps do not cover. It shows that "who degrades" and "semantic or primitive"
-   are genuinely orthogonal: Java2D degrades in the framework and carries no
-   semantics at all, because every one of its destinations can draw a
-   rectangle. `sparkles:ui` cannot make that assumption for a terminal, so it
-   cannot copy the primitivism wholesale — but it can copy the _scope_: keep
-   semantics only where a target's fidelity floor destroys intent, which is
-   text and hairlines, not scrollbars whose geometry `scrollbarThumb` already
-   computes once.
+5. **F4's axis fits Java2D exactly, and it places `sparkles:ui` on it.**
+   [F4][comparison] replaces the semantic-vs-primitive framing with a question of
+   _where the lowering lives_, and Java2D is unambiguous: the lowering lives in
+   the framework above the seam, in Swing, and the seam itself carries no
+   semantics at all. It can afford that because every one of its destinations can
+   draw a rectangle. `sparkles:ui` cannot assume that of a terminal, so it cannot
+   copy the primitivism wholesale — but it can copy the _scope_: keep semantic
+   operations only where a target's fidelity floor destroys intent, which is text
+   and hairlines. `Scrollbar` already passes F4's second test, the one about
+   derived geometry: it carries `content`, `viewport` and `offset`, not a thumb
+   rectangle, and every backend lowers through the single `scrollbarThumb`
+   formula in `sparkles.ui.state` by way of `scrollbarCellCount` and
+   `scrollbarCell`. What [friction §3][friction] records is that a widget concept
+   is in the drawing seam at all — not that the seam computes its geometry.
 
-6. **Adopt a stated floor by making degradation observable, not refusable.**
-   F4 recommends a floor plus a refusable degrade. Java2D has neither and is
-   demonstrably worse for it — but it also shows that "refusable" is the harder
-   half to retrofit into a portable API. The cheap first move is
+6. **Adopt the stated floor by making degradation observable, not refusable.**
+   [F5][comparison] asks for a floor plus a refusable degrade. Java2D has neither
+   and is demonstrably worse for it — but it also shows that "refusable" is the
+   harder half to retrofit into a portable API. The cheap first move is
    _observability_: a canvas reporting which optional primitives it actually
-   executed, so `RecordingCanvas` and golden tests can assert on it. Refusal can
-   then be layered as a policy over an observable seam.
+   executed, so `RecordingCanvas` and golden tests can assert on it. That is
+   [F12][comparison]'s point in miniature — the op stream earns its keep as the
+   parity oracle, and a degradation nobody can observe is one the oracle cannot
+   check. Refusal can then be layered as a policy over an observable seam.
 
 7. **Do not adopt the state-vector-as-ordinals classification.** It buys Java2D
    a fast `<=` test per capability and costs it a decision tree no one can read.
-   `sparkles:ui` has three backends and eight op kinds; the pressure that
-   produced `paintState` through `clipState` does not exist here.
+   `sparkles:ui` has a handful of canvases and eight op kinds; the pressure that
+   produced `paintState` through `clipState` does not exist here. The related
+   discipline is worth taking instead: [F11][comparison] asks that the contract
+   be stated once and the rest derived, and `OpKind` already works that way — it
+   is an eight-arm `match!` over the payload rather than a stored tag, so the
+   kind and the payload cannot disagree the way `validatePipe` and
+   `MTLSurfaceData.validatePipe` do.
 
 ## Sources
 

@@ -169,12 +169,12 @@ so `hcat [text "a", text "bb"]` overlaps rather than laying out. The user's
 workaround is to compose text with an explicitly sized invisible rectangle.
 
 This is the sharpest data point in the survey against reading
-[F1][comparison] ("text measurement does not belong on the painter") as
+[F1][comparison] ("text measurement is not a method of the drawing seam") as
 license to simply delete `measure`. `diagrams` did delete it — there is no
 metrics class, no shaping trait, no `Font::Length` — and the result is a
-layout engine that cannot lay out text. F1's four subjects all moved
-measurement _somewhere_; `diagrams` is the control experiment showing what
-moving it _nowhere_ costs.
+layout engine that cannot lay out text. The subjects behind F1 all put
+measurement _somewhere_ other than the painter; `diagrams` is the control
+experiment showing what putting it _nowhere_ costs.
 
 > [!IMPORTANT]
 > The reason is structural, not an oversight: the backend does not exist as a
@@ -199,16 +199,19 @@ moving it _nowhere_ costs.
   means grepping its module for `instance Renderable`, or writing the program
   and reading the type error.
 
-That is the same locus as our friction §2 — capability discovered at the call
-site by introspection rather than declared at the seam — with the opposite
-default. `sparkles:ui`'s `__traits(compiles)` at each interpreter call site
-_skips_; GHC's instance resolution at each diagram-construction site _fails the
-build_. Both are "the concept does not describe the contract"; only one of them
-is silent.
+That is the same locus as our friction §2 (_five methods, eight kinds_) —
+capability discovered at the call site by introspection rather than declared at
+the seam — with the opposite default. `sparkles:ui`'s `__traits(compiles)` in
+`interp/immediate.d` _takes the primitive's stated degradation_: `ruleEndpoints`
+plus a cell-aligned `line` where `rule` is missing, `paintScrollbarCells`
+glyph-per-cell where `scrollbar` is, and nothing at all for the clip pair, since
+the display list has already culled the hidden subtrees. GHC's instance
+resolution at each diagram-construction site _fails the build_. Both are "the
+concept does not describe the contract"; only one of them is silent.
 
 The `Backend` class is also the honest place to note what it does **not**
 contain: no capability enum, no `hasFeature`, no floor. Compare Qt's
-`PaintEngineFeature` ([F4][comparison]) — `diagrams` has no equivalent, and
+`PaintEngineFeature` ([F5][comparison]) — `diagrams` has no equivalent, and
 cannot have one, because its capabilities are not values.
 
 ## Q3 — semantic operations or primitives
@@ -237,30 +240,35 @@ But the set is not closed by the framework. Two escape hatches sit at the seam:
 
 That second mechanism is the transferable one. It is a way to make a
 sub-capability a type rather than a flag — the shape friction §2 wants for
-`rule`, `scrollbar` and the clip pair, which today are one undifferentiated
-"optional" bucket.
+`rule`, `scrollbar` and the clip pair, which the seam probes identically and
+types identically even though `rule`'s absence changes the picture and the clip
+pair's does not.
 
 ## Q4 — command shape
 
 **A small closed sum for structure; an open existential for payload.** `RNode`
 has four constructors and no dead fields; the primitive is `Prim`, whose payload
-is whatever type the constructor captured. There is no tag-plus-eighteen-fields
-record anywhere in the pipeline, and no way to construct an illegal combination:
-a `RPrim` carries a `Prim` and nothing else, an `RStyle` carries a `Style` and
-nothing else.
+is whatever type the constructor captured. Nothing in the pipeline is a flat
+record carrying fields another kind owns, and there is no way to construct an
+illegal combination: an `RPrim` carries a `Prim` and nothing else, an `RStyle`
+carries a `Style` and nothing else.
 
-This confirms [F2][comparison]'s prescription (`DrawOp` should be a sum type)
-and adds a second axis. `DrawOp`'s eighteen fields are dead for most kinds
-_because the union is flat_; `RNode` avoids that by pushing the variability
-one level down into an existential, so the sum stays at four cases forever
-however many primitives the ecosystem grows. `OpKind` grew from five to eight
-during one backend's implementation; `RNode` has not needed a fifth case.
+That elimination is the same one `DrawOp` gets from being a `SumType` over eight
+per-kind payloads, and on the settled half of [F3][comparison] — that reifying
+the stream is right — the two designs agree outright. Where `diagrams` bears on
+F3's open half, the encoding, is a second axis: `RNode` pushes the variability
+one level down into an existential, so its structural sum stays at four cases
+however many primitives the ecosystem grows, while `sparkles:ui` spends one arm
+per drawing kind and therefore eight `match!` arms in every walker and every
+member accessor. `RNode` has never needed a fifth case.
 
-The cost is precisely what `RecordingCanvas` exists for: an `RTree` **cannot be
-compared or replayed generically**. `Prim` erases the type, so two trees can be
-tested for equality only if every primitive is `Eq` and you `cast` back through
-[`_Prim`][types], the `Prism'` provided for that purpose. `diagrams` has no
-op-stream parity harness, and the existential is why.
+The cost of the existential is exactly the property `RecordingCanvas` rests on:
+an `RTree` **cannot be compared or replayed generically**. `Prim` erases the
+type, so two trees can be tested for equality only if every primitive is `Eq`
+and you `cast` back through [`_Prim`][types], the `Prism'` provided for that
+purpose. `diagrams` has no op-stream parity harness, and the existential is why;
+a `DrawOp` stream is a sequence of plain values that compares pairwise, which is
+what makes it a parity oracle ([F12][comparison]).
 
 ## Q5 — sub-unit placement
 
@@ -287,8 +295,9 @@ That is a direct answer to friction §5's real complaint, which is not that
 quantity smaller than its own unit**. `Measured` is that vocabulary: a
 relative-unit type resolved by the framework before the seam, so the backend
 receives one absolute number and the toolkit never learns about device pixels.
-It generalises [F5][comparison]'s "name a fidelity, not a position" from a
-ladder of discrete fidelities to a continuous function of scale.
+It generalises [F6][comparison]'s answer — a named fidelity plus a queried
+device unit — from a ladder of discrete fidelities to a continuous function of
+scale.
 
 ## Q6 — resolved or semantic styling
 
@@ -306,9 +315,15 @@ backend's helper is literally
 `getStyleAttrib getFillTexture`, `getStyleAttrib getFont`, and so on. **An
 attribute type no backend queries is silently dropped**, and nothing reports it.
 
-So `diagrams` does not pay the `visual`-and-`slot` double cost of friction §6 —
-it carries only the semantic side and pays instead in re-resolution per backend
-plus a silent-drop channel. Note the asymmetry against Q3: primitives are open
+So `diagrams` does not pay friction §6's double cost — a resolved appearance and
+a semantic role on every drawing operation, which [F9][comparison] finds no
+subject carrying. It keeps only the semantic side and pays instead in
+re-resolution per backend plus a silent-drop channel. `sparkles:ui` stores the
+resolved half each primitive paints from — an `Ink` on the four content
+primitives, `FillRect`'s own colour fields and its `BoxChrome` pointer — with a
+`Slot` beside it on six of the eight payloads; `Visual` is reconstructed through
+`visualOf` rather than stored, which makes the hedge cheaper without making it a
+decision. Note the asymmetry against Q3: primitives are open
 and _non-ignorable_ (absence of an instance is an error), attributes are open
 and _ignorable_ (absence of a query is nothing at all). One vocabulary, two
 enforcement regimes, in the same seam.
@@ -331,14 +346,19 @@ The one place lifetime reappears is `Result` itself: Cairo's is
 `(IO (), C.Render ())`, so the _effect_ is deferred as a value and run later —
 the same trick as `RecordingCanvas`, reached by making the result type an
 action rather than by making the command stream a data structure. Friction §7
-therefore gets no lesson from this subject beyond [F6][comparison]'s existing
-conclusion: share the payload, do not borrow it. `diagrams` shares it by GC,
-which a `@nogc` seam cannot copy wholesale.
+therefore gets one lesson from this subject, and it is [F8][comparison]'s: of
+thirty-eight subjects, not one borrows a payload across a frame. `diagrams`
+shares by GC, which a `@nogc` seam cannot copy wholesale. `DrawOp.text` is a
+`const(char)[]` borrowed from a frame arena that `CmdBuffer.textRun` copies
+into, under a rule stated on the type — an operation is valid while the buffer
+that built it is alive and unreset — which makes the borrow enforceable rather
+than advisory. It is still a borrow, and the retain boundary it implies is
+exactly what `UI-O4` keeps open.
 
 ## Q8 — can a backend ask the scene its extent?
 
-**Yes — and this is where `diagrams` most directly contradicts the current
-synthesis.** Every diagram carries an [`Envelope`][envelope] as part of its
+**Yes — and this is where the survey's extent finding gets its strongest
+evidence.** Every diagram carries an [`Envelope`][envelope] as part of its
 value, defined not as a bounding box but as a support function:
 
 ```haskell
@@ -371,10 +391,15 @@ adjustSize2D szL _ opts d = (set szL spec opts, t, d # transform t)
 
 A backend may thus request `absolute`, `mkWidth 400`, or fully specified
 `dims` and receive, before it allocates anything, the size it will actually
-paint plus the transform to get there. [F7][comparison] concluded that "extent
-belongs to the surface, not the scene" and that friction §8's gap is narrow.
-`diagrams` says it belongs to **both**, and puts an explicit resolution step in
-the seam for exactly that reason — which is also the step that returns the
+paint plus the transform to get there. This is the survey's strongest case for
+[F7][comparison]: extent is three questions — surface, layout and ink — and
+`diagrams` answers all three from the scene, maintained at construction rather
+than derived by a scan, then puts an explicit resolution step in the seam so the
+surface's request and the scene's answer meet. `sparkles:ui` sits at the far end
+of that axis. Nothing on `CmdBuffer`, the display list or the arena reports the
+extent of a built stream — `CmdBuffer` exposes `length`, the operation count,
+and `measure`, a run's cell extent — so a caller that needs painted bounds folds
+`op.rect` itself (friction §8). `adjustDia` is also the step that returns the
 inverse transform for mapping device coordinates back to scene coordinates, a
 capability `sparkles:ui` does not have and will want for hit-testing under a
 scaled GPU canvas.
@@ -440,43 +465,61 @@ scaled GPU canvas.
 1. **Do not delete `measure` without deciding where measurement goes**
    (friction §1, [F1][comparison]). This subject is the negative control: it
    removed measurement from the seam and from everywhere else, and its layout
-   engine cannot lay out a string. F1 remains right that measurement does not
-   belong on the _painter_; `diagrams` shows the requirement is to _relocate_
+   engine cannot lay out a string. F1 remains right that measurement is not a
+   method of the drawing seam; `diagrams` shows the requirement is to _relocate_
    it, not merely to remove it.
 2. **Split a capability with a type index rather than a flag** (friction §2).
    `DImage n Embedded` / `External` / `Native t` splits one "draw an image"
-   capability into three, each separately instanceable. Our `rule`, `scrollbar`
-   and clip pair are one undifferentiated optional bucket; typed sub-capabilities
-   are a cheaper fix than a feature enum and compose better with structural
-   typing.
-3. **Keep the flat sum small by pushing variability down.** `RNode`'s four
-   cases have survived the whole ecosystem's primitive growth because the
-   variable part is an existential, not another tag. When re-encoding `DrawOp`
-   as a `SumType` ([F2][comparison]), prefer few structural cases with a payload
-   type over one case per `OpKind`.
+   capability into three, each separately instanceable. `rule`, `scrollbar` and
+   the clip pair are four optional primitives probed and typed alike, though the
+   clip pair's absence is invisible and the other two's is not; typed
+   sub-capabilities are a cheaper fix than a feature enum and compose better with
+   structural typing.
+3. **The structural sum should be small, with the variability one level down.**
+   This subject argues against `DrawOp`'s one-arm-per-drawing-kind encoding:
+   eight arms is one axis too many, and few structural cases carrying a payload
+   type would serve the same stream. The mechanism is `RNode` — four
+   constructors that have survived the whole ecosystem's primitive growth
+   because the variable part is a `Prim` existential capturing its own
+   `Renderable p b` dictionary, not another tag ([`Core/Types.hs`][types]).
+   Priced against the seam as it stands: `DrawOp.kind` is an eight-arm `match!`
+   precisely so a derived `OpKind` and the payloads cannot disagree, `visualOf`
+   reconstructs a `Visual` per arm, and each member accessor — `rect`, `text`,
+   `glyph`, `to`, `lineStyle`, `ruleEdge`, `slot`, the `bar*` group,
+   `expandPercent`, `translate` — is another eight, since an arm that cannot
+   answer must return a neutral value rather than read another arm's bytes.
+   Collapsing the arms collapses all of that, and costs the exhaustiveness that
+   makes an unhandled kind a compile error at every consumer. It buys nothing on
+   size: `TextRun` is the widest payload either way, and `DrawOp.sizeof <= 64`
+   holds regardless. **Live** — arm count is a maintenance argument the size
+   budget does not answer. Eight arms means eight `match!` arms in every walker
+   and every accessor, and that cost is real whatever the budget says.
 4. **But keep the payload comparable.** `diagrams` pays for its existential
-   with no replay and no parity harness. `RecordingCanvas` is on the
-   friction log's "did not cause friction" list; a design that erases payload
-   types would put it there.
+   with no replay and no parity harness ([F12][comparison]). `RecordingCanvas`
+   is on the friction log's "did not cause friction" list because a `DrawOp`
+   stream is a sequence of plain, pairwise-comparable values; a payload type
+   that erased its own identity would take that with it. Whatever shape the
+   structural sum takes, the payload stays a value.
 5. **A typed seam does not remove the silent degrade — it hides it better**
-   (friction §2, [F4][comparison]). `render _ _ = mempty` type-checks like a
+   (friction §2, [F5][comparison]). `render _ _ = mempty` type-checks like a
    real implementation, and Cairo's PNG-only `External` image path degrades at
-   run time with a `putStrLn`. F4's prescription — a stated floor plus a
-   _refusable_ degrade — is not weakened by adding static checking; it is
-   needed in addition to it. This is the single most transferable negative
-   result here.
+   run time with a `putStrLn`. F5's ladder — floor, defaulted, refusable — is
+   not weakened by adding static checking; it is needed in addition to it. This
+   is the single most transferable negative result here.
 6. **Adopt a framework-resolved relative unit** in place of more `RuleEdge`
-   enumerators (friction §5, [F5][comparison]). `Measured`'s
-   `(local, global, normalized) -> output` collapse is a generalisation of
-   "name a fidelity, not a position": the toolkit authors a quantity relative to
+   enumerators (friction §5, [F6][comparison]). `Measured`'s
+   `(local, global, normalized) -> output` collapse generalises F6's named
+   fidelity plus queried device unit: the toolkit authors a quantity relative to
    something it knows, and the framework hands the backend one absolute number.
-7. **Reconsider [F7][comparison] — extent belongs to both.** `diagrams`
-   contradicts it directly: the scene knows its extent by construction
+7. **Extent is answerable from the scene, and the transform comes with it**
+   (friction §8, [F7][comparison]). `diagrams` is F7's maintained-at-construction
+   end taken as far as it goes: the scene knows its extent by construction
    (`Envelope`), the backend states a request (`SizeSpec` in its own `Options`),
-   and `adjustDia` resolves the two _and returns the inverse transform_. That
-   transform is the part `sparkles:ui` will want independently of friction §8,
-   because a scaled GPU canvas needs it to map pointer coordinates back into
-   cell space.
+   and `adjustDia` resolves the two _and returns the inverse transform_. Painted
+   bounds in `sparkles:ui` come from folding `op.rect` over the stream, outside
+   the seam. That inverse transform is the part the toolkit will want
+   independently of friction §8, because a scaled GPU canvas needs it to map
+   pointer coordinates back into cell space.
 8. **Note what does not transfer.** Attribute purity, GC-shared payloads, and
    instance-resolution-as-capability all depend on the backend being a phantom
    type rather than a value. `isCanvas` takes `ref T c` — a real object with

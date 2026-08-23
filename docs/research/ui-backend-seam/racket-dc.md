@@ -8,9 +8,10 @@ is a 72-member device-context interface with bitmap, PostScript, SVG, PDF,
 recording and printer implementations; `pict` is a purely functional image
 algebra layered directly on top of it. The pair is the survey's clearest
 **dissenter from [F1][comparison]** — Racket puts text measurement _on the
-device context_ — and simultaneously its clearest **counter-example to
-[F7][comparison]**, because a `pict` is a self-describing extent and
-`record-dc%` can report the ink extent of a recorded scene.
+device context_ — and simultaneously its fullest confirmation of
+[F7][comparison], because it ships all three extents the finding separates: the
+device reports its drawing area, a `pict` carries a self-describing layout box,
+and `record-dc%` reports the ink extent of a recorded scene.
 
 |                      |                                                                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -125,8 +126,8 @@ get-font-metrics-key
 (`sic` on both typos, quoted verbatim from [`dc.rkt`][dc-src].) So the
 capability booleans exist, they are per-device, and the **framework** — the one
 shared `dc-mixin` — reads them and degrades once. The application never sees
-them. This is Qt's arrangement from [F3][comparison] with the query made
-private.
+them. That is the **framework** slot in [F4][comparison]'s list of six places a
+lowering can live, with the query made private.
 
 ### `pict` is an algebra over four numbers
 
@@ -196,9 +197,11 @@ constructor dereferences it and fails hard when it is `#f`, with
 Everything downstream of a measurement is baked into immutable pict extents at
 construction time, so a mis-chosen sizing DC yields a layout that is silently
 wrong on the target and cannot be re-derived. **Racket does not refute
-[F1][comparison]; it prices the minority position** — a global device
+[F1][comparison]; it is the one priced dissent in it** — a global device
 parameter, a wasted 1×1 surface, and an unenforced obligation to match metric
-universes by hand.
+universes by hand. `sparkles:ui` puts `measure` on the painter too, and pays a
+different bill for it: [friction §1][friction] is the same decision met from
+the unit side rather than the addressing side.
 
 One benefit is real: a caller that _does_ hold the target DC gets that device's
 own shaping. `get-text-extent`'s `combine-mode` selects among "each character
@@ -251,11 +254,12 @@ no text input, no shadow — and no per-command appearance either. Appearance is
 `set-clipping-region`, plus the transformation stack. A `draw-rectangle` call
 takes four reals and nothing else.
 
-That is the PostScript model, and it is a third position the [comparison
-matrix][comparison] does not yet have a column for: Slint carries the role in
-the method name, egui resolves by tessellation, `sparkles:ui` carries both
-`visual` and `slot` per op — Racket carries appearance **out of band entirely**,
-so the marginal cost of an operation is zero fields.
+That is the PostScript model, and it is one of the cheaper encodings
+[F9][comparison] counts: Slint carries the role in the method name, egui
+resolves by tessellation, `sparkles:ui` stores the resolved fields each
+primitive paints from and, on six of its eight payloads, a semantic `Slot`
+beside them — Racket carries appearance **out of band entirely**, so the
+marginal cost of an operation is zero fields.
 
 The consequence shows up in `record-dc%`, which must save and restore the
 target's entire state around a replay — pen, brush, font, smoothing, text mode,
@@ -267,9 +271,12 @@ before the replay" ([`record-dc-class.scrbl`][record-doc]).
 
 **Out-of-band appearance makes commands cheap and composition expensive.** For
 `sparkles:ui`, whose display list is replayed into several backends and
-compared op-by-op by `RecordingCanvas`, the transposed choice (state per op) is
-what keeps the stream comparable — an argument for [friction §6][friction]
-being a real cost honestly paid rather than a hedge to be removed.
+compared op-by-op by `RecordingCanvas`, the transposed choice — resolved
+appearance on the operation rather than on the device — is what keeps the
+stream comparable without a state machine to unwind first. That prices
+[friction §6][friction] rather than resolving it: the seam pays for the role
+as well as the appearance, and the fact that a `Visual` is reconstructed
+through `visualOf` rather than stored makes the hedge cheap, not decided.
 
 ## Q4 — command shape
 
@@ -302,18 +309,28 @@ writing a `DrawOp` declaration. The macro's per-argument spec is a triple of
 `clone-` / `convert-` / `unconvert-` functions, so the encoding of each payload
 type is declared once beside the operation.
 
-[F2][comparison] refined: a method-dispatch seam **and** a reified,
+[F3][comparison] refined: a method-dispatch seam **and** a reified,
 comparable, serialisable stream are compatible, provided the recorder is
 generated from the seam's declaration instead of being a parallel data type
-kept in sync by hand. `sparkles:ui` maintains `OpKind`, `DrawOp` and the
-`isCanvas` method set as three hand-synchronised artefacts; [friction
-§2][friction] is exactly the drift a generated recorder makes impossible.
+kept in sync by hand. The macro also settles F3's open trade by construction —
+each command's payload is exactly its argument list, so nothing is as wide as
+the widest operation, and the set is still closed because the method set is.
+
+`sparkles:ui` derives what it can and declares the rest by hand. `OpKind` is
+computed from `DrawOp` by an eight-arm `match!`, so those two cannot disagree —
+[F11][comparison] applied. The declaration that stands apart is `isCanvas`
+itself, which names five methods while the interpreter calls eight kinds,
+probing the other four with `__traits(compiles)` at each site: [friction
+§2][friction] is exactly the drift a recorder generated from one declaration
+makes impossible.
 
 ## Q5 — sub-unit placement
 
-Coordinates are `real?` throughout, so the enumerated-position problem
-([friction §5][friction]) never arises. What Racket adds beyond the other
-continuous-coordinate subjects is a **named snapping policy on the device**:
+Coordinates are `real?` throughout, so a band along an edge is never spelled as
+a compass direction ([friction §5][friction]). Continuous coordinates do not
+thereby dissolve the sub-unit question — they move it onto the device, which is
+[F6][comparison] in one subject. What Racket adds beyond the other
+continuous-coordinate subjects is a **named snapping policy** for it:
 
 - `set-smoothing` takes `'unsmoothed`, `'smoothed` or `'aligned`. Both
   `'unsmoothed` and `'aligned` "adjust drawing coordinates to match pixel
@@ -330,9 +347,10 @@ continuous-coordinate subjects is a **named snapping policy on the device**:
   unit is a point, not a pixel.
 
 That last bullet is the survey's second independent confirmation of
-[F5][comparison]'s "name a fidelity, not a position", arriving from the
-opposite direction to Notcurses: the caller writes `0`, meaning _as thin as
-this device can honestly draw_, and four backends answer differently.
+[F6][comparison]'s "a named fidelity plus a queried device unit", arriving from
+the opposite direction to Notcurses: the caller writes `0`, meaning _as thin as
+this device can honestly draw_, and four backends answer differently — and
+`get-hairline-width` is the queried unit that makes the name resolvable.
 `sparkles:ui`'s `RuleEdge` names six positions where a hairline **width**
 supplied by the backend would name none.
 
@@ -354,32 +372,41 @@ frame but the process** — a stronger property than any other subject offers, a
 what makes a recorded drawing a golden-test _artefact_ rather than a golden-test
 output. And **retention is bounded on purpose**: `set-recording-limit` plus
 `continue-recording?` stop recording past an accumulated size
-([`record-dc.rkt`][record-src]), where `RecordingCanvas` is an unbounded GC array.
+([`record-dc.rkt`][record-src]), where `RecordingCanvas` collects into an
+unbounded GC array and `CmdBuffer` reports a `length` that nothing caps.
 
-[Friction §7][friction] — a borrowed `const(char)[]` that must outlive the op —
-is the case Racket handles by letting the recording path own its copies while
-the live path borrows. The seam need not choose one policy for both.
+Racket agrees with [F8][comparison] and shows the shape of the agreement:
+per-argument, and different on the two paths. `sparkles:ui` splits the same way
+— `CmdBuffer.textRun` copies its bytes into a `FrameArena`, which is what makes
+a `scope` source safe to draw with, while `RecordingCanvas` interns on the
+collected heap so its operations outlive the call that drew them. What Racket
+has and the arena path does not is a payload that survives the buffer:
+[friction §7][friction] is the rule _an operation is valid while the buffer that
+built it is alive and unreset_, stated on the type and therefore enforceable,
+but still a borrow — which is the retain boundary `UI-O4` holds open. Racket's
+`convert-`/`unconvert-` pair is what closing it looks like: a plain-data
+encoding declared beside the operation, chosen per argument.
 
 ## Q8 — extent query
 
 **Racket answers this three times, and the three answers are different things.
-This complicates [F7][comparison] materially.**
+It is the fullest confirmation of [F7][comparison] in the survey.**
 
-| Query                                       | Owner               | What it means                                                |
-| ------------------------------------------- | ------------------- | ------------------------------------------------------------ |
-| `get-size`                                  | the **device**      | the destination drawing area — F7's answer, present and used |
-| `get-ink-extent`                            | the **recording**   | the bounding box of what was actually drawn                  |
-| `pict-width`/`-height`/`-ascent`/`-descent` | the **scene value** | the declared layout box, computed at construction            |
+| Query                                       | Owner               | What it means                                        |
+| ------------------------------------------- | ------------------- | ---------------------------------------------------- |
+| `get-size`                                  | the **device**      | the destination drawing area — F7's surface question |
+| `get-ink-extent`                            | the **recording**   | the bounding box of what was actually drawn          |
+| `pict-width`/`-height`/`-ascent`/`-descent` | the **scene value** | the declared layout box, computed at construction    |
 
-`get-size` behaves as F7 predicts: the docs enumerate it per backend (window
+`get-size` is the uncontroversial one: the docs enumerate it per backend (window
 client size, selected bitmap size — "or 0 if no bitmap is selected" — or the
 page drawing area), and `post-script-dc%` computes it from paper size minus
 margins over the configured scale ([`post-script-dc.rkt`][ps-src]).
 
-`get-ink-extent` is the refutation. `record-dc%` takes a `record-ink?`
-initialisation argument; when true it allocates a Cairo _recording surface_ and
-returns the extent from `cairo_recording_surface_ink_extents`. The docs draw
-the distinction `skia-canvas-render.d` had to discover the hard way:
+`get-ink-extent` is the second question, answered separately. `record-dc%`
+takes a `record-ink?` initialisation argument; when true it allocates a Cairo _recording surface_ and
+returns the extent from `cairo_recording_surface_ink_extents`. The docs draw a
+distinction that a scan over operation rects cannot make:
 
 > Bounding drawing "ink" takes into account the visible effect of drawing with
 > different pen widths and the shape of drawn text, as opposed to just
@@ -400,10 +427,17 @@ box whenever a child draws outside its bounds. `convert-bounds-padding`
 defaults to `'(3 3 3 3)` "to accommodate a small amount of drawing outside the
 pict's bounding box" when converting to PNG or PDF ([`pict.scrbl`][pict-doc]).
 
-So **"extent" is three questions, not one**, and F7 answers only the first. A
-toolkit needs the surface extent (who allocates), the layout extent (who
-arranges) and the ink extent (who crops) — Racket ships all three, with the
-expensive one behind a flag.
+So **"extent" is three questions, not one** — the surface extent (who
+allocates), the layout extent (who arranges) and the ink extent (who crops).
+Racket ships all three, with the expensive one behind a flag, and it sits on
+the maintained-at-construction side of [F7][comparison]'s axis for the layout
+one: a pict's box is a field, fixed when the pict is built, and even the
+panorama box is memoised rather than re-walked. `sparkles:ui` answers none of
+the three from the seam. `CmdBuffer` reports an operation count and a run's cell
+extent; nothing on it, the display list or the arena reports the extent of a
+built stream, so a caller that needs painted bounds folds `op.rect` itself
+([friction §8][friction]) — the derived-by-scan side of the same axis, and a
+scan that reads a `TextRun`'s declared cell advance rather than its ink.
 
 ## Strengths
 
@@ -457,47 +491,62 @@ expensive one behind a flag.
 1. **Q1 stays decided, but for a sharper reason.** Racket is the one surveyed
    subject that puts measurement on the painter, and it pays with a global
    parameter, a wasted surface, and an unchecked correspondence between sizing
-   device and target device. That does not falsify [F1][comparison] — it prices
-   it. Keep [friction §1][friction]'s conclusion; cite Racket as the cost side.
+   device and target device. That does not falsify [F1][comparison] — it is the
+   priced dissent inside it. `Size measure(const(char)[])` on `isCanvas` is the
+   same placement; [friction §1][friction] is the bill in our units, and Racket
+   is the bill in the other currency.
 2. **Steal `get-font-metrics-key` outright.** A small integer identifying a
    metric universe, `0` meaning "not cacheable", lets a toolkit cache measured
    text across backends **and** detect the case where a layout was measured
    against the wrong one. Whatever font abstraction replaces `measure` on
    `isCanvas` should carry one. Nothing else in the survey has this.
 3. **Generate the recorder from the seam declaration.** [Friction §2][friction]
-   is drift between `isCanvas`, `OpKind` and `DrawOp`. `record-dc-mixin` shows
-   the drift is structural, not clerical: derive `RecordingCanvas` and the op
-   encoding from one declaration and the three cannot disagree. This also
-   delivers [F2][comparison]'s sum-type shape as a by-product — a tag that is
-   the operation's own name, with only its live arguments.
+   is the gap between the five methods `isCanvas` checks and the eight kinds the
+   interpreter calls. `DrawOp.kind` is the cheap half of the answer: an
+   eight-arm `match!` rather than a stored tag, so no walker can read a kind the
+   payload contradicts, which is [F11][comparison] in miniature.
+   `record-dc-mixin` shows how far the same move goes: derive the conforming
+   backend, the op encoding and the method set from one declaration and none of
+   the three can disagree. It also settles [F3][comparison]'s live trade for
+   free — a tag that is the operation's own name, carrying only its live
+   arguments, with no operation as wide as the widest.
 4. **Replace `RuleEdge` with a backend-supplied hairline width, not more
    enumerators.** Racket's pen-width-`0` convention plus `get-hairline-width`
-   (`1/sx` on screen, `1/(4·sx)` for PostScript) is [F5][comparison]'s "name a
-   fidelity" in its simplest possible form, and it composes with continuous
-   coordinates we may not adopt.
+   (`1/sx` on screen, `1/(4·sx)` for PostScript) is [F6][comparison]'s "a named
+   fidelity plus a queried device unit" in its simplest possible form. The
+   caller names the fidelity; the device answers with the unit. That is the
+   pattern [friction §5][friction] needs whether or not we adopt continuous
+   coordinates.
 5. **Partition the seam into commands and queries, mechanically.**
    `check-page-active`'s explicit fifteen-method list is what
    [friction §2][friction] wants: the drawing subset named in one place rather
    than inferred. Ours would additionally make clear which members a
    `RecordingCanvas` must record and which it must answer.
-6. **Contradicts [F7][comparison]: extent is three questions.** The synthesis
-   concluded that extent belongs to the surface and the display list need not
-   be self-describing. Racket ships **surface** extent (`get-size`), **scene**
-   extent (`get-ink-extent`, opt-in), and **layout** extent (the pict fields) —
-   and `pict` cannot function without the third. Restate F7 as: the _surface_
+6. **Confirms [F7][comparison] in full, and names the owner of each third.**
+   Racket ships **surface** extent (`get-size`), **ink** extent
+   (`get-ink-extent`, opt-in), and **layout** extent (the pict fields) — and
+   `pict` cannot function without the third. Take the same split: the _surface_
    extent belongs to the surface; the _ink_ extent is a legitimate scene query
    worth paying for only when asked; the _layout_ extent belongs to the layout
    pass, which is where [friction §8][friction]'s offscreen consumer should get
-   it. `skia-canvas-render.d` scanning ops for a rect was reaching for the
-   third answer through the second's door.
-7. **Bound the recorder.** `set-recording-limit` costs almost nothing and turns
-   an unbounded `DrawOp[]` into a degradation with a stated ceiling.
+   it. `skia-canvas-render.d` folds `op.rect` across the stream, which reaches
+   for the third answer through the second's door and gets a cell advance
+   instead of an ink box.
+7. **Bound the recorder.** `CmdBuffer` reports its operation count and nothing
+   acts on it. `set-recording-limit` costs almost nothing and turns an unbounded
+   `DrawOp[]` into a degradation with a stated ceiling — which is also what
+   keeps [F12][comparison]'s parity oracle affordable to keep inspecting.
 8. **Do not adopt out-of-band appearance.** [Friction §6][friction] calls
-   carrying both `visual` and `slot` a hedge. Racket shows the alternative's
-   full bill — fourteen state settings saved and restored around every replay,
-   and no semantic role surviving into the stream at all. For a seam whose
-   whole justification is a comparable op stream, per-op payload is the right
-   side of this trade even though it is the more expensive one per command.
+   storing a resolved appearance beside a semantic `Slot` a hedge, and
+   [F9][comparison] counts seven encodings that cost less. Racket is the
+   cheapest of them and shows its full bill — fourteen state settings saved and
+   restored around every replay, and no semantic role surviving into the stream
+   at all, which is fatal for the HTML interpreter that re-resolves class names
+   from the role. For a seam whose whole justification is a comparable op
+   stream, per-op payload is the right side of this trade even though it is the
+   more expensive one per command. The saving to chase is the one the seam
+   taken here — store what a primitive paints from and derive `Visual` at the
+   asking — not the transposition.
 
 ## Sources
 

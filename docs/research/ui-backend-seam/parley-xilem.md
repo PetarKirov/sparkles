@@ -7,7 +7,7 @@ Linebender's answer to the same two problems `sparkles:ui` has, written by the
 people who wrote [Vello][vello] and read best immediately after that deep-dive:
 **shaping is a context you borrow during layout, and painting is a ten-method
 sink you stream into.** Section numbers below (§1-§8) refer to
-[`canvas-seam-friction.md`][friction]; F1-F7 refer to the findings in
+[`canvas-seam-friction.md`][friction]; F1-F12 refer to the findings in
 [`comparison.md`][comparison].
 
 | Field                 | Value                                                                                                                                                                     |
@@ -214,7 +214,8 @@ this is the sharpest contrast with `isCanvas` in the survey. `PaintSink`'s ten
 methods are the complete surface; a backend author reads one declaration.
 The two context methods carry `{}` bodies documented "Default implementation:
 ignored", so the optional-primitive bargain is expressed as a default rather
-than as a caller-side probe.
+than as the `__traits(compiles, …)` probe that discovers `isCanvas`'s four
+optional primitives at each interpreter call site.
 
 Two further separations do work `isCanvas` does not:
 
@@ -232,9 +233,10 @@ Two further separations do work `isCanvas` does not:
   painting, surfaced by a `finish() -> Result<(), Error>` at the end of the
   stream ([`imaging_skia` 0.0.1 `sinks.rs`][skia-sinks]).
 
-That is **F4 implemented, with a twist F4 did not anticipate**: the degrade is
-refusable, but refusal is _deferred and stream-scoped_ rather than per-call,
-because making every draw call fallible would poison the authoring API.
+That is **F5's refusable tier implemented, with a twist F5 does not
+anticipate**: the degrade is refusable, but refusal is _deferred and
+stream-scoped_ rather than per call, because making every draw call fallible
+would poison the authoring API.
 
 ## Q3 — semantic operations or primitives
 
@@ -265,12 +267,27 @@ require eager string formatting on the hot path" ([crate docs][imaging-docs]),
 and `ValidateError` variants report the enclosing context stack when a scene is
 unbalanced.
 
-So the design splits what `DrawOp` fuses: a **rendering** channel that is
-resolved and primitive, and a **semantic** channel that is optional, ignorable
-by default, and used for diagnostics and validation rather than for painting
-decisions. Note the vocabulary collision — `imaging`'s `Slot` and
-`sparkles:ui`'s `Slot` are the same word for the same idea, in the channel that
-explicitly does not affect pixels.
+So the design splits what `DrawOp` carries on one payload: a **rendering**
+channel that is resolved and primitive, and a **semantic** channel that is
+optional, ignorable by default, and used for diagnostics and validation rather
+than for painting decisions. `sparkles:ui` runs both down the same wire: on six of
+the eight payloads the role is a field of the operation itself, sitting beside
+whatever resolved material that primitive needs in order to paint, so a backend
+that never reads a `Slot` carries one anyway. Only the clip pair abstains —
+`PushClip` and `PopClip` have no such field, and `DrawOp.slot` answers
+`Slot.inherit` on their behalf. **F9** names this
+subject as the ignorable-channel encoding, and it is the encoding a semantic
+role wants when it is not a rendering instruction.
+
+The counter-case is friction §3, `scrollbar` as a widget concept in the drawing
+seam. There the semantics genuinely are rendering instructions: content extent,
+viewport, offset, track and thumb colours, a rail-expansion percentage and two
+fallback glyphs reach the backend because a cell target and a pixel target
+degrade a scrollbar differently, and a canvas that declines the primitive gets
+`paintScrollbarCells`, glyph by glyph. Masonry has no such op because it has no
+cell target to degrade toward. Note the vocabulary collision — `imaging`'s
+`Slot` and `sparkles:ui`'s `Slot` are the same word for the same idea, in the
+channel that explicitly does not affect pixels.
 
 ## Q4 — command shape
 
@@ -305,22 +322,32 @@ sum type and [Vello][vello]'s parallel streams and keeps both wanted properties
 — no dead fields, and no prefix sum needed to read entry _n_. `Scene` derives
 `PartialEq`, so two frames compare directly.
 
-**This complicates F2** in a useful direction. F2 says reify as a sum type. Here
-the _seam_ is a trait and the _reification_ is one implementation of it, so
-`RecordingCanvas`'s role is not a testing affordance bolted on beside the
-contract — it is the contract's canonical implementor, and every consumer that
-wants a value (goldens, caches, layer plans) goes through it. `sparkles:ui` has
-both halves the wrong way round: `DrawOp[]` is the seam's _output type_ rather
-than one conforming backend.
+**This is a third answer to F3.** F3 keeps reification and leaves the encoding a
+live trade: a closed sum eliminates illegal combinations and keeps operations
+comparable as values, while tag-plus-per-op storage pays only for what each
+command uses. Masonry takes the second road without giving up comparison,
+because `Scene` derives `PartialEq` over the arenas its ids index into.
+
+It also arranges the two halves differently from `sparkles:ui`. Here the _seam_
+is a trait and the _reification_ is one implementation of it, so every consumer
+that wants a value — goldens, per-widget caches, the layer plan — reaches it
+through the sink. In `sparkles:ui` the reified form is also a direct product:
+`buildDisplayList` returns a `DrawOp[]`, and `RecordingCanvas` is a conforming
+backend beside it that turns canvas calls back into the same operations. Both
+arrangements keep the property **F12** asks for — the stream stays an
+inspectable value, which is what makes it a parity oracle — but Masonry's leaves
+a single producer of the vocabulary, which is **F11**'s rule applied to an
+encoding.
 
 ## Q5 — sub-unit placement
 
-**Not a problem either project has** — `kurbo` is `f64`, `Length` wraps an
-`f64`, glyph positions are `f32`. Three of the four surveyed float-coordinate
-subjects said the same; **F5** is unaffected.
+**Not a problem either project has _in its vocabulary_** — `kurbo` is `f64`,
+`Length` wraps an `f64`, glyph positions are `f32` — and it reappears one layer
+up all the same, which is exactly **F6**: continuous coordinates relocate the
+sub-unit problem rather than dissolving it.
 
-The one transferable fragment is Parley's `quantize` flag, passed when creating
-a builder ([`context.rs`][parley-context]):
+The relocation is visible as Parley's `quantize` flag, passed when creating a
+builder ([`context.rs`][parley-context]):
 
 > Set `quantize` as `true` to have the layout coordinates aligned to pixel
 > boundaries. That is the easiest way to avoid blurry text and to receive
@@ -332,8 +359,14 @@ Grid alignment is a documented, opt-in property of the _text layout_, chosen
 per layout and per consumer, with an explicit list of what must be rounded
 (glyph run baseline, inline box baseline, selection geometry `y0`/`y1`). That is
 the closest any surveyed subject comes to `sparkles:ui`'s cell quantization, and
-it argues the decision belongs to the measurement layer rather than to the
-drawing vocabulary — the same conclusion §1 reaches from the other end.
+it is the shape F6 asks for: a named fidelity, chosen per layout, with an
+explicit statement of what it governs. It also argues the decision belongs to
+the measurement layer rather than to the drawing vocabulary — the same
+conclusion §1 reaches from the other end. Friction §5 is that same pressure met
+without a sub-cell unit to name: `rule(Rect, RuleEdge, Visual)` spells the
+position as one of six compass edges, each backend decides what a band along
+that edge means, and a canvas that declines the primitive gets `ruleEndpoints`
+and a cell-aligned `line`.
 
 ## Q6 — resolved or semantic styling
 
@@ -362,12 +395,24 @@ Below that, the drawing seam is **fully resolved**: `FillRef.brush` is a
 `normalized_coords`, `hint`, `style`. No role travels on a draw; the role
 travels on the _context_ channel (Q3), which no backend has to read.
 
-Friction §6 says the seam "hedges rather than deciding, and every op pays for
-both". The answer here is that the two things belong to different layers: an
-**index into a palette** on the retained artifact, resolved to concrete
-appearance at the moment of painting, plus a separate annotation stream for
-anything that is not appearance at all. `sparkles:ui`'s `Slot` and `Visual` are
-that same pair collapsed into one struct and paid for on every op.
+Friction §6 says the seam "hedges rather than deciding, and every drawing
+operation pays for both". The answer here is that the two things belong to
+different layers: an **index into a palette** on the retained artifact, resolved
+to concrete appearance at the moment of painting, plus a separate annotation
+stream for anything that is not appearance at all.
+
+`sparkles:ui` divides the same pair along a different line. `Visual` is derived,
+not stored — `DrawOp.visual` reconstructs one through `visualOf`, documented
+lossy on purpose, so a fill reports box chrome, a run reports text chrome, and
+the combinations no backend reads get defaults. What a payload keeps is the
+resolved material its own primitive paints from: an `Ink` on the four content
+primitives, and on `FillRect` its colour fields plus a `const(BoxChrome)*` that
+is null unless the box has a border, shadow, radius or arrow. `Slot` is stored,
+on six of the eight payloads. The resolved half is therefore compressed to what
+each primitive actually uses, and the role still rides beside it — which is the
+per-operation pairing **F9** finds no subject in the survey paying for.
+`BrushIndex` is the other order: the handle is what the artifact carries, and
+the table is what the frame hands the painter.
 
 ## Q7 — payload ownership and lifetime
 
@@ -387,10 +432,27 @@ across frames. Parley's side is the same shape — a `Layout<B>` owns its data a
 `ArcStr = std::sync::Arc<str>` is Masonry's answer for widget-held text: "a
 data-friendly way to represent strings in Masonry … it can be cheaply cloned".
 
-Friction §7 stands, and this is the cheapest of the three answers the survey has
-now collected (interning, reference-counting, backend-owned caches): keep the
+Friction §7 stands, and this is the cheapest of the answers the survey has now
+collected (interning, reference-counting, backend-owned caches): keep the
 borrowed form for the streaming call, define the owned form as a _sink that
-copies_, and let the retention decision be the caller's per-widget.
+copies_, and let the retention decision be the caller's per widget.
+
+`sparkles:ui` already takes the copying half. `CmdBuffer.textRun` copies each
+run into a frame arena — `FrameArena` bumps through never-moving `pureMalloc`
+chunks, `GcArena` interns by `idup` — which is what makes a `scope` source safe,
+and `RecordingCanvas` interns on the collected heap so its operations outlive
+the call that drew them. The arena is a copier, not a deduplicating interner:
+one run in, one copy out. What the seam does not have is Masonry's boundary.
+`TextRun.text` is a 16-byte `const(char)[]` into the arena, and the rule stated
+on the type — _an operation is valid while the buffer that built it is alive and
+unreset_ — is enforceable because `CmdBuffer` is move-only, but there is no
+`to_owned()` a caller can ask for and no point at which the borrow turns into
+ownership. (`textRunOp(Rect, string, …)` is the one exception, and only because
+`string` is immutable and needs no arena.) That is the open half of **F8**:
+every one of the thirty-eight copies, refcounts or arena-allocates, and the
+stronger form of the mechanism holds an offset pair rather than a pointer, which
+is what makes a command trivially copyable and transferable between threads.
+`UI-O4` stays open on exactly that retain boundary.
 
 ## Q8 — can the scene report its extent?
 
@@ -405,8 +467,20 @@ validation error about invalid rectangles. `ImageRenderer::render_source` takes
 The single exception points the same way as Vello's `Drawable::bbox`:
 `VisualLayerKind::External { bounds }` carries a rect precisely because that
 layer's content is realized by somebody else and its size cannot be recovered
-from commands Masonry never recorded. **F7 holds**, and the case that needs a
-content-bounds query remains the offscreen/intermediate one.
+from commands Masonry never recorded.
+
+**F7 splits extent into three questions, and this subject answers them in three
+different places.** Surface extent is an input, handed to the renderer. Layout
+extent is maintained at construction and published — `width()`, `height()` and
+`calculate_content_widths()` are numbers Parley's line breaker already held. Ink
+extent nobody asks for, which puts `imaging` among the subjects F7 records as
+refusing a scene-side query outright. Friction §8 sits at the other end of that
+axis, and the contrast with Parley is exact: where the line breaker publishes a
+height it was already holding, the drawing side publishes no such number at all.
+`CmdBuffer` will say how many operations it holds and how wide a run measures,
+and beyond that neither it nor the display list nor the arena knows how far the
+stream it just built reaches. A backend that must size its own surface folds
+`op.rect` across the whole list to recover a number layout already had.
 
 ## Strengths
 
@@ -466,28 +540,60 @@ content-bounds query remains the offscreen/intermediate one.
    enumerated concept and let helper functions supply everything else. This is
    compatible with keeping `isCanvas` structural — the point is that the concept
    should name the whole obligation and nothing more.
-2. **Make `RecordingCanvas` the display list, not a debug affordance**
-   (friction §4, F2). Masonry's `record::Scene` is a conforming backend that
-   happens to retain, and every consumer that needs a value goes through it.
-   Inverting `sparkles:ui`'s arrangement — seam first, `DrawOp[]` as one
-   implementation — dissolves the "who defines the vocabulary" question that
-   §2 and §4 are both symptoms of.
-3. **Adopt a tag-plus-id command with typed side arenas** if the reified stream
-   survives. It keeps random access (which Vello gives up) and eliminates dead
-   fields (which the current `DrawOp` cannot), and it makes interning strings a
-   property of the recorder rather than of the op.
-4. **Replace `visual` + `slot` with an index into a palette, resolved at paint**
-   (friction §6). `BrushIndex` is the design `sparkles:ui` is groping toward:
-   the op carries a small, comparable handle; the painter is handed the table
-   for this frame. A re-resolving backend gets the table it wants and a pixel
-   backend gets a resolved colour, without every op carrying both.
+2. **Reach the reified stream through the seam** (friction §4,
+   [F3](./comparison.md), F11). Masonry's `record::Scene` is a conforming
+   backend that happens to retain, and every consumer that needs a value goes
+   through it. `sparkles:ui` has the conforming recorder — `RecordingCanvas` is
+   the reference implementation and the parity oracle — but `buildDisplayList`
+   also produces a `DrawOp[]` directly, so two artifacts define one vocabulary,
+   and F11's rule is that artifacts which can disagree will. Making the seam the only door is the same fix as
+   §2's: name the whole obligation once, derive the rest.
+3. **A command could be a tag plus one index into typed side arenas.** This is a
+   standing objection to the encoding `sparkles:ui` uses. `DrawOp` is a closed
+   `SumType` over eight payloads, so every operation is as wide as the widest of
+   them and a `PopClip` that carries no fields at all costs what a `TextRun`
+   costs. The mechanism is `record::Command`: a seven-variant tag carrying one
+   id, with `clips`, `masks`, `groups`, `draws` and `contexts` each in a vector
+   sized for its own kind and strings interned once ([`record::Command`][record],
+   [`record::Scene`][scene]). It keeps random access, which Vello gives up, and
+   it keeps `PartialEq`, which most arena encodings give up.
+
+   The price against the current code is specific. `DrawOp` is self-contained:
+   an operation is a value, so `RecordingCanvas`'s stream compares pairwise
+   without reference to the structure that built it, and the friction log lists
+   that comparability as working. Tag-plus-id makes an operation meaningful only
+   relative to its scene — comparing two frames becomes a scene walk, composing
+   two streams means rebasing ids, and the member accessors that read a payload
+   directly (`rect`, `text`, `slot`, `barContent`, and `visual` through
+   `visualOf`) become arena lookups. The exhaustiveness the eight-arm `match!`
+   gives `DrawOp.kind` for free — the reason `OpKind` is derived rather than
+   stored, so the tag and the arm cannot disagree — moves to a runtime
+   discriminant that nothing checks. And the width the encoding is reacting to
+   is already bounded: `static assert(DrawOp.sizeof <= 64)` is a budget, and the
+   widest payload, `TextRun`, fits inside it.
+
+   That bound answers the width half of the objection and not the storage half,
+   so the objection stands: the sum pays the widest payload on every operation,
+   and sizing each payload's storage for its own kind is the encoding that does
+   not. It is the same argument the survey's arm-count dissents make, reached
+   from storage instead of from the number of cases.
+
+4. **Carry a handle and hand the painter a table** (friction §6, F9).
+   `BrushIndex` is a small, comparable value on the artifact plus a `&[Brush]`
+   supplied at paint time: a re-resolving backend gets the table it wants and a
+   pixel backend gets a resolved colour. `sparkles:ui` keeps `Visual` derived
+   rather than stored already, so the channel this would remove is the resolved
+   material each payload holds, not the role — `Slot` plus a theme yields an
+   `Ink`, and no `Ink` yields a `Slot`. The obstacle is that the table has to be
+   scoped to the frame rather than to the process for `RecordingCanvas`'s
+   operations to stay comparable across themes.
 5. **Move anything that is not appearance into an ignorable annotation channel**
    (friction §3). `ContextKindRef::{Widget, ChildIndex, Slot}` with default no-op
    handlers shows that a seam can carry semantics for diagnostics without those
    semantics becoming rendering instructions. Applied to `scrollbar`: the
    degradation decision may justify a semantic op, but widget identity and role
    do not belong on a draw.
-6. **Make degradation refusable at the stream boundary, not per call** (F4).
+6. **Make degradation refusable at the stream boundary, not per call** (F5).
    `RenderUnsupportedError`'s six variants plus a `finish() -> Result` is a
    working shape: keep the draw calls infallible, accumulate the first refusal,
    and let a golden test ask for a hairline and be told no.

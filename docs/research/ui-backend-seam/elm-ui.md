@@ -221,13 +221,13 @@ the browser's intrinsic-sizing algorithm, `Fill` by flexbox. The only
 extent-shaped values that cross the API are the author's own `px` literals and
 the four `Adjustment` fractions.
 
-This is the extreme end of [F1][comparison]. The four previously surveyed
-subjects all agreed measurement does not belong on the painter; `elm-ui` shows
-that a toolkit can be built where measurement does not belong _anywhere in the
-toolkit_ — provided one backend, with a complete constraint solver, is willing
-to finish the job. The condition is the finding: **you may delete `measure`
-only if the seam is a constraint system rather than a command stream, and only
-if every backend can solve it.** A `RecordingCanvas` cannot solve flexbox, and
+This is the extreme end of [F1][comparison]. The survey's other subjects put
+measurement somewhere other than the painter; `elm-ui` shows that a toolkit can
+be built where measurement does not belong _anywhere in the toolkit_ — provided
+one backend, with a complete constraint solver, is willing to finish the job.
+The condition is the finding: **you may delete `measure` only if the seam is a
+constraint system rather than a command stream, and only if every backend can
+solve it.** A `RecordingCanvas` cannot solve flexbox, and
 neither can a terminal.
 
 ## Q2 — is the backend contract stated in one place?
@@ -257,10 +257,11 @@ nothing below them is expressible. Two consequences bear directly on
   `overflow-x: auto` / `overflow-y: auto`
   ([`src/Internal/Style.elm` L1199–L1213][style-scrollbars]). The thumb's
   existence, size and position are computed by the browser from content
-  extent — a quantity `elm-ui` cannot know. Our `DrawOp` carries
-  `barContent` / `barViewport` / `barOffset` precisely so a backend can compute
-  a thumb; `elm-ui` carries nothing because it delegates the sizing along with
-  the drawing.
+  extent — a quantity `elm-ui` cannot know. Our `scrollbar` payload carries
+  content, viewport and offset precisely so that a backend can compute a thumb
+  from them, through the one `scrollbarThumb` formula every backend shares;
+  `elm-ui` carries nothing because it delegates the sizing along with the
+  drawing.
 - **There is no ellipsis.** `text-overflow` appears nowhere in the source tree
   (verified: no match for `text-overflow` or `ellipsis` in `src/`). Truncation
   requires knowing that a string exceeds a box, which is exactly the fact the
@@ -283,35 +284,50 @@ but the _reason_ they do not arise is a single fact worth recording once.
   `elm/virtual-dom`. There is no command stream to encode well or badly.
 - **Q5 (sub-unit placement):** coordinates are continuous CSS pixels and
   fractional `em`s (`vertical-align` is emitted as a `Float` in `em`,
-  [L2518][model-adjustrules]). Like Slint, Qt and egui, the sub-unit problem
-  simply does not exist. This is now four of five surveyed subjects for whom
-  [F5][comparison] holds trivially, which strengthens the reading that
-  `RuleEdge` is an artifact of integer cell coordinates rather than a design
-  choice anyone else faced.
+  [L2518][model-adjustrules]). Like Slint, Qt and egui, `elm-ui` never names a
+  unit it cannot subdivide, so nothing in the vocabulary asks where a sub-unit
+  mark lands. [F6][comparison] is why that reads as relocation rather than
+  dissolution: the browser still has to decide which device pixels a half-pixel
+  border covers, and it decides alone, under rules `elm-ui` neither states nor
+  can query. `RuleEdge` (our answer to the same question, [friction
+  §5][friction]) is an artifact of integer cell coordinates, but continuous
+  coordinates would only move the decision to whoever rasterises — F6's
+  conclusion, that the answer is a named fidelity plus a queried device unit,
+  is what survives either coordinate choice.
 - **Q6 (resolved or semantic styling):** semantic on the way in
   (`Background.color`, `Font.size`), resolved by CSS cascade on the way out.
   `elm-ui` never carries both, because the thing it hands over — a class name —
   _is_ the semantic token, and resolution happens in a layer it does not own.
   That is the HTML interpreter's position in our own tree, generalised to the
-  whole toolkit.
+  whole toolkit — and one more subject for [F9][comparison], which finds no one
+  carrying a resolved appearance and a semantic role together. Our seam carries
+  both: each payload stores the resolved fields its primitive paints from, and
+  six of the eight carry a `Slot` beside them ([friction §6][friction]).
 - **Q7 (payload ownership):** immutable, garbage-collected, shared by default.
   A `String` in Elm cannot dangle and cannot be mutated, so borrowed-slice
   lifetime — [friction §7][friction] — is unrepresentable rather than solved.
+  That places `elm-ui` at the far end of [F8][comparison]: sharing an immutable
+  value is the cheapest of the mechanisms the survey finds, and none of them is
+  a borrow.
 
 ## Q8 — extent query
 
-**Absent by construction, and this is the survey's cleanest confirmation of
-[F7][comparison].** The only extent query in the ecosystem is
+**Absent by construction, and this is the survey's cleanest illustration of the
+split [F7][comparison] draws.** The only extent query in the ecosystem is
 `Browser.Dom.getElement`, which returns `scene`, `viewport` _and_ `element`
-rectangles ([`src/Browser/Dom.elm` L367–L384][dom-element-type]) — i.e. the
-surface declares its extent, and it does so post-hoc, asynchronously, from
-outside the toolkit. Nothing derives an extent by scanning a display list,
-because there is no display list.
+rectangles ([`src/Browser/Dom.elm` L367–L384][dom-element-type]) — three
+different extents, named separately, exactly as F7 says they must be. `elm-ui`
+answers only the surface one, and it answers post-hoc, asynchronously, from
+outside the toolkit. It never answers a layout or an ink extent, and it cannot
+derive one by scanning, because there is no display list to scan.
 
 The corollary for our [friction §8][friction]: a design that cannot ask "how
-big is the scene" also cannot offer content-sized offscreen rendering. `elm-ui`
-does not offer it, and no one appears to have demanded it — a data point for
-scoping the layout query F7 recommends narrowly.
+big is this subtree" also cannot offer content-sized offscreen rendering.
+`elm-ui` does not offer it, and no one appears to have demanded it — a data
+point for how narrowly the layout-extent question can be scoped, and for F7's
+observation that answering it at construction is the alternative to answering
+it by scan. Our own scan folds `op.rect` across a built stream, since nothing
+on `CmdBuffer`, the display list or the arena reports a bound.
 
 ## What would survive in `sparkles:ui` if `measure` were deleted
 
@@ -349,18 +365,17 @@ sites named.
 > `sparkles:ui` **already** does what [F1][comparison] recommends: `layout` is
 > parameterised on `isTextMeasure` and never touches a canvas
 > ([`layout.d`, `isTextMeasure` / `CellMeasure`][layout]). Meanwhile
-> `isCanvas!T` still demands `Size measure(const(char)[])`
-> ([`canvas.d` L158–L169][canvas]) — and no interpreter call site calls it. A
-> grep across `libs/` and `apps/` finds `.measure(` on a canvas only in
-> `canvas.d`'s own concept and unittest and in `libs/skia`'s equivalent
-> assertion — never in `interp/`. Backends do implement it
-> (`GridCanvas.measure` is the grapheme-aware one), but **every in-tree call
-> site of `layout` passes the default `CellMeasure`**, so no backend's answer
-> has ever reached the engine; `grid_canvas.d` records the same thing as the
-> open `LAY5`/`MIG5` measurement gap. `SkiaCanvas.measure` is therefore not a
-> backend forced to lie so much as a member of a concept the painter never
-> consults — and `sparkles:ui` is today, operationally, in `elm-ui`'s position
-> without having chosen it.
+> `isCanvas!T` counts `Size measure(const(char)[])` among its five required
+> methods ([`canvas.d` L661–L692][canvas]) — and no interpreter call site calls
+> it. A grep across `libs/` and `apps/` finds `.measure(` on a canvas only in
+> `canvas.d`'s own concept and unittest — never in `interp/`. Backends do
+> implement it (`GridCanvas.measure` is the grapheme-aware one), but **every
+> in-tree call site of `layout` passes the default `CellMeasure`**, so no
+> backend's answer reaches the engine; `grid_canvas.d` records exactly that as
+> the open `LAY5`/`MIG5` measurement gap. The cell-denominated `measure` of
+> [friction §1][friction] is therefore less a backend forced to lie than a
+> member of a concept the painter never consults — and `sparkles:ui` sits,
+> operationally, in `elm-ui`'s position without having chosen it.
 
 ## Strengths
 
@@ -409,34 +424,43 @@ sites named.
    `sparkles:ui` backend contains a line breaker willing to take them over.
    This closes the "maybe the seam does not need measurement at all" branch
    that [friction §1][friction] leaves implicitly open.
-2. **The relocation F1 recommends is already done — and unfinished.** `layout`
-   takes an injected `isTextMeasure`; `isCanvas` separately demands `measure`
-   and nothing calls it. The concrete action is _removing_ `measure` from
-   `isCanvas`, not designing a new font abstraction. This complicates F1's
-   framing: the finding is right, the friction log's description of the harm
-   ("the best measurer in the system must lie") overstates it, since the liar
-   is a member no caller consults.
+2. **The relocation F1 recommends is half in place, which is [F2][comparison]'s
+   point exactly.** `layout` takes an injected `isTextMeasure`; `isCanvas`
+   separately requires `measure`, and nothing calls it. The concrete action is
+   _removing_ `measure` from `isCanvas`, not designing a new font abstraction —
+   and removing it settles only the placement decision, leaving F2's other five
+   (unit, oracle authority, return shape, device parameterisation, what is
+   measured) untouched. It also qualifies the emphasis of [friction
+   §1][friction]: "the best measurer in the system must lie" describes a member
+   no caller consults, so the harm is latent rather than active, and the unit
+   question is the live half.
 3. **Adopt metrics-as-data alongside metrics-as-query.** `Font.Adjustment` is a
    better fit for a terminal-first toolkit than a callback: a cell backend's
    metrics _are_ four constants. An `isTextMeasure` implementation that is a
    plain value, not a canvas reference, is what every in-tree call site already
    uses (`CellMeasure`), and formalising that keeps `layout` `@safe pure`.
-4. **Contradicts F3's framing, mildly.** F3 says the real axis is "who
-   degrades". `elm-ui` adds a third position — _nobody degrades, because the
-   toolkit never names the thing_. Its scrollbar is not a semantic op that a
-   backend degrades; it is an overflow policy. Reading `scrollbar` in
-   `DrawOp` against that: our eight scrollbar fields exist because we compute
-   thumb geometry and hand it over. A policy-shaped alternative
-   ("this subtree scrolls") is available to us for the GPU backend and _not_
-   available for the cell backend, which must draw the thumb itself — so
-   [friction §3][friction] resolves toward keeping the semantics, and the fix
-   is to stop shipping the derived geometry that `scrollbarThumb` already
-   computes once.
-5. **Confirms F7 from the far side.** A toolkit with no extent query shipped
-   for years, and the ecosystem's only extent answer comes from the surface,
-   asynchronously, after the fact ([`Browser.Dom.getElement`][dom-getelement]).
-   Scope [friction §8][friction] to the offscreen sizing case and give it a
-   layout query, not a display-list property.
+4. **Instantiates the last of [F4][comparison]'s six positions.** F4 asks where
+   a lowering lives, and its sixth answer is _nobody_ — the toolkit never names
+   the thing, so there is nothing to lower. `elm-ui` is that answer in a
+   shipped toolkit: its scrollbar is not a semantic op a backend degrades, it
+   is an overflow policy. Reading our `scrollbar` payload against that: its
+   fourteen fields exist because the toolkit does name the thing, and the
+   naming is what a cell backend needs — a policy-shaped alternative ("this
+   subtree scrolls") is available for the GPU backend and _not_ for the cell
+   backend, which has to draw the thumb itself. So [friction §3][friction]
+   resolves toward keeping the semantics. What stays worth pruning is the part
+   of the payload that is one backend's private answer: `trackGlyph` and
+   `thumbGlyph` ride past every backend that never reads them, while
+   `scrollbarThumb` in `sparkles.ui.state` is the shared lowering that already
+   keeps the geometry from being computed twice.
+5. **Confirms [F7][comparison]'s decomposition from the far side.** A toolkit
+   with no extent query shipped for years, and the ecosystem's one answer names
+   three rectangles and delivers them from the surface, asynchronously, after
+   the fact ([`Browser.Dom.getElement`][dom-getelement]). That is F7's split —
+   surface, layout, ink — arriving whether or not a design asks for it. Scope
+   [friction §8][friction] to the layout question and the offscreen sizing case
+   that needs it, and answer it at construction rather than by folding
+   `op.rect` over a finished stream.
 6. **A warning about the "two seams" open question.** `elm-ui` is the case
    where a toolkit assumed one backend and got four (Chrome, Firefox, Safari,
    IE) with no capability vocabulary to describe their disagreement. Whichever

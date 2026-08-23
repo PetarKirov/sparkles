@@ -7,8 +7,8 @@ The terminal end of the range done deliberately. Ratatui's renderer seam is not
 a drawing API at all: widgets write into a reified cell grid, and the
 [`Backend`][backend] trait exists only to push the _difference_ between two such
 grids at a terminal. Everything `canvas-seam-friction.md`'s eight entries argue
-about — measurement, semantics, command shape, payload ownership — has been
-answered by moving it above the seam, into the `Buffer`.
+about — measurement, semantics, command shape, payload ownership — lives above
+the seam, in the `Buffer`.
 
 | Field                | Value                                                                                                              |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -192,7 +192,7 @@ Optionality is expressed three ways, each visible in the declaration:
 
 The associated `type Error` is the underrated one. Because the seam is generic
 over its error type, a backend refuses rather than degrades — which is the
-"refusable degrade" half of [F4][comparison],
+"refusable degrade" half of [F5][comparison],
 obtained for free from the type rather than from a `NODEGRADE` flag.
 
 The feature-gated methods are the interesting failure mode: enabling
@@ -236,11 +236,16 @@ Choosing the glyph vocabulary is the application's decision, made once, above
 everything.
 
 This is the direct falsification of the premise behind
-[friction §3][friction]: our `DrawOp` carries
-eight scrollbar fields _so that each backend can re-derive the rail_. Ratatui
-derives it once, in the widget, and ships cells. The reason we cannot simply
-copy that is Q5 — but the eight fields are not the price of semantics, they are
-the price of deferring the derivation.
+[friction §3][friction] — `scrollbar` as a widget concept in the drawing seam.
+Our `Scrollbar` payload carries the rail's _inputs_ (content extent, viewport
+extent, offset, an edge, a rail-expansion percentage) beside two fallback glyphs
+a pixel backend never reads, so that each backend resolves the thumb at its own
+resolution — `interp/immediate.d` applying `paintScrollbarCells` for a canvas
+that declines the primitive, `RaylibCanvas` resolving continuously for one that
+does not. Ratatui resolves it once, in the widget, and ships cells. The reason we
+cannot simply copy that is Q5 — but the inputs are the price of the semantics,
+and `trackGlyph`/`thumbGlyph` are the price of one target's answer riding past
+every backend that will never read it.
 
 Because the intermediate is a **readable** grid, widgets can also compose in a
 way a command stream forbids. `MergeStrategy` ([`symbols/merge.rs`][merge])
@@ -270,9 +275,13 @@ pub struct Buffer {
 
 `Cell` is 5–6 live fields — `symbol: Option<CompactString>`, `fg`, `bg`, optional
 `underline_color`, `modifier`, `diff_option` ([`buffer/cell.rs`][cell]) — and
-every one is live for every cell. There is no tag, so there are no dead fields,
-and the illegal-combination problem that `sparkles.input.events` rejects and
-`DrawOp` inherits simply does not exist in this shape.
+every one is live for every cell. There is no tag, so there are no dead fields
+and no arms. `DrawOp` answers the illegal-combination problem the way
+`sparkles.input.events` does — a closed sum, one arm per kind, dispatched by
+`op.match!(…)` — and pays for the answer twice: in the eight arms every walker
+and every accessor must spell out, and in a uniform operation width, since
+`static assert(DrawOp.sizeof <= 64)` budgets every op at the widest payload's
+size. A grid pays neither, because it has nothing to discriminate.
 
 The properties `RecordingCanvas` exists to give us come along free, and better:
 
@@ -326,8 +335,9 @@ The sub-cell grid is resolved down to graphemes before a single `Cell` is
 written, so the `Backend` never learns that a plot had 2×4 resolution.
 
 Compare [Notcurses][notcurses], which puts the same ladder _in_ the seam as
-a blitter. Ratatui and Notcurses agree on [F5][comparison]'s substance — name a
-fidelity, not a position — and disagree on where it lives.
+a blitter. Ratatui and Notcurses agree on the first of the three mechanisms
+[F6][comparison] puts in `RuleEdge`'s place — name a fidelity, not a position —
+and disagree only on where the name lives.
 The deciding factor is visible in each design: Notcurses's blitter must be in
 the seam because different _terminals_ support different blitters, so the
 decision is a property of the device. Ratatui's marker is a property of the
@@ -336,8 +346,11 @@ chosen by the widget, resolved by the backend, and that split is the friction.
 
 ## Q6 — resolved or semantic styling
 
-A `Cell` carries **one** appearance, not two. There is no `slot` beside a
-`visual`; the widget resolved the style and the cell holds the result.
+A `Cell` carries **one** appearance, not two. There is no semantic role beside
+the resolved colours; the widget resolves the style and the cell holds the
+result. Six of our eight payloads store a `Slot` beside the resolved appearance
+their primitive paints from — an `Ink` for the four content operations, its own
+colour fields for a fill.
 
 But the resolved vocabulary is itself deliberately unresolved at the bottom.
 `Color` ([`style/color.rs`][color]) is `Reset`, the sixteen ANSI names,
@@ -352,11 +365,15 @@ re-resolution, because it inherited a vocabulary the device already speaks.
 applied into the cell's non-optional fields. Partial styling is a
 composition-time concept that does not survive to the seam.
 
-This weakens the premise of our friction §6 (F6's neighbour in
-[the synthesis][comparison]): carrying both `visual` and `slot` is not the only
-way to serve a re-resolving backend. The alternative is a resolved vocabulary
-whose leaves are _already_ symbolic — which is precisely what `Slot` would be if
-`Visual` could name a palette entry instead of only an `RgbColor`.
+This weakens the premise of our friction §6 — a resolved appearance and a
+semantic role on every drawing op — and it is the second of the cheaper
+encodings [F9][comparison] names: carrying the role beside the resolved colour
+is not the only way to serve a re-resolving backend. The alternative is a
+resolved vocabulary whose leaves are _already_ symbolic — which is precisely
+what `Slot` would be if a `Visual` could name a palette entry instead of only an
+`RgbColor`. It also fixes which of our two channels is the redundant one: a role
+plus a theme yields the resolved colour, and no arrangement of resolved colours
+yields the role.
 
 ## Q7 — payload ownership
 
@@ -372,12 +389,18 @@ lifetime is provably the buffer's: `Terminal::flush` borrows both buffers, calls
 `Backend::draw`, and returns before `swap_buffers` resets anything. A backend
 that wants to retain a symbol clones a `CompactString`.
 
-This is a third answer beside F6's two (reference-count, or backend-owned
-cache): **copy, because the payload is bounded**. It only works because a cell's
-payload is one grapheme cluster. It is nonetheless the answer friction §7 is
-looking for in the one case that matters most — `DrawOp.text` is a run of text
-precisely because the toolkit chose runs over cells, and the borrow is the price
-of that choice, not an independent defect.
+F8 tabulates eight ownership mechanisms across the survey and finds not one
+subject that borrows a payload across a frame; this is the cheapest of the eight
+— **copy, because the payload is bounded** — and it works only because a cell's
+payload is one grapheme cluster. A run of
+text is not bounded, which is why `CmdBuffer.textRun` copies into a frame arena
+rather than into the operation: the bytes belong to the toolkit, not to the
+widget that drew them, and the rule stated on the type is that an operation is
+valid while the buffer that built it is alive and unreset. What friction §7
+records is the step Ratatui never has to take. The rule is stated on the type,
+which makes it enforceable rather than advisory, but the type system cannot
+express it — a private `launder` cast is what carries the slice past `dip1000` —
+and the retain boundary an offset pair settles for free stays open as `UI-O4`.
 
 For payloads that genuinely cannot fit in a cell — sixel/Kitty images, OSC 8
 links — Ratatui does not extend the seam. It adds a **negative directive**:
@@ -402,7 +425,7 @@ the same problem.
 
 **Answered three times over, at three different layers**, which is why this is
 the least interesting question for Ratatui and the most instructive about
-[F7][comparison].
+[F7][comparison]'s three questions.
 
 | Layer              | Query                                  | Meaning                                     |
 | ------------------ | -------------------------------------- | ------------------------------------------- |
@@ -415,8 +438,9 @@ The self-describing case is free: a `Buffer` _is_ its extent, because `content.l
 must equal `area.width * area.height`. An offscreen consumer builds a buffer at
 the size it wants, or uses `Buffer::with_lines`, which derives width from the
 longest line and height from the count ([`buffer.rs:92`][buffer]) — the exact
-"size a surface to content" operation `skia-canvas-render.d` had to hand-roll by
-scanning ops.
+"size a surface to content" operation `skia-canvas-render.d` hand-rolls by
+scanning ops, because nothing on `CmdBuffer`, the display list or the arena
+reports a built stream's extent.
 
 `WindowSize` is worth a second look for the terminal↔GPU question. It reports
 both units from one `TIOCGWINSZ`, with the pixel field documented as possibly
@@ -473,8 +497,10 @@ carry both and mark one as best-effort; it does not have to pick.
 ## Bearing on the proposal
 
 1. **Reifying a grid is a live alternative to reifying commands — for the
-   terminal half.** F2 concludes the reification is right and the fix is a sum
-   type. Ratatui shows a third option F2 does not consider: reify the _result_,
+   terminal half.** F3 keeps the reification and leaves its encoding a live
+   trade: a closed sum eliminates illegal combinations and keeps operations
+   comparable, variable-stride per-op records pay only for what each op uses.
+   Ratatui sits outside both: reify the _result_,
    not the instructions. It yields everything `RecordingCanvas` yields, plus
    diffing and read-back composition, and it is what `sparkles:ui-tui` already
    produces one layer down. It does not scale to Skia — which sharpens the
@@ -487,14 +513,18 @@ carry both and mark one as best-effort; it does not have to pick.
    a `RecordingCanvas` equivalent and its own docs recommend asserting against
    the `Buffer` instead ([`backend/test.rs`][testbackend]). An op stream is
    unstable under drawing-order refactors that leave the result identical; a
-   grid is not.
+   grid is not. That is F12's conclusion from the other end: the op stream is
+   the parity oracle, not the golden.
 
-3. **Friction §3's eight scrollbar fields are the cost of deferring, not of
+3. **Friction §3's derived-geometry fields are the cost of deferring, not of
    semantics.** Ratatui derives the rail once in the widget and configures
-   degradation with a four-glyph `Set`. `scrollbarThumb` already computes the
-   same geometry once ([`canvas.d`][canvas]). With F3, the resolution is: keep a
-   semantic op where a backend can genuinely do better (a real box shadow),
-   resolve to primitives where it cannot.
+   degradation with a four-glyph `Set`. `scrollbarThumb` computes that geometry
+   once in `sparkles.ui.state`, and `canvas.d` re-exports the lowerings built on
+   it — `scrollbarCellCount`, `scrollbarCell`, `ruleEndpoints`
+   ([`canvas.d`][canvas]) — so the derivation a backend re-runs from the op's
+   fields is already published as a helper it could call instead. With F4, the
+   resolution is: keep a semantic op where a backend can genuinely do better (a
+   real box shadow), resolve to primitives where it cannot.
 
 4. **Adopt a "cede territory" directive before adding an image op.**
    `CellDiffOption::Skip` / `AlwaysUpdate` solve foreign-renderer coexistence —
@@ -502,29 +532,33 @@ carry both and mark one as best-effort; it does not have to pick.
    `sparkles:ui` meets this with `sparkles:terminal-view` panes and image
    protocols, and it is cheaper than an op kind.
 
-5. **`type Error` beats a capability query for refusal.** F4 asks for a refusable
+5. **`type Error` beats a capability query for refusal.** F5 asks for a refusable
    degrade; Ratatui gets it from the return type, at every call site, unforgettably.
 
-6. **Contradicts F1's unanimity while confirming its conclusion by another
-   route.** Ratatui agrees the painter must not measure, but does **not** put
-   measurement behind an abstraction: `cell_width` is a free function over
-   `str`, one unit, non-negotiable, with a per-cell escape hatch (`ForcedWidth`).
+6. **Sharpens F1 rather than dissenting from it.** F1 places Ratatui in the
+   free-function camp, and the detail worth taking is that the free function sits
+   behind no abstraction at all: `cell_width` is one unit over `str`,
+   non-negotiable, with a per-cell escape hatch (`ForcedWidth`).
    For a single-unit toolkit a `TextShaper` trait is over-engineering. The
-   transferable rule is narrower than F1 states: _measurement must not be a
+   transferable rule is narrower than placement alone: _measurement must not be a
    backend method_ — whether it must be an abstraction depends on whether the
    units genuinely differ.
 
-7. **One unit is not one oracle.** Ratatui has exactly one unit and still ships
+7. **One unit is not one oracle** — the point F2 draws from this subject.
+   Ratatui has exactly one unit and still ships
    two width functions that disagree on `U+FF9E`/`U+FF9F`
    ([`text/line.rs`][line] vs [`buffer/cell_width.rs`][cellwidth]). Whatever we
    do about friction §1, layout and painting must call the _same_ function —
-   `cellsOf` does that accidentally today; a shaping-aware redesign must do it
+   `cellsOf` does that accidentally; a shaping-aware redesign must do it
    deliberately.
 
-8. **Confirms F7 and adds the free case.** Extent is answered by the device
-   (`Backend::size`, `window_size`) and by the surface (`Buffer::area`). The
-   offscreen-sized-to-content case F7 leaves to "a layout query" is free when the
-   intermediate is a grid, because a grid _is_ its extent.
+8. **Confirms F7 with the cheapest maintained-at-construction case in the
+   survey.** Extent is answered by the device (`Backend::size`, `window_size`)
+   and by the scene (`Buffer::area`), two of F7's three questions, and nothing is
+   scanned to get either: a grid _is_ its extent, because `content.len()` must
+   equal `area.width * area.height`. `buildDisplayList` hands back a `DrawOp[]`
+   without the number layout already computed, so a caller that needs painted
+   bounds folds `op.rect` back out of the stream.
 
 ## Sources
 

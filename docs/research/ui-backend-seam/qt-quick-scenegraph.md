@@ -195,8 +195,9 @@ things the software adaptation simply does not draw.
 
 For friction §2 this is a two-edged result. The _existence_ half is solved
 outright — an abstract base class with pure virtuals states the required surface
-in one place, which `isCanvas`'s five-method probe plus three `__traits(compiles)`
-call sites does not. The _quality_ half is worse than Qt's own earlier answer.
+in one place, which `isCanvas`'s five-method probe plus four optional primitives
+discovered by `__traits(compiles)` at their call sites does not. The _quality_
+half is worse than Qt's own earlier answer.
 
 ## Q3 — semantic operations or primitives
 
@@ -249,21 +250,23 @@ bool QSGSoftwareRenderableNodeUpdater::visit(QSGGeometryNode *node)
 > geometry tier threw it away.
 
 That is a direct, load-bearing complication of
-[F3](./comparison.md).
-F3 framed semantic-vs-primitive as a free choice whose real axis is where
-degradation lives. Qt shows a prior constraint: **primitives below a certain
+[F4](./comparison.md).
+F4 frames semantic-vs-primitive as a free choice whose real axis is where the
+lowering lives. Qt shows a prior constraint: **primitives below a certain
 level are not degradable at all**, so a seam that must span unlike targets has no
-choice about carrying semantics. It also complicates
-[F2](./comparison.md)'s
-implicit sympathy for egui's mesh extreme: egui works because every egui backend
-is a triangle rasterizer. `sparkles:ui`'s backend set is not.
+choice about carrying semantics. It also bounds the trade
+[F3](./comparison.md)
+leaves open: how a reified stream is encoded is genuinely unsettled, but the
+_vocabulary_ being encoded is not free to fall to meshes. egui works because every
+egui backend is a triangle rasterizer. `sparkles:ui`'s backend set — a cell grid,
+raylib and Skia — is not.
 
 ## Q4 — the shape of a draw command
 
 **There is no draw command.** There is a heap-allocated polymorphic node with a
 seven-value `NodeType` tag, a `Flags` word, and `markDirty(DirtyState)`. Refinement
-past those seven values is `dynamic_cast`, as Q3 shows. So Qt is neither a sum
-type nor tag-plus-dead-fields; it is the third option, an open class hierarchy —
+past those seven values is `dynamic_cast`, as Q3 shows. So Qt is neither a closed
+sum nor a variable-stride per-op record; it is the third option, an open class hierarchy —
 and it pays the exact cost that shape implies, namely that the discriminant is not
 enough to dispatch on and the fallback is a runtime type test that can fail.
 
@@ -277,17 +280,21 @@ What retention buys, and what it costs, is worth stating because
   flags), and the tree needs a thread rendezvous (Q7).
 
 `sparkles:ui` wants neither batching nor partial update from its display list; it
-wants recordability and comparability. F2's recommendation — keep the reified
-stream, encode it as a sum type — is untouched by Qt, because Qt is not paying for
-the same property.
+wants recordability and comparability, and it gets them from a `DrawOp` that is a
+closed sum over eight payloads inside a 64-byte budget, dispatched by `match!`.
+[F3](./comparison.md)'s live question — how a reified stream is best encoded — is
+untouched by Qt, because Qt is not paying for the same property.
 
 ## Q5 — sub-unit placement
 
-Does not arise: `QRectF`, `QPointF` and `qreal` throughout, with the device pixel
-ratio supplied out of band at sync time. Qt is the fourth subject in this survey
-with continuous coordinates, which keeps reinforcing
-[F5](./comparison.md)'s
-first half.
+Does not arise for Qt: `QRectF`, `QPointF` and `qreal` throughout, with the device
+pixel ratio supplied out of band at sync time. Qt is the fourth subject in this
+survey with continuous coordinates — and the fourth to show that they relocate the
+sub-unit question rather than dissolving it, which is
+[F6](./comparison.md)'s
+conclusion. The device unit arrives through a separate query
+(`prepareSync`'s `devicePixelRatio`); what that unit is spent on is decided
+elsewhere again.
 
 The second half — "name a fidelity, not a position" — has a Qt analogue worth
 copying, in a different currency. Antialiasing is **not** a backend flag consulted
@@ -298,7 +305,7 @@ returns `true` by default ([`qsgbasicinternalrectanglenode_p.h`][rectnodep]) and
 ([`qsgbasicinternalrectanglenode.cpp`][rectnode]). A fidelity request that the
 backend may decline, decided once before geometry is built rather than at every
 call site — which is the shape
-[F4](./comparison.md)
+[F5](./comparison.md)
 asks for, expressed as a virtual predicate rather than a flag enum.
 
 ## Q6 — resolved appearance, semantic role, or both
@@ -309,13 +316,20 @@ concrete setters). A GPU backend reads `activeMaterial()`; the software backend
 reads the role, by `dynamic_cast`. Two consumers with opposite needs are served
 without any node carrying a role tag _and_ a resolved-style struct side by side.
 
-That is the cleanest available answer to friction §6, and it composes with F2's
-recommendation into a single change rather than two: **in a sum type, the tag is
-the slot.** `DrawOp` carries `slot` and `visual` as parallel fields precisely
-because `kind` is too coarse to identify what was drawn — the same coarseness that
-forces Qt into `dynamic_cast`. A `SumType` whose variants are
-`ScrollbarThumb`/`FocusRing`/`Rule` makes the role structural and leaves only
-appearance as data.
+That is the cleanest available answer to friction §6, _a resolved appearance and a
+semantic role on every drawing op_. `DrawOp` cannot serve them for free the way a
+class hierarchy does: six of its eight payloads spend an actual field on the
+role, a `Slot` sitting next to whatever the primitive needs in order to paint —
+an `Ink` for the content arms, colour fields plus a chrome pointer for a fill.
+Only the appearance side is recovered rather than kept, `visualOf`
+reconstructing a `Visual` on demand instead of storing one — deriving the
+appearance makes the hedge cheaper without deciding it. What keeps the role as
+data is that the arms are named after shapes: `FillRect`, `TextRun`,
+`Glyph`, `Line`. A derived `kind` over those eight arms cannot say whether a fill
+is a scrollbar thumb or a focus ring, which is the same coarseness that forces Qt
+into `dynamic_cast`. Arms named `ScrollbarThumb`/`FocusRing`/`Rule` would make the
+role structural and leave only appearance as data — [F3](./comparison.md)'s
+encoding question asked about granularity rather than about width.
 
 ## Q7 — payload ownership
 
@@ -344,21 +358,26 @@ while `QQuickItem::updatePaintNode()` runs, and the doc is categorical:
 
 with a matching warning that native graphics and scene-graph interaction must
 happen "exclusively on the render thread, primarily during the `updatePaintNode()`
-call". This is a **third** answer beyond
-[F6](./comparison.md)'s two: not
+call". This is a mechanism outside the copy / refcount / arena set
+[F8](./comparison.md) enumerates: not
 reference counting, not a backend-owned cache, but a declared window during which
 borrowing is legal — after which the borrow is a bug the documentation, rather
 than the type system, forbids.
 
 > [!WARNING]
-> Qt's rendezvous is enforced by convention. D can do better: `RecordingCanvas`
-> plus a `SumType` payload could make the copy-at-sync explicit and checked. The
-> transferable idea is the _phase_, not the enforcement mechanism.
+> Qt's rendezvous is enforced by convention. `sparkles:ui` states its own rule on
+> the type — an operation is valid while the buffer that built it is alive and
+> unreset — and `CmdBuffer` is move-only, so a copy cannot hand out a second set of
+> live pointers; `RecordingCanvas` interns on the collected heap, so its operations
+> outlive the call that drew them. What Qt adds is the _phase_: a named window in
+> which a borrow is legal, which is the shape friction §7's open question — record
+> on one thread, submit on another, tracked as `UI-O4` — is looking for. The
+> transferable idea is the phase, not the enforcement mechanism.
 
 ## Q8 — can a backend ask the scene its extent?
 
-**Yes, per node, as an opt-in promise** — which is a different answer from every
-other subject surveyed so far. `QSGRenderNode` ([`qsgrendernode.h`][rendernode])
+**Yes, per node, as an opt-in promise** — the sharpest form of a scene-side extent
+answer in the survey. `QSGRenderNode` ([`qsgrendernode.h`][rendernode])
 declares:
 
 ```cpp
@@ -379,16 +398,22 @@ stated too:
 
 `QSGGlyphNode::boundingRect()` is the same idea at the adaptation tier.
 
-This complicates
-[F7](./comparison.md). F7 concluded
-that extent belongs to the surface because a backend allocating a surface chose
-its size. True — and irrelevant to the case Qt cares about. Qt's surface knows its
-size perfectly well; the renderer still needs _per-item_ bounds, for partial
-update and occlusion. Friction §8 conflated two questions: "how big is the scene"
-(a surface property, F7 is right) and "what does this op touch" (a per-op
-property, which `DrawOp` does answer for rects and does **not** answer for
-`textRun`, where `rect.width` is an advance in cells and no other subject's
-backend would accept that as a bound).
+This is [F7](./comparison.md) on
+another subject: extent is three questions, and Qt keeps them apart. Surface
+extent the backend already knows, having allocated it. Layout extent lives above
+the seam, in `QTextLayout`. Ink extent — "what does this node touch" — is answered
+from the scene, and maintained at construction by the node rather than derived by
+a scan, which is exactly the axis F7 draws.
+
+Friction §8, _no extent query_, sits on that same split. What `sparkles:ui` has
+no equivalent of is the promise: no op volunteers its bounds the way a
+`QSGRenderNode` does, and neither `CmdBuffer` nor the display list nor the arena
+will say what a finished stream covers. The two questions they do answer are how
+many operations were recorded and how wide a run measures, so painted bounds
+exist only once a caller folds `op.rect` over the stream. That fold is the
+derived-by-scan arm of F7's axis, and it holds only because a `TextRun`'s
+`rect.width` is its advance in cells — a bound no other subject's backend would
+accept, and one friction §1 indicts for a different reason.
 
 `QSGRenderNode` deserves one more note as the **declared escape hatch**: a node
 that renders with the raw graphics API, and pays for the privilege by declaring
@@ -418,7 +443,7 @@ than deleting it.
   lives behind "This file is not part of the Qt API. … We mean it."
 - **Silent skip as the degradation policy.** `// We dont know, so skip` loses
   content with no diagnostic and no way for a caller to demand failure instead —
-  the refusable degrade F4 asks for is absent.
+  the refusable degrade F5 asks for is absent.
 - **`NodeType` is too coarse to dispatch on**, so the software backend runs a
   five-deep `dynamic_cast` chain per geometry node, every frame.
 - **No capability query about drawing.** `QSGRendererInterface` answers "which
@@ -441,38 +466,46 @@ than deleting it.
 
 ## Bearing on the proposal
 
-1. **The tag must be fine-grained enough to dispatch on, or a backend will
-   downcast.** Qt's seven `NodeType`s force a five-way `dynamic_cast` chain in the
-   software adaptation. This is F2 and friction §4 arriving from a new direction:
-   a `SumType` variant per _semantic_ op (not per geometric shape) is what keeps
-   role recovery free. Fold friction §6 into the same change — **the tag is the
-   slot**, and `visual` becomes the only styling field.
-2. **Contradicts F3's framing.** F3 treats semantic-vs-primitive as a free choice
-   about where degradation lives. Qt demonstrates a hard constraint underneath it:
+1. **The discriminant must be fine-grained enough to dispatch on, or a backend
+   will downcast.** Qt's seven `NodeType`s force a five-way `dynamic_cast` chain in
+   the software adaptation. `DrawOp` never forces that — `match!` is exhaustive and
+   `kind` is derived from the same eight arms, so the two cannot disagree — but the
+   arms are named after shapes rather than roles, which is why friction §6 still has
+   a `Slot` to carry on six of them. An arm per _semantic_ op is what makes role
+   recovery free, and that is [F3](./comparison.md)'s encoding question asked about
+   arm granularity rather than about payload width.
+2. **Constrains [F4](./comparison.md)'s framing.** F4 treats semantic-vs-primitive
+   as a free choice about where the lowering lives. Qt demonstrates a hard constraint underneath it:
    geometry-plus-shader is portable only among shader backends, and Qt's own CPU
    backend drops it. For a toolkit whose backends are a cell grid and a GPU, the
    semantic tier is not a preference — it is the only shared vocabulary. This also
    caps how far `sparkles:ui` should drift toward egui's mesh model.
-3. **Complicates F7 and re-frames friction §8.** Two questions were conflated.
-   Scene extent belongs to the surface (F7 stands). Per-op extent belongs to the
-   op, and `DrawOp` half-answers it: `textRun.rect.width` is a cell advance, which
-   is a bound only under the monospace assumption friction §1 already indicts. Qt's
-   shape — a bound that is only trusted when the op declares it trustworthy — is
-   the cheap fix, and it is what an offscreen consumer actually needs.
+3. **Confirms F7 and sharpens friction §8.** Two questions are worth keeping
+   apart. Surface extent belongs to the surface. Ink extent belongs to the op, and
+   `DrawOp` half-answers it: a `TextRun`'s `rect.width` is a cell advance, which is
+   a bound only under the monospace assumption friction §1 indicts. Qt's shape — a
+   bound trusted only when the op declares it trustworthy — is the cheap fix, and it
+   is what an offscreen consumer, which today folds `op.rect` over the whole stream,
+   actually needs.
 4. **A declared escape hatch is better than an optional method.** `QSGRenderNode`
    is what `sparkles:ui` lacks for the Skia backend's raw-Graphite path: an op
    that says "I will paint inside this rect, I will dirty this state, do not
    assume anything else". Cheaper than widening the primitive vocabulary each time
    a backend wants more.
-5. **Adopt `supportsAntialiasing()`'s shape for F4/F5.** A fidelity request the
-   backend may decline, resolved once at build time rather than probed at each
-   call site, is the "refusable degrade" F4 wants and the "name a fidelity"
-   F5 wants, in one mechanism `sparkles:ui` can express as a DbI optional
-   predicate rather than a `__traits(compiles)` at the call site.
-6. **Reject the silent skip.** `// We dont know, so skip` is what
-   `__traits(compiles)`-per-call-site already does to us in a nicer syntax.
-   Whatever replaces `isCanvas` should make an unhandled op a compile error, not a
-   missing pixel.
+5. **Adopt `supportsAntialiasing()`'s shape for [F5](./comparison.md) and
+   [F6](./comparison.md).** A fidelity request the backend may decline, resolved
+   once at build time rather than probed at each call site, is the "refusable
+   degrade" F5 wants and the "name a fidelity" F6 wants, in one mechanism
+   `sparkles:ui` can express as a DbI optional predicate rather than a
+   `__traits(compiles)` at the call site.
+6. **Reject the silent skip.** `// We dont know, so skip` is the failure mode
+   `__traits(compiles)`-per-call-site invites, in a nicer syntax. Each of the four
+   optional primitives states its degradation — `ruleEndpoints` plus a cell-aligned
+   `line`, `paintScrollbarCells` glyph-per-cell, and nothing at all for the clip
+   pair, since the display list has already culled hidden subtrees — so nothing is
+   dropped in silence. What the mechanism cannot express is a _refusal_. Whatever
+   replaces `isCanvas` should make an unhandled op a compile error, not a missing
+   pixel.
 7. **Do not adopt retention.** Batching and partial update are the only things it
    buys, `sparkles:ui` wants neither, and the bill — ownership flags, dirty bits,
    a documented-only thread rendezvous — is exactly the complexity the friction

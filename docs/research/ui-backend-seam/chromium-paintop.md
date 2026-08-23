@@ -44,7 +44,7 @@ says exactly why:
 
 Mutability, payload substitution and a bespoke wire format — those three
 requirements are what force reification. A virtual-dispatch painter cannot be
-paused, inspected, culled by rect, re-encoded with different images and shipped
+paused, inspected, culled by rect, re-serialised with different images and shipped
 to another process.
 
 ### Design philosophy
@@ -225,10 +225,12 @@ Where cc needs a text extent it asks the payload, not a canvas:
 This is [F1](./comparison.md)
 at maximum scale and by the most extreme route in the survey: not "measurement
 lives in a sibling abstraction" but "measurement has already happened by the
-time the seam exists". All four subjects the synthesis covers agree, and the one
-with a real process boundary agrees hardest: a measurement answerable only by
-the far side of an IPC would be unaffordable, so the question is settled before
-the boundary exists.
+time the seam exists". The subject with a real process boundary agrees hardest:
+a measurement answerable only by the far side of an IPC would be unaffordable,
+so the question is settled before the boundary exists. `isCanvas`'s fifth
+method, `Size measure(const(char)[])`, is the one obligation on this list that
+Chromium's seam does not carry at all (friction §1, `measure` is denominated in
+cells).
 
 ## Q2 — is the contract stated in one place?
 
@@ -258,8 +260,8 @@ technique worth naming:
   `kMinNumberOfSlowPathsForMSAA = 6` so counting stops once the answer is known.
 
 That inversion is the finding.
-[F4](./comparison.md)
-asked for a stated floor and a refusable degrade; Chromium's floor is
+[F5](./comparison.md)
+asks for a stated floor and a refusable degrade; Chromium's floor is
 "everything", and negotiation happens over _content properties_ rather than over
 _primitives_. Nobody asks "can you draw a hairline"; the recording says "I
 contain non-AA paint" and the scheduler picks a target accordingly.
@@ -288,13 +290,25 @@ vocabulary:
   **`SetNodeIdOp`** carry PDF/accessibility identity that has no pixels.
 
 This complicates
-[F3](./comparison.md)
-usefully. The axis is not only "who degrades" — there is a third option neither
-Slint nor Qt shows: **carry an identity and a nested stream, and let the
-consumer supply the state**. Applied to friction §3, a scrollbar op would be an
-id plus the rail rect, with `barContent`/`barViewport`/`barOffset` looked up
-from a params struct at paint time, exactly as Chromium looks up scroll offsets.
-Eight fields on `DrawOp` become zero, and the semantics still survive.
+[F4](./comparison.md)
+usefully. F4's axis is where the lowering lives, and Chromium adds a place the
+list does not name: **carry an identity and a nested stream, and let the
+consumer supply the state at playback**. Applied to friction §3 (`scrollbar` is
+a widget concept in the drawing seam), a scrollbar operation would be an id plus
+the rail rect, with the state the `Scrollbar` payload spells out —
+`content`, `viewport`, `offset`, `expandPercent`, the two track colours, the
+lit-track flag and the `trackGlyph`/`thumbGlyph` fallbacks — looked up from a
+paint-params struct, exactly as Chromium looks up scroll offsets.
+
+The price is specific. Twelve of the `Scrollbar` payload's fourteen fields
+leave the arm, and with them the eight accessors that read them — `barContent`,
+`barViewport`, `barOffset`, `expandPercent`, `barTrackLit`, `barTrackColor`,
+`barTrackGlyph`, `barThumbGlyph` — become lookups against a struct the caller
+must now thread through `interp/immediate.d` alongside the operation. It buys no
+bytes: `TextRun`, not `Scrollbar`, is the widest payload, so the 64-byte budget
+does not move. What it buys is that the drawing vocabulary stops knowing what a
+scrollbar is, while `scrollbarThumb` stays the one `STM2` formula every backend
+renders.
 
 ## Q4 — the command's shape
 
@@ -313,9 +327,11 @@ And `DrawLineLiteOp` / `DrawArcLiteOp` are duplicate op types that differ from
 `PaintFlags`, each prefaced with
 `// TODO(crbug.com/340122178): figure out a better way to unify types.`
 ([`paint_op.h`][paint_op]). Chromium duplicated two ops and left a bug open
-rather than let every line carry unused paint state. `DrawOp`'s eighteen
-fields — eight of them for one op kind — is the failure mode this is defending
-against.
+rather than let every line carry unused paint state. `DrawOp` answers the same
+pressure by a different route: each kind gets its own payload, so `Scrollbar`'s
+fourteen fields ride on the `Scrollbar` arm alone and `PopClip` declares no
+fields at all. What the two encodings disagree about is not dead fields but
+stride.
 
 **Second, exhaustiveness is not free.** `TYPES(M)` plus
 `static_assert(kNumOpTypes == TYPES(M))` is a manual reconstruction of what D's
@@ -323,8 +339,8 @@ against.
 36-arm `switch` written out by hand, precisely so a new op type breaks the
 build.
 
-**Third — and this qualifies
-[F2](./comparison.md)
+**Third — and this is the sharpest evidence in the survey for the second half of
+[F3](./comparison.md)
 — a closed sum type is a fixed-size cell, and that is exactly the cost Chromium
 routes around.** The union appears in the tree only once, at the deserialisation
 scratch buffer:
@@ -338,12 +354,36 @@ inline constexpr size_t kLargestPaintOpAlignedSize =
 ```
 
 Everywhere else — recording, playback, serialisation — an op occupies
-`ComputeOpAlignedSize<T>()` bytes and no more. A D `SumType!(FillRect, TextRun,
-Scrollbar, …)[]` would make every element the size of the largest member, which
-is the same waste as today's eighteen fields, merely type-safe about it. The
-transferable lesson is that reification wants **two** things: a closed tag for
-exhaustive dispatch, and per-op-sized storage. Chromium buys the second with an
-arena and pays for the first with macros.
+`ComputeOpAlignedSize<T>()` bytes and no more. Chromium's standing argument
+against `sparkles:ui`'s encoding is exactly this: `DrawOp` is
+`SumType!(FillRect, TextRun, Glyph, Line, Rule, Scrollbar, PushClip, PopClip)`,
+every element of a `DrawOp[]` is as wide as `TextRun` — the widest payload,
+which is what the `static assert(DrawOp.sizeof <= 64)` budget guards — and a
+`PopClip`, which carries no fields, costs what a text run costs. Chromium's
+position is that reification wants **two** things: a closed tag for exhaustive
+dispatch, and per-op-sized storage. It buys the second with an arena and pays
+for the first with macros.
+
+The price of taking that trade here is concrete. Per-op-sized storage means a
+`DrawOp` stops being a value: the display-list walk becomes an offset-and-tag
+cursor over `sparkles.ui.arena` bytes rather than a `foreach` over a slice, and
+`op.match!(…)` — with `final switch` exhaustiveness supplied by the compiler
+rather than by a `TYPES(M)` macro and a hand-written 36-arm switch — is replaced
+by a cast per arm. `visualOf` and the seventeen accessors on `DrawOp` all take
+a pointer of unknown arm instead of a sum, so each of them regains the
+"which arm is it" question that `DrawOp.kind` derives once. Most expensive of
+all, `RecordingCanvas`'s operations stop being pairwise comparable:
+the op-stream parity harness compares two collected `DrawOp[]`s element by
+element, which is a `==` on a sum type and nothing more.
+
+And the win is denominated in a browser's units, not the toolkit's. Chromium
+records a whole page's display list, rect-culls it through an rtree and ships it
+across a process boundary where every byte is written by hand and read back; a
+`sparkles:ui` frame is thousands of operations, and 4096 of them at the 64-byte
+budget is 256 KiB, bump-allocated once and reset. Variable stride
+buys nothing once the widest payload fits the budget, and it costs
+`RecordingCanvas` its pairwise-comparable value semantics — which the friction
+log lists under what did _not_ cause friction. The fixed cell stays.
 
 ## Q5 — sub-unit placement
 
@@ -359,10 +399,11 @@ heuristic over `draw_path_count_` / `draw_line_count_`, and exposes
 
 So the op carries **the same geometry plus a realisation strategy**, chosen by
 the recorder. That is
-[F5](./comparison.md)'s
-"name a fidelity, not a position" in a shipping codebase — with the twist that
-the strategy is a _hint on the op_, not a separate primitive, and that the
-producer can force it off.
+[F6](./comparison.md)'s
+"name a fidelity, not a position" in a shipping codebase — and it lands on the
+side F6 argues for, since float coordinates did not spare Chromium the choice,
+they only moved it onto the op. The twist is that the strategy is a _hint on the
+op_, not a separate primitive, and that the producer can force it off.
 
 ## Q6 — resolved appearance or semantic role
 
@@ -378,12 +419,18 @@ explicitly excluded from the wire — `// This field isn't serialized.` — beca
 the consumer that needs it (`DisplayItemList::CaptureContent`) is in the same
 process as the producer.
 
-This is a clean answer to friction §6: pay for one representation, and when a
-second consumer needs the semantic role, give that role a dedicated op or a
-side channel rather than a field on the hot path. `sparkles:ui` carries `slot`
-on all eighteen fields' worth of ops so that one backend — HTML — can re-derive
-class names; Chromium's equivalent would be a `SetSlotOp` in the stream, costing
-nothing when nobody emits it.
+This is a clean answer to friction §6 (a resolved appearance and a semantic role
+on every drawing op), and it is [F9](./comparison.md) argued from the largest
+codebase in the survey: pay for one representation, and when a second consumer
+needs the semantic role, give that role a dedicated op or a side channel rather
+than a field on the hot path. `sparkles:ui` stores `Slot` on six of the eight
+payloads — `PushClip` and `PopClip` carry none, and `DrawOp.slot` answers
+`Slot.inherit` for them — so that one interpreter, HTML, can re-derive class
+names from the role while the pixel backends read the resolved `Ink` beside it.
+Deriving `Visual` on demand through `visualOf` rather than storing one keeps
+that hedge cheap; it does not make it a decision. Chromium's equivalent would be
+a `SetSlotOp` bracketing a run in the stream, costing nothing when the HTML
+interpreter is not the consumer.
 
 ## Q7 — payload ownership across a process boundary
 
@@ -420,15 +467,26 @@ for our purposes, because it states the trade-off explicitly:
 > the TransferCache — [`paint_cache.h`][paint_cache]
 
 That is
-[F6](./comparison.md)
+[F8](./comparison.md)
 confirmed and then sharpened: reference counting and an identity-keyed cache are
 not alternatives, they are a _tier list_, and the tiering axis is the cost of
 maintaining the reference, not the cost of the payload.
 
-Friction §7 — `DrawOp.text` as a borrowed slice that cannot cross a thread — has
-no counterpart anywhere in `cc/paint`. The system that most needs cheap
-recording chose owning payloads and paid for a manual destructor table to get
-them.
+`sparkles:ui` sits inside F8's family rather than outside it. `TextRun.text` is
+a `const(char)[]` borrowed from a frame arena, and `CmdBuffer.textRun`
+**copies** into that arena, which is what makes a `scope` source safe.
+`FrameArena` bump-allocates over never-moving chunks, and `RecordingCanvas`
+interns on the collected heap so its operations outlive the call that drew them.
+What Chromium's tier list bears on is friction §7 (`DrawOp.text` is borrowed,
+and the borrow is not expressible): the arena copy answers _where the bytes
+live_, and leaves open the question `UI-O4` tracks — how long an operation may
+be retained, and by whom.
+The lifetime rule is stated on the type (_an operation is valid while the buffer
+that built it is alive and unreset_) and the buffer is move-only, so the rule is
+enforceable rather than advisory. But nothing in `cc/paint` asks a caller to
+observe a rule of that shape at all: the system that most needs cheap recording
+chose owning payloads and paid for a manual destructor table to get them, which
+is what lets a `PaintRecord` cross a thread with no negotiation.
 
 ## Q8 — can a backend ask the scene its extent?
 
@@ -450,17 +508,26 @@ _painter_ declared at `EndPaintOfUnpaired(visual_rect)` time. Blink knows each
 display item's visual rect because it computed the layout; it hands that rect
 over rather than making anyone re-derive it.
 
-This complicates
-[F7](./comparison.md). F7
-concluded that extent belongs to the surface and that a display list should not
-be self-describing. Chromium's scene _is_ self-describing, and the offscreen
-case F7 conceded ("a consumer that wants to size a surface to content") is not
-the marginal one here — it is tiled raster, the main path. The reconciliation is
-that Chromium does not make the _ops_ self-describing; it makes the _container_
-so, from producer-declared rects, and treats per-op bounds derivation as the
-lossy fallback. `skia-canvas-render.d` scanning every op's rect is precisely
-`PaintOp::GetBounds`, and Chromium's verdict on that technique is that it is
-conservative, incomplete, and worth having only as a backstop.
+This is
+[F7](./comparison.md)
+at its most emphatic, and on the pole F7 argues for. F7 separates surface,
+layout and ink extent and puts the real axis at maintained-at-construction
+versus derived-by-scan; Chromium maintains, and it maintains at the container
+rather than at the op. The offscreen case is not marginal here — it is tiled
+raster, the main path. Note what Chromium does _not_ do: the ops stay silent
+about their bounds, and per-op derivation is the lossy fallback.
+
+`sparkles:ui` is at the other pole on both counts. It has no `visual_rects_`
+equivalent anywhere in the stack: `buildDisplayList` emits operations with no
+rect declared alongside them, and none of the three containers that hold them —
+`CmdBuffer`, the display list, the arena the text is interned in — accumulates a
+bound as they are pushed, so none of the three can be asked what a finished
+stream covers. `CmdBuffer` answers `length` and a run's cell `measure`; painted
+bounds are whatever a consumer derives for itself by folding `op.rect`
+(friction §8, no extent query). `skia-canvas-render.d` scanning
+every operation's rect is precisely `PaintOp::GetBounds`, and Chromium's verdict
+on that technique is that it is conservative, incomplete, and worth having only
+as a backstop.
 
 ## Strengths
 
@@ -513,54 +580,81 @@ removed` about `imageInfo()`.
 
 ## Bearing on the proposal
 
-1. **Keep the reified stream, and drop the tag-plus-eighteen-fields encoding —
-   but do not assume a `SumType` array is the fix.** F2 recommends re-encoding
-   `DrawOp` as a sum type; Chromium's evidence is that per-op structs plus
-   _variable-stride storage_ is what removes the waste, and that a fixed-size
-   cell (`LargestPaintOp`) is the thing to keep out of the hot path. A D
-   `SumType!(…)[]` is that fixed-size cell. If `sparkles:ui` adopts a sum type,
-   it should be honest that the win is representability (illegal states
-   unrepresentable, `==` compares only what is live), not size — and the size
-   win needs an arena. **This qualifies F2.** (friction §4)
+1. **`DrawOp`'s closed sum is a fixed-size cell, and Chromium's position is that
+   per-op structs in variable-stride storage are the encoding that earns its
+   keep.** The mechanism is `ComputeOpAlignedSize<T>()`: an op occupies its own
+   size everywhere except the deserialisation scratch buffer, where
+   `LargestPaintOp` appears exactly once and is treated as a cost to be
+   contained. Aimed at `sparkles:ui`, the argument is that every element of a
+   `DrawOp[]` should cost the width of what it holds rather than the width of
+   `TextRun`. The price is
+   the whole value semantics: the display-list walk becomes a tag-and-offset
+   cursor, `op.match!` and its `final switch` exhaustiveness become a cast per
+   arm, `visualOf` and the seventeen accessors take a pointer of unknown arm,
+   and `RecordingCanvas`'s collected operations stop comparing pairwise — which
+   is how the op-stream parity harness works. **Answered: variable stride buys
+   nothing once the widest payload fits the 64-byte budget, and it costs
+   `RecordingCanvas` its pairwise-comparable value semantics, which the friction
+   log lists among the things that are working.** The trade reads differently at
+   4096 operations bump-allocated and reset than at a browser's millions copied
+   across a process boundary. This is the strongest statement of the
+   variable-stride side of F3; the toolkit takes the other side knowingly.
+   (friction §4, the encoding is neither `@safe` nor variable-width)
 2. **Answer friction §3 with `DrawScrollingContentsOp`'s shape, not Slint's.**
    Emit `scrollbar` as an identity plus a rail rect, and look
    `barContent`/`barViewport`/`barOffset`/`expandPercent` up from a
    paint-params struct at interpretation time — exactly as Chromium resolves
-   scroll offsets from `PlaybackParams`. Eight fields leave `DrawOp`, the
-   semantics survive, and `scrollbarThumb` stays the single formula.
-   **This complicates F3**, which framed the choice as semantic-vs-primitive and
-   then as who-degrades; there is a third answer. (friction §3)
+   scroll offsets from `PlaybackParams`. Twelve of the `Scrollbar` payload's
+   fourteen fields leave the arm along with the eight `bar*` accessors that read
+   them, the semantics survive, and `scrollbarThumb` stays the single `STM2`
+   formula. It saves no bytes — `TextRun` is the widest payload either way.
+   **This complicates F4**, which lists six places a lowering can live; playback
+   against a caller-supplied params struct is a seventh.
+   (friction §3, `scrollbar` is a widget concept in the drawing seam)
 3. **Move `measure` off the canvas — the strongest result in the survey just got
    a fifth unanimous vote, from the subject under the most pressure.** Chromium
    does not merely relocate measurement; it makes text arrive pre-shaped, so the
-   seam never asks. (F1, friction §1)
+   seam never asks. (F1, friction §1, `measure` is denominated in cells)
 4. **Carry a realisation strategy on the op, and let the recorder choose it.**
-   `DrawLineOp::draw_as_path` plus `DisableLineDrawingAsPaths()` is F5's
+   `DrawLineOp::draw_as_path` plus `DisableLineDrawingAsPaths()` is F6's
    "fidelity, not position" already shipping, in the form of a hint field with a
-   producer-side override. A `rule` op carrying a fidelity enum rather than a
-   `RuleEdge` compass follows the same pattern. (F5, friction §5)
-5. **Drop `slot` from every op; give the semantic role its own op.** Chromium
-   pays for resolved appearance only, and routes identity through `SetNodeIdOp`,
-   `AnnotateOp` and `ElementId`. A `SetSlotOp` (or a slot-run bracket) costs
-   nothing when the HTML interpreter is not the consumer. (F6-adjacent, friction §6)
-6. **Own the text payload; the borrow is indefensible at this scale.** No op in
-   `cc/paint` borrows anything, in the system whose entire reason for existing is
-   cheap recording. Chromium's tier list — inline / refcount / identity-keyed
-   client cache / transcode — is the menu, and the selection axis is the cost of
-   maintaining the reference, not the size of the payload. (F6, friction §7)
-7. **Reconsider F7's conclusion that extent belongs to the surface.** Chromium's
-   scene answers its own extent (`DisplayItemList::bounds()`), and does so
-   because the _producer_ declares each item's visual rect while emitting it —
-   which `sparkles:ui`'s layout pass already knows. Recording a rect alongside
-   each op group during `buildDisplayList` is cheaper and more exact than any
-   backend-side scan, and it is what makes rect-culled partial replay possible
-   later. **This contradicts F7.** (friction §8)
+   producer-side override — from a subject whose coordinates are floats, which
+   is F6's point. A `Rule` payload carrying a fidelity enum rather than a
+   `RuleEdge` compass follows the same pattern.
+   (F6, friction §5, sub-cell placement as a compass direction)
+5. **Drop `Slot` from the six payloads that store one; give the semantic role
+   its own op.** Chromium pays for resolved appearance only, and routes identity
+   through `SetNodeIdOp`, `AnnotateOp` and `ElementId`. A `SetSlotOp` (or a
+   slot-run bracket) costs nothing when the HTML interpreter is not the
+   consumer, and `DrawOp.slot` — which already answers `Slot.inherit` for the
+   two clip payloads — would answer it for a stream nobody bracketed.
+   (F9, friction §6, a resolved appearance and a semantic role on every drawing
+   op)
+6. **Price the retain boundary from Chromium's tier list, not from the copy.**
+   No op in `cc/paint` borrows anything, in the system whose entire reason for
+   existing is cheap recording. `sparkles:ui`'s frame arena is a copy, so it is
+   inside F8's family; what it does not answer is how long an operation may be
+   retained and by whom, which is the open half of `UI-O4`. Chromium's tiers —
+   inline / refcount / identity-keyed client cache / transcode — are the menu,
+   and the selection axis is the cost of maintaining the reference, not the size
+   of the payload. (F8, friction §7, `DrawOp.text` is borrowed, and the borrow
+   is not expressible)
+7. **Maintain extent at construction, the way F7 argues.** Chromium's scene
+   answers its own extent (`DisplayItemList::bounds()`), and does so because the
+   _producer_ declares each item's visual rect while emitting it — which
+   `sparkles:ui`'s layout pass already knows. Recording a rect alongside each op
+   group during `buildDisplayList` is cheaper and more exact than folding
+   `op.rect` on the backend side, and it is what makes rect-culled partial
+   replay possible later. **This is F7's strongest confirmation.**
+   (F7, friction §8, no extent query)
 8. **Declare content predicates on the display list, not capabilities on the
    backend.** `AnalyzeAddedOp`'s `has_draw_text_ops_` / `has_non_aa_paint_` bits
    are computed for free at push time and let a consumer decide policy without
-   re-walking. That is a cheaper half of F4's ask than a capability protocol, and
-   it composes with the optional-primitive bargain the friction log wants kept.
-   (F4, friction §2)
+   re-walking. That is a cheaper half of F5's ask than a capability protocol, and
+   it composes with the optional-primitive bargain the friction log wants kept —
+   the four probed primitives (`rule`, `scrollbar`, `pushClip`, `popClip`) each
+   already have a stated degradation; what `isCanvas` does not state is that they
+   exist. (F5, friction §2, five methods, eight kinds)
 
 ## Sources
 

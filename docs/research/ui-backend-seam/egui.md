@@ -72,9 +72,13 @@ So egui does not merely keep measurement off the backend — it resolves text
 completely before the backend exists, and hands over triangles. A backend
 _cannot_ measure text, because by the time it is involved there is no text.
 
-That is the fourth independent subject in this survey to put measurement
-somewhere other than the painter, and the most emphatic. Friction §1 is not a
-close call.
+That is the most emphatic of the subjects that put measurement somewhere other
+than the painter, and it leaves [F1](./comparison.md) with no closer dissent
+here. Friction §1 is the same decision taken the other way:
+`Size measure(const(char)[])` is one of the five methods `isCanvas` requires,
+and its answer is denominated in cells — so `SkiaCanvas.measure` returns
+`cellsOf(text)`, and the backend with real shaping, kerning and fallback is
+structurally forbidden from using any of it.
 
 ## Q2 — no capability negotiation, because there is nothing to negotiate
 
@@ -95,18 +99,31 @@ shapes, not as a variant a backend must interpret. egui therefore sits with
 even the primitive vocabulary is gone by the time the seam is reached, since
 `ClippedPrimitive` carries a mesh.
 
+On [F4](./comparison.md)'s axis — _where the lowering lives_ — egui puts every
+lowering above the seam, in the producer. `sparkles:ui` splits the same axis:
+`fillRect`, `textRun`, `glyph` and `line` are primitives, but the optional
+`scrollbar` hands a backend content extent, viewport extent, offset, an edge and
+two fallback glyphs, precisely so a cell target can decide for itself what a
+scrollbar degrades to (friction §3). egui never faces that case, because it
+admits one target class and can therefore afford to decide everything once.
+
 ## Q4 — a sum type
 
 Unlike Slint and Qt, egui's paint vocabulary is **reified as a sum type**
 rather than dispatched through virtual methods. `Shape` is an enum whose
-payload varies per variant, which is exactly the shape friction §4 wants for
-`DrawOp` and exactly what `sparkles.input.events` already argues for.
+payload varies per variant — the same encoding `DrawOp` uses, a `SumType` over
+eight per-kind payloads dispatched by `match!`, and the one
+`sparkles.input.events` already argues for.
 
 Worth noting what this buys egui that inheritance does not: shapes are values,
-so they can be collected, transformed, culled and replayed. That is the same
-property `RecordingCanvas` and the op-stream parity harness need — which
-confirms our reified-command choice was right and only its _encoding_ (a tag
-plus eighteen mostly-dead fields) is wrong.
+so they can be collected, transformed, culled and replayed. Those are exactly
+the properties `RecordingCanvas` and the op-stream parity harness are built on,
+which is the case [F3](./comparison.md) makes for reifying the stream at all and
+[F12](./comparison.md) makes for keeping the reified value inspectable rather
+than treating it as a golden. What egui leaves unsettled is what F3 leaves
+unsettled: a closed sum rules out illegal combinations and keeps values
+comparable, while how much each variant costs in storage is a separate question
+the sum does not answer.
 
 `Shape::Callback` is the escape hatch: backend-specific painting, for the cases
 the vocabulary cannot express. A closed sum type with one explicit door — and
@@ -117,8 +134,10 @@ Two encoding details are worth copying: `Shape::Vec(Vec<Self>)` makes the
 stream a tree where nesting helps and is documented as the slower path
 ("[f]or performance reasons it is better to avoid it"), and `Shape::Mesh` is
 `Arc`-wrapped explicitly "to minimize the size of `Shape`" — the variant's
-payload size is treated as a design parameter, which is the discipline
-`DrawOp`'s 656-byte era lacked.
+payload size is treated as a design parameter. `DrawOp` states the same
+parameter outright, as `static assert(DrawOp.sizeof <= 64)` with `TextRun` as
+the widest payload; egui meets it by moving the one wide payload behind a
+pointer, which is a second way of buying the same discipline.
 
 ## Q5 — sub-unit placement
 
@@ -126,7 +145,15 @@ Continuous coordinates; no sub-unit problem. `Shape`'s own documentation fixes
 the unit — "[c]oordinates are all screen space points (not physical pixels)" —
 and `ClippedPrimitive` repeats it ("[e]verything is using logical points"), so
 the device-pixel conversion is the backend's and the toolkit never names a
-position within a cell. Same dissolution of friction §5 as Slint and Qt.
+position within a cell.
+
+That is the relocation [F6](./comparison.md) describes, not a dissolution: what
+a hairline lands on still has to be decided, and egui decides it in the backend,
+where `pixels_per_point` lives. `sparkles:ui` decides it in the vocabulary
+instead — `rule` names an edge (`RuleEdge.top`, `centerX`, …) and each backend
+chooses what a band along that edge means, so `SkiaCanvas` draws one device
+pixel where `GridCanvas` fills a whole cell. Six predefined positions is the
+whole spelling, which is friction §5.
 
 ## Q6 — resolved or semantic styling
 
@@ -134,8 +161,14 @@ Fully resolved — colours are concrete by tessellation time. The one deferred
 piece is deliberately narrow: `Color32::PLACEHOLDER` inside a `Galley` marks
 "colour not yet chosen", resolved at paint time by `TextShape::fallback_color`.
 That is a sentinel value inside an otherwise-resolved payload rather than a
-second, semantic representation carried alongside — which is a much cheaper
-answer to friction §6 than our `visual` _plus_ `slot`.
+second, semantic representation carried alongside — one of the seven cheaper
+encodings [F9](./comparison.md) counts, none of which our seam takes. Six of
+the eight `DrawOp` payloads store a `Slot` beside the resolved
+fields their primitive paints from, so a pixel backend reads the resolved half
+while the HTML interpreter re-resolves from the role to emit class names, and
+every operation pays for both (friction §6). Reconstructing `Visual` on demand
+through `visualOf` keeps that hedge cheap without making it a decision; egui
+shows that for colour a sentinel can retire the second channel entirely.
 
 ## Q7 — payload ownership
 
@@ -143,6 +176,17 @@ answer to friction §6 than our `visual` _plus_ `slot`.
 (`TextShape::galley: Arc<Galley>`), so payloads are **reference-counted rather
 than borrowed**. A shape can outlive the frame that built it without the
 toolkit interning anything.
+
+`DrawOp` answers the same question by borrowing. `CmdBuffer.textRun` copies the
+run into a frame arena and the operation holds a `const(char)[]` into it, under
+a rule stated on the type — _an operation is valid while the buffer that built
+it is alive and unreset_ — which is what makes it enforceable rather than
+advisory. It is still a borrow: the operation cannot cross a thread and cannot
+be retained past the frame, and it needs the private `launder` cast to escape
+`dip1000` at all. That is friction §7, and the retain boundary `UI-O4` holds
+open. [F8](./comparison.md) counts eight ownership mechanisms across the survey
+and no subject that borrows a payload across a frame; egui's refcount is the
+cheapest of the eight to adopt.
 
 The caveat egui states explicitly is a validity rule, not a lifetime one: a
 stored `Shape::Text` must be recreated when `pixels_per_point` changes or when
@@ -153,9 +197,15 @@ invalidation rule.
 ## Q8 — extent query
 
 `ClippedPrimitive` carries its own clip rect; extent falls out of the
-primitives, as in our §8 workaround. There is no "how big is the scene" query
-on the seam, because the frame is always painted into a surface whose size the
-host already set.
+primitives, the way `skia-canvas-render.d` folds `op.rect` across a stream
+because nothing on `CmdBuffer` or the display list reports one — `CmdBuffer`
+exposes an operation count and a run's cell extent, and no more (friction §8).
+There is no "how big is the scene" query on the seam, because the frame is
+always painted into a surface whose size the host already set.
+
+That is [F7](./comparison.md)'s split in miniature: the surface question is
+answered by the host, the ink question is derived by a scan, and neither is
+maintained at construction.
 
 ## Strengths
 
@@ -182,7 +232,7 @@ host already set.
 - **`Shape::Vec` makes the stream a tree** whose flattening cost is real enough
   that the docs discourage it.
 - **`Shape::Callback` is unportable by construction** — a frame that uses one
-  is no longer backend-neutral.
+  is not backend-neutral.
 - **Nothing states which backend behaviours are required**, because the
   question is assumed away rather than answered.
 
@@ -194,27 +244,35 @@ host already set.
 | **Tessellate inside the toolkit**; the seam carries meshes    | The narrowest possible backend contract; identical output across wgpu, glow and WebGL             | Excludes every non-triangle target — a cell grid can never be a backend                             |
 | A **12-variant `enum`**, not virtual dispatch                 | Shapes are values: collect, transform, cull, compare                                              | The vocabulary is closed; a new primitive is a breaking change to the enum                          |
 | `Arc<Mesh>` / `Arc<Galley>` rather than borrowed slices       | No lifetime obligation; a payload may outlive its frame                                           | Refcount traffic per frame, and sharing hides staleness                                             |
-| One **escape hatch** (`Shape::Callback`) with a typed context | Backend-specific painting stays possible without widening the vocabulary                          | A frame containing one is no longer portable, and parity testing cannot cover it                    |
+| One **escape hatch** (`Shape::Callback`) with a typed context | Backend-specific painting stays possible without widening the vocabulary                          | A frame containing one is not portable, and parity testing cannot cover it                          |
 | **Logical points** at the seam, device pixels in the backend  | Layout stays resolution-independent; the backend owns `pixels_per_point`                          | Anything pixel-exact (hairlines, snapping) is not expressible at the seam                           |
 | Late colour via **`Color32::PLACEHOLDER`**                    | Theming without carrying a second, semantic style channel                                         | A magic sentinel inside the payload; nothing type-checks that it was substituted                    |
 | **No capability negotiation at all**                          | Triangles are the floor of every target egui admits                                               | The model gives no guidance whatsoever for a survey subject like ours that spans unlike devices     |
 
 ## Bearing on the proposal
 
-1. **A sum type is the right encoding for a reified command** — and egui shows
-   the reification itself is worth keeping, which our own tooling depends on.
-2. **Reference-counted payloads** are a lighter answer to §7 than interning:
-   share the payload, do not index into a host table.
-3. **One explicit escape hatch** (`Callback`) beats an open-ended optional
-   method set — it makes "the vocabulary cannot express this" a visible,
-   contained case rather than a silently skipped op.
+1. **A sum type is the right encoding for a reified command** — egui is a
+   second subject standing where `DrawOp` stands, and it shows the reification
+   itself is worth keeping, which `RecordingCanvas` and the parity harness
+   depend on ([F3](./comparison.md), [F12](./comparison.md)).
+2. **Reference-counted payloads** are a lighter answer to §7 than a frame
+   arena: share the payload, and the retain question stops being a question
+   without a lifetime rule the type system cannot express.
+3. **One explicit escape hatch** (`Callback`) is a visible, contained case
+   where "the vocabulary cannot express this" is otherwise a silence. Our four
+   optional primitives — `rule`, `scrollbar`, `pushClip`, `popClip` — each name
+   a degradation, but they are discovered by `__traits(compiles)` at the
+   interpreter's call sites rather than declared anywhere a backend author can
+   read (friction §2). [F5](./comparison.md) says the declaration is cheap.
 4. The geometry model itself is **not** available to us, and the reason is
    worth recording: it moves all fidelity decisions above the seam, which a
    terminal backend cannot honour.
 5. **A shared payload needs a stated invalidation rule, not just a refcount.**
-   If `sparkles:ui` adopts shared text or image payloads for §7, it must also
+   If `sparkles:ui` takes shared text or image payloads for §7, it must also
    say what makes one stale — egui names dpi changes and atlas rebuilds, and
    that rule lives in prose, which is where ours would rot.
+   [F11](./comparison.md) is the counterweight: state the contract on the type,
+   the way the buffer-alive-and-unreset rule is stated, and derive the rest.
 
 ## Sources
 

@@ -151,8 +151,8 @@ The unit is `Double` — the same unit as `Point`, `Rect` and `Size`
 ([`BasicTypes.hs`][basictypes]) — so there is no translation problem, because
 the measurer is the authority and layout adopts its answer.
 
-This is a fifth independent confirmation of **F1**, in its strongest form yet:
-not merely "measurement lives elsewhere" but "measurement is a separate
+This is an independent confirmation of **F1**, in the strongest form the survey
+records: not merely "measurement lives elsewhere" but "measurement is a separate
 _backend_, with its own C implementation, deliberately severed from the
 painter's context".
 
@@ -182,8 +182,15 @@ supertrait-extending `text::Renderer`, `image::Renderer` and `svg::Renderer`
 ([`core/src/text.rs`][iced-text]), so a backend implements the subset it
 supports and the type system records which. [Slint][slint] uses one trait with
 defaults, so absence is silent but recoverable. Monomer uses one record, so
-absence is not expressible at all. `isCanvas` is closest to Slint —
-and has neither Iced's decomposition nor Monomer's exhaustiveness.
+absence is not expressible at all. `isCanvas` is closest to Slint: it names five
+methods, and four further primitives — `rule`, `scrollbar`, `pushClip`,
+`popClip` — are probed with `__traits(compiles)` at their interpreter call
+sites, each with a degradation the interpreter spells out beside the probe
+(`ruleEndpoints` plus a cell-aligned `line`; `paintScrollbarCells`
+glyph-per-cell; and nothing at all for the clip pair, since the display list has
+already culled the hidden subtrees). Absence is therefore recoverable, as in
+Slint. What the concept has is neither Iced's decomposition nor Monomer's
+exhaustiveness: the four are recoverable but undeclared.
 
 The price is visible in the test utilities, where `mockRenderer` must spell out
 all 45 fields to say "do nothing" ([`TestUtil.hs`][testutil]):
@@ -207,10 +214,10 @@ suited for pure OpenGL/Vulkan/Metal" and demonstrated in
 lacks bypasses the record and talks to the GPU API directly, which silently
 welds the seam to whichever backend is live.
 
-This sharpens **F4** rather than contradicting it. Monomer's floor is 100% of
-the surface, its negotiable set is empty, and its degradation story is "escape
-to raw GL". That is a coherent point in the design space, and it is only
-liveable because exactly one backend exists.
+This sharpens **F5** rather than contradicting it. Monomer's floor is the entire
+surface, its defaulted set is empty, nothing is refusable, and its degradation
+story is "escape to raw GL". That is a coherent point in the design space, and
+it is only liveable because exactly one backend exists.
 
 ## Q3 — semantic widgets or primitives?
 
@@ -244,16 +251,18 @@ cost no backend anything. The counterpart is that no backend can specialize one.
 would receive "box gradient", not "shadow", and could not degrade it.
 
 > [!NOTE]
-> This complicates [`comparison.md`][comparison]'s **F3** axis of _who
-> degrades_ — backend (Slint) or framework (Qt). Monomer is a third answer:
-> **nobody degrades**, because the helper layer is written once against a fixed
-> primitive set that is assumed present. It is the cheapest option available
-> and it is available only to a single-backend project. `sparkles:ui` cannot
-> take it, but it should notice that the choice of _encoding_ (value vs. vtable)
-> is what decides whether semantic operations must sit inside the seam. Slint
-> puts `draw_box_shadow` in the trait partly because a trait is where a Rust
-> project puts overridable behaviour; a record lets the same operation sit
-> outside without losing dispatch.
+> [`comparison.md`][comparison]'s **F4** puts the question not at
+> semantic-versus-primitive but at _where the lowering lives_, and Monomer
+> occupies the cheapest arm on that list: **nobody lowers in the seam**, because
+> the helper layer is written once against a fixed primitive set that is assumed
+> present. It is available only to a single-backend project. `sparkles:ui`
+> cannot take it, but it should notice that the choice of _encoding_ (value vs.
+> vtable) is what decides whether semantic operations must sit inside the seam.
+> Slint puts `draw_box_shadow` in the trait partly because a trait is where a
+> Rust project puts overridable behaviour; a record lets the same operation sit
+> outside without losing dispatch. `scrollbarThumb` lives in `sparkles.ui.state`
+> and not in any backend, so the toolkit takes Monomer's arrangement for the
+> geometry and Slint's for the primitive that paints it.
 
 ## Q4 — command shape
 
@@ -289,10 +298,13 @@ diffed, culled, serialised, golden-tested or moved to another thread. It is
 exactly what `RecordingCanvas` and the op-stream parity harness rely on, minus
 the data.
 
-That supports **F2** from the other side. Slint, Qt and [Notcurses][notcurses] show that not
-reifying is workable; [egui][egui] shows that reifying as a sum type gives you
-everything; Monomer shows the degenerate middle — reification whose payload is
-a function is reification you cannot use.
+That supports **F3** from the other side. F3 holds that reifying the stream is
+the right call and leaves the _encoding_ a live trade; Monomer marks the floor
+of that trade. Slint, Qt and [Notcurses][notcurses] show that not reifying is
+workable; [egui][egui] shows that reifying as a closed sum gives you everything,
+which is the shape `DrawOp` has — a `SumType` over eight plain-data payloads;
+Monomer shows the degenerate middle. Reification whose payload is a function is
+reification you cannot use, which is exactly the boundary **F12** draws.
 
 ## Q5 — sub-unit placement
 
@@ -305,10 +317,12 @@ a function is reification you cannot use.
 offset arithmetically as `max 1.5 (unFontSize _tlFontSize / 20)`
 ([`Drawing.hs`][drawing]).
 
-Same verdict as Slint, Qt and egui, so **F5** stands unchanged: `RuleEdge` is a
-symptom of integer cell coordinates. Monomer adds nothing new here except a
-reminder that once coordinates are continuous, "sub-unit chrome" stops being a
-seam question and becomes arithmetic in a helper function.
+Same verdict as Slint, Qt and egui, and it is **F6** in miniature: continuous
+coordinates do not dissolve the sub-unit question, they relocate it. Monomer
+needs no `RuleEdge` analogue because no position has to be named at the seam —
+but the fidelity policy still has to be written down, and it lands in a helper
+as `max 1.5 (…)`, a clamp chosen so a hairline survives at small sizes. The
+seam sheds the enumerators; the decision they encode moves one layer up.
 
 ## Q6 — resolved appearance, semantic role, or both
 
@@ -330,9 +344,14 @@ HTML-like backend. `_weTheme` sits in `WidgetEnv`, so role-to-colour resolution
 happens in the widget, once, per frame.
 
 Monomer therefore pays for one representation, as Slint and Qt do. It is a
-third confirmation that carrying both `visual` and `slot` on every op
-([friction §6][friction]) is a cost incurred by our HTML interpreter
-specifically, not by the general problem.
+third confirmation that carrying a resolved appearance beside a semantic role
+([friction §6][friction]) is a cost our HTML interpreter incurs specifically,
+not one the general problem imposes. The toolkit already keeps the cheaper half
+of that bargain — a payload stores only the resolved fields its own primitive
+paints from, and `DrawOp.visual` reconstructs a `Visual` on demand rather than
+storing one — but `Slot` rides on six of the eight payloads, and Monomer's
+answer is that a project with a single target class never needs the second
+representation at all.
 
 ## Q7 — payload ownership, and crossing the frame
 
@@ -381,12 +400,17 @@ backend.
 
 This is a complete, working answer to the question M7/T5 raises, and it answers
 it by **not** moving a command stream across the thread boundary at all.
-Combined with **F6**: share payloads by reference count, keep GPU handles in one
-thread, move the immutable scene rather than the commands.
+Combined with **F8**: every ownership mechanism in the survey copies,
+reference-counts or arena-allocates, and none hands a payload across a frame.
+`CmdBuffer.textRun` copies each run into a frame arena, which puts the toolkit
+squarely inside that set; what Monomer adds is the arrangement above it — keep
+the GPU handles on one thread, and move the immutable scene rather than the
+commands.
 
 ## Q8 — extent query
 
-**Absent from the renderer, present in layout — exactly F7's split.** The
+**Absent from the renderer, present in layout — two of F7's three questions,
+answered in different modules.** The
 surface's size is pushed in: `beginFrame :: Double -> Double -> IO ()`, called
 from `renderWidgets` with values obtained from SDL (`getViewportSize window dpr`,
 [`Main/Core.hs`][maincore]). `WidgetEnv` separately carries `_weWindowSize` and
@@ -396,9 +420,14 @@ Content extent is a first-class **layout** query instead:
 `widgetGetSizeReq :: WidgetEnv s e -> WidgetNode s e -> (SizeReq, SizeReq)`,
 where a `SizeReq` is `fixed`/`flex`/`extra`/`factor` in `Double`
 ([`StyleTypes.hs`][styletypes]). So "how big is this content" is answerable
-without a painter, and "how big is the surface" is answered by whoever created
-the surface. **F7** is confirmed by a subject that keeps the two questions in
-different modules and different type signatures.
+without a painter, "how big is the surface" is answered by whoever created the
+surface, and ink extent is asked by nobody. **F7** is confirmed by a subject
+that keeps the questions in different modules and different type signatures.
+Both of its answers are maintained at construction; neither is derived by a
+scan. That is F7's second axis, and it is the one `sparkles:ui` answers the
+other way — nothing on `CmdBuffer`, the display list or the arena reports the
+extent of a built stream, so a caller that needs painted bounds folds `op.rect`
+itself ([friction §8][friction]).
 
 ## Strengths
 
@@ -447,47 +476,58 @@ different modules and different type signatures.
 ## Bearing on the proposal
 
 1. **F1 holds, and Monomer prices it.** Moving `measure` off `isCanvas`
-   ([friction §1][friction]) is backed by five of five surveyed subjects. The
-   new warning: once measurement and painting are different objects, keeping
+   ([friction §1][friction]) has the weight of the survey behind it. The warning
+   Monomer adds: once measurement and painting are different objects, keeping
    them coherent under scale is an unenforced obligation. Put the scale/DPR
    argument _in_ the metrics type rather than repeating it at call sites.
 2. **A stated contract and optional primitives are in direct tension, and
-   `isCanvas` has neither.** Monomer answers [friction §2][friction] perfectly
-   by abolishing optionality; Qt buys optionality by declaring features. A DbI
-   concept can have both — but only if the optional set is _written down_
-   instead of discovered by `__traits(compiles)` at interpreter call sites.
-   That is the concrete shape of **F4**'s "floor plus negotiable set".
+   `isCanvas` states one of them.** Monomer answers [friction §2][friction]
+   perfectly by abolishing optionality; Qt buys optionality by declaring
+   features. A DbI concept can have both — the four optional primitives each
+   carry a stated degradation already, written beside the probe; what is absent
+   is the declaration naming which four they are, rather than leaving them to be
+   discovered from `__traits(compiles)` at interpreter call sites. That is the
+   concrete shape of **F5**'s floor / defaulted / refusable ladder, and D has a
+   construct for every rung.
 3. **Reject the escape hatch.** `createRawTask` is what a seam grows when it
    cannot say "this backend can do more"; an equivalent would destroy the
    backend parity the op-stream harness exists to defend.
-4. **Semantic operations need not live inside the seam** — this complicates
-   **F3**. Monomer keeps `scrollbar` out entirely and still shares one
-   implementation, because helpers take the backend as a parameter.
-   `scrollbarThumb` already computes our geometry once, so a free function
-   `paintScrollbar(ref canvas, …)` over the primitive ops would remove eight of
-   `DrawOp`'s eighteen fields ([friction §3][friction], §4). The price is
-   Monomer's — no per-backend degradation — and _that_ is the real decision,
-   not "semantic versus primitive". A cell backend that must degrade
-   differently is the argument for keeping it in, and should be made on those
-   terms.
+4. **Semantic operations need not live inside the seam** — which is **F4**'s
+   point that the axis is where the lowering lives. Monomer keeps `scrollbar`
+   out entirely and still shares one implementation, because helpers take the
+   backend as a parameter. `scrollbarThumb` computes the geometry once in
+   `sparkles.ui.state`, so a free function `paintScrollbar(ref canvas, …)` over
+   the primitive ops would retire a whole arm — the fourteen-field `Scrollbar`
+   payload, the eight accessors no other arm can answer, and one `match!` arm in
+   every walker ([friction §3][friction]). It would not make an operation
+   narrower, since the widest payload is `TextRun` and the budget is measured
+   against that (§4); the saving is arm count, not bytes. The price is
+   Monomer's — no per-backend degradation — and _that_ is the real decision, not
+   "semantic versus primitive". A cell backend that must degrade differently is
+   the argument for keeping it in, and should be made on those terms.
 5. **Do not reify actions; reify data or nothing.** The overlay queue is the
-   cautionary case for **F2**: closures give ordering and foreclose everything
-   else. If `DrawOp` becomes a `SumType`, keep it a value with no callable
-   payload.
+   cautionary case for **F3**: closures give ordering and foreclose everything
+   else. `DrawOp`'s eight payloads are plain data with no callable member, and
+   that is the property to defend — **F12**'s point that reification pays only
+   while the value stays inspectable.
 6. **For M7/T5, move the scene, not the commands.**
    `Either Renderer (TChan (RenderMsg s e))` keeps the GPU handle on one thread
    and ships an immutable widget tree to it, with disposal as a routed request.
-   That dissolves [friction §7][friction] without interning strings or making
+   That dissolves [friction §7][friction] without widening the borrow or making
    `DrawOp` sendable — available to us because our display list is already
-   built by a pure function.
+   built by a pure function. `UI-O4` asks the retain-boundary question directly,
+   and this is one shape of answer to it.
 7. **A value-shaped seam is worth only what you do with it.** The strongest
    argument for a record — trivial mocking, decoration, recording — is
    unexercised here, while `RecordingCanvas` delivers the same property under a
-   structural concept and is actually used. Keep the DbI encoding; the friction
-   log was right that this is not the problem.
-8. **F7 is confirmed again**: extent belongs to the surface, content extent to
-   layout. `widgetGetSizeReq` is the layout query [`comparison.md`][comparison]
-   recommends, already shipping.
+   structural concept, interns its text on the collected heap so the ops outlive
+   the call that drew them, and is actually used. Keep the DbI encoding; the
+   friction log is right that this is not the problem.
+8. **F7's split is confirmed again**: surface extent belongs to whoever made the
+   surface, content extent to layout, and Monomer maintains both at
+   construction rather than scanning for either. `widgetGetSizeReq` is the
+   layout query [`comparison.md`][comparison] recommends, already shipping;
+   [friction §8][friction] is where the toolkit still scans instead.
 
 ## Sources
 

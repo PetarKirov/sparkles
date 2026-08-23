@@ -75,11 +75,12 @@ an artifact of our unusual constraint; it is the ordinary answer.
 Callers ask `hasFeature(...)`, which is a one-line mask test against the
 engine's own `gccaps` ([`qpaintengine.h`][engineh]).
 
-This is precisely the shape `sparkles:ui` lacks. Our `isCanvas` checks five
-methods while `OpKind` has eight kinds, and the remaining three are discovered
-by `__traits(compiles)` at each interpreter call site. A backend author cannot
-learn the contract from the concept, and `static assert(isCanvas!T)` passing
-says less than it appears to.
+This is precisely the shape `sparkles:ui` lacks. `isCanvas` checks five methods
+— `fillRect`, `textRun`, `glyph`, `line`, `measure` — while `DrawOp` has eight
+arms, and the four optional primitives (`rule`, `scrollbar`, `pushClip`,
+`popClip`) are discovered by `__traits(compiles)` at each interpreter call site
+instead. A backend author cannot learn the contract from the concept, and
+`static assert(isCanvas!T)` passing says less than it appears to.
 
 **The more interesting half is what Qt does with the answer.** When a feature
 is absent, `QPainter` does not simply degrade at the call site — it _emulates_
@@ -89,16 +90,22 @@ backend.
 
 Two features are exempt: `AlphaBlend` and `PorterDuff` cannot be emulated. So
 Qt's model is not "every capability is optional" but "these are optional and
-the framework covers them; these are floor requirements". That distinction is
-the missing piece in our own optional-primitive story, where `rule`,
-`scrollbar` and the clip pair are all "optional" with no statement of which are
-genuinely negotiable.
+the framework covers them; these are floor requirements". Our own optional
+primitives each state a degradation — `rule` falls back to `ruleEndpoints` plus
+a cell-aligned `line`, `scrollbar` to `paintScrollbarCells` glyph by glyph, the
+clip pair to nothing at all, because the display list has already culled the
+hidden subtrees — but they state it where the interpreter probes for them
+rather than in one declaration, they sit in a single tier below a floor that is
+implicit in which five methods `isCanvas` happens to check, and none of them
+lets a backend supply the method and then decline a particular request
+([F5](./comparison.md)).
 
 Worth noting against friction §2 honestly: a flag enum only describes
 capabilities the framework already knows how to emulate or route around. It
-does not solve "which methods must exist", which is what `isCanvas` gets wrong.
-Qt sidesteps that by using an abstract base class — the method set is the class,
-and only _quality_ is negotiable.
+does not solve "which methods must exist" — and that, rather than optionality
+itself, is what the concept and the interpreter disagree about
+([F11](./comparison.md)). Qt sidesteps it by using an abstract base class — the
+method set is the class, and only _quality_ is negotiable.
 
 > [!IMPORTANT]
 > Qt itself later abandoned this model rather than extending it. Read
@@ -117,9 +124,18 @@ Slint on Q3, and the pair brackets the design space: Slint tells the backend
 _what a thing is_ so it can degrade knowingly; Qt tells it _what shape to fill_
 and emulates anything the backend cannot manage.
 
-Both work. What distinguishes them is where the degradation logic lives — in
-the backend (Slint) or in the framework (Qt) — which is a more useful axis than
-"semantic vs primitive" and is the one the synthesis should re-cut on.
+Both work. What distinguishes them is where the lowering lives — in the backend
+(Slint) or in the framework (Qt) — and that is the axis worth cutting on, with
+the caveat that those are two positions out of six, the others being a node
+kind, the producer, the widget, and nobody ([F4](./comparison.md)).
+
+That reading makes friction §3 half a complaint rather than a whole one. A
+`scrollbar` in the drawing seam is a legitimate semantic operation: a cell
+backend degrades one differently from a pixel backend, so the intent has to
+survive the crossing. What does not have to survive it is derived geometry —
+`scrollbarThumb` computes the thumb identically for every backend, and
+`scrollbarCellCount`, `scrollbarCell` and `ruleEndpoints` are re-exported from
+`canvas.d` precisely so a backend can reach the answer without being handed it.
 
 ## Q4 — no reified command
 
@@ -137,23 +153,44 @@ inheritance buys here that a concept does not. Its documentation
 So an engine that implements paths gets text for free. `drawPath`'s default is
 the same pattern read from the other end: it does nothing, but warns
 `"QPaintEngine::drawPath: Must be implemented when feature PainterPaths is set"`
-— the declaration and the implementation check each other. Our `isCanvas` has
-no equivalent of a default implemented in terms of other primitives — a canvas
-either has a method or the interpreter skips the op.
+— the declaration and the implementation check each other.
+
+`sparkles:ui` reifies where Qt does not: `DrawOp` is a closed sum over eight
+payloads, dispatched with `match!`, exactly so a frame can be collected,
+replayed and compared ([F3](./comparison.md)). It is in Qt's camp on the
+fallbacks too — a missing optional primitive is covered once, above the
+backend, not once per backend. What it does not have is Qt's second half. The
+degradations live at the interpreter's call sites behind `__traits(compiles)`
+probes rather than in the concept, so a backend author reads them out of
+`interp/immediate.d` or not at all, and nothing cross-checks a canvas that
+supplies `rule` against what supplying it is supposed to mean.
 
 ## Q5 — sub-unit placement
 
-Floats (`QPointF`, `QRectF`); no sub-unit problem, and no declared precision
-model either. Like Slint, Qt dissolves friction §5 by having a continuous
-coordinate space rather than by naming positions in a discrete one.
+Floats (`QPointF`, `QRectF`), and no declared precision model either. Like
+Slint, Qt has a continuous coordinate space rather than named positions in a
+discrete one — which relocates friction §5 rather than dissolving it. The
+question of what happens at a fractional edge leaves the vocabulary and
+reappears, unstated, in each engine's rounding ([F6](./comparison.md)).
+`RuleEdge` at least says out loud which six positions it can spell.
 
 ## Q6 — resolved or semantic styling
 
 Resolved. The engine receives a state (`QPainterState`) with concrete pen and
 brush; there is no semantic role. Qt therefore pays for one representation, not
 two — the same result as Slint, reached from the opposite end of the
-semantic/primitive axis, which is evidence that carrying `visual` _and_ `slot`
-(§6) is a cost we chose rather than one the problem imposes.
+semantic/primitive axis, and evidence that friction §6 is a cost `sparkles:ui`
+chooses rather than one the problem imposes. Where a Qt engine is handed a pen
+and a brush and nothing else, six of our eight payloads arrive carrying the
+role as well: a `Slot` rides alongside whatever concrete colours and ink that
+particular primitive actually paints with. The pixel backends read only the
+concrete half, while the HTML interpreter goes back to the role to emit class
+names. That `Visual` is derived on demand through `visualOf` rather than stored
+keeps the hedge cheap without turning it into a decision.
+
+Qt also indicates which half is the redundant one. A pen and a brush follow
+from a role plus a theme; no role follows back out of a pen
+([F9](./comparison.md)).
 
 ## Q7 — payload ownership
 
@@ -164,13 +201,30 @@ QPaintDevice that created it" ([`qpaintengine.cpp`][enginecpp]) — which is the
 same instinct as Slint's backend-owned cache: the party that knows a lifetime
 owns the thing.
 
+`sparkles:ui` states its rule with the same flatness, and states it on the
+type: an operation is valid while the buffer that built it is alive and unreset
+(`sparkles.ui.cmd_buffer`), and the buffer is move-only, so a copy cannot hand
+out a second set of live pointers. `TextRun.text` is a `const(char)[]` that
+`CmdBuffer.textRun` copies into a frame arena, which is what makes drawing from
+a `scope` source safe. The two seams part company over what a backend does when
+it wants the bytes after the call returns: Qt hands it a refcount, one of the
+ownership mechanisms the field settles on ([F8](./comparison.md)), while ours
+has no spelling for retention at all — the borrow is bounded by the frame, and
+`UI-O4` is open on exactly where the retain boundary belongs.
+
 ## Q8 — extent query
 
 The paint _device_ declares its extent (`QPaintDevice::width()`/`height()`,
-[`qpaintdevice.h`][device]), not the command stream. The scene does not know
-its own size; the surface does. That inverts friction §8 and is arguably the
-better shape — a backend allocating a surface knows the size because it chose
-it.
+[`qpaintdevice.h`][device]), not the command stream. That answers the surface
+question — how big is the thing I paint into — and Qt leaves the other two
+unasked: how big is the content, and how much of the surface did this stream
+touch ([F7](./comparison.md)). Friction §8 is about those two, and we
+land in Qt's position without having chosen it: put the question to a
+`CmdBuffer`, to the display list, or to the arena, and none of the three can
+say what region a finished stream covers. A backend that has to size its own
+surface therefore folds `op.rect` over every operation to arrive at the number,
+and Qt — having handed the question to the device — offers it no precedent to
+copy.
 
 ## Strengths
 
@@ -178,8 +232,9 @@ it.
   bitmask an engine sets once; a reader learns the whole negotiable surface
   from one enum.
 - **A stated floor.** `AlphaBlend` and `PorterDuff` are documented as
-  un-emulatable, so "optional" and "required" are distinguishable — the exact
-  distinction `sparkles:ui`'s optional primitives lack.
+  un-emulatable, so "optional" and "required" are distinguishable in one place
+  — a distinction `sparkles:ui` makes only by implication, in the split between
+  the five methods `isCanvas` checks and the four it does not.
 - **Degradation lives once, in the framework.** A new engine inherits every
   emulation path for free, and the emulated result arrives in a form
   (`QImage`) any engine can consume.
@@ -227,13 +282,20 @@ it.
 1. **A declared capability set is the right shape for §2**, and Qt shows it
    pays for itself only if the framework can _act_ on the answer. A flag nobody
    consults is worse than no flag.
-2. **Separate "optional, framework-emulated" from "floor requirement".** Our
-   optional primitives are currently one undifferentiated bucket.
+2. **Three tiers, not one.** Qt's split between a framework-emulated feature
+   and an un-emulatable floor is two of the three names in
+   [F5](./comparison.md) — floor, defaulted, refusable. `sparkles:ui` has the
+   first two and declares neither in one place; the third, a primitive a
+   backend supplies and then declines for a given request, has no spelling.
 3. **Defaults expressed in terms of other primitives** (`drawTextItem` →
    `drawPath`) are how Qt keeps the required set small without losing
-   capability. A DbI concept can do this with a `static if` in a mixin; we do
-   not.
-4. **Extent belongs to the surface, not the scene** — reconsider §8's framing.
+   capability. Our equivalents exist as helpers — `ruleEndpoints`,
+   `paintScrollbarCells` — but they are wired in at the interpreter's call
+   sites; a DbI concept can state them once, in a mixin behind a `static if`.
+4. **Qt answers only the surface half of extent.** `QPaintDevice` sizes what
+   the painting goes into and never asks the scene what it drew, so §8 stands
+   as written: the number `buildDisplayList` could publish is the one every
+   surface-allocating backend recovers by scanning ([F7](./comparison.md)).
 5. **Weigh this subject against Qt's own later answer.** The capability bitmask
    is the strongest §2 precedent in the survey and was abandoned by the vendor
    that wrote it; adopt the _shape_ on evidence from elsewhere, not on Qt's

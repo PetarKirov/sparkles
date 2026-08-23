@@ -135,15 +135,22 @@ shadow needs to know a shadow was intended in order to degrade it sensibly.
 
 The disagreement to resolve is therefore not "semantic or primitive" but _how
 many_ semantic operations a seam can carry before a new backend becomes
-prohibitive — Slint answers with eight, we have eight, and ours is the one that
-feels wrong. That suggests the problem is `DrawOp`'s shape (§4), not the
+prohibitive — Slint answers with eight, and our seam also carries eight
+operation kinds, yet ours is the one that feels wrong. The difference is in the
+declaration, not the count: a Slint backend author reads all eight off the
+trait, while `isCanvas` names five methods and leaves `rule`, `scrollbar` and
+the clip pair to be discovered by `__traits(compiles)` at each interpreter call
+site (§2), with the encoding of the eight kinds a separate question again (§4).
+That suggests the problem is how the eight are stated and encoded, not the
 presence of semantics.
 
 ## Q4 — command shape
 
 **Does not arise.** Slint dispatches through trait methods rather than
-reifying a command stream, so there is no tagged union to get wrong. That is
-itself an answer: our `DrawOp` exists because we wanted a recordable,
+reifying a command stream, so there is no closed sum to get wrong. That is
+itself an answer: our `DrawOp` — a `struct` over a `SumType` of eight per-kind
+payloads, dispatched by `match!` and held to a `static assert(DrawOp.sizeof <=
+64)` budget set by the widest of them — exists because we want a recordable,
 comparable stream (`RecordingCanvas`, the op-stream parity harness), and Slint
 pays no such cost because it does not want that.
 
@@ -161,7 +168,8 @@ backend applies `scale_factor()`. Corner radius rides along as
 
 The lesson for friction §5 is that `RuleEdge` is a symptom of integer cell
 coordinates, not of a missing enumerator. A toolkit whose geometry is
-continuous never needs to name an edge.
+continuous never needs to name an edge — it needs to say what each backend
+snaps to instead.
 
 ## Q6 — resolved or semantic styling
 
@@ -169,9 +177,14 @@ continuous never needs to name an edge.
 Parameters are computed values — `Brush`, `LogicalLength` — and geometry
 arrives final; `BorderRectLayout` pre-computes stroke geometry.
 
-So Slint pays for one, not both. We carry `visual` _and_ `slot` on every op
-(§6) because the HTML backend re-resolves; Slint has no such backend and does
-not pay for it.
+So Slint pays for one, not both. We pay for both (§6): each payload stores the
+resolved fields its primitive paints from — an `Ink` for the four content
+kinds, `FillRect`'s own colour fields plus a `const(BoxChrome)*` — and six of
+the eight also store the `Slot` that names the role, because the HTML
+interpreter re-resolves from that role to emit class names. Reconstructing a
+`Visual` on demand through `visualOf` keeps the resolved half from being stored
+twice; it does not remove the second half. Slint has no re-resolving backend
+and does not carry the role at all.
 
 ## Q7 — payload ownership
 
@@ -182,8 +195,13 @@ backend that needs to retain one can.
 The technique worth stealing is `draw_cached_pixmap(item_cache, update_fn)`:
 the **backend owns a cache**, keyed by item, and is handed a callback to
 populate it on demand. Ownership of expensive payloads sits with the party that
-knows their lifetime, instead of the display list carrying borrowed slices that
-must outlive the frame.
+knows their lifetime, rather than with the drawing seam. Ours carries the
+payload directly: `DrawOp.text` is a `const(char)[]` borrowed from a frame
+arena that `CmdBuffer.textRun` copies into, valid while the buffer that built
+it is alive and unreset (§7) — a rule stated on the type, and one a backend
+that wants to record on one thread and submit on another meets head-on
+(`UI-O4`). `SharedString` and the item cache are the two ways Slint lets a
+backend opt out of that constraint per payload instead of per frame.
 
 ## Q8 — extent query
 
@@ -247,10 +265,15 @@ never comes up in this design.
    backend-chosen unit. This is the single strongest transferable result.
 2. **Semantic draw operations are not the error.** Reconsider §3 before acting
    on it.
-3. **Continuous coordinates dissolve §5.** Whether `sparkles:ui` can afford
-   them is a separate question — its layout is cell-based on purpose.
-4. **Backend-owned caches** are a credible answer to §7 that does not require
-   interning everything.
+3. **Continuous coordinates move §5 rather than settle it.** They buy a
+   spelling for every sub-cell position, and hand back the question of what a
+   backend snaps to. Whether `sparkles:ui` can afford them is a separate
+   question again — its layout is cell-based on purpose.
+4. **Backend-owned caches** are a credible answer to §7. The frame arena copies
+   each run and dedupes nothing, so the open question `UI-O4` tracks is not how
+   to share bytes but where the retain boundary sits — and a cache the backend
+   owns puts it with the party that knows a payload's lifetime, without
+   widening the arena's obligation.
 
 ## Sources
 

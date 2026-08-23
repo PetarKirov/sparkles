@@ -243,9 +243,11 @@ That leaves three degradation channels, none declared:
    support is added for blend modes" ([`render_context.rs`][rc]).
 
 So Piet lands where `sparkles:ui` does — an unstated contract — by the opposite
-route. Ours is understated because the concept checks five of eight kinds;
+route. Ours is understated because `isCanvas` names five methods while four
+further primitives are discovered by `__traits(compiles, …)` at the
+interpreter's call sites, across eight op kinds ([friction §2][friction]);
 Piet's is overstated, because every method is mandatory and some of them are
-lies. **This sharpens F4:** the failure is not "optional capabilities are
+lies. **This sharpens F5:** the failure is not "optional capabilities are
 undeclared", it is that _a seam with no capability vocabulary at all forces
 every gap into either a runtime error, a silent wrong render, or a doc comment._
 Piet has all three, and the caller can distinguish none of them.
@@ -276,9 +278,13 @@ Every backend answers it differently:
 Two of the five share a **framework-side software fallback** exposed as public
 helpers in [`piet/src/util.rs`][util] ("Code useful for multiple backends"). That
 is Qt's answer — the framework emulates once — offered as a library rather than
-imposed by the painter, so a backend with something better ignores it. F3's
-"who degrades" axis gains a third position: **the framework supplies the
-fallback, the backend chooses whether to use it.**
+imposed by the painter, so a backend with something better ignores it. F4 asks
+where a lowering lives and enumerates six places; Piet shows two of them are not
+exclusive: **the framework supplies the lowering, the backend chooses whether to
+use it.** `sparkles:ui` already has the ingredients for that arrangement —
+`canvas.d` re-exports `scrollbarCellCount`, `scrollbarCell` and `ruleEndpoints`,
+each built on the one `scrollbarThumb` formula in `sparkles.ui.state` — so the
+lowering is published as callable code rather than duplicated per backend.
 
 ## Q4 — command shape
 
@@ -301,19 +307,27 @@ Piet does reach for sum types elsewhere, twice, where the alternative would have
 been dead fields: `PaintBrush` (`Color | Linear | Radial | Fixed`) and
 `TextAttribute` (`FontFamily | FontSize | Weight | TextColor | Style |
 Underline | Strikethrough`), the latter applied over byte ranges via
-`range_attribute`. So the repository that most resembles our tag-plus-fields
-problem solved its own many-optional-properties question the way F2 recommends —
-a sum type — and simply never faced the command-shape question, because it has
-no commands.
+`range_attribute`. Those are closed sums for the same reason `DrawOp` is one — a
+fixed set of alternatives, no dead fields, values that compare. So Piet settles
+its many-optional-properties question the way F3 settles the encoding half, and
+simply never faces the command-shape question, because it has no commands. It
+therefore has nothing to say about F3's live half: what the reified stream costs
+per operation. `DrawOp` pays the widest payload on every op — `static
+assert(DrawOp.sizeof <= 64)`, and `TextRun` is the payload that sets the budget
+([friction §4][friction]) — a trade piet never has to price.
 
 ## Q5 — sub-unit placement
 
 Does not arise. Coordinates are kurbo `f64` throughout, resolution scaling is a
 constructor argument, and hairlines are `stroke(shape, brush, width)` with any
-positive `width`. Piet is a third confirmation of F5's negative half: **a
-toolkit with continuous coordinates never invents a `RuleEdge`.** It contributes
-nothing to the positive half — it has no target that cannot address below the
-unit, so it never had to name a fidelity.
+positive `width`. Piet is the boundary case F6 predicts: **continuous
+coordinates spare a toolkit a `RuleEdge` only when every target can address
+below the unit**, and all five of piet's can. Because none of them is coarser
+than the coordinate space, the sub-unit question never relocates anywhere
+visible, and piet never has to name a fidelity or query a device unit — F6's
+positive half goes untested here. `sparkles:ui` has the opposite population:
+`GridCanvas` fills a whole cell where `SkiaCanvas` draws one device pixel, which
+is why `rule` spells position as an edge ([friction §5][friction]).
 
 ## Q6 — resolved appearance, semantic role, or both?
 
@@ -331,12 +345,17 @@ does not care passes `Color::BLACK` and pays a mint per call. **The seam does no
 choose between resolved and semantic; it makes both inhabit one parameter and
 lets the caller pick per call site.**
 
-Compare friction §6, where `DrawOp` carries `visual` _and_ `slot` on every op so
-that the HTML backend can re-resolve. Piet's arrangement costs nothing per
-operation: the polymorphism is in the parameter type, and monomorphisation
-erases it. `IntoBrush` is marked "an internal trait that you should not have to
-implement or think about", which is the ergonomic price — the mechanism is
-invisible until it appears in a compiler error.
+Compare [friction §6][friction], where each payload stores the resolved fields
+its own primitive paints from — an `Ink` on the four content primitives, colour
+fields plus a `const(BoxChrome)*` on `FillRect` — _and_ a `Slot`, on six of the
+eight payloads, so that the HTML interpreter can re-resolve the role into class
+names. `DrawOp.visual` reconstructs a `Visual` from the stored halves on demand,
+which makes the hedge cheap without making it a decision. Piet's arrangement
+costs nothing per operation either, and it does decide: the polymorphism is in
+the parameter type, and monomorphisation erases it. `IntoBrush` is marked "an
+internal trait that you should not have to implement or think about", which is
+the ergonomic price — the mechanism is invisible until it appears in a compiler
+error.
 
 Everything else is resolved: `StrokeStyle` holds joins, caps, dashes;
 `TextAttribute` holds concrete font families, sizes, weights and colours. No
@@ -363,11 +382,17 @@ Nothing is borrowed across a frame boundary anywhere in the API.
   the sharing strategy; the seam requires only that it be shareable.
 - **Brushes.** `Cow<'a, P::Brush>`, borrowed when possible.
 
-This is F6 confirmed a fourth time, with a refinement: piet does not merely
+This is F8 confirmed a fourth time, with a refinement: piet does not merely
 reference-count, it makes the **conversion into backend-owned form an explicit
-API call whose result the caller retains**. `DrawOp.text` as a borrowed slice
-that "must outlive the op" (friction §7) has no analogue here, and could not:
-`TextStorage`'s `'static` bound forbids it structurally.
+API call whose result the caller retains**. `DrawOp.text` has no analogue here,
+and could not: `TextStorage`'s `'static` bound forbids a borrow structurally.
+Ours is a `const(char)[]` copied into a frame arena by `CmdBuffer.textRun`, held
+under the rule the type states — _an operation is valid while the buffer that
+built it is alive and unreset_ — and the move-only buffer is what keeps a second
+set of live pointers from existing. That rule is enforceable where piet's is
+structural, and it still stops at the frame: the retain boundary that piet's
+`Self::Image` and `Self::TextLayout` cross freely is the question `UI-O4` leaves
+open ([friction §7][friction]).
 
 > [!IMPORTANT]
 > The cost is that no payload is a value. A `Self::TextLayout` cannot be built
@@ -390,10 +415,17 @@ harness, each picture module exports a `SIZE` constant that travels beside its
 backend CLIs create a target of that size before drawing — extent is metadata on
 the _scene author_, not a query on either scene or context.
 
-F7 stands: the surface knows its size because it was told. Piet adds that when
-the size must come from content, the practical answer is a constant maintained
-next to the drawing code — which is what `skia-canvas-render.d` was trying to
-avoid computing (friction §8), and is no better than the scan it replaced.
+Piet answers exactly one of F7's three questions — the surface's — and answers
+it by being told. The other two it pushes onto the scene author: when the size
+must come from content, the practical answer is a constant maintained beside the
+drawing code. That is F7's maintained-at-construction pole reached by hand, and
+it is the failure mode [friction §8][friction] records: the first
+`skia-canvas-render.d` guessed a size, cropped its own text, and the golden
+pinned the crop. Its scan over every operation's `rect` is the derived-by-scan
+pole, and it works only because a `TextRun`'s `rect.width` happens to be its
+advance in cells. Nothing on `CmdBuffer`, the display list or
+the arena answers the question directly; `CmdBuffer` reports an operation count
+and a run's cell extent, and painted bounds are the caller's fold.
 
 ## Strengths
 
@@ -449,57 +481,65 @@ avoid computing (friction §8), and is no better than the scan it replaced.
    Linebender did not abandon `RenderContext` because trait dispatch was slow or
    because associated types were awkward; they abandoned it because a seam
    defined as the intersection of its backends cannot be made consistent and
-   cannot be extended ([`vision.md`][vision]). `isCanvas` is defined by our own
-   `OpKind`, not by an intersection — the vocabulary is ours to choose. That is
-   a material difference, and it means friction §2's fix must preserve it: state
-   the contract, but do not derive it from what all three current backends
-   happen to support.
+   cannot be extended ([`vision.md`][vision]). `isCanvas` is defined by the
+   operation vocabulary we choose, not by an intersection. That is a material
+   difference, and it means friction §2's fix must preserve it: state the
+   contract, but do not derive it from what all three backends happen to
+   support.
 
 2. **A seam with no capability vocabulary at all is worse than ours, in a way
-   that refines F4.** Piet's five backends degrade silently — a blur becomes a
-   rect, a gradient becomes magenta — because there is nowhere to say "no". F4
-   already asks for a floor plus a refusable degrade; Piet shows the third
-   requirement: **the caller must be able to tell the three outcomes apart**
-   (honoured / degraded / refused). `piet::Error` cannot, because the drawing
-   methods return `()`.
+   that refines F5.** Piet's five backends degrade silently — a blur becomes a
+   rect, a gradient becomes magenta — because there is nowhere to say "no". F5
+   asks for a floor plus a refusable degrade; Piet shows the third requirement:
+   **the caller must be able to tell the three outcomes apart** (honoured /
+   degraded / refused). `piet::Error` cannot, because the drawing methods return
+   `()`. Ours states each optional primitive's degradation in prose — a
+   cell-aligned `line` for `rule`, `paintScrollbarCells` glyph-per-cell for
+   `scrollbar`, nothing at all for the clip pair — which is one channel more
+   than piet has and one short of a channel the caller can read.
 
-3. **Measurement-off-the-painter is now unanimous across five subjects, and
+3. **Measurement-off-the-painter is near-unanimous across the survey, and
    Piet's variant is the strictest** (F1). Adopt the shape: a factory that
    builds a laid-out object, with size, per-line metrics and hit-testing on the
    object. Do **not** adopt piet's fixed `f64` unit — Slint's associated
    `Font::Length` is the part that lets a cell backend and a shaping backend
    both answer honestly, and it is the part friction §1 needs.
 
-4. **Piet contradicts F3's framing in a useful direction.** F3 poses "who
-   degrades" as backend-vs-framework. Piet does both at once: `piet::util`
-   publishes the software blur, and each backend decides whether to call it.
-   A `sparkles.ui.degrade` module exporting `scrollbarCell`, `ruleEndpoints` and
-   friends as _callable helpers a backend may use_ — which
-   [`canvas.d`][canvas] already half does — is a better target than choosing a
-   camp. The `DrawOp` scrollbar fields (friction §3) exist so each backend can
-   re-derive geometry; publishing the derivation and passing the semantic
-   parameters once is the same fix Piet arrived at.
+4. **Piet occupies two of F4's six places at once, and shows they compose.** F4
+   asks where a lowering lives. `piet::util` publishes the software blur in the
+   framework, and each backend decides whether to call it. [`canvas.d`][canvas]
+   already publishes `scrollbarCellCount`, `scrollbarCell` and `ruleEndpoints`
+   over the single `scrollbarThumb` formula, so the derivation is shared rather than
+   re-invented; what remains is to say in the contract that a backend may call
+   them. The `Scrollbar` payload (friction §3) carries the semantic parameters
+   precisely so each backend can lower them with those helpers — including
+   `trackGlyph` and `thumbGlyph`, which only a cell backend reads.
 
-5. **`IntoBrush` is a live alternative to carrying `visual` _and_ `slot`
-   (friction §6).** A canvas primitive taking a paint _parameter_ that may be a
-   resolved `Visual`, a semantic `Slot`, or a backend-native handle — resolved by
-   the backend at the call, with the op's rect available as the bbox — costs
-   nothing per op and lets the HTML interpreter keep class names while
-   `SkiaCanvas` keeps `SkPaint`s. This is the single most transferable mechanism
-   in the subject.
+5. **`IntoBrush` is a live alternative to storing resolved appearance beside a
+   `Slot` (friction §6).** A canvas primitive taking a paint _parameter_ that may
+   be a resolved `Visual`, a semantic `Slot`, or a backend-native handle —
+   resolved by the backend at the call, with the op's rect available as the bbox
+   — costs nothing per op and lets the HTML interpreter keep class names while
+   `SkiaCanvas` keeps `SkPaint`s. It also answers the split the payloads make
+   internally between `Ink` and `BoxChrome` without the seam having to speak
+   either. This is the single most transferable mechanism in the subject.
 
 6. **Reject the contribution gate.** "Implementable on three named backends
    before it may exist" is exactly the ratchet the authors identify as fatal. If
-   `sparkles:ui` wants a fidelity vocabulary (F5) or a new semantic op, the test
-   should be "can every backend _degrade_ it honestly", not "can every backend
-   _implement_ it".
+   `sparkles:ui` wants the fidelity vocabulary F6 asks for, or a new semantic op,
+   the test should be "can every backend _degrade_ it honestly", not "can every
+   backend _implement_ it".
 
-7. **Reification is worth more than Piet knew.** Piet's trait doc anticipates a
-   recording context and no one ever wrote one, so cross-backend verification
-   fell back to tolerant, per-OS pixel diffs. `RecordingCanvas` plus the
-   op-stream parity harness is a capability piet structurally cannot have, and
-   F2's recommendation — keep the reified stream, re-encode it as a sum type —
-   is reinforced rather than challenged here.
+7. **Reification is worth more than Piet knew, and only while the values stay
+   inspectable.** Piet's trait doc anticipates a recording context and no one
+   ever wrote one, so cross-backend verification falls back to tolerant, per-OS
+   pixel diffs. `RecordingCanvas` — which interns text on the collected heap, so
+   its operations outlive the call that drew them — plus the op-stream parity
+   harness is a capability piet structurally cannot have. That is F12 stated
+   from the far side: the op stream is the parity oracle, and the moment it stops
+   being a comparable value the oracle degrades into a golden image. F3's
+   reification half is reinforced rather than challenged here; its encoding half
+   piet cannot speak to.
 
 8. **Nothing in this subject bears on the survey's open question.** Every piet
    backend is a full 2D vector renderer with real shaping; the widest gap it

@@ -199,13 +199,15 @@ table, and a `widthMap "xterm" "/path/to/map.dat"` config directive to load it p
 `TERM` ([`README.md`][readme]). Installation is one-shot and irrevocable: "Only one
 custom table load can be performed in a Vty program."
 
-Two results follow for [F1][comparison]. First, measurement is indeed **not on the
-painter** — it is not on `Output` at all. Second, and against the shape F1 recommends,
-it is not on a per-backend font object either: it is **one global oracle that the
-toolkit and the device are negotiated into agreeing on**, because in a terminal the
-device's opinion of a width is a fact the toolkit must match, not a service the
-toolkit can request. A per-backend measurer would let two backends disagree, which is
-precisely the failure the width-table machinery exists to eliminate.
+Two results follow. The first is [F1][comparison]'s: measurement is indeed **not on the
+painter** — it is not on `Output` at all. The second lands squarely on
+[F2][comparison]'s _oracle authority_ decision, and answers it in a way no per-backend
+measurer could. Vty's oracle is not a font object owned by whichever backend is
+painting; it is **one global table that the toolkit and the device are negotiated into
+agreeing on**, because in a terminal the device's opinion of a width is a fact the
+toolkit must match, not a service the toolkit can request. A per-backend measurer would
+let two backends disagree, which is precisely the failure the width-table machinery
+exists to eliminate.
 
 `HorizText` also caches `charWidth` beside `outputWidth`. Both units survive into
 `TextSpan`, and both are needed: `cursorColumnOffset` uses `spanOpHasWidth`'s
@@ -256,25 +258,35 @@ This is the survey's cleanest counter-example to Slint's eight semantic operatio
 and the reason is structural rather than philosophical: **Vty has one target class**.
 Every consumer of a `Picture` is a terminal, so there is no backend that would degrade
 a scrollbar differently from another backend, and therefore nothing for a semantic
-operation to buy. [F3][comparison] says the axis is _who degrades_; Vty adds the prior
-question — _is there more than one way to degrade?_ When the answer is no, semantics
-in the seam are pure cost.
+operation to buy. [F4][comparison] says the axis is _where the lowering lives_; Vty adds
+the prior question — _is there more than one lowering to choose between?_ When the
+answer is no, the seam has nowhere to put a semantic operation that a caller could not
+put above it, and semantics in the seam are pure cost.
 
 ## Q4 — command shape
 
-**A closed, abstractly-exported sum type with per-constructor named fields**, which is
-what [F2][comparison] recommends for `DrawOp`, plus two properties `DrawOp` cannot
-have as a public struct:
+**A closed, abstractly-exported sum type with per-constructor named fields** — the same
+side of [F3][comparison]'s encoding trade that `DrawOp` takes, a closed
+`SumType` over eight per-kind payloads whose fields are case-local and whose walkers
+are `match!` arms. Vty adds two properties on top of that shape, and only one of them
+is a property `DrawOp` shares:
 
 1. **Illegal states are unconstructible, not merely unrepresentable.** `HorizJoin` of
    two unequal-height images cannot be built, because the only way in is `horizJoin`,
-   which pads first. A `sparkles:ui` `SumType` would get case-local fields; it would
-   still not get invariant maintenance unless the constructors are the only entry.
-2. **Derived structural `Eq` on the reified result.** `SpanOp` derives `Eq`, and
-   `outputPicture` keeps the previous frame's `DisplayOps` in `assumedStateRef` and
-   emits only rows where `Vector.zipWith (/=) previousOps ops` says something changed
-   ([`Output.hs` L217][output-picture]). The whole redraw optimisation is one `/=` on
-   the reified value.
+   which pads first. This is the half `DrawOp` does not have. Its payloads are public
+   structs, so case-local fields eliminate the cross-arm nonsense — a `PopClip` has no
+   colour to set wrongly — without eliminating the within-arm kind: nothing stops a
+   caller building a `TextRun` whose `rect.width` disagrees with the advance, or a
+   `PushClip` with no matching `PopClip`. Sum-typing relocates illegal states; only a
+   constructor boundary removes them.
+2. **Structural equality on the reified result** — which `DrawOp` does have, as plain
+   value semantics on the sum, and which is why the op-stream parity harness can
+   compare two `RecordingCanvas` runs pairwise. Vty spends it on redraw: `SpanOp`
+   derives `Eq`, and `outputPicture` keeps the previous frame's `DisplayOps` in
+   `assumedStateRef` and emits only rows where `Vector.zipWith (/=) previousOps ops`
+   says something changed ([`Output.hs` L217][output-picture]). The whole redraw
+   optimisation is one `/=` on the reified value. What separates the two is not
+   comparability but how long a compared value stays readable — Q7.
 
 Note the two reifications differ in shape on purpose: `Image` is a **tree** with
 per-case payloads (recursion is the composition mechanism), and `SpanOp` is a **flat
@@ -320,10 +332,16 @@ a 240-colour terminal down to `Default`, and mapping bright ISO colours to their
 counterparts on `ColorMode8` ([`Output.hs` L340][output-limit]). The platform backend
 never sees a colour it cannot emit.
 
-That is Qt's "framework emulates, backend stays simple" placement in a cell library,
-and it is direct evidence for friction §6: pick one channel, resolve early, and put
-the device-specific narrowing in one function that the seam's declared capability
-drives.
+That is Qt's "framework emulates, backend stays simple" placement in a cell library, and
+it is another subject on [F9][comparison]'s side of the count: one channel per
+operation, and nothing pays for a second. Friction §6, _a resolved appearance and a
+semantic role on every drawing op_, is the contrast. Six of `DrawOp`'s eight payloads
+store a `Slot` beside the resolved `Ink` or colour fields the primitive paints from, so
+the pixel backends read the resolved half and the HTML interpreter re-resolves from the
+role. Deriving `Visual` on demand rather than storing it makes that hedge cheap; it
+does not make it one channel. Vty's lesson for it is the placement: resolve to one
+channel early, then clamp against the backend's declared capability in a single
+function, so no backend re-implements degradation.
 
 > [!WARNING]
 > "Resolved" is not quite total. `Attr`'s colour field is three-state —
@@ -345,9 +363,21 @@ application can force an image to normal form before handing it over
 The frame-lifetime question is answered in the strongest possible way: `outputPicture`
 **stores the reified result across frames** in `prevOutputOps :: Maybe DisplayOps`
 inside an `IORef`, and diffs the next frame against it ([`Output.hs`][output-picture]).
-A command stream that carried borrowed text — friction §7's `DrawOp.text` — could not
-implement this at all. [F6][comparison] said share, do not borrow; Vty is the case
-where _the optimisation itself_ depends on ownership.
+[F8][comparison] finds no subject in the survey borrowing a payload across a frame;
+Vty is the case where _the optimisation itself_ is the reason.
+
+`sparkles:ui` sits on both sides of that line, and the split is the interesting part.
+`DrawOp.text` is a `const(char)[]` borrowed from an arena — `CmdBuffer.textRun` copies
+the caller's bytes in, which is what makes a `scope` source safe — and the rule stated
+on the type is that _an operation is valid while the buffer that built it is alive and
+unreset_. Which arena it borrows from decides whether Vty's diff is available. Under
+`FrameArena`, `reset()` reclaims the chunks and last frame's runs stop being readable,
+so a retained `DrawOp[]` is a set of dangling slices; under `GcArena`, `intern` is an
+`idup` and `reset` a no-op, so the `DrawOp[]` that `buildDisplayList` returns is owned
+outright and diffs exactly as Vty's does. `RecordingCanvas` interns on the collected
+heap for the same reason: its ops must outlive the call that drew them. Friction §7 is
+the price of the first path and `UI-O4` is open on precisely where the retain boundary
+should fall.
 
 ## Q8 — extent query
 
@@ -381,10 +411,13 @@ argument and crops the self-describing image into the surface-declared one. Vty 
 both numbers and uses each for what it is good for — the image's for layout and
 composition, the surface's for clipping and the output loop.
 
-That combination contradicts [F7][comparison]'s "extent belongs to the surface, not
-the scene". It belongs to both, and the reason the scene's copy is cheap is that it
-was never _derived_ — the constructors that build the scene are the only place it
-could be computed, so computing it there costs one addition per node.
+That combination is [F7][comparison] in its clearest form: extent is not one question
+but three, and Vty answers the surface one from `displayBounds` and the layout one from
+the scene, keeping each where it is authoritative. On F7's other axis —
+maintained-at-construction versus derived-by-scan — Vty is the purest instance of the
+first pole in the survey, and the reason its scene copy is cheap is exactly that it is
+never derived: the constructors that build the scene are the only place it could be
+computed, so computing it there costs one addition per node.
 
 ## Strengths
 
@@ -432,41 +465,52 @@ could be computed, so computing it there costs one addition per node.
 
 ## Bearing on the proposal
 
-1. **Adopt "extent by construction" for the display list, and stop treating friction
-   §8 as a query problem.** `skia-canvas-render.d` scans ops for a bounding box
-   because nothing accumulates one; the fix is not an `extent()` method on the seam
-   but a `buildDisplayList` that returns the extent it already knew while emitting.
-   Vty shows the cost is one addition per composition. **This contradicts
-   [F7][comparison]**, which concluded extent belongs to the surface: Vty has it in
-   both places, deliberately, and the scene's copy is the cheap one.
-2. **Q4's answer is a sum type _plus a constructor boundary_.** F2 recommends
-   re-encoding `DrawOp` as a `SumType`; Vty adds the second half — if the cases stay
-   publicly constructible, the invariants (`rect.width` is the advance in cells; a
-   `popClip` matches a `pushClip`) remain conventions. Make the emitters the only way
-   in.
+1. **Maintain extent at construction, and stop treating friction §8 as a query
+   problem.** `skia-canvas-render.d` folds `op.rect` over the whole stream to get a
+   bounding box, because neither `CmdBuffer` — which reports `length` and a run's
+   `measure`, and nothing about painted bounds — nor the display list nor the arena
+   carries one. The answer is not an `extent()` method on the seam but a
+   `buildDisplayList` that hands back the extent it already knew while emitting. Vty
+   prices that at one addition per composition. This puts us on
+   [F7][comparison]'s derived-by-scan pole and Vty on the other one, on the same axis
+   and for a cheaper price.
+2. **Q4's remaining half is the constructor boundary, not the sum.** `DrawOp` is
+   already the closed sum [F3][comparison] argues for; what Vty adds is that publicly
+   constructible cases leave the invariants as conventions — `rect.width` is the
+   advance in cells, a `popClip` matches a `pushClip`, and nothing in the type says so.
+   Make the `CmdBuffer` emitters the only way in.
 3. **Carry both units on a text op.** `HorizText` caches `outputWidth` _and_
-   `charWidth`, and `sparkles:ui` will need the same pair the moment a cursor or a
-   selection has to be placed in a proportional-font backend. Fold this into whatever
-   replaces `measure` under [F1][comparison].
-4. **Reconsider F1's shape for the terminal end.** Vty's measurement is a global
+   `charWidth`, and `sparkles:ui` needs the same pair the moment a cursor or a
+   selection has to be placed in a proportional-font backend. `TextRun` carries one
+   rectangle in cells and nothing else, which is friction §1 seen from the cursor's
+   end. This is [F2][comparison]'s _return shape_ decision, and it should be settled
+   together with the unit rather than after it.
+4. **Oracle authority may differ between the two ends.** Vty's measurement is a global
    oracle negotiated against the device precisely so two consumers _cannot_ disagree.
    A per-backend `Font::Length` (Slint's model) is right for the GPU end and wrong for
-   the terminal end, where the device's width table is authoritative. This is evidence
-   for the umbrella's open question — the two ends may want different measurement
-   ownership, which is a reason to doubt one seam.
+   the terminal end, where the device's width table is authoritative. That is evidence
+   on [F2][comparison]'s second decision, and for the umbrella's open question — the
+   two ends may want different measurement ownership, which is a reason to doubt one
+   seam.
 5. **Put device narrowing in one framework function.** `limitAttrForDisplay` is the
    model for friction §6: resolve to one channel early, then clamp against the
    backend's _declared_ capability in a single place, so no backend re-implements
-   degradation. Combine with [F4][comparison]'s floor.
-6. **Zero semantic operations is a live option, but only at Vty's target count.** F3
-   framed the axis as who degrades; Vty adds that a seam with one target class buys
-   nothing from semantics. `sparkles:ui` has three backends that degrade a scrollbar
-   three ways, so the option is not open — but this is why the `scrollbar` op should
-   be justified by _backend divergence_, not by convenience.
-7. **The reified result must be ownable to be diffable.** Vty's redraw optimisation is
-   `Vector.zipWith (/=)` against the previous frame's ops. `sparkles:ui` cannot do
-   that while `DrawOp.text` is borrowed (friction §7), and that is a concrete cost, not
-   a hypothetical one.
+   degradation. Combine with [F5][comparison]'s floor — a stated minimum plus a
+   refusable degrade is what lets the clamp read a capability instead of guessing at
+   one.
+6. **Zero semantic operations is a live option, but only at Vty's target count.**
+   [F4][comparison] frames the axis as where the lowering lives; Vty adds that a seam
+   with one target class has only one place to put it, so semantics buy nothing.
+   `sparkles:ui` has three backends that degrade a scrollbar three ways, so the option
+   is not open — but this is why `scrollbar`, with its fourteen fields including the
+   two cell glyphs every pixel backend ignores (friction §3), should be justified by
+   _backend divergence_ and by nothing else.
+7. **The reified result must be ownable to be diffable, and which arena builds it
+   decides that.** Vty's redraw optimisation is `Vector.zipWith (/=)` against the
+   previous frame's ops. `DrawOp` compares fine, so the obstacle is never equality: it
+   is that a `FrameArena` stream stops being readable at `reset()`, while a `GcArena`
+   one does not. Anyone reaching for a cross-frame diff is choosing the second arena
+   and paying GC ownership for it (friction §7, `UI-O4`).
 8. **Expect the traversal to absorb the complexity the data sheds.** Vty's algebra is
    beautiful and its blitter is "too touchy". A `sparkles:ui` display list that gets
    more structural will move work into `interp/immediate.paint`; budget for it and

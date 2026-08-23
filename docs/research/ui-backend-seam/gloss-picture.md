@@ -3,8 +3,8 @@
 **Category:** pure sum-type scene. **Last reviewed:** August 23, 2026.
 Pinned at [`ca666dc7`][rev].
 
-The minimal honest version of what [`comparison.md`](./comparison.md)'s **F2**
-recommends `DrawOp` become: a scene described entirely by one algebraic data
+The purest form of the encoding [`comparison.md`](./comparison.md)'s **F3**
+weighs `DrawOp` against: a scene described entirely by one algebraic data
 type, small enough to read in a single screen, with no renderer abstraction of
 any kind underneath it. Gloss has exactly one renderer — OpenGL — so it is on
 this list for its _data type_, not for its portability, and half the survey's
@@ -205,8 +205,12 @@ a would-be consumer reads fifteen cases and knows the surface exactly. Haskell's
 exhaustiveness checking turns "did you handle everything" into a compiler
 warning rather than a documentation problem. Compare
 [friction §2](../../specs/ui-skia/canvas-seam-friction.md): `isCanvas` names five
-methods while `OpKind` has eight members and the rest are discovered by
-`__traits(compiles)` at call sites.
+methods, four further primitives are discovered by `__traits(compiles)` at each
+interpreter call site, and the eight kinds a caller can ask about are derived
+from the payload rather than read off the concept. Deriving `OpKind` from the
+sum is **F11** working — the two cannot disagree — but the optional four are
+the part of the surface no single statement covers, which is the same finding
+pointing at the gap.
 
 The cost is the other half of the bargain: because the type is closed and total,
 **there is no optionality at all**. There is no capability query, no default,
@@ -221,7 +225,10 @@ case-insensitive grep for `clip` or `scissor` across `gloss` and
 the window's orthographic projection, set once per frame from the window size
 ([`Internals/Rendering/Common.hs`][common], `withModelview`). A scene cannot
 express "confine this subtree" — so `sparkles:ui`'s optional `pushClip`/`popClip`
-pair has no analogue here, and Gloss cannot advise on **F4**.
+pair has no analogue here, and Gloss cannot advise on **F5**. Our clip pair is
+the cheapest case of the optional-primitive ladder anyway: a backend that
+supplies neither method paints unclipped and loses nothing, because the display
+list culls the hidden subtrees before any backend sees them.
 
 ## Q3 — semantic widgets, or primitives?
 
@@ -237,13 +244,14 @@ That is the structural point worth carrying into
 [friction §3](../../specs/ui-skia/canvas-seam-friction.md): in Gloss the
 "semantic" layer is **ordinary functions that build values**, not extra
 constructors. `circleSolid` is a widget-shaped helper that costs the seam
-nothing, because the seam is a type and the helper is above it. `scrollbar` as
-an `OpKind` costs every backend; `scrollbar` as a function returning a
-`DrawOp[]` — using `scrollbarThumb`, which
-[`canvas.d`][canvas] already exposes — would cost none. Gloss does not disprove
-**F3**'s claim that semantic ops are legitimate; it shows the third option F3's
-two-camp framing omits: **degrade nowhere, because the composite was lowered by
-a shared function before any backend saw it.**
+nothing, because the seam is a type and the helper is above it. A `Scrollbar`
+arm costs every backend; a function returning a `DrawOp[]` — over
+`scrollbarThumb` and the `scrollbarCellCount`/`scrollbarCell` lowerings
+[`canvas.d`][canvas] re-exports — costs none. Gloss does not disprove
+**F4**'s claim that semantic ops are legitimate; it is the clean instance of one
+of the six places F4 names a lowering can live — **the widget: a shared function
+lowers the composite before any backend sees it, so no backend degrades
+anything.**
 
 Gloss can afford that because it has no backend that would degrade differently.
 `sparkles:ui` does — which is exactly the argument for keeping `scrollbar`
@@ -252,27 +260,29 @@ semantic, and it should be made on that ground rather than by default.
 ## Q4 — command shape
 
 **A sum type, and the survey's cleanest example of one.** `Picture` is what
-[`sparkles.input.events`][events] argues for and what **F2** recommends
-`DrawOp` become: illegal combinations are unrepresentable, and `deriving (Show,
-Eq, Data, Typeable)` gives structural equality, a printable form, and generic
-traversal for free — none of which `DrawOp` gets, because a tag-plus-eighteen-
-fields struct compares dead fields too.
+[`sparkles.input.events`][events] argues for and what `DrawOp` is: a closed sum
+over per-kind payloads, so illegal combinations are unrepresentable and every
+field is live for the arm that carries it. `deriving (Show, Eq, Data, Typeable)`
+then gives structural equality, a printable form and generic traversal for free,
+where D's `SumType` gives comparison and a `match!` and leaves the rest to the
+consumer.
 
-The two axes that matter for us are separable, and Gloss picks the far end of
-both:
+Two axes are separable, and Gloss picks the far end of both:
 
-| Axis      | Gloss                       | `DrawOp` today  | What each buys                                                         |
-| --------- | --------------------------- | --------------- | ---------------------------------------------------------------------- |
-| Encoding  | sum type                    | tag + 18 fields | no dead fields; `==` compares only live data; exhaustiveness checking  |
-| Structure | tree (`Pictures`, wrappers) | flat `DrawOp[]` | no redundant style/transform per op; O(1) subtree wrap; peephole match |
+| Axis      | Gloss                       | `DrawOp`                       | What each buys                                                         |
+| --------- | --------------------------- | ------------------------------ | ---------------------------------------------------------------------- |
+| Width     | per-constructor             | uniform, `sizeof <= 64` budget | an exact fit vs. an array of equal-stride, index-addressable values    |
+| Structure | tree (`Pictures`, wrappers) | flat `DrawOp[]`                | no redundant style/transform per op; O(1) subtree wrap; peephole match |
 
-**F2 recommends the first and is silent on the second.** They are independent:
-`sparkles:ui` could adopt a `SumType` `DrawOp` and keep the flat array, which is
-probably the right move, and Gloss is the evidence for what that leaves on the
-table. The flat array's payoff is concrete and load-bearing here:
+**F3 weighs the first and is silent on the second.** They are independent:
+`sparkles:ui` takes the uniform-width sum and the flat array together, and Gloss
+is the evidence for what the second of those leaves on the table. The flat
+array's payoff is concrete and load-bearing here:
 
-- `RecordingCanvas` ([`canvas.d`][canvas]) is a `DrawOp[]` — the op-stream
-  parity harness diffs two backends' _painted_ sequences. Gloss's `Eq` compares
+- `RecordingCanvas` ([`canvas.d`][canvas]) collects a `DrawOp[]` — the op-stream
+  parity harness diffs two backends' _painted_ sequences, which is **F12**'s
+  reason for reifying at all: the stream earns its keep as the cross-target
+  oracle, not as an artifact anyone stores. Gloss's `Eq` compares
   two scenes **as authored**, which is a different and weaker property: two
   `Picture`s that paint identically can differ structurally (`Pictures [a, b]`
   vs `Pictures [Pictures [a], b]`), and one that paints differently can compare
@@ -299,9 +309,10 @@ failure mode.
 ## Q5 — sub-unit placement
 
 **Does not arise: coordinates are `Float` throughout**, so Gloss joins Slint,
-Qt and egui on the continuous side of **F5**. But it adds something the other
-three do not, and it bears directly on F5's recommendation to "name a fidelity,
-not a position": Gloss names **no** fidelity, and derives it from the
+Qt and egui on the continuous side of **F6** — which finds that continuity
+relocates the sub-unit problem rather than dissolving it. Gloss adds something
+the other three do not, and it bears directly on F6's answer, a named fidelity
+plus a queried device unit: Gloss names **no** fidelity, and derives it from the
 accumulated transform instead.
 
 ```haskell
@@ -328,8 +339,8 @@ point", which renders `GL.Points` instead of a ring
 
 That is a fidelity ladder like Notcurses's blitters, but **implicit**: the scene
 says nothing, the backend measures the accumulated scale and picks. It only
-works because transforms are nodes — a flat array of absolute coordinates has
-already discarded the scale factor by the time the backend runs, leaving the
+works because transforms are nodes — a flat array of absolute coordinates
+carries no scale factor by the time the backend runs, leaving the
 backend to infer fidelity from a rect's size, which is what
 `skia-canvas-render.d` does for extent
 ([friction §8](../../specs/ui-skia/canvas-seam-friction.md)) and is equally
@@ -347,9 +358,12 @@ Two consequences are specific to the node encoding and worth noting against
 
 - **Colour is inherited, not carried.** A leaf under no `Color` node has no
   colour of its own; it uses whatever `GL.currentColor` the enclosing scope set,
-  saved and restored around the recursion. `DrawOp`'s `visual` is on every op
-  because a flat array has no enclosing scope to inherit from — the redundancy
-  is a consequence of flatness, not of hedging.
+  saved and restored around the recursion. Each `DrawOp` payload stores the
+  resolved appearance its own primitive paints from — an `Ink` for the four
+  content primitives, colour fields plus a `const(BoxChrome)*` for a fill —
+  because a flat array has no enclosing scope to inherit from. That half of §6
+  is a consequence of flatness, not of hedging; the hedge is the `Slot` stored
+  beside it on six of the eight payloads.
 - **The backend may ignore the node entirely.** `stateColor`/`stateWireframe`
   ([`State.hs`][state]) turn `Color` into a no-op and `Polygon` into a
   `GL.LineLoop`. A style node the backend can globally disable is a much cheaper
@@ -361,14 +375,17 @@ Two consequences are specific to the node encoding and worth noting against
 `Text` holds a Haskell `String` and `Path` a list of tuples — immutable,
 garbage-collected, freely retained and shared across threads. A `Picture` is a
 value; the drivers build a fresh one per frame from
-`world -> Picture` and keep no reference. This is the exact opposite of
-[friction §7](../../specs/ui-skia/canvas-seam-friction.md)'s borrowed
-`DrawOp.text`, obtained not by interning or reference-counting but by the
-language.
+`world -> Picture` and keep no reference. That retention is what
+[friction §7](../../specs/ui-skia/canvas-seam-friction.md) records `DrawOp.text`
+cannot do: the bytes are copied into a frame arena, and an operation is valid
+while the buffer that built it is alive and unreset. Gloss buys unlimited
+retention not by interning or reference-counting but from the language, and it
+pays for it in a garbage collector our `@nogc` display-list walk does not have.
 
-The interesting case is `Bitmap`, where Gloss does exactly what **F6**
-recommends. `BitmapData` carries a `ForeignPtr Word8` and a `bitmapCacheMe`
-flag, documented as "The boolean flag controls whether Gloss should cache the
+The interesting case is `Bitmap`, and it lands squarely inside **F8**'s
+observation that no subject borrows a payload across a frame. `BitmapData`
+carries a `ForeignPtr Word8` and a `bitmapCacheMe` flag, documented as "The
+boolean flag controls whether Gloss should cache the
 data between frames for speed. If you are programatically generating the image
 for each frame then use `False`" ([`Internals/Data/Picture.hs`][picture]). The
 renderer keeps `stateTextures :: !(IORef [Texture])` ([`State.hs`][state]) and
@@ -389,7 +406,9 @@ A **backend-owned cache keyed by payload identity**, with the scene supplying a
 per-payload hint about whether caching is worth it — Slint's
 `draw_cached_pixmap` in a different language, arrived at independently. The
 `freeTexture` counterpart deletes the GL object immediately when `cacheMe` is
-false. F6 is confirmed by a second, unrelated subject.
+false. F8 is confirmed by a second, unrelated subject, and this is the
+mechanism `sparkles:ui` has no image analogue of: `UI-O4` stays open on exactly
+the retain boundary a `cacheMe` hint answers.
 
 ## Q8 — extent query
 
@@ -403,10 +422,11 @@ signature besides the renderer is `applyViewPortToPicture`
 ([`Backend/Types.hs`][backend]), which the drivers call each frame and hand to
 `withModelview` ([`Common.hs`][common]).
 
-This is a third independent confirmation of **F7**: the surface declares its
-extent, the scene does not. Gloss adds the detail that the extent flows from the
-_window system_ rather than from the renderer — which is why the query sits on
-the windowing class that "doesn't know anything about drawing".
+**F7** separates three extent questions — surface, layout and ink — and Gloss
+answers exactly one of them: the surface declares itself, and nothing in the
+library answers the other two. Gloss adds the detail that the extent flows from
+the _window system_ rather than from the renderer — which is why the query sits
+on the windowing class that "doesn't know anything about drawing".
 
 Gloss also shows the price of having no scene extent. Because the projection is
 window-sized and origin-centred, a `Picture` that does not fit is simply
@@ -421,8 +441,8 @@ and only bites an offscreen consumer. Gloss has no offscreen consumer.
   reader learns the whole seam in one screen; a consumer that misses a case gets
   a compiler warning.
 - **No dead fields anywhere.** Every constructor's arguments are live for that
-  constructor — the property `sparkles.input.events` argues for and `DrawOp`
-  lacks.
+  constructor — the property `sparkles.input.events` argues for, and the one a
+  closed sum buys in either language.
 - **Free structural equality, printing and generic traversal** from
   `deriving (Show, Eq, Data, Typeable)` — recording and comparison need no
   purpose-built harness.
@@ -470,45 +490,55 @@ Translate …` ([`ViewPort.hs`][viewport]) pans and zooms an arbitrarily large
 
 ## Bearing on the proposal
 
-1. **Adopt the sum type; keep the flat array.** Gloss confirms **F2**'s
-   encoding recommendation from the far end — but the encoding and the
-   _structure_ are independent choices, and F2 conflates them by silence. A
-   `SumType` `DrawOp` in a `DrawOp[]` keeps `RecordingCanvas`, the op-stream
-   parity harness, linear culling and index addressing, and gives up only the
-   redundancy the tree avoids. Say so explicitly in the proposal so the tree is
-   rejected on the record rather than by omission
-   ([friction §4](../../specs/ui-skia/canvas-seam-friction.md)).
+1. **Keep the flat array, and reject the tree on the record.** Gloss holds the
+   far end of the encoding trade **F3** describes — but encoding and _structure_
+   are independent choices, and F3 weighs only the first. A sum in a `DrawOp[]`
+   keeps `RecordingCanvas`, the op-stream parity harness, linear culling and
+   index addressing, and gives up only the redundancy the tree avoids. Say so
+   explicitly in the proposal, so the tree is rejected by argument rather than
+   by omission ([friction §4](../../specs/ui-skia/canvas-seam-friction.md)).
 2. **Lower composites with a shared function, not with an op kind, wherever
    every backend would degrade the same way.** Gloss's `circleSolid`/`sectorWire`
    are the pattern: widget-shaped helpers above the seam that cost it nothing.
-   This is the option **F3**'s "in the backend vs in the framework" framing
-   omits. `scrollbar` should stay an op only if the cell and pixel degradations
-   genuinely differ — which they do — but the eight `DrawOp` scrollbar fields
-   that exist so each backend can _re-derive_ the same rail geometry are the
-   part this argues against
+   That is the widget slot in **F4**'s list of six places a lowering can live.
+   `Scrollbar` should stay an arm only if the cell and pixel degradations
+   genuinely differ — which they do — but the fourteen fields on that payload,
+   which exist so each backend can _re-derive_ the same rail geometry from
+   `scrollbarThumb`, are the part this argues against, and they are exactly the
+   derived geometry F4 says the seam should not carry
    ([friction §3](../../specs/ui-skia/canvas-seam-friction.md)).
-3. **`visual`-on-every-op is a cost of flatness, not of hedging.** Gloss pays
-   nothing for style because `Color` is a scope. If `DrawOp` stays flat, the
-   per-op `visual` is the price of that decision and should be defended as such;
-   the thing actually worth removing at
-   [friction §6](../../specs/ui-skia/canvas-seam-friction.md) is the redundant
-   `slot`, not the pair.
+3. **Resolved appearance on every payload is a cost of flatness, not of
+   hedging.** Gloss pays nothing for style because `Color` is a scope. While
+   `DrawOp` is flat, each payload's `Ink` or fill colours are the price of that
+   decision and should be defended as such. What
+   [friction §6](../../specs/ui-skia/canvas-seam-friction.md) actually records
+   is the `Slot` carried beside them, and **F9** says which way that decision
+   goes if it is ever made: resolved appearance follows from a role plus a
+   theme, and a role does not follow from resolved appearance.
 4. **A closed sum type states the contract but provides no optionality.** This
-   sharpens **F4**: moving `DrawOp` to a `SumType` fixes
+   sharpens **F5**: `DrawOp`'s sum answers
    [friction §2](../../specs/ui-skia/canvas-seam-friction.md)'s "what are the
-   kinds" half and does nothing for the "which can this backend do" half. They
-   need separate mechanisms, and Gloss — having neither problem — is proof only
-   of the first.
-5. **F6 confirmed again, independently.** A backend-owned cache keyed by payload
+   kinds" half and says nothing about the "which can this backend do" half,
+   which the interpreter still asks one `__traits(compiles)` at a time. They
+   need separate mechanisms — F5's floor / defaulted / refusable ladder is the
+   one for the second — and Gloss, having neither problem, is proof only of the
+   first.
+5. **F8 confirmed again, independently.** A backend-owned cache keyed by payload
    identity, plus a scene-side "is this worth caching" hint, is the shape to copy
-   for images at [friction §7](../../specs/ui-skia/canvas-seam-friction.md). Two
+   for images at [friction §7](../../specs/ui-skia/canvas-seam-friction.md), and
+   it answers the retain-boundary question `UI-O4` holds open for text. Two
    subjects reached it without contact.
-6. **F7 confirmed again, with a warning.** Extent belongs to the surface, and in
-   Gloss it comes from the window manager. But Gloss also demonstrates the exact
-   failure mode `skia-canvas-render.d` hit — a scene larger than the surface
-   crops silently — and shows it can persist indefinitely in a project that only
-   ever paints into a live window. The offscreen case is the one that needs the
-   query, and it needs it because it is the one where the crop is invisible
+6. **F7's surface question, answered — and the other two left open.** Extent
+   comes from the window manager here, which is the surface question settled at
+   the cheapest possible price. But Gloss also demonstrates the exact
+   failure mode `skia-canvas-render.d` guards against by scanning every
+   operation's rect — a scene larger than the surface crops silently. `CmdBuffer`
+   reports an operation count and a run's cell extent, so a caller that wants
+   painted bounds folds `op.rect` itself: the derived-by-scan end of F7's axis,
+   with nothing maintained at construction. Gloss shows that a silent crop can
+   persist indefinitely in a project that only ever paints into a live
+   window. The offscreen case is the one that needs a layout answer, and it
+   needs it because it is the one where the crop is invisible
    until a golden pins it
    ([friction §8](../../specs/ui-skia/canvas-seam-friction.md)).
 7. **F1's negative half is unanimous; its positive half is untested here.**
@@ -521,7 +551,7 @@ Translate …` ([`ViewPort.hs`][viewport]) pans and zooms an arbitrarily large
 > **What Gloss cannot answer.** It has one renderer, so nothing here is evidence
 > about multi-backend negotiation, degradation policy, or whether a terminal and
 > a GPU can share a seam. Q2's optionality half, Q5's cell-target half and all of
-> **F4** are outside what this subject can speak to. Its value is that the
+> **F5** are outside what this subject can speak to. Its value is that the
 > _shape_ of a pure sum-type scene is visible in full, undistorted by any
 > compromise made for a second backend.
 

@@ -217,8 +217,9 @@ either.
 Two things follow for [friction §1][friction]. F1 is confirmed by a subject that
 is terminal-only, which strengthens it: measurement is off the painter even
 where there is one painter and no shaping to abstract. And Mosaic's more-correct
-_layering_ coexists with a less-correct _answer_ — our `cellsOf` is a real
-Unicode width — so the two are independent problems.
+_layering_ coexists with a less-correct _answer_ — the `cellsOf` width that
+`SkiaCanvas.measure` returns is a real Unicode width — so placement and
+correctness are independent problems.
 
 The residue of the port is visible in `Constraints`, whose surviving Compose
 doc comment describes a range "in pixels" while every value in it is a cell
@@ -253,8 +254,8 @@ operator fun get(row: Int, column: Int): TextPixel {
 `themeEvents` and seven `kitty*` protocol flags — each documented with the VT
 mode number or protocol URL it corresponds to
 ([`terminal/Terminal.kt`][terminalapi]). This is Qt's `hasFeature` model, stated
-once, in a data type — precisely what [F4](./comparison.md)
-recommends.
+once, in a data type — precisely the declared floor
+[F5](./comparison.md) describes.
 
 But it is consumed **at the encode step, not the draw step**. Only three of the
 thirteen reach rendering — `ansiLevel` and `kittyUnderline` are parameters of
@@ -278,13 +279,13 @@ code at all: the `rrtop` sample defines its own `Modifier.border`, a
 `DrawModifier` taking eight box-drawing `Char` parameters, in application space
 ([`samples/rrtop/…/Border.kt`][rrtopborder]).
 
-This does not contradict [F3](./comparison.md)
-so much as expose its precondition. F3's axis — _who degrades_ — only exists
-when there is something to degrade **to**. Mosaic has one device class, so
-"semantics must survive to the backend so it can degrade them" has no force, and
-the drawing vocabulary shrinks to the two operations a cell grid natively
-supports. The semantics are not lost: they live in the retained `MosaicNode`
-tree, which is above the painter and is what `dumpNodes()` prints.
+This does not contradict [F4](./comparison.md)
+so much as expose its precondition. F4's axis — _where the lowering lives_ —
+only has force when there is something to lower **to**. Mosaic has one device
+class, so "semantics must survive to the backend so it can degrade them" buys
+nothing, and the drawing vocabulary shrinks to the two operations a cell grid
+natively supports. The semantics are not lost: they live in the retained
+`MosaicNode` tree, which is above the painter and is what `dumpNodes()` prints.
 
 That is the shape of the answer to the umbrella's open question. If a toolkit's
 targets genuinely disagree, the way to keep semantics is to keep the **node
@@ -294,7 +295,7 @@ one painter until it can express both.
 ## Q4 — command shape
 
 **No reified command stream** — `drawTo` is virtual dispatch, like Slint and Qt.
-And yet Mosaic has every property [F2](./comparison.md)
+And yet Mosaic has every property [F3](./comparison.md)
 credits to reification, because **the frame itself is the value**:
 
 ```kotlin
@@ -312,21 +313,24 @@ It is collected, compared and replayed — the test library's seam is a
 ([`testing/TestMosaic.kt`][testmosaic]), and the runtime's own
 `AnsiRenderingTest` asserts on those strings.
 
-**This complicates F2.** F2 argues our reified `DrawOp[]` earns its keep because
-`RecordingCanvas` and the op-stream parity harness need values. Mosaic shows the
-cheaper alternative for a cell target: **compare frames, not commands.** A cell
-grid is already a comparable value, and comparing it tests the composition of
-operations rather than their sequence — usually the property a golden test
-actually wants. Reification is still right for `sparkles:ui`, because a GPU
-frame is _not_ cheaply comparable and the op stream is the only artifact the two
-targets share — but that is now a stated reason rather than an assumption.
+**This complicates F3.** F3 credits reification with recording, replay, culling
+and comparison, and that is why the `DrawOp[]` display list earns its keep:
+`RecordingCanvas` and the op-stream parity harness both need values. Mosaic
+shows the cheaper alternative for a cell target: **compare frames, not
+commands.** A cell grid is already a comparable value, and comparing it tests
+the composition of operations rather than their sequence — usually the property
+a golden test actually wants. Reification is still right for `sparkles:ui`,
+because a GPU frame is _not_ cheaply comparable, and the op stream is what lets
+one scripted session be compared across both targets — but that is the reason,
+stated, rather than an assumption.
 
-Note also that without a command type Mosaic still acquired a
-tag-plus-dead-fields shape one level down: `TextPixel` carries six fields, most
-`Unspecified` for a typical cell, and `drawRect` takes seven defaulted
-parameters of which a background fill uses one. The pressure behind
-[friction §4][friction] is not specific to sum types — it is what happens when
-one entry point serves several intents.
+Note also that without a command type Mosaic still acquires a
+one-shape-for-every-intent encoding one level down: `TextPixel` carries six
+fields, most `Unspecified` for a typical cell, and `drawRect` takes seven
+defaulted parameters of which a background fill uses one. The uniform-width
+half of [friction §4][friction] — a `PopClip` that carries nothing costing what
+a `TextRun` costs — is the same pressure seen from storage rather than from the
+call: it is what happens when one entry point serves several intents.
 
 ## Q5 — sub-unit placement
 
@@ -349,17 +353,18 @@ pixels and deliberately keeps them out**. `Terminal.Size` carries `columns`,
 sub-cell ladder needs. None of it reaches `DrawScope`: the pixel size is state
 for the application to read, not vocabulary for the painter.
 
-This supports [F5](./comparison.md)'s
-diagnosis and adds a third option beside "continuous coordinates" and "name a
-fidelity": **name nothing, and let the application spend the sub-cell budget by
-choosing code points.** Coherent for one device class; not for ours, where the
-raylib and Skia canvases have real device pixels and `RuleEdge` already reads as
-an apology for them.
+This supports [F6](./comparison.md)'s
+diagnosis — a float seam relocates the sub-unit question rather than dissolving
+it — and adds a third option beside continuous coordinates and a named fidelity
+over a queried device unit: **name nothing, and let the application spend the
+sub-cell budget by choosing code points.** Coherent for one device class; not
+for ours, where the raylib and Skia canvases have real device pixels and
+`RuleEdge` reads as an apology for them.
 
 ## Q6 — resolved appearance, semantic role, or both
 
-**Neither.** There is no `slot`, no theme and no palette in the toolkit at all;
-`Color` is an RGB value. What Mosaic has instead is a third answer worth
+**Neither.** There is no semantic role, no theme and no palette in Mosaic at
+all; `Color` is an RGB value. What it has instead is a third answer worth
 naming: an **`Unspecified` sentinel per attribute, resolved by accumulation into
 the cell**.
 
@@ -375,23 +380,29 @@ private inline fun TextPixel.updateTextPixel(codePoint: Int, foreground: Color, 
 rect that specifies only `background`, leaving each cell's code point and
 foreground untouched; a later `drawText` overwrites the code point and
 foreground and leaves the background. Style composition is therefore performed
-by the **surface**, per attribute, by painter's algorithm — no op needs to carry
-a fully-resolved `Visual`, and no consumer needs to re-resolve a role.
+by the **surface**, per attribute, by painter's algorithm — no operation carries
+a resolved appearance beside a role, and no consumer re-resolves one.
 
 The cost is that "inherit" and "explicitly transparent" become one value and
 draw order becomes semantically load-bearing. The benefit is one representation
-where [friction §6][friction] has us paying for two. Not directly transferable —
-an HTML backend emitting class names still needs the role — but it shows the
-hedge is not forced: a partial, sentinel-bearing appearance is a third point
-between "resolved" and "semantic".
+where [friction §6][friction] has us paying for two: six of our eight payloads
+store a `Slot` beside the resolved colours their primitive paints from.
+Reconstructing a `Visual` on demand from those fields, rather than storing one,
+keeps the hedge cheap — it does not turn it into a decision. Mosaic's answer is
+not directly transferable, since the HTML interpreter emitting class names
+needs the role, but it shows the hedge is not forced: a partial,
+sentinel-bearing appearance is a third point between "resolved" and "semantic".
 
 ## Q7 — payload ownership
 
 **Not a problem Mosaic can have, and the one lifetime rule it does have points
 the other way.** Text payloads are Kotlin `String`/`AnnotatedString` —
-immutable, shared, garbage-collected — so [friction §7][friction]'s borrowed
-slice has no analogue. A `TextSurface` is allocated fresh on every `draw()`
-([`layout/Node.kt`][layoutnode]), so no frame data outlives its frame either.
+immutable, shared, garbage-collected — so [friction §7][friction] has no
+analogue here: `TextRun.text` is a `const(char)[]` copied into a frame arena and
+borrowed from it, valid while the buffer that built it is alive and unreset, and
+a Kotlin string is subject to no such window. A `TextSurface` is allocated fresh
+on every `draw()` ([`layout/Node.kt`][layoutnode]), so no frame data outlives
+its frame either.
 
 The inversion worth noting is that the reuse hazard sits on the **output**, and
 is documented rather than enforced:
@@ -404,8 +415,9 @@ is documented rather than enforced:
 `AnsiRendering` holds one `StringBuilder` for the process lifetime and
 `clear()`s it per frame. The pattern is: **share the payloads freely, reuse the
 one buffer that is genuinely hot, and document that one** — a milder form of
-[F6](./comparison.md)'s "share
-it, do not borrow it".
+[F8](./comparison.md)'s "copy,
+refcount or arena-allocate; do not borrow across a frame", and the mildest
+mechanism of the eight it catalogues.
 
 ## Q8 — can a backend ask the scene its extent?
 
@@ -416,20 +428,20 @@ back off the frame — `AnsiRendering` stores `lastHeight = surface.height` and
 uses it next frame to decide how many stale lines to move up over and clear
 ([`rendering.kt`][rendering]).
 
-**This contradicts [F7](./comparison.md).**
-F7 concludes that "a backend allocating a surface generally knows the size
-because it chose it", from Qt's paint device and Notcurses' plane. Mosaic is a
-counter-example in the direction our friction log pointed: nobody chooses the
-size. The terminal's own `columns`/`rows` are _not_ used to size the surface —
-they are ambient state a composable can read via `LocalTerminalState`. Content
+**This confirms [F7](./comparison.md), and
+picks a side of its axis.** F7 separates three questions — surface, layout and
+ink extent — and puts the real choice between maintained-at-construction and
+derived-by-scan. Mosaic keeps the three apart and answers all of them from the
+scene, maintained: the terminal's own `columns`/`rows` never size the surface,
+being ambient state a composable reads via `LocalTerminalState`. Content
 decides, and the encoder adapts to whatever it is handed, frame by frame.
 
 That is exactly `skia-canvas-render.d`'s situation in [friction §8][friction]:
-an offscreen consumer with no externally-given size. The difference is that
-Mosaic gets the number from **layout**, exactly and for free, rather than by
-scanning a display list. F7's remedy ("add a layout query for the offscreen
-case") is right, and Mosaic is the existence proof that the layout query is the
-whole answer, not a supplement to a self-describing display list.
+an offscreen consumer with no externally-given size, which derives the extent by
+scanning every operation's rect because nothing reports it. Mosaic gets the same
+number from **layout**, exactly and for free, and never scans. It is the
+existence proof that a layout extent query is the whole answer for the offscreen
+case, not a supplement to a self-describing display list.
 
 ## Strengths
 
@@ -486,52 +498,55 @@ whole answer, not a supplement to a self-describing display list.
    seam by not trying. The thing worth protecting is the widget/layout tree, not
    `isCanvas`.
 
-2. **Contradicts F7, in the direction of [friction §8][friction].** Mosaic's
-   surface is sized by the scene, every frame, and its ANSI encoder consumes
-   that extent to clear stale lines. F7's "the surface generally knows the size
-   because it chose it" is not universal. Its recommended remedy — a layout
-   extent query — is confirmed as sufficient: Mosaic never scans a display list,
-   it reads the measured root.
+2. **Confirms F7, on the side [friction §8][friction] needs.** Mosaic's surface
+   is sized by the scene, every frame, and its ANSI encoder consumes that extent
+   to clear stale lines. The extent is maintained at construction — layout
+   already computed it — never derived by scanning. That is the remedy for the
+   offscreen case: a layout extent query, which `CmdBuffer` (`length` and a
+   run's `measure`) does not offer, so `skia-canvas-render.d` folds `op.rect`
+   itself.
 
-3. **Complicates F2.** Reification is not the only route to comparable frames.
+3. **Complicates F3.** Reification is not the only route to comparable frames.
    For a cell target the frame buffer is already a value, and Mosaic's entire
-   golden-test story rides on that with no recorder. Keep `DrawOp` and the
-   `SumType` re-encoding, but state the reason as _"the op stream is the only
-   artifact the cell and GPU targets share"_ — not _"otherwise we could not
-   test"_, which for `GridCanvas` is false.
+   golden-test story rides on that with no recorder. Keep `DrawOp` and its
+   closed sum, but state the reason as _"the op stream is what makes one
+   scripted session comparable across both targets"_ — not _"otherwise we could
+   not test"_, which for `GridCanvas` is false.
 
-4. **Qualifies F3.** Semantic draw operations answer "how does this backend
+4. **Qualifies F4.** Semantic draw operations answer "how does this backend
    degrade a scrollbar". Mosaic keeps its semantics in the retained node tree
    and gives the painter two primitives; nothing is lost, because nothing has to
    degrade. Before acting on [friction §3][friction], decide whether `scrollbar`
-   is in the seam because degradation must happen there, or because the seam is
+   is in the seam because the lowering must live there, or because the seam is
    the only shared vocabulary we have. If the latter, a shared _widget_
-   vocabulary above two small painters removes the pressure entirely.
+   vocabulary above small native painters removes the pressure entirely.
 
 5. **Confirms F1 from a fourth direction, and separates two questions.**
    Measurement is off the painter even in a toolkit with exactly one painter and
    no shaping. But Mosaic's answer is a code-point count, which is wrong for CJK
    and combining marks — so moving `measure` off `isCanvas` fixes the layering
-   and says nothing about correctness. Our `cellsOf` is the better _answer_
-   sitting in the worse _place_; keep the answer when relocating it.
+   and says nothing about correctness. `cellsOf` is the better _answer_ sitting
+   in the worse _place_; keep the answer when relocating it.
 
 6. **Adopt the capability record's placement, not just its shape.**
-   `Terminal.Capabilities` is F4's stated floor done well — thirteen documented
+   `Terminal.Capabilities` is F5's stated floor done well — thirteen documented
    fields with a total no-capability implementation — and it is read at the
-   byte-encoding step, never by drawing code. That is a cleaner cut than probing
-   for `pushClip` at each call site ([friction §2][friction]): the capability
-   governs a **lowering**, so it belongs where lowering happens.
+   byte-encoding step, never by drawing code. That is a cleaner cut than
+   `__traits(compiles, …)` probing for `pushClip`, `rule`, `scrollbar` and
+   `popClip` at each interpreter call site ([friction §2][friction]): a
+   capability governs a **lowering**, so it belongs where lowering happens.
 
 7. **A third option for [friction §6][friction].** Attribute-level `Unspecified`
    with composition-by-paint-order is neither "resolved" nor "semantic", and it
-   costs one field instead of two. It does not serve the HTML interpreter's
-   class names, so it is not a drop-in — but it falsifies the framing that the
-   choice is binary.
+   carries one appearance channel where our payloads carry resolved colour and a
+   `Slot`. It does not serve the HTML interpreter's class names, so it is not a
+   drop-in — but it falsifies the framing that the choice is binary.
 
 8. **Reject the seamlessness.** `drawTo(canvas: TextSurface)` is the one thing
-   here not to copy: `sparkles:ui` has three painters and a fourth planned, so
-   whatever replaces `isCanvas` keeps the structural-typing property the
-   friction log recorded as working.
+   here not to copy: three backends implement `isCanvas` — a cell grid, raylib
+   and Skia — and the structural typing that lets a `@system` GPU canvas and a
+   `@safe` recorder satisfy one concept with neither lying is what the friction
+   log records as working. Keep it.
 
 ## Sources
 

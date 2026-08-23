@@ -240,9 +240,9 @@ outline) becomes `SDL_RenderLines` over five points. `SDL_RenderTextureTiled`,
 Nineteen public drawing calls collapse into six queue functions, and a driver
 can never learn that a nine-grid was intended.
 
-This answers [F3][comparison]'s "who degrades" axis as **framework**, by
-construction, and more cleanly than Qt — `QPainter` emulates only when the
-engine _declines_, whereas SDL lowers unconditionally. The price inverts
+This answers [F4][comparison]'s "where the lowering lives" axis as
+**framework**, by construction, and more cleanly than Qt — `QPainter` emulates
+only when the engine _declines_, whereas SDL lowers unconditionally. The price inverts
 [friction §3][friction]: no backend can render a nine-patch natively even where
 the hardware would do it better, because the seam has no word for it.
 
@@ -254,11 +254,36 @@ shapes, because the arms are grouped by _payload shape_ rather than by tag:
 carry `{first, count, color, blend, texture, …}` and differ only in how
 `RunCommandQueue` interprets the vertex range.
 
-That is a useful refinement of [F2][comparison], which recommends re-encoding
-`DrawOp` as a sum type. SDL shows the encoding does not need one arm per kind —
-`fillRect`, `textRun`, `glyph` and `line` in `sparkles:ui` share nearly all
-their fields and could share an arm, leaving `scrollbar`'s eight fields as the
-one arm that genuinely differs. It also shows the discipline that makes a
+That refines [F3][comparison], which holds that reifying the stream is right
+while its encoding stays a live trade. SDL shows an encoding does not need one
+arm per kind: eleven tags, four shapes.
+
+`DrawOp` takes the other route — a closed sum with one arm per kind, eight of
+them: `FillRect`, `TextRun`, `Glyph`, `Line`, `Rule`, `Scrollbar`, `PushClip`,
+`PopClip`. Four of those describe nearly the same record. `TextRun`, `Glyph`
+and `Line` each carry a position, an `Ink` and a `Slot`, and `FillRect` differs
+only in storing its own colour fields plus a `const(BoxChrome)*` where the
+others store an `Ink`. Grouped SDL's way they are one arm with a discriminant,
+and `Scrollbar`'s fourteen fields are the one payload that genuinely differs.
+
+The price is paid in the accessors. `visualOf` reconstructs a `Visual` per
+payload precisely because a fill reports box chrome and a run reports text
+chrome; merged, that split moves inside the arm and the documented lossiness
+stops being legible from the type. Each of `DrawOp`'s seventeen member
+accessors — `kind`, `rect`, `text`, `to`, `slot`, the seven `bar*` ones — is
+one `match!` arm per kind returning either the field or a neutral value; merged,
+each becomes a `match!` over five arms with an inner switch on the
+discriminant, and `DrawOp.kind`, derived by an eight-arm `match!` so that no
+stored tag can disagree with the payload, reads that discriminant instead.
+Exhaustiveness moves from the sum's arms to a `final switch` the writer has to
+remember. The 64-byte budget is indifferent: it is a bound rather than an
+equality, and the merged arm stays governed by `TextRun`, the widest payload
+either way. `RecordingCanvas` is indifferent too — the ops stay values and stay
+pairwise comparable.
+
+The argument therefore stands as a maintenance one: arm count is a cost the
+size budget does not price, and SDL is the survey's demonstration that a seam
+can group by shape and stay legible. It also shows the discipline that makes a
 shared arm safe: `SDL_RENDERCMD_NO_OP` exists as a first-class tag, and a
 partially-built command is **retracted by retagging** it rather than by unwinding
 the queue (`cmd->command = SDL_RENDERCMD_NO_OP;` when a driver's `Queue*` hook
@@ -294,11 +319,11 @@ And the escape from the coarse unit is per-frame, not per-application:
 > [!IMPORTANT]
 > That sentence is the closest thing in the survey to a direct answer for a
 > cell-space toolkit on a pixel backend. **Draw the chrome in the coarse unit;
-> turn the coarse unit off for the text.** It complicates [F5][comparison],
-> which concluded that continuous coordinates dissolve friction §5: SDL has
-> continuous coordinates _and_ keeps a declared coarse unit, because the coarse
-> unit is what the content was authored against. The two are orthogonal, and
-> `sparkles:ui` currently conflates them.
+> turn the coarse unit off for the text.** It sharpens [F6][comparison], which
+> holds that continuous coordinates relocate the sub-unit problem rather than
+> dissolving it: SDL has continuous coordinates _and_ keeps a declared coarse
+> unit, because the coarse unit is what the content was authored against. The
+> two are orthogonal, and `sparkles:ui` conflates them.
 
 Note also what SDL never does: enumerate positions. There is no `RuleEdge`,
 because a hairline is `SDL_RenderLine` at whatever float coordinates the caller
@@ -319,12 +344,17 @@ from the render target and `SDL_ConvertToLinear` converts before queueing, with
 `color_scale` (the HDR/SDR-white-point factor) riding on the command. Nothing
 semantic — no slot, no role — reaches a driver.
 
-This is a fifth answer to Q6 and the cheapest surveyed. `DrawOp` carries
-`visual` _and_ `slot` on every op ([friction §6][friction]); SDL carries
-neither on most ops, because appearance is a property of _stream position_. The
-trade-off is real: a state-carrying stream is not order-independent, so ops
-cannot be reordered, culled individually or compared pairwise — which is
-exactly what `RecordingCanvas` and the op-stream parity harness do.
+This is a fifth answer to Q6 and the cheapest surveyed. `DrawOp` stores the
+resolved appearance each primitive paints from — an `Ink` on the four content
+payloads, colour fields plus a `const(BoxChrome)*` on `FillRect` — and a `Slot`
+beside it on six of the eight payloads ([friction §6][friction]); SDL carries
+neither on most ops, because appearance is a property of _stream position_.
+That `Visual` is derived from the payload through `visualOf` rather than stored
+makes the hedge [F9][comparison] describes cheaper without making it a
+decision. The trade-off is real: a state-carrying stream is not
+order-independent, so ops cannot be reordered, culled individually or compared
+pairwise — which is exactly what `RecordingCanvas` and the op-stream parity
+harness do.
 
 ## Q7 — payload ownership
 
@@ -358,13 +388,16 @@ answer to the borrowed-payload hazard**: the borrow stays a borrow, and
 mutating a still-referenced payload forces the frame to be submitted first.
 
 > [!NOTE]
-> This complicates [F6][comparison] ("share it, do not borrow it"). SDL borrows,
-> and stays correct, by making the borrow's invalidation observable. For
-> [friction §7][friction] — `DrawOp.text` as a borrowed slice — the SDL-shaped
-> fix is not interning and not reference counting but **copying variable-length
-> payload into a frame arena and putting an offset in the op**, which
-> simultaneously makes `DrawOp` trivially copyable, sendable across a thread,
-> and free of the `dip1000` `@system` assignment.
+> This is [F8][comparison] at its most interesting: every subject copies,
+> refcounts or arena-allocates, and SDL borrows a texture handle while staying
+> correct by making the borrow's invalidation observable. For
+> [friction §7][friction] — `DrawOp.text` as a slice — `CmdBuffer.textRun`
+> already copies each run into `sparkles.ui.arena`'s `FrameArena`, so the bytes
+> belong to the arena and a `scope` source is safe. What SDL adds is the shape
+> of the handle: **an offset into the arena rather than a slice of it**, which
+> is what would make `DrawOp` trivially copyable, sendable across a thread, and
+> free of the `launder` cast and the `@trusted` `opAssign` that
+> [friction §4][friction] records.
 
 ## Q8 — extent query
 
@@ -376,8 +409,11 @@ optional `GetOutputSize` hook; failing that asks the window
 answers from the current target's `SDL_RenderViewState.pixel_w/pixel_h`, so a
 texture target reports its own size. Nothing derives extent from the command
 stream, and nothing could — the stream is flushed and its arena reset several
-times per frame. This confirms [F7][comparison] from a fourth subject and adds
-the offscreen case: SDL treats "no output size" as a legitimate state.
+times per frame. That bounds [F7][comparison]: surface, layout and ink extent
+are three different questions, and a subject whose stream does not survive the
+frame can answer only the first, and only from the device. SDL adds the
+offscreen case: "no output size" is a legitimate state, returned as `true` with
+zero.
 
 ## Strengths
 
@@ -426,14 +462,18 @@ the offscreen case: SDL treats "no output size" as a legitimate state.
 
 ## Bearing on the proposal
 
-1. **Copy the arena-plus-offset payload encoding** for `DrawOp.text`
-   ([friction §7][friction]) — the concrete alternative to interning and to
-   reference counting that [F6][comparison] did not have. Copy the bytes into a
-   frame-scoped arena at emit time and store `(first, length)` in the op: this
-   makes `DrawOp` trivially copyable, removes the `dip1000` `@system`
-   assignment, and makes the recorded stream sendable to another thread, which
-   is what M7/T5 wants. `sparkles.ui.arena` already does this for chrome
-   payloads.
+1. **Take the offset, not just the arena** ([friction §7][friction]).
+   `CmdBuffer.textRun` copies each run into a `FrameArena`, so the copy half of
+   SDL's answer is in place; what `TextRun` keeps is a `const(char)[]` into that
+   arena, and the slice is what costs the `launder` cast and pins the operation
+   to the frame. SDL's durable handle is `(first, count)` into
+   `renderer->vertex_data`, deliberately not a pointer, because the arena
+   reallocs. An offset pair on `TextRun` is the stronger form
+   [F8][comparison] names — trivially copyable, sendable to another thread — at
+   the cost of giving every reader of `op.text` an arena to resolve against,
+   including `RecordingCanvas`, which interns on the collected heap so its ops
+   outlive the call that drew them. `UI-O4` is open on exactly that retain
+   boundary.
 2. **State the floor in one place, with substitution rules.**
    `VerifyDrawQueueFunctions` is what [friction §2][friction] is missing — not
    a capability enum, but one declaration saying which primitives are mandatory
@@ -442,7 +482,7 @@ the offscreen case: SDL treats "no output size" as a legitimate state.
    concept_, with each one's fallback. D can do this properly where C could
    only assert.
 3. **Make degradation refusable per domain, not globally.**
-   `IsSupportedBlendMode` confirms [F4][comparison] from a second subject and
+   `IsSupportedBlendMode` confirms [F5][comparison] from a second subject and
    adds that the query belongs to the _feature domain_, not to one global
    "supported?" call: a golden test asking for a true hairline should be refused
    by the hairline domain, not by a capability bitmask.
@@ -451,26 +491,31 @@ the offscreen case: SDL treats "no output size" as a legitimate state.
    least disruptive route out of [friction §1][friction] and §5 that keeps
    cell-space layout: the toolkit lays out in cells, the canvas owns the
    cell→device transform, and text (or a focus ring, or a two-pixel inset) opts
-   out per op. This **complicates [F5][comparison]**, which read continuous
-   coordinates as dissolving §5 — SDL has continuous coordinates _and_ keeps a
-   coarse declared unit, because the unit encodes authorial intent rather than a
-   rendering limitation.
-5. **Group the sum-type arms by payload shape, not by kind.** [F2][comparison]
-   recommends a `SumType` for `DrawOp`; SDL's eleven-tags-four-arms encoding
-   shows the arm count can sit far below the kind count.
-   `fillRect`/`textRun`/`glyph`/`line` share a shape, and `scrollbar` is the
-   outlier that earns its own arm — [friction §4][friction] and §3 resolved
-   together.
+   out per op. This **confirms [F6][comparison]**, which holds that continuous
+   coordinates relocate the sub-unit problem rather than dissolving it — SDL has
+   continuous coordinates _and_ keeps a coarse declared unit, because the unit
+   encodes authorial intent rather than a rendering limitation.
+5. **Group the sum-type arms by payload shape, not by kind.** [F3][comparison]
+   leaves the encoding a live trade; SDL's eleven-tags-four-arms command shows
+   the arm count can sit far below the kind count. `FillRect`, `TextRun`,
+   `Glyph` and `Line` share a shape and could share one arm, with `Scrollbar`
+   the outlier that earns its own — [friction §4][friction] and §3 resolved
+   together. The bill is `visualOf` and the seventeen member accessors, each of
+   which trades one `match!` arm per kind for an inner switch on a
+   discriminant, plus `DrawOp.kind`, which is derived from the arm rather than
+   read from a stored tag. The claim stands on maintenance, which the 64-byte
+   budget does not price.
 6. **Treat "appearance as stream state" as a fork, not a recommendation**
    ([friction §6][friction]). SDL's `SETDRAWCOLOR` dedup is the cheapest Q6
    answer surveyed and is incompatible with treating each op as an
    independently comparable value — which is what `RecordingCanvas` and the
-   parity harness rely on. Decide what the harness needs first.
+   parity harness rely on, and what [F12][comparison] says reification buys.
+   Decide what the harness needs first.
 7. **Name the residue.** `SDL_HINT_RENDER_LINE_METHOD` says that where backends
    legitimately disagree about fidelity, the seam should expose the choice under
    a name rather than pick silently per backend. `RuleEdge`'s real content is a
    fidelity policy ("one device pixel" vs "a whole cell") — the same instinct
-   [F5][comparison] reached from Notcurses. Two subjects now converge on it.
+   [F6][comparison] reaches from Notcurses. Two subjects converge on it.
 8. **Do not copy the property bag.** Untyped, non-exhaustive, mostly escape
    hatch. The real capability declarations in SDL are the asserted floor, the
    per-domain queries, and the driver's texture-format list — not
