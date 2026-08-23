@@ -433,7 +433,7 @@ input to the build.
 
 <!-- References -->
 
-[fg2]: https://eprints.soton.ac.uk/257577/1/funcgeo2.pdf
+[fg2]: https://web.archive.org/web/20260510004814/https://eprints.soton.ac.uk/257577/1/funcgeo2.pdf
 [fg2doi]: https://doi.org/10.1023/A:1022986521797
 [fg82]: http://web.archive.org/web/20241227050435/https://dl.acm.org/doi/10.1145/800068.802148
 [fi]: http://conal.net/papers/functional-images/fop-conal.pdf

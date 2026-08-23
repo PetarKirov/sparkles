@@ -530,7 +530,7 @@ scene _and_ the device, so neither owning it alone is correct.
 
 [cairo-rev]: https://gitlab.freedesktop.org/cairo/cairo/-/tree/bd04e43e201ef9beddcacdf379b610a0e199112e
 [cairo-repo]: https://gitlab.freedesktop.org/cairo/cairo
-[cairo-docs]: https://www.cairographics.org/manual/
+[cairo-docs]: https://web.archive.org/web/20260814002659/https://www.cairographics.org/manual/
 [cairo-backend-h]: https://gitlab.freedesktop.org/cairo/cairo/-/blob/bd04e43e201ef9beddcacdf379b610a0e199112e/src/cairo-surface-backend-private.h
 [cairo-surface-c]: https://gitlab.freedesktop.org/cairo/cairo/-/blob/bd04e43e201ef9beddcacdf379b610a0e199112e/src/cairo-surface.c
 [cairo-devscale]: https://gitlab.freedesktop.org/cairo/cairo/-/blob/bd04e43e201ef9beddcacdf379b610a0e199112e/src/cairo-surface.c#L1773
