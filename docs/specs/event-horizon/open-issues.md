@@ -286,6 +286,15 @@ bookkeeping).
 **Leaning:** (A) for M3/M4; measure slot pressure in the M8/M9 bench and
 switch to (B) if it bites.
 
+**Partially resolved** — for _scope deadlines_ the question is settled by a
+correctness (not slot-pressure) forcing move: the kernel-timer arm passed the
+frame-pinned `CancelContext` as CQE userdata and its fire-and-forget disarm
+raced a queued expiry (use-after-free, SPEC §8.3). `withDeadline` now uses a
+scheduler-owned armed list with clamped tick waits — no kernel op at all,
+which is (B) minus even the single armed op. `sleep`/`Ticker` (fiber-parked
+`OpTimeout`, safe by the park protocol) remain on (A); this issue stays open
+only for them.
+
 ## O19 — msghdr-based datagram ops
 
 **Where:** SPEC §4.1, §7.3.

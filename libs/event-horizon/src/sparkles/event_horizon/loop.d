@@ -141,6 +141,14 @@ if (isCompletionBackend!Backend)
     error the buffer is recycled to its origin (it does not come back —
     there will be no completion).
 
+    $(B The `ctx` lifetime rule:) `ctx` must stay valid until the op's
+    $(I terminal) completion is dispatched — `cancel` alone does not shorten
+    that (the terminal CQE still arrives and still invokes `cb`). A caller
+    whose `ctx` dies earlier must `detach` the handle first: after `detach`
+    returns, the callback never runs. Handing a stack frame's address to
+    `ctx` without one of those guarantees is exactly the use-after-free the
+    retired kernel-timer deadline shipped (SPEC §8.3).
+
     Backpressure: on a full submission queue the loop performs one implicit
     `flush` retry, then returns `EAGAIN`; an exhausted slab returns
     `ENOBUFS`.
