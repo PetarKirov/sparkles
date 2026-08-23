@@ -1169,7 +1169,7 @@ struct X11Wsi
     // which the next fallible operation reports.
     private void emit(Payload)(WindowId id, Payload payload) nothrow
     {
-        auto result = events_.push(WindowEvent(nextSequence_, id,
+        auto result = events_.pushCoalesced(WindowEvent(nextSequence_, id,
             WindowEventPayload(payload)));
         if (result.hasError)
         {

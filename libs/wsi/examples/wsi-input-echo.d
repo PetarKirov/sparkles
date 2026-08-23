@@ -76,6 +76,7 @@ private struct EchoState
     WindowId id;
     SurfaceMetrics metrics;
     size_t cursorIndex;
+    bool repaint;
     bool quit;
 }
 
@@ -93,17 +94,17 @@ private void echoLoop(Backend)(ref Backend wsi, ref DefaultLoop loop,
                     value.metrics.physicalSize.width,
                     value.metrics.physicalSize.height,
                     value.metrics.scale.value);
-                paintIfNeeded(wsi, state);
+                state.repaint = true;
             },
             (in SurfaceMetricsChangedEvent value) {
                 state.metrics = value.metrics;
+                state.repaint = true;
                 writefln("#%s metrics     %s×%s logical, %s×%s physical, ×%s",
                     event.sequence, value.metrics.logicalSize.width,
                     value.metrics.logicalSize.height,
                     value.metrics.physicalSize.width,
                     value.metrics.physicalSize.height,
                     value.metrics.scale.value);
-                paintIfNeeded(wsi, state);
             },
             (in KeyboardEvent value) {
                 writefln("#%s key %-7s physical=%s logical=%s loc=%s mods=%s",
@@ -164,9 +165,22 @@ private void echoLoop(Backend)(ref Backend wsi, ref DefaultLoop loop,
     while (!state.quit)
     {
         static if (is(typeof(wsi.runIntegratedOnce(loop, Duration.init))))
-            wsi.runIntegratedOnce(loop, 250.msecs).value;
+            auto ticked = wsi.runIntegratedOnce(loop, 250.msecs);
         else
-            loop.runHostedOnce(wsi, 250.msecs).value;
+            auto ticked = loop.runHostedOnce(wsi, 250.msecs);
+        if (ticked.hasError)
+        {
+            writefln("loop error: %s (errno=%s stage=%s)",
+                ticked.error.context, ticked.error.errnoValue,
+                ticked.error.stage);
+            // The backend's sticky diagnostic names the original failure.
+            auto sticky = wsi.drain((WindowEvent _) @safe {});
+            if (sticky.hasError)
+                writefln("backend diagnostic: %s (kind=%s native=%s)",
+                    sticky.error.diagnostic.value, sticky.error.kind,
+                    sticky.error.nativeCode);
+            return;
+        }
         batched = 0;
         auto drained = wsi.drain((WindowEvent event) @safe {
             if (batched < batch.length)
@@ -181,6 +195,14 @@ private void echoLoop(Backend)(ref Backend wsi, ref DefaultLoop loop,
         }
         foreach (ref event; batch[0 .. batched])
             handle(event);
+        // Paint once per drained batch, not per metrics event: a resize
+        // drag floods configures, and a per-event repaint would spend the
+        // whole flood painting sizes nobody will ever see again.
+        if (state.repaint)
+        {
+            state.repaint = false;
+            paintIfNeeded(wsi, state);
+        }
         if (batched != 0)
             stdout.flush(); // stay line-visible when piped through tee
     }
