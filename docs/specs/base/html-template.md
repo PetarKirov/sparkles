@@ -3,8 +3,8 @@
 _Audience: developers and coding agents building against `sparkles:base`. This
 document is normative: it states what an interpolated HTML literal means, which
 escape each interpolation receives, and which templates are rejected at compile
-time. Status: **designed, not implemented** — the mechanism is proven by a
-prototype (§9), the module is not written yet._
+time. Status: **`HTLM1` and `HTLM2` implemented** in
+`libs/base/src/sparkles/base/html_template.d`; `HTLM3`–`HTLM5` are open (§8)._
 
 ## 1. Overview
 
@@ -50,22 +50,23 @@ range (§6).
 
 ## 2. Requirements
 
-| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                           |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| HTL1  | **Context decides the escape.** Every interpolation is classified by scanning the literal skeleton, and escaped for that context alone (§3, §4). A caller never names an escape for a plain value.                                                                                                                                                                    |
-| HTL2  | **Classification is compile-time.** The scan runs during CTFE over the `InterpolatedLiteral!lit` parts; the context of each interpolation is a template constant, so the runtime path is the escape loop and nothing else — no per-value branch on a stored state.                                                                                                    |
-| HTL3  | **Unsound placements are compile errors**, naming the offending expression's own source text: tag-name and attribute-name positions (HTL7), raw-text elements (HTL8), comments (HTL9), and unterminated attribute quotes.                                                                                                                                             |
-| HTL4  | **Auto-quoting.** An interpolation in an unquoted attribute value (`class=$(x)`) emits `"…"` around the escaped value. An unquoted value that contains a space would otherwise become two attributes; quoting is always correct, so it is not left to the caller.                                                                                                     |
-| HTL5  | **URL attributes are percent-encoded per position**, not entity-escaped only: `percentPathSegment` before a `?`, `percentComponent` after it, `percentFragment` after a `#`, then the five-entity escape on top (an attribute is still an attribute). The URL attribute set is `href src action formaction cite poster data ping srcset manifest`.                    |
-| HTL6  | **A whole-URL interpolation is checked, not encoded.** `href=$(url)` (the value _is_ the interpolation) cannot be percent-encoded — that would destroy `://`. It is scheme-checked instead: `javascript:`, `vbscript:` and `data:` (other than `data:image/*`) are rejected at **runtime** as `HtmlError.unsafeScheme`, since the value is not known at compile time. |
-| HTL7  | **Structure is static.** `<$(tag)>` and `<div $(attr)="x">` do not compile: an attacker-chosen tag or attribute name is not an escaping problem but a structural one, and there is no escape that makes it safe.                                                                                                                                                      |
-| HTL8  | **No interpolation into `<script>`/`<style>`.** Raw-text elements have no character references, so no escape exists; the value must arrive through `json(x)` or `cssValue(x)` (§5), which serialize into a form that cannot close the element.                                                                                                                        |
-| HTL9  | **No interpolation into comments**, where `--` and `>` terminate unpredictably across parsers.                                                                                                                                                                                                                                                                        |
-| HTL10 | **Skeleton validation.** The literal must be well-formed on its own: tags balanced (accounting for the void elements), attribute quotes closed, raw-text elements closed. Violations are compile errors, quoting the tag and the byte offset.                                                                                                                         |
-| HTL11 | **Escape hatches are explicit and greppable**: `raw(x)` (pre-escaped markup, e.g. a fragment from another `html` call), `attrs(range)` (a spread of name/value pairs in a tag), `json(x)`, `cssValue(x)`. A `raw` is the only way unescaped bytes reach the output.                                                                                                   |
-| HTL12 | **Composition without double-escaping.** `htmlText(...)` returns an `HtmlFragment` (a `string` newtype); interpolating one into another template writes it verbatim, exactly as `raw` does, because it is already escaped.                                                                                                                                            |
-| HTL13 | **Writer-first, allocation-free.** The primitive is `writeHtml(ref Writer, …)` over any `char` output range; attributes are inferred, and the path is `@safe pure nothrow @nogc` for a `@nogc` writer and values with `@nogc` conversions (§6). `htmlText` and the lazy `html` wrapper are conveniences over it.                                                      |
-| HTL14 | **Values render through `sparkles.base.text.writers.writeValue`** — the same vocabulary `styled_template` uses, so an `int`, a `Duration`, a `SmallBuffer` or a `toString`-bearing type all interpolate without a caller-side `.text`.                                                                                                                                |
+| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTL1  | **Context decides the escape.** Every interpolation is classified by scanning the literal skeleton, and escaped for that context alone (§3, §4). A caller never names an escape for a plain value.                                                                                                                                                                                                                                                                                                                                                       |
+| HTL2  | **Classification is compile-time.** The scan runs during CTFE over the `InterpolatedLiteral!lit` parts; the context of each interpolation is a template constant, so the runtime path is the escape loop and nothing else — no per-value branch on a stored state.                                                                                                                                                                                                                                                                                       |
+| HTL3  | **Unsound placements are compile errors**, naming the offending expression's own source text: tag-name and attribute-name positions (HTL7), raw-text elements (HTL8), comments (HTL9), and unterminated attribute quotes.                                                                                                                                                                                                                                                                                                                                |
+| HTL4  | **Auto-quoting.** An interpolation in an unquoted attribute value (`class=$(x)`) emits `"…"` around the escaped value. An unquoted value that contains a space would otherwise become two attributes; quoting is always correct, so it is not left to the caller.                                                                                                                                                                                                                                                                                        |
+| HTL5  | **URL attributes are percent-encoded per position**, not entity-escaped only: `percentPathSegment` before a `?` (so `/` is escaped and a segment stays one segment), `percentComponent` after a `?` or `#` (so `&`, `=` and `#` cannot survive — an interpolation there is one value, not a whole query), then the five-entity escape on top, because an attribute is still an attribute. The URL attribute set is `href src action formaction cite poster data ping manifest srcset background longdesc`.                                               |
+| HTL6  | **A whole-URL interpolation is checked, not encoded.** `href=$(url)` (the value _is_ the interpolation) cannot be percent-encoded — that would destroy `://`. It is scheme-checked instead — case-insensitively (RFC 3986 §3.1) — and `javascript:`, `vbscript:` and `data:` (other than `data:image/`) are replaced by the inert `about:invalid#unsafe-scheme`: never emitted, never silently dropped. A rejection cannot throw, because the write path is `nothrow` (`HTL15`); an `Expected`-returning arm for callers that want to _know_ is `HTLM3`. |
+| HTL7  | **Structure is static.** `<$(tag)>` and `<div $(attr)="x">` do not compile: an attacker-chosen tag or attribute name is not an escaping problem but a structural one, and there is no escape that makes it safe.                                                                                                                                                                                                                                                                                                                                         |
+| HTL8  | **No interpolation into `<script>`/`<style>`.** Raw-text elements have no character references, so no escape exists; the value must arrive through `json(x)` or `cssValue(x)` (§5), which serialize into a form that cannot close the element.                                                                                                                                                                                                                                                                                                           |
+| HTL9  | **No interpolation into comments**, where `--` and `>` terminate unpredictably across parsers.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| HTL10 | **Skeleton validation.** The literal must be well-formed on its own: tags balanced (accounting for the void elements), attribute quotes closed, raw-text elements closed. Violations are compile errors, quoting the tag and the byte offset.                                                                                                                                                                                                                                                                                                            |
+| HTL11 | **Escape hatches are explicit and greppable**: `raw(x)` (pre-escaped markup, e.g. a fragment from another `html` call), `attrs(range)` (a spread of name/value pairs in a tag), `json(x)`, `cssValue(x)`. A `raw` is the only way unescaped bytes reach the output.                                                                                                                                                                                                                                                                                      |
+| HTL12 | **Composition without double-escaping.** `htmlText(...)` returns an `HtmlFragment` (a `string` newtype); interpolating one into another template writes it verbatim, exactly as `raw` does, because it is already escaped.                                                                                                                                                                                                                                                                                                                               |
+| HTL13 | **Writer-first, allocation-free.** The primitive is `writeHtml(ref Writer, …)` over any `char` output range; attributes are inferred, and the path is `@safe pure nothrow @nogc` for a `@nogc` writer and values with `@nogc` conversions (§6). `htmlText` and the lazy `html` wrapper are conveniences over it.                                                                                                                                                                                                                                         |
+| HTL15 | **`@safe pure nothrow @nogc`.** The write path carries all four attributes whenever the writer and the value's conversion do. A requirement, not an aspiration: it rules out the "render the value to a string, then escape it" implementation — each context escapes _through a sink_ as the bytes are produced (§6) — and it rules out throwing on a rejected URL (`HTL6`). `htmlText` allocates by definition and is the exception.                                                                                                                   |
+| HTL14 | **Values render through `sparkles.base.text.writers.writeValue`** — the same vocabulary `styled_template` uses, so an `int`, a `Duration`, a `SmallBuffer` or a `toString`-bearing type all interpolate without a caller-side `.text`.                                                                                                                                                                                                                                                                                                                   |
 
 ## 3. The context model
 
@@ -73,19 +74,20 @@ The scanner is a plain byte state machine over the literal parts, carried across
 them (an interpolation can sit anywhere, including mid-attribute). Its state is
 the tuple `(inTag, quote, afterEq, attrName, urlSection, rawTextElement)`.
 
-| Context        | Reached at                                 | Example                        |
-| -------------- | ------------------------------------------ | ------------------------------ |
-| `text`         | outside any tag                            | `<p>$(x)</p>`                  |
-| `attrQuoted`   | inside `"…"` or `'…'` after `=`            | `<p class="$(x)">`             |
-| `attrUnquoted` | directly after `=`                         | `<p class=$(x)>`               |
-| `urlWhole`     | a URL attribute whose value _is_ the value | `<a href=$(u)>`, `href="$(u)"` |
-| `urlPath`      | inside a URL attribute, before `?`/`#`     | `<a href="/u/$(id)">`          |
-| `urlQuery`     | inside a URL attribute, after `?`          | `<a href="/s?q=$(q)">`         |
-| `urlFragment`  | inside a URL attribute, after `#`          | `<a href="/p#$(anchor)">`      |
-| `tagName`      | inside `<…` before the first space         | `<$(t)>` — **error**           |
-| `attrName`     | in a tag, not after `=`                    | `<p $(a)="1">` — **error**     |
-| `rawText`      | inside `<script>`/`<style>`                | **error** unless §5            |
-| `comment`      | inside `<!-- … -->`                        | **error**                      |
+| Context            | Reached at                               | Example                    |
+| ------------------ | ---------------------------------------- | -------------------------- |
+| `text`             | outside any tag                          | `<p>$(x)</p>`              |
+| `attrQuoted`       | inside `"…"` or `'…'` after `=`          | `<p class="$(x)">`         |
+| `attrUnquoted`     | directly after `=`                       | `<p class=$(x)>`           |
+| `urlWhole`         | a quoted URL attribute the value fills   | `<a href="$(u)">`          |
+| `urlWholeUnquoted` | the same, unquoted (auto-quoted on emit) | `<a href=$(u)>`            |
+| `urlPath`          | inside a URL attribute, before `?`/`#`   | `<a href="/u/$(id)">`      |
+| `urlQuery`         | inside a URL attribute, after `?`        | `<a href="/s?q=$(q)">`     |
+| `urlFragment`      | inside a URL attribute, after `#`        | `<a href="/p#$(anchor)">`  |
+| `tagName`          | inside `<…` before the first space       | `<$(t)>` — **error**       |
+| `attrName`         | in a tag, not after `=`                  | `<p $(a)="1">` — **error** |
+| `rawText`          | inside `<script>`/`<style>`              | **error** unless §5        |
+| `comment`          | inside `<!-- … -->`                      | **error**                  |
 
 `urlWhole` is distinguished from `urlPath` by one bit: whether any literal byte
 of the attribute value precedes the interpolation. `href="/u/$(id)"` has `/u/`;
@@ -101,8 +103,9 @@ and is checked rather than encoded (HTL6).
 | `attrUnquoted`            | `'"'`, `writeHtmlEscaped`, `'"'`                           |
 | `urlPath`                 | `encodePercent!percentPathSegment` → `writeHtmlEscaped`    |
 | `urlQuery`                | `encodePercent!percentComponent` → `writeHtmlEscaped`      |
-| `urlFragment`             | `encodePercent!percentFragment` → `writeHtmlEscaped`       |
+| `urlFragment`             | `encodePercent!percentComponent` → `writeHtmlEscaped`      |
 | `urlWhole`                | scheme check (HTL6) → `writeHtmlEscaped`                   |
+| `urlWholeUnquoted`        | `'"'`, as `urlWhole`, `'"'`                                |
 | `raw(x)` / `HtmlFragment` | verbatim                                                   |
 
 `percentComponent` in a query — rather than `percentQuery` — is deliberate: the
@@ -180,16 +183,18 @@ writer, so the bytes are escaped as they are produced. The `urlPath` and
 
 | ID    | Milestone                                                                                                                                                                                        |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| HTLM1 | Scanner + context classification + `text`/`attrQuoted`/`attrUnquoted` escapes; `writeHtml`/`htmlText`.                                                                                           |
-| HTLM2 | URL contexts (HTL5/HTL6) and the escaping-writer adaptors that remove the temporary (§6).                                                                                                        |
-| HTLM3 | Compile-time rejections and skeleton validation (HTL3, HTL7–HTL10) with the error-message corpus.                                                                                                |
+| HTLM1 | **Delivered.** Scanner + context classification + the text and attribute escapes; `writeHtml`/`htmlText`.                                                                                        |
+| HTLM2 | **Delivered.** URL contexts (`HTL5`/`HTL6`) and the escaping sinks that remove the temporary (§6).                                                                                               |
+| HTLM3 | The rejections shipped with `HTLM1` (`HTL3`, `HTL7`–`HTL9`, and the unquoted-tail case); what is left is whole-skeleton validation (`HTL10`) and the `Expected`-returning `writeHtmlChecked`.    |
 | HTLM4 | `raw`/`HtmlFragment`/`attrs`/`attr` (HTL11–HTL12); `json`/`cssValue`.                                                                                                                            |
 | HTLM5 | Adoption: `sparkles.docs.breadcrumbs` and `sparkles.docs.sidebar` first (smallest, most markup-dense), then `page_shell`. A/B the generated site — byte-identical output is the acceptance test. |
 
-## 9. Prototype evidence
+## 9. Evidence
 
-A ~200-line prototype (scanner + classification + the four escapes) compiles and
-runs. Given
+The module's own tests pin every row of §4; `dub test :base -- -i html_template`
+runs 17 of them, one `@safe pure nothrow @nogc` (`HTL15`) and one asserting the
+rejections do not compile. `libs/base/examples/html-template.d` is the runnable
+tour. Given
 
 ```d
 const cls  = `a" onload="evil()`;
@@ -216,7 +221,7 @@ it writes:
 
 — attribute-injection defeated, path traversal defeated (`/` → `%2F`), query
 parameter injection defeated (`&` → `%26`), and the unquoted attribute quoted.
-The two rejections report the expression's own source text:
+The rejections report the expression's own source text:
 
 ```
 Error: static assert:  "`cls` interpolates into a tag/attribute NAME position"
