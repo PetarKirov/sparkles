@@ -535,6 +535,155 @@ KeyedRect[] keyedRects(in WidgetTree tree, in Frame[] frames) pure nothrow
     return result;
 }
 
+/**
+The answer to "where is the element named `key`?" (`ANC7`, `ANC3`).
+
+The three ways a lookup fails to yield one honest rect are kept apart, because
+a caller that cannot tell them apart writes a silent bug for each: the key
+names nothing, it names $(I several) elements, or it names one that is scrolled
+entirely out of a clipping ancestor. `ANC7` settles the middle case — a
+duplicate is an ambiguity with no positional fallback, never a contest the
+last-painted element wins — and `ANC3` names the last one, which `keyTargets`
+alone cannot express because it drops fully-clipped entries and so reads
+"scrolled out" as "gone".
+*/
+struct KeyLookup
+{
+    /// How many visible nodes carried the key this frame.
+    size_t count;
+    /// The clip-intersected rect when exactly one did; empty otherwise.
+    Rect rect;
+    /// One element carried it and every part of it is clipped away.
+    bool clipped;
+
+@safe pure nothrow @nogc const:
+
+    /// Exactly one element, with some of it on screen: `rect` is usable.
+    bool ok() => count == 1 && !clipped;
+    /// The key named nothing this frame.
+    bool missing() => count == 0;
+    /// The key named more than one element — refuse, never pick (`ANC7`).
+    bool ambiguous() => count > 1;
+}
+
+/**
+The rect of the element named `key`, through the same clip rule the display
+list scissors with, over the frames the painter used (the `IXR27` invariant).
+
+This is the single-rect narrowing of $(LREF keyTargets): where that returns
+every match, this one answers only when the name is unambiguous, and reports
+the ambiguity otherwise. Key `0` is "unkeyed" and therefore not a name.
+*/
+KeyLookup rectOfKey(in WidgetTree tree, in Frame[] frames, size_t key)
+    pure nothrow @nogc
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    KeyLookup found;
+    if (key == 0)
+        return found;
+
+    void walk(uint idx, in Rect clip)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        const rect = frames[idx].rect;
+        if (node.key == key)
+        {
+            if (found.count == 0)
+            {
+                const visible = rect.intersection(clip);
+                found.rect = visible;
+                found.clipped = visible.empty;
+            }
+            ++found.count;
+        }
+        const childClip = childClipOf(node, rect, clip);
+        foreach (ci; node.children)
+            walk(ci, childClip);
+    }
+
+    walk(tree.root, unclipped());
+    return found;
+}
+
+@("ui.state.rectOfKey.namesAtMostOneElement")
+@safe unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const a = b.add(Widget(kind: WidgetKind.text, text: "alpha", key: 7));
+    const c = b.add(Widget(kind: WidgetKind.text, text: "beta", key: 9));
+    const col = b.add(Widget(kind: WidgetKind.column, children: [a, c]));
+    auto tree = b.finish(col);
+    auto frames = layout(tree);
+
+    const hit = rectOfKey(tree, frames, 7);
+    assert(hit.ok && !hit.ambiguous && !hit.missing);
+    assert(hit.rect == frames[a].rect, "the rect the painter used (IXR27)");
+    assert(rectOfKey(tree, frames, 9).rect == frames[c].rect);
+
+    // 0 is "unkeyed", never a name — otherwise every plain widget answers.
+    assert(rectOfKey(tree, frames, 0).missing);
+    assert(rectOfKey(tree, frames, 1234).missing);
+}
+
+@("ui.state.rectOfKey.duplicatesAreAmbiguousNotAContest")
+@safe unittest
+{
+    // `ANC7`: adopting `keyAt`'s last-in-paint-order-wins would reproduce
+    // CSS's N-instances-resolve-to-the-last failure. A duplicate must be
+    // reported, and `ok` must be false so no caller can act on a guess.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const one = b.add(Widget(kind: WidgetKind.text, text: "first", key: 3));
+    const two = b.add(Widget(kind: WidgetKind.text, text: "second", key: 3));
+    const col = b.add(Widget(kind: WidgetKind.column, children: [one, two]));
+    auto tree = b.finish(col);
+    auto frames = layout(tree);
+
+    const hit = rectOfKey(tree, frames, 3);
+    assert(hit.ambiguous && hit.count == 2);
+    assert(!hit.ok, "no positional fallback — the caller must refuse");
+}
+
+@("ui.state.rectOfKey.scrolledOutIsNotGone")
+@safe unittest
+{
+    // `ANC3`: a keyed row scrolled out of its viewport is found-but-clipped,
+    // which is a different answer from "no such key" — an anchor that cannot
+    // tell them apart either re-places to a stale rect or vanishes silently.
+    import sparkles.ui.geometry : Point, SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    uint[] rows;
+    foreach (i, t; ["zero", "one", "two", "three"])
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: t,
+            key: cast(size_t)(100 + i)));
+    const inner = b.add(Widget(kind: WidgetKind.column, children: rows));
+    // A two-row viewport scrolled down by three: only "three" is on screen.
+    const vp = b.add(Widget(kind: WidgetKind.column, children: [inner],
+        height: SizeSpec.fixed(2), clipY: true, childOffset: Point(0, 3)));
+    auto tree = b.finish(vp);
+    auto frames = layout(tree);
+
+    const shown = rectOfKey(tree, frames, 103);
+    assert(shown.ok, "the row inside the viewport resolves normally");
+
+    const scrolledOut = rectOfKey(tree, frames, 100);
+    assert(scrolledOut.count == 1 && scrolledOut.clipped);
+    assert(!scrolledOut.ok && !scrolledOut.missing,
+        "found, but nothing of it is on screen — not the same as absent");
+}
+
 @("ui.state.sourceOffsetAt.charPreciseThroughWrap")
 @safe unittest
 {
