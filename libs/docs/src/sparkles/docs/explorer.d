@@ -28,10 +28,11 @@ import sparkles.docs.sidebar : SidebarItem;
 import sparkles.docs.site : writeJsonString;
 import sparkles.docs.site_tree : DirNode, SiteTree;
 
-/// The client renderer, verbatim (`views/explorer.js`). A string import so the
-/// JavaScript stays a JavaScript file — linted, formatted and diffed as one —
-/// rather than a D string literal.
-enum explorerScript = import("explorer.js");
+/// The site's client layer, verbatim (`views/site.js`): the explorer renderer
+/// plus the soft navigation that keeps it alive across a click (`DOC13`). A
+/// string import so the JavaScript stays a JavaScript file — linted,
+/// formatted and diffed as one — rather than a D string literal.
+enum siteScript = import("site.js");
 
 /++
 The site tree plus the docs nav as the JSON $(LREF explorerScript) reads.
