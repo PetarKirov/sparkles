@@ -42,6 +42,14 @@ struct SiteConfig
     /// relative to the repository root.
     @WireOptional() string[] linkRoots;
 
+    /// Directories published in full regardless of whether the docs link
+    /// them (`DSC8`), relative to the repository root. Each is treated
+    /// exactly as a $(I linked directory) is — same `.gitignore`-aware walk,
+    /// same extension allow-list, same globs and size cap — so a root is a
+    /// standing link, not a policy bypass. Empty by default: discovery stays
+    /// link-driven until a repository opts a subtree in.
+    @WireOptional() string[] sourceRoots;
+
     /// Extension allow-list (lower-case, no dot) for files reached by
     /// $(I directory) expansion. A directly linked file is exempt — the link
     /// is explicit intent — but still subject to the binary deny-list and
@@ -62,6 +70,7 @@ struct SiteConfig
     {
         SiteConfig c = SiteConfig(
             linkRoots: linkRoots.dup,
+            sourceRoots: sourceRoots.dup,
             extensions: extensions.dup,
             maxFileSize: maxFileSize,
             excludeGlobs: excludeGlobs.dup);
