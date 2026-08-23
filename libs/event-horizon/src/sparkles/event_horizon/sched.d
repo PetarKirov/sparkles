@@ -19,7 +19,8 @@ version (EhSchedStack)  :  // rides DefaultLoop; peer backends via backend.selec
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ENOBUFS;
 import core.thread.fiber : Fiber;
-import core.time : Duration;
+import core.thread.osthread : Thread;
+import core.time : Duration, MonoTime;
 
 import sparkles.event_horizon.buffer : Buf;
 import sparkles.event_horizon.capability : SpawnOptions;
@@ -162,6 +163,7 @@ struct Sched
     /// Tears down the loop; every fiber must have finished.
     void destroy() @safe nothrow @nogc
     in (_liveFibers == 0, "destroy with live fibers")
+    in (_armedDeadlines is null, "destroy with armed deadlines")
     {
         _loop.destroy();
     }
@@ -234,27 +236,55 @@ struct Sched
         enqueue(task);
     }
 
-    // Deadlines need the loop's timer, which exists only when the backend
-    // lowers OpTimeout (io_uring/kqueue; not the current IOCP data path). On
-    // a timer-less backend, withDeadline/timeout are simply unavailable.
-    static if (__traits(hasMember, DefaultLoop, "submitAfter"))
-    {
-        /// Arms a one-shot deadline: expiry cancels `node`'s subtree with
-        /// `InterruptKind.deadline` (SPEC §8.3). The token disarms it.
-        ulong armDeadline(CancelContext* node, Duration timeout) @trusted nothrow
-        {
-            auto h = _loop.submitAfter(timeout, &onDeadline, cast(void*) node);
-            return h.hasError ? 0 : h.value.token.raw;
-        }
+    // ── the deadline service (SPEC §8.3) ─────────────────────────────────
+    // Deadlines are a scheduler service, not kernel ops: an armed node sits
+    // on an intrusive list this scheduler owns, the tick clamps its wait to
+    // the earliest expiry, and the sweep cancels expired subtrees between
+    // dispatches. Nothing asynchronous ever holds the node's address —
+    // disarming is a synchronous severance, so a disarmed node can never be
+    // swept. (The kernel-timer design this replaces passed the frame-pinned
+    // node as timer userdata; a queued expiry CQE could outlive the scope
+    // frame and sweep freed stack. It also never disarmed at all on IOCP,
+    // whose cancel lowering is a stub.) Works on every backend.
 
-        /// Disarms a deadline; a no-op for an already-fired or invalid token.
-        void disarmDeadline(ulong token) @safe nothrow
-        {
-            if (token == 0)
-                return;
-            OpHandle h = {token: OpToken(token)};
-            cast(void) _loop.cancel(h);
-        }
+    /// Arms a one-shot deadline on `node`: expiry cancels its subtree with
+    /// `InterruptKind.deadline` (SPEC §8.3). Infallible; undone by
+    /// `disarmDeadline`. The node must stay address-stable while armed —
+    /// `runScope` pins it on the scope frame and always disarms before the
+    /// frame dies.
+    void armDeadline(CancelContext* node, Duration timeout) @trusted nothrow @nogc
+    in (!node.deadlineArmed, "node already carries a deadline")
+    {
+        const now = MonoTime.currTime;
+        // Saturate: a huge finite timeout must never wrap past MonoTime's
+        // range into the past and expire instantly (the Duration→tick
+        // conversion itself can overflow, so gate on the coarse half-range
+        // bound rather than on the wrapped sum).
+        node.deadlineAt = timeout >= Duration.max / 2
+            ? MonoTime.max
+            : now + timeout;
+        node.prevArmed = null;
+        node.nextArmed = _armedDeadlines;
+        if (_armedDeadlines !is null)
+            _armedDeadlines.prevArmed = node;
+        _armedDeadlines = node;
+        node.deadlineArmed = true;
+    }
+
+    /// Disarms `node`'s deadline — synchronous unlink, idempotent; a no-op
+    /// for a node that was never armed or was already swept.
+    void disarmDeadline(CancelContext* node) @trusted nothrow @nogc
+    {
+        if (!node.deadlineArmed)
+            return;
+        if (node.prevArmed !is null)
+            node.prevArmed.nextArmed = node.nextArmed;
+        else
+            _armedDeadlines = node.nextArmed;
+        if (node.nextArmed !is null)
+            node.nextArmed.prevArmed = node.prevArmed;
+        node.prevArmed = node.nextArmed = null;
+        node.deadlineArmed = false;
     }
 
     /// Fibers spawned and not yet finished.
@@ -277,7 +307,7 @@ struct Sched
         while (_liveFibers > 0 || _loop.inFlight > 0)
         {
             if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0
-                && !_loop.wakerArmed)
+                && !_loop.wakerArmed && _armedDeadlines is null)
                 assert(0, "deadlock: parked fibers with nothing in flight");
             auto r = tick(Duration.max);
             if (r.hasError)
@@ -292,15 +322,25 @@ struct Sched
     ready fibers (up to `resumeBudget`), then — if none became ready and
     ops are in flight — one `runOnce(timeout)`.
 
-    Returns `dispatched` (fibers ran or completions arrived), `timedOut`
-    (nothing within `timeout`; also when every fiber is parked with nothing
-    in flight — only an external wake between ticks can help), or `drained`
-    (no live fibers, no user ops). Must not be called from inside a fiber;
-    `run()` and `tick()` do not interleave concurrently.
+    Returns `dispatched` (fibers ran, completions arrived, or a deadline
+    swept), `timedOut` (nothing within `timeout`; also when every fiber is
+    parked with nothing in flight — only an external wake between ticks can
+    help), or `drained` (no live fibers, no user ops). Must not be called
+    from inside a fiber; `run()` and `tick()` do not interleave concurrently.
+
+    Deadlines are a $(B scheduler) service (SPEC §8.3): an armed deadline
+    does not make the ring readable, and only this tick (or `tickHosted`)
+    sweeps expiries — an embedder must call the tick on its cadence rather
+    than gate it on ring-fd readiness, or deadlines go unnoticed.
     */
     IoResult!RunStatus tick(Duration timeout = Duration.zero) @trusted
     in (_running is null, "tick from inside a fiber")
     {
+        // Entry sweep: deliver an already-expired deadline before resuming
+        // fibers — a continuously-ready workload never reaches the wait
+        // below, and the woken checkpoints should observe the interrupt now.
+        cast(void) sweepDeadlines();
+
         uint ran;
         while (ran < _opts.resumeBudget)
         {
@@ -314,14 +354,40 @@ struct Sched
             return ioOk(RunStatus.dispatched);
         if (_liveFibers == 0 && _loop.inFlight == 0)
             return ioOk(RunStatus.drained);
+
+        // Clamp the wait to the earliest armed deadline.
+        Duration eff = timeout;
+        const until = untilNextDeadline(MonoTime.currTime);
+        if (until < eff)
+            eff = until;
+
         // Parked fibers (or detached ops): wait. With an armed waker the
         // wait blocks even when no user op is in flight — the
         // park-until-external-wake pattern (SPEC §5.6). Without one,
-        // runOnce reports drained instantly; surface that as timedOut
-        // (only an external wake between ticks can make progress).
-        auto r = _loop.runOnce(timeout);
+        // runOnce reports drained instantly — so when a deadline is the
+        // only thing pending, sleep it out here: with no ops, no waker,
+        // and no ready fibers, nothing else can wake this thread.
+        IoResult!RunStatus wait()
+        {
+            if (_loop.inFlight == 0 && !_loop.wakerArmed
+                && until != Duration.max)
+            {
+                // Zero-time probe first so a requested stop() surfaces
+                // before the sleep rather than after it.
+                auto pre = _loop.runOnce(Duration.zero);
+                if (pre.hasError || pre.value == RunStatus.stopped)
+                    return pre;
+                if (eff > Duration.zero)
+                    (() @trusted => Thread.sleep(eff))();
+                return ioOk(RunStatus.timedOut);
+            }
+            return _loop.runOnce(eff);
+        }
+
+        auto r = wait();
         if (r.hasError)
             return r;
+        const swept = sweepDeadlines();
         // A wake completion is infrastructure — dispatch swallows it and
         // no fiber is enqueued. Resume the idle waiter so it can re-check
         // (pool steal, shutdown). Any other dispatched completion is also
@@ -334,6 +400,10 @@ struct Sched
             if (!t.enqueued)
                 enqueue(t);
         }
+        if (r.value == RunStatus.stopped)
+            return r;
+        if (swept || _readyHead !is null)
+            return ioOk(RunStatus.dispatched);
         return ioOk(r.value == RunStatus.drained ? RunStatus.timedOut : r.value);
     }
 
@@ -350,6 +420,8 @@ struct Sched
             Duration timeout = Duration.zero) @trusted
         in (_running is null, "tickHosted from inside a fiber")
         {
+            cast(void) sweepDeadlines(); // see tick()
+
             uint ran;
             while (ran < _opts.resumeBudget)
             {
@@ -364,9 +436,17 @@ struct Sched
             if (_liveFibers == 0 && _loop.inFlight == 0)
                 return ioOk(RunStatus.drained);
 
-            auto r = _loop.runHostedOnce(host, timeout);
+            // Clamp to the earliest armed deadline; the hosted wait always
+            // blocks on the host source, so no sleep arm is needed here.
+            Duration eff = timeout;
+            const until = untilNextDeadline(MonoTime.currTime);
+            if (until < eff)
+                eff = until;
+
+            auto r = _loop.runHostedOnce(host, eff);
             if (r.hasError)
                 return r;
+            const swept = sweepDeadlines();
             if (_idleWaiter !is null && r.value == RunStatus.dispatched)
             {
                 auto t = _idleWaiter;
@@ -374,6 +454,8 @@ struct Sched
                 if (!t.enqueued)
                     enqueue(t);
             }
+            if (swept && r.value != RunStatus.stopped)
+                return ioOk(RunStatus.dispatched);
             return r;
         }
     }
@@ -474,13 +556,47 @@ private:
         }
     }
 
-    /// The deadline-timer callback: expiry sweeps the node's subtree.
-    static void onDeadline(void* p, ref Completion done) nothrow @nogc
+    /// Sweeps expired deadlines: unlink first (one-shot), then cancel the
+    /// subtree. Runs only between dispatches on the owning thread — never
+    /// concurrently with fiber code — so every armed node is alive (its
+    /// scope frame cannot exit without `disarmDeadline`).
+    bool sweepDeadlines() @trusted nothrow @nogc
     {
-        if (done.res != 0)
-            return; // the deadline was disarmed (-ECANCELED): no sweep
-        auto node = (() @trusted => cast(CancelContext*) p)();
-        cancelTree(node, Interrupt(InterruptKind.deadline));
+        if (_armedDeadlines is null)
+            return false;
+        const now = MonoTime.currTime;
+        bool swept;
+        auto n = _armedDeadlines;
+        while (n !is null)
+        {
+            auto next = n.nextArmed;
+            if (n.deadlineAt <= now)
+            {
+                disarmDeadline(n);
+                cancelTree(n, Interrupt(InterruptKind.deadline));
+                swept = true;
+            }
+            n = next;
+        }
+        return swept;
+    }
+
+    /// The earliest armed expiry, as a wait bound relative to `now`;
+    /// `Duration.max` when nothing (relevant) is armed. Already-cancelling
+    /// nodes are skipped — their sweep would no-op, so waking early for
+    /// them buys nothing.
+    Duration untilNextDeadline(MonoTime now) const @safe nothrow @nogc
+    {
+        Duration best = Duration.max;
+        for (const(CancelContext)* n = _armedDeadlines; n !is null; n = n.nextArmed)
+        {
+            if (n.state != CancelContext.State.on)
+                continue;
+            const until = n.deadlineAt <= now ? Duration.zero : n.deadlineAt - now;
+            if (until < best)
+                best = until;
+        }
+        return best;
     }
 
     void enqueue(FiberTask t) @safe nothrow @nogc
@@ -537,6 +653,9 @@ private:
     FiberTask _running;
     FiberTask _idleWaiter; /// parked on `parkUntilWake`; resumed from `tick`
     uint _liveFibers;
+    /// Armed deadline scopes (intrusive, unsorted — a handful at most, so
+    /// the O(n) sweep/min beats heap bookkeeping; see SPEC §8.3).
+    CancelContext* _armedDeadlines;
 }
 
 /**
@@ -609,6 +728,18 @@ unittest
     assert(rootIsSelf, "the root fiber's loop is the one it runs on");
     assert(childIsSelf, "and so is a fiber spawned from it");
     assert(!onScheduler, "the run is over");
+}
+
+@("sched.capability.deadlineServiceProbe")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.event_horizon.capability : hasDeadlineTimer, isFiberExecutor;
+
+    static assert(isFiberExecutor!Sched);
+    // The DbI probe must match armDeadline/disarmDeadline's exact shape — a
+    // mismatch silently un-instantiates withDeadline for every consumer.
+    static assert(hasDeadlineTimer!Sched);
 }
 
 @("sched.spawn.runsToCompletion")

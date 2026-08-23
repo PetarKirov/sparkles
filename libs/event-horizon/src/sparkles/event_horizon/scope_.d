@@ -352,10 +352,9 @@ private template runScope(alias fn, E)
         }
         sc.node.addFiber(joiner);
 
-        ulong deadlineToken;
         static if (hasDeadlineTimer!X)
             if (timeout != Duration.max)
-                deadlineToken = exec.armDeadline(&sc.node, timeout);
+                exec.armDeadline(&sc.node, timeout);
 
         alias T = typeof(fn(sc));
         static if (is(T == void))
@@ -371,8 +370,7 @@ private template runScope(alias fn, E)
         sc.joinPhase();
 
         static if (hasDeadlineTimer!X)
-            if (deadlineToken != 0)
-                exec.disarmDeadline(deadlineToken);
+            exec.disarmDeadline(&sc.node); // synchronous severance; idempotent
 
         if (outerNode !is null)
             outerNode.removeChild(&sc.node);
