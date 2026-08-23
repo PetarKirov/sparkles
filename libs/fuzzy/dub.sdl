@@ -19,7 +19,14 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    dependency "sparkles:test-runner" path="../.."
+    // Cycle-safe path: `sparkles:ui` depends on this package (the property
+    // tree's search projection), and `ui` is in the impl library's dependency
+    // closure (impl -> ui), so a `dependency` on the runner shim would close
+    // `ui -> fuzzy -> test-runner -> impl -> ui`. Source-include the shim and
+    // the impl instead, as `base`/`core-cli`/`test-utils`/`ui` do for the
+    // same reason.
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
@@ -33,7 +40,9 @@ configuration "unittest" {
 // Keeping this separate avoids imposing GNU ld's --wrap on library consumers.
 configuration "allocation-audit" {
     targetType "library"
-    dependency "sparkles:test-runner" path="../.."
+    // The same cycle-safe runner integration as the unittest configuration.
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
     dependency "sparkles:base" path="../.."
 
     versions "FuzzyAllocationAudit"

@@ -14,23 +14,23 @@ targetPath "build"
 // the edge counts even though only math's *test* build needs the runner.
 // `../test-runner/src` is here for the same reason: see the unittest
 // configuration below. This is the recipe `sparkles:core-cli` documents.
-// `../fuzzy/src` is import-only, like math: a `dependency "sparkles:fuzzy"`
-// would close `ui -> fuzzy -> (unittest) test-runner -> impl -> core-cli ->
-// ui` (dub unions across configs). The rule that makes import-only WORK at
-// link time: everything fuzzy-touching in `sparkles.ui.property_tree` is a
-// template, so its instantiations are emitted into the CONSUMER's objects —
-// object files resolve against archives in any order, while a fuzzy
-// reference baked into ui.a could not (dub places libsparkles_fuzzy.a before
-// libsparkles_ui.a). A consumer of the search projection therefore declares
-// `dependency "sparkles:fuzzy"`; the unittest configuration source-includes
-// fuzzy instead so this package's own tests link without the edge.
-importPaths "src" "../test-runner/src" "../math/src" "../fuzzy/src"
+importPaths "src" "../test-runner/src" "../math/src"
 
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
 // sparkles:ui, never the reverse.
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
+// A REAL edge, not import-only like math: DMD speculatively emits TypeInfo
+// for structs of merely-IMPORTED modules into the importing object, and the
+// plain fuzzy leaves (QueryText/Constraint/AnalysisProfile) have generated
+// `__xtoHash`/`__xopEquals` that exist only in fuzzy's own objects — so an
+// import-only ui.a left every dmd consumer of this package with undefined
+// references through property_tree.o (which the ModuleInfo import chain
+// always pulls). The cycle that once forced import-only (`ui -> fuzzy ->
+// test-runner -> impl -> ui`) is gone: fuzzy integrates the runner
+// cycle-safely (source-include), so it has no runner dependency edge.
+dependency "sparkles:fuzzy" path="../.."
 
 // `expected` is declared rather than inherited through base's import paths: the
 // table component returns `Expected` in its public API, so it is this package's
@@ -54,8 +54,8 @@ configuration "unittest" {
     // shim would close `ui -> test-runner -> impl -> core-cli -> ui`. Source-
     // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
     // do for the same reason.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../fuzzy/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src" "../fuzzy/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
 
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.
