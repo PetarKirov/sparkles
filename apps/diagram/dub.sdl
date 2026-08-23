@@ -17,12 +17,6 @@ dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
-// The settings pane (SET1) uses the ui property tree's fuzzy search
-// projection; sparkles:ui reaches fuzzy import-only (see libs/ui/dub.sdl), so
-// the consumer supplies the linked library. Not a capability the app names
-// for itself — a link edge sparkles:ui cannot carry — and not a backend, so
-// DIA2's grep is unaffected.
-dependency "sparkles:fuzzy" path="../.."
 
 configuration "application" {
     targetType "executable"
