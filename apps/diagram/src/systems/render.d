@@ -46,7 +46,31 @@ import world : Capture, Entity, GroupId, liveBounds, noEntity, Tool, World,
 /// Inline capacity of the frame's op buffer. A few thousand ops covers a dense
 /// board at terminal size without spilling to the heap; the `@nogc` frame
 /// path asserts it stays under.
-enum size_t frameOpCap = 4096;
+enum size_t frameOpCap = 16_384;
+
+/**
+Ops the BOARD may not spend (`RND1`).
+
+The ceiling used to be one number every emitter checked against the whole
+buffer, which made the chrome the thing that lost. A dotted backdrop costs one
+op per lattice $(I intersection) where a lined one costs a rule per row and
+column, so switching minor marks to `dots` multiplied the board's cost by two
+orders of magnitude: the grid alone reached the ceiling, and the toolbar, the
+status row and the minimap — emitted afterwards, and all small — then emitted
+NOTHING. A board with no chrome at all, from one enum change.
+
+Two things were wrong, and both are fixed here. The ceiling itself was sized
+for a lined grid: one dot per screen cell is the honest cost of graph paper,
+so a surface of 16k cells needs 16k ops and 4,096 could not draw a 100×45
+terminal. And the ceiling was shared, so the unbounded half of the frame could
+spend the bounded half's share. Now the board draws inside a budget and the
+chrome's is reserved: the board is the part that can be arbitrarily dense, the
+chrome is the part that says what the board is doing, and the second is never
+what the first costs you.
+*/
+enum size_t chromeOpReserve = 512;
+/// ditto
+enum size_t boardOpBudget = frameOpCap - chromeOpReserve;
 
 /// How many of those the buffer holds inline before it reaches for the heap.
 /// Deliberately not `frameOpCap`: the two used to be one number, which put
@@ -106,7 +130,10 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
         worldPerCell: cam.worldPerCell,
         cellsPerWorld: cam.cellsPerWorld,
     };
-    appendGridBackdrop(ops, w.gridConfig, gv, pal, pageFg, pageBg);
+    // The backdrop gets what the board has, minus what the rest of the board
+    // still needs; it drops a layer whole rather than half-drawing one.
+    appendGridBackdrop(ops, w.gridConfig, gv, pal, pageFg, pageBg,
+        boardOpBudget > ops.length ? boardOpBudget - ops.length : 0);
 
     // Connectors under nodes so a box covers the stub that enters it (`RND3`).
     renderConnectors(w, cam, board, vis, pal, pageFg, pageBg, ops);
@@ -134,6 +161,10 @@ private void renderBoard(ref const World w, ref const Camera cam, in Rect board,
 
     foreach (e; order[0 .. n])
     {
+        // Same budget as the backdrop, for the same reason: a board dense
+        // with entities must not be able to cost the reader their chrome.
+        if (ops.length >= boardOpBudget)
+            break;
         const r = worldRectToSurface(cam, w.bounds[e], board);
         if (r.empty)
             continue;
@@ -384,6 +415,8 @@ private void renderMinimap(ref const World w, ref const Camera cam,
     // Every live entity — the board may have culled them (`RND2`).
     foreach (e; 0 .. w.highWater)
     {
+        if (ops.length >= boardOpBudget)
+            break; // the chrome's share is not the minimap's to spend either
         if (!w.alive(cast(Entity) e))
             continue;
         const b = w.bounds[e];
@@ -946,4 +979,73 @@ unittest
         if (op.kind == OpKind.textRun && op.text == "Label…")
             sawLabel = true;
     assert(sawLabel, "menu item is one textRun containing U+2026");
+}
+
+@("diagram.render.aDenseBackdropNeverStarvesTheChrome")
+@safe unittest
+{
+    import sparkles.ui.components.grid_backdrop : gridPreset, GridPreset;
+    import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
+
+    // Dotted graph paper emits one glyph per lattice INTERSECTION, so on a
+    // large surface the backdrop alone runs to thousands of ops — where a
+    // line lattice is one rule per row and column. The frame ceiling used to
+    // be checked by every emitter against the whole buffer, so the backdrop
+    // spent it and the toolbar, the status row and the minimap then emitted
+    // NOTHING: a board with no chrome at all, which is what a reader saw the
+    // moment they switched minor marks to dots.
+    auto wOwner = World.create();
+    ref World w() => wOwner.get();
+    w.settings.grid = gridPreset(GridPreset.dotPaper);
+    w.settings.grid.minorLattice.interval = 1;
+    cast(void) w.spawn(Rect(2, 2, 8, 4));
+    cast(void) w.spawn(Rect(20, 10, 6, 3));
+    Camera cam;
+    const pal = defaultTwoslashPalette(ColorScheme.dark);
+    const viewport = Size(140, 48); // 6,720 board cells: past any sane ceiling
+
+    auto opsOwner = makeUnique!FrameOps();
+    ref FrameOps ops() => opsOwner.get();
+    systemRender(w, cam, viewport, pal, RgbColor(0xcd, 0xd6, 0xf4),
+        RgbColor(0x1e, 0x1e, 0x2e), ops);
+
+    // The toolbar's tool buttons and the status row are the chrome that must
+    // survive: they are O(1), and they are the only way to see the board's
+    // state at all.
+    // The board is clipped to `boardArea`, so an op on the toolbar row or the
+    // status row can only have come from the chrome — no need to identify it
+    // by content. The minimap IS inside the board, so that one is matched by
+    // its exact panel rect instead of by overlap, which the backdrop's own
+    // ops would otherwise satisfy.
+    const toolbar = toolbarArea(viewport);
+    const status = Rect(0, viewport.height - statusRows, viewport.width, statusRows);
+    const mini = minimapPanel(viewport);
+    bool sawToolbar, sawStatus, sawMinimap;
+    size_t dots;
+    foreach (ref op; ops[])
+    {
+        if (toolbar.contains(op.rect.origin))
+            sawToolbar = true;
+        if (status.contains(op.rect.origin))
+            sawStatus = true;
+        if (!mini.empty && op.kind == OpKind.fillRect && op.rect == mini)
+            sawMinimap = true;
+        if (op.kind == OpKind.glyph)
+            ++dots;
+    }
+    assert(sawToolbar, "the toolbar survived a dense backdrop");
+    assert(sawStatus, "…and so did the status row");
+    assert(sawMinimap, "…and the minimap");
+    // …and the backdrop the reader actually asked for is still THERE, at the
+    // density they asked for. Reserving the chrome is only half the fix: the
+    // first attempt kept the chrome by dropping the dense minor layer, which
+    // means it kept the chrome by deleting the very feature that revealed the
+    // bug — and a `sawDots` flag was happy, because the sparse MAJOR layer
+    // still drew. So count them. A minor lattice at interval 1 is one mark
+    // per board cell; anything near the major layer's own count (a sixteenth
+    // of that) means the minor layer was dropped.
+    const boardCells = cast(size_t)(viewport.width
+        * (viewport.height - toolbarRows - statusRows));
+    assert(dots > boardCells / 2,
+        "the dots are drawn at full density, not sacrificed to make room");
 }
