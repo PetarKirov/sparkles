@@ -7,23 +7,36 @@ decides_, one row at a time, so each row can be argued about on its own.
 
 **Last reviewed:** August 19, 2026
 
-The extraction is the input to tuning [`sparkles:dmd-fmt`][dmd-fmt-spec]. Its v1 policy is
-**author's-breaks-preserved with structural reindentation** — line structure is the author's,
-indentation is recomputed, horizontal whitespace is normalized, and _no token is ever added or
-removed_. That policy is a filter, and running prettier's decision list through it is the point of
-the exercise: it says which of prettier's 134 decisions are reachable at all, which are reachable
-only with more oracle than we have, and which are excluded by construction.
+The extraction is the input to tuning [`sparkles:dmd-fmt`][dmd-fmt-spec]. Each row is scored
+against dmd-fmt's **two-tier scope**, fixed in [the decision record][dmd-fmt-spec] (`D9`):
+
+- **The layout tier** reformats without touching the token stream, and is always on. It is the
+  v1 policy — author's breaks preserved, indentation recomputed, whitespace normalized.
+- **The rewrite tier** may add, remove or respell tokens. Trailing commas are on by default,
+  because inserting one is what lets a long signature or call break one-per-line at all; every
+  other rewrite is **opt-in**, off unless the project asks for it.
+
+That split is the filter this page applies, and it replaces the reading this survey started from —
+which treated any token change as out of scope, and therefore scored a sixth of prettier's
+decisions as unreachable. They are reachable. They are simply not free, and the price is paid per
+rule.
 
 > [!IMPORTANT]
-> **The headline number: 24 of the 134 decisions below never reach a D formatter that does not
-> rewrite tokens.** Trailing commas, semicolons, quote characters, number spelling, redundant
-> parentheses, quoted object keys — every one of these is prettier _editing your code_, not laying
-> it out. dmd-fmt v1 declares that a non-goal, so a sixth of prettier's decision surface is out of
-> scope before the first line of D is written, and it is the sixth prettier is most famous for. Of
-> the remainder, another large block turns out to be **source-hint preservation**
-> (objects, decorators, template interpolations, blank lines) — which is the v1 policy already,
-> arrived at independently. What is genuinely _new_ and genuinely _applicable_ is a much shorter
-> list than prettier's size suggests: the [shortlist](#the-shortlist) has twelve entries.
+> **The headline: rewriting is the cheap part; _verifying_ a rewrite is the whole cost.** The M1
+> verifier's tier-3 check is token equality modulo whitespace — it is what makes the layout tier
+> provably safe, and **every rewrite breaks it by construction**. A rewrite rule is therefore not
+> done when it produces the right bytes; it is done when it ships with the check that proves it did
+> not change meaning — and those checks do not generalize. Paren removal needs precedence. Import
+> sorting needs to know no import in the group has an import-order side effect. Declaration
+> reordering needs to know nothing reflects over declaration order, which in D means
+> `__traits(allMembers)`, `static foreach` over it, and any string mixin built from it. So the rule
+> this page ends up recommending is: **each opt-in rewrite carries its own verifier, or it does not
+> ship** — which is also why shipping them one at a time, off by default, is the right shape.
+>
+> Two findings survive the scope change intact. Prettier's preservation surface is larger than
+> advertised — six independent source hints read the original text — and the expensive _layout_
+> decisions cluster in exactly three printers, which are the three shapes a D reader meets
+> constantly.
 
 ---
 
@@ -34,13 +47,14 @@ prettier's docs unless the docs are the only statement of the rule (marked _rati
 several rows contradict the folk understanding of what prettier does.
 
 - **Tree:** [`prettier/prettier`][repo] @ `414e453ae9034866d93eea456b430aa52140371b` (2026-08-13).
-- **Read in full:** `src/language-js/print/{assignment,binaryish,call-arguments,member-chain,object,array,block,statement-sequence,if-statement,clause,switch-statement,return-statement,expression-statement,variable-declaration,try-statement,for-statement,while-statement,do-while-statement,for-x-statement,function,function-parameters,arrow-function,class,class-body,decorators,module,comment,member,call-expression,key,literal,miscellaneous,type-parameters,union-type,ignored}.js`,
+- **Read in full:** `src/language-js/print/{assignment,binaryish,call-arguments,member-chain,object,array,block,statement-sequence,if-statement,clause,switch-statement,return-statement,expression-statement,variable-declaration,try-statement,for-statement,while-statement,do-while-statement,for-x-statement,function,function-parameters,arrow-function,class,class-body,decorators,module,comment,member,call-expression,key,literal,miscellaneous,type-parameters,union-type,template-literal,type-alias,enum,mapped-type,type-annotation,ignored}.js`,
   `src/language-js/{options.js,utilities/{should-flatten,is-simple-call-argument,is-lone-short-argument}.js}`,
   `src/{main/core-options.evaluate.js,common/common-options.evaluate.js,utilities/{print-string,print-number,make-string}.js}`,
   `docs/rationale.md`, `commands.md`.
-- **Excluded:** JSX, Flow, Angular/Vue/HTML-binding, template literals, and the TypeScript
-  type-level printers, except where a rule generalizes (type parameters → D template parameters).
-  Those have no D analogue and would pad the list without informing it.
+- **Excluded:** JSX, Flow, Angular/Vue/HTML-binding, and the parts of the TypeScript type layer
+  with no D construct (mapped types; unions and intersections as a type algebra). Template
+  literals and the type-level printers **are** included, mapped onto D's interpolated expression
+  sequences ([IES][ies]) and its template parameters, constraints and `alias` declarations — §I.
 
 **A "decision" is a rule that can change bytes of output.** A helper that only computes a predicate
 is folded into the row it serves. Where prettier implements one idea in three printers (the
@@ -50,11 +64,12 @@ is folded into the row it serves. Where prettier implements one idea in three pr
 
 | Verdict    | Meaning                                                                        |
 | ---------- | ------------------------------------------------------------------------------ |
-| **Adopt**  | Applies to D as-is; worth implementing.                                        |
+| **Adopt**  | Applies to D; implement it, on by default.                                     |
 | **Adapt**  | The idea transfers, the trigger or shape must change for D.                    |
-| **Have**   | v1 already decides this, the same way or deliberately differently.             |
+| **Opt-in** | A rewrite worth having, shipped **off by default**, with its own verifier.     |
+| **Have**   | dmd-fmt already decides this, the same way or deliberately differently.        |
 | **Oracle** | Reachable only with AST facts the `oracle.d` offset arrays do not yet collect. |
-| **Token**  | Excluded by v1: adds or removes tokens.                                        |
+| **Reject** | Decided against for D.                                                         |
 | **N/A**    | No D construct.                                                                |
 
 ---
@@ -65,30 +80,36 @@ What prettier lets you change is a decision in itself — its
 [option philosophy][option-philosophy] is that an option exists only where the team could not pick
 a winner. Eighteen format-affecting options, in a formatter that markets itself as opinionated.
 
-| #   | Decision                                                                                                                     | Source              | Verdict   |
-| --- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------- |
-| P1  | `printWidth` defaults to **80**, and is explicitly a _target_, not a cap — prettier emits longer lines on purpose (P67, P77) | [core-options][opt] | **Have**  |
-| P2  | `tabWidth` defaults to **2**; `useTabs` defaults to false                                                                    | [core-options][opt] | **Have**  |
-| P3  | `endOfLine` defaults to `lf`; `auto` infers from the line ending after the file's first line                                 | [core-options][opt] | **Adapt** |
-| P4  | `semi` (default on) — when off, a leading `;` is emitted on lines that would otherwise continue the previous statement       | [js-options][jsopt] | **N/A**   |
-| P5  | `singleQuote` (default off) only breaks ties; escape count wins first (P108)                                                 | [js-options][jsopt] | **Token** |
-| P6  | `quoteProps: as-needed \| consistent \| preserve` — quoting of object keys                                                   | [key.js][key]       | **Token** |
-| P7  | `trailingComma` defaults to **`all`**: prettier _writes_ trailing commas whenever a list breaks                              | [js-options][jsopt] | **Token** |
-| P8  | `bracketSpacing` (default on) — `{ a }` vs `{a}`; the sole horizontal-spacing option                                         | [common-opts][copt] | **Adapt** |
-| P9  | `arrowParens` defaults to `always`: `(x) => x`, not `x => x`                                                                 | [js-options][jsopt] | **Token** |
-| P10 | `objectWrap: preserve \| collapse` — makes the object source-hint (P17) switchable, added because it is a known wart         | [common-opts][copt] | **Adapt** |
-| P11 | `experimentalOperatorPosition: end \| start` — operator at the end of the broken line, or the start of the next              | [binaryish][bin]    | **Adapt** |
-| P12 | `experimentalTernaries` — an entire second ternary printer, opt-in, because the first one is disliked                        | [ternary][tern]     | **Adapt** |
-| P13 | `requirePragma` / `insertPragma` / `checkIgnorePragma` — file-level opt-in/opt-out via a docblock marker                     | [core-options][opt] | **Adapt** |
-| P14 | `rangeStart`/`rangeEnd` — format a byte range, extended outward to whole statements                                          | [core-options][opt] | **Adopt** |
-| P15 | `cursorOffset` — report where a cursor lands after formatting                                                                | [core-options][opt] | **Adopt** |
-| P16 | `embeddedLanguageFormatting: auto \| off` — format code embedded in strings/templates                                        | [core-options][opt] | **Adapt** |
+| #   | Decision                                                                                                                     | Source              | Verdict    |
+| --- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------- |
+| P1  | `printWidth` defaults to **80**, and is explicitly a _target_, not a cap — prettier emits longer lines on purpose (P67, P77) | [core-options][opt] | **Have**   |
+| P2  | `tabWidth` defaults to **2**; `useTabs` defaults to false                                                                    | [core-options][opt] | **Have**   |
+| P3  | `endOfLine` defaults to `lf`; `auto` infers from the line ending after the file's first line                                 | [core-options][opt] | **Adapt**  |
+| P4  | `semi` (default on) — when off, a leading `;` is emitted on lines that would otherwise continue the previous statement       | [js-options][jsopt] | **N/A**    |
+| P5  | `singleQuote` (default off) only breaks ties; escape count wins first (P108)                                                 | [js-options][jsopt] | **Opt-in** |
+| P6  | `quoteProps: as-needed \| consistent \| preserve` — quoting of object keys                                                   | [key.js][key]       | **N/A**    |
+| P7  | `trailingComma` defaults to **`all`**: prettier _writes_ trailing commas whenever a list breaks                              | [js-options][jsopt] | **Adopt**  |
+| P8  | `bracketSpacing` (default on) — `{ a }` vs `{a}`; the sole horizontal-spacing option                                         | [common-opts][copt] | **Adapt**  |
+| P9  | `arrowParens` defaults to `always`: `(x) => x`, not `x => x`                                                                 | [js-options][jsopt] | **Adapt**  |
+| P10 | `objectWrap: preserve \| collapse` — makes the object source-hint (P17) switchable, added because it is a known wart         | [common-opts][copt] | **Adapt**  |
+| P11 | `experimentalOperatorPosition: end \| start` — operator at the end of the broken line, or the start of the next              | [binaryish][bin]    | **Adapt**  |
+| P12 | `experimentalTernaries` — an entire second ternary printer, opt-in, because the first one is disliked                        | [ternary][tern]     | **Adapt**  |
+| P13 | `requirePragma` / `insertPragma` / `checkIgnorePragma` — file-level opt-in/opt-out via a docblock marker                     | [core-options][opt] | **Adapt**  |
+| P14 | `rangeStart`/`rangeEnd` — format a byte range, extended outward to whole statements                                          | [core-options][opt] | **Adopt**  |
+| P15 | `cursorOffset` — report where a cursor lands after formatting                                                                | [core-options][opt] | **Adopt**  |
+| P16 | `embeddedLanguageFormatting: auto \| off` — format code embedded in strings/templates                                        | [core-options][opt] | **Adapt**  |
 
-> **For D.** P1–P3 and P8 are already `FormatConfig`. P14/P15 are the editor contract dmd-fmt owes
-> an LSP and does not have; both are cheap on a token spine with exact byte spans and expensive on
-> an AST, which is an argument for the spine. P16 is the `q{ … }` / mixin question. P4–P7, P9 are
-> token-changing and excluded — note how many of prettier's _options_ are options only because the
-> decision is a rewrite in the first place.
+> **For D.** P1–P3 and P8 are already `FormatConfig`. On P2, prettier's `tabWidth: 2` is the one
+> default D simply does not take — [DStyle][dstyle] fixes four columns per level, and
+> `FormatConfig.indentSize` already does. P14/P15 are the editor contract dmd-fmt owes an LSP and
+> does not have; both are cheap on a token spine with exact byte spans and expensive on an AST,
+> which is an argument for the spine. P16 is the `q{ … }` / `mixin` question — see P154.
+>
+> The options that are _rewrites_ now land as D options rather than exclusions: P5/P108 become the
+> literal-form option (P154), P7 the default-on trailing comma, P9 the lambda-paren option
+> (`preserve` default, `avoid` matching DStyle's own `filter!(a => a == 42)`, `always`), P6 alone
+> stays N/A because D has no quotable object keys. Note how much of prettier's _option_ surface is
+> option-shaped only because the underlying decision is a rewrite: seven of its eighteen.
 
 ---
 
@@ -97,32 +118,37 @@ a winner. Eighteen format-affecting options, in a formatter that markets itself 
 The most under-advertised part of prettier. A formatter that "reprints from the AST" in fact reads
 the original text in at least six places to decide layout, and its docs apologize for four of them.
 
-| #   | Decision                                                                                                                                                                     | Source                      | Verdict   |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | --------- |
-| P17 | **The object source hint:** an object stays exploded iff the author put a newline between `{` and the first key. Long one-liners expand; short multi-liners never collapse   | [object.js][obj]            | **Adapt** |
-| P18 | Prettier documents P17 as _a workaround, not a feature_, and calls it non-reversible formatting it wants to remove                                                           | [rationale][rationale]      | **Have**  |
-| P19 | **Blank lines are preserved, then collapsed to one.** A run of empty lines between statements becomes exactly one                                                            | [statement-sequence][seq]   | **Have**  |
-| P20 | Blank lines at the start and end of a block are deleted                                                                                                                      | [block.js][block]           | **Have**  |
-| P21 | A file always ends with exactly one newline                                                                                                                                  | [block.js][block]           | **Have**  |
-| P22 | **The decorator source hint:** decorators written inline stay inline; decorators written on their own line stay there — detected by "is there a newline after any decorator" | [decorators.js][dec]        | **Adopt** |
-| P23 | …except on classes, which always get their decorators on their own line                                                                                                      | [decorators.js][dec]        | **Adapt** |
-| P24 | **The interpolation source hint:** a `${…}` breaks only if the author already broke it; otherwise the template stays on one line at any length                               | [rationale][rationale]      | **N/A**   |
-| P25 | A blank line _inside_ an argument list forces the whole list to explode, one argument per line                                                                               | [call-arguments][args]      | **Adopt** |
-| P26 | A blank line after an array element / object property / class member is preserved as a hardline inside the broken list                                                       | [array][arr], [object][obj] | **Adopt** |
-| P27 | A blank line after a call in a member chain is preserved, and forces the chain to break                                                                                      | [member-chain][chain]       | **Adopt** |
-| P28 | Comment content is never reflowed or rewrapped — "we can't know how to format it"                                                                                            | [rationale][rationale]      | **Have**  |
-| P29 | **Nothing is ever sorted or moved** — not imports, not object keys, not class members. Sorting is a transform, and unsafe                                                    | [rationale][rationale]      | **Have**  |
-| P30 | Strings are never converted between quote styles and templates, never split across lines with `+`                                                                            | [rationale][rationale]      | **Have**  |
-| P31 | Optional `{}` / `return` / `?:`↔`if` are never added or removed                                                                                                              | [rationale][rationale]      | **Have**  |
+| #   | Decision                                                                                                                                                                     | Source                      | Verdict    |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ---------- |
+| P17 | **The object source hint:** an object stays exploded iff the author put a newline between `{` and the first key. Long one-liners expand; short multi-liners never collapse   | [object.js][obj]            | **Have**   |
+| P18 | Prettier documents P17 as _a workaround, not a feature_, and calls it non-reversible formatting it wants to remove                                                           | [rationale][rationale]      | **Have**   |
+| P19 | **Blank lines are preserved, then collapsed to one.** A run of empty lines between statements becomes exactly one                                                            | [statement-sequence][seq]   | **Have**   |
+| P20 | Blank lines at the start and end of a block are deleted                                                                                                                      | [block.js][block]           | **Have**   |
+| P21 | A file always ends with exactly one newline                                                                                                                                  | [block.js][block]           | **Have**   |
+| P22 | **The decorator source hint:** decorators written inline stay inline; decorators written on their own line stay there — detected by "is there a newline after any decorator" | [decorators.js][dec]        | **Adopt**  |
+| P23 | …except on classes, which always get their decorators on their own line                                                                                                      | [decorators.js][dec]        | **Adapt**  |
+| P24 | **The interpolation source hint:** a `${…}` breaks only if the author already broke it; otherwise the template stays on one line at any length                               | [rationale][rationale]      | **Adapt**  |
+| P25 | A blank line _inside_ an argument list forces the whole list to explode, one argument per line                                                                               | [call-arguments][args]      | **Adopt**  |
+| P26 | A blank line after an array element / object property / class member is preserved as a hardline inside the broken list                                                       | [array][arr], [object][obj] | **Adopt**  |
+| P27 | A blank line after a call in a member chain is preserved, and forces the chain to break                                                                                      | [member-chain][chain]       | **Adopt**  |
+| P28 | Comment content is never reflowed or rewrapped — "we can't know how to format it"                                                                                            | [rationale][rationale]      | **Opt-in** |
+| P29 | **Nothing is ever sorted or moved** — not imports, not object keys, not class members. Sorting is a transform, and unsafe                                                    | [rationale][rationale]      | **Opt-in** |
+| P30 | Strings are never converted between quote styles and templates, never split across lines with `+`                                                                            | [rationale][rationale]      | **Opt-in** |
+| P31 | Optional `{}` / `return` / `?:`↔`if` are never added or removed                                                                                                              | [rationale][rationale]      | **Have**   |
 
-> **For D.** P17–P18 is the single most interesting row in the table: prettier's own team calls its
-> source hint a wart it cannot remove, and it is _the same mechanism_ dmd-fmt v1 elevates to a
-> policy. Two readings are available and both are defensible — either prettier's regret is evidence
-> against v1, or prettier's inability to find a better heuristic in nine years is evidence for it.
-> The difference in kind: prettier's hint is **one construct's exception** inside a reprinting
-> formatter, so it reads as an inconsistency; in v1 it is **the rule everywhere**, so it does not.
-> P22/P23 map exactly onto D's UDAs (`@attr`) and their placement before aggregates. P25–P27 are
-> real, small, and adoptable now — the spine already knows where blank lines are.
+> **For D.** P17–P18 is the row to be clear-eyed about. Prettier's own team calls its object source
+> hint a wart it has failed to remove, and it is _the same mechanism_ dmd-fmt makes policy — but the
+> difference in kind is real, and it is why dmd-fmt keeps it deliberately rather than apologetically:
+> in prettier the hint is **one construct's exception** inside a reprinting formatter, so it reads as
+> an inconsistency; in dmd-fmt it is **the rule everywhere**, so a reader never has to learn which
+> constructs listen to them and which do not. Reversibility, prettier's stated objection, is a
+> property of the whole tier here, not of one node type.
+>
+> P22/P23 map exactly onto D's UDAs and their placement before aggregates. P24 maps onto
+> [IES][ies] — `i"…$(expr)…"` — and is developed in §I. P25–P27 are real, small, and adoptable now:
+> the spine already knows where blank lines are. P28–P30 are no longer statements of scope but
+> **the three opt-in rewrite families**: DDoc reflow (§G), reordering (P147), and literal-form
+> selection (P154).
 
 ---
 
@@ -133,35 +159,45 @@ the original text in at least six places to decide layout, and its docs apologiz
 | P32 | Statements in a block are separated by a hardline; the block never collapses onto one line at any width                                                                                                   | [statement-sequence][seq] | **Have**  |
 | P33 | A non-empty block body is `{` + indent(hardline + body) + hardline + `}` — K&R braces, never Allman, not configurable                                                                                     | [block.js][block]         | **Adapt** |
 | P34 | An **empty** block prints `{}` — except after `if`/`else`/`try`/labels, where a hardline is inserted between the braces                                                                                   | [block.js][block]         | **Adapt** |
-| P35 | Empty statements (stray `;`) are dropped from statement sequences                                                                                                                                         | [statement-sequence][seq] | **Token** |
+| P35 | Empty statements (stray `;`) are dropped from statement sequences                                                                                                                                         | [statement-sequence][seq] | **Adopt** |
 | P36 | `if (…)` condition: group(indent(softline + test) + softline) — the condition indents inside the parens when it breaks                                                                                    | [miscellaneous][misc]     | **Adopt** |
 | P37 | …unless the condition is `!(…)` or `!!(…)` over a logical expression, which hugs — so that deleting the `!` doesn't change the indent                                                                     | [miscellaneous][misc]     | **Adapt** |
 | P38 | A non-block `if` body is indented on its own line: `if (x)\n  foo();` — braces are never added, but the body never stays inline                                                                           | [clause.js][clause]       | **Adapt** |
-| P39 | `else` attaches to the previous `}` with one space; after a non-block consequent it goes on its own line                                                                                                  | [if-statement][ifs]       | **Adopt** |
+| P39 | `else` attaches to the previous `}` with one space; after a non-block consequent it goes on its own line                                                                                                  | [if-statement][ifs]       | **Adapt** |
 | P40 | `else if` is printed as a flat chain, not a nested indent                                                                                                                                                 | [clause.js][clause]       | **Have**  |
 | P41 | A clause whose leading comment is on its own line gets a hardline before it — the comment forces the break                                                                                                | [clause.js][clause]       | **Adopt** |
 | P42 | `for (init; test; update)` breaks all three clauses together, indented, or none                                                                                                                           | [for-statement][for]      | **Adopt** |
-| P43 | `for (;;)` is the canonical empty-header spelling                                                                                                                                                         | [for-statement][for]      | **Token** |
+| P43 | `for (;;)` is the canonical empty-header spelling                                                                                                                                                         | [for-statement][for]      | **Adapt** |
 | P44 | `switch` cases are hardline-separated; a `case` body that is a single block hugs (`case x: {`), otherwise it indents one level                                                                            | [switch-statement][sw]    | **Have**  |
 | P45 | `switch` discriminant breaks like an `if` condition (P36)                                                                                                                                                 | [switch-statement][sw]    | **Adopt** |
 | P46 | `try`/`catch`/`finally` are always brace-hugged on one line; the catch parameter only breaks if it carries comments                                                                                       | [try-statement][try]      | **Adopt** |
 | P47 | `do { … } while (…)`: the `while` hugs the closing brace; a non-block body puts it on its own line                                                                                                        | [do-while][dowhile]       | **Adopt** |
 | P48 | Multiple declarators in one declaration: **hardline** between them if any has an initializer, `line` if none — `let a, b, c;` may stay flat, `let a = 1, b = 2;` never does                               | [variable-decl][vardecl]  | **Adopt** |
 | P49 | The first declarator is indented when there is more than one (ESLint `one-var` compatibility)                                                                                                             | [variable-decl][vardecl]  | **Adapt** |
-| P50 | `return`/`throw` of a binary expression wraps in `ifBreak` parens: `return (\n  a &&\n  b\n);`                                                                                                            | [return-statement][ret]   | **Token** |
-| P51 | `return` whose argument has a leading own-line comment gets hard parens and a hardline                                                                                                                    | [return-statement][ret]   | **Token** |
+| P50 | `return`/`throw` of a binary expression wraps in `ifBreak` parens: `return (\n  a &&\n  b\n);`                                                                                                            | [return-statement][ret]   | **Adapt** |
+| P51 | `return` whose argument has a leading own-line comment gets hard parens and a hardline                                                                                                                    | [return-statement][ret]   | **Adapt** |
 | P52 | Class body members are hardline-separated, blank lines preserved; interface/object-type members use `line` and can collapse                                                                               | [class-body][cbody]       | **Adapt** |
 | P53 | The class head (`class X extends Y implements Z`) enters "group mode" only when there are ≥2 heritage clauses, comments, or a member-expression superclass; otherwise `extends` is glued on the same line | [class.js][cls]           | **Adopt** |
 | P54 | When the class head breaks, the `{` moves to its own line (via `ifBreak` on the heritage group) — but _not_ for interfaces, reverted after user complaints                                                | [class.js][cls]           | **Adapt** |
 
-> **For D.** P33/P34 are where v1 differs on purpose — D's house style is Allman, and v1 recomputes
-> indentation without moving braces, so prettier's brace decisions are informative, not adoptable.
-> P36/P37 and P42/P45 are the reusable shapes: a parenthesized header that indents its contents when
-> it breaks. P37 is a genuinely good idea worth stealing — _make the layout invariant under adding a
-> negation_ — and it generalizes: any wrapper that would change indentation when deleted is a
-> stability hazard. P48 is directly applicable to D declaration lists. P52–P54 map onto D aggregate
-> heads with base classes, interfaces, and `if (…)` template constraints, which is exactly where D
-> declarations get long.
+> **For D.** P33/P34/P38/P39 become **brace style, configurable** — [DStyle][dstyle] is Allman and
+> that is the default; K&R is an option, as in dfmt. Two sub-decisions matter more than the brace
+> column itself: a braceless `if (x) foo();` is preserved when the author wrote it (never
+> expanded, never brace-injected), and `else if` chains stay flat (P40), which DStyle mandates
+> explicitly. P36/P37 and P42/P45 are the reusable shapes: a parenthesized header that indents its
+> contents when it breaks. P37 is worth stealing outright — _make the layout invariant under adding
+> a negation_ — and it generalizes: any wrapper that would change indentation when deleted is a
+> stability hazard.
+>
+> P35 is safe, with a caveat worth recording because it corrects an assumption easy to make: a bare
+> `;` is **not** universally an error in D. As the body of an `if`/`while`/`for` it is
+> (`Error: use { } for an empty statement, not ;`, verified on DMD 2.112.1), but inside a block —
+> `{ int x; ;;; }` — and after an aggregate or function body — `struct S { };` — it compiles
+> cleanly. So there is something to remove, dropping it is a no-op, and the rewrite is safe for the
+> reason that it is dead syntax rather than the reason that it is illegal. P48 applies directly to
+> D declaration lists. P52–P54 map onto D aggregate heads with base classes, interfaces and `if (…)`
+> template constraints — exactly where D declarations get long, and where DStyle already has an
+> opinion (constraints indent to their declaration's level; see P157).
 
 ---
 
@@ -177,8 +213,8 @@ six printers implementing one shape with different exceptions. The exceptions _a
 | P55 | The canonical list: `group("(" + indent(softline + join(","+line, items)) + trailingComma + softline + ")")` — all-or-nothing, one item per line when broken | [call-arguments][args], [function-params][fparams] | **Adopt** |
 | P56 | An empty list prints `()`/`{}`/`[]` with no inner break, carrying only dangling comments                                                                     | [call-arguments][args]                             | **Adopt** |
 | P57 | If any item's printed doc contains a hardline, the whole list is forced broken (`shouldBreak` propagation)                                                   | [call-arguments][args]                             | **Adapt** |
-| P58 | A trailing comma is _emitted_ when broken and elided when flat, via `ifBreak(",")`                                                                           | [miscellaneous][misc]                              | **Token** |
-| P59 | …except after a rest element (`...x`), where a trailing comma is illegal                                                                                     | [function-params][fparams]                         | **Token** |
+| P58 | A trailing comma is _emitted_ when broken and elided when flat, via `ifBreak(",")`                                                                           | [miscellaneous][misc]                              | **Adopt** |
+| P59 | …except after a rest element (`...x`), where a trailing comma is illegal                                                                                     | [function-params][fparams]                         | **Adapt** |
 
 ### Call arguments — the expensive part
 
@@ -226,7 +262,10 @@ six printers implementing one shape with different exceptions. The exceptions _a
 > P74 is directly usable for D array literals and `enum` tables. P77 maps onto `import a.b : c;`.
 > P79/P80 map onto `!(T, U)` template parameter lists and their `: bound = default` forms. P68/P69
 > are the anti-pattern: a general-purpose formatter with a hardcoded list of third-party library
-> names, which is exactly the thing a D formatter must not grow.
+> names, which is exactly the thing a D formatter must not grow. P58's trailing comma is the one
+> rewrite that is on by default, and it is enabling rather than cosmetic — without it, a list that
+> breaks one-per-line has no comma after its last element, so the magic-trailing-comma signal
+> dmd-fmt already reads (M4) can only ever be written by hand.
 
 ---
 
@@ -278,43 +317,64 @@ six printers implementing one shape with different exceptions. The exceptions _a
 | P106 | `a.b` where both sides are plain identifiers never breaks at the dot                                              | [member.js][mem]        | **Adopt** |
 | P107 | `new` callee is inlined rather than chain-formatted                                                               | [call-expression][call] | **Adapt** |
 
-> **For D.** P82/P83 are marked **Oracle** and this is the sharpest boundary the extraction found:
-> deciding what to flatten needs operator precedence, and precedence needs the unary/binary
-> distinction that the [dmd-fmt proposal][proposal] explicitly declined to solve at the token level.
-> Everything else in this section is reachable. P96–P101 are the **UFCS pipeline decision** — the
-> repo's own [functional-declarative guidelines][fdg] make `x.filter!(…).map!(…).array` the house
-> idiom, so how a broken pipeline lays out is the most-seen formatting decision in this codebase.
-> P98's capitalization heuristic maps onto D naming (types are capitalized, so `Type.make(x)` as a
-> chain head is exactly the intended case). P93's short-key rule generalizes to any `name: value`
-> or `name = value` where the name is too short for a wrap to read as one; that is worth stating as
-> a width rule, not a key rule.
+> **For D.** P82/P83 are marked **Oracle**, and with rewriting in scope this is now the _load-bearing_
+> boundary of the whole page rather than a footnote: flattening by precedence needs the
+> unary-vs-binary distinction the [proposal][proposal] declined to solve at token level — and so do
+> P116 (paren removal) and P156 (DStyle's binary-operator spacing). Three of the most-wanted rules
+> share one blocker, which changes its cost/benefit: it is not one feature's prerequisite, it is
+> the gate on a third of the rewrite tier.
+>
+> Everything else in this section is reachable today. P96–P101 are the **UFCS pipeline decision** —
+> the repo's own [functional-declarative guidelines][fdg] make `x.filter!(…).map!(…).array` the
+> house idiom, so how a broken pipeline lays out is the most-seen formatting decision in this
+> codebase. P98's capitalization heuristic maps onto D naming (types are PascalCase, so
+> `Type.make(x)` as a chain head is exactly the intended case). P93's short-key rule generalizes to
+> any `name: value` or `name = value` where the name is too short for a wrap to read as one — worth
+> stating as a width rule, not a key rule. P50/P51 are now allowed to insert the parens they need,
+> which D makes safer than JS: there is no ASI, so a wrapped `return (…)` cannot change meaning.
 
 ---
 
 ## F. Token-level normalization
 
-Everything in this section is prettier _rewriting_ code, and is out of v1's scope. It is inventoried
-anyway because it is the sharpest available statement of what "just formatting" does not mean.
+This section is prettier _rewriting_ code. Under the two-tier scope it is no longer excluded — it
+is where the opt-in tier's prettier-derived rules live, and the section that most needs a per-rule
+verdict rather than a blanket one. §J adds the D-specific rewrites prettier has no row for.
 
-| #    | Decision                                                                                                                         | Source                  | Verdict   |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | --------- |
-| P108 | **Quote choice by escape count:** pick the quote that needs fewer escapes; `singleQuote` only breaks ties                        | [print-string][pstr]    | **Token** |
-| P109 | Escape sequences inside the string are preserved exactly — `"🙂"` never becomes `"\uD83D\uDE42"`, or the reverse                 | [make-string][mkstr]    | **Token** |
-| P110 | Re-escaping is minimal: quotes of the _other_ kind are unescaped when switching quote styles                                     | [make-string][mkstr]    | **Token** |
-| P111 | Numbers are lowercased; `+` and leading zeros are stripped from exponents; `1e0` → `1`; `.5` → `0.5`; `1.50` → `1.5`; `1.` → `1` | [print-number][pnum]    | **Token** |
-| P112 | BigInt literals are lowercased                                                                                                   | [literal.js][lit]       | **Token** |
-| P113 | Regex flags are sorted alphabetically                                                                                            | [literal.js][lit]       | **Token** |
-| P114 | Object keys are quoted or unquoted per `quoteProps`, with a consistency rule: if one sibling needs quotes, all get them          | [key.js][key]           | **Token** |
-| P115 | Key unquoting is refused wherever it would change semantics (TypeScript numeric keys, Flow, `--strictPropertyInitialization`)    | [key.js][key]           | **Token** |
-| P116 | Redundant parentheses are dropped; needed ones are re-derived from precedence rather than preserved                              | [needs-parens][np]      | **Token** |
-| P117 | Semicolons are inserted or removed per `semi`, including the defensive leading `;`                                               | [expression-stmt][expr] | **N/A**   |
-| P118 | `directive` string literals ("use strict") keep their exact code units — quote swapping is refused when they contain quotes      | [literal.js][lit]       | **N/A**   |
+| #    | Decision                                                                                                                         | Source                  | Verdict    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ---------- |
+| P108 | **Quote choice by escape count:** pick the quote that needs fewer escapes; `singleQuote` only breaks ties                        | [print-string][pstr]    | **Opt-in** |
+| P109 | Escape sequences inside the string are preserved exactly — `"🙂"` never becomes `"\uD83D\uDE42"`, or the reverse                 | [make-string][mkstr]    | **Adopt**  |
+| P110 | Re-escaping is minimal: quotes of the _other_ kind are unescaped when switching quote styles                                     | [make-string][mkstr]    | **Adopt**  |
+| P111 | Numbers are lowercased; `+` and leading zeros are stripped from exponents; `1e0` → `1`; `.5` → `0.5`; `1.50` → `1.5`; `1.` → `1` | [print-number][pnum]    | **Reject** |
+| P112 | BigInt literals are lowercased                                                                                                   | [literal.js][lit]       | **Reject** |
+| P113 | Regex flags are sorted alphabetically                                                                                            | [literal.js][lit]       | **Reject** |
+| P114 | Object keys are quoted or unquoted per `quoteProps`, with a consistency rule: if one sibling needs quotes, all get them          | [key.js][key]           | **N/A**    |
+| P115 | Key unquoting is refused wherever it would change semantics (TypeScript numeric keys, Flow, `--strictPropertyInitialization`)    | [key.js][key]           | **N/A**    |
+| P116 | Redundant parentheses are dropped; needed ones are re-derived from precedence rather than preserved                              | [needs-parens][np]      | **Opt-in** |
+| P117 | Semicolons are inserted or removed per `semi`, including the defensive leading `;`                                               | [expression-stmt][expr] | **N/A**    |
+| P118 | `directive` string literals ("use strict") keep their exact code units — quote swapping is refused when they contain quotes      | [literal.js][lit]       | **N/A**    |
 
-> **For D.** The row that matters is **P116**. Prettier can drop parentheses because it reprints
-> from an AST that knows precedence; a token-spine formatter cannot, and must not try. The rest of
-> the section is a menu for a hypothetical `dmd-fmt --fix`-style pass that v1 deliberately does not
-> have; if such a pass is ever built, P109/P110/P115 are the guard rails — **normalize spelling, never
-> semantics** — and they are the reason prettier's string handling is 3 functions instead of 1.
+> **For D.** **P116** is the one to take, and the one to gate. Prettier can drop parentheses because
+> it reprints from an AST that knows precedence; a token-spine formatter must acquire that knowledge
+> first (P82/P83), and until it does, paren removal is unimplementable rather than merely disabled.
+> Once it exists, D wants the rule in _both_ directions — drop the redundant pair, and add a
+> clarifying pair where mixed precedence is easy to misread — which prettier does not do, and which
+> DStyle half-endorses already ("avoid unnecessary parentheses": `a == b ? "foo" : "bar"`).
+>
+> **P108–P110 generalize into P154**, D's literal-form selection: D has five spellings of a string
+> literal where JS has two, so "fewest escapes" is a choice among `"…"`, `` `…` ``, `q"ID…ID"`,
+> `q{…}` and `x"…"` rather than between two quote characters. P109/P110 are the guard rails that
+> make it safe — **normalize spelling, never semantics** — and they are the reason prettier's string
+> handling is three functions instead of one.
+>
+> **P111–P113 are rejected.** Number spelling in D carries author intent that no formatter can
+> recover: `0x1F` vs `31`, `1_000_000`'s digit separators, `1.0f` vs `1.0`, the `L`/`u` suffixes.
+> Prettier can normalize because JS has one numeric type and one canonical spelling; D has neither,
+> and a rule that lowercases `0xDEADBEEF` or strips a trailing `.0` would destroy information while
+> changing nothing about layout. **P114/P115 are N/A** — D's AA literals key on expressions, so
+> there is no quoted-key question. **P117 is N/A**: D's semicolons are mandatory, so there is
+> nothing to insert or elide (the stray-`;` case is P35).
 
 ---
 
@@ -335,13 +395,21 @@ anyway because it is the sharpest available statement of what "just formatting" 
 | P129 | Prettier documents that magic comments (`eslint-disable-next-line`) can be silently invalidated by its own reflow, and tells users to prefer range-based pragmas | [rationale][rationale]  | **Adopt** |
 
 > **For D.** P121/P122 is the exact analogue of DDoc block comments (`/** … */` with leading `*`),
-> which v1 currently passes through untouched — re-indenting them is a small, safe, well-specified
-> win, and P122 is the trap to avoid while doing it. P123's dangling-comment classification is the
-> one piece of comment machinery a token-spine formatter still needs, because "the comment inside an
-> otherwise-empty `()`" has no token to hang off. P125/P126 are worth internalizing generally: a
-> comment is a layout input, not just content to relocate. P129 is a warning dmd-fmt inherits the
-> moment it moves any line — `// dfmt off`-style range pragmas are safer than line-scoped ones, and
-> that is already the design.
+> and it is the _floor_ of what dmd-fmt does here rather than the ceiling: re-indenting the body is
+> safe and unconditional, while **P28 becomes the opt-in DDoc reflow** — rewrap prose to the print
+> width, indent section bodies one level as [DStyle][dstyle] requires, leave `---` example blocks
+> and fenced code untouched, and lay out DDoc tables with the repo's own solver
+> (`libs/ui/src/sparkles/ui/components/table/layout.d`, already used for the markdown adapter). The
+> precedent is hue, which renders and reflows markdown today; the escape hatches are the same ones
+> a reader already knows — a language-less code block, or `// dfmt off`. P122 is the trap to handle
+> while doing it: a line ending in two spaces is a markdown hard break, and re-indenting it silently
+> deletes the break.
+>
+> P123's dangling-comment classification is the one piece of comment machinery a token-spine
+> formatter still needs, because "the comment inside an otherwise-empty `()`" has no token to hang
+> off. P125/P126 are worth internalizing generally: a comment is a layout input, not just content
+> to relocate. P129 is a warning dmd-fmt inherits the moment it moves any line — range pragmas are
+> safer than line-scoped ones, and that is already the design (D5).
 
 ---
 
@@ -357,33 +425,160 @@ anyway because it is the sharpest available statement of what "just formatting" 
 
 ---
 
+## I. Template literals and the type level
+
+Included on the second pass, because both map onto D constructs that the first reading dismissed:
+prettier's template literals are the closest thing in its corpus to D's
+[interpolated expression sequences][ies], and its type-level printers reuse the same layout
+machinery D needs for template parameters, constraints and `alias` declarations.
+
+| #    | Decision                                                                                                                                        | Source                  | Verdict   |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | --------- |
+| P135 | A template literal is never broken and never re-quoted; its quasis are emitted verbatim between the backticks                                   | [template-literal][tl]  | **Have**  |
+| P136 | An interpolation is first rendered at **infinite width**; it may break only if it _still_ contains a newline at that width                      | [template-literal][tl]  | **Adopt** |
+| P137 | When one does break, the break is taken at the `${` / `}` boundary in preference to breaking inside a member expression                         | [template-literal][tl]  | **Adopt** |
+| P138 | Rebuilt template content is **re-escaped** (`` ` ``, `\`, `${`) so a doc-level rewrite cannot silently change the string's meaning              | [template-literal][tl]  | **Adopt** |
+| P139 | Interpolation indentation is preserved by aligning the expression to the `${` column, or dedenting to root when the previous quasi ends in `\n` | [template-literal][tl]  | **Adapt** |
+| P140 | `jest.each` tagged templates: prettier detects a pipe-delimited table _inside_ a template literal and pads its columns into alignment           | [template-literal][tl]  | **Adapt** |
+| P141 | A `type X<T> = …` alias is printed through the **assignment** machinery, so type aliases inherit all eight layouts of P89                       | [type-alias][talias]    | **Adopt** |
+| P142 | An enum body always breaks — one member per line, at any width                                                                                  | [object.js][obj]        | **Adapt** |
+| P143 | An enum member's initializer uses a plain `" = "`, never the assignment layouts                                                                 | [enum.js][enum]         | **Adopt** |
+| P144 | A conditional type breaks before the `?` when either side is generic; chains of them print flat, like nested ternaries                          | [assignment][asg]       | **Adapt** |
+| P145 | Whether a leading space precedes a type annotation is decided by **which token precedes it** (`:` vs `=>`), not by the annotation itself        | [type-annotation][tann] | **Adapt** |
+
+> **For D.** P136 is the rule to take for IES, and it is a strictly better version of P24: instead
+> of "did the author break it", the test is "does it break _anyway_ at unlimited width" — same
+> stability, no source hint. P137 says the break belongs at `$(` / `)`, not inside the expression,
+> which is what keeps `i"…$(a.b.c)…"` readable. P138 is the guard rail every literal rewrite needs
+> (P154): D has more escaping regimes than JS — `"…"` escapes, `` `…` `` and `q"…"` do not, and
+> `i"…"` adds `\$` — so a form change is only sound if the decoded code units are unchanged, which
+> is exactly what makes it verifiable. P140 is library-specific in its trigger and generic in its
+> mechanism: aligning a table that lives _inside_ a literal is the DDoc-table case (P28), and the
+> repo already owns a better solver than prettier's.
+>
+> P141 is the row that pays: D's `alias X(T) = …;` is an assignment, so every layout in P89–P95
+> applies to it for free once assignment is implemented. P144 maps onto nested ternaries in
+> eponymous templates (`enum f(T) = cond ? a : b`) and, loosely, onto `static if`/`else static if`
+> chains, which DStyle already requires to stay flat. P145 is a reminder that in D the `:` is
+> overloaded across selective imports (`import a : b`, spaces both sides per DStyle), template
+> constraints, AA literals, named arguments, `case a: .. case b:` and label statements — one token,
+> six spacing rules, and the spine sees only the token.
+
+---
+
+## J. The D rewrite catalog
+
+Rules with no prettier row, because they are D's. This is the section the two-tier scope opens up,
+and it is deliberately a menu of **opt-in** rules with their hazards attached — the hazard is the
+specification of the verifier each one needs.
+
+| #    | Rule                                                                                                                                                                       | Source of the rule       | Verdict    |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ---------- |
+| P146 | **Import grouping**: `core.*`, `std.*`, external, other sub-packages, same sub-package — one blank line between groups                                                     | [code style][code-style] | **Opt-in** |
+| P147 | **Import sorting**: lexicographic within a group, and the selective symbol list sorted too (`import a : b, c;`)                                                            | [DStyle][dstyle]         | **Opt-in** |
+| P148 | **Declaration ordering**: public API before implementation details, topologically within                                                                                   | [code style][code-style] | **Opt-in** |
+| P149 | **Test adjacency**: a `unittest` moves to directly follow the declaration it exercises                                                                                     | [code style][code-style] | **Opt-in** |
+| P150 | **Attribute ordering**: alphabetical ignoring the `@` — `const @nogc nothrow pure @safe`                                                                                   | [DStyle][dstyle]         | **Opt-in** |
+| P151 | **Legacy `alias` retirement**: `alias Y X;` → `alias X = Y;`                                                                                                               | [DStyle][dstyle]         | **Opt-in** |
+| P152 | **Shortened function bodies** (DIP1043): a body that is one `return` becomes `=> expr;`                                                                                    | [code style][code-style] | **Opt-in** |
+| P153 | **Expression contracts** (DIP1009): an `in`/`out` block holding exactly one `assert` becomes `in (…)` / `out (r; …)`, and the `do` goes away                               | [DStyle][dstyle]         | **Opt-in** |
+| P154 | **Literal-form selection**: pick the spelling that needs no escapes — `` `…` `` for text with `"`, `q"ID…ID"` for blocks, `q{…}` for D code inside `mixin(…)`              | [code style][code-style] | **Opt-in** |
+| P155 | **`format("%s %s", a, b)` → `i"$(a) $(b)"`**                                                                                                                               | this survey              | **Reject** |
+| P156 | **DStyle spacing**: space after `if`/`foreach`/`while`/`version`, around binary operators and slice `..`, after `cast(T)`; none after unary operators, `assert`, or a call | [DStyle][dstyle]         | **Oracle** |
+| P157 | **Constraint and contract indentation**: `if (…)`, `in`, `out` sit at their declaration's indentation level, not one deeper                                                | [DStyle][dstyle]         | **Adopt**  |
+| P158 | **Field de-alignment**: exactly one space between a field's type and its name in an aggregate                                                                              | [DStyle][dstyle]         | **Opt-in** |
+| P159 | **Dead-semicolon removal**: `struct S { };` → `struct S { }`, the declaration-level half of P35                                                                            | this survey              | **Adopt**  |
+| P160 | **Template-argument simplification**: `f!(T)` → `f!T` when the argument is a single token                                                                                  | this survey              | **Opt-in** |
+
+### The hazards, which are the verifier specifications
+
+- **P146/P147 are safer in D than the same rule is in JS**, and the reason is worth stating because
+  it is the strongest argument in this section: D's module constructors run in **dependency order
+  computed by the runtime**, not in the order `import` statements appear, so reordering imports
+  cannot reorder initialization the way reordering ES module imports can. Overload sets assembled
+  from several modules are order-independent too — ambiguity is an error, not first-wins. The
+  residual hazards are narrow and checkable: never move an import across a `version`/`static if`
+  boundary, never merge imports at different scopes, and preserve renamed-import spelling.
+- **P148/P149 are the dangerous pair, and must never touch aggregate fields.** Reordering fields
+  changes `.offsetof`, the ABI, and every `align`/union assumption in the program. Even at module
+  scope, D reflects over declaration order: `__traits(allMembers)` returns it, `static foreach` over
+  that order generates code from it, and a string mixin built from either bakes it into the output.
+  A defensible verifier is therefore: refuse the rewrite in any module that mentions
+  `__traits(allMembers)`, `__traits(derivedMembers)`, or `.tupleof`, and restrict the rewrite to
+  module-scope functions in the first release. P149 has a cheap hook this repo already provides —
+  the `@("module.symbol.case")` test-name convention names the subject.
+- **P150 must reorder only the commuting set** (`@safe`/`@trusted`/`@system`, `pure`, `nothrow`,
+  `@nogc`, `const`/`immutable`/`inout`/`shared` as member qualifiers). `ref`, `scope` and `return`
+  are **not** in it: `return scope` and `scope return` differ, and a sort that treats them as
+  keywords to alphabetize is a semantic change wearing a style rule's clothes.
+- **P152's real blocker is documented in this repo already**: a local `import` in the body forces a
+  braced body, so the rewrite must decline whenever the body imports — which is a syntactic check,
+  not a semantic one, and therefore cheap.
+- **P154 is the most verifiable rewrite in the catalog**, and should be built first for that reason:
+  decode the old spelling and the new one and compare code units. If they differ, the rewrite is
+  wrong, and the check is total rather than heuristic. Note the one form that is not a pure
+  respelling: `q{…}` is **lexed** by the compiler, so moving text into it can turn a passing build
+  into a failing one (an unbalanced brace inside a comment, say) — which is a feature when the
+  content really is D code and a bug otherwise, so restrict it to `mixin(…)` arguments.
+- **P155 is not a formatting rule and should not be one.** `format(…)` returns a `string`; an IES
+  literal is a compile-time _sequence_ that deliberately does not convert to `string`. The rewrite
+  therefore only type-checks where the callee accepts IES (`writeln`, an IES-aware overload) and
+  changes the expression's type everywhere else. It is a good **lint with a fix**, offered per site
+  with the type checked — which is `sparkles:dmd-lsp`'s job, not the formatter's.
+- **P156 is the largest single gap between dmd-fmt and DStyle**, and the one users will notice
+  first: v1 preserves `a+b` because it has no opinion on spacing, while DStyle mandates `a + b`.
+  It is gated on the same unary-vs-binary question as P82/P83 and P116 — which is the argument for
+  paying that cost once, deliberately, rather than three times by accident.
+- **P158 contradicts a rule dmd-fmt already implements**: M4 preserves author alignment (aligned
+  table literals stay aligned), while DStyle asks for exactly one space between a field's type and
+  its name, explicitly to keep diffs small. Both positions are defensible and they cannot both be
+  the default; recording the conflict is more useful than silently resolving it. The narrow reading
+  — de-align _aggregate field declarations_, keep alignment inside array/table literals — is
+  probably right, and is what the option should mean.
+
+---
+
 ## What the extraction says
 
-**1. A sixth of the surface is not layout at all.** 19 rows are marked **Token** and another 5
-**N/A**; §F alone is eleven rows of pure rewriting. Prettier's identity as "the formatter with no options" depends on being
-allowed to rewrite quotes, commas, semicolons, parentheses and number spelling; a formatter that
-declines that — as v1 does, to keep verification tractable — cannot be prettier and should stop
-being measured against it.
+160 rows: **63 Adopt · 47 Adapt · 17 Opt-in · 17 Have · 7 N/A · 6 Reject · 3 Oracle.**
 
-**2. Prettier's preservation is larger than advertised, and regretted.** Six independent source
-hints (P17, P22, P24, P19, P25–P27) read the original text. The team documents P17 and P24 as
-workarounds they want to remove and have not, in nine years, found a replacement for. This is the
-strongest external evidence available for the v1 policy, and simultaneously the strongest argument
-that the policy will be criticized in exactly the same terms.
+**1. The scope change moved the bottleneck from _permission_ to _proof_.** Under the old reading,
+19 rows were excluded because they touched tokens. Under the two-tier scope only 6 are rejected on
+their merits, and the constraint that replaced the blanket exclusion is sharper and more useful:
+tier-3 token equality cannot verify a rewrite, so each opt-in rule needs its own check. Ranked by
+how cheap that check is: **P154** (decode both spellings, compare code units — total, not
+heuristic) · **P151/P152/P153/P159/P160** (syntactic, local, mechanically checkable) ·
+**P146/P147** (needs a scope-boundary check, and D's dependency-ordered module construction makes
+the semantics easier than JS's) · **P116/P156** (needs precedence) · **P148/P149** (needs to prove
+nothing reflects over declaration order — the hardest, and the one to ship last).
 
-**3. The expensive decisions cluster in three places** — call arguments (P60–P66), member chains
-(P96–P101), assignment (P89–P95). Together they are ~1,300 lines of prettier's ~10,800-line JS
-printer, roughly one line in eight, and they are the three shapes a D reader meets constantly:
-lambda-taking calls, UFCS pipelines, and `auto x = …`. Everything else is comparatively mechanical.
+**2. One missing fact gates a third of the rewrite tier.** Unary-vs-binary disambiguation — declined
+at token level by the proposal — is the prerequisite for P82/P83 (operator flattening), P116
+(parenthesis normalization) and P156 (DStyle's binary-operator spacing). Three separately-requested
+rules, one blocker. That reframes it: not a per-feature cost, but a single investment that unlocks
+the most-visible difference between dmd-fmt's output and DStyle's prescription.
 
-**4. Two decisions are inadmissible on principle** — P68 and P69 hardcode third-party library names
+**3. Prettier's preservation is larger than advertised, and it is what dmd-fmt made policy.** Six
+independent source hints read the original text (P17, P19, P22, P24, P25–P27). Prettier's docs call
+two of them workarounds it wants to remove; dmd-fmt keeps them deliberately, and the difference is
+consistency: prettier's hint is one construct's exception, dmd-fmt's is the rule everywhere. P136 is
+the one improvement available — "does it break at unlimited width" is the same stability with no
+source hint at all.
+
+**4. The expensive _layout_ decisions cluster in three places** — call arguments (P60–P66), member
+chains (P96–P101), assignment (P89–P95). Together ~1,300 lines of prettier's ~10,800-line JS
+printer, and the three shapes a D reader meets constantly: lambda-taking calls, UFCS pipelines,
+`auto x = …`. Everything else is comparatively mechanical.
+
+**5. Two decisions are inadmissible on principle** — P68 and P69 hardcode third-party library names
 (`it`, `describe`, `useEffect`) into a general-purpose formatter. They are the visible cost of
 "opinionated": once the formatter owns the layout, every community with a bad-looking idiom
-petitions for a special case.
+petitions for a special case. P155 is the D-side instance of the same temptation, and is rejected
+for a stronger reason — it does not preserve types.
 
-**5. The `Doc` IR gap is small and specific.** `libs/dmd-fmt/src/sparkles/dmd_fmt/doc.d` already has `text`/`line`/`softline`/
-`hardline`/`group`/`fill`/`indentBlock`/`alignBlock`/`ifBreak`/`lineSuffix`/`conditional`. Missing,
-in the order the decisions above need them:
+**6. The `Doc` IR gap is small and specific.** `libs/dmd-fmt/src/sparkles/dmd_fmt/doc.d` already has
+`text`/`line`/`softline`/`hardline`/`group`/`fill`/`indentBlock`/`alignBlock`/`ifBreak`/
+`lineSuffix`/`conditional`. Missing, in the order the decisions above need them:
 
 | Missing primitive                         | Needed by                          | Note                                                                                |
 | ----------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------- |
@@ -392,31 +587,50 @@ in the order the decisions above need them:
 | `willBreak` / `canBreak` inspection       | P57, P60, P64, P89, P101           | Every "does this sub-doc break?" guard.                                             |
 | `removeLines`                             | P60, P63                           | Flattening a hugged signature.                                                      |
 | `breakParent`                             | P22, P25, P101                     | Partly covered: `hardline` already forces enclosing groups.                         |
+| `dedentToRoot`                            | P139                               | Interpolations that start at column 0 inside a multi-line literal.                  |
 | `label`                                   | P96 (chain detection), P60         | Tagging a doc so a parent printer can branch on how a child printed.                |
 
 Adding group ids and doc-valued `ifBreak` is the enabling change; the rest are conveniences.
 
 ## The shortlist
 
-Twelve decisions, ordered by value per unit of work, that apply to D, survive the v1 policy, and do
-not need an oracle we lack:
+**Layout tier — twelve, ordered by value per unit of work.** All apply to D, none need an oracle
+we lack:
 
 1. **P90 + group ids** — the `fluid` assignment layout, and the IR change that unlocks P80 and P54.
 2. **P96–P101** — member-chain grouping, for UFCS pipelines. The most-seen layout in this codebase.
-3. **P74** — concise fill for all-numeric array literals.
-4. **P25–P27** — blank lines inside lists and chains as break forcers.
-5. **P121 + P122** — re-indent DDoc `/** … */` comment bodies, with the hard-break trap handled.
-6. **P36 + P37** — parenthesized-header indentation, invariant under adding a negation.
-7. **P48** — hardline between declarators when any has an initializer.
-8. **P93** — the short-name wrap rule, generalized off object keys.
-9. **P75** — force-break an array of same-kind multi-element elements (the table heuristic).
-10. **P61 + P62 + P65** — the refusal guards, so that any future hugging looks deliberate.
-11. **P123 + P124** — dangling comments inside empty delimiters.
-12. **P14 + P15** — range formatting and cursor tracking, the editor contract the spine makes cheap.
+3. **P141** — route `alias X(T) = …;` through assignment, and every layout in P89–P95 comes free.
+4. **P74** — concise fill for all-numeric array literals.
+5. **P25–P27** — blank lines inside lists and chains as break forcers.
+6. **P121 + P122** — re-indent DDoc `/** … */` bodies, with the hard-break trap handled.
+7. **P36 + P37** — parenthesized-header indentation, invariant under adding a negation.
+8. **P157** — constraints and contracts at their declaration's indentation level (DStyle).
+9. **P48** — hardline between declarators when any has an initializer.
+10. **P93** — the short-name wrap rule, generalized off object keys.
+11. **P75** — force-break an array of same-kind multi-element elements (the table heuristic).
+12. **P136 + P137** — IES interpolation: break only if it breaks at unlimited width, and break at
+    the `$(` boundary.
 
-Deferred with reasons: P60–P66 (needs argument boundaries from the oracle), P82–P83 (needs
-precedence, i.e. unary/binary disambiguation), everything in §F (token-changing), P68/P69
-(inadmissible), P17 (already the policy, not a decision to re-take).
+**Rewrite tier — build order, cheapest verifier first.** Trailing commas (P7/P58) are the default-on
+member and are already specified; the opt-in rules should land in this order, each with the check
+named in §J:
+
+1. **P154** — literal-form selection. Total verifier (decode and compare), highest daily value.
+2. **P159 + P35** — dead-semicolon removal. Trivial, and a good first exercise of the
+   rewrite-plus-verifier harness.
+3. **P151 + P152 + P153 + P160** — the syntactic modernizations (legacy `alias`, `=>` bodies,
+   expression contracts, `!T`).
+4. **P146 + P147** — import grouping and sorting, with the scope-boundary check.
+5. **P150** — attribute ordering, restricted to the commuting set.
+6. **P158** — field de-alignment, once the conflict with M4's alignment preservation is decided.
+7. **P116 + P156** — parenthesis normalization and DStyle spacing, after the precedence oracle
+   exists. These two justify that investment between them.
+8. **P148 + P149** — declaration ordering and test adjacency, last, and never for aggregate fields.
+
+Deferred with reasons: P60–P66 (needs argument boundaries from the oracle), P82/P83 (needs
+precedence — same gate as item 7 above), P68/P69/P155 (inadmissible), P111–P113 (number and regex
+spelling carries author intent D cannot recover), P17 (already the policy, not a decision to
+re-take).
 
 ---
 
@@ -472,6 +686,10 @@ precedence, i.e. unary/binary disambiguation), everything in §F (token-changing
 [tp]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/type-parameters.js
 [ut]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/union-type.js
 [key]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/key.js
+[tl]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/template-literal.js
+[talias]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/type-alias.js
+[enum]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/enum.js
+[tann]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/type-annotation.js
 [lit]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/print/literal.js
 [np]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/language-js/parentheses/needs-parentheses.js
 [pstr]: https://github.com/prettier/prettier/blob/414e453ae9034866d93eea456b430aa52140371b/src/utilities/print-string.js
@@ -487,4 +705,7 @@ precedence, i.e. unary/binary disambiguation), everything in §F (token-changing
 [dfmt]: ./dfmt.md
 [proposal]: ./dmd-fmt-proposal.md
 [dmd-fmt-spec]: ../../specs/dmd-fmt/index.md
+[dstyle]: ../../guidelines/dstyle.md
+[code-style]: ../../guidelines/code-style.md
+[ies]: ../../guidelines/interpolated-expression-sequences.md
 [fdg]: ../../guidelines/functional-declarative-programming-guidelines.md

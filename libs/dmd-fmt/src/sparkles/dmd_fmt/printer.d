@@ -2,7 +2,15 @@
 The printer — M3/M4 of the dmd-fmt proposal: walk the token spine guided by
 the S2 group tree and emit the M2 `Doc` IR.
 
-The v1 style policy, stated plainly (and recorded in `docs/specs/dmd-fmt/`):
+What this module implements is $(B tier 1) of the two-tier scope fixed in
+`docs/specs/dmd-fmt/` (D9): the layout pass, which reformats without touching
+the token stream and is therefore always on and verifiable by token equality.
+The $(B rewrite tier) around it — trailing-comma insertion on by default,
+everything else opt-in and each with its own verifier — is specified in D9 and
+catalogued in `docs/research/code-formatting/prettier-decisions.md`; none of it
+lives here yet.
+
+Tier 1's policy, stated plainly:
 $(B author's-breaks-preserved with structural reindentation) — the paradigm
 gofmt proves out, chosen because it is verifiable today and needs no
 unary-vs-binary token disambiguation. Concretely:
@@ -21,8 +29,9 @@ $(LIST
         opening or before a closing brace.
     * $(B The magic trailing comma) (M4): a list whose author wrote a
         trailing comma is pinned one-element-per-line; without one, a list
-        too wide for `softMaxLineLength` explodes via the greedy engine
-        (read, never written — token-changing passes are a non-goal).
+        too wide for `softMaxLineLength` explodes via the greedy engine.
+        Read, never written: writing it is the one default-on rewrite D9
+        schedules, and it belongs to tier 2, not to this pass.
     * $(B Verbatim by default) (M3's do-no-harm valve): `// dfmt off` …
         `// dfmt on` ranges and `asm { … }` bodies are emitted
         byte-for-byte; `#line`/shebang directives, the `__EOF__` tail, the

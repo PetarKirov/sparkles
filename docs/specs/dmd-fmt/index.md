@@ -1,7 +1,7 @@
 # `sparkles:dmd-fmt` — M0 Decision Record
 
 _**Status:** M0–M8 delivered (v1 formatter; M9 deferred by its own gate) ·
-**Date:** 2026-08-17 · **Scope:** the D formatter on the DMD substrate
+**Date:** 2026-08-17, revised 2026-08-23 (D9) · **Scope:** the D formatter on the DMD substrate
 (`libs/dmd-fmt`), per
 [the research proposal](../../research/code-formatting/dmd-fmt-proposal.md)._
 
@@ -135,6 +135,58 @@ iteration to a fixed point with per-step verification, ocamlformat's
 `max-iters` discipline. The `dub run :ci` sweep wires in with M5's
 `--check`, when a formatter exists to drive it.
 
+### D9 — Scope: two tiers; layout always on, rewrites opt-in
+
+**Superseding the v1 posture that no token is ever added or removed.** That posture was a
+verification convenience, not a goal, and stating it as scope understated what this formatter is
+for. The scope is two tiers:
+
+**Tier 1 — layout.** Reformats without touching the token stream: author's breaks preserved,
+indentation recomputed structurally, horizontal whitespace normalized, blank runs collapsed. Always
+on, and the only tier the v1 defaults exercise beyond the one exception below. It is verified by
+D8's tier-3 token equality plus the DDoc-attachment check, which is exactly why it can be on
+unconditionally.
+
+**Tier 2 — rewrites.** May add, remove, or respell tokens. One member is **on by default**:
+
+- **Trailing commas are inserted** when a list breaks one-element-per-line, and elided when it is
+  flat (prettier's `ifBreak(",")`, `trailingComma: all`). This is enabling rather than cosmetic —
+  without it a broken signature or call has no comma after its final element, and the magic
+  trailing comma M4 already _reads_ could only ever be written by hand.
+
+Every other rewrite is **opt-in**, off unless the project's configuration asks for it. The catalog,
+with each rule's hazards, is [the prettier decision inventory][decisions] §F and §J; the families
+are: import grouping and sorting, declaration ordering and test adjacency, parenthesis
+normalization (both removing redundant pairs and adding clarifying ones), string-literal form
+selection (`` ` ` `` / `q"…"` / `q{…}` to avoid escapes), attribute ordering, the syntactic
+modernizations (`alias X = Y;`, `=>` bodies, DIP1009 expression contracts), DDoc reflow, and
+DStyle's spacing rules.
+
+**Three consequences, and they are the reason this is a decision rather than a wish:**
+
+1. **Tier-3 equality cannot verify tier 2 — by construction.** Token equality modulo whitespace is
+   precisely what a rewrite breaks. So **each opt-in rewrite ships with its own verifier or it does
+   not ship**, and rules are ordered by how cheap that verifier is: literal-form selection is total
+   (decode both spellings, compare code units); the syntactic modernizations are local and
+   mechanical; import sorting needs a scope-boundary check; parenthesis and spacing rules need
+   precedence; declaration reordering needs to prove nothing in the module reflects over
+   declaration order. `checkConvergence` (D8) continues to apply to every tier, unchanged.
+2. **The M8 differential measures tier 1 only.** The stability triad and the dfmt similarity
+   ratchet run with rewrites off, so the 0.927 mean and the 0.85 tripwire floor stay comparable
+   across releases and are never moved by enabling an option.
+3. **Two standing prohibitions.** No rewrite reorders **aggregate fields** (it changes `.offsetof`,
+   the ABI, and every `align`/union assumption); and no reordering rule runs in a module that
+   mentions `__traits(allMembers)`, `__traits(derivedMembers)` or `.tupleof`, because D reflects
+   over declaration order and a string mixin can bake it into generated code.
+
+Two tier-1 decisions change with this, both previously recorded as v1 limitations:
+**brace style becomes configurable** — Allman by default per [DStyle][dstyle], K&R available as
+dfmt has it, and a braceless `if (x) foo();` preserved as written, never expanded and never
+brace-injected — and **DStyle's spacing rules become the target** rather than "no opinion on
+`a+b`". The latter is gated on unary-versus-binary disambiguation, which D1 declined to solve at
+token level; it is the same prerequisite as operator flattening and parenthesis normalization, so
+the three are one investment, not three.
+
 ## Spike results
 
 | Spike                                | Result         | Where                                      |
@@ -217,10 +269,13 @@ do-no-harm valve's verbatim slice is always a token-span slice.
 ## Milestone delivery (M1–M8)
 
 All eight milestones shipped on this branch, each guarded by the M1
-verifier; the v1 style policy is deliberately conservative and stated in
-`printer.d`'s module doc: **author's-breaks-preserved with structural
-reindentation** (the paradigm gofmt proves out), chosen because it is
-verifiable today and needs no unary-vs-binary token disambiguation.
+verifier. What shipped is D9's **tier 1** in full, and none of tier 2: the
+style policy stated in `printer.d`'s module doc is
+**author's-breaks-preserved with structural reindentation** (the paradigm
+gofmt proves out), chosen because it is verifiable today and needs no
+unary-vs-binary token disambiguation. D9 keeps that as the always-on tier and
+adds the rewrite tier around it; nothing below is invalidated by the scope
+revision.
 
 | Milestone                | Delivered as                                                                                                                                                                  |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -238,11 +293,15 @@ only if greedy output proves materially worse than dfmt on the M8 corpus —
 a comparison the harness runs whenever a `dfmt` binary is present. The IR
 already carries N-way choice, so promotion is an interpreter swap.
 
-Known v1 limitations, deliberate and recorded: one continuation level where
-authors nest several; no opinionated spacing between tokens (adjacency is
-preserved, so `a+b` vs `a + b` is the author's choice); no brace-style
-opinion; no comment reflow; no alignment engine (existing alignment is
-preserved, never created).
+Known limitations of what has **shipped**, as distinct from what is in scope
+(D9 revises three of these from "deliberate" to "scheduled"): one continuation
+level where authors nest several; no opinionated spacing between tokens —
+adjacency is preserved, so `a+b` vs `a + b` is still the author's choice
+(scheduled, gated on the precedence oracle); no brace-style option (scheduled,
+Allman default); no comment reflow (scheduled as opt-in DDoc reflow); no
+alignment engine — existing alignment is preserved, never created, which D9
+notes is in tension with DStyle's one-space field rule and is resolved by
+option, not by default.
 
 ## Risks: retired and open
 
@@ -264,7 +323,9 @@ real reduction and is scheduled after this branch ships).
 - Research: [the proposal](../../research/code-formatting/dmd-fmt-proposal.md) ·
   [the substrate baseline](../../research/code-formatting/dmd-lsp-baseline.md)
   (Q-a … Q-i, the hard list) ·
-  [the survey](../../research/code-formatting/index.md)
+  [the survey](../../research/code-formatting/index.md) ·
+  [the prettier decision inventory][decisions] (160 scored rules — D9's
+  tier-2 catalog and each rule's verifier)
 - Code: `libs/dmd-fmt/src/sparkles/dmd_fmt/` — `spine.d` (S1/S3),
   `oracle.d` + `groups.d` (S2), `loc_inventory.d` (S4), `bench.d` (D3)
 - Consumers: hue's [format preview](../hue/format-preview.md) (`FPR2`/`FPR7`)
@@ -272,4 +333,6 @@ real reduction and is scheduled after this branch ships).
 - Fork: [PLAN-UPSTREAMING.md][plan] on `dmdserver-dub` tracks the
   upstreamable fixes and library-quality findings this work produced
 
+[decisions]: ../../research/code-formatting/prettier-decisions.md
+[dstyle]: ../../guidelines/dstyle.md
 [plan]: https://github.com/PetarKirov/dmd/blob/c562711dbd4685c4e4f7bd5ff46e1a306c932259/PLAN-UPSTREAMING.md
