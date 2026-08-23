@@ -49,13 +49,16 @@ enum bool isFiberExecutor(X) = __traits(compiles, (ref X x, CancelContext* cc) {
 });
 
 /**
-Optional deadline-timer primitive (gates `withDeadline`, SPEC §8.3): arms a
-one-shot timer whose expiry cancels `node`'s subtree; the token disarms it.
-On `Sched` this is an in-ring `TIMEOUT`.
+Optional deadline primitive (gates `withDeadline`, SPEC §8.3): arms a
+one-shot deadline whose expiry cancels `node`'s subtree; disarming is a
+synchronous, idempotent severance — after `disarmDeadline(node)` returns,
+the node can never be swept. On `Sched` this is a scheduler-owned armed
+list swept between dispatches (never a kernel op holding the node's
+address), so it is available on every backend.
 */
 enum bool hasDeadlineTimer(X) = __traits(compiles, (ref X x, CancelContext* cc) {
-    ulong t = x.armDeadline(cc, Duration.zero);
-    x.disarmDeadline(t);
+    x.armDeadline(cc, Duration.zero);
+    x.disarmDeadline(cc);
 });
 
 /**
