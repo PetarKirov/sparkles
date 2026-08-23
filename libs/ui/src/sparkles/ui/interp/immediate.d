@@ -10,7 +10,7 @@ interpreters are later siblings under `interp/`.
 module sparkles.ui.interp.immediate;
 
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, isCanvas, Line, LineStyle,
-    match, OpKind, PopClip, PushClip, Rule, RuleEdge, ruleEndpoints, Scrollbar,
+    match, OpKind, PopClip, PushClip, Rule, RuleEdge, ruleSpan, Scrollbar,
     scrollbarCell, scrollbarCellCount, TextRun, visualOf;
 import sparkles.ui.geometry : Point;
 import sparkles.ui.style : Visual;
@@ -53,7 +53,7 @@ if (isCanvas!Canvas)
                 else
                 {
                     Point rf, rt;
-                    ruleEndpoints(r.rect, r.edge, rf, rt);
+                    ruleSpan(r.rect, r.edge, rf, rt);
                     canvas.line(rf, rt, vis, LineStyle.solid);
                 }
             },
@@ -190,7 +190,18 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
     assert(rec.ops.length == 1);
     assert(rec.ops[0].kind == OpKind.line);
     assert(rec.ops[0].rect.origin == Point(2, 6));
-    assert(rec.ops[0].to == Point(11, 6));
+    // HALF-OPEN, so the rule's last cell is inside the span. This used to be
+    // `ruleEndpoints`' inclusive `(11, 6)` handed straight to a `line` whose
+    // own convention is exclusive, which drew every rule one cell short of
+    // its rect — see `ruleSpan`.
+    assert(rec.ops[0].to == Point(12, 6));
+
+    // …and the vertical edge, which the cell backends were dropping outright.
+    auto vrec = RecordingCanvas();
+    paint(vrec, [ruleOp(Rect(2, 3, 10, 4), RuleEdge.left)]);
+    assert(vrec.ops.length == 1);
+    assert(vrec.ops[0].rect.origin == Point(2, 3));
+    assert(vrec.ops[0].to == Point(2, 7));
 }
 
 @("ui.interp.immediate.scrollbarFallsBackToCells")

@@ -407,14 +407,30 @@ struct CellGrid
     /// line is undercurl — the twoslash error squiggle).
     void line(in Point from, in Point to, in Visual v, LineStyle style)
     {
-        const y = from.y;
-        foreach (x; from.x .. to.x)
+        if (from.y == to.y || from.x != to.x)
+        {
+            const y = from.y;
+            foreach (x; from.x .. to.x)
+                if (inBounds(x, y))
+                {
+                    auto c = &at(x, y);
+                    c.underline = true;
+                    c.curly = style == LineStyle.wavy;
+                    c.underColor = v.fg;
+                }
+            return;
+        }
+        // Vertical: the cell's left eighth-block, matching the accent border
+        // of the same weight. See `GridCanvas.line` — one degradation, two
+        // backends, so a board looks the same in a terminal and in `--render`.
+        const x = from.x;
+        const g = accentGlyph(1, left: true);
+        foreach (y; from.y .. to.y)
             if (inBounds(x, y))
             {
                 auto c = &at(x, y);
-                c.underline = true;
-                c.curly = style == LineStyle.wavy;
-                c.underColor = v.fg;
+                c.glyph = g;
+                c.fg = v.fg;
             }
     }
 
