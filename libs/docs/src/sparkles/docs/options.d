@@ -67,6 +67,26 @@ struct GalleryOptions
     string stylesheetHref;
 
     /**
+    Linked from `<head>` when set, instead of inlining the shell's own CSS
+    (`DOC12`) — the content-addressed `assets/shell-<hash>.css` a site build
+    writes once. Depth-adjusted per page like $(LREF stylesheetHref).
+
+    Empty keeps the self-contained document a single `--html` render has to
+    be: one file, no siblings to carry around.
+    */
+    string shellCssHref;
+
+    /// The shell's behaviour script as an asset rather than an inline block,
+    /// on the same terms as $(LREF shellCssHref).
+    string shellScriptHref;
+
+    /// The client module that hydrates the explorer aside from the site's
+    /// shared tree asset (`DOC12`). The aside itself arrives as
+    /// $(LREF sidebarHtml) — an empty placeholder carrying the asset href —
+    /// so the shell stays unaware of how a sidebar is built.
+    string explorerScriptHref;
+
+    /**
     Blob base for the forge links in the breadcrumb trail (`GAL14`) — e.g.
     `https://github.com/PetarKirov/sparkles/blob/main`.
 
@@ -96,7 +116,7 @@ struct GalleryOptions
     aside, per page: directories as collapsibles open along the current page's
     path, pages as links relative to the current page, the current one
     highlighted. Supersedes `sidebarHtml` when set: the explorer varies per
-    page, so `writeGallery` builds it (`page_shell.explorerNav`) rather than
+    page, so `writeGallery` points it at the shared tree asset rather than
     the caller supplying one string.
     */
     bool explorerSidebar;
