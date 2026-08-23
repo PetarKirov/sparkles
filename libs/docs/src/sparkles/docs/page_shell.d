@@ -321,15 +321,25 @@ private enum themeToggleButton =
 
 /// Flips the class and stores the choice under `appearanceKey`.
 private enum themeToggleScript =
-    "const T = document.getElementById('hue-appearance');
+    // Delegated, not bound to the button: a soft navigation (`DOC13`) swaps
+    // the header out, and a listener held by the old one would go with it.
+    "const sync = () => {
 " ~
-    "const sync = () => T.setAttribute('aria-pressed',
+    "  const t = document.getElementById('hue-appearance');
 " ~
-    "  String(document.documentElement.classList.contains('dark')));
+    "  if (t) t.setAttribute('aria-pressed',
+" ~
+    "    String(document.documentElement.classList.contains('dark')));
+" ~
+    "};
 " ~
     "sync();
 " ~
-    "T.addEventListener('click', () => {
+    "addEventListener('hue:navigate', sync);
+" ~
+    "document.addEventListener('click', e => {
+" ~
+    "  if (!e.target.closest('#hue-appearance')) return;
 " ~
     "  const dark = document.documentElement.classList.toggle('dark');
 " ~
@@ -592,7 +602,7 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
 
     import sparkles.docs.assets : writeContentAddressedAsset;
     import sparkles.docs.explorer : explorerJson, explorerPlaceholder,
-        explorerScript, rootPrefix;
+        rootPrefix, siteScript;
     import sparkles.docs.site_tree : buildSiteTree;
 
     static struct Rendered
@@ -630,8 +640,8 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
     // 70% of a site's bytes when each page held a copy.
     const treeHref = writeContentAddressedAsset(outDir, "tree", "json",
         explorerJson(tree, docsNav, opt.siteBase));
-    const explorerHref = writeContentAddressedAsset(outDir, "explorer", "js",
-        explorerScript);
+    const explorerHref = writeContentAddressedAsset(outDir, "site", "js",
+        siteScript);
     const cssHref = writeContentAddressedAsset(outDir, "shell", "css",
         shellCss(opt, true, true));
     const behaviourHref = writeContentAddressedAsset(outDir, "page", "js",
@@ -1095,7 +1105,7 @@ unittest
     const px = readText(buildPath(outDir, "a", "x.d.html"));
     assert(px.canFind(`id="site-explorer"`), px);
     assert(px.canFind(`data-root="../" data-current="a/x.d.html"`), px);
-    assert(px.canFind(`<script type="module" src="../assets/explorer-`), px);
+    assert(px.canFind(`<script type="module" src="../assets/site-`), px);
     assert(px.canFind(`<link rel="stylesheet" href="../assets/shell-`), px);
     assert(!px.canFind("<details"), px);  // no per-page tree at all
     // …and the directory pages are shell pages, not the legacy list.
