@@ -44,8 +44,26 @@
 // capture whose size quietly follows the panel's DPI is a broken oracle rather
 // than a cosmetic difference (`CLI6`).
 //
-// `--pointer x,y` parks the pointer through `HUE_GUI_POINTER`, which is how a
-// hovered scrollbar — a lit track, an expanded rail — becomes photographable.
+// `--pointer x,y` parks the pointer through `HUE_GUI_POINTER`, and `--env
+// NAME=VALUE` sets any other hook, so a state reached by opening a pane or
+// replaying a script can be captured without this tool learning each one.
+//
+// CHECK THAT WHAT YOU ARE COMPARING IS IN THE FRAME. A capture testifies only
+// about what it contains, and two frames that agree because neither shows the
+// affordance read exactly like two frames that agree because it is unchanged.
+// This bit me: a settings-pane capture was compared across a change to hover
+// handling, at pointer positions off the window entirely, in frames whose
+// property tree fit its panel and therefore had no scrollbar in them at all.
+// Three ways to be sure, cheapest first:
+//
+//   * Run the capture twice with the affordance's input present and absent. If
+//     the frames match, the input is not reaching it and nothing below matters.
+//   * `--diff a.png:b.png` reports where two captures differ, as a bounding box
+//     and a mask — which is how you find a one-cell-wide bar in a window
+//     instead of sweeping the pointer past it.
+//   * Prefer an assertion where one is possible. `ui-gallery --render-plain
+//     --script 'move 49,11'` puts the same question to a component as TEXT,
+//     and text fails loudly.
 //
 // Exit status: 0 identical, 1 drift, 2 a setup problem — a missing binary,
 // no `xvfb-run`, or a non-reproducible capture.
