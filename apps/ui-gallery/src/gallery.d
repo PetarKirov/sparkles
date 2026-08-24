@@ -1228,8 +1228,7 @@ struct Gallery
             ScrollState(dock.offsetV(paneNav)), keyNavScroll);
         b.nodes[view_].width = SizeSpec.fixed(f.content.width);
         const bar = verticalBar(b, dock.scrollOf(paneNav),
-            BarGeometry(f.vExtents.content, f.vExtents.viewport,
-                f.vExtents.track), 0);
+            BarGeometry.ofFrame(f.vExtents), 0);
         const inner = b.add(Widget(
             kind: WidgetKind.row,
             children: [view_, bar],
@@ -1263,8 +1262,7 @@ struct Gallery
             ScrollState(dock.offsetV(paneInsp)), keyInspScroll);
         const f = dock.scrollFrameOf(paneInsp);
         const bar = verticalBar(b, dock.scrollOf(paneInsp),
-            BarGeometry(f.vExtents.content, f.vExtents.viewport,
-                f.vExtents.track), hitInspBar);
+            BarGeometry.ofFrame(f.vExtents), hitInspBar);
         const inner = b.add(Widget(
             kind: WidgetKind.row,
             children: [view_, bar],
@@ -1296,8 +1294,7 @@ struct Gallery
         // grew past the viewport (`GalleryState.contentWidth`).
         const f = dock.scrollFrameOf(paneContent);
         const bar = verticalBar(b, dock.scrollOf(paneContent),
-            BarGeometry(f.vExtents.content, f.vExtents.viewport,
-                f.vExtents.track), hitContentBar);
+            BarGeometry.ofFrame(f.vExtents), hitContentBar);
 
         return b.add(Widget(
             kind: WidgetKind.row,

@@ -55,6 +55,15 @@ struct BarGeometry
     long content;  /// total rows
     long viewport; /// rows visible at once
     int track;     /// the bar's own length, in cells
+
+    /// The geometry a dock pane's own frame already resolved (`SCV7`).
+    ///
+    /// Every pane bar in the shell asked the same three questions of the same
+    /// value, and unpacking them at each call site is how the three copies
+    /// would drift — one reading `content` off the frame while another read it
+    /// off the model. The container publishes it; this names that.
+    static BarGeometry ofFrame(in ScrollExtents e) pure nothrow @nogc
+        => BarGeometry(e.content, e.viewport, e.track);
 }
 
 /// `true` iff there is anything to scroll. An inert bar is not drawn, and
