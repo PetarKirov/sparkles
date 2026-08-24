@@ -875,9 +875,14 @@ private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
     uint[] parts = [fenceRuleRun(b, opt, "╰")];
     if (hOver && track > 0)
     {
+        // The bar IS this border (`SCV11`): its track glyph is the rule glyph
+        // and its track colour the rule colour, so it owns the line instead of
+        // overlaying a copy of it. `paintsIdleTrack` is what makes that true on
+        // the pixel target too — the hairline it draws idle is the same 1px
+        // `OpKind.rule` paints and `drawBox` gives a light arm (`BOX1`), which
+        // is why the separate rule run underneath can go.
         const hot = opt.hotFenceHBar == blk.codeBody.start;
-        const base = fenceRuleRun(b, opt, repGlyph("─", track));
-        const bar = scrollbar(b, ScrollbarSpec(
+        parts ~= scrollbar(b, ScrollbarSpec(
             content: widest,
             viewport: innerW,
             offset: offsetX,
@@ -891,10 +896,8 @@ private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
             hasTrackFg: opt.theme.present,
             thumbFg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
             hasThumbFg: opt.theme.present,
+            paintsIdleTrack: true,
         ), track);
-        parts ~= b.add(Widget(kind: WidgetKind.stack,
-            children: [base, bar], width: SizeSpec.fixed(track),
-            height: SizeSpec.fixed(1)));
     }
     else
         parts ~= fenceRuleRun(b, opt, repGlyph("─", track));

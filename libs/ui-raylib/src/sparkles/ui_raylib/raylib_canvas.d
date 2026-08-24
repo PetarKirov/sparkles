@@ -329,6 +329,28 @@ struct RaylibCanvas
         }
     }
 
+    /// The hairline an owned track shows while idle — `rule`'s geometry, in
+    /// the track's own colour, so a bar mounted on a border is indistinguishable
+    /// from the border when nothing is hovering it.
+    private void idleRule(in Scrollbar op) @system
+    {
+        const x0 = cast(int) px(op.rect.x);
+        const y0 = cast(int) py(op.rect.y);
+        const w = cast(int)(op.rect.width * cellW);
+        const h = cast(int)(op.rect.height * cellH);
+        const c = op.trackColor;
+        const a = op.trackAlpha;
+        final switch (op.edge) with (RuleEdge)
+        {
+            case top:     fillPixels(x0, y0, w, 1, c, a); break;
+            case bottom:  fillPixels(x0, y0 + h - 1, w, 1, c, a); break;
+            case left:    fillPixels(x0, y0, 1, h, c, a); break;
+            case right:   fillPixels(x0 + w - 1, y0, 1, h, c, a); break;
+            case centerX: fillPixels(x0 + w / 2, y0, 1, h, c, a); break;
+            case centerY: fillPixels(x0, y0 + h / 2, w, 1, c, a); break;
+        }
+    }
+
     /// Draws the semantic scrollbar op with the backend's continuous px rail.
     void scrollbar(in Scrollbar op) @system
     {
@@ -336,15 +358,18 @@ struct RaylibCanvas
             cast(int) originX, cast(int) originY);
         if (!r.live)
             return;
-        // A bar that owns its rule paints the track on every frame (`SCV11`):
-        // it IS the panel border it sits on, so letting the pointer's
-        // departure erase it would erase the border. A bar in a reserved lane
-        // keeps the conscious-scrollbar look — the rail appears under the
-        // pointer (`SCB2`) — which is the difference placement makes.
-        if (op.trackLit || op.paintsIdleTrack)
+        if (op.trackLit)
             DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
                 Color(op.trackColor.r, op.trackColor.g, op.trackColor.b,
                     op.trackAlpha));
+        else if (op.paintsIdleTrack)
+            // A bar that owns its rule IS the border it sits on, so idle it
+            // must look like one — a hairline on the same edge, at the weight
+            // `drawBox` gives a light box-drawing arm (`BOX1`), which is what
+            // `OpKind.rule` already paints. Filling the hover rail here
+            // instead thickened every overflowing fence's bottom border from
+            // 1px to cellH/3; the window A/B oracle caught it.
+            idleRule(op);
         DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
             rlFg(visualOf(op)));
     }

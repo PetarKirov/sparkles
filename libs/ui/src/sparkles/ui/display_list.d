@@ -180,8 +180,13 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             static int barInt(long value) pure nothrow @nogc
                 => value < int.min ? int.min
                     : value > int.max ? int.max : cast(int) value;
-            auto trackVis = resolveVisual(pal, Slot.track, node.decoration,
-                node.textStyle, pageFg, pageBg);
+            // A bar that owns its rule IS a border, so it resolves the border
+            // slot (`SCV11`). `Slot.track` exists to dim a hover affordance
+            // sitting under a thumb; a panel edge is not that, and resolving
+            // it there paints the fence's bottom border two shades light.
+            auto trackVis = resolveVisual(pal,
+                node.barPaintsIdleTrack ? Slot.border : Slot.track,
+                node.decoration, node.textStyle, pageFg, pageBg);
             auto thumbVis = resolveVisual(pal, Slot.thumb, node.decoration,
                 node.textStyle, pageFg, pageBg);
             if (node.hasBarTrackFgOverride)
@@ -510,4 +515,51 @@ unittest
         buildDisplayListInto(tree, frames, pal,
             RgbColor(0, 0, 0), RgbColor(0, 0, 0), ops);
     }));
+}
+
+@("ui.display_list.anOwnedRuleResolvesTheBorderSlot")
+@safe unittest
+{
+    // `SCV11`: a bar that owns its rule IS a border, so its track resolves
+    // `Slot.border`; one in a reserved lane resolves `Slot.track`, which
+    // exists to dim a hover affordance sitting under a thumb.
+    //
+    // The two were not merely different shades — they were a BACKEND
+    // DISAGREEMENT. The cell target paints a bar's track glyph
+    // unconditionally, so it overpainted the fence's border run and showed the
+    // track colour; the pixel target painted no idle track at all, so it
+    // showed the border run underneath. One fence, two colours, depending on
+    // where you looked at it.
+    import std.sumtype : match;
+
+    import sparkles.ui.canvas : Scrollbar;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : Decoration, Palette, resolveVisual, TextStyle;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    static RgbColor trackFgOf(bool owned)
+    {
+        auto b = Builder();
+        const bar = b.add(Widget(kind: WidgetKind.scrollbar,
+            barContent: 100, barViewport: 10, barPaintsIdleTrack: owned));
+        auto tree = b.finish(bar);
+        auto ops = buildDisplayList(tree, layout(tree), Palette.init,
+            RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+        RgbColor found;
+        bool seen;
+        foreach (op; ops)
+            op.match!((in Scrollbar s) { found = s.trackColor; seen = true; },
+                (in _) {});
+        assert(seen, "the bar emitted no scrollbar operation");
+        return found;
+    }
+
+    const pal = Palette.init;
+    const border = resolveVisual(pal, Slot.border, Decoration.init,
+        TextStyle.init, RgbColor(0, 0, 0), RgbColor(255, 255, 255)).fg;
+    const track = resolveVisual(pal, Slot.track, Decoration.init,
+        TextStyle.init, RgbColor(0, 0, 0), RgbColor(255, 255, 255)).fg;
+
+    assert(trackFgOf(true) == border, "an owned rule is border-coloured");
+    assert(trackFgOf(false) == track, "a lane bar keeps the track slot");
 }

@@ -3,6 +3,10 @@
     name "gui_ab"
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
+    dependency "raylib-d" version="~>6.0.1"
+    // raylib-d's `library` config does not declare it; the image API is
+    // CPU-side, so no window is opened.
+    libs "raylib"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
@@ -164,18 +168,105 @@ int main(string[] rawArgs)
         buildPath(p.outDir, "old.png"));
     writefln("  new %s (%s bytes) -> %s", digest(newPng), newPng.length,
         buildPath(p.outDir, "new.png"));
-    const n = min(oldPng.length, newPng.length);
-    foreach (i; 0 .. n)
-        if (oldPng[i] != newPng[i])
-        {
-            writefln("  first differing byte at offset %s: %02x vs %02x",
-                i, oldPng[i], newPng[i]);
-            break;
-        }
-    if (oldPng.length != newPng.length)
-        writefln("  sizes differ by %s bytes",
-            cast(long) newPng.length - cast(long) oldPng.length);
+    reportPixelDiff(buildPath(p.outDir, "old.png"),
+        buildPath(p.outDir, "new.png"), p.outDir);
     return 1;
+}
+
+/**
+Where the two captures actually differ, in pixels.
+
+A byte offset into a compressed PNG says nothing about the window — one
+changed pixel shifts every subsequent byte — so the drift is reported as a
+bounding box and a count, and the differing pixels are written out as a mask.
+That is the difference between "something moved" and "the fence's bottom border
+row changed and nothing else did".
+*/
+private void reportPixelDiff(string oldPath, string newPath, string outDir)
+    @system
+{
+    import raylib : Color, ExportImage, GenImageColor, Image, ImageDrawPixel,
+        LoadImage, LoadImageColors, UnloadImage, UnloadImageColors;
+    import std.string : toStringz;
+
+    auto a = LoadImage(oldPath.toStringz);
+    auto b = LoadImage(newPath.toStringz);
+    scope (exit)
+    {
+        UnloadImage(a);
+        UnloadImage(b);
+    }
+    if (a.width != b.width || a.height != b.height)
+    {
+        writefln("  sizes differ: %sx%s vs %sx%s", a.width, a.height,
+            b.width, b.height);
+        return;
+    }
+
+    auto pa = LoadImageColors(a);
+    auto pb = LoadImageColors(b);
+    scope (exit)
+    {
+        UnloadImageColors(pa);
+        UnloadImageColors(pb);
+    }
+
+    auto mask = GenImageColor(a.width, a.height, Color(0, 0, 0, 255));
+    scope (exit)
+        UnloadImage(mask);
+
+    int minX = int.max, minY = int.max, maxX = -1, maxY = -1;
+    size_t differing;
+    foreach (y; 0 .. a.height)
+        foreach (x; 0 .. a.width)
+        {
+            const i = y * a.width + x;
+            if (pa[i].r == pb[i].r && pa[i].g == pb[i].g
+                && pa[i].b == pb[i].b && pa[i].a == pb[i].a)
+                continue;
+            ++differing;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+            ImageDrawPixel(&mask, x, y, Color(255, 0, 0, 255));
+        }
+
+    if (differing == 0)
+    {
+        writeln("  …but every pixel matches: the PNGs differ only in encoding.");
+        return;
+    }
+    writefln("  %s of %s pixels differ (%.4f%%)", differing,
+        cast(size_t)(a.width * a.height),
+        100.0 * differing / (a.width * a.height));
+    writefln("  bounding box: x %s..%s, y %s..%s (%sx%s)", minX, maxX,
+        minY, maxY, maxX - minX + 1, maxY - minY + 1);
+
+    // A handful of actual before/after colours, because "76 pixels moved" and
+    // "76 pixels changed shade" are different bugs and the box cannot tell
+    // them apart.
+    size_t shown;
+    foreach (y; 0 .. a.height)
+    {
+        foreach (x; 0 .. a.width)
+        {
+            const i = y * a.width + x;
+            if (pa[i].r == pb[i].r && pa[i].g == pb[i].g
+                && pa[i].b == pb[i].b && pa[i].a == pb[i].a)
+                continue;
+            writefln("    (%s,%s) %02x%02x%02x%02x -> %02x%02x%02x%02x",
+                x, y, pa[i].r, pa[i].g, pa[i].b, pa[i].a,
+                pb[i].r, pb[i].g, pb[i].b, pb[i].a);
+            if (++shown == 4)
+                break;
+        }
+        if (shown == 4)
+            break;
+    }
+    const maskPath = buildPath(outDir, "diff-mask.png");
+    ExportImage(mask, maskPath.toStringz);
+    writefln("  mask -> %s", maskPath);
 }
 
 /// Captures `bin` `p.runs` times, failing unless every run agrees with itself.
