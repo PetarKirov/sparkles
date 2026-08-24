@@ -655,13 +655,13 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     uint bottom;
     if (hOver)
     {
-        // The fence idiom: the bottom border IS the horizontal scrollbar —
-        // a plain fill under one semantic leaf spanning the scrolling
-        // center; frozen-column segments keep their real junction glyphs.
+        // The fence idiom: the bottom border IS the horizontal scrollbar
+        // (`SCV11`) — one semantic leaf spanning the scrolling center, owning
+        // the rule rather than overlaying a copy of it, since its track glyph
+        // already IS the border glyph. Frozen-column segments keep their real
+        // junction glyphs on either side.
         const run = bottomGlyphs[1 .. $ - 1];
-        const fill = ruleRun(repeatGlyph(props.glyphs.horizontalLine,
-            centerViewW));
-        const bar = scrollbar(b, ScrollbarSpec(
+        const track = scrollbar(b, ScrollbarSpec(
             content: centerContentW,
             viewport: centerViewW,
             offset: sx,
@@ -674,10 +674,8 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             hasTrackFg: style.hasRuleFg,
             thumbFg: vp.hThumbFg,
             hasThumbFg: vp.hasHThumbFg,
+            paintsIdleTrack: true,
         ), centerViewW);
-        const track = b.add(Widget(kind: WidgetKind.stack,
-            children: [fill, bar], width: SizeSpec.fixed(centerViewW),
-            height: SizeSpec.fixed(1)));
         uint[] parts = [ruleRun(bottomGlyphs[0 .. 1].to!string)];
         if (leftW > 0)
             parts ~= ruleRun(run[0 .. leftW].to!string);
@@ -693,12 +691,9 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     // The vertical track for the scrolling strip (fenceVTrack's shape).
     uint vTrack(int contentLines, int shown)
     {
-        auto trackCells = new uint[](0);
-        foreach (_; 0 .. shown)
-            trackCells ~= ruleRun(props.glyphs.verticalLine.to!string);
-        const base = b.add(Widget(kind: WidgetKind.column,
-            children: trackCells, width: SizeSpec.fixed(1)));
-        const vbar = scrollbar(b, ScrollbarSpec(
+        // Likewise the right edge: one leaf that owns the border column
+        // (`SCV11`), not a bar stacked over a run of `│` cells.
+        return scrollbar(b, ScrollbarSpec(
             content: contentLines,
             viewport: shown,
             offset: sy,
@@ -711,10 +706,8 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             hasTrackFg: style.hasRuleFg,
             thumbFg: vp.vThumbFg,
             hasThumbFg: vp.hasVThumbFg,
+            paintsIdleTrack: true,
         ), shown);
-        return b.add(Widget(kind: WidgetKind.stack,
-            children: [base, vbar], width: SizeSpec.fixed(1),
-            height: SizeSpec.fixed(shown)));
     }
 
     // ── Assemble the strips: each row band is [left cap, panes, right edge];
