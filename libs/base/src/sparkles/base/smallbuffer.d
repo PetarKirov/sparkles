@@ -280,10 +280,7 @@ pure nothrow @nogc:
             // references the untouched slots would be garbage pointers, which
             // the conservative scan of a stack- or GC-resident buffer would
             // follow — so those instantiations pay for default initialization.
-            static if (hasIndirections!T)
-                T[N] _inline;
-            else
-                T[N] _inline = void;   // live iff !onHeap
+            T[N] _inline;                         // live iff !onHeap
             T[] _block;                           // capacity slots (ControlBlock prefix precedes them)
         }
 
@@ -487,15 +484,9 @@ pure nothrow @nogc:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Output range interface: appends a single element.
-    static if (hasIndirections!T)
+    void put(T element) @safe
     {
-        /// ditto
-        void put(T element) @safe => putOne(element);
-    }
-    else
-    {
-        /// ditto
-        void put(in T element) @safe => putOne(element);
+        putOne(element);
     }
 
     /*
@@ -624,22 +615,10 @@ pure nothrow @nogc:
         }
     }
 
-    /// Appends a single element using `~=` operator. The parameter mirrors
-    /// $(LREF SmallBuffer.put)'s: `in` (and so `scope`) only where `T` carries
-    /// no references, because the element is stored and outlives the call.
-    static if (hasIndirections!T)
+    /// Appends a single element using `~=` operator.
+    void opOpAssign(string op : "~")(T element) @safe
     {
-        void opOpAssign(string op : "~")(T element) @safe
-        {
-            put(element);
-        }
-    }
-    else
-    {
-        void opOpAssign(string op : "~")(in T element) @safe
-        {
-            put(element);
-        }
+        put(element);
     }
 
     /// Appends elements from a slice using `~=` operator.
@@ -2434,4 +2413,105 @@ unittest
     foreach (v; h.all) // mutable `return scope` slice
         sum += v;
     assert(sum == 10 + 99 + 30);
+}
+
+@("SmallBuffer.noIndirections.putAndAppendByValue")
+@safe pure nothrow @nogc
+unittest
+{
+    // Struct with no indirections (POD / value payload)
+    static struct Point
+    {
+        int x;
+        int y;
+        long tag;
+    }
+    static assert(!hasIndirections!Point);
+
+    // Test unique buffer (unique = true)
+    {
+        SmallBuffer!(Point, 2, true) buf;
+        buf.put(Point(1, 2, 100));
+        buf ~= Point(3, 4, 200);
+        // Inline capacity reached (N == 2)
+        assert(!buf.onHeap && buf.length == 2);
+        assert(buf[0] == Point(1, 2, 100));
+        assert(buf[1] == Point(3, 4, 200));
+
+        // Spill to heap
+        buf ~= Point(5, 6, 300);
+        buf.put(Point(7, 8, 400));
+        assert(buf.onHeap && buf.length == 4);
+        assert(buf[2] == Point(5, 6, 300));
+        assert(buf[3] == Point(7, 8, 400));
+
+        // Slice append
+        const Point[2] more = [Point(9, 10, 500), Point(11, 12, 600)];
+        buf ~= more[];
+        assert(buf.length == 6);
+        assert(buf[4] == Point(9, 10, 500));
+        assert(buf[5] == Point(11, 12, 600));
+    }
+
+    // Test shared buffer (unique = false, CoW)
+    {
+        SmallBuffer!(Point, 2, false) buf;
+        buf.put(Point(10, 20, 1000));
+        buf ~= Point(30, 40, 2000);
+        buf ~= Point(50, 60, 3000); // heap spill
+        assert(buf.onHeap && buf.length == 3);
+
+        auto copy = buf;
+        assert(buf.refCount == 2);
+        copy ~= Point(70, 80, 4000); // CoW clone
+        assert(buf.length == 3);
+        assert(copy.length == 4);
+        assert(copy[3] == Point(70, 80, 4000));
+    }
+}
+
+@("SmallBuffer.sumTypePayload.putAndAppend")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.sumtype : SumType, match;
+
+    alias Val = SumType!(int, double, bool, typeof(null));
+    static struct PayloadA { int x; Val val; }
+    static struct PayloadB { long id; }
+    alias NodePayload = SumType!(PayloadA, PayloadB);
+
+    static struct ComplexNode
+    {
+        int kind;
+        NodePayload payload;
+        long span;
+
+        this(P)(int k, P p, long s) @trusted pure nothrow @nogc
+        {
+            kind = k;
+            span = s;
+            payload = p;
+        }
+    }
+    static assert(!hasIndirections!ComplexNode);
+
+    // Test unique buffer with complex nested SumType
+    SmallBuffer!(ComplexNode, 2, true) buf;
+    buf.put(ComplexNode(1, PayloadA(10, Val(null)), 100));
+    buf ~= ComplexNode(2, PayloadB(200), 300);
+    assert(!buf.onHeap && buf.length == 2);
+
+    // Spill to heap
+    buf ~= ComplexNode(3, PayloadA(30, Val(3.14)), 400);
+    assert(buf.onHeap && buf.length == 3);
+
+    const isNullVal = buf[0].payload.match!(
+        (in PayloadA a) => a.val.match!(
+            (in typeof(null)) => true,
+            _ => false
+        ),
+        (in PayloadB) => false
+    );
+    assert(isNullVal);
 }
