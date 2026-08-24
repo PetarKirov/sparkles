@@ -53,10 +53,28 @@ struct ScrollbarGlyphs
     dchar track = '│';
 }
 
-/// The widget-level semantic scrollbar payload. Content stays in content
-/// units; backends resolve the thumb in their own track units.
+/**
+The widget-level semantic scrollbar payload. Content stays in content units;
+backends resolve the thumb in their own track units.
+
+$(B Named arguments are forced) — see the
+$(LINK2 ../../../../../docs/guidelines/idioms/forced-named-arguments/index.md,
+idiom). Six of these fields are `bool` and five of them sit adjacent, so a
+positional call could swap `trackLit` for `paintsIdleTrack` and compile
+silently. Every call site already names its arguments; the sentinel makes that
+convention enforced rather than observed, which is what keeps adding a field
+here from being a hazard.
+
+The idiom's four-byte cost is affordable precisely here and not on its
+neighbours: this value is a stack temporary built per bar and immediately
+consumed, whereas `Widget` is a flat-arena element measured in thousands per
+frame and `DrawOp` sits exactly at its 64-byte budget.
+*/
 struct ScrollbarSpec
 {
+    private struct NamedOnly {}
+    NamedOnly _ = NamedOnly.init;
+
     long content;
     long viewport;
     long offset;
@@ -1004,4 +1022,18 @@ version (unittest)
     sv.v = sv.v.hoveredNow(false).pressed(0, 400, 100, 400);
     assert(sv.v.dragging && !sv.v.hovered);
     assert(vBar(sv, 0).lit, "so does a grab with the pointer elsewhere");
+}
+
+@("ui.components.chrome.scrollbarSpecIsNamedOnly")
+@safe unittest
+{
+    // The forced-named-arguments idiom, asserted rather than assumed: six of
+    // `ScrollbarSpec`'s fields are `bool` and five are adjacent, so a
+    // positional call is a swap waiting to happen — `trackLit` for
+    // `paintsIdleTrack` compiles fine and paints wrong.
+    static assert(__traits(compiles,
+        ScrollbarSpec(content: 100, viewport: 10, trackLit: true)),
+        "named construction must keep working");
+    static assert(!__traits(compiles, ScrollbarSpec(100, 10)),
+        "positional construction must be rejected outside this module");
 }
