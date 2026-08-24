@@ -179,6 +179,15 @@ DStyle's spacing rules.
    mentions `__traits(allMembers)`, `__traits(derivedMembers)` or `.tupleof`, because D reflects
    over declaration order and a string mixin can bake it into generated code.
 
+**Where the scope stops.** A rewrite belongs to the formatter only when a _syntactic_ argument
+establishes its safety. Transformations whose safety needs resolved types — `format("%s %s", a, b)`
+→ `i"$(a) $(b)"` is the canonical one — are **codemods**, a distinct tool with its own roadmap
+([codemods][codemods]) built on this formatter plus `sparkles:dmd-lsp`. They run _through_ the
+formatter, never instead of it, and are never part of `dmd-fmt --check`.
+
+How every decision here gets a fixture, a coverage gate and a generated documentation page is
+[the testing spec][testing].
+
 Two tier-1 decisions change with this, both previously recorded as v1 limitations:
 **brace style becomes configurable** — Allman by default per [DStyle][dstyle], K&R available as
 dfmt has it, and a braceless `if (x) foo();` preserved as written, never expanded and never
@@ -334,5 +343,7 @@ real reduction and is scheduled after this branch ships).
   upstreamable fixes and library-quality findings this work produced
 
 [decisions]: ../../research/code-formatting/prettier-decisions.md
+[codemods]: ./codemods.md
+[testing]: ./testing.md
 [dstyle]: ../../guidelines/dstyle.md
 [plan]: https://github.com/PetarKirov/dmd/blob/c562711dbd4685c4e4f7bd5ff46e1a306c932259/PLAN-UPSTREAMING.md

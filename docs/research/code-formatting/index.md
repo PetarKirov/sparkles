@@ -161,7 +161,9 @@ depth-1 clones. See [the theory index's footnote](./theory/index.md#milestones).
 **"I am building a formatter."**
 [Concepts][concepts] → [layout preservation][layout-preserving] (the half the papers skip) →
 [dfmt][dfmt] and [clang-format][clang-format] (token-spine architecture) →
-[verification][verification] → [the incompleteness budget][budget].
+[verification][verification] (proving you did not break the code) →
+[how formatters test themselves][testing-methodology] (proving it every day) →
+[the incompleteness budget][budget].
 
 **"I am designing the D formatter."**
 [The substrate][baseline] first — it changes the assumptions — then
@@ -200,6 +202,7 @@ checked.
 [concepts-lossless]: ./concepts.md#3-lossless-syntax-trees
 [attachment]: ./concepts.md#2-trivia-and-the-attachment-problem
 [verification]: ./verification.md
+[testing-methodology]: ./testing-methodology.md
 [readability]: ./readability-evidence.md
 [comparison]: ./comparison.md
 [cmp1]: ./comparison.md#1-input-model--fidelity

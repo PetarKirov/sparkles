@@ -686,6 +686,14 @@
           {
             "text": "M0 Decision Record",
             "link": "/specs/dmd-fmt/"
+          },
+          {
+            "text": "Testing & Decision Docs",
+            "link": "/specs/dmd-fmt/testing"
+          },
+          {
+            "text": "Codemod Roadmap",
+            "link": "/specs/dmd-fmt/codemods"
           }
         ]
       },
@@ -2505,6 +2513,10 @@
           {
             "text": "Verification",
             "link": "/research/code-formatting/verification"
+          },
+          {
+            "text": "How Formatters Test Themselves",
+            "link": "/research/code-formatting/testing-methodology"
           },
           {
             "text": "Readability Evidence",
