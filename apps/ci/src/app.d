@@ -18,6 +18,7 @@ Usage:
 ---
 nix run .#ci -- [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- --build [--fail-fast]
 nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- --test-extracted [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
@@ -34,6 +35,7 @@ $(LIST
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
+    $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
@@ -197,6 +199,9 @@ struct CliParams
     @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, the per-subject examples directories under docs/research/platform-ui-guidelines/, and the per-subject examples directories under docs/research/autological-artifacts/."))
     bool exampleFiles;
 
+    @(Option(`build`, description: "Run dub build for each sub-package defined in the root dub.sdl."))
+    bool build;
+
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
 
@@ -327,6 +332,7 @@ enum ProgramMode
     verifyExamples,
     updateExamples,
     runExampleFiles,
+    runDubBuild,
     runDubTests,
     runExtractedTests,
     checkReferenceLinks,
@@ -460,6 +466,9 @@ int ciMain(string[] args)
     if (mode == ProgramMode.auditFences)
         return runAuditFencesMode(cli);
 
+    if (mode == ProgramMode.runDubBuild)
+        return runDubBuildMode(cli.failFast);
+
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast, cli.coverage);
 
@@ -526,11 +535,20 @@ private string validateCliMode(
     if (cli.exampleFiles && (cli.verify || cli.update))
         return "--example-files cannot be combined with --verify or --update";
 
+    if (cli.build && (cli.verify || cli.update))
+        return "--build cannot be combined with --verify or --update";
+
     if (cli.test && (cli.verify || cli.update))
         return "--test cannot be combined with --verify or --update";
 
+    if (cli.build && cli.exampleFiles)
+        return "--build cannot be combined with --example-files";
+
     if (cli.test && cli.exampleFiles)
         return "--test cannot be combined with --example-files";
+
+    if (cli.build && cli.test)
+        return "--build cannot be combined with --test";
 
     if ((cli.verify || cli.update)
         && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
@@ -541,26 +559,29 @@ private string validateCliMode(
     if (cli.exampleFiles && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--example-files cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
+    if (cli.build && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--build cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
+
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
-    if (cli.testExtracted && (cli.verify || cli.update || cli.exampleFiles || cli.test
+    if (cli.testExtracted && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
             || cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test-extracted cannot be combined with other modes";
 
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
-    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
+    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-vcs-urls cannot be combined with other modes";
 
-    if (cli.checkBlobPaths && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
+    if (cli.checkBlobPaths && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
         return "--check-blob-paths cannot be combined with other modes";
 
-    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkBlobPaths || cli.ciStats))
+    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkBlobPaths || cli.ciStats))
         return "--check-docs-sidebar cannot be combined with other modes";
 
-    if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.test
+    if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
         return "--ci-stats cannot be combined with other modes";
 
@@ -613,6 +634,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.test)
         return ProgramMode.runDubTests;
 
+    if (cli.build)
+        return ProgramMode.runDubBuild;
+
     if (cli.fixReferenceLinks)
         return ProgramMode.fixReferenceLinks;
 
@@ -649,6 +673,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.verifyExamples:     return "--verify";
         case ProgramMode.updateExamples:     return "--update";
         case ProgramMode.runExampleFiles:    return "--example-files";
+        case ProgramMode.runDubBuild:        return "--build";
         case ProgramMode.runDubTests:        return "--test";
         case ProgramMode.runExtractedTests:  return "--test-extracted";
         case ProgramMode.checkReferenceLinks: return "--dedup-reference-links";
@@ -1140,6 +1165,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 rc = runUpdateMode(g.examples, results, g.mdFile, failFast);
                 break;
             case ProgramMode.runExampleFiles:
+            case ProgramMode.runDubBuild:
             case ProgramMode.runDubTests:
             case ProgramMode.runExtractedTests:
                 rc = 1;
@@ -2550,6 +2576,79 @@ private string resolvedCompiler(string repoRoot, in string[] subPackages)
     return null;
 }
 
+private int runDubBuildMode(bool failFast)
+{
+    info(i"resolving repository root");
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+    info(i"repository root: $(repoRoot)");
+
+    info(i"parsing dub.sdl sub-packages");
+    auto subPackages = parseSubPackages(repoRoot);
+    if (subPackages.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return 1;
+    }
+    info(i"$(subPackages.length) sub-package(s) to build");
+    if (compilerIsLdc(environment.get("DC", "")))
+        info(i"ldc codegen threads capped at $(hwParallelism())");
+
+    i"Building $(subPackages.length) sub-package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    int failures = 0;
+    size_t processed = 0;
+    string[] failedPackages;
+
+    foreach (i, pkg; subPackages)
+    {
+        const pkgName = pkg.baseName;
+        const progress = i"[$(i + 1)/$(subPackages.length)]".text;
+        const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub build :$(pkgName)}");
+
+        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
+        auto buildCmd = dubBuildCommand(repoRoot, pkg, pkgName);
+        auto lines = executeMonitoredLines(
+            buildCmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
+            withLdcThreadEnv(null));
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        monitor.sample();
+
+        if (lines.result.status != 0)
+        {
+            failures++;
+            failedPackages ~= pkgName;
+            if (failFast)
+            {
+                processed = i + 1;
+                writeln();
+                break;
+            }
+        }
+
+        processed = i + 1;
+        writeln();
+    }
+
+    displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
+    return failures > 0 ? 1 : 0;
+}
+
 private int runDubTestsMode(bool failFast, bool coverage)
 {
     info(i"resolving repository root");
@@ -3670,6 +3769,32 @@ private string detectRepoRoot()
         : null;
 }
 
+/// True when a sub-package's recipe declares `targetType "sourceLibrary"`.
+/// A sourceLibrary has no binary output in its default configuration, so `dub build :pkg`
+/// fails unless directed to its `unittest` configuration.
+private bool isSourceLibrary(string repoRoot, string packagePath)
+{
+    const sdl = buildPath(repoRoot, packagePath, "dub.sdl");
+    if (!sdl.exists)
+        return false;
+    return sdl.readText.canFind("sourceLibrary");
+}
+
+/// `dub build :pkg` argv, honouring `$DC`. LDC codegen threads are bounded
+/// separately via $(LREF withLdcThreadEnv).
+private string[] dubBuildCommand(string repoRoot, string packagePath, string pkgName, string[] extra = null)
+{
+    auto cmd = ["dub", "--root", repoRoot, "build", ":" ~ pkgName];
+    if (isSourceLibrary(repoRoot, packagePath))
+        cmd ~= "--config=unittest";
+    const dc = environment.get("DC", "");
+    if (dc.length)
+        cmd ~= "--compiler=" ~ dc;
+    if (extra.length)
+        cmd ~= extra;
+    return cmd;
+}
+
 /// `dub test :pkg` argv, honouring `$DC`. LDC codegen threads are bounded
 /// separately via $(LREF withLdcThreadEnv).
 private string[] dubTestCommand(string repoRoot, string pkgName, string[] extra = null)
@@ -3700,6 +3825,40 @@ unittest
     assert(compilerIsLdc("ldc2-1.41.0"));
     assert(!compilerIsLdc("dmd"));
     assert(!compilerIsLdc(""));
+}
+
+@("ci.dubBuildCommand")
+unittest
+{
+    const cmd = dubBuildCommand("/repo", "libs/base", "base");
+    assert(cmd[0 .. 4] == ["dub", "--root", "/repo", "build"]);
+    assert(cmd[4] == ":base");
+}
+
+@("ci.validateCliMode.buildExclusions")
+unittest
+{
+    CliParams params;
+    params.build = true;
+    assert(validateCliMode(params, null) is null);
+    assert(resolveProgramMode(params) == ProgramMode.runDubBuild);
+    assert(programModeName(ProgramMode.runDubBuild) == "--build");
+
+    params.test = true;
+    assert(validateCliMode(params, null) == "--build cannot be combined with --test");
+
+    params.test = false;
+    params.verify = true;
+    assert(validateCliMode(params, null) == "--build cannot be combined with --verify or --update");
+
+    params.verify = false;
+    params.exampleFiles = true;
+    assert(validateCliMode(params, null) == "--build cannot be combined with --example-files");
+
+    params.exampleFiles = false;
+    params.dedupReferenceLinks = true;
+    assert(validateCliMode(params, null)
+        == "--build cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)");
 }
 
 /// Merge LDC `--threads=N` into a child environment's `DFLAGS`.
