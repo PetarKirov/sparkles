@@ -173,25 +173,30 @@ PointerShape shapeAt(scope const HoverTarget[] targets, Point p)
 The frame's one pointer shape (`DCK15`, `IXB4`): what the pointer should look
 like given who owns it and what is under it.
 
-$(B A grab outranks every hover, without a list.) While an affordance holds the
-pointer (`STM11`) the shape is $(I its), wherever the pointer strays and
-whatever it strays over — that is what makes a scrollbar dragged off its track
-keep its axis cursor. An owner that declared no shape gets `default_` rather
-than falling through to the hover shape, because a drag in progress is not a
-hover: letting the shape change to whatever passes underneath would undo the
-feedback the grab exists to give.
+$(B A grab outranks every hover, without a list.) An affordance holding the
+pointer (`STM11`) that $(I declared) a shape keeps it wherever the pointer
+strays and whatever it strays over — that is what makes a scrollbar dragged off
+its track hold its axis cursor instead of flickering through the scenery.
+
+$(B Declaring nothing is not declaring `default_`.) A capture with no shape is
+transparent: the composition falls through to the claims and the hover beneath
+it. This is not a concession, it is the useful half of the rule — an armed tab
+that has not yet become a drag, and a text selection being extended, both want
+the cursor the content under them already has, and neither should have to
+restate it every frame to keep it. A gesture with an opinion states it; a
+gesture without one does not get an opinion invented for it.
 
 `extra` is for affordances that are painted but not $(I widgets) — hue's
 format-preview ruler and its cell-painted fence bars — so they contribute at
-the same precedence instead of forcing the host to compose around them. It is
-an explicit slice, in priority order, deliberately: a claim that nothing
-declares is a claim nobody can forget to pass. Each entry is taken only when
-its shape is non-default, so an inactive claim costs a comparison.
+the right precedence instead of forcing a host to compose around them. It is an
+explicit slice, in priority order, deliberately: a claim that nothing declares
+is a claim nobody can forget to pass. Each entry is taken only when its shape
+is non-default, so an inactive claim costs a comparison.
 */
 PointerShape composeShape(in CaptureState capture, PointerShape underPointer,
     scope const PointerShape[] extra...) pure nothrow @nogc
 {
-    if (!capture.isFree)
+    if (capture.shape != PointerShape.default_)
         return capture.shape;
     foreach (s; extra)
         if (s != PointerShape.default_)
@@ -241,13 +246,20 @@ unittest
 
     // Free: whatever is under the pointer.
     assert(composeShape(free, PointerShape.text) == PointerShape.text);
-    // Held: the owner's, wherever the pointer went and over whatever — this is
-    // the "any grab outranks every hover" rule, with no list to maintain.
+    // Held with a declaration: the owner's, wherever the pointer went and over
+    // whatever — "any grab outranks every hover", with no list to maintain.
     assert(composeShape(held, PointerShape.text) == PointerShape.nsResize);
-    // An owner that wants nothing gets the arrow, NOT the thing it is dragging
-    // over: a drag must not repaint the cursor from the scenery it crosses.
+    // Held WITHOUT one: transparent, not an arrow. An armed tab and a text
+    // selection being extended both keep the cursor of the content under them,
+    // and neither should have to restate it to hold on to it.
     assert(composeShape(free.capturedBy(bar), PointerShape.text)
-        == PointerShape.default_);
+        == PointerShape.text);
+    // A gesture may change its mind without changing owner — a pressed tab
+    // that travels far enough becomes a carry.
+    assert(composeShape(free.capturedBy(bar).reshaped(PointerShape.grabbing),
+        PointerShape.text) == PointerShape.grabbing);
+    // …but a shape cannot be smuggled in with no owner behind it.
+    assert(free.reshaped(PointerShape.grabbing) == free);
 
     // Non-widget claims sit between: above the hover, below any grab.
     assert(composeShape(free, PointerShape.text, PointerShape.default_,
@@ -1329,57 +1341,6 @@ unittest
     assert(LineEditState("", true).erased().text.length == 0);
 }
 
-/**
-The one pointer-shape decision (`IXB4`): what the terminal/window pointer
-should look like given the workspace's interaction state. Live grabs
-outrank hover — a divider drag holds `ew-resize` and a grabbed bar holds
-its axis shape wherever the pointer strays — then divider hover, then any
-hovered bar's shape. Pass the bars in priority order (horizontal before
-vertical keeps `ew-resize` winning ties, matching both shipped hosts).
-
-Every host consumes this ONE function: the TUI writes the result as
-OSC 22 (re-asserting mid-grab — terminals may reset the pointer when a
-drag starts), the GUI maps it to the window cursor.
-*/
-PointerShape wantedPointerShape(in SplitState split, bool overDivider,
-    scope const(ScrollbarState)[] bars...) @safe pure nothrow @nogc
-{
-    if (split.dragging)
-        return PointerShape.ewResize;
-    foreach (ref const b; bars)
-        if (b.dragging)
-            return b.shape;
-    if (overDivider)
-        return PointerShape.ewResize;
-    foreach (ref const b; bars)
-        if (b.hovered)
-            return b.shape;
-    return PointerShape.default_;
-}
-
-@("ui.state.wantedPointerShape.priority")
-@safe pure nothrow @nogc
-unittest
-{
-    const idleV = ScrollbarState(ScrollAxis.vertical);
-    const idleH = ScrollbarState(ScrollAxis.horizontal);
-    const split = SplitState(32);
-
-    assert(wantedPointerShape(split, false, idleH, idleV)
-        == PointerShape.default_);
-    // A live divider drag outranks everything.
-    assert(wantedPointerShape(split.started(32), true,
-        idleH.hoveredNow(true), idleV) == PointerShape.ewResize);
-    // A grabbed bar outranks divider hover; its axis picks the shape.
-    const grabbedV = idleV.pressed(0, 100, 10, 10);
-    assert(wantedPointerShape(split, true, idleH, grabbedV)
-        == PointerShape.nsResize);
-    // Divider hover outranks bar hover; bar hover wins over idle.
-    assert(wantedPointerShape(split, true, idleH.hoveredNow(true), idleV)
-        == PointerShape.ewResize);
-    assert(wantedPointerShape(split, false, idleH, idleV.hoveredNow(true))
-        == PointerShape.nsResize);
-}
 
 /**
 A selection as one Regular value (`STM3`): an `anchor` (where it started) and a
@@ -1891,6 +1852,19 @@ struct CaptureState
     CaptureState released() const
         => CaptureState(0);
 
+    /**
+    The owner's shape, changed mid-gesture — for a drag that changes character
+    without changing owner. A pressed tab is the case that demands it: it is a
+    click until it travels far enough to become a re-dock, and only then does
+    it want `grabbing`, which is the one piece of feedback distinguishing
+    "carrying a pane" from "clicked and nothing happened" (`DCK5`).
+
+    A no-op while nothing is captured, so this cannot smuggle in a shape with
+    no owner behind it.
+    */
+    CaptureState reshaped(PointerShape s) const
+        => owner == 0 ? this : CaptureState(owner, s);
+
     /// `true` iff nobody holds the pointer.
     bool isFree() const => owner == 0;
 
@@ -1991,6 +1965,23 @@ struct SplitState
         auto s = size < minSize ? minSize : (size > maxSize ? maxSize : size);
         return SplitState(s, dragging, grabPos, grabSize);
     }
+
+    /**
+    This divider's claim on the pointer shape (`DCK15`) — the counterpart of
+    $(REF ScrollbarState.shape, sparkles,ui,state), so each machine answers for
+    itself and no caller re-derives it.
+
+    A live drag keeps asking even once the pointer has left the divider, which
+    is the whole reason it is the machine's answer and not a hit test: otherwise
+    the cursor flickers back the instant the drag moves.
+
+    `ew-resize` because a `SplitState` measures one size and has no axis of its
+    own; the side-by-side arrangement is the only one that has ever used it.
+    An axis-aware divider is the container's, and `DockContainer` has its own.
+    */
+    PointerShape shape(bool overDivider) const
+        => dragging || overDivider
+            ? PointerShape.ewResize : PointerShape.default_;
 }
 
 @("ui.state.split.dragClampAndRelease")

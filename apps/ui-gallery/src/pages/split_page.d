@@ -7,7 +7,7 @@ the pointer's delta $(B since the grab), not by snapping the divider under the
 pointer. Get that wrong and the divider jumps the moment you touch it, which is
 the single most common defect in hand-rolled splitters.
 
-The page also shows `wantedPointerShape`, because deciding which cursor to ask
+The page also shows `SplitState.shape`, because deciding which cursor to ask
 for is the other half of a divider and is equally easy to spread across two
 places that disagree.
 */
@@ -18,7 +18,7 @@ import std.conv : text;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Key, KeyEvent;
 import sparkles.ui.geometry : SizeSpec;
-import sparkles.ui.state : SplitState, wantedPointerShape;
+import sparkles.ui.state : SplitState;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
@@ -62,7 +62,7 @@ uint view(ref Builder b, in GalleryState s)
         kv(b, "dragging", s.split.dragging ? "yes" : "no", 16),
         kv(b, "bounds", text(minPane, " … ", maxPane(available)), 16),
         kv(b, "pointer shape", shapeName(
-            wantedPointerShape(s.split, s.hover.isHot(hitSplit))), 16),
+            s.split.shape(s.hover.isHot(hitSplit))), 16),
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
@@ -237,8 +237,8 @@ version (unittest)
     const idle = SplitState(30);
     const dragging = idle.started(30);
 
-    assert(wantedPointerShape(idle, false) == PointerShape.default_);
-    assert(wantedPointerShape(idle, true) != PointerShape.default_);
-    assert(wantedPointerShape(dragging, false) != PointerShape.default_,
+    assert(idle.shape(false) == PointerShape.default_);
+    assert(idle.shape(true) != PointerShape.default_);
+    assert(dragging.shape(false) != PointerShape.default_,
         "the grab owns the cursor, not the hover");
 }
