@@ -19,4 +19,5 @@ public import sparkles.input.frame;
 public import sparkles.input.gesture;
 public import sparkles.input.metrics;
 public import sparkles.input.pointer;
+public import sparkles.input.script;
 public import sparkles.input.tier;

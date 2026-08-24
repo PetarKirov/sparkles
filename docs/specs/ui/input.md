@@ -140,6 +140,12 @@ Proposed. Required by the [application host](../ui-app/index.md) and by migratin
 | INP19 | Every pixel producer must use one cells-to-device mapping value, including its origin and zero-divisor policy, so SDL, raylib, and native WSI cannot quantize the same pointer differently.                                                             | full   | `sparkles.input.metrics` `CellMetrics`; SDL and raylib adapters |
 | INP20 | Pixel gestures must reuse `ScreenPosition!float`, and consumers must be able to import the shared `PointerShape` through `sparkles:input`. The enum remains defined in lower-level `sparkles:base` so compatibility does not create a dependency cycle. | full   | `sparkles.input.gesture` `PointF`; `sparkles.input.pointer`     |
 
+## Input as text (`INP22`)
+
+| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Status         | Traces to                                                               |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- | ----------------------------------------------------------------------- |
+| INP22 | **An event must be writable, and reading it back must yield the same event.** A line-oriented spelling of `Event`, so an application is put into a state by being **sent the input that reaches it** rather than having the state assigned behind `handle` (`PRN7`). `parse ∘ write == id` is a property test over each field's whole domain, not a sample — the way it breaks is one enum member that parses but does not write. Recognizer conclusions (`GestureEvent`) and layout-derived key detail (`text`/`unshifted`) are deliberately unspellable: scripting them would let a test assert an input no device could produce, which is the same hole as injecting state. | full (`INP22`) | `script.d` `parseEvent`/`writeEvent`; consumed by hue's replay (`DBG4`) |
+
 ## Hit testing (`INP10`)
 
 | ID    | Requirement                                                                                                                                                                                                                                                                                                                                                              | Status            | Traces to                                                                                                                                                                                                                                                                                  |
@@ -191,13 +197,14 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 ## Module coverage
 
-| Source file                                         | Requirements                    |
-| --------------------------------------------------- | ------------------------------- |
-| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP20`  |
-| `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                          |
-| `libs/ui-raylib/src/`                               | `INP8`, `INP9`                  |
-| `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer), `INP21` |
-| `libs/input/src/sparkles/input/frame.d` _(planned)_ | `INP17`                         |
+| Source file                              | Requirements                    |
+| ---------------------------------------- | ------------------------------- |
+| `libs/input/src/sparkles/input/`         | `INP1`–`INP6`, `INP11`–`INP20`  |
+| `libs/tui/src/sparkles/tui/input.d`      | `INP7`                          |
+| `libs/ui-raylib/src/`                    | `INP8`, `INP9`                  |
+| `libs/ui/src/sparkles/ui/state.d`        | `INP10` (the consumer), `INP21` |
+| `libs/input/src/sparkles/input/script.d` | `INP22`                         |
+| `libs/input/src/sparkles/input/frame.d`  | `INP17`                         |
 
 ## Relationship to existing specs
 
