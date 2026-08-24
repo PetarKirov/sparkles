@@ -78,7 +78,12 @@ import sparkles.input.events : Event, EndOfInput, FocusEvent, isNoEvent, Key,
 
 import std.sumtype : match;
 
-@safe pure nothrow @nogc:
+// No module-wide attribute block: `writeEvent` and `parseScript` are generic
+// over a sink the CALLER supplies, and forcing `@nogc` on them would reject an
+// ordinary GC array — the guidelines' rule that a template's attributes must
+// infer. Everything non-generic below is annotated explicitly instead, so the
+// `@nogc` guarantee is stated where it is actually a guarantee.
+@safe:
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parsing
@@ -92,7 +97,7 @@ through without pre-filtering and rely on the drain sentinel it already handles.
 Offsets in a returned $(REF ParseError, sparkles,base,text,errors) are relative
 to `line`.
 */
-ParseExpected!Event parseEvent(const(char)[] line)
+ParseExpected!Event parseEvent(const(char)[] line) pure nothrow @nogc
 {
     // Not `scope`: dip1000 would then infer that the result borrows from the
     // line, and it does not — every event this returns is self-contained
@@ -125,7 +130,7 @@ ParseExpected!Event parseEvent(const(char)[] line)
     }
 }
 
-private ParseExpected!Event parseKey(ref Scanner s)
+private ParseExpected!Event parseKey(ref Scanner s) pure nothrow @nogc
 {
     const name = s.word();
     Key k;
@@ -150,7 +155,7 @@ private ParseExpected!Event parseKey(ref Scanner s)
     return parseOk(Event(e));
 }
 
-private ParseExpected!Event parseChar(ref Scanner s)
+private ParseExpected!Event parseChar(ref Scanner s) pure nothrow @nogc
 {
     const lit = s.word();
     dchar ch;
@@ -174,7 +179,7 @@ private ParseExpected!Event parseChar(ref Scanner s)
 }
 
 private ParseExpected!Event parsePointer(ref Scanner s, PointerAction action,
-    bool wantsButton)
+    bool wantsButton) pure nothrow @nogc
 {
     PointerEvent e;
     e.action = action;
@@ -196,7 +201,7 @@ private ParseExpected!Event parsePointer(ref Scanner s, PointerAction action,
     return parseOk(Event(e));
 }
 
-private ParseExpected!Event parseWheel(ref Scanner s)
+private ParseExpected!Event parseWheel(ref Scanner s) pure nothrow @nogc
 {
     WheelEvent e;
     Point d;
@@ -219,7 +224,7 @@ private ParseExpected!Event parseWheel(ref Scanner s)
     return parseOk(Event(e));
 }
 
-private ParseExpected!Event parseFocus(ref Scanner s)
+private ParseExpected!Event parseFocus(ref Scanner s) pure nothrow @nogc
 {
     const t = s.word();
     if (t == "in")
@@ -230,7 +235,7 @@ private ParseExpected!Event parseFocus(ref Scanner s)
         "expected `in` or `out`"));
 }
 
-private ParseExpected!Event parseResize(ref Scanner s)
+private ParseExpected!Event parseResize(ref Scanner s) pure nothrow @nogc
 {
     const t = s.word();
     const x = indexOfByte(t, 'x');
@@ -247,7 +252,7 @@ private ParseExpected!Event parseResize(ref Scanner s)
 
 /// Accepts `e` only if nothing follows on the line — so a typo in a trailing
 /// token is reported rather than ignored.
-private ParseExpected!Event finish(ref Scanner s, Event e)
+private ParseExpected!Event finish(ref Scanner s, Event e) pure nothrow @nogc
 {
     if (s.word().length)
         return parseErr!Event(ParseError(ParseErrorCode.trailingContent,
@@ -334,7 +339,7 @@ private import sparkles.input.events : GestureEvent;
 
 /// Renders one event to a fixed buffer — the convenience behind
 /// $(LREF writeEvent) for a caller that just wants the line.
-SmallBuffer!(char, 64) eventLine(in Event e)
+SmallBuffer!(char, 64) eventLine(in Event e) pure nothrow @nogc
 {
     SmallBuffer!(char, 64) buf;
     writeEvent(buf, e);
@@ -357,10 +362,10 @@ private static immutable string[30] keyNames = [
     "back", "menu",
 ];
 
-private string keyName(Key k)
+private string keyName(Key k) pure nothrow @nogc
     => keyNames[cast(size_t) k];
 
-private bool keyFromName(scope const(char)[] s, out Key k)
+private bool keyFromName(scope const(char)[] s, out Key k) pure nothrow @nogc
 {
     foreach (i, n; keyNames)
         if (s == n)
@@ -375,7 +380,7 @@ private bool keyFromName(scope const(char)[] s, out Key k)
     return false;
 }
 
-private string actionName(KeyAction a)
+private string actionName(KeyAction a) pure nothrow @nogc
 {
     final switch (a)
     {
@@ -385,7 +390,7 @@ private string actionName(KeyAction a)
     }
 }
 
-private string actionName(PointerAction a)
+private string actionName(PointerAction a) pure nothrow @nogc
 {
     final switch (a)
     {
@@ -397,7 +402,7 @@ private string actionName(PointerAction a)
     }
 }
 
-private bool actionFromName(scope const(char)[] s, out KeyAction a)
+private bool actionFromName(scope const(char)[] s, out KeyAction a) pure nothrow @nogc
 {
     switch (s)
     {
@@ -408,7 +413,7 @@ private bool actionFromName(scope const(char)[] s, out KeyAction a)
     }
 }
 
-private string buttonName(PointerButton b)
+private string buttonName(PointerButton b) pure nothrow @nogc
 {
     final switch (b)
     {
@@ -421,7 +426,7 @@ private string buttonName(PointerButton b)
     }
 }
 
-private bool buttonFromName(scope const(char)[] s, out PointerButton b)
+private bool buttonFromName(scope const(char)[] s, out PointerButton b) pure nothrow @nogc
 {
     switch (s)
     {
@@ -437,7 +442,7 @@ private bool buttonFromName(scope const(char)[] s, out PointerButton b)
 
 /// Parses a `+`-joined modifier token (`ctrl+shift`) into `m`. Additive, so
 /// several tokens on one line compose.
-private bool modsFromName(scope const(char)[] s, ref Mods m)
+private bool modsFromName(scope const(char)[] s, ref Mods m) pure nothrow @nogc
 {
     if (s.length == 0)
         return false;
@@ -501,7 +506,7 @@ private bool isScalar(dchar c) pure nothrow @nogc
 
 /// A code point as one literal character, or `0x<hex>` for anything a line
 /// cannot hold — a space, a `#`, or a non-printable.
-private bool codePointFromName(scope const(char)[] s, out dchar ch)
+private bool codePointFromName(scope const(char)[] s, out dchar ch) pure nothrow @nogc
 {
     if (s.length == 0)
         return false;
@@ -586,7 +591,7 @@ private void writeSigned(Writer)(ref Writer w, int v)
 
 /// A whole signed integer, rejecting anything with leftovers — so `10x` is an
 /// error rather than a silent `10`.
-private bool wholeInteger(scope const(char)[] s, out long v)
+private bool wholeInteger(scope const(char)[] s, out long v) pure nothrow @nogc
 {
     if (s.length == 0)
         return false;
@@ -659,9 +664,9 @@ private struct Scanner
     }
 }
 
-private bool isSpace(char c) => c == ' ' || c == '\t' || c == '\r';
+private bool isSpace(char c) pure nothrow @nogc => c == ' ' || c == '\t' || c == '\r';
 
-private long indexOfByte(scope const(char)[] s, char c)
+private long indexOfByte(scope const(char)[] s, char c) pure nothrow @nogc
 {
     foreach (i, b; s)
         if (b == c)
@@ -669,7 +674,7 @@ private long indexOfByte(scope const(char)[] s, char c)
     return -1;
 }
 
-private bool decodeOne(scope const(char)[] s, out dchar ch)
+private bool decodeOne(scope const(char)[] s, out dchar ch) pure nothrow @nogc
 {
     const b0 = cast(ubyte) s[0];
     size_t need;

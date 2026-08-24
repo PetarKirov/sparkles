@@ -57,6 +57,7 @@ import std.digest.md : md5Of, toHexString;
 import std.file : exists, isFile, mkdirRecurse, read, remove;
 import std.format : format;
 import std.path : absolutePath, buildPath;
+import std.string : indexOf;
 import std.process : Config, environment, spawnProcess, wait;
 import std.stdio : stderr, writefln, writeln;
 
@@ -101,6 +102,9 @@ struct Params
 
     @(Option("out|O", description: "Directory for the captured PNGs"))
     string outDir = "/tmp/hue-gui-ab";
+
+    @(Option("env|e", description: "Extra NAME=VALUE hooks, set on BOTH sides"))
+    string[] extraEnv;
 }
 
 int main(string[] rawArgs)
@@ -314,6 +318,22 @@ private bool shoot(in Params p, string bin, string side, out ubyte[] bytes)
         env["HUE_GUI_POINTER"] = p.pointer;
     if (p.top >= 0)
         env["HUE_GUI_TOP"] = p.top.to!string;
+    // Everything else the harness understands, without this tool having to
+    // learn each hook: the interesting states are reached by opening a pane or
+    // replaying a script, and hardcoding a flag per hook meant the states that
+    // most needed a picture were the ones that could not have one. Set on both
+    // sides by construction — an A/B where the two runs saw different hooks
+    // measures the hooks.
+    foreach (kv; p.extraEnv)
+    {
+        const eq = kv.indexOf('=');
+        if (eq <= 0)
+        {
+            stderr.writefln("gui-ab: --env expects NAME=VALUE, got '%s'", kv);
+            return false;
+        }
+        env[kv[0 .. eq]] = kv[eq + 1 .. $];
+    }
     // A Wayland socket in the environment makes raylib's GLFW prefer it over
     // the Xvfb display we just pinned, and the capture then lands on the real
     // compositor (or fails outright).

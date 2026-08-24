@@ -10,6 +10,7 @@ change — the golden-frame screenshots are the oracle.
 module gui_state;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.input.events : Event, Point, PointerAction, PointerEvent;
 import sparkles.input.frame : InputFrame;
 import sparkles.input.gesture : PointF;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
@@ -452,6 +453,23 @@ struct GuiCapture
     int forceHover = -1;      /// `HUE_GUI_HOVER`: force the Nth popup
     PointF pointer;           /// `HUE_GUI_POINTER=<x>,<y>` in device pixels
     bool pointerSet;          /// ditto; distinguishes an unset hook from `(0, 0)`
+    /**
+    The scripted prelude (`INP22`/`HST20`): events the host delivers through
+    `handle` before the first frame, so a capture reaches its state the way a
+    person would.
+
+    Assembled from `HUE_REPLAY=<file>` — a script in
+    $(MREF sparkles,input,script)'s grammar — and, ahead of it, `HUE_GUI_POINTER`
+    as a plain `move`. That is the same hook it always was, spelled as the event
+    it always meant: a position written over the folded frame never MOVED, so
+    nothing downstream saw motion, which is why a hover had to be synthesised
+    separately to photograph one.
+
+    `HUE_REPLAY` rather than a flag alone because an Android activity has no
+    command line (`AND14`/`CFG12`), and `hue-debug.env` is how a device
+    re-enables these hooks at all (`AND9`).
+    */
+    Event[] prelude;
     /// `HUE_GUI_INSPECT`: open the tree-sitter panel before the first frame.
     /// There is otherwise no way to photograph a pane a keystroke opens — and
     /// the pane's arrangement (its bar beside the document's) is exactly the
@@ -526,8 +544,59 @@ struct GuiCapture
         catch (Exception)
         {
         }
+        // The pointer hook, as the event it means. First, so a replay script
+        // can move on from wherever the hook parked the pointer.
+        if (c.pointerSet)
+            c.prelude ~= Event(PointerEvent(
+                action: PointerAction.move,
+                pos: Point(cast(int) c.pointer.x, cast(int) c.pointer.y)));
+        c.prelude ~= replayScript(get("HUE_REPLAY", ""));
         return c;
     }
+}
+
+/**
+Reads a replay script from `path` (`DBG4`). An unreadable file or a bad line
+yields no events and a note on stderr: a debug hook must not take the viewer
+down, and a silently empty replay is better diagnosed loudly than by a golden
+that quietly photographs the wrong frame.
+*/
+private Event[] replayScript(string path) @safe
+{
+    import std.conv : text;
+    import std.file : exists, readText;
+    import sparkles.input.script : parseScript;
+
+    if (path.length == 0)
+        return null;
+    if (!exists(path))
+        return warnAndDrop(text("hue: HUE_REPLAY: no such file: ", path));
+    Event[] evs;
+    try
+    {
+        auto r = parseScript(readText(path), evs);
+        if (r.hasError)
+            return warnAndDrop(text("hue: HUE_REPLAY: ", path, ": byte ",
+                r.error.offset, ": ", r.error.context));
+    }
+    catch (Exception e)
+        return warnAndDrop(text("hue: HUE_REPLAY: ", path, ": ", e.msg));
+    return evs;
+}
+
+/// Says why a replay produced nothing, and produces nothing. A debug hook must
+/// not take the viewer down, but a silently empty replay is worse than a loud
+/// one: the golden still renders, of the wrong frame, and looks fine.
+private Event[] warnAndDrop(string msg) @trusted nothrow
+{
+    import std.stdio : stderr;
+
+    try
+        stderr.writeln(msg);
+    catch (Exception)
+    {
+    }
+    return null;
 }
 
 @("gui_state.GuiCapture.fromEnv")
@@ -579,6 +648,35 @@ unittest
 
     env = ["HUE_GUI_POINTER": "somewhere"];
     assert(!GuiCapture.fromEnv(&get).pointerSet);
+}
+
+@("gui_state.GuiCapture.thePointerHookIsAnEvent")
+@safe
+unittest
+{
+    // `DBG4`: the hook that used to be a position written over the folded
+    // frame is now the `move` it always meant. Asserted here rather than by
+    // screenshot because a capture only testifies about what is IN it — the
+    // frames that were supposed to show this had no scrollbar in them at all,
+    // which no amount of staring at PNGs revealed.
+    string[string] env;
+    string get(string name, string fallback) @safe
+        => name in env ? env[name] : fallback;
+
+    assert(GuiCapture.fromEnv(&get).prelude.length == 0,
+        "no hook, no prelude — a run pays nothing for this");
+
+    env["HUE_GUI_POINTER"] = "300,400";
+    const c = GuiCapture.fromEnv(&get);
+    assert(c.prelude.length == 1);
+    assert(c.prelude[0] == Event(PointerEvent(
+        action: PointerAction.move, pos: Point(300, 400))),
+        "a move, in device pixels, ahead of any replay script");
+
+    // A malformed hook contributes nothing rather than a `(0,0)` move, which
+    // would park the pointer in the corner and look deliberate.
+    env["HUE_GUI_POINTER"] = "over there";
+    assert(GuiCapture.fromEnv(&get).prelude.length == 0);
 }
 
 /**
