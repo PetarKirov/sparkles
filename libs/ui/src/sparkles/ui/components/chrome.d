@@ -14,6 +14,7 @@ module sparkles.ui.components.chrome;
 import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_control : PointerShape;
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
 import sparkles.ui.components.dock : DockDrag, dockHintRect;
@@ -139,6 +140,13 @@ uint scrollbar(ref Builder b, in ScrollbarSpec spec, int track)
         hasFgOverride: spec.hasThumbFg,
         hitId: spec.hitId,
         key: spec.key,
+        // A bar knows its own axis, so it declares the cursor rather than
+        // leaving each host to work out that this rectangle is a bar (`DCK15`).
+        // Unconditional on purpose: being UNDER the pointer is what `shapeAt`
+        // resolves, so a machine's `hovered` flag would only restate the hit
+        // test that just found this rect — and restating it is how paint and
+        // hit drift apart.
+        pointerShape: vertical ? PointerShape.nsResize : PointerShape.ewResize,
     ));
 }
 
@@ -918,6 +926,57 @@ version (unittest)
     assert(etree.nodes[none].visibility == Visibility.collapsed);
     import sparkles.ui.state : hoverTargets;
     assert(hoverTargets(etree, layout(etree)).length == 0);
+}
+
+@("ui.components.chrome.scrollBox.aBarDeclaresItsCursor")
+@safe unittest
+{
+    import sparkles.base.term_control : PointerShape;
+    import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
+        ScrollAreaAxis;
+    import sparkles.ui.geometry : Point, Rect;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : hoverTargets, shapeAt;
+
+    // The whole `DCK15` path end to end, with no host in it: a bar declares a
+    // shape as a widget, layout places it, the hit list carries the
+    // declaration, and `shapeAt` answers from the rect the painter will use.
+    const frame = scrollLayout(ScrollArea(
+        rect: Rect(0, 0, 40, 13),
+        v: ScrollAreaAxis(content: 200, viewport: 12, gutter: 2),
+        h: ScrollAreaAxis(content: 80, viewport: 38, gutter: 1),
+    ));
+
+    ScrollView sv;
+    auto b = Builder();
+    const rows = b.add(Widget(kind: WidgetKind.column));
+    const root = scrollBox(b, rows, frame, vBar(sv, 0), hBar(sv, 0));
+    auto tree = b.finish(root);
+    auto frames = layout(tree);
+    const targets = hoverTargets(tree, frames);
+
+    Rect vRect, hRect;
+    foreach (i, ref const node; tree.nodes)
+        if (node.kind == WidgetKind.scrollbar)
+        {
+            if (node.width.value <= 2)
+                vRect = frames[i].rect;
+            else
+                hRect = frames[i].rect;
+        }
+    assert(!vRect.empty && !hRect.empty, "both bars were placed");
+
+    assert(shapeAt(targets, Point(vRect.x, vRect.y + 1))
+        == PointerShape.nsResize, "the vertical bar resizes north-south");
+    assert(shapeAt(targets, Point(hRect.x + 1, hRect.y))
+        == PointerShape.ewResize, "and the horizontal one east-west");
+    // The content is not a bar, and nothing in it invented a cursor.
+    assert(shapeAt(targets, Point(frame.content.x, frame.content.y))
+        == PointerShape.default_);
+    // No machine state was consulted: this bar has never been hovered. Being
+    // under the pointer IS the hover, and asking a flag as well is what lets
+    // paint and hit disagree.
+    assert(!sv.v.hovered && !sv.v.dragging);
 }
 
 @("ui.components.chrome.scrollBox.framesContentBesideItsBars")
