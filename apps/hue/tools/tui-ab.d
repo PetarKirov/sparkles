@@ -18,7 +18,7 @@
 //       --old /tmp/hue-before --new apps/hue/build/hue \
 //       --file libs/ui/src/sparkles/ui/state.d
 //
-// Two guards, because both of their failures have happened here and each
+// Three guards, because each of their failures has happened here and each
 // reads as a pass:
 //
 //   * A capture must be REPRODUCIBLE before it may be compared. hue runs an
@@ -29,6 +29,11 @@
 //   * The two binaries must actually DIFFER. `dub build -c no-gui` writes to
 //     the same path as the default config, so it is easy to A/B one build
 //     against itself and read "byte-identical" as proof of anything.
+//   * A capture must be a FRAME. hue exiting on a bad argument writes one line
+//     of diagnostics to the same stream, and two such lines compare equal —
+//     "identical" for a run that rendered nothing on either side. `--min-bytes`
+//     refuses it. (The `view` subcommand is supplied by this tool; `--args`
+//     holds flags only, and passing `view` there is exactly how this was hit.)
 //
 // Exit status: 0 identical, 1 drift (with the first differing offset and its
 // neighbourhood), 2 a setup problem — a missing binary, `script`, or a
@@ -81,6 +86,10 @@ struct Params
     @(Option("dump", description: "Write each side's bytes to this prefix"))
     string dumpPrefix;
 
+    @(Option("min-bytes", description: "Refuse a capture smaller than this — "
+        ~ "an error message is not a frame"))
+    size_t minBytes = 1024;
+
 }
 
 int main(string[] rawArgs)
@@ -92,6 +101,19 @@ int main(string[] rawArgs)
     if (!parsed)
         return reportCliError(parsed.error);
     auto p = parsed.value;
+
+    // Writing the keys to a child that already exited raises SIGPIPE, and the
+    // default disposition kills this process outright — status -13, no output,
+    // no diagnosis. `runOnce` already means to tolerate that case (the child
+    // may have died on a bad argument, and its output is still the frame), but
+    // a `catch (Exception)` never runs: the signal fires first. Ignoring it
+    // turns the write into an ordinary `EPIPE` failure the catch can handle.
+    version (Posix)
+    {
+        import core.sys.posix.signal : SIG_IGN, SIGPIPE, signal;
+
+        signal(SIGPIPE, SIG_IGN);
+    }
 
     if (!hasScript)
     {
@@ -182,6 +204,20 @@ private bool capture(in Params p, string bin, string label, out ubyte[] frame)
     }
     writefln("%s: %s bytes, %s (stable over %s runs)",
         label, first.length, digest(first), p.runs > 1 ? p.runs : 1);
+    // Guard three: a session that never drew is not a frame. hue exiting on a
+    // bad argument writes a line of diagnostics to the same stream, and two
+    // such lines compare equal — "identical" for a comparison that rendered
+    // nothing on either side. A real full-screen frame is kilobytes.
+    if (first.length < p.minBytes)
+    {
+        stderr.writefln("tui-ab: %s captured only %s bytes, below --min-bytes "
+            ~ "%s — that is a diagnostic, not a frame. Check the arguments; "
+            ~ "the `view` subcommand is supplied by this tool, so --args holds "
+            ~ "flags only.", label, first.length, p.minBytes);
+        stderr.writefln("  captured: %s", visible(first));
+        return false;
+    }
+
     frame = first;
     return true;
 }
