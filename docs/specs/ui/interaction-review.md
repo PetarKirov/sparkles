@@ -133,6 +133,20 @@ third bottom-edge affordance on a device where the pointer is a fingertip
 several cells wide — and IXR27 is the proof that two ad-hoc owners of one press
 is not a hypothetical. Order: ~~IXB1~~ (done) → IXB9 → IXB3.
 
+**Correction (2026-08-24).** The note above records IXB4 as shipped "as
+`wantedPointerShape`", and that is not what happened. `wantedPointerShape`
+composes a split and a list of bars, and only `apps/ui-gallery` ever called it;
+hue's two hosts each kept writing their own expression, and
+[`DCK9`](./containers.md)/[`SCV6`](./containers.md) were written to match — both
+say the **host** supplies the pane shapes, which is the direct negation of this
+row's "Hosts never compute shapes". Three requirements therefore disagreed in
+the tree, in favour of the code.
+
+[`DCK15`](./containers.md) is the actual seam: a shape is _declared_ by an
+element and _derived_ from ownership, so no host composes one. IXB4 is
+reinstated as `partial` until the two hue expressions are gone; the wording that
+survives is its last sentence, which was right all along.
+
 Original sequencing note: IXB1/IXB4 are independent and small; IXB3 wants IXB7
 for the GUI side but its TUI half can land first (the TUI workspace already
 consumes `Event`s); IXB5 was the largest single move and closed IXR11/IXR15;

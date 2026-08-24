@@ -44,10 +44,17 @@ import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
 
 /// A hit-testable region: the node's frame plus the id reported when the pointer
 /// is over it. `hitId == 0` means "not hit-testable" and is never reported hot.
+///
+/// It also carries the shape the element asked for (`Widget.pointerShape`), so
+/// $(LREF shapeAt) and $(LREF HoverState) resolve from the $(B same) derived
+/// list rather than two walks that can disagree by a frame. A region may carry
+/// either alone: a decorative divider declares `ew-resize` without being
+/// hot-testable, and most hit-testable things declare no shape.
 struct HoverTarget
 {
     Rect rect;
     size_t hitId;
+    PointerShape shape;
 }
 
 /**
@@ -71,11 +78,11 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         if (node.visibility != Visibility.visible)
             return;
         const rect = frames[idx].rect;
-        if (node.hitId != 0)
+        if (node.hitId != 0 || node.pointerShape != PointerShape.default_)
         {
             const visible = rect.intersection(clip);
             if (!visible.empty)
-                targets ~= HoverTarget(visible, node.hitId);
+                targets ~= HoverTarget(visible, node.hitId, node.pointerShape);
         }
         const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
@@ -138,6 +145,117 @@ size_t keyAt(in KeyTarget[] targets, Point p) pure nothrow @nogc
         if (t.rect.contains(p))
             hit = t.key;
     return hit;
+}
+
+/**
+The shape the topmost element under `p` asks for, or `default_` (`DCK15`).
+
+$(LREF keyAt) for `Widget.pointerShape`: same list, same paint order, same
+later-wins rule, so the element that would take the click is the element whose
+cursor you get. An element declaring nothing is skipped rather than taken as a
+declaration of `default_` — a link inside a resize handle keeps the handle's
+shape where it does not cover it, instead of punching an arrow-shaped hole.
+
+This is the whole of the hover half of the decision. A caller does not
+enumerate what might want a cursor; it asks what is under the pointer.
+*/
+PointerShape shapeAt(scope const HoverTarget[] targets, Point p)
+    pure nothrow @nogc
+{
+    PointerShape want;
+    foreach (t; targets)
+        if (t.shape != PointerShape.default_ && t.rect.contains(p))
+            want = t.shape; // later target wins → topmost
+    return want;
+}
+
+/**
+The frame's one pointer shape (`DCK15`, `IXB4`): what the pointer should look
+like given who owns it and what is under it.
+
+$(B A grab outranks every hover, without a list.) While an affordance holds the
+pointer (`STM11`) the shape is $(I its), wherever the pointer strays and
+whatever it strays over — that is what makes a scrollbar dragged off its track
+keep its axis cursor. An owner that declared no shape gets `default_` rather
+than falling through to the hover shape, because a drag in progress is not a
+hover: letting the shape change to whatever passes underneath would undo the
+feedback the grab exists to give.
+
+`extra` is for affordances that are painted but not $(I widgets) — hue's
+format-preview ruler and its cell-painted fence bars — so they contribute at
+the same precedence instead of forcing the host to compose around them. It is
+an explicit slice, in priority order, deliberately: a claim that nothing
+declares is a claim nobody can forget to pass. Each entry is taken only when
+its shape is non-default, so an inactive claim costs a comparison.
+*/
+PointerShape composeShape(in CaptureState capture, PointerShape underPointer,
+    scope const PointerShape[] extra...) pure nothrow @nogc
+{
+    if (!capture.isFree)
+        return capture.shape;
+    foreach (s; extra)
+        if (s != PointerShape.default_)
+            return s;
+    return underPointer;
+}
+
+@("ui.state.shapeAt.topmostDeclarationWins")
+@safe pure nothrow @nogc
+unittest
+{
+    // A pane (no shape) with a divider over it (ew-resize) and, on the
+    // divider, a small handle that wants a hand.
+    const HoverTarget[3] targets = [
+        HoverTarget(Rect(0, 0, 20, 10), 1),
+        HoverTarget(Rect(9, 0, 2, 10), 2, PointerShape.ewResize),
+        HoverTarget(Rect(9, 4, 2, 2), 3, PointerShape.grab),
+    ];
+
+    assert(shapeAt(targets, Point(2, 2)) == PointerShape.default_);
+    assert(shapeAt(targets, Point(9, 1)) == PointerShape.ewResize);
+    assert(shapeAt(targets, Point(9, 5)) == PointerShape.grab,
+        "the topmost declaration wins, exactly as the click would");
+}
+
+@("ui.state.shapeAt.silenceIsNotADeclaration")
+@safe pure nothrow @nogc
+unittest
+{
+    // The hit-testable child paints over the divider but asks for nothing.
+    // Skipping it — rather than reading `default_` as a declaration — is what
+    // keeps the handle's cursor whole instead of punching a hole in it.
+    const HoverTarget[2] targets = [
+        HoverTarget(Rect(0, 0, 4, 4), 1, PointerShape.ewResize),
+        HoverTarget(Rect(1, 1, 2, 2), 2),
+    ];
+    assert(shapeAt(targets, Point(2, 2)) == PointerShape.ewResize);
+}
+
+@("ui.state.composeShape.aGrabIsNotAHover")
+@safe pure nothrow @nogc
+unittest
+{
+    enum bar = 7;
+    const free = CaptureState.init;
+    const held = free.capturedBy(bar, PointerShape.nsResize);
+
+    // Free: whatever is under the pointer.
+    assert(composeShape(free, PointerShape.text) == PointerShape.text);
+    // Held: the owner's, wherever the pointer went and over whatever — this is
+    // the "any grab outranks every hover" rule, with no list to maintain.
+    assert(composeShape(held, PointerShape.text) == PointerShape.nsResize);
+    // An owner that wants nothing gets the arrow, NOT the thing it is dragging
+    // over: a drag must not repaint the cursor from the scenery it crosses.
+    assert(composeShape(free.capturedBy(bar), PointerShape.text)
+        == PointerShape.default_);
+
+    // Non-widget claims sit between: above the hover, below any grab.
+    assert(composeShape(free, PointerShape.text, PointerShape.default_,
+        PointerShape.ewResize) == PointerShape.ewResize);
+    assert(composeShape(held, PointerShape.text, PointerShape.ewResize)
+        == PointerShape.nsResize);
+    assert(composeShape(free, PointerShape.text, PointerShape.default_)
+        == PointerShape.text, "an inactive claim declares nothing");
 }
 
 
@@ -1744,21 +1862,32 @@ Ids are the caller's — hit ids, or any stable non-zero token per affordance.
 struct CaptureState
 {
     size_t owner; /// the affordance holding the pointer (0 = free)
+    /**
+    The shape the owner holds for the duration of its drag (`DCK15`), so the
+    cursor follows the $(I gesture) rather than the scenery under it — a bar
+    thumb dragged off its track keeps its axis shape, a divider dragged past a
+    pane edge keeps `ew-resize`. `default_` is a live grab that wants the plain
+    arrow, which is not the same as no grab; $(LREF composeShape) reads the
+    difference. Meaningless while `owner == 0`, and cleared with it.
+    */
+    PointerShape shape;
 
 @safe pure nothrow @nogc:
 
     /**
-    A press landed on `id`, which now owns the pointer until release.
+    A press landed on `id`, which now owns the pointer until release, holding
+    `shape` throughout.
 
     Capture does $(B not) transfer: a press while another affordance holds the
     pointer is ignored, because a press cannot occur without an intervening
     release in a well-formed stream, and honouring one would reintroduce the
     mid-drag owner change this exists to prevent.
     */
-    CaptureState capturedBy(size_t id) const
-        => owner == 0 ? CaptureState(id) : this;
+    CaptureState capturedBy(size_t id,
+        PointerShape shape = PointerShape.default_) const
+        => owner == 0 ? CaptureState(id, shape) : this;
 
-    /// The pointer was released: ownership ends.
+    /// The pointer was released: ownership ends, and the shape with it.
     CaptureState released() const
         => CaptureState(0);
 
