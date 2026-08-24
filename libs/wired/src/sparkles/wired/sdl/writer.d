@@ -28,7 +28,7 @@ private SdlError encodeError(SdlErrorCode code, string type, string reason)
     failure.stage = SdlErrorStage.encode;
     failure.code = code;
     failure.sourceType = type;
-    failure.reason = reason;
+    failure.reason ~= reason;
     return failure;
 }
 
