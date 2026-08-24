@@ -25,6 +25,8 @@ import expected : Expected, ok, err;
 import optional : Optional, some;
 
 import sparkles.wired.policy;
+import sparkles.wired.schema : NodeKind;
+import sparkles.wired.walk : WireWalk;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.enums : enumFromValue;
 
@@ -218,8 +220,11 @@ private enum bool isExpectedLike(X) =
 /// The JSON object-key text for an associative-array key: a `string` verbatim,
 /// a type carrying a type-level `@WireConvert` by its converter's `to`, or an
 /// enum by its resolved name / underlying-value text (§7).
-private string aaKeyText(K)(K k)
+private string aaKeyText(K, Root, size_t nodeIndex)(K k)
 {
+    alias walk = WireWalk!(Json, Root);
+    enum node = walk.node!nodeIndex;
+
     static if (is(K == string))
         return k;
     else static if (hasConvert!(Json, K))
@@ -239,10 +244,10 @@ private string aaKeyText(K)(K k)
     }
     else static if (is(K == enum))
     {
-        enum repr = resolveRepr!(Json, K);
+        enum repr = node.policy.repr;
         static if (repr == Repr.name)
         {
-            alias names = wireNames!(Json, K, resolveCaseStyle!(Json, K));
+            alias names = wireNames!(Json, K, node.policy.caseStyle);
             static foreach (i, m; __traits(allMembers, K))
                 if (k == __traits(getMember, K, m))
                     return names[i];
@@ -288,9 +293,8 @@ if (is(E == enum))
 // The `JsonError`-native walks over the arena engine's borrowed views.
 // The Exception/JSONValue surface above remains until the switch-over
 // milestone; consumers instantiate only what they call. The walk keeps
-// the same compile-time posture as the old one: a flat result channel
-// (no per-node `Expected`), inline per-field dispatch, and the one-pass
-// `fieldPolicies` table.
+// a flat result channel (no per-node `Expected`) while node dispatch, child
+// traversal, and policy lookup come from the reified schema cursor.
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.wired.json.document : JsonKind, JsonValue;
@@ -417,38 +421,41 @@ private void summarizeInto(scope JsonValue v, ref JsonError e) @safe pure nothro
 }
 
 /// The recursive native decode walk (mirrors `decodeImpl` over views).
-private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
+private NRes!T decodeNative(T, Root = T, size_t nodeIndex = 0)(
+    scope JsonValue v, ref JsonError failure)
 {
     alias U = Unqual!T;
+    alias walk = WireWalk!(Json, Root);
+    enum node = walk.node!nodeIndex;
 
-    static if (is(U == JSONValue))
+    static if (node.kind == NodeKind.passthrough)
         return nOk(toStdJson(v)); // §4.2 passthrough: materialize the subtree
 
-    else static if (hasConvert!(Json, U))
-        return decodeViaNative!(convertOf!(Json, U), U)(v, failure);
+    else static if (node.kind == NodeKind.converted)
+        return decodeViaNative!(convertOf!(Json, U), U, Root, nodeIndex)(v, failure);
 
-    else static if (is(U == bool))
+    else static if (node.kind == NodeKind.scalar && is(U == bool))
     {
         if (v.kind != JsonKind.bool_)
             return nFail!T(failure, decodeError!T(v, "expected a JSON boolean"));
         return nOk(v.boolean);
     }
 
-    else static if (is(U == string))
+    else static if (node.kind == NodeKind.scalar && is(U == string))
     {
         if (v.kind != JsonKind.string_)
             return nFail!T(failure, decodeError!T(v, "expected a JSON string"));
         return nOk(v.str.idup); // borrowed view → owned string
     }
 
-    else static if (is(U == enum))
-        return decodeEnumNative!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(
+    else static if (node.kind == NodeKind.enumeration)
+        return decodeEnumNative!(U, node.policy.repr, node.policy.caseStyle)(
             v, failure);
 
-    else static if (isIntegral!U)
+    else static if (node.kind == NodeKind.scalar && isIntegral!U)
         return decodeIntegralNative!T(v, failure);
 
-    else static if (isFloatingPoint!U)
+    else static if (node.kind == NodeKind.scalar && isFloatingPoint!U)
     {
         switch (v.kind) with (JsonKind)
         {
@@ -463,7 +470,56 @@ private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
         }
     }
 
-    else static if (is(U == E[], E))
+    else static if (node.kind == NodeKind.staticArray)
+    {
+        alias E = typeof(U.init[0]);
+        static if (isSomeChar!E)
+        {
+            if (v.kind != JsonKind.string_)
+                return nFail!T(failure, decodeError!T(v, "expected a JSON string"));
+            import std.conv : to;
+
+            try
+            {
+                auto decoded = v.str.to!(E[]);
+                if (decoded.length != U.length)
+                    return nFail!T(failure,
+                        decodeError!T(v, "expected exactly " ~ U.length.stringof
+                            ~ " character code units"));
+                U result;
+                result[] = decoded[];
+                return nOk(result);
+            }
+            catch (Exception)
+                return nFail!T(failure,
+                    decodeError!T(v, "string does not fit the character type"));
+        }
+        else
+        {
+            if (v.kind != JsonKind.array)
+                return nFail!T(failure, decodeError!T(v, "expected a JSON array"));
+            if (v.length != U.length)
+                return nFail!T(failure,
+                    decodeError!T(v, "expected exactly " ~ U.length.stringof
+                        ~ " elements"));
+            U result;
+            size_t idx;
+            foreach (elem; v.byElement)
+            {
+                auto r = decodeNative!(E, Root, walk.child!(nodeIndex, 0))(
+                    elem, failure);
+                if (r.failed)
+                {
+                    failure.prependIndex(idx);
+                    return nFailed!T();
+                }
+                result[idx++] = r.value;
+            }
+            return nOk(result);
+        }
+    }
+
+    else static if (node.kind == NodeKind.sequence && is(U == E[], E))
     {
         static if (isSomeChar!E)
         {
@@ -486,7 +542,8 @@ private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
             size_t idx;
             foreach (elem; v.byElement)
             {
-                auto r = decodeNative!E(elem, failure);
+                auto r = decodeNative!(E, Root, walk.child!(nodeIndex, 0))(
+                    elem, failure);
                 if (r.failed)
                 {
                     failure.prependIndex(idx);
@@ -499,30 +556,30 @@ private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
         }
     }
 
-    else static if (is(U == V[K], V, K))
-        return decodeAANative!U(v, failure);
+    else static if (node.kind == NodeKind.map)
+        return decodeAANative!(U, Root, nodeIndex)(v, failure);
 
-    else static if (is(U == Nullable!N, N))
+    else static if (node.kind == NodeKind.nullAware && is(U == Nullable!N, N))
     {
         if (v.kind == JsonKind.null_)
             return nOk(U.init);
-        auto r = decodeNative!N(v, failure);
+        auto r = decodeNative!(N, Root, walk.child!(nodeIndex, 0))(v, failure);
         if (r.failed)
             return nFailed!T();
         return nOk(U(r.value));
     }
 
-    else static if (is(U == Optional!N, N))
+    else static if (node.kind == NodeKind.nullAware && is(U == Optional!N, N))
     {
         if (v.kind == JsonKind.null_)
             return nOk(U.init);
-        auto r = decodeNative!N(v, failure);
+        auto r = decodeNative!(N, Root, walk.child!(nodeIndex, 0))(v, failure);
         if (r.failed)
             return nFailed!T();
         return nOk(some(r.value));
     }
 
-    else static if (is(U == Ternary))
+    else static if (node.kind == NodeKind.nullAware && is(U == Ternary))
     {
         switch (v.kind) with (JsonKind)
         {
@@ -536,7 +593,7 @@ private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
         }
     }
 
-    else static if (is(U == SysTime))
+    else static if (node.kind == NodeKind.scalar && is(U == SysTime))
     {
         if (v.kind != JsonKind.string_)
             return nFail!T(failure, decodeError!T(v, "expected a JSON string"));
@@ -551,11 +608,12 @@ private NRes!T decodeNative(T)(scope JsonValue v, ref JsonError failure)
                 decodeError!T(v, "not an ISO-8601 extended timestamp"));
     }
 
-    else static if (isSumType!U)
-        return decodeSumTypeNative!(U, MatchStrategy.exactlyOne)(v, failure);
+    else static if (node.kind == NodeKind.unionType)
+        return decodeSumTypeNative!(U, node.policy.field.match, Root, nodeIndex)(
+            v, failure);
 
-    else static if (is(U == struct))
-        return decodeStructNative!T(v, failure);
+    else static if (node.kind == NodeKind.aggregate)
+        return decodeStructNative!(T, Root, nodeIndex)(v, failure);
 
     else
         static assert(false, "wired: unsupported type for fromJSON: " ~ T.stringof);
@@ -683,13 +741,17 @@ private bool fieldKeyEquals(string expected)(scope const(char)[] actual)
 /// length switch over the resolved field keys and a seen-mask for the
 /// required-field check — unknown keys hop over their extent for free
 /// (the old walk did one object lookup per field instead).
-private NRes!T decodeStructNative(T)(scope JsonValue v, ref JsonError failure)
+private NRes!T decodeStructNative(T, Root, size_t nodeIndex)(
+    scope JsonValue v, ref JsonError failure)
 if (is(T == struct))
 {
     if (v.kind != JsonKind.object)
         return nFail!T(failure, decodeError!T(v, "expected a JSON object"));
 
-    alias policies = fieldPolicies!(Json, T);
+    alias walk = WireWalk!(Json, Root);
+    alias policies = walk.childPolicies!nodeIndex;
+    enum aggregate = walk.node!nodeIndex;
+    static assert(aggregate.edgeCount == policies.length);
     T result;
     bool[policies.length > 0 ? policies.length : 1] seen;
 
@@ -709,29 +771,15 @@ if (is(T == struct))
                         {
                             alias V = typeof(T.tupleof[j]);
 
-                            static if (policies[j].hasConvert)
+                            enum child = walk.child!(nodeIndex, j);
+                            enum childNode = walk.schema.nodes[child];
+                            static if (childNode.kind == NodeKind.converted)
                                 auto r = decodeViaNative!(
-                                    convertOf!(Json, T.tupleof[j]), V)(
+                                    convertOf!(Json, T.tupleof[j], V), V,
+                                    Root, child)(
                                     m.value, failure);
-                            else static if (is(V == enum))
-                                auto r = decodeEnumNative!(V,
-                                    policies[j].reprFor(WireTarget.all,
-                                        resolveRepr!(Json, V)),
-                                    policies[j].caseFor(WireTarget.all,
-                                        resolveCaseStyle!(Json, V)))(
-                                    m.value, failure);
-                            else static if (is(V == E[], E) && is(E == enum))
-                                auto r = decodeEnumArrayNative!(E,
-                                    policies[j].reprFor(WireTarget.value,
-                                        resolveRepr!(Json, E)),
-                                    policies[j].caseFor(WireTarget.value,
-                                        resolveCaseStyle!(Json, E)))(
-                                    m.value, failure);
-                            else static if (isSumType!V)
-                                auto r = decodeSumTypeNative!(V,
-                                    policies[j].match)(m.value, failure);
                             else
-                                auto r = decodeNative!V(m.value, failure);
+                                auto r = decodeNative!(V, Root, child)(m.value, failure);
 
                             if (r.failed)
                             {
@@ -779,31 +827,8 @@ if (is(T == struct))
     return nOk(result);
 }
 
-private NRes!(E[]) decodeEnumArrayNative(E, Repr repr, CaseStyle style)(
-    scope JsonValue v, ref JsonError failure)
-if (is(E == enum))
-{
-    if (v.kind != JsonKind.array)
-        return nFail!(E[])(failure,
-            decodeError!(E[])(v, "expected a JSON array"));
-    E[] result;
-    result.reserve(v.length);
-    size_t idx;
-    foreach (elem; v.byElement)
-    {
-        auto r = decodeEnumNative!(E, repr, style)(elem, failure);
-        if (r.failed)
-        {
-            failure.prependIndex(idx);
-            return nFailed!(E[])();
-        }
-        result ~= r.value;
-        idx++;
-    }
-    return nOk(result);
-}
-
-private NRes!ST decodeSumTypeNative(ST, MatchStrategy strat)(
+private NRes!ST decodeSumTypeNative(ST, MatchStrategy strat, Root,
+    size_t nodeIndex)(
     scope JsonValue v, ref JsonError failure)
 if (isSumType!ST)
 {
@@ -811,9 +836,10 @@ if (isSumType!ST)
 
     static if (strat == MatchStrategy.first)
     {
-        static foreach (V; Types)
+        static foreach (i, V; Types)
         {{
-            auto r = decodeNative!V(v, failure);
+            auto r = decodeNative!(V, Root,
+                WireWalk!(Json, Root).child!(nodeIndex, i))(v, failure);
             if (!r.failed)
                 return nOk(ST(r.value));
         }}
@@ -823,9 +849,10 @@ if (isSumType!ST)
     {
         ST result;
         size_t matches = 0;
-        static foreach (V; Types)
+        static foreach (i, V; Types)
         {{
-            auto r = decodeNative!V(v, failure);
+            auto r = decodeNative!(V, Root,
+                WireWalk!(Json, Root).child!(nodeIndex, i))(v, failure);
             if (!r.failed)
             {
                 matches++;
@@ -842,7 +869,7 @@ if (isSumType!ST)
     }
 }
 
-private NRes!V decodeViaNative(alias Conv, V)(
+private NRes!V decodeViaNative(alias Conv, V, Root, size_t nodeIndex)(
     scope JsonValue v, ref JsonError failure)
 {
     static assert(!is(Conv.from == void),
@@ -854,7 +881,8 @@ private NRes!V decodeViaNative(alias Conv, V)(
     else
         alias WireT = Raw;
 
-    auto raw = decodeNative!WireT(v, failure);
+    auto raw = decodeNative!(WireT, Root,
+        WireWalk!(Json, Root).child!(nodeIndex, 0))(v, failure);
     if (raw.failed)
     {
         failure.targetType = V.stringof;
@@ -872,7 +900,8 @@ private NRes!V decodeViaNative(alias Conv, V)(
         return nOk(back);
 }
 
-private NRes!T decodeAANative(T)(scope JsonValue v, ref JsonError failure)
+private NRes!T decodeAANative(T, Root, size_t nodeIndex)(
+    scope JsonValue v, ref JsonError failure)
 if (is(T == V[K], V, K))
 {
     alias V = typeof(T.init.values[0]);
@@ -884,10 +913,12 @@ if (is(T == V[K], V, K))
     T result;
     foreach (m; v.byKeyValue)
     {
-        auto k = aaKeyParseNative!K(m.key, failure);
+        auto k = aaKeyParseNative!(K, Root,
+            WireWalk!(Json, Root).child!(nodeIndex, 0))(m.key, failure);
         if (k.failed)
             return nFailed!T();
-        auto rv = decodeNative!V(m.value, failure);
+        auto rv = decodeNative!(V, Root,
+            WireWalk!(Json, Root).child!(nodeIndex, 1))(m.value, failure);
         if (rv.failed)
         {
             failure.prependKey(m.key);
@@ -898,7 +929,7 @@ if (is(T == V[K], V, K))
     return nOk(result);
 }
 
-private NRes!K aaKeyParseNative(K)(
+private NRes!K aaKeyParseNative(K, Root, size_t nodeIndex)(
     scope const(char)[] keyStr, ref JsonError failure)
 {
     static if (is(K == string))
@@ -928,10 +959,11 @@ private NRes!K aaKeyParseNative(K)(
     }
     else static if (is(K == enum))
     {
-        enum repr = resolveRepr!(Json, K);
+        enum node = WireWalk!(Json, Root).node!nodeIndex;
+        enum repr = node.policy.repr;
         static if (repr == Repr.name)
         {
-            enum style = resolveCaseStyle!(Json, K);
+            enum style = node.policy.caseStyle;
             alias names = wireNames!(Json, K, style);
             static foreach (i, m; __traits(allMembers, K))
                 if (keyStr == names[i])
@@ -1045,37 +1077,41 @@ private JsonError encodeError(T)(string reason)
 
 /// The recursive native encode walk (mirrors `encodeImpl`, but streams
 /// tokens instead of building a tree).
-private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
+private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer,
+    Root = T, size_t nodeIndex = 0)(
     const T value, ref Writer w, uint depth)
 {
     import std.range.primitives : put;
 
     alias U = Unqual!T;
+    alias walk = WireWalk!(Json, Root);
+    enum node = walk.node!nodeIndex;
 
-    static if (is(U == JSONValue))
+    static if (node.kind == NodeKind.passthrough)
         return writeStdJson!(opts, keyLess)(value, w, depth);
 
-    else static if (hasConvert!(Json, U))
-        return encodeViaNative!(convertOf!(Json, U), U, opts, keyLess)(value, w, depth);
+    else static if (node.kind == NodeKind.converted)
+        return encodeViaNative!(convertOf!(Json, U), U, opts, keyLess,
+            Root, nodeIndex)(value, w, depth);
 
-    else static if (is(U == bool))
+    else static if (node.kind == NodeKind.scalar && is(U == bool))
     {
         put(w, value ? "true" : "false");
         return encOk();
     }
 
-    else static if (is(U == string))
+    else static if (node.kind == NodeKind.scalar && is(U == string))
     {
         writeJsonString(w, value);
         return encOk();
     }
 
-    else static if (is(U == enum))
-        return encodeEnumNative!(U, resolveRepr!(Json, U),
-            resolveCaseStyle!(Json, U))(value, w);
+    else static if (node.kind == NodeKind.enumeration)
+        return encodeEnumNative!(U, node.policy.repr,
+            node.policy.caseStyle)(value, w);
 
 
-    else static if (isIntegral!U)
+    else static if (node.kind == NodeKind.scalar && isIntegral!U)
     {
         import sparkles.base.text.writers : writeInteger;
 
@@ -1083,7 +1119,7 @@ private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
         return encOk();
     }
 
-    else static if (isFloatingPoint!U)
+    else static if (node.kind == NodeKind.scalar && isFloatingPoint!U)
     {
         import std.math : isFinite;
         import sparkles.base.text.float_conv : formatShortestDouble;
@@ -1097,7 +1133,49 @@ private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
         return encOk();
     }
 
-    else static if (is(U == E[], E))
+    else static if (node.kind == NodeKind.staticArray)
+    {
+        alias E = typeof(U.init[0]);
+        static if (isSomeChar!E)
+        {
+            import std.conv : to;
+
+            static if (is(E == char))
+                writeJsonString(w, value[]);
+            else
+                writeJsonString(w, value[].to!string);
+            return encOk();
+        }
+        else
+        {
+            static if (U.length == 0)
+            {
+                put(w, "[]");
+                return encOk();
+            }
+            put(w, '[');
+            foreach (i, ref e; value)
+            {
+                if (i)
+                    put(w, ',');
+                static if (opts.pretty)
+                    newlineIndent!opts(w, depth + 1);
+                auto r = encodeNative!(opts, keyLess, E, Writer, Root,
+                    walk.child!(nodeIndex, 0))(e, w, depth + 1);
+                if (r.failed)
+                {
+                    r.error.prependIndex(i);
+                    return r;
+                }
+            }
+            static if (opts.pretty)
+                newlineIndent!opts(w, depth);
+            put(w, ']');
+            return encOk();
+        }
+    }
+
+    else static if (node.kind == NodeKind.sequence && is(U == E[], E))
     {
         static if (isSomeChar!E)
         {
@@ -1123,7 +1201,8 @@ private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
                     put(w, ',');
                 static if (opts.pretty)
                     newlineIndent!opts(w, depth + 1);
-                auto r = encodeNative!(opts, keyLess)(e, w, depth + 1);
+                auto r = encodeNative!(opts, keyLess, E, Writer, Root,
+                    walk.child!(nodeIndex, 0))(e, w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependIndex(i);
@@ -1137,47 +1216,52 @@ private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
         }
     }
 
-    else static if (is(U == V[K], V, K))
-        return encodeAANative!(opts, keyLess)(value, w, depth);
+    else static if (node.kind == NodeKind.map)
+        return encodeAANative!(opts, keyLess, U, Writer, Root, nodeIndex)(
+            value, w, depth);
 
-    else static if (is(U == Nullable!N, N))
+    else static if (node.kind == NodeKind.nullAware && is(U == Nullable!N, N))
     {
         if (value.isNull)
         {
             put(w, "null");
             return encOk();
         }
-        return encodeNative!(opts, keyLess)(value.get, w, depth);
+        return encodeNative!(opts, keyLess, N, Writer, Root,
+            walk.child!(nodeIndex, 0))(value.get, w, depth);
     }
 
-    else static if (is(U == Optional!N, N))
+    else static if (node.kind == NodeKind.nullAware && is(U == Optional!N, N))
     {
         if (value.empty)
         {
             put(w, "null");
             return encOk();
         }
-        return encodeNative!(opts, keyLess)(value.front, w, depth);
+        return encodeNative!(opts, keyLess, N, Writer, Root,
+            walk.child!(nodeIndex, 0))(value.front, w, depth);
     }
 
-    else static if (is(U == Ternary))
+    else static if (node.kind == NodeKind.nullAware && is(U == Ternary))
     {
         put(w, value == Ternary.unknown ? "null"
                 : value == Ternary.yes ? "true" : "false");
         return encOk();
     }
 
-    else static if (is(U == SysTime))
+    else static if (node.kind == NodeKind.scalar && is(U == SysTime))
     {
         writeJsonString(w, value.toUTC.toISOExtString);
         return encOk();
     }
 
-    else static if (isSumType!U)
-        return value.match!(v => encodeNative!(opts, keyLess)(v, w, depth));
+    else static if (node.kind == NodeKind.unionType)
+        return encodeSumTypeNative!(opts, keyLess, U, Writer, Root, nodeIndex)(
+            value, w, depth);
 
-    else static if (is(U == struct))
-        return encodeStructNative!(opts, keyLess)(value, w, depth);
+    else static if (node.kind == NodeKind.aggregate)
+        return encodeStructNative!(opts, keyLess, U, Writer, Root, nodeIndex)(
+            value, w, depth);
 
     else
         static assert(false, "wired: unsupported type for writeJSON: " ~ T.stringof);
@@ -1208,12 +1292,13 @@ if (is(E == enum))
 /// permutation sorted by wire key under `keyLess`. Resolved entirely at
 /// compile time, so `KeyOrder.sorted` costs nothing at run time and the
 /// walk stays `@nogc`.
-private template fieldOrder(JsonWriteOptions opts, alias keyLess, T)
+private template fieldOrder(JsonWriteOptions opts, alias keyLess, Root,
+    size_t nodeIndex)
 {
     static immutable size_t[] fieldOrder = () {
         import std.algorithm.sorting : sort;
 
-        alias policies = fieldPolicies!(Json, T);
+        alias policies = WireWalk!(Json, Root).childPolicies!nodeIndex;
         auto idx = new size_t[](policies.length);
         foreach (i, ref e; idx)
             e = i;
@@ -1226,14 +1311,16 @@ private template fieldOrder(JsonWriteOptions opts, alias keyLess, T)
 /// Struct fields stream in declaration order, or sorted by wire key under
 /// `opts.keyOrder` (SPEC §11.6); skip policies are applied inline exactly
 /// as in the tree-building walk.
-private EncRes encodeStructNative(JsonWriteOptions opts, alias keyLess, T, Writer)(
+private EncRes encodeStructNative(JsonWriteOptions opts, alias keyLess, T, Writer,
+    Root, size_t nodeIndex)(
     const T value, ref Writer w, uint depth)
 if (is(T == struct))
 {
     import std.range.primitives : put;
 
-    alias policies = fieldPolicies!(Json, T);
-    alias order = fieldOrder!(opts, keyLess, T);
+    alias walk = WireWalk!(Json, Root);
+    alias policies = walk.childPolicies!nodeIndex;
+    alias order = fieldOrder!(opts, keyLess, Root, nodeIndex);
 
     put(w, '{');
     bool first = true;
@@ -1262,21 +1349,15 @@ if (is(T == struct))
             else
                 put(w, ':');
 
-            static if (policies[i].hasConvert)
-                auto r = encodeViaNative!(convertOf!(Json, T.tupleof[i]), V, opts, keyLess)(
+            enum child = walk.child!(nodeIndex, i);
+            enum childNode = walk.schema.nodes[child];
+            static if (childNode.kind == NodeKind.converted)
+                auto r = encodeViaNative!(convertOf!(Json, T.tupleof[i], V), V,
+                    opts, keyLess, Root, child)(
                     value.tupleof[i], w, depth + 1);
-            else static if (is(V == enum))
-                auto r = encodeEnumNative!(V,
-                    policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
-                    policies[i].caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(
-                    value.tupleof[i], w);
-            else static if (is(V == E[], E) && is(E == enum))
-                auto r = encodeEnumArrayNative!(E,
-                    policies[i].reprFor(WireTarget.value, resolveRepr!(Json, E)),
-                    policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(
-                    value.tupleof[i], w);
             else
-                auto r = encodeNative!(opts, keyLess)(value.tupleof[i], w, depth + 1);
+                auto r = encodeNative!(opts, keyLess, V, Writer, Root, child)(
+                    value.tupleof[i], w, depth + 1);
 
             if (r.failed)
             {
@@ -1294,45 +1375,43 @@ if (is(T == struct))
     return encOk();
 }
 
-private EncRes encodeEnumArrayNative(E, Repr repr, CaseStyle style, Writer)(
-    const E[] values, ref Writer w)
-if (is(E == enum))
-{
-    import std.range.primitives : put;
-
-    put(w, '[');
-    foreach (i, e; values)
-    {
-        if (i)
-            put(w, ',');
-        auto r = encodeEnumNative!(E, repr, style)(e, w);
-        if (r.failed)
-        {
-            r.error.prependIndex(i);
-            return r;
-        }
-    }
-    put(w, ']');
-    return encOk();
-}
-
-private EncRes encodeViaNative(alias Conv, V,
-    JsonWriteOptions opts, alias keyLess, Writer)(const V value, ref Writer w, uint depth)
+private EncRes encodeViaNative(alias Conv, V, JsonWriteOptions opts,
+    alias keyLess, Root, size_t nodeIndex, Writer)(
+    const V value, ref Writer w, uint depth)
 {
     auto wire = Conv.to(value);
     static if (isExpectedLike!(typeof(wire)))
     {
         if (wire.hasError)
             return EncRes(true, encodeError!V(wire.error.msg));
-        return encodeNative!(opts, keyLess)(wire.value, w, depth);
+        return encodeNative!(opts, keyLess, typeof(wire.value), Writer, Root,
+            WireWalk!(Json, Root).child!(nodeIndex, 0))(wire.value, w, depth);
     }
     else
-        return encodeNative!(opts, keyLess)(wire, w, depth);
+        return encodeNative!(opts, keyLess, typeof(wire), Writer, Root,
+            WireWalk!(Json, Root).child!(nodeIndex, 0))(wire, w, depth);
+}
+
+private EncRes encodeSumTypeNative(JsonWriteOptions opts, alias keyLess, ST,
+    Writer, Root, size_t nodeIndex)(const ST value, ref Writer w, uint depth)
+if (isSumType!ST)
+{
+    alias Types = TemplateArgsOf!ST;
+    return value.match!((variant) {
+        alias V = typeof(variant);
+        static foreach (i, Candidate; Types)
+            static if (is(Unqual!V == Unqual!Candidate))
+                return encodeNative!(opts, keyLess, Candidate, Writer, Root,
+                    WireWalk!(Json, Root).child!(nodeIndex, i))(
+                    variant, w, depth);
+        assert(false, "wired: active SumType variant is absent from its schema");
+    });
 }
 
 /// Associative arrays stream with lexicographically sorted keys
 /// (SPEC §11.6 — deterministic output independent of hash order).
-private EncRes encodeAANative(JsonWriteOptions opts, alias keyLess, T, Writer)(
+private EncRes encodeAANative(JsonWriteOptions opts, alias keyLess, T, Writer,
+    Root, size_t nodeIndex)(
     const T value, ref Writer w, uint depth)
 if (is(T == V[K], V, K))
 {
@@ -1350,7 +1429,8 @@ if (is(T == V[K], V, K))
     Pair[] pairs;
     pairs.reserve(value.length);
     foreach (k, ref const _; value)
-        pairs ~= Pair(aaKeyText(k), k);
+        pairs ~= Pair(aaKeyText!(K, Root,
+            WireWalk!(Json, Root).child!(nodeIndex, 0))(k), k);
     pairs.sort!((a, b) => keyLess(a.text, b.text));
 
     if (pairs.length == 0)
@@ -1370,7 +1450,9 @@ if (is(T == V[K], V, K))
             put(w, ": ");
         else
             put(w, ':');
-        auto r = encodeNative!(opts, keyLess)(value[p.key], w, depth + 1);
+        auto r = encodeNative!(opts, keyLess, typeof(T.init.values[0]), Writer,
+            Root, WireWalk!(Json, Root).child!(nodeIndex, 1))(
+            value[p.key], w, depth + 1);
         if (r.failed)
         {
             r.error.prependKey(p.text);
@@ -1568,6 +1650,125 @@ version (unittest)
     assert(jsonText([Suit.spades, Suit.hearts]) == `["spades","hearts"]`);
     assert(fromJSON!(Suit[])(`["hearts","spades"]`).value
         == [Suit.hearts, Suit.spades]);
+}
+
+@("wired.json.schemaWalk.staticArraysExactLength")
+@safe unittest
+{
+    int[3] numbers = [1, 2, 3];
+    assert(jsonText(numbers) == "[1,2,3]");
+    assert(fromJSON!(int[3])(jsonText(numbers)).value == numbers);
+    assert(fromJSON!(int[3])("[1,2]").hasError);
+    assert(fromJSON!(int[3])("[1,2,3,4]").hasError);
+
+    char[3] text = "abc";
+    assert(jsonText(text) == `"abc"`);
+    assert(fromJSON!(char[3])(`"abc"`).value == text);
+    assert(fromJSON!(char[3])(`"ab"`).hasError);
+    assert(fromJSON!(char[3])(`"abcd"`).hasError);
+}
+
+@("wired.json.schemaWalk.nullableEnumArrayPolicy")
+@safe unittest
+{
+    enum Mode { fastPath, slowPath }
+    static struct Shape
+    {
+        @WireCase!Json(CaseStyle.snakeCase, WireTarget.value)
+        Nullable!(Mode[]) modes;
+    }
+
+    auto value = Shape(Nullable!(Mode[])([Mode.fastPath, Mode.slowPath]));
+    assert(jsonText(value) == `{"modes":["fast_path","slow_path"]}`);
+    assert(fromJSON!Shape(jsonText(value)).value == value);
+}
+
+@("wired.json.schemaWalk.nestedArrayPolicy")
+@safe unittest
+{
+    enum Mode { fastPath, slowPath }
+    static struct Shape
+    {
+        @WireCase!Json(CaseStyle.kebabCase, WireTarget.value)
+        Mode[][] modes;
+    }
+
+    auto value = Shape([[Mode.fastPath], [Mode.slowPath]]);
+    assert(jsonText(value) == `{"modes":[["fast-path"],["slow-path"]]}`);
+    assert(fromJSON!Shape(jsonText(value)).value == value);
+}
+
+@("wired.json.schemaWalk.mapKeyValuePolicies")
+@safe unittest
+{
+    enum Key { fastPath, slowPath }
+    enum Value { lowLevel, highLevel }
+    static struct Shape
+    {
+        @WireCase!Json(CaseStyle.snakeCase, WireTarget.key)
+        @WireCase!Json(CaseStyle.kebabCase, WireTarget.value)
+        Value[Key][] entries;
+    }
+
+    Value[Key] first = [Key.fastPath: Value.lowLevel];
+    Value[Key] second = [Key.slowPath: Value.highLevel];
+    auto value = Shape([first, second]);
+    assert(jsonText(value)
+        == `{"entries":[{"fast_path":"low-level"},{"slow_path":"high-level"}]}`);
+    assert(fromJSON!Shape(jsonText(value)).value == value);
+}
+
+@("wired.json.schemaWalk.aggregatePolicyThroughWrappers")
+@safe unittest
+{
+    static struct Item { int fieldName; }
+    static struct Shape
+    {
+        @WireCase!Json(CaseStyle.snakeCase, WireTarget.value)
+        Nullable!(Item[]) items;
+    }
+
+    auto value = Shape(Nullable!(Item[])([Item(7)]));
+    assert(jsonText(value) == `{"items":[{"field_name":7}]}`);
+    assert(fromJSON!Shape(jsonText(value)).value == value);
+}
+
+@("wired.json.schemaWalk.byteGoldenStability")
+@safe unittest
+{
+    enum Mode { fastPath, slowPath }
+    static struct Stable
+    {
+        @WireName!Json("id") int identifier;
+        string label;
+        Mode mode;
+        int[] values;
+        int[string] counts;
+        Nullable!int limit;
+        @WireOptional(WireSkip.whenDefault) int omitted;
+    }
+
+    auto value = Stable(3, "sample", Mode.fastPath, [1, 2],
+        ["z": 9, "a": 1], Nullable!int(5), 0);
+    enum golden = `{"id":3,"label":"sample","mode":"fastPath",`
+        ~ `"values":[1,2],"counts":{"a":1,"z":9},"limit":5}`;
+    assert(jsonText(value) == golden);
+    assert(fromJSON!Stable(golden).value == value);
+}
+
+@("wired.json.schemaWalk.recursiveReference")
+@system unittest
+{
+    static struct Tree
+    {
+        string label;
+        Tree[] children;
+    }
+
+    auto value = Tree("root", [Tree("leaf", [])]);
+    enum golden = `{"label":"root","children":[{"label":"leaf","children":[]}]}`;
+    assert(jsonText(value) == golden);
+    assert(fromJSON!Tree(golden).value == value);
 }
 
 @("wired.json.aggregate")

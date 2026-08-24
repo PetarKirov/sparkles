@@ -7,10 +7,9 @@ explicit `NodeKind.reference` node whose `referenceIndex` names an earlier
 node. Policy values are resolved through `sparkles.wired.policy`, once, while
 the arena is built.
 
-The JSON codec continues to consume `fieldPolicies` directly until its E2
-schema-walk migration. `schemaFieldPolicies` is the behavior-preserving
-projection E2 will substitute at that boundary; delegating `fieldPolicies` to
-it now would introduce a policy/schema template cycle and change JSON codegen.
+`fieldPolicies` is a compatibility projection of aggregate child snapshots.
+The builder consumes the declaration-only policy seed, avoiding a
+policy/schema template cycle.
 */
 module sparkles.wired.schema;
 
@@ -405,15 +404,29 @@ private WireSchema buildWireSchema(F, T)()
                 schema.nodes[index].kind = NodeKind.aggregate;
                 schema.nodes[index].policy.caseStyle = site.caseFor(
                     slot, resolveCaseStyle!(F, V));
-                alias policies = fieldPolicies!(F, V);
+                alias policies = resolvedFieldPolicies!(F, V);
                 const first = reserveEdges(index, policies.length);
                 static foreach (i; 0 .. policies.length)
                 {{
                     alias E = typeof(V.tupleof[i]);
+                    FieldPolicy field = policies[i];
+                    static if (!hasExplicitWireName!(F, V.tupleof[i]))
+                        field.key = convertCaseOf(
+                            schema.nodes[index].policy.caseStyle,
+                            __traits(identifier, V.tupleof[i]));
                     const child = buildField!(V, i, E,
-                        Ancestors, V)(policies[i].key, policies[i], nextAncestors);
+                        Ancestors, V)(field.key, field, nextAncestors);
                     schema.edges[first + i] = child;
                 }}
+                foreach (i; 0 .. policies.length)
+                    foreach (j; 0 .. i)
+                    {
+                        const a = schema.nodes[schema.edges[first + i]].name;
+                        const b = schema.nodes[schema.edges[first + j]].name;
+                        assert(a != b, "wired: duplicate field key \"" ~ a
+                            ~ "\" for " ~ V.stringof ~ " under format "
+                            ~ F.stringof);
+                    }
             }
             else
                 static assert(false, "wired: unsupported schema type " ~ V.stringof
@@ -494,8 +507,8 @@ template wireSchemaOf(F, T)
 
 /** Projects an aggregate root's schema children back to the current flat API.
 
-This is intentionally separate from `fieldPolicies` until E2 moves JSON's codec
-walk to the schema and removes the policy/schema instantiation cycle.
+The declaration-only seed used while building the schema keeps this projection
+acyclic.
 */
 template schemaFieldPolicies(F, T)
 if (is(T == struct))
