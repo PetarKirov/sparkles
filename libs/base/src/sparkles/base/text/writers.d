@@ -7,6 +7,7 @@
 module sparkles.base.text.writers;
 
 import core.time : Duration;
+import std.traits : isSomeChar, isSomeString;
 
 import sparkles.base.term_style : Style;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
@@ -485,7 +486,7 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes an escaped character to an output range (without quotes). @nogc-compatible.
-void writeEscapedChar(Writer)(ref Writer w, char c)
+void writeEscapedChar(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
 {
     import std.range.primitives : put;
 
@@ -500,8 +501,8 @@ void writeEscapedChar(Writer)(ref Writer w, char c)
         case '\'': put(w, `\'`); return;
         default:
             if (c >= 0x20 && c < 0x7F)
-                put(w, c);
-            else
+                put(w, cast(char) c);
+            else if (c < 0x20)
             {
                 // Hex escape for non-printable. Deliberately upper-case
                 // (`\xAB`), unlike the lower-case numeral digits — the
@@ -511,6 +512,10 @@ void writeEscapedChar(Writer)(ref Writer w, char c)
                 put(w, `\x`);
                 put(w, base16.digits[(c >> 4) & 0xF]);
                 put(w, base16.digits[c & 0xF]);
+            }
+            else
+            {
+                put(w, c);
             }
     }
 }
@@ -527,7 +532,7 @@ unittest
 }
 
 /// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
-void writeEscapedString(Writer)(ref Writer w, const(char)[] s)
+void writeEscapedString(Writer, S)(ref Writer w, S s) if (isSomeString!S)
 {
     import std.range.primitives : put;
 
@@ -549,7 +554,7 @@ unittest
 }
 
 /// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.
-void writeEscapedCharLiteral(Writer)(ref Writer w, char c)
+void writeEscapedCharLiteral(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
 {
     import std.range.primitives : put;
 
