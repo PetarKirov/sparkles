@@ -1267,6 +1267,10 @@
               {
                 "text": "Delivery Plan",
                 "link": "/specs/wired/sdl/PLAN"
+              },
+              {
+                "text": "Provenance Manifest",
+                "link": "/specs/wired/sdl/PROVENANCE"
               }
             ]
           },
