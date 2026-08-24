@@ -58,6 +58,13 @@ struct Params
         ~ "e.g. ']]j'."))
     string keys;
 
+    @(Option("script|s", description:
+        "With --render: a full input script delivered after --keys, in the "
+        ~ "sparkles.input.script grammar; `;` separates lines, e.g. "
+        ~ "'move 40,12;press left 40,12'. This is how a hover, a drag or a "
+        ~ "scrollbar gets into a golden at all."))
+    string script;
+
     @(Option("term-tab-glyphs", description:
         "The Terminal page's narrow tab list, one glyph per position — "
         ~ "overrides the default circled-number series."))
@@ -105,6 +112,7 @@ int main(string[] args)
         const req = RenderRequest(
             page: pageIndexOf(cli.page),
             keys: cli.keys,
+            script: cli.script,
             width: cli.windowWidth,
             height: cli.windowHeight,
         );

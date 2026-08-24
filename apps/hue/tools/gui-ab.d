@@ -105,6 +105,11 @@ struct Params
 
     @(Option("env|e", description: "Extra NAME=VALUE hooks, set on BOTH sides"))
     string[] extraEnv;
+
+    @(Option("diff", description: "Compare two existing PNGs and exit — "
+        ~ "'a.png:b.png'. Locating an affordance in a capture is the same "
+        ~ "question as reporting drift, so it is the same code."))
+    string diffPair;
 }
 
 int main(string[] rawArgs)
@@ -116,6 +121,22 @@ int main(string[] rawArgs)
     if (!parsed)
         return reportCliError(parsed.error);
     auto p = parsed.value;
+
+    // Reporting where two captures differ is useful on its own: finding a
+    // one-cell-wide bar in a 1600px window by sweeping the pointer is hopeless,
+    // and asking "what moved between these two frames" answers it directly.
+    if (p.diffPair.length)
+    {
+        const sep = p.diffPair.indexOf(':');
+        if (sep <= 0 || sep + 1 >= p.diffPair.length)
+        {
+            stderr.writeln("gui-ab: --diff expects 'a.png:b.png'");
+            return 2;
+        }
+        reportPixelDiff(p.diffPair[0 .. sep], p.diffPair[sep + 1 .. $],
+            p.outDir);
+        return 0;
+    }
 
     if (!onPath("xvfb-run"))
     {

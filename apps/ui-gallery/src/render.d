@@ -20,11 +20,12 @@ byte-for-byte the terminal.
 */
 module render;
 
-import std.array : appender;
-import std.conv : to;
+import std.array : appender, replace;
+import std.conv : text, to;
 
 import sparkles.base.term_color : Color;
 import sparkles.input : charEvent, Event;
+import sparkles.input.script : parseScript;
 import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.render : paintFull;
 import sparkles.ui.geometry : Size;
@@ -43,13 +44,24 @@ struct RenderRequest
 {
     size_t page;         /// index into the catalog
     string keys;         /// keystrokes delivered before the frame is taken
+    /**
+    A full input script delivered after `keys` (`INP22`), in
+    $(MREF sparkles,input,script)'s grammar — newline- or `;`-separated.
+
+    `keys` can only spell printable characters, which is why no golden anywhere
+    exercised a hover, a drag or a scrollbar: the states that most needed a
+    picture were the ones a keystroke string could not reach. A script can say
+    `move 40,12` and `press left 40,12`, so those states become renderable —
+    and therefore assertable — like any other.
+    */
+    string script;
     int width = 96;      /// surface width in cells
     int height = 32;     /// surface height in cells
 }
 
 /// The frame `req` describes, as ANSI — the same bytes the terminal backend
 /// would emit for a full repaint.
-string renderAnsi(in RenderRequest req)
+string renderAnsi(const RenderRequest req)
 {
     // A `SmallBuffer!char`, not an `appender!string`: the terminal writers put
     // `const(char)[]` control sequences, which an immutable-element appender
@@ -70,7 +82,7 @@ The form a golden compares against: a layout regression is visible in it
 directly, whereas a diff over SGR runs mostly reports colour changes nobody
 asked about.
 */
-string renderPlain(in RenderRequest req)
+string renderPlain(const RenderRequest req)
     => gridText(renderGrid(req));
 
 /// A painted grid as bare glyphs. Separate from $(LREF renderPlain) so the
@@ -106,13 +118,21 @@ string gridText(in Grid grid)
 
 /// The painted grid — the step both forms share, and the one that must be the
 /// terminal's own painter rather than a lookalike.
-Grid renderGrid(in RenderRequest req)
+Grid renderGrid(const RenderRequest req)
 {
     auto app = Gallery(GalleryState(page: req.page));
 
     Event[] script;
     foreach (dchar c; req.keys)
         script ~= charEvent(c);
+    // `;` as well as a newline, so a whole session fits in one shell argument.
+    if (req.script.length)
+    {
+        auto r = parseScript(replace(req.script, ";", "\n"), script);
+        if (r.hasError)
+            throw new Exception(text("--script: byte ", r.error.offset, ": ",
+                r.error.context));
+    }
 
     const size = Size(req.width, req.height);
     auto rec = runAppRecorded(app, RunConfig.init, script,
@@ -159,6 +179,42 @@ Grid renderGrid(in RenderRequest req)
     // frame path may read a clock or a random source.
     const req = RenderRequest(page: 0, width: 80, height: 24);
     assert(renderPlain(req) == renderPlain(req));
+}
+
+@("ui_gallery.render.aPointerCanReachTheFrameToo")
+@safe unittest
+{
+    import std.algorithm : canFind;
+
+    import registry : pageIndexOf;
+
+    // The gap `--keys` left open (`INP22`): no golden anywhere exercised a
+    // hover, a drag or a scrollbar, because a keystroke string cannot spell a
+    // pointer — so the states that most needed a picture were the ones that
+    // could not have one.
+    //
+    // The split page reports the shape its machine wants, which makes the
+    // hover legible as TEXT rather than as a colour a plain render drops.
+    const req = RenderRequest(page: pageIndexOf("split"), width: 96, height: 32);
+    const idle = renderPlain(req);
+    assert(idle.canFind("pointer shape"), "the page reports one");
+    assert(idle.canFind("default_"), "and nothing is hovered yet");
+
+    // Column 49 is the divider — one cell wide, which is the point: a hit
+    // target this narrow is exactly what a coarse pointer sweep steps over,
+    // and what nothing but a real event can land on.
+    RenderRequest hovered = req;
+    hovered.script = "move 49,11";
+    const shown = renderPlain(hovered);
+    assert(shown.canFind("ewResize"),
+        "a scripted `move` onto the divider hovers it");
+    assert(shown != idle, "…and the frame differs, so a golden would catch it");
+
+    // One cell either side is not the divider. Without this the test would
+    // pass on a build that reported `ewResize` unconditionally.
+    RenderRequest beside = req;
+    beside.script = "move 47,11";
+    assert(!renderPlain(beside).canFind("ewResize"), "and only there");
 }
 
 @("ui_gallery.render.keystrokesReachTheFrame")
