@@ -738,6 +738,16 @@
         ]
       },
       {
+        "text": "DQL",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/dql/SPEC"
+          }
+        ]
+      },
+      {
         "text": "Event Horizon",
         "collapsed": true,
         "items": [

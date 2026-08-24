@@ -191,20 +191,20 @@ never the meaning of a row or the edit dispatch behind it.
 
 ### Paths are addresses; element keys are identity
 
-Every row has one readable, persistable path. The base grammar is
-`name ( "." name | "[" digits "]" )*`: members use `style.opacity`, array
-elements use `stops[2]`. Erased child names are not restricted to D
-identifiers — a `JsonValue`-shaped subject may hold keys containing `.`, `[`,
-spaces or leading digits — so the grammar adds a quoted segment: `["…"]`
-addresses a child by arbitrary name, with `\"` and `\\` escapes. The path
-emitter uses the bare form exactly when the name is identifier-shaped and the
-quoted form otherwise, so every emitted path re-parses to the same segments.
-`at!"style.opacity"(subject)` is a compile-time-checked, `ref`-returning
-direct access; a typo is a build error. `resolve` parses the same grammar at
-run time and returns a refusal for a bad member, bad index or null pointer
-rather than faulting. The two forms are differentially equal over all
-base-grammar paths the planner emits, and the quoted round-trip is proved in
-the same spike, by
+Every row has one readable, persistable path conforming to the [`sparkles:dql`](../dql/SPEC.md)
+path addressing grammar. The base grammar is `name ( "." name | "[" digits "]" )*`:
+members use `style.opacity`, array elements use `stops[2]`. Erased child names
+are not restricted to D identifiers — a `JsonValue`-shaped subject may hold
+keys containing `.`, `[`, spaces or leading digits — so the grammar adds a
+quoted segment: `["…"]` addresses a child by arbitrary name, with `\"` and
+`\\` escapes. The path emitter uses the bare form exactly when the name is
+identifier-shaped and the quoted form otherwise, so every emitted path
+re-parses to the same segments. `at!"style.opacity"(subject)` is a
+compile-time-checked, `ref`-returning direct access; a typo is a build error.
+`resolve` parses the same grammar at run time and returns a refusal for a bad
+member, bad index or null pointer rather than faulting. The two forms are
+differentially equal over all base-grammar paths the planner emits, and the
+quoted round-trip is proved in the same spike, by
 [`path-addressing.d`](../../research/property-tree/examples/path-addressing.d);
 quoted segments, like keyed ones below, are runtime-resolved only.
 
@@ -243,11 +243,11 @@ vocabulary but is deferred until its semantics are defined — see Deferred.)
 type and emit a compatible `EditValue`; it is not a registry key and cannot
 make an arbitrary opaque value assignable.
 `@ShowIf("kind == FillKind.gradient")` is compiled into a typed `@safe`
-predicate over the enclosing value and evaluated on every rebuild. Bad member
-names or incompatible custom editors are build errors, shown by the spike's
-negative-compile probes (C27). The complete dispatch, including the opaque
-escape and value-dependent predicate, is proved by
-[`leaf-dispatch.d`](../../research/property-tree/examples/leaf-dispatch.d).
+[`sparkles:dql`](../dql/SPEC.md) predicate over the enclosing value and
+evaluated on every rebuild. Bad member names or incompatible custom editors
+are build errors, shown by the spike's negative-compile probes (C27). The
+complete dispatch, including the opaque escape and value-dependent predicate,
+is proved by [`leaf-dispatch.d`](../../research/property-tree/examples/leaf-dispatch.d).
 
 All surfaces ask one shared `nodeExpandable` projection. It reads a node's
 optional `expandable` capability and falls back to structural
