@@ -35,7 +35,7 @@ revision in comments.
 
 Add `sdl.document` scalar types (`SdlScalarKind`, date-time/zone payloads,
 qualified names, positions/spans) and the canonical scalar emitter from SPEC
-§3.3/§9. Reuse format-neutral integer, float, UTF-8, and Base64 primitives where
+§3.4/§9. Reuse format-neutral integer, float, UTF-8, and Base64 primitives where
 they already exist; add them to `sparkles:base` only when genuinely reusable.
 
 Gate: one test matrix covering every scalar kind, boundary integers, signed
@@ -46,16 +46,25 @@ builds without the parser or typed codec.
 
 ## S2 — Complete lexer
 
-Implement UTF-8/BOM handling, identifiers and keywords, punctuation,
-terminators, all scalar tokens, comments, logical-line continuation, and token
-spans. The lexer is a forward range over borrowed source and returns structured
-`SdlError` values rather than throwing.
+Implement the compile-time `SdlParserConfig`/feature sets and the `sdlFull`,
+`sdlDubCompat`, and `sdlDubRecipe` profiles before the scanner kernels. Add
+UTF-8/BOM handling, identifiers and keywords, punctuation, terminators, all
+scalar tokens, comments, logical-line continuation, and token spans. The lexer
+is a forward range over borrowed source and returns structured `SdlError` values
+rather than throwing. Scalar decoding is deferred until a consumer requests the
+token value; disabled families reject as `unsupportedFeature` without
+instantiating their conversion kernels.
 
-Gate: SPEC §3 lexical conformance tests, malformed escape/suffix/Base64/BOM and
-unterminated-comment cases, CR/LF/CRLF/U+2028/U+2029 location pins, Unicode name
-tests, and differential fixture outcomes against the pinned DUB lexer. A fuzz
-smoke test proves arbitrary bytes either tokenize or return an error without
-crash, hang, or out-of-bounds access.
+Gate: SPEC §3 lexical conformance tests under `sdlFull`; malformed
+escape/suffix/Base64/BOM and unterminated-comment cases;
+CR/LF/CRLF/U+2028/U+2029 location pins; Unicode name tests; and differential
+fixture outcomes under `sdlDubCompat` against the pinned DUB lexer. The
+`sdlDubRecipe` profile parses the pinned DUB recipe snapshot and every in-tree
+`dub.sdl`, while rejecting each disabled scalar family with its whole candidate
+span. Compile-time availability checks and linked-symbol probes prove binary,
+numeric, character, and temporal kernels are absent from a recipe-profile
+artifact. A fuzz smoke test runs each named profile and proves arbitrary bytes
+either tokenize or return an error without crash, hang, or out-of-bounds access.
 
 ## S3 — Parser and ordered arena
 
@@ -65,7 +74,7 @@ and children. Add qualified-name-filtering ranges that retain all repetitions.
 
 Gate: SPEC §4 arena invariants; anonymous-tag and child-block grammar failures;
 duplicate attribute and child preservation; namespace separation; deep nesting
-bounded by `SdlReadOptions.maxDepth`; allocator lifecycle/leak checks; DIP1000
+bounded by `SdlParserConfig.maxDepth`; allocator lifecycle/leak checks; DIP1000
 compile tests preventing views from escaping their document. Representative
 DUB `recipe/sdl.d` fixtures parse into expected semantic snapshots.
 
