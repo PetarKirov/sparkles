@@ -93,6 +93,9 @@ export default withMermaid(
       /\/text-conformance\//,
       /\/libs\/base\/src\//,
       /\/libs\/wired\/bench\//,
+      // wired's vendored-SDL license inventory (linked from the SDL provenance
+      // spec) — a repo file, not a site page.
+      /\/libs\/wired\/THIRD_PARTY_NOTICES$/,
       /\/research\/application-packaging\/grounding\//,
       // The twoslash showcase is a static gallery generated into docs/public/ at
       // build time (docs/scripts/build-twoslash-showcase.sh), not a markdown page.
