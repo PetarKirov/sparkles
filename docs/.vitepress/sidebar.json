@@ -671,6 +671,14 @@
           {
             "text": "ci-stats delivery plan",
             "link": "/specs/ci/stats/PLAN"
+          },
+          {
+            "text": "Task DAG specification",
+            "link": "/specs/ci/task-dag/SPEC"
+          },
+          {
+            "text": "Task DAG delivery plan",
+            "link": "/specs/ci/task-dag/PLAN"
           }
         ]
       },
@@ -1245,6 +1253,20 @@
               {
                 "text": "Delivery Plan",
                 "link": "/specs/wired/expressiveness/PLAN"
+              }
+            ]
+          },
+          {
+            "text": "SDL Backend",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Specification",
+                "link": "/specs/wired/sdl/SPEC"
+              },
+              {
+                "text": "Delivery Plan",
+                "link": "/specs/wired/sdl/PLAN"
               }
             ]
           },
