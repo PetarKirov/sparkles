@@ -60,7 +60,9 @@ import sparkles.wired.sdl :
     SdlAttribute, SdlChild, SdlExtra, SdlTagName, SdlTagNamespace, SdlTagValue,
     SdlDocument, SdlNode, SdlScalar, SdlScalarKind, SdlQualifiedName, SdlSpan,
     SdlDateTime, SdlZonedDateTime, SdlExtras, SdlExtraMember,
-    SdlParseResult, SdlReadOptions, SdlWriteOptions,
+    SdlParseResult, SdlParserConfig, SdlScalarFeatures, SdlSyntaxFeatures,
+    SdlSyntaxCompatibility, sdlFull, sdlDubCompat, sdlDubRecipe,
+    SdlWriteOptions,
     SdlError, SdlErrorCode, SdlErrorStage, SdlString,
     parseSdlDocument, validateSDL, writeSdlDocument,
     fromSDL, writeSDL, toSDL, readSDLFile, writeSDLFile;
@@ -72,10 +74,126 @@ does for JSON. Document-engine names remain available from
 
 ## 3. SDL language accepted
 
-### 3.1 Document grammar
+### 3.1 Compile-time dialects
 
-The parser accepts the complete language represented by DUB's bundled SDLang
-implementation. In compact form:
+SDL is a family of syntax profiles, not one runtime-maximal parser. Parser
+configuration is a compile-time value: every combination specializes the lexer
+and parser, and disabled scalar/syntax kernels are neither instantiated nor
+linked. The semantic token and document types remain profile-independent.
+
+```d
+enum SdlSyntaxCompatibility : ubyte
+{
+    sparkles,
+    dub5efed360,
+}
+
+struct SdlScalarFeatures
+{
+    bool nulls;
+    bool booleans;
+    bool strings;
+    bool characters;
+    bool integers;
+    bool longIntegers;
+    bool floats;
+    bool doubles;
+    bool decimals;
+    bool binary;
+    bool dates;
+    bool dateTimes;
+    bool zonedDateTimes;
+    bool durations;
+}
+
+struct SdlSyntaxFeatures
+{
+    bool rawStrings;
+    bool unicodeIdentifiers;
+    bool unicodeWhitespace;
+    bool unicodeNewlines;
+    bool hashComments;
+    bool slashComments;
+    bool dashComments;
+    bool blockComments;
+    bool continuations;
+    bool semicolonTerminators;
+    bool anonymousTags;
+}
+
+struct SdlParserConfig
+{
+    SdlScalarFeatures scalars;
+    SdlSyntaxFeatures syntax;
+    SdlSyntaxCompatibility compatibility = SdlSyntaxCompatibility.sparkles;
+    bool validateUtf8 = true;
+    uint maxDepth = 1024;
+}
+```
+
+Boolean fields default to `false`: a custom profile opts into every accepted
+feature deliberately, and adding a future feature cannot silently widen an
+existing profile. Shared scanners do not imply accepted scalar kinds. For
+example, a date-time profile may instantiate a digit kernel without accepting a
+standalone integer token.
+
+Three named profiles are normative:
+
+| Profile        | Contract                                                                                                                                                                                       |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sdlFull`      | Every scalar and syntax feature in this specification, with deterministic Sparkles semantics. This is the public default.                                                                      |
+| `sdlDubCompat` | Every feature, with accepted spellings, token boundaries, continuation behavior, and scalar interpretation pinned to DUB's bundled SDLang lexer at `5efed360e1c9342453bc5dd19339c75981526d83`. |
+| `sdlDubRecipe` | The DUB compatibility behavior and complete structural/trivia/string syntax, but only string and boolean scalar values: the types consumed by known `dub.sdl` recipe fields.                   |
+
+`sdlDubRecipe` is intentionally not acceptance-equivalent to DUB's generic SDL
+front end. Pinned DUB constructs a full SDL DOM before ignoring unknown recipe
+tags and attributes, so an extension may contain any scalar. Callers that must
+accept or preserve arbitrary extensions use `sdlDubCompat`; a known-schema
+reader may use `sdlDubRecipe` and reject an extension carrying a disabled scalar.
+
+The profiles retain all structural grammar needed by their contract. In
+particular, `sdlDubRecipe` keeps namespaces, attributes, child blocks, repeated
+tags, regular and raw string spellings, all DUB comment forms, continuations,
+Unicode names/whitespace/newlines, and semicolon terminators. Custom profiles
+may remove those syntax features too.
+
+When the source begins with a recognizable spelling of a disabled scalar
+family, the lexer returns `unsupportedFeature` over the whole candidate span. It
+must not reinterpret the source as shorter identifiers or punctuation. This
+rule both gives deterministic diagnostics and leaves the disabled semantic
+conversion kernel absent. There is no opaque-token fallback in v1.
+
+The compatibility selector governs syntax and scalar interpretation only. All
+profiles retain Sparkles' structured errors, original-source byte spans,
+allocator ownership, and host-independent named-zone representation. In
+particular, a token after a UTF-8 BOM starts at original byte offset 3 even in
+`sdlDubCompat`, rather than reproducing DUB's internally rebased offset 0.
+
+The full profiles resolve the previously ambiguous historical behavior as
+follows:
+
+| Behavior                | `sdlFull`                                                                                                                           | `sdlDubCompat`                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Date-time clock fields  | civil ranges                                                                                                                        | DUB rollover/normalization                                                           |
+| Date-time fractions     | 1-3 decimal digits; `HH:MM.f` means zero seconds plus the fraction                                                                  | pinned DUB millisecond interpretation, including longer fractions                    |
+| Duration fractions      | 1-7 decimal digits (hectonanoseconds)                                                                                               | pinned DUB millisecond interpretation                                                |
+| Duration components     | overflow components normalize; leading `-` negates the whole value                                                                  | same accepted component ranges as pinned DUB                                         |
+| Date/clock input widths | variable, range-checked                                                                                                             | pinned DUB widths                                                                    |
+| Named-zone terminator   | whitespace, newline, `;`, `{`, or `}`                                                                                               | pinned DUB token boundary (whitespace only)                                          |
+| GMT offset              | `GMT[+-]HH[:MM]`, range-checked; malformed `GMT+`/`GMT-` forms are errors                                                           | pinned DUB's Java-compatible forms                                                   |
+| Continuation            | backslash, enabled horizontal trivia/comments, then a required logical newline; repeated continuations require repeated backslashes | pinned DUB behavior, including one backslash consuming multiple blank physical lines |
+
+Named zones remain host-independent in both profiles. `sdlDubCompat` reproduces
+whether DUB accepts and how it lexically interprets a GMT spelling, but it does
+not consult a host time-zone database or replace an unknown spelling with a
+platform-dependent instant.
+
+### 3.2 Document grammar
+
+`sdlDubCompat` accepts the complete language represented by DUB's bundled
+SDLang implementation, subject to the profile-independent error/span/ownership
+rules above. `sdlFull` accepts the deterministic Sparkles dialect. In compact
+form, their shared structural grammar is:
 
 ```text
 document   := terminator* tag* EOF
@@ -100,7 +218,7 @@ characters may additionally be Unicode numeric characters, `-`, `_`, `.`, or
 when used in value position and therefore are not unquoted identifiers there.
 Names are case-sensitive. A qualified name has at most one namespace prefix.
 
-### 3.2 Whitespace, continuation, comments, and encoding
+### 3.3 Whitespace, continuation, comments, and encoding
 
 - Input is UTF-8. A UTF-8 BOM is accepted and excluded from the first token's
   span. UTF-16 and UTF-32 BOMs are rejected.
@@ -116,7 +234,7 @@ Names are case-sensitive. A qualified name has at most one namespace prefix.
   document. Their byte ranges remain covered by surrounding/full source spans
   where applicable, but the canonical writer does not reproduce them.
 
-### 3.3 Scalar syntax and D representation
+### 3.4 Scalar syntax and D representation
 
 `SdlScalar` is a discriminated value. The parser must retain the exact kind in
 the following table rather than converting every scalar through text:
@@ -342,7 +460,8 @@ The stable code set includes at least `invalidUtf8`, `unsupportedBom`,
 `numberOutOfRange`, `invalidBase64`, `invalidDate`, `invalidDateTime`,
 `invalidDuration`, `depthExceeded`, `missingRole`, `duplicateRole`,
 `unexpectedKind`, `valueOutOfRange`, `unknownMember`, `conversionFailed`,
-`checkFailed`, `allocationFailed`, `fileReadFailed`, and `fileWriteFailed`.
+`checkFailed`, `unsupportedFeature`, `allocationFailed`, `fileReadFailed`, and
+`fileWriteFailed`.
 Adding a code is source-compatible; changing the meaning of an existing code or
 collapsing two listed classes into an unstructured message is not.
 
@@ -443,12 +562,6 @@ into newlines. Unknown ignored input cannot satisfy a typed text round-trip;
 ## 11. Reader, writer, and file APIs
 
 ```d
-struct SdlReadOptions
-{
-    bool validateUtf8 = true;
-    uint maxDepth = 1024;
-}
-
 struct SdlWriteOptions
 {
     string indent = "    ";
@@ -456,24 +569,27 @@ struct SdlWriteOptions
 }
 ```
 
-Disabling `validateUtf8` skips a separate validation pass but does not permit
+`SdlParserConfig` is the compile-time value from §3.1. Disabling its
+`validateUtf8` skips a separate validation pass but does not permit
 invalid UTF-8 in identifiers, strings, characters, or source-location scanning;
 encountering invalid input while decoding one of those remains an error.
-`maxDepth == 0` permits root tags but no child block. The parser checks depth
-before allocating a deeper node.
+`config.maxDepth == 0` permits root tags but no child block. The parser checks
+depth before allocating a deeper node.
 
 ```d
 SdlParseResult!Allocator parseSdlDocument(
+    SdlParserConfig config = sdlFull,
+    Allocator = Mallocator,
+)(
     scope const(char)[] text,
     scope const(char)[] sourceName = null,
-    SdlReadOptions options = SdlReadOptions.init,
-    Allocator = Mallocator,
 );
 
 Expected!(void, SdlError) validateSDL(
+    SdlParserConfig config = sdlFull,
+)(
     scope const(char)[] text,
     scope const(char)[] sourceName = null,
-    SdlReadOptions options = SdlReadOptions.init,
 );
 
 Expected!(void, SdlError) writeSdlDocument(Document, Writer)(
@@ -482,7 +598,8 @@ Expected!(void, SdlError) writeSdlDocument(Document, Writer)(
     SdlWriteOptions options = SdlWriteOptions.init,
 );
 
-Expected!(T, SdlError) fromSDL(T)(scope const(char)[] text);
+Expected!(T, SdlError) fromSDL(T,
+    SdlParserConfig config = sdlParserConfigFor!T)(scope const(char)[] text);
 Expected!(T, SdlError) fromSDL(T)(return scope SdlNode node);
 Expected!(void, SdlError) writeSDL(T, Writer)(scope const ref T value, ref Writer writer);
 Expected!(SdlString, SdlError) toSDL(T)(scope const ref T value);
@@ -510,7 +627,7 @@ removes the temporary file where the platform permits.
 
 ## 12. Compatibility, provenance, and licensing
 
-The syntax and conformance baseline is DUB's bundled SDLang code under
+The syntax and conformance baseline for `sdlDubCompat` is DUB's bundled SDLang code under
 `source/dub/internal/sdlang/`, especially `lexer.d`, `parser.d`, `token.d`, and
 `ast.d`. DUB's `source/dub/recipe/sdl.d` supplies real-world evidence for
 namespaces, repeated tags, positional values, attributes, nested tags, and
@@ -521,8 +638,12 @@ source locations, and format-neutral node boundaries.
 Those sources are evidence, not the target architecture. This backend uses
 `Expected`, an ordered flat arena, borrowed views, the shared wired schema, and
 no throwing class DOM. Compatibility means accepting the same valid SDL
-language and preserving its semantic distinctions; it does not mean matching
-DUB's internal classes or exact exception strings.
+language for enabled features and preserving its semantic distinctions; it does
+not mean matching DUB's internal classes, source-coordinate rebasing, host
+time-zone lookup, or exact exception strings. SDLite at
+`b33048bf2d0c6b5df1b3b4b18e6cd83cb2f7aa81` supplies comparative evidence for
+the borrowed forward-range and deferred-scalar architecture, but its accepted
+language is not a conformance oracle.
 
 DUB is MIT-licensed. Any source or test substantially ported from DUB must keep
 the applicable MIT copyright and permission notice in the destination file or
