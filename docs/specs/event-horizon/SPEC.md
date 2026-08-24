@@ -157,6 +157,7 @@ _Loop-side_ modules may import anything.
 | `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                            |
 | `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
 | `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                |
+| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8); target M19                                                |
 | `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
 | `package`                | —            | public re-exports                                                                                                                    |
 
@@ -1424,13 +1425,22 @@ double; the spawn machinery (`ChildProcess`, `spawnProcess`, `spawnPty`,
 `wait`) and the `RingProc` handler are loop-side in `live` (all re-exported
 by `package`, so consumer spellings do not change).
 
+**Delivery status.** §§13.1–13.4 describe the shipped M15 POSIX baseline.
+Today it is publicly re-exported and tested on Linux; kqueue has a shipped
+`EVFILT_PROC` reap lowering, but the process modules are not yet exported or
+covered by the package test suite on macOS. Windows has no process surface:
+its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.9
+are the approved M19 target needed to move `apps/ci` off
+`sparkles.core_cli.process_utils`; they are normative targets, not claims about
+the current implementation.
+
 The design premise, taken from what `apps/hue`
 actually runs: **background work in this repository is subprocess-shaped**
 (`git status`, `git diff`, a resident twoslash oracle, an LLM agent, a PTY
 child). A spawned child's pipes are ordinary descriptors the ring already
 knows how to read — so once spawning is right, "async background work" is
-plain fiber I/O with no second scheduler, no worker threads, and no
-polling. (`apps/hue`'s thread-backed `GitStatusCache`, and the nested
+plain fiber I/O with no second application scheduler, no per-process worker,
+and no polling. (`apps/hue`'s thread-backed `GitStatusCache`, and the nested
 150 ms wait loop it forces on the TUI, are the anti-pattern this section
 replaces.)
 
@@ -1462,8 +1472,16 @@ struct ProcessConfig
     StdioSpec stdoutSpec = StdioSpec(StdioMode.pipe);
     StdioSpec stderrSpec = StdioSpec(StdioMode.inherit);
     const(char[])[] env = null;   /// null = inherit; entries are "KEY=value"
+    const(EnvironmentChange)[] envOverlay; /// target M19: environment edits
     const(char)[] cwd = null;     /// null = inherit
     bool newProcessGroup = false; /// setpgid(0, 0) in the child (kill the tree)
+}
+
+struct EnvironmentChange
+{
+    const(char)[] name;       /// non-empty; must not contain '=' or NUL
+    const(char)[] value;      /// ignored when unset; must not contain NUL
+    bool unset;               /// remove name instead of assigning value
 }
 ```
 
@@ -1471,6 +1489,15 @@ Spawning is `posix_spawnp` (PATH-searched), never `fork` — a fiber stack is
 the worst possible place for a fork. The argv/env staging buffer grows on
 the heap (the M7 4 KiB static budget and its `E2BIG` are gone); spawn is a
 setup-phase operation and may allocate.
+
+The shipped `env` field is a complete replacement when non-null. M19 adds
+`envOverlay`: start with `env` when non-null, otherwise the inherited
+environment, then apply changes in order (last change for a name wins; `unset`
+removes it). Name matching is byte-exact on POSIX and case-insensitive on
+Windows. An invalid name/value fails spawn before a child exists. PATH lookup
+uses the resulting environment. This overlay rule is shared by low-level spawn
+and supervised runs; callers do not need to snapshot and rebuild the parent
+environment to set one variable.
 
 ### 13.2 The child handle
 
@@ -1528,11 +1555,12 @@ IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
     scope const(ubyte)[] stdinBytes = null);
 ```
 
-Portability: the `WAITID` lowering is io_uring's today. The kqueue backend
-maps child exit onto `EVFILT_PROC`/`NOTE_EXIT` (M10 refinement, planned in
-M15); IOCP waits on the process handle via the wait-packet path (M11
-refinement). The `OpWaitid` descriptor is already portable-shaped — peer
-backends implement it without API change.
+Portability as shipped: io_uring lowers `OpWaitid` to `WAITID`; kqueue lowers
+it to `EVFILT_PROC`/`NOTE_EXIT` and closes the register-vs-exit race with a
+`waitpid(WNOHANG)` back-check. The kqueue lowering is not yet reachable through
+the public package import. IOCP process waits are an M19 target (§13.9). The
+descriptor is portable-shaped; peer backends implement it without changing
+the fiber-level wait contract.
 
 ### 13.3 PTY spawning
 
@@ -1574,6 +1602,211 @@ joins `Env` (§11: `Env = CtxOf!(RingClock, RingNet, RingProc)`). `SimProc`
 double: scripted per-command stdout bytes and exit statuses, with no
 process and no ring — the double that makes an application's "run git,
 parse, decide" path a unit test.
+
+### 13.5 Supervised runs (target M19)
+
+The application-facing operation is one ownership boundary around spawn,
+stdin, output, timeout/cancellation, sampling, drain, and reap:
+
+```d
+enum ProcessStream : ubyte { stdout_, stderr_ }
+enum ProcessEventKind : ubyte { line, sample, exited }
+enum ProcessEnd : ubyte { exited, timedOut, cancelled, spawnFailed }
+
+struct ProcessLine
+{
+    ProcessStream stream;
+    const(ubyte)[] bytes; /// callback-borrowed; line terminator excluded
+    bool terminated;      /// false only for the final EOF fragment
+}
+
+struct ProcessResourceUsage
+{
+    size_t peakRssBytes, peakProcesses, sampleCount;
+    Duration wallTime, userTime, systemTime;
+    bool sampled;         /// false when the host has no tree sampler
+}
+
+struct ProcessEvent
+{
+    ProcessEventKind kind;
+    ProcessLine line;             /// valid for line
+    ProcessResourceUsage usage;   /// valid for sample
+    ExitStatus status;            /// valid for exited
+    ProcessEnd end;               /// valid for exited
+}
+
+struct SupervisedProcessConfig
+{
+    ProcessConfig process;
+    Duration timeout = Duration.zero;      /// zero = no deadline
+    Duration terminateGrace = 5.seconds;
+    Duration sampleInterval = 250.msecs;   /// zero = final accounting only
+    bool collectOutput = true;
+}
+
+struct SupervisedProcessResult
+{
+    ProcessEnd end;
+    ExitStatus status;             /// valid once a child existed and was reaped
+    ProcessResourceUsage usage;
+    SmallBuffer!(ubyte, 256) stdout_;
+    SmallBuffer!(ubyte, 256) stderr_;
+    IoError spawnError;             /// valid only for spawnFailed
+}
+
+alias ProcessEventSink = void delegate(in ProcessEvent event);
+
+IoResult!SupervisedProcessResult supervise(ref Sched s,
+    scope const(char[])[] argv,
+    in SupervisedProcessConfig cfg = SupervisedProcessConfig(),
+    scope const(ubyte)[] stdinBytes = null,
+    scope ProcessEventSink onEvent = null);
+```
+
+`supervise` is a structured operation: it does not return while a child, pipe
+operation, process wait, timer, sample, or blocking-pool job owned by the run is
+live. Stdout and stderr are separate byte streams even when events interleave;
+`mergeStdout` is the explicit exception and reports all merged lines as
+`stdout_`. `collectOutput` controls accumulation only, never draining or event
+delivery. Spawn failure creates no child, emits no `exited` event, and is
+reported as `spawnFailed` plus `spawnError`; non-zero child exit is data, not an
+`IoError`.
+
+The event sink runs synchronously on the supervising scheduler fiber and must
+not retain `ProcessLine.bytes`; it may copy them. Exactly one `exited` event is
+the final event for a child that was created; it is emitted only after both
+streams reached EOF and the child was reaped, even when the OS reported exit
+earlier. No callback runs after `supervise` returns. `SimProc` gains a scripted
+event/sample path so application policy remains testable without a host process.
+Scope cancellation remains latched on the fiber (§8.4); supervision delays its
+delivery only long enough to complete cleanup and publish the final event.
+
+### 13.6 Line framing and stream ordering (target M19)
+
+Each pipe has an independent incremental framer over arbitrary bytes. `LF`
+ends a line; one immediately preceding `CR` is removed, so LF and CRLF produce
+the same payload. Embedded NUL and invalid UTF-8 are preserved. Empty lines are
+events. EOF emits one final event with `terminated == false` iff bytes remain;
+EOF immediately after a terminator emits nothing extra. A read may contain
+many lines and a line may span many reads; kernel chunking is never observable
+as line boundaries.
+
+Order is preserved within each stream. There is no invented total order
+between separate stdout and stderr pipes: events are delivered in completion
+order. Callers requiring one kernel stream and one total order select
+`mergeStdout`. Framing storage grows for a long line subject to the run's
+allocator/OOM policy; it never truncates silently. The final collected buffers
+contain the exact raw bytes, including original terminators, independently of
+the normalized line events.
+
+### 13.7 Timeout, cancellation, drain, and reap (target M19)
+
+Timeout and scope cancellation use one idempotent state machine:
+
+```text
+running -> termRequested -> grace -> killRequested -> exited -> drained -> reaped
+       \-------------------------------------------> exited -> drained -> reaped
+```
+
+The first timeout/cancel trigger wins the reported `ProcessEnd`; later triggers
+only advance cleanup. The supervisor closes its stdin writer, sends the
+graceful termination request to the supervised tree, and arms one monotonic
+grace timer. Natural exit during grace suppresses the hard kill. Expiry sends
+the hard-kill request once. POSIX maps these stages to `SIGTERM` then `SIGKILL`
+against a fresh process group; `supervise` creates that group regardless of the
+low-level `newProcessGroup` default. Windows maps them as specified in §13.9.
+
+Termination never abandons output. Both output pipes drain concurrently to EOF,
+the process wait completes, and the OS status is consumed exactly once before
+return. Exit-before-EOF and EOF-before-exit are both valid; neither alone ends
+the run. All paths, including event-sink failure represented by surrounding
+scope cancellation, converge on the same cleanup. A `ChildProcess`/supervisor
+state transition atomically consumes the reap right; a second `wait`, drain, or
+termination request is an idempotent no-op where cleanup calls need it, or
+`ECHILD`/`ESRCH` on the explicit low-level API. PID/handle reuse can never make
+a stale operation target another process.
+
+### 13.8 Resource samples and scheduler-integrated blocking work (target M19)
+
+Samples cover the supervised process tree, not only the root. They report peak
+summed RSS, peak live-process count, elapsed wall time, and best-effort
+user/system CPU. Linux samples `/proc`; Darwin uses `proc_pid_rusage` plus
+`proc_listchildpids`; Windows queries the Job Object (§13.9). A sample is taken
+before checking exit so a just-exited root remains observable. `sample` events
+carry cumulative values. Final usage is always emitted in the result;
+`wallTime` is always valid, while unsupported counters leave `sampled == false`
+rather than fabricating zero-valued measurements.
+At most one sample operation is in flight per run. If sampling takes longer than
+its interval, missed instants coalesce into the next cumulative sample rather
+than queuing stale tree walks.
+
+Operations that cannot be represented by the platform completion backend run
+on `BlockingPool`, a bounded scheduler service distinct from `RawCpuPool` and
+`WorkStealingPool`. Submission parks the calling fiber, a persistent DRuntime
+worker performs the blocking host call, and completion enters the owner loop
+through its thread-safe completed queue plus `Waker`. Queue saturation returns
+`EAGAIN`; it never runs blocking work inline on the loop thread. Cancellation
+detaches policy from execution but does not free the job context: the worker's
+terminal completion is still drained before the scope can exit. Pool shutdown
+rejects new jobs, joins workers, and dispatches every accepted completion
+exactly once. POSIX spawn portability helpers, Darwin sampling calls, and any
+fallback process wait may use this pool; no path introduces `Thread.sleep`, a
+polling wait, or a second application scheduler.
+
+```d
+alias BlockingCall = void function(void* context) nothrow;
+
+struct BlockingPool
+{
+    @disable this(this);
+    static IoResult!void create(out BlockingPool pool,
+        uint workers = 0, uint queueCapacity = 64);
+    IoResult!void run(ref Sched s, BlockingCall call, void* context);
+    IoResult!void shutdown();
+}
+```
+
+The call writes its typed result into caller-owned `context`; `run` returns only
+after its completion, including when cancellation arrived meanwhile. The
+parked frame therefore remains the ordinary lifetime proof. `Sched` owns or is
+bound to one pool rather than constructing a pool per operation.
+
+### 13.9 Windows lowering (target M19)
+
+Windows process parity is native Win32, not a POSIX emulation:
+
+- spawn uses `CreateProcessW`; argv is encoded with the documented
+  `CommandLineToArgvW` inverse quoting rules, strings/cwd are UTF-16, and the
+  double-NUL environment block is case-insensitively sorted after applying
+  §13.1's overlay;
+- the child is created suspended, assigned to a per-run Job Object, then
+  resumed, so descendants cannot escape between creation and supervision;
+  inability to assign the requested job fails spawn and terminates/reaps the
+  suspended child;
+- piped streams use uniquely named pipes whose parent ends are opened with
+  `FILE_FLAG_OVERLAPPED` and associated with the scheduler's IOCP. Child ends
+  alone are inheritable; `STARTUPINFOEXW` plus a handle list prevents accidental
+  inheritance. `ReadFile`/`WriteFile` completions use the ordinary op-slot
+  lifetime rule (§4.3), including `CancelIoEx` terminal completion;
+- process exit uses one `RegisterWaitForSingleObject` registration. Its callback
+  posts the wait result to IOCP; unregister and process/thread-handle closure
+  happen only after that completion is consumed. The process exit code is read
+  once and represented as `ExitStatus(signaled: false, code: value)`;
+- the Job Object has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. `newProcessGroup`
+  additionally requests `CREATE_NEW_PROCESS_GROUP`; graceful termination sends
+  `CTRL_BREAK_EVENT` when the child has a compatible console group. If no
+  console control channel exists, the graceful stage records that no soft
+  signal was deliverable and still observes the configured grace. Hard kill is
+  `TerminateJobObject`, covering the whole descendant tree;
+- sampling uses `QueryInformationJobObject` accounting and process/memory
+  classes. If Job Object accounting is unavailable, the sample has
+  `sampled == false`; wall time remains valid.
+
+There are no anonymous blocking pipes, polling `PeekNamedPipe`, helper wait
+loops, or per-process threads in the Windows path. IOCP remains the single I/O
+wait. This Windows work does not alter Linux backend selection: Linux continues
+to require `io_uring` with no epoll fallback (§3.4).
 
 ## 14. Channels
 
@@ -1736,8 +1969,8 @@ backend over [mheily/libkqueue](https://github.com/mheily/libkqueue)**
 (an epoll shim the APK links statically) as its `DefaultBackend` — the
 same backend + shim combination Linux CI exercises via
 `EventHorizonLibkqueue`. The loop, scheduler, waker (eventfd), timers,
-poll, signalfd, and inotify all run; only the `WAITID`-backed proc reap
-waits on the O26 lowerings, like the other peer backends.
+poll, signalfd, and inotify all run; proc reap uses kqueue's shipped
+`EVFILT_PROC` lowering (§13.2).
 
 **Degradation.** Loop creation can still fail where a UI must run (an
 unforeseen sandbox, a broken shim). UI adapters therefore keep their
@@ -1749,21 +1982,22 @@ silent behavioral fork.
 
 Re-exported from `sparkles.event_horizon` (`package.d`):
 
-| Area         | Symbols                                                                                                                                                                                                                                                    |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Errors       | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                    |
-| Causes       | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                  |
-| Tier A       | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
-| Buffers      | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                     |
-| Probing      | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                        |
-| Tier B       | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                 |
-| Subprocesses | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                  |
-| Channels     | `Channel`                                                                                                                                                                                                                                                  |
-| Scopes       | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                            |
-| Capabilities | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                            |
-| Schedules    | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                |
-| Topology     | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                       |
-| Veneer (M12) | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                         |
+| Area                     | Symbols                                                                                                                                                                                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Errors                   | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                    |
+| Causes                   | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                  |
+| Tier A                   | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
+| Buffers                  | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                     |
+| Probing                  | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                        |
+| Tier B                   | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                 |
+| Subprocesses             | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                  |
+| Supervision (M19 target) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool`                                           |
+| Channels                 | `Channel`                                                                                                                                                                                                                                                  |
+| Scopes                   | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                            |
+| Capabilities             | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                            |
+| Schedules                | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                |
+| Topology                 | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                       |
+| Veneer (M12)             | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                         |
 
 Memory-management policy (normative): allocating types follow the
 [composable-allocator guidelines](../../guidelines/allocators/index.md) —

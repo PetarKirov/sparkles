@@ -157,6 +157,10 @@ labelled `A[wine]`; optional `windows-latest` CI job.
 
 Gate: the echo example green under Wine.
 
+This milestone shipped socket/timer/waker parity only. It did not ship process
+spawn, process-handle waits, overlapped process pipes, or Job Objects; those are
+M19, and the distinction is normative in SPEC §13.
+
 ## M12 — Monadic veneer (tier C)
 
 `effect.d`: the `Effect!T` pipeline layer monomorphized onto the direct core
@@ -212,12 +216,17 @@ per-stream stdio control with heap-staged argv/env (`spawnProcess` v2),
 and the capability layer — `isProc` (associated-`Child` shape), `RingProc`
 joining `Env`, `SimProc` as the deterministic double. Portability
 refinements ride the backend milestones: kqueue `EVFILT_PROC`/`NOTE_EXIT`
-lowering for `OpWaitid`, IOCP wait-packet reap.
+lowering for `OpWaitid`, plus a planned IOCP reap. M19 supersedes the latter
+with the documented wait-registration contract in SPEC §13.9.
 
 Gate: the `agent-tooling` example upgraded to v2 (stdin round-trip, stderr
 capture, kill, signaled exit); `pty-drain` reaps in-ring via `spawnPty`;
 a `SimProc` unit test drives an app-shaped "run, parse, decide" path with
 no process.
+
+Status clarification: the low-level implementation shipped on POSIX and is
+exported/tested on Linux. kqueue child reap has since shipped, but macOS public
+export and process tests remain M19. IOCP process support did not ship here.
 
 ## M16 — UI-loop substrate
 
@@ -313,3 +322,40 @@ provider's execution backend, with `initDMD` as `childInit` so every format
 inherits initialized frontend globals by CoW. Follow-up (not built): parallel
 grandchild fan-out; dmd-lsp fork-per-analysis (`PRJ13` lifted); the
 live-types oracle.
+
+## M19 — Cross-platform supervised processes for `apps/ci`
+
+Deliver SPEC §§13.5–13.9 as one parity milestone above the shipped M15
+low-level POSIX API:
+
+1. Export `proc`/`live` and the supported process surface under
+   `version (Posix)`, not Linux-only gates; run spawn, separate/merged pipes,
+   environment, cwd, exit, kill, concurrent drain, and exactly-once reap tests
+   against io_uring and kqueue (libkqueue on Linux plus native macOS).
+2. Add inherited-environment overlays and the supervised run/event API:
+   independent stdout/stderr line framing over arbitrary bytes, raw capture,
+   cumulative resource-sample events, and a final exit event.
+3. Add timeout and cancellation teardown: tree-scoped TERM, monotonic grace,
+   KILL, concurrent EOF drain, and one reap on every race/error path.
+4. Add the bounded scheduler-integrated `BlockingPool`; completions wake the
+   owner loop, cancellation retains job storage through terminal completion,
+   and no blocking call or sleep runs on a scheduler thread.
+5. Add native Windows spawning with `CreateProcessW`, UTF-16 argv/environment/
+   cwd staging, restricted handle inheritance, IOCP-associated overlapped named
+   pipes, process-handle wait registration posting to IOCP, and Job Object tree
+   ownership/termination/resource accounting.
+6. Port the process execution layer used by `apps/ci` from
+   `sparkles.core_cli.process_utils` to the supervised surface without changing
+   its user-visible line streaming, timeout status, separate capture, or
+   resource-reporting behavior.
+
+Gate: one behavioral suite runs the same supervision cases on Linux, native
+macOS, and Windows (Wine for bounded smoke plus `windows-latest` for Job Object,
+console-control, and real IOCP semantics). Cases cover environment set/replace/
+unset and PATH lookup; LF/CRLF/split/final-partial/binary lines; stdout/stderr
+ordering and merge; chatty dual streams; natural exit, spawn failure, timeout,
+external cancellation, TERM-exit, grace-expiry KILL, descendants, and every
+exit-vs-EOF race; exactly one exit event/drain/reap; cumulative samples; blocking
+pool saturation/cancel/shutdown. `apps/ci`'s affected commands pass on all three
+hosts. Linux traces contain `io_uring_enter` and no `epoll_*`; Windows traces
+contain IOCP waits and no pipe/process polling loop.
