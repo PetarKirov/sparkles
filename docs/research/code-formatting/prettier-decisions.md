@@ -62,15 +62,16 @@ is folded into the row it serves. Where prettier implements one idea in three pr
 
 ### Legend
 
-| Verdict    | Meaning                                                                        |
-| ---------- | ------------------------------------------------------------------------------ |
-| **Adopt**  | Applies to D; implement it, on by default.                                     |
-| **Adapt**  | The idea transfers, the trigger or shape must change for D.                    |
-| **Opt-in** | A rewrite worth having, shipped **off by default**, with its own verifier.     |
-| **Have**   | dmd-fmt already decides this, the same way or deliberately differently.        |
-| **Oracle** | Reachable only with AST facts the `oracle.d` offset arrays do not yet collect. |
-| **Reject** | Decided against for D.                                                         |
-| **N/A**    | No D construct.                                                                |
+| Verdict     | Meaning                                                                        |
+| ----------- | ------------------------------------------------------------------------------ |
+| **Adopt**   | Applies to D; implement it, on by default.                                     |
+| **Adapt**   | The idea transfers, the trigger or shape must change for D.                    |
+| **Opt-in**  | A rewrite worth having, shipped **off by default**, with its own verifier.     |
+| **Have**    | dmd-fmt already decides this, the same way or deliberately differently.        |
+| **Oracle**  | Reachable only with AST facts the `oracle.d` offset arrays do not yet collect. |
+| **Codemod** | Real, but a [codemod][codemods] rather than a formatter rule — it needs types. |
+| **Reject**  | Decided against for D.                                                         |
+| **N/A**     | No D construct.                                                                |
 
 ---
 
@@ -472,23 +473,23 @@ Rules with no prettier row, because they are D's. This is the section the two-ti
 and it is deliberately a menu of **opt-in** rules with their hazards attached — the hazard is the
 specification of the verifier each one needs.
 
-| #    | Rule                                                                                                                                                                       | Source of the rule       | Verdict    |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ---------- |
-| P146 | **Import grouping**: `core.*`, `std.*`, external, other sub-packages, same sub-package — one blank line between groups                                                     | [code style][code-style] | **Opt-in** |
-| P147 | **Import sorting**: lexicographic within a group, and the selective symbol list sorted too (`import a : b, c;`)                                                            | [DStyle][dstyle]         | **Opt-in** |
-| P148 | **Declaration ordering**: public API before implementation details, topologically within                                                                                   | [code style][code-style] | **Opt-in** |
-| P149 | **Test adjacency**: a `unittest` moves to directly follow the declaration it exercises                                                                                     | [code style][code-style] | **Opt-in** |
-| P150 | **Attribute ordering**: alphabetical ignoring the `@` — `const @nogc nothrow pure @safe`                                                                                   | [DStyle][dstyle]         | **Opt-in** |
-| P151 | **Legacy `alias` retirement**: `alias Y X;` → `alias X = Y;`                                                                                                               | [DStyle][dstyle]         | **Opt-in** |
-| P152 | **Shortened function bodies** (DIP1043): a body that is one `return` becomes `=> expr;`                                                                                    | [code style][code-style] | **Opt-in** |
-| P153 | **Expression contracts** (DIP1009): an `in`/`out` block holding exactly one `assert` becomes `in (…)` / `out (r; …)`, and the `do` goes away                               | [DStyle][dstyle]         | **Opt-in** |
-| P154 | **Literal-form selection**: pick the spelling that needs no escapes — `` `…` `` for text with `"`, `q"ID…ID"` for blocks, `q{…}` for D code inside `mixin(…)`              | [code style][code-style] | **Opt-in** |
-| P155 | **`format("%s %s", a, b)` → `i"$(a) $(b)"`**                                                                                                                               | this survey              | **Reject** |
-| P156 | **DStyle spacing**: space after `if`/`foreach`/`while`/`version`, around binary operators and slice `..`, after `cast(T)`; none after unary operators, `assert`, or a call | [DStyle][dstyle]         | **Oracle** |
-| P157 | **Constraint and contract indentation**: `if (…)`, `in`, `out` sit at their declaration's indentation level, not one deeper                                                | [DStyle][dstyle]         | **Adopt**  |
-| P158 | **Field de-alignment**: exactly one space between a field's type and its name in an aggregate                                                                              | [DStyle][dstyle]         | **Opt-in** |
-| P159 | **Dead-semicolon removal**: `struct S { };` → `struct S { }`, the declaration-level half of P35                                                                            | this survey              | **Adopt**  |
-| P160 | **Template-argument simplification**: `f!(T)` → `f!T` when the argument is a single token                                                                                  | this survey              | **Opt-in** |
+| #    | Rule                                                                                                                                                                       | Source of the rule       | Verdict     |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------- |
+| P146 | **Import grouping**: `core.*`, `std.*`, external, other sub-packages, same sub-package — one blank line between groups                                                     | [code style][code-style] | **Opt-in**  |
+| P147 | **Import sorting**: lexicographic within a group, and the selective symbol list sorted too (`import a : b, c;`)                                                            | [DStyle][dstyle]         | **Opt-in**  |
+| P148 | **Declaration ordering**: public API before implementation details, topologically within                                                                                   | [code style][code-style] | **Opt-in**  |
+| P149 | **Test adjacency**: a `unittest` moves to directly follow the declaration it exercises                                                                                     | [code style][code-style] | **Opt-in**  |
+| P150 | **Attribute ordering**: alphabetical ignoring the `@` — `const @nogc nothrow pure @safe`                                                                                   | [DStyle][dstyle]         | **Opt-in**  |
+| P151 | **Legacy `alias` retirement**: `alias Y X;` → `alias X = Y;`                                                                                                               | [DStyle][dstyle]         | **Opt-in**  |
+| P152 | **Shortened function bodies** (DIP1043): a body that is one `return` becomes `=> expr;`                                                                                    | [code style][code-style] | **Opt-in**  |
+| P153 | **Expression contracts** (DIP1009): an `in`/`out` block holding exactly one `assert` becomes `in (…)` / `out (r; …)`, and the `do` goes away                               | [DStyle][dstyle]         | **Opt-in**  |
+| P154 | **Literal-form selection**: pick the spelling that needs no escapes — `` `…` `` for text with `"`, `q"ID…ID"` for blocks, `q{…}` for D code inside `mixin(…)`              | [code style][code-style] | **Opt-in**  |
+| P155 | **`format("%s %s", a, b)` → `i"$(a) $(b)"`** — reclassified: a **codemod**, not a formatter rule ([roadmap][codemods] C2)                                                  | this survey              | **Codemod** |
+| P156 | **DStyle spacing**: space after `if`/`foreach`/`while`/`version`, around binary operators and slice `..`, after `cast(T)`; none after unary operators, `assert`, or a call | [DStyle][dstyle]         | **Oracle**  |
+| P157 | **Constraint and contract indentation**: `if (…)`, `in`, `out` sit at their declaration's indentation level, not one deeper                                                | [DStyle][dstyle]         | **Adopt**   |
+| P158 | **Field alignment**: the space between a field's type and its name in an aggregate — configurable, DStyle's one space as the default                                       | [DStyle][dstyle]         | **Adopt**   |
+| P159 | **Dead-semicolon removal**: `struct S { };` → `struct S { }`, the declaration-level half of P35                                                                            | this survey              | **Adopt**   |
+| P160 | **Template-argument simplification**: `f!(T)` → `f!T` when the argument is a single token                                                                                  | this survey              | **Opt-in**  |
 
 ### The hazards, which are the verifier specifications
 
@@ -520,31 +521,38 @@ specification of the verifier each one needs.
   respelling: `q{…}` is **lexed** by the compiler, so moving text into it can turn a passing build
   into a failing one (an unbalanced brace inside a comment, say) — which is a feature when the
   content really is D code and a bug otherwise, so restrict it to `mixin(…)` arguments.
-- **P155 is not a formatting rule and should not be one.** `format(…)` returns a `string`; an IES
-  literal is a compile-time _sequence_ that deliberately does not convert to `string`. The rewrite
-  therefore only type-checks where the callee accepts IES (`writeln`, an IES-aware overload) and
-  changes the expression's type everywhere else. It is a good **lint with a fix**, offered per site
-  with the type checked — which is `sparkles:dmd-lsp`'s job, not the formatter's.
+- **P155 is a codemod, and that is a place rather than a rejection.** `format(…)` returns a
+  `string`; an IES literal is a compile-time _sequence_ that deliberately does not convert to one.
+  The rewrite therefore only type-checks where the callee accepts IES (`writeln`, an IES-aware
+  overload), so no syntactic argument establishes its safety — which is exactly the line
+  [the codemod roadmap][codemods] draws between the two tools, and P155 is its C2 opener, applied
+  per site with the callee's signature checked. The general test: **a formatter rewrite is safe by
+  decoding; a codemod is safe only by typing.**
 - **P156 is the largest single gap between dmd-fmt and DStyle**, and the one users will notice
   first: v1 preserves `a+b` because it has no opinion on spacing, while DStyle mandates `a + b`.
   It is gated on the same unary-vs-binary question as P82/P83 and P116 — which is the argument for
   paying that cost once, deliberately, rather than three times by accident.
-- **P158 contradicts a rule dmd-fmt already implements**: M4 preserves author alignment (aligned
-  table literals stay aligned), while DStyle asks for exactly one space between a field's type and
-  its name, explicitly to keep diffs small. Both positions are defensible and they cannot both be
-  the default; recording the conflict is more useful than silently resolving it. The narrow reading
-  — de-align _aggregate field declarations_, keep alignment inside array/table literals — is
-  probably right, and is what the option should mean.
+- **P158 is an option with three positions, not a yes/no.** M4 preserves author alignment (aligned
+  table literals stay aligned); DStyle asks for exactly one space between a field's type and its
+  name, explicitly to keep diffs small. Both are defensible, so the key takes a value: `dstyle`
+  (the default — collapse aggregate field padding to one space), `preserve` (today's M4 behaviour),
+  and `align` (**enforce** column alignment across a run of field declarations, creating it where
+  the author did not). The third position is the one no surveyed formatter offers as a first-class
+  option and that users of every formatter keep asking for; it is a column solver over a contiguous
+  declaration run, and the repo already owns one
+  (`libs/ui/src/sparkles/ui/components/table/layout.d`). The scope is the same under all three
+  values: **aggregate field declarations only** — alignment inside array and table literals stays
+  the author's.
 
 ---
 
 ## What the extraction says
 
-160 rows: **63 Adopt · 47 Adapt · 17 Opt-in · 17 Have · 7 N/A · 6 Reject · 3 Oracle.**
+160 rows: **64 Adopt · 47 Adapt · 17 Have · 16 Opt-in · 7 N/A · 5 Reject · 3 Oracle · 1 Codemod.**
 
 **1. The scope change moved the bottleneck from _permission_ to _proof_.** Under the old reading,
-19 rows were excluded because they touched tokens. Under the two-tier scope only 6 are rejected on
-their merits, and the constraint that replaced the blanket exclusion is sharper and more useful:
+19 rows were excluded because they touched tokens. Under the two-tier scope only 5 are rejected on
+their merits and 1 is reclassified as a [codemod][codemods], and the constraint that replaced the blanket exclusion is sharper and more useful:
 tier-3 token equality cannot verify a rewrite, so each opt-in rule needs its own check. Ranked by
 how cheap that check is: **P154** (decode both spellings, compare code units — total, not
 heuristic) · **P151/P152/P153/P159/P160** (syntactic, local, mechanically checkable) ·
@@ -622,15 +630,21 @@ named in §J:
    expression contracts, `!T`).
 4. **P146 + P147** — import grouping and sorting, with the scope-boundary check.
 5. **P150** — attribute ordering, restricted to the commuting set.
-6. **P158** — field de-alignment, once the conflict with M4's alignment preservation is decided.
+6. **P158** — field alignment as a three-valued key (`dstyle` default, `preserve`, `align`).
 7. **P116 + P156** — parenthesis normalization and DStyle spacing, after the precedence oracle
    exists. These two justify that investment between them.
 8. **P148 + P149** — declaration ordering and test adjacency, last, and never for aggregate fields.
 
 Deferred with reasons: P60–P66 (needs argument boundaries from the oracle), P82/P83 (needs
-precedence — same gate as item 7 above), P68/P69/P155 (inadmissible), P111–P113 (number and regex
-spelling carries author intent D cannot recover), P17 (already the policy, not a decision to
-re-take).
+precedence — same gate as item 7 above), P68/P69 (inadmissible — hardcoded library names),
+P111–P113 (number and regex spelling carries author intent D cannot recover), P17 (already the
+policy, not a decision to re-take). Moved rather than deferred: P155, to
+[the codemod roadmap][codemods].
+
+**How this list gets executed and published** is [the testing spec][testing-spec]: every decision
+above needs a `.cases` fixture, every configurable one needs a fixture per value, and the published
+per-decision documentation is generated from those fixtures so a documented example is by
+construction the formatter's actual output.
 
 ---
 
@@ -705,6 +719,8 @@ re-take).
 [dfmt]: ./dfmt.md
 [proposal]: ./dmd-fmt-proposal.md
 [dmd-fmt-spec]: ../../specs/dmd-fmt/index.md
+[codemods]: ../../specs/dmd-fmt/codemods.md
+[testing-spec]: ../../specs/dmd-fmt/testing.md
 [dstyle]: ../../guidelines/dstyle.md
 [code-style]: ../../guidelines/code-style.md
 [ies]: ../../guidelines/interpolated-expression-sequences.md
