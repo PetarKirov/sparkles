@@ -246,6 +246,156 @@ if (is(E == enum))
     return parseOk(best);
 }
 
+/**
+Reads a quoted string literal (backticks `` `...` ``, double quotes `"..."`, or single quotes `'...'`)
+from the front of `s`, writing unescaped characters into output range `w` and advancing `s` past the literal.
+
+Backtick raw strings undergo no escape processing. Double and single quotes decode standard escape
+sequences (`\"`, `\'`, `\\`, `\/`, `\n`, `\r`, `\t`, `\b`, `\f`, `\0`, `\xHH`, `\uXXXX`).
+
+Returns `ParseExpected!size_t` reporting the number of characters written, or a `ParseError` on unterminated
+quotes or invalid escape sequences.
+*/
+ParseExpected!size_t readQuotedString(Writer)(ref scope const(char)[] s, ref Writer w)
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.utf : encodeUtf8;
+
+    if (s.length == 0)
+        return parseErr!size_t(ParseErrorCode.emptyInput, 0);
+
+    const char quote = s[0];
+    if (quote != '\"' && quote != '\'' && quote != '`')
+        return parseErr!size_t(ParseErrorCode.unexpectedCharacter, 0);
+
+    size_t written = 0;
+    size_t i = 1;
+
+    if (quote == '`')
+    {
+        // Raw backtick string
+        while (i < s.length && s[i] != '`')
+        {
+            put(w, s[i]);
+            written++;
+            i++;
+        }
+        if (i >= s.length)
+            return parseErr!size_t(ParseErrorCode.unexpectedEnd, i);
+        i++; // skip closing quote
+        s = s[i .. $];
+        return parseOk(written);
+    }
+
+    // Escaped string (' or ")
+    while (i < s.length)
+    {
+        const c = s[i];
+        if (c == quote)
+        {
+            i++; // skip closing quote
+            s = s[i .. $];
+            return parseOk(written);
+        }
+
+        if (c == '\\')
+        {
+            if (i + 1 >= s.length)
+                return parseErr!size_t(ParseErrorCode.unexpectedEnd, i);
+
+            i++;
+            const esc = s[i];
+            switch (esc)
+            {
+                case '"':  put(w, '"');  written++; i++; break;
+                case '\'': put(w, '\''); written++; i++; break;
+                case '\\': put(w, '\\'); written++; i++; break;
+                case '/':  put(w, '/');  written++; i++; break;
+                case 'b':  put(w, '\b'); written++; i++; break;
+                case 'f':  put(w, '\f'); written++; i++; break;
+                case 'n':  put(w, '\n'); written++; i++; break;
+                case 'r':  put(w, '\r'); written++; i++; break;
+                case 't':  put(w, '\t'); written++; i++; break;
+                case '0':  put(w, '\0'); written++; i++; break;
+                case 'x':
+                    if (i + 2 >= s.length || !isHexDigit(s[i + 1]) || !isHexDigit(s[i + 2]))
+                        return parseErr!size_t(ParseErrorCode.invalidEscape, i - 1);
+                    const b = cast(char)((hexNibble(s[i + 1]) << 4) | hexNibble(s[i + 2]));
+                    put(w, b);
+                    written++;
+                    i += 3;
+                    break;
+                case 'u':
+                    if (i + 4 >= s.length || !isHexDigit(s[i + 1]) || !isHexDigit(s[i + 2]) ||
+                        !isHexDigit(s[i + 3]) || !isHexDigit(s[i + 4]))
+                        return parseErr!size_t(ParseErrorCode.invalidEscape, i - 1);
+                    uint cp = (hexNibble(s[i + 1]) << 12) | (hexNibble(s[i + 2]) << 8)
+                        | (hexNibble(s[i + 3]) << 4) | hexNibble(s[i + 4]);
+                    i += 5;
+                    // Check for UTF-16 surrogate pair
+                    if (cp >= 0xD800 && cp <= 0xDBFF)
+                    {
+                        if (i + 5 < s.length && s[i .. i + 2] == `\u` &&
+                            isHexDigit(s[i + 2]) && isHexDigit(s[i + 3]) &&
+                            isHexDigit(s[i + 4]) && isHexDigit(s[i + 5]))
+                        {
+                            uint low = (hexNibble(s[i + 2]) << 12) | (hexNibble(s[i + 3]) << 8)
+                                | (hexNibble(s[i + 4]) << 4) | hexNibble(s[i + 5]);
+                            if (low >= 0xDC00 && low <= 0xDFFF)
+                            {
+                                cp = 0x10000 + (((cp & 0x3FF) << 10) | (low & 0x3FF));
+                                i += 6;
+                            }
+                            else
+                                return parseErr!size_t(ParseErrorCode.invalidSurrogate, i);
+                        }
+                        else
+                            return parseErr!size_t(ParseErrorCode.invalidSurrogate, i);
+                    }
+                    char[4] buf;
+                    const len = encodeUtf8(cast(dchar) cp, buf);
+                    foreach (b; buf[0 .. len])
+                    {
+                        put(w, b);
+                        written++;
+                    }
+                    break;
+                default:
+                    return parseErr!size_t(ParseErrorCode.invalidEscape, i - 1);
+            }
+        }
+        else
+        {
+            put(w, c);
+            written++;
+            i++;
+        }
+    }
+
+    return parseErr!size_t(ParseErrorCode.unexpectedEnd, i);
+}
+
+@("text.readers.readQuotedString")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!char buf;
+    const(char)[] s1 = "`hello world` rest";
+    auto r1 = readQuotedString(s1, buf);
+    assert(r1.hasValue && r1.value == 11);
+    assert(buf[] == "hello world");
+    assert(s1 == " rest");
+
+    buf.clear();
+    const(char)[] s2 = `"hello\n\"world\"\t\x20\u2713" extra`;
+    auto r2 = readQuotedString(s2, buf);
+    assert(r2.hasValue);
+    assert(buf[] == "hello\n\"world\"\t \u2713");
+    assert(s2 == " extra");
+}
+
 @("text.readers.readInteger.advancesOnSuccess")
 @betterC
 unittest
