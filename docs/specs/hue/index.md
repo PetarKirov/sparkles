@@ -174,3 +174,5 @@ its own docs.
 | `apps/hue/src/lantern.d`           | [lantern](./lantern.md) — `LTN1`–`LTN4`, `LTN9`–`LTN12` (the prefix state machine and its wall-clock delay)                                                                |
 | `apps/hue/src/lantern_view.d`      | [lantern](./lantern.md) — `LTN5`–`LTN8`, `LTN14` (the panel as one widget tree, both backends)                                                                             |
 | `apps/hue/tools/capture-modes.d`   | [ui/backends](../ui/backends.md) — `TGT10` (the cross-backend parity harness)                                                                                              |
+| `apps/hue/tools/tui-ab.d`          | [gui](./gui.md) — `DBG*` (the TUI A/B oracle: a terminal frame IS its bytes)                                                                                               |
+| `apps/hue/tools/gui-ab.d`          | [gui](./gui.md) — `DBG1` (the window A/B oracle: two builds' captures compared, each side captured twice so a race cannot read as a difference)                            |
