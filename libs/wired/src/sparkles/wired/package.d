@@ -10,4 +10,5 @@ See `docs/specs/wired/SPEC.md` for the normative specification.
 module sparkles.wired;
 
 public import sparkles.wired.policy;
+public import sparkles.wired.schema;
 public import sparkles.wired.json;
