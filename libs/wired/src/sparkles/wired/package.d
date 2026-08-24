@@ -11,4 +11,5 @@ module sparkles.wired;
 
 public import sparkles.wired.policy;
 public import sparkles.wired.schema;
+public import sparkles.wired.walk;
 public import sparkles.wired.json;

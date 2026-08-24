@@ -125,10 +125,11 @@ hand-written. There is no round-trip predicate or property-test helper.
 **D verdict:** [(b)][tags] — the flat-arena `SchemaNode[]` upgrade is mechanical
 (model: [zio-schema][zio-schema]'s ADT, [facet][facet]'s `Shape`).
 
-### Probe-verified spec divergences
+### Former divergences, resolved by the schema walk
 
-Two places where the hand-written walk silently under-delivers the SPEC, kept
-here as a live regression marker:
+Two places where the hand-written walk silently under-delivered the SPEC,
+fixed by the schema-driven codec walk (the live marker below now asserts the
+SPEC-conformant behavior):
 
 ```d
 #!/usr/bin/env dub
@@ -161,26 +162,23 @@ struct WithStatic
 
 void main()
 {
-    // SPEC §5.2 says the key policy recases AA keys: {"table":{"fast_path":1}}.
+    // SPEC §5.2: the key policy recases AA keys.
     writeln(toJSON(SlotPolicy([Mode.fastPath: 1])).value[]);
 
-    // SPEC §4.3 mandates static-array support; PLAN M4 gates on it.
+    // SPEC §4.3 mandates static-array support.
     writeln("static arrays encode: ", __traits(compiles, toJSON(WithStatic([1, 2, 3]))));
 }
 ```
 
-```[Output]
-{"table":{"fastPath":1}}
-static arrays encode: false
+```ansi
+{"table":{"fast_path":1}}
+static arrays encode: true
 ```
 
-The policy layer resolves `WireTarget.key`/`.value` correctly and its unit
-tests pass (`policy.d:541-574`) — but the codec only consults slot-targeted
-policies for two narrow shapes (`codec.d:699-712`), so AA keys and composed
-wrappers (`Nullable!(E[])`, `E[][]`) fall back to type-level policy: wrong
-output, no error. Static arrays (`T[N]`) are specified with exact-length decode
-(SPEC §4.3) but have no branch in the codec at all. Neither is tracked in
-[open-issues][wired-issues].
+The surveyed baseline's codec consulted slot-targeted policies for only two
+narrow shapes (`codec.d:699-712`), so AA keys fell back to type-level policy,
+and static arrays (`T[N]`) had no codec branch at all. The schema walk resolves
+policies and shapes structurally, so both now conform (SPEC §5.2, §4.3).
 
 ## Naming, optionality & defaults
 

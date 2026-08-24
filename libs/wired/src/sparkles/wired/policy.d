@@ -263,6 +263,12 @@ private template pickAttr(alias sym, alias Attr, F, alias pred)
         enum found = false;
 }
 
+package template hasExplicitWireName(F, alias symbol)
+{
+    enum hasExplicitWireName = pickAttr!(symbol, WireNameAttr, F,
+        (_) => true).found;
+}
+
 /// The broad (`WireTarget.all`) `CaseStyle` of type `T` under format `F`,
 /// preferring an exact-`F` `WireCase` over its `AnyFormat` form, and falling
 /// back to `CaseStyle.original` (§6). Field-level overrides live in
@@ -588,7 +594,7 @@ if (is(S == struct))
 
 /// Recases `ident` under a run-time `style` — the dispatch `convertCase` needs
 /// when the style is a CTFE value rather than a template argument.
-private string convertCaseOf(CaseStyle style, string ident) @safe pure
+package string convertCaseOf(CaseStyle style, string ident) @safe pure
 {
     final switch (style)
     {
@@ -602,7 +608,7 @@ private string convertCaseOf(CaseStyle style, string ident) @safe pure
 
 /// The value-level policy of one aggregate field under a format: everything the
 /// struct walk needs about the field except its (alias-carrying) `@WireConvert`.
-/// Produced by $(LREF fieldPolicies); the slot lattice is finished by
+/// Seeded by `resolvedFieldPolicies`; the slot lattice is finished by
 /// $(LREF caseFor) / $(LREF reprFor) once the slot type's own policy is known.
 struct FieldPolicy
 {
@@ -640,19 +646,19 @@ struct FieldPolicy
     }
 }
 
-/// The per-field policies of aggregate `T` under format `F`, resolved in one
+/// Declaration-only policy seeds for aggregate `T` under format `F`, resolved in one
 /// compile-time pass: one entry per field of `T.tupleof`, excluding the hidden
 /// context pointer of a nested struct. Exact-`F` attributes win over `AnyFormat`
 /// ones, first-written wins within a tier, and field keys apply an explicit
 /// `@WireName` else the identifier recased by `T`'s aggregate `@WireCase` (§5.1).
-template fieldPolicies(F, T)
+package template resolvedFieldPolicies(F, T)
 if (is(T == struct))
 {
     // `static immutable`, not `enum`: a manifest-constant array is re-copied at
     // every use site (each `fieldPolicies!(F, T)[i]` would re-materialize all N
     // entries in CTFE — O(N²) over a struct walk); this is built once and its
     // reads constant-fold.
-    static immutable FieldPolicy[] fieldPolicies = () {
+    static immutable FieldPolicy[] resolvedFieldPolicies = () {
         // Tier per slot: 0 = unset, 1 = AnyFormat, 2 = exact-F; higher wins,
         // first-written wins within a tier (matching pickAttr's scan order).
         int aggTier = 0;
@@ -776,13 +782,26 @@ if (is(T == struct))
     // §5.5: resolved field keys must be unique under this format.
     private enum dupKey = () {
         string[] keys;
-        foreach (p; fieldPolicies)
+        foreach (p; resolvedFieldPolicies)
             keys ~= p.key;
         return firstDuplicate(keys);
     }();
     static assert(dupKey is null,
         "wired: duplicate field key \"" ~ dupKey ~ "\" for " ~ T.stringof
         ~ " under format " ~ F.stringof);
+}
+
+/** The per-field policy API, projected from the reified schema.
+
+The schema builder consumes $(LREF resolvedFieldPolicies), the declaration-only
+seed, which keeps this projection from recursively instantiating itself.
+*/
+template fieldPolicies(F, T)
+if (is(T == struct))
+{
+    import sparkles.wired.schema : schemaFieldPolicies;
+
+    alias fieldPolicies = schemaFieldPolicies!(F, T);
 }
 
 /// The resolved wire names of `E`'s members under format `F` at case `style`,
