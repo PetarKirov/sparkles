@@ -538,37 +538,6 @@ minimum the seam enforces. `submitAndWait`/`open` are deliberately **not**
 included — nothing requires `run`/`runOnce` to be `@nogc`, and asserting more
 than is promised would block backends for no user-visible gain.
 
-## O26 — Peer-backend child reap: `EVFILT_PROC` and IOCP wait packets
-
-**Where:** SPEC §13.2 (portability paragraph); PLAN M15.
-
-`OpWaitid` is portable-shaped. **The kqueue lowering has since landed**
-(`feat(event-horizon.kqueue): lower OpWaitid onto EVFILT_PROC`); IOCP is still
-outstanding. The sharp edges each lowering carries:
-
-- **kqueue `EVFILT_PROC`/`NOTE_EXIT`** delivers the exit status in `data`,
-  but registering the filter races the exit: a child that dies before
-  `kevent` registration returns `ESRCH`, so the lowering needs a
-  register-then-`waitpid(WNOHANG)` back-check to close the window. Under
-  libkqueue on Linux the filter is emulated via pidfd — semantics to
-  verify, not assume. _(Shipped with the back-check; this is the same
-  mechanism `DISPATCH_SOURCE_TYPE_PROC` uses — see the
-  [GCD survey](../../research/async-io/gcd/index.md).)_
-- **IOCP** has no process-completion primitive; the options are a
-  wait-packet (`NtAssociateWaitCompletionPacket`, undocumented-ish but
-  what modern runtimes use) vs a thread-pool `RegisterWaitForSingleObject`
-  bounce. Job objects enter only if `killGroup` is to mean anything on
-  Windows.
-
-**Options:** (A) implement both lowerings in M15 to the semantics above;
-(B) keep peer-platform reap on a helper-thread `waitpid`/`WaitForSingleObject`
-bounce feeding the backend's completed queue (the kqueue worker-pool
-pattern) until the native paths are proven.
-
-**Leaning:** (B) as the correctness baseline shipped with M15, with (A) as
-per-backend refinements — the API is identical either way, and the bounce
-is exactly how the kqueue backend already handles regular files.
-
 ## O27 — kqueue pays a syscall per submit; batch the change list into the wait
 
 **Landed.** Option (B). Normative contracts are in SPEC §3.1 and §5.2.
