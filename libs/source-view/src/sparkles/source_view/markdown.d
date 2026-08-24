@@ -920,15 +920,11 @@ private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
 private uint fenceVTrack(ref Builder b, MdViewOptions opt,
     ref const MdBlock blk, int lines, int shownRows, int offsetY)
 {
+    // The right border IS this bar (`SCV11`), the vertical twin of the bottom
+    // one: one leaf owning the border column instead of a bar stacked over a
+    // run of `│` cells.
     const hot = opt.hotFenceVBar == blk.codeBody.start;
-    auto cells = new uint[](0);
-    foreach (r; 0 .. shownRows)
-    {
-        cells ~= fenceRuleRun(b, opt, "│");
-    }
-    const base = b.add(Widget(kind: WidgetKind.column, children: cells,
-        width: SizeSpec.fixed(1)));
-    const bar = scrollbar(b, ScrollbarSpec(
+    return scrollbar(b, ScrollbarSpec(
         content: lines,
         viewport: shownRows,
         offset: offsetY,
@@ -942,9 +938,8 @@ private uint fenceVTrack(ref Builder b, MdViewOptions opt,
         hasTrackFg: opt.theme.present,
         thumbFg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
         hasThumbFg: opt.theme.present,
+        paintsIdleTrack: true,
     ), shownRows);
-    return b.add(Widget(kind: WidgetKind.stack, children: [base, bar],
-        width: SizeSpec.fixed(1), height: SizeSpec.fixed(shownRows)));
 }
 
 private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
