@@ -39,6 +39,11 @@ indent_size = unset
 insert_final_newline = unset
 trim_trailing_whitespace = unset
 
+# Exact upstream DUB recipe snapshot; preserve its original tab indentation.
+[libs/wired/src/sparkles/wired/sdl/fixtures/*.snapshot.sdl]
+indent_style = unset
+indent_size = unset
+
 # The Android debug signing keystore is a binary artifact, checked in so the
 # APK signature stays stable across rebuilds (see
 # nix/packages/android/build-apk.nix)

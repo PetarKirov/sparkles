@@ -33,8 +33,8 @@ enum SdlScalarKind : ubyte
 /// A namespace plus local name. An empty namespace is an ordinary SDL name.
 struct SdlQualifiedName
 {
-    string namespace_;
-    string localName;
+    const(char)[] namespace_;
+    const(char)[] localName;
 }
 
 /// One source position: zero-based byte offset and one-based display position.
@@ -76,7 +76,7 @@ it from `Duration.zero` as an unknown offset.
 struct SdlZonedDateTime
 {
     SdlDateTime local;
-    string zone;
+    const(char)[] zone;
     Duration utcOffset;
     bool hasUtcOffset;
 }
@@ -93,7 +93,7 @@ struct SdlScalar
     private union Payload
     {
         bool booleanValue;
-        string stringValue;
+        const(char)[] stringValue;
         dchar characterValue;
         int integerValue;
         long longValue;
@@ -122,7 +122,7 @@ struct SdlScalar
     }
 
     /// Constructs an SDL string.
-    this(string value) @safe pure nothrow @nogc
+    this(return scope const(char)[] value) @safe pure nothrow @nogc
     {
         _kind = SdlScalarKind.string_;
         _payload.stringValue = value;
@@ -218,7 +218,7 @@ struct SdlScalar
     }
 
     /// Active string payload.
-    string stringValue() const @safe pure nothrow @nogc return scope
+    const(char)[] stringValue() const @safe pure nothrow @nogc return scope
     in (_kind == SdlScalarKind.string_)
     {
         return (() @trusted => _payload.stringValue)();
@@ -331,4 +331,22 @@ unittest
 
     auto span = SdlSpan(SdlPosition(3, 2, 4), SdlPosition(7, 2, 8));
     assert(span.start.byteOffset == 3 && span.end.column == 8);
+}
+
+@("sdl.document.textPayloadsAreConstBorrowed")
+@safe pure nothrow @nogc
+unittest
+{
+    char[4] text = "text";
+    auto scalar = SdlScalar(text[]);
+    assert(scalar.stringValue == "text");
+    static assert(!__traits(compiles, scalar.stringValue[0] = 'T'));
+
+    text[0] = 'T';
+    assert(scalar.stringValue == "Text");
+
+    auto name = SdlQualifiedName(text[0 .. 1], text[1 .. $]);
+    auto zoned = SdlZonedDateTime(zone: text[]);
+    static assert(!__traits(compiles, name.localName[0] = 'x'));
+    static assert(!__traits(compiles, zoned.zone[0] = 'x'));
 }

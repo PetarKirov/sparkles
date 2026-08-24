@@ -44,6 +44,7 @@ enum SdlErrorCode : ubyte
     unknownMember,
     conversionFailed,
     checkFailed,
+    unsupportedFeature,
     allocationFailed,
     fileReadFailed,
     fileWriteFailed,
@@ -64,7 +65,7 @@ struct SdlError
     string targetType;
     string expectedKind;
     string actualKind;
-    string reason;
+    SmallBuffer!(char, 96) reason;
     SmallBuffer!(char, 40) filePath;
     int cause;
 
@@ -119,7 +120,7 @@ struct SdlError
         if (reason.length)
         {
             put(w, ": ");
-            put(w, reason);
+            put(w, reason[]);
         }
     }
 
@@ -163,7 +164,7 @@ unittest
     failure.span.start = SdlPosition(12, 2, 5);
     failure.targetType = "Dependency";
     failure.rolePath ~= ".dependency[1]@version";
-    failure.reason = "expected a string";
+    failure.reason ~= "expected a string";
 
     checkWriter!((ref w) => failure.toString(w))(
         "dub.sdl(2:5): Cannot decode Dependency at "
