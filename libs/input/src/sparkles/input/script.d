@@ -71,7 +71,8 @@ import sparkles.base.text.errors : ParseError, ParseErrorCode, ParseExpected,
 import sparkles.base.text.readers : readInteger;
 import sparkles.base.text.writers : writeInteger;
 
-import sparkles.input.events : Event, EndOfInput, FocusEvent, Key, KeyAction,
+import sparkles.input.events : Event, EndOfInput, FocusEvent, isNoEvent, Key,
+    KeyAction,
     KeyEvent, Mods, NoEvent, PointerAction, PointerButton, PointerEvent, Point,
     ResizeEvent, Size, WheelEvent;
 
@@ -729,6 +730,71 @@ private void encodeOne(Writer)(ref Writer w, dchar ch)
 private void put(Writer)(ref Writer w, scope const(char)[] s)
 {
     w ~= s;
+}
+
+/**
+Parses a whole script, appending each event to `out_` and skipping the blanks
+and comments (`INP22`).
+
+Returns the first failure with its offset made $(B absolute) within `text`, so
+a caller can point at the byte in the file rather than at a column in a line it
+no longer has. Everything up to that point is already in `out_`: a script that
+fails halfway is reported, not silently truncated to nothing.
+
+The output range is the caller's — a `SmallBuffer!(Event, N)` keeps the whole
+read `@nogc`, and an `Appender` is fine where that does not matter.
+*/
+ParseExpected!void parseScript(Sink)(const(char)[] text, ref Sink out_)
+{
+    size_t base;
+    while (base <= text.length)
+    {
+        size_t end = base;
+        while (end < text.length && text[end] != '\n')
+            ++end;
+        auto r = parseEvent(text[base .. end]);
+        if (r.hasError)
+        {
+            auto e = r.error;
+            e.offset += base;
+            return parseErr!void(e);
+        }
+        // The sentinel is what a blank line and a comment parse to, so
+        // dropping it here is the same rule every consumer already applies.
+        if (!isNoEvent(r.value))
+            out_ ~= r.value;
+        if (end >= text.length)
+            break;
+        base = end + 1;
+    }
+    return parseOk();
+}
+
+@("input.script.readsAWholeSessionAndPointsAtTheBadLine")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(Event, 8) evs;
+    auto r = parseScript("# open the fold\n"
+        ~ "move 42,7\n"
+        ~ "\n"
+        ~ "press left 42,7   # grab the thumb\n"
+        ~ "drag left 42,19\n"
+        ~ "release left 42,19", evs);
+    assert(!r.hasError);
+    assert(evs.length == 4, "comments and blanks are not events");
+    assert(evs[0] == Event(PointerEvent(PointerAction.move,
+        PointerButton.none, Point(42, 7))));
+    assert(evs[3] == Event(PointerEvent(PointerAction.release,
+        PointerButton.left, Point(42, 19))));
+
+    // A bad line is located in the FILE, not in the line — the caller has the
+    // file, and "column 6" of a line it discarded is not actionable.
+    SmallBuffer!(Event, 8) partial;
+    auto bad = parseScript("move 1,1\nkey nope\nmove 2,2", partial);
+    assert(bad.hasError);
+    assert(bad.error.offset == 9 + 4, "offset lands on `nope`");
+    assert(partial.length == 1, "what parsed is kept; the failure is reported");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

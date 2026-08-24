@@ -186,6 +186,14 @@ RecordingHost runRecorded(Present, Handle)(
     if (setup !is null)
         setup(h);
 
+    // `HST20`: the prelude is delivered ahead of the script and BEFORE the
+    // first frame, exactly as the live arms do it — so a prelude means the same
+    // thing whether the frames go to a window, a terminal or here. Its own
+    // frames are deliberately not recorded: a prelude describes the state a
+    // recording starts from, not part of what is being recorded.
+    foreach (ref e; cfg.prelude)
+        handle(h, e);
+
     void frame()
     {
         h.beginFrameState();
