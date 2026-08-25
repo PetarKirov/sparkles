@@ -34,10 +34,38 @@
               inherit (prev.stdenv.hostPlatform) isDarwin;
               hostCpu = prev.stdenv.hostPlatform.parsed.cpu.name;
 
-              # Official LDC 1.41 still rpaths glibc 2.40. nixpkgs
-              # elfutils 0.195 needs GLIBC_ABI_GNU2_TLS from this
-              # stdenv's glibc. Point host ELF links at that
-              # interpreter + rpath so `libs "dw"` examples run.
+              rawLdc = inputs'.dlang-nix.packages.ldc-1_42_0;
+
+              cleanLdcConfig = prev.writeText "ldc2.conf" ''
+                default:
+                {
+                    switches = [
+                        "-defaultlib=phobos2-ldc,druntime-ldc",
+                    ];
+                    post-switches = [
+                        "-I=${rawLdc}/include/d",
+                    ];
+                    lib-dirs = [
+                        "${rawLdc}/lib",
+                    ];
+                    rpath = "${rawLdc}/lib";
+                };
+
+                "^wasm(32|64)-":
+                {
+                    switches = [
+                        "-defaultlib=",
+                        "-L-z", "-Lstack-size=1048576",
+                        "-L--stack-first",
+                        "-link-internally",
+                        "-L--export-dynamic",
+                    ];
+                    lib-dirs = [];
+                };
+              '';
+
+              # LDC still needs host ELF links pointed at stdenv's glibc dynamic
+              # linker + rpath so `libs "dw"` examples run with elfutils 0.195.
               #
               # Cannot be wrapProgram --add-flags: those flags are
               # prepended to every invocation, and wasm-ld rejects
@@ -81,69 +109,58 @@
                   done
                   if [ "$use_host_elf" -eq 1 ]; then
                     exec "${unwrapped}" \
+                      -conf=${cleanLdcConfig} \
                       -L--dynamic-linker=${prev.stdenv.cc.bintools.dynamicLinker} \
                       -L-rpath=${prev.stdenv.cc.libc}/lib \
                       "$@"
                   else
-                    exec "${unwrapped}" "$@"
+                    exec "${unwrapped}" -conf=${cleanLdcConfig} "$@"
                   fi
                 '';
-
-              cleanLdcConfig = lib.pipe "${prev.ldc}/etc/ldc2.conf" [
-                builtins.readFile
-                (lib.splitString "\n")
-                (lib.filter (line: !(lib.hasInfix "/lib/clang/" line && lib.hasInfix "/lib/darwin" line)))
-                lib.concatLines
-                (prev.writeText "ldc2-clean.conf")
-              ];
             in
             {
-              # On Darwin, ldc2.conf ships a lib-dirs entry pointing at a
-              # compiler-rt path that does not exist in the Nix store, yielding
-              # a spurious `ld: warning: directory not found`. Re-point both
-              # drivers at the cleaned config via a wrapper. Because this overlay
-              # replaces `pkgs.ldc` package-set-wide, the result must stay a
-              # *complete* ldc — dub builds link against `${ldc}/lib`
-              # (druntime/phobos) and may invoke `ldmd2` — so we `symlinkJoin`
-              # the real package and only wrap the two drivers, rather than
-              # substituting a bare `ldc2` shim.
+              # dlang.nix defaults to `-link-defaultlib-shared` in its ldc2.conf,
+              # which breaks standalone binaries when `buildDubPackage` scrubs
+              # compiler references. Re-point drivers at `cleanLdcConfig` (static
+              # defaultlibs).
+              # On Linux, wrap the drivers to also point host ELF links at stdenv's
+              # dynamicLinker and glibc rpath.
+              # Because this overlay replaces `pkgs.ldc` package-set-wide, the
+              # result must stay a *complete* ldc — dub builds link against
+              # `${ldc}/lib` (druntime/phobos) and may invoke `ldmd2` — so we
+              # `symlinkJoin` the real package and only wrap the two drivers,
+              # rather than substituting a bare `ldc2` shim.
               ldc =
                 if isDarwin then
                   prev.symlinkJoin {
-                    name = "ldc-${prev.ldc.version}";
-                    paths = [ prev.ldc ];
+                    name = "ldc-${rawLdc.version}";
+                    paths = [ rawLdc ];
                     nativeBuildInputs = [ prev.makeWrapper ];
                     postBuild = ''
                       for drv in ldc2 ldmd2; do
                         wrapProgram "$out/bin/$drv" --add-flags "-conf=${cleanLdcConfig}"
                       done
                     '';
-                    # Pass the real ldc's separate `include` output through the
-                    # wrapper: the closure scrubs in
-                    # nix/packages/{default,examples}.nix reference
-                    # `pkgs.ldc.include` (phobos sources leak into binaries via
-                    # assert/`__FILE__` strings) and must evaluate uniformly on
-                    # both platforms.
-                    passthru = {
-                      inherit (prev.ldc) include;
+                    passthru = lib.optionalAttrs (rawLdc ? include) {
+                      inherit (rawLdc) include;
                     };
-                    meta = prev.ldc.meta // {
+                    meta = rawLdc.meta // {
                       mainProgram = "ldc2";
                     };
                   }
                 else
                   prev.symlinkJoin {
-                    name = "ldc-${prev.ldc.version}";
-                    paths = [ prev.ldc ];
+                    name = "ldc-${rawLdc.version}";
+                    paths = [ rawLdc ];
                     postBuild = ''
                       rm -f "$out/bin/ldc2" "$out/bin/ldmd2"
-                      ln -s ${linuxHostElfCompilerWrapper "${prev.ldc}/bin/ldc2"} "$out/bin/ldc2"
-                      ln -s ${linuxHostElfCompilerWrapper "${prev.ldc}/bin/ldmd2"} "$out/bin/ldmd2"
+                      ln -s ${linuxHostElfCompilerWrapper "${rawLdc}/bin/ldc2"} "$out/bin/ldc2"
+                      ln -s ${linuxHostElfCompilerWrapper "${rawLdc}/bin/ldmd2"} "$out/bin/ldmd2"
                     '';
-                    passthru = {
-                      inherit (prev.ldc) include;
+                    passthru = lib.optionalAttrs (rawLdc ? include) {
+                      inherit (rawLdc) include;
                     };
-                    meta = prev.ldc.meta // {
+                    meta = rawLdc.meta // {
                       mainProgram = "ldc2";
                     };
                   };
@@ -156,7 +173,7 @@
               # packages bind `callPackage` to the *final* package set, so
               # `prev.dtools` already resolves `ldc` to the wrapper — the `ldc`
               # argument has to be overridden back to the plain package.
-              dtools = prev.dtools.override { ldc = prev.ldc; };
+              dtools = prev.dtools.override { ldc = rawLdc; };
 
               dmd =
                 let

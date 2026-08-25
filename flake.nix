@@ -115,7 +115,7 @@
     };
     ldc-windows-x64 = {
       type = "file";
-      url = "https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-windows-x64.7z";
+      url = "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z";
       flake = false;
     };
     wcwidth-src = {

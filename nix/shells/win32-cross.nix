@@ -78,7 +78,7 @@
 
       # Windows druntime/phobos import libs from the official LDC release
       # archive — fixed-output fetch, in lockstep with the pinned host LDC.
-      ldcVersion = "1.41.0";
+      ldcVersion = "1.42.0";
       ldcWindowsLibs = pkgs.stdenvNoCC.mkDerivation {
         pname = "ldc-windows-x64-libs";
         version = ldcVersion;
