@@ -820,25 +820,6 @@ unittest
     auto moved = move(parsed.document);
     assert(moved.valid && !parsed.document.valid);
     static assert(!__traits(compiles, { auto copy = moved; }));
-    pragma(msg, "CHAIN_STRING", !__traits(compiles, {
-        const(char)[] escape(scope ref SdlDocument!() document) @safe
-        { return document.root.byValue.front.stringValue; }
-    }));
-    pragma(msg, "LOCAL_NODE_NAME", !__traits(compiles, {
-        const(char)[] escape(scope ref SdlDocument!() document) @safe
-        {
-            auto node = document.root.byChild.front;
-            return node.qualifiedName.localName;
-        }
-    }));
-    pragma(msg, "LOOP_FIRST_STRING", !__traits(compiles, {
-        const(char)[] escape(scope ref SdlDocument!() document) @safe
-        {
-            foreach (child; document.root.byChild)
-                return child.byValue.front.stringValue;
-            return null;
-        }
-    }));
 
 
     // Positive: every view/range/payload may be borrowed inside the scope'd
