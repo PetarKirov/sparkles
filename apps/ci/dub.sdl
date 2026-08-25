@@ -65,5 +65,12 @@ configuration "unittest" {
     sourcePaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
     importPaths "src" "../../libs/test-runner/src" "../../libs/test-runner-impl/src"
 
+    // The same -unittest flattening compiles wired's `sdl/files.d`, whose
+    // `version (unittest)` block imports the temporary-filesystem helpers.
+    // wired keeps its own test-utils edge unittest-scoped (a main-recipe edge
+    // races concurrent single-file example builds in the shared dub
+    // workspace), so this build declares the import path itself.
+    dependency "sparkles:test-utils" path="../.."
+
     dflags "-checkaction=context" "-allinst"
 }
