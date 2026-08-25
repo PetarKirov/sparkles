@@ -33,6 +33,8 @@ enum CtlSeq : string
     exitAltScreen  = "\x1b[?1049l", /// Return to the primary screen buffer.
     syncBegin      = "\x1b[?2026h", /// Begin synchronized output (DEC 2026).
     syncEnd        = "\x1b[?2026l", /// End synchronized output — flush the frame.
+    pushKeyboardMode = "\x1b[>9u",  /// Push Kitty flags 1|8 (disambiguate + report all keys as CSI u).
+    popKeyboardMode  = "\x1b[<u",   /// Pop progressive keyboard enhancement mode.
 }
 
 /// Named DEC private modes; $(LREF writeModeSet)/$(LREF writeModeReset) cover
@@ -279,6 +281,7 @@ unittest
     // Fixed CtlSeq → its literal in one put.
     writeEscapeSeq!(CtlSeq.hideCursor)(b);
     assert(b[] == "\x1b[?25l");
+    assert(cast(string) CtlSeq.pushKeyboardMode == "\x1b[>9u");
 
     // DEC mode set/reset assembled at compile time; must match the runtime writers.
     b.clear();

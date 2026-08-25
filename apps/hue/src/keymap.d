@@ -173,7 +173,7 @@ struct KeyContext
     bool scopeActive(Scope_ s, in KeyEvent k)
         => s == Scope_.ctrl
             ? (!pickerActive && !inspectorFocused && !settingsActive
-                && k.mods.ctrl && k.key == Key.char_)
+                && (k.mods.ctrl || k.mods.super_) && k.key == Key.char_)
             : reachable(s);
 }
 
@@ -434,14 +434,22 @@ immutable Binding[] hueBindings = [
     bind(Scope_.input, chord(Key.backspace), Command.inputBackspace, "erase"),
     bind(Scope_.input, chord(Key.enter), Command.inputAccept, "accept"),
 
-    // ── ctrl (terminal) ──────────────────────────────────────────────────
+    // ── ctrl / cmd (terminal) ─────────────────────────────────────────────
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: 'c', ctrl: true),
+        Command.copySelection, "copy selection"),
+    bind(Scope_.ctrl, Chord(key: Key.char_, ch: 'c', super_: true),
         Command.copySelection, "copy selection"),
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: '=', ctrl: true),
         Command.fontBigger, "bigger font"),
+    bind(Scope_.ctrl, Chord(key: Key.char_, ch: '=', super_: true),
+        Command.fontBigger, "bigger font"),
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: '+', ctrl: true),
         Command.fontBigger, "bigger font"),
+    bind(Scope_.ctrl, Chord(key: Key.char_, ch: '+', super_: true),
+        Command.fontBigger, "bigger font"),
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: '-', ctrl: true),
+        Command.fontSmaller, "smaller font"),
+    bind(Scope_.ctrl, Chord(key: Key.char_, ch: '-', super_: true),
         Command.fontSmaller, "smaller font"),
 
     // ── tree ─────────────────────────────────────────────────────────────
@@ -734,9 +742,15 @@ immutable Binding[] hueBindings = [
         "prev pane"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', ctrl: true),
         Command.pickerToggleScore, "score breakdown"),
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 's', super_: true),
+        Command.pickerToggleScore, "score breakdown"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 'd', ctrl: true),
         Command.pickerPreviewDown, "scroll preview down"),
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 'd', super_: true),
+        Command.pickerPreviewDown, "scroll preview down"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 'u', ctrl: true),
+        Command.pickerPreviewUp, "scroll preview up"),
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 'u', super_: true),
         Command.pickerPreviewUp, "scroll preview up"),
 
     // ── the tree-sitter inspector pane (`INS`) ───────────────────────────
@@ -816,6 +830,8 @@ immutable Binding[] hueBindings = [
         "save"),
     bind(Scope_.settings, Chord(key: Key.char_, ch: 's', ctrl: true),
         Command.settingsSave, "save"),
+    bind(Scope_.settings, Chord(key: Key.char_, ch: 's', super_: true),
+        Command.settingsSave, "save"),
     bind(Scope_.settings, chord(Key.escape), Command.settingsClose, "close"),
     bind(Scope_.settings, chord('q'), Command.settingsClose, "close"),
     bind(Scope_.settings, chord(Key.back), Command.settingsClose, "close"),
@@ -878,7 +894,7 @@ void bindingsAt(Sink)(ref Sink sink, in KeyContext ctx,
 
 version (unittest)
 {
-    import sparkles.input.events : Mods;
+    import sparkles.input.events : KeyAction, Mods;
 
     // Explicit-table framework calls, NOT the wrappers: the oracle pins the
     // compiled policy and must stay `pure` and independent of whatever
@@ -971,7 +987,7 @@ unittest
             // check its first key, which is the one the guide labels.
             const c = b.path[prefix.length];
             const ev = KeyEvent(c.key, c.ch, Mods(ctrl: c.ctrl, alt: c.alt,
-                shift: c.shift == ShiftReq.yes));
+                shift: c.shift == ShiftReq.yes, super_: c.super_));
             const r = resolveH(prefix, ev, ctx);
 
             const isLeaf = b.depth == prefix.length + 1 && b.group.length == 0;
@@ -1129,6 +1145,26 @@ unittest
     assert(ch('-', KeyContext.init, ctrl).cmd == Command.fontSmaller);
     // An unbound chord is not silently the plain binding.
     assert(ch('y', KeyContext.init, ctrl).cmd == Command.none);
+}
+
+@("keymap.ctrlChordsNormaliseAcrossProducers")
+@safe pure nothrow @nogc
+unittest
+{
+    // The four spellings Ctrl+C arrives in across backends and producers
+    assert(commandForH(KeyEvent(Key.char_, 'c', Mods(ctrl: true)), KeyContext.init).cmd
+        == Command.copySelection);
+    assert(commandForH(KeyEvent(Key.char_, '\x03'), KeyContext.init).cmd
+        == Command.copySelection);
+    assert(commandForH(KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'c'),
+        KeyContext.init).cmd == Command.copySelection);
+    assert(commandForH(KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'C'),
+        KeyContext.init).cmd == Command.copySelection);
+    // macOS Cmd+C (super_)
+    assert(commandForH(KeyEvent(Key.char_, 'c', Mods(super_: true)), KeyContext.init).cmd
+        == Command.copySelection);
+    assert(commandForH(KeyEvent(Key.char_, 0, Mods(super_: true), KeyAction.press, 'c'),
+        KeyContext.init).cmd == Command.copySelection);
 }
 
 @("keymap.foldSequenceIsAPrefixNotACommand")

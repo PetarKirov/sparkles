@@ -137,12 +137,13 @@ ChordParsed parseChordPath(string text) @safe pure
             const mod = rest[0 .. plus];
             switch (mod)
             {
-                case "ctrl":  c.ctrl = true; break;
-                case "alt":   c.alt = true; break;
-                case "shift": c.shift = ShiftReq.yes; break;
+                case "ctrl":         c.ctrl = true; break;
+                case "cmd", "super": c.super_ = true; break;
+                case "alt":          c.alt = true; break;
+                case "shift":        c.shift = ShiftReq.yes; break;
                 default:
                     return chordFail("unknown modifier '" ~ mod
-                        ~ "' (ctrl, alt, shift)");
+                        ~ "' (ctrl, cmd/super, alt, shift)");
             }
             rest = rest[plus + 1 .. $];
         }
@@ -226,6 +227,8 @@ string unparseChordPath(ChordPath p) @safe pure
         if (i)
             s ~= ' ';
         const c = p.path[i];
+        if (c.super_)
+            s ~= "cmd+";
         if (c.ctrl)
             s ~= "ctrl+";
         if (c.alt)
@@ -395,7 +398,7 @@ immutable(Binding)[] applyKeysOverlay(immutable(Binding)[] base,
 private bool overlayChordMatches(Chord user, Chord row) @safe pure nothrow @nogc
 {
     if (user.key != row.key || user.ch != row.ch || user.chEnd != row.chEnd
-        || user.ctrl != row.ctrl || user.alt != row.alt)
+        || user.ctrl != row.ctrl || user.alt != row.alt || user.super_ != row.super_)
         return false;
     final switch (user.shift)
     {
@@ -666,7 +669,7 @@ version (unittest)
     {
         const c = b.path[0];
         const ev = KeyEvent(c.key, c.ch, Mods(ctrl: c.ctrl, alt: c.alt,
-            shift: c.shift == ShiftReq.yes));
+            shift: c.shift == ShiftReq.yes, super_: c.super_));
         const r = ui_keymap.resolve(merged, null, ev, ctx);
         const isLeaf = b.depth == 1 && b.group.length == 0;
         if (isLeaf)

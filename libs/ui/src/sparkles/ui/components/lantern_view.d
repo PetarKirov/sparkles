@@ -138,6 +138,8 @@ private Span writeKeyLabel(ref LabelArena arena, in Chord c)
 {
     const start = cast(uint) arena.length;
 
+    if (c.super_)
+        arena ~= "D-";
     if (c.ctrl)
         arena ~= "C-";
     if (c.alt)

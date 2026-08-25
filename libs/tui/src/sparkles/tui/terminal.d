@@ -96,6 +96,7 @@ struct Terminal
         writeEscapeSeq!(DecMode.autowrap, false)(s); // a full-width cell must not wrap/scroll
         if (opts.mouse)
             writeMouseTracking(s, true, opts.motion); // SGR mouse: click + drag + wheel
+        writeEscapeSeq!(CtlSeq.pushKeyboardMode)(s); // Kitty progressive keyboard enhancement
         writeAll(outFd, s[]);
         return t;
     }
@@ -122,6 +123,7 @@ struct Terminal
         writeEscapeSeq!(DecMode.autowrap, true)(s); // autowrap on
         if (_opts.hideCursor)
             writeEscapeSeq!(CtlSeq.showCursor)(s);
+        writeEscapeSeq!(CtlSeq.popKeyboardMode)(s);
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
         writeAll(_outFd, s[]);

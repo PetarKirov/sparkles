@@ -259,6 +259,7 @@ private Chord chordOf(in KeyEvent k) @safe pure nothrow @nogc
     c.shift = k.mods.shift ? ShiftReq.yes : ShiftReq.no;
     c.ctrl = k.mods.ctrl;
     c.alt = k.mods.alt;
+    c.super_ = k.mods.super_;
     return c;
 }
 

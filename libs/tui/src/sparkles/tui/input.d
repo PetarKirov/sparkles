@@ -37,28 +37,38 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
     if (s.length >= 2 && s[0] == '[' && s[1] == '<')
         return decodeMouse(s[2 .. $]);
 
-    // Parse `p1 [; p2 …] final`. Params are decimal; the final is the last byte.
+    // Parse `p1 [; p2 …] final`. Params are decimal; `:` starts a Kitty
+    // subfield (shifted/base key, event-type) — keep the first subfield
+    // of each `;` parameter and ignore the rest, or `[99:67;5u` is NoEvent.
     uint[3] p;
     size_t np;
     size_t i = 1;
     bool sawDigit;
+    bool skipSub;
     for (; i < s.length; ++i)
     {
         const c = s[i];
-        if (c >= '0' && c <= '9')
+        if (c == ':')
         {
-            if (np < p.length)
-                p[np] = p[np] * 10 + (c - '0');
-            sawDigit = true;
+            skipSub = true;
+            continue;
         }
-        else if (c == ';')
+        if (c == ';')
         {
             if (np < p.length)
                 ++np;
             sawDigit = false;
+            skipSub = false;
+            continue;
         }
-        else
-            break; // the final byte
+        if (c >= '0' && c <= '9')
+        {
+            if (!skipSub && np < p.length)
+                p[np] = p[np] * 10 + (c - '0');
+            sawDigit = true;
+            continue;
+        }
+        break; // the final byte
     }
     if (sawDigit && np < p.length)
         ++np;
@@ -103,6 +113,23 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
                 case 24:    return keyEvent(Key.f12, mods);
                 default:    return Event(NoEvent());
             }
+        case 'u':
+            if (np >= 1 && p[0] != 0)
+            {
+                // Kitty flag 8 reports modifier/media keys as BMP PUA
+                // codepoints (57344–63743). They are not characters.
+                if (p[0] >= 57344 && p[0] <= 63743)
+                    return Event(NoEvent());
+                switch (p[0])
+                {
+                    case '\r', '\n': return keyEvent(Key.enter, mods);
+                    case '\t':       return keyEvent(Key.tab, mods);
+                    case 0x7f, 0x08: return keyEvent(Key.backspace, mods);
+                    case 0x1b:       return keyEvent(Key.escape, mods);
+                    default:         return charEvent(cast(dchar) p[0], mods);
+                }
+            }
+            return Event(NoEvent());
         default: return Event(NoEvent());
     }
 }
@@ -112,7 +139,12 @@ private Mods modsFromParam(uint m) @safe pure nothrow @nogc
     if (m == 0)
         return Mods();
     const bits = m - 1;
-    return Mods(ctrl: (bits & 4) != 0, alt: (bits & 2) != 0, shift: (bits & 1) != 0);
+    return Mods(
+        ctrl: (bits & 4) != 0,
+        alt: (bits & 2) != 0,
+        shift: (bits & 1) != 0,
+        super_: (bits & 8) != 0,
+    );
 }
 
 /// Decode the tail of an SGR-1006 mouse report (the bytes after `ESC [ <`):
@@ -403,6 +435,29 @@ unittest
     assert(decodeEscape("[1;5A") == keyEvent(Key.up, Mods(ctrl: true)));
     // Shift+Alt+Left = param 4 (bits 3 = shift|alt).
     assert(decodeEscape("[1;4D") == keyEvent(Key.left, Mods(alt: true, shift: true)));
+    // Super+Up = param 9 (bit 8 = super).
+    assert(decodeEscape("[1;9A") == keyEvent(Key.up, Mods(super_: true)));
+}
+
+@("input.decodeEscape.csiUAndSuper")
+@safe pure nothrow @nogc
+unittest
+{
+    // CSI u format: ESC [ <codepoint> ; <modifiers> u
+    // Cmd+C = 99 ('c') + param 9 (super_)
+    assert(decodeEscape("[99;9u") == charEvent('c', Mods(super_: true)));
+    assert(decodeEscape("[99;9:1u") == charEvent('c', Mods(super_: true)));
+    // Ctrl+C in CSI u = 99 + param 5; colon subfields must not drop it.
+    const ctrlC = charEvent('c', Mods(ctrl: true));
+    assert(decodeEscape("[99;5u") == ctrlC);
+    assert(decodeEscape("[99:67;5u") == ctrlC);
+    assert(decodeEscape("[99::99;5u") == ctrlC);
+    assert(decodeEscape("[27u") == keyEvent(Key.escape));
+    assert(decodeEscape("[27;1:1u") == keyEvent(Key.escape));
+    // Enter with Super
+    assert(decodeEscape("[13;9u") == keyEvent(Key.enter, Mods(super_: true)));
+    // Flag 8 reports LEFT_SUPER as a PUA codepoint — not a character.
+    assert(isNoEvent(decodeEscape("[57444;9u]")));
 }
 
 @("input.decodeEscape.navAndFunctionKeys")

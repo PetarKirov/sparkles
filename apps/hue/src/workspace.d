@@ -1966,6 +1966,8 @@ private Duration waitDeadline(ref WorkspaceTui w, bool eventDriven = false)
         if (untilPreview < deadline)
             deadline = untilPreview;
     }
+    if (w.viewer.toastVisible && deadline > 50.msecs)
+        deadline = 50.msecs;
     return deadline;
 }
 
@@ -1978,13 +1980,19 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
         w.tree.rebuild();
         return true;
     }
+    bool repainted = false;
+    if (w.viewer.toastVisible)
+    {
+        w.viewer.tickToast(waited);
+        repainted = true;
+    }
     // The wait expired rather than a key arriving: advance the guide's
     // clock so the panel opens on time — and the settings pane's scrollbar
     // easing with it (the same cadence, the same look as every tree view).
     w.tickLantern(waited);
     if (w.settings.active)
         w.settings.tickAnims(waited);
-    return w.tickDock(waited);
+    return w.tickDock(waited) || repainted;
 }
 
 version (unittest)

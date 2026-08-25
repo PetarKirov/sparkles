@@ -1161,6 +1161,13 @@ int runGui(GuiArgs guiArgs) @system
             window.clipboard(text.toStringz);
     }
 
+    void showToast(string msg, bool success = false)
+    {
+        flash.copyModeMsg = msg;
+        flash.toastSuccess = success;
+        flash.toast = Timeline.triggered(toastCfg);
+    }
+
     // Copy the current selection: a text range → `vm.source[min..max]`
     // (SGR-stripped when `cm.ansiStrip`); a table region → TSV / markdown cells
     // (SEL7/TBL2). Always slices `vm.source` — the DISPLAYED document — not
@@ -1174,6 +1181,7 @@ int runGui(GuiArgs guiArgs) @system
         {
             auto txt = vm.source[cast(size_t) drag.selMin() .. cast(size_t) drag.selMax()];
             copyToClipboard(cm.ansiStrip ? stripSgr(txt) : txt);
+            showToast("Copied to clipboard", success: true);
         }
         else if (drag.regime == Regime.table && drag.selTable >= 0)
         {
@@ -1193,7 +1201,10 @@ int runGui(GuiArgs guiArgs) @system
             const txt = serializeGridCopy(dsvCopy, reg, dims.rows, dims.cols,
                 &cellText, cm.tableFmt);
             if (txt.length)
+            {
                 copyToClipboard(txt);
+                showToast("Copied to clipboard", success: true);
+            }
         }
     }
 
@@ -1848,13 +1859,25 @@ int runGui(GuiArgs guiArgs) @system
                 : text(":", inp.query[]);
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
         }
-        // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
-        else if (flash.toast.visible)
+        // In-app notification toast (flashes near top right).
+        if (flash.toast.visible)
         {
             flash.toast = flash.toast.stepped(frameMs(window.frameSeconds), toastCfg);
-            const barY = screenH - cellH;
-            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
-            drawText(fonts, cstrOf(buf, flash.copyModeMsg), 4, cast(float) barY, TextStyle(0), vm.pageBg);
+            const msg = flash.copyModeMsg;
+            const iconCols = flash.toastSuccess ? 2 : 0;
+            const boxW = cast(int)((iconCols + msg.length + 4) * cellW);
+            const boxH = cast(int)(cellH + 12);
+            const boxX = cast(int)(screenW - boxW - 20);
+            const boxY = cast(int)(cellH + 8);
+            if (boxX > 0)
+            {
+                chrome.fillPixels(boxX, boxY, boxW, boxH, mix(vm.pageBg, vm.pageFg, 0.15));
+                const textX = cast(float)(boxX + 12);
+                const textY = cast(float)(boxY + 6);
+                if (flash.toastSuccess)
+                    drawText(fonts, cstrOf(buf, "✓ "), textX, textY, TextStyle(0), vm.pageFg);
+                drawText(fonts, cstrOf(buf, msg), textX + iconCols * cellW, textY, TextStyle(0), vm.pageFg);
+            }
         }
 
         // The key guide (`LTN5`), last so it sits over everything — it is a
@@ -2527,8 +2550,7 @@ int runGui(GuiArgs guiArgs) @system
                         applyDsvBrowser();
                     else
                     {
-                        flash.copyModeMsg = "filter: " ~ dsvBrowser.filterError;
-                        flash.toast = Timeline.triggered(toastCfg);
+                        showToast("filter: " ~ dsvBrowser.filterError);
                     }
                     inp.query.clear();
                 }
@@ -2868,17 +2890,11 @@ int runGui(GuiArgs guiArgs) @system
                     break;
                 case Command.toggleFormatPreview:
                     if (const msg = formatPreviewToggle(vm))
-                    {
-                        flash.copyModeMsg = msg;
-                        flash.toast = Timeline.triggered(toastCfg);
-                    }
+                        showToast(msg);
                     break;
                 case Command.formatterNext:
                     if (const msg = formatPreviewCycle(vm))
-                    {
-                        flash.copyModeMsg = msg;
-                        flash.toast = Timeline.triggered(toastCfg);
-                    }
+                        showToast(msg);
                     break;
                 case Command.formatWidthNarrower:
                     formatPreviewNudge(vm, -2);
@@ -2888,8 +2904,7 @@ int runGui(GuiArgs guiArgs) @system
                     break;
                 case Command.toggleAnsiCopy:
                     cm.ansiStrip = !cm.ansiStrip;
-                    flash.copyModeMsg = cm.ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
-                    flash.toast = Timeline.triggered(toastCfg);
+                    showToast(cm.ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw");
                     break;
                 case Command.toggleTableCopy:
                     // DSV documents cycle through their own dialect too.
@@ -2897,11 +2912,10 @@ int runGui(GuiArgs guiArgs) @system
                         ? TableCopyFormat.markdown
                         : cm.tableFmt == TableCopyFormat.markdown && dsvCopy.present
                         ? TableCopyFormat.source : TableCopyFormat.tsv;
-                    flash.copyModeMsg = cm.tableFmt == TableCopyFormat.tsv
+                    showToast(cm.tableFmt == TableCopyFormat.tsv
                         ? "table-copy: tsv"
                         : cm.tableFmt == TableCopyFormat.markdown
-                        ? "table-copy: markdown" : "table-copy: source";
-                    flash.toast = Timeline.triggered(toastCfg);
+                        ? "table-copy: markdown" : "table-copy: source");
                     break;
                 case Command.dsvFilter:
                     inp.mode = Mode.dsvFilter;
@@ -3686,10 +3700,7 @@ int runGui(GuiArgs guiArgs) @system
         // `FMV8`: --format-preview starts the session on the opening file.
         if (formatPreview)
             if (const msg = formatPreviewStart(vm, formatWidth, formatterName))
-            {
-                flash.copyModeMsg = msg;
-                flash.toast = Timeline.triggered(toastCfg);
-            }
+                showToast(msg);
         // A markdown file opens in preview by default; Tab toggles to the raw
         // highlighted-source view. The capture's preview pin ("0") fixes the
         // initial mode for deterministic goldens.
