@@ -184,6 +184,23 @@ SdlParseResult!Allocator parseSdlDocument(
 if (stateSize!Allocator != 0)
     => parseSdlDocument!config(text, null, alloc);
 
+/** Validates SDL text against a profile without retaining a document
+(SPEC §11).
+
+A successful result proves the input parses under `config`; nothing is kept,
+so this is a pure check with no arena cost beyond the discarded parse. All
+lex/parse/decode failures propagate unchanged with their structured stage,
+code, span, and source name.
+*/
+SdlExpected!void validateSDL(SdlParserConfig config = sdlFull)(
+    scope const(char)[] text, scope const(char)[] sourceName = null)
+{
+    auto parsed = parseSdlDocument!config(text, sourceName);
+    if (parsed.hasValue)
+        return sdlOk();
+    return sdlErr!void(parsed.error);
+}
+
 private bool scalarToken(SdlTokenKind kind) @safe pure nothrow @nogc
 {
     return kind >= SdlTokenKind.null_ && kind <= SdlTokenKind.duration;
@@ -631,6 +648,8 @@ private bool runPass(SdlParserConfig config, bool fill, Allocator)(
             }
             while (terminator(cursor.token.kind));
             contextDepth++;
+            static if (fill)
+                document.nodes[thisNode].hasBlock = true;
             continue;
         }
 
@@ -1401,4 +1420,56 @@ unittest
         syntax: sdlFull.syntax,
         validateUtf8: false,
     ))(state = 0x5DEE_CE66);
+}
+
+@("sdl.reader.validateSdlOutcomes")
+@safe unittest
+{
+    enum noSemicolons = SdlParserConfig(
+        scalars: sdlFull.scalars,
+        syntax: SdlSyntaxFeatures(
+            rawStrings: true,
+            unicodeIdentifiers: true,
+            unicodeWhitespace: true,
+            unicodeNewlines: true,
+            hashComments: true,
+            slashComments: true,
+            dashComments: true,
+            blockComments: true,
+            continuations: true,
+            semicolonTerminators: false,
+            anonymousTags: true,
+        ),
+    );
+    enum flat = SdlParserConfig(
+        scalars: sdlFull.scalars,
+        syntax: sdlFull.syntax,
+        maxDepth: 0,
+    );
+
+    assert(!validateSDL!sdlFull("a 1\nb;\n").hasError);
+    assert(!validateSDL!sdlFull("").hasError);
+
+    auto lex = validateSDL!sdlFull(`"open`);
+    assert(lex.hasError && lex.error.stage == SdlErrorStage.lex
+        && lex.error.code == SdlErrorCode.unterminatedString);
+
+    auto parse = validateSDL!sdlFull("a {\nb\n");
+    assert(parse.hasError && parse.error.stage == SdlErrorStage.parse
+        && parse.error.code == SdlErrorCode.unexpectedEof);
+
+    auto depth = validateSDL!flat("a {\n}\n");
+    assert(depth.hasError && depth.error.code == SdlErrorCode.depthExceeded);
+
+    auto feature = validateSDL!noSemicolons("a;\n");
+    assert(feature.hasError
+        && feature.error.code == SdlErrorCode.unsupportedFeature
+        && feature.error.stage == SdlErrorStage.lex);
+
+    auto decode = validateSDL!sdlFull("2147483648\n");
+    assert(decode.hasError && decode.error.stage == SdlErrorStage.decode
+        && decode.error.code == SdlErrorCode.numberOutOfRange);
+
+    auto named = validateSDL!sdlFull("a {\nb\n", "named.sdl");
+    assert(named.hasError && named.error.sourceName[] == "named.sdl");
 }
