@@ -33,7 +33,7 @@ struct SdlQualifiedName
     const(char)[] localName;
 
     /// Full identity equality; namespaces are never implicit wildcards.
-    bool opEquals(scope const SdlQualifiedName rhs) const
+    bool opEquals(scope const SdlQualifiedName rhs) const scope
         @safe pure nothrow @nogc
         => namespace_ == rhs.namespace_ && localName == rhs.localName;
 }
@@ -766,6 +766,232 @@ struct SdlFilteredChildRange
     }
 }
 
+// ── Unknown-member capture (SPEC §8) ─────────────────────────────────────────
+
+/** The SDL channel an unknown occurrence was captured from (SPEC §8). */
+enum SdlExtraChannel : ubyte
+{
+    value,      /// a positional value beyond the declared slots
+    attribute,  /// an attribute matching no declared qualified name
+    child,      /// a child tag matching no declared child field name
+}
+
+/** One captured unknown occurrence (SPEC §8).
+
+This is the *borrowed* member flavor: the name, scalar payload, and child view
+alias the source document's arena, so a member is valid only while that
+document lives (`-preview=dip1000` tracks the accessor chain exactly as it
+tracks $(LREF SdlNode)). Payloads are exposed through `return scope` accessors
+rather than public fields so escaping slices fail to compile at the document
+boundary. The owning counterpart is $(LREF SdlOwnedExtraMember).
+*/
+struct SdlExtraMember
+{
+    private SdlExtraChannel _channel;
+    private size_t _ordinal;
+    private SdlQualifiedName _name;
+    private SdlScalar _scalar;
+    private SdlNode _node;
+    private SdlSpan _span;
+
+    package this(return scope SdlExtraChannel channel, size_t ordinal,
+        return scope SdlQualifiedName name, return scope SdlScalar scalar,
+        return scope SdlNode node, return scope SdlSpan span)
+        @safe pure nothrow @nogc
+    {
+        _channel = channel;
+        _ordinal = ordinal;
+        _name = name;
+        _scalar = scalar;
+        _node = node;
+        _span = span;
+    }
+
+    /// The channel this occurrence came from.
+    SdlExtraChannel channel() const scope @safe pure nothrow @nogc => _channel;
+
+    /// Index of this occurrence within its channel among ALL occurrences of
+    /// the containing tag — the encode-time merge position.
+    size_t ordinal() const scope @safe pure nothrow @nogc => _ordinal;
+
+    /// Borrowed qualified name; both halves empty for `value` members.
+    SdlQualifiedName name() const return scope @safe pure nothrow @nogc
+        => (() @trusted => _name)();
+
+    /// Borrowed scalar payload; kind $(LREF SdlScalarKind.none) for `child`
+    /// members.
+    SdlScalar scalar() const return scope @safe pure nothrow @nogc
+        => (() @trusted => _scalar)();
+
+    /// Borrowed child-subtree view; invalid for the other channels.
+    SdlNode node() const return scope @safe pure nothrow @nogc
+        => (() @trusted => _node)();
+
+    /// Source span of the occurrence: the scalar token for values, the whole
+    /// `name=value` extent for attributes, the full declaration for children.
+    SdlSpan span() const scope @safe pure nothrow @nogc => _span;
+}
+
+/** Ordered unmatched-occurrence capture — the borrowed flavor (SPEC §8).
+
+Members appear in canonical grammar order: all captured positional values by
+position, then attributes in occurrence order, then children in occurrence
+order. The type is valid only while its source document lives; decode refuses
+it from the text convenience overload at compile time. Use
+$(LREF OwnedSdlExtras) when the capture must outlive the document.
+*/
+struct SdlExtras
+{
+    /// Opaque to the shared wire schema (SPEC §1.1 seam): only the SDL
+    /// backend interprets captured occurrences.
+    static enum bool wirePassthrough = true;
+
+    private SdlExtraMember[] _members;
+
+    package this(return scope SdlExtraMember[] members) @safe pure nothrow @nogc
+    {
+        _members = members;
+    }
+
+    /// Number of captured occurrences.
+    size_t length() const scope @safe pure nothrow @nogc => _members.length;
+
+    /// Whether nothing was captured.
+    bool empty() const scope @safe pure nothrow @nogc => _members.length == 0;
+
+    /// Borrowed view of member `i` in storage order.
+    SdlExtraMember at(size_t i) const return scope @safe pure nothrow @nogc
+    in (i < _members.length)
+        => (() @trusted => _members[i])();
+}
+
+/// One owned attribute occurrence inside an $(LREF SdlOwnedExtraNode) subtree.
+struct SdlOwnedExtraAttribute
+{
+    SdlQualifiedName name;  /// owned-spelling qualified name
+    SdlScalar value;        /// scalar whose string/binary/zone payloads are pooled
+}
+
+/** Owned recursive capture of one unknown child subtree (SPEC §8).
+
+Mirrors the semantic shape of an SDL node: ordered values, ordered attributes
+(with duplicates), and ordered children. Every slice-bearing payload is copied
+into the owner's pools, so the tree survives its source document. `hasBlock`
+keeps the source's `{ }` presence so canonical re-emission stays byte-stable
+for empty blocks.
+*/
+struct SdlOwnedExtraNode
+{
+    SdlQualifiedName name;              /// owned-spelling qualified name
+    SdlScalar[] values;                 /// pooled payloads, source order
+    SdlOwnedExtraAttribute[] attributes; /// pooled entries, source order
+    SdlOwnedExtraNode[] children;       /// recursive captures, source order
+    bool hasBlock;                      /// source declaration carried `{ }`
+}
+
+/** One captured unknown occurrence — the owned flavor (SPEC §8).
+
+Same metadata as $(LREF SdlExtraMember), but every payload is deep-copied:
+value/attribute scalars pool their string/binary/zone bytes, and `child`
+members materialize the whole subtree as an $(LREF SdlOwnedExtraNode). The
+simplest design that survives typed decode→encode→decode byte-stably without
+keeping allocator bookkeeping alive alongside the value.
+*/
+struct SdlOwnedExtraMember
+{
+    SdlExtraChannel channel;    /// the channel this occurrence came from
+    size_t ordinal;             /// index within its channel (see SdlExtraMember)
+    SdlQualifiedName name;      /// owned spelling; empty for `value` members
+    SdlScalar scalar;           /// pooled payload; `.none` kind for children
+    SdlOwnedExtraNode node;     /// owned subtree; default-empty otherwise
+    SdlSpan span;               /// recorded source coordinates of the original
+}
+
+/** Ordered unmatched-occurrence capture — the owning flavor (SPEC §8).
+
+Usable after the input buffer and source document are gone; works with both
+$(LREF fromSDL) overloads. Members follow the same canonical order as
+$(LREF SdlExtras).
+*/
+struct OwnedSdlExtras
+{
+    /// Opaque to the shared wire schema (SPEC §1.1 seam): only the SDL
+    /// backend interprets captured occurrences.
+    static enum bool wirePassthrough = true;
+
+    SdlOwnedExtraMember[] members; /// captured occurrences, canonical order
+
+    package char[][] _strings;   /// owns copied UTF-8 payloads and names
+    package ubyte[][] _binaries; /// owns copied binary payloads
+
+    /// Number of captured occurrences.
+    size_t length() const scope @safe pure nothrow @nogc => members.length;
+
+    /// Whether nothing was captured.
+    bool empty() const scope @safe pure nothrow @nogc => members.length == 0;
+
+    /// Member `i` in storage order.
+    ref inout(SdlOwnedExtraMember) at(size_t i) inout return scope
+        @safe pure nothrow @nogc
+    in (i < members.length)
+        => members[i];
+}
+
+package char[] poolSlice(scope const(char)[] s, ref char[][] strings)
+    @safe pure
+{
+    if (s.length == 0)
+        return null;
+    strings ~= s.dup;
+    return strings[$ - 1];
+}
+
+package SdlQualifiedName poolName(return scope SdlQualifiedName n,
+    ref char[][] strings) @safe pure
+=> SdlQualifiedName(poolSlice(n.namespace_, strings),
+    poolSlice(n.localName, strings));
+
+/** Deep-copies `s`'s slice-bearing payloads into the given pools, preserving
+the exact scalar kind (string bytes, binary bytes, and zoned zone spellings
+are the only slice-bearing payloads). */
+package SdlScalar poolScalar(return scope SdlScalar s, ref char[][] strings,
+    ref ubyte[][] binaries) @safe pure
+{
+    final switch (s.kind) with (SdlScalarKind)
+    {
+    case none:
+    case null_:
+    case boolean:
+    case character:
+    case integer:
+    case longInteger:
+    case float_:
+    case double_:
+    case decimal:
+    case date:
+    case dateTime:
+    case duration:
+        return s;
+    case string_:
+        return SdlScalar(poolSlice(s.stringValue, strings));
+    case binary:
+    {
+        const raw = s.binary;
+        if (raw.length == 0)
+            return SdlScalar(cast(const(ubyte)[]) null);
+        binaries ~= cast(ubyte[]) raw.dup;
+        return SdlScalar(binaries[$ - 1]);
+    }
+    case zonedDateTime:
+    {
+        const zoned = s.zonedDateTime;
+        return SdlScalar(SdlZonedDateTime(zoned.local,
+            poolSlice(zoned.zone, strings), zoned.utcOffset,
+            zoned.hasUtcOffset));
+    }
+    }
+}
+
 @("sdl.document.scalarKindsAndPayloads")
 @safe pure nothrow @nogc
 unittest
@@ -813,4 +1039,84 @@ unittest
     auto zoned = SdlZonedDateTime(zone: text[]);
     static assert(!__traits(compiles, name.localName[0] = 'x'));
     static assert(!__traits(compiles, zoned.zone[0] = 'x'));
+}
+
+@("sdl.document.extras.borrowedMemberAccessors")
+@safe pure nothrow @nogc
+unittest
+{
+    SdlExtraMember member = SdlExtraMember(SdlExtraChannel.attribute, 3,
+        SdlQualifiedName("x", "platform"), SdlScalar(7),
+        SdlNode.init, SdlSpan(SdlPosition(1, 1, 2), SdlPosition(9, 1, 10)));
+
+    assert(member.channel == SdlExtraChannel.attribute);
+    assert(member.ordinal == 3);
+    assert(member.name.namespace_ == "x" && member.name.localName == "platform");
+    assert(member.scalar.kind == SdlScalarKind.integer);
+    assert(member.span.start.byteOffset == 1);
+
+    SdlExtraMember[1] storage = [member];
+    auto extras = SdlExtras(storage[]);
+    assert(extras.length == 1 && !extras.empty);
+    assert(extras.at(0).ordinal == 3);
+
+    assert(SdlExtras.init.empty && SdlExtras.init.length == 0);
+}
+
+@("sdl.document.extras.ownedPoolingCopiesEverySlice")
+@safe pure unittest
+{
+    import core.time : seconds;
+
+    // Narrow trust: untracks one scalar copy for heap stashing in this
+    // pooling test only (the pool owns the bytes afterwards).
+    static SdlScalar borrowAny(scope const ref SdlScalar s) @trusted
+    {
+        const ps = &s;
+        return *ps;
+    }
+
+    static SdlQualifiedName borrowName(scope const ref SdlQualifiedName n)
+        @trusted
+    {
+        const pn = &n;
+        return *pn;
+    }
+
+    OwnedSdlExtras owned;
+    char[][] strings;
+    ubyte[][] binaries;
+
+    // String payloads are copied, not aliased.
+    char[6] text = "origin";
+    const rawText = SdlScalar(text[]);
+    const pooledText = poolScalar(borrowAny(rawText), strings, binaries);
+    owned.members ~= SdlOwnedExtraMember(SdlExtraChannel.value, 0,
+        SdlQualifiedName.init, borrowAny(pooledText),
+        SdlOwnedExtraNode.init, SdlSpan.init);
+    text[] = 'X';
+    assert(owned.at(0).scalar.stringValue == "origin");
+
+    // Binary and zone spellings likewise.
+    immutable ubyte[3] bytes = [9, 8, 7];
+    const rawBytes = SdlScalar(bytes[]);
+    const pooledBytes = poolScalar(borrowAny(rawBytes), strings, binaries);
+    const pooledName = poolName(SdlQualifiedName("ns", "blob"), strings);
+    owned.members ~= SdlOwnedExtraMember(SdlExtraChannel.attribute, 1,
+        borrowName(pooledName), borrowAny(pooledBytes),
+        SdlOwnedExtraNode.init, SdlSpan.init);
+    assert(owned.at(1).name.localName == "blob");
+    assert(owned.at(1).scalar.binary == bytes[]);
+
+    const zoneSource = "Planet/Earth";
+    const rawZone = SdlScalar(SdlZonedDateTime(SdlDateTime(Date(2024, 1, 2),
+        3, 4, 5, 0), zoneSource, 0.seconds, false));
+    auto pooledZone = poolScalar(borrowAny(rawZone), strings, binaries);
+    owned.members[1] = SdlOwnedExtraMember(SdlExtraChannel.attribute, 1,
+        owned.at(1).name, borrowAny(pooledZone),
+        SdlOwnedExtraNode.init, SdlSpan.init);
+    assert(owned.at(1).scalar.zonedDateTime.zone == zoneSource);
+
+    assert(owned.length == 2);
+    assert(strings.length >= 3 && binaries.length == 1);
 }
