@@ -20,7 +20,7 @@ import diff_view : TypeOverlay;
 import sparkles.source_view.markdown : FenceScroll, TableScroll;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 import dsv_view : DsvCopy, serializeGridCopy;
-import core.time : Duration;
+import core.time : Duration, msecs;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
@@ -51,7 +51,8 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
-    ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt;
+    ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt,
+    Timeline;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
     TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
@@ -243,6 +244,29 @@ struct PreviewTui
     void tickLantern(Duration elapsed) @safe pure nothrow @nogc
     {
         ltnTick(lantern, elapsed, lanternDelay);
+    }
+
+    // ── In-app notification toast (e.g. copy feedback) ──────────────────────
+    private Timeline toast;
+    private string toastMsg;
+    private static immutable Timeline.Config toastCfg = Timeline.Config(holdMs: 1600);
+
+    /// Show an in-app notification box near the top right.
+    void showToast(string msg) @safe pure nothrow @nogc
+    {
+        toast = Timeline.triggered(toastCfg);
+        toastMsg = msg;
+    }
+
+    /// Whether the notification toast is currently visible.
+    bool toastVisible() const @safe pure nothrow @nogc
+        => toast.visible;
+
+    /// Advances the notification toast clock.
+    void tickToast(Duration elapsed) @safe pure nothrow @nogc
+    {
+        if (toast.visible)
+            toast = toast.stepped(cast(int) elapsed.total!"msecs", toastCfg);
     }
 
     /// Whether a key sequence is in flight (`LTN1`): the workspace must not
@@ -473,6 +497,7 @@ struct PreviewTui
         }
         writeClipboard(source[a .. b]);
         sel = Selection!long.cleared;
+        showToast("Copied to clipboard");
     }
 
     // Queue `text` for the system clipboard. The PAYLOAD, not a sequence:
@@ -610,6 +635,51 @@ struct PreviewTui
             paintScrollbar(g);
         paintStatus(g);
         paintLantern(g);
+        paintToast(g);
+    }
+
+    /// The in-app notification box, rendered near the top right when active.
+    private void paintToast(ref Grid g) @system
+    {
+        if (!toast.visible || toastMsg.length == 0)
+            return;
+        const ushort iconCols = 2;
+        const boxW = cast(ushort)(iconCols + toastMsg.length + 4);
+        const boxH = cast(ushort) 3;
+        if (width < boxW + 2 || height < boxH + 1)
+            return;
+        const boxX = cast(ushort)(originX + width - boxW - 2);
+        const boxY = cast(ushort) 1;
+
+        const borderCol = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
+        CellStyle frameStyle;
+        frameStyle.fg = Color.fromRgb(borderCol);
+        frameStyle.bg = Color.fromRgb(mix(pageBg, pageFg, 0.15));
+
+        CellStyle textStyle;
+        textStyle.fg = Color.fromRgb(pageFg);
+        textStyle.bg = frameStyle.bg;
+
+        CellStyle iconStyle;
+        iconStyle.fg = frameStyle.fg;
+        iconStyle.bg = frameStyle.bg;
+
+        g.fillRect(boxX, boxY, boxW, boxH, frameStyle);
+
+        g.putText(boxX, boxY, "┌", frameStyle);
+        foreach (x; 1 .. boxW - 1)
+            g.putText(cast(ushort)(boxX + x), boxY, "─", frameStyle);
+        g.putText(cast(ushort)(boxX + boxW - 1), boxY, "┐", frameStyle);
+
+        g.putText(boxX, cast(ushort)(boxY + 1), "│", frameStyle);
+        g.putText(cast(ushort)(boxX + 2), cast(ushort)(boxY + 1), "✓ ", iconStyle);
+        g.putText(cast(ushort)(boxX + 2 + iconCols), cast(ushort)(boxY + 1), toastMsg, textStyle);
+        g.putText(cast(ushort)(boxX + boxW - 1), cast(ushort)(boxY + 1), "│", frameStyle);
+
+        g.putText(boxX, cast(ushort)(boxY + 2), "└", frameStyle);
+        foreach (x; 1 .. boxW - 1)
+            g.putText(cast(ushort)(boxX + x), cast(ushort)(boxY + 2), "─", frameStyle);
+        g.putText(cast(ushort)(boxX + boxW - 1), cast(ushort)(boxY + 2), "┘", frameStyle);
     }
 
     /// A host-supplied status notice (workspace startup messages — e.g. a

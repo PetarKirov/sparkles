@@ -206,9 +206,9 @@ struct RaylibEvents
             sink(charEvent(cast(dchar) cp, mods));
         for (int k = GetKeyPressed(); k != 0; k = GetKeyPressed())
         {
-            const key = namedKey(k);
-            if (key != Key.none)
-                sink(keyEvent(key, mods));
+            const e = basicGradeKey(k, mods);
+            if (!isNoEvent(e))
+                sink(e);
         }
         // Named-key auto-repeat (M14): raylib reports OS repeats only
         // through IsKeyPressedRepeat (chars repeat natively through
@@ -487,5 +487,44 @@ unittest
         assert(namedKey(KEY_MENU) == Key.menu);
         assert(isDismiss(KeyEvent(namedKey(KEY_BACK))));
         assert(isDismiss(KeyEvent(namedKey(KEY_ESCAPE))));
+    }
+}
+
+/// Basic-grade mapping: named keys as-is; Ctrl/Alt/Super+letter as a
+/// `char_` event with the unshifted codepoint. Unmodified letters stay on
+/// `GetCharPressed` and yield `NoEvent` here — Super must be in this arm
+/// because Cmd+letter never arrives as TEXT_INPUT.
+private Event basicGradeKey(int rk, Mods mods) @safe pure nothrow @nogc
+{
+    const key = namedKey(rk);
+    if (key != Key.none)
+        return keyEvent(key, mods);
+    if (mods.ctrl || mods.alt || mods.super_)
+    {
+        const unshifted = unshiftedCodepoint(rk);
+        if (unshifted != 0)
+            return Event(KeyEvent(Key.char_, unshifted, mods, KeyAction.press, unshifted));
+    }
+    return Event(NoEvent());
+}
+
+@("ui_raylib.events.basicGradeKey.superLetter")
+@safe pure nothrow @nogc
+unittest
+{
+    with (KeyboardKey)
+    {
+        const superC = Mods(super_: true);
+        assert(basicGradeKey(KEY_C, superC)
+            == Event(KeyEvent(Key.char_, 'c', superC, KeyAction.press, 'c')));
+        assert(basicGradeKey(KEY_EQUAL, superC)
+            == Event(KeyEvent(Key.char_, '=', superC, KeyAction.press, '=')));
+        assert(basicGradeKey(KEY_MINUS, superC)
+            == Event(KeyEvent(Key.char_, '-', superC, KeyAction.press, '-')));
+        assert(isNoEvent(basicGradeKey(KEY_C, Mods())));
+        assert(basicGradeKey(KEY_UP, superC) == keyEvent(Key.up, superC));
+        const ctrlC = Mods(ctrl: true);
+        assert(basicGradeKey(KEY_C, ctrlC)
+            == Event(KeyEvent(Key.char_, 'c', ctrlC, KeyAction.press, 'c')));
     }
 }

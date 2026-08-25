@@ -160,6 +160,8 @@ unittest
     assert(setup.canFind("\x1b[?1049h"), setup);         // alt-screen
     assert(setup.canFind("\x1b[?1000;1002;1006h"), setup); // SGR mouse
     assert(setup.canFind("\x1b[?7l"), setup);            // autowrap off
+    assert(setup.canFind("\x1b[>9u"), setup);            // Kitty flags 1|8
+
 
     // First frame: a full paint, sync-framed, with the content.
     const st = CellStyle(fg: Color.fromRgb(200, 200, 200));
@@ -186,6 +188,7 @@ unittest
     const teardown = drain(pty.master, rb);
     assert(teardown.canFind("\x1b[?1000;1002;1006l"), teardown); // mouse off
     assert(teardown.canFind("\x1b[?25h"), teardown);             // cursor shown
+    assert(teardown.canFind("\x1b[<u"), teardown);               // pop keyboard mode
     assert(teardown.canFind("\x1b[?1049l"), teardown);           // alt-screen exit
 }
 

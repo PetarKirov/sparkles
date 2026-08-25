@@ -164,7 +164,7 @@ configuration "unittest" {
     // preview support modules gui_text.d / gui_ansi.d / gui_preview.d ARE
     // compiled and unit-tested here. gui_ansi.d drives an off-screen VT, so the
     // test build links libghostty-vt (headless, no window).
-    excludedSourceFiles "src/app.d" "src/gui.d"
+    excludedSourceFiles "src/app.d" "src/gui.d" "test/fixtures/*"
 
     // The off-screen VT bridge (gui_ansi.d) + preview model (gui_preview.d).
     dependency "sparkles:ghostty" path="../.."
@@ -175,6 +175,9 @@ configuration "unittest" {
     versions "HueDmdFmt"
 
     dependency "sparkles:test-runner" path="../.."
+
+    sourcePaths "src" "test"
+    importPaths "src" "test"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

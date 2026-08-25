@@ -96,6 +96,7 @@ struct Chord
     ShiftReq shift;
     bool ctrl;
     bool alt;
+    bool super_;
 }
 
 /// A `char_` chord.
@@ -264,6 +265,8 @@ bool matches(in Chord c, in KeyEvent k) @safe pure nothrow @nogc
         return false;
     if (c.alt && !k.mods.alt)
         return false;
+    if (c.super_ && !k.mods.super_)
+        return false;
     final switch (c.shift)
     {
         case ShiftReq.ignore: break;
@@ -282,7 +285,8 @@ bool matches(in Chord c, in KeyEvent k) @safe pure nothrow @nogc
 /// both be listed, so the guide's de-duplication must not conflate them.
 bool sameKey(in Chord a, in Chord b) @safe pure nothrow @nogc
     => a.key == b.key && a.ch == b.ch && a.chEnd == b.chEnd
-    && a.shift == b.shift && a.ctrl == b.ctrl && a.alt == b.alt;
+    && a.shift == b.shift && a.ctrl == b.ctrl && a.alt == b.alt
+    && a.super_ == b.super_;
 
 /**
 Whether a table chord accepts a chord already typed — prefix comparison
@@ -300,6 +304,7 @@ it — and then a typed `g`, which records `ShiftReq.no`, has to still match it.
 bool acceptsTyped(in Chord table, in Chord typed) @safe pure nothrow @nogc
     => table.key == typed.key && table.ch == typed.ch
     && table.ctrl == typed.ctrl && table.alt == typed.alt
+    && table.super_ == typed.super_
     && (table.shift == ShiftReq.ignore || table.shift == typed.shift);
 
 /**
@@ -316,10 +321,30 @@ normalise, which is how producers drift apart again.
 KeyEvent normalise(in KeyEvent raw) @safe pure nothrow @nogc
 {
     KeyEvent k = raw;
-    if (k.key == Key.char_ && k.ch >= 'A' && k.ch <= 'Z')
+    if (k.key == Key.char_)
     {
-        k.ch += 'a' - 'A';
-        k.mods.shift = true;
+        // 1. Raw ASCII control characters (0x01..0x1A -> 'a'..'z' + ctrl)
+        if (k.ch >= 1 && k.ch <= 26 && !k.mods.ctrl)
+        {
+            k.ch = cast(dchar)('a' + k.ch - 1);
+            k.mods.ctrl = true;
+        }
+        // 2. Events where character is 0 but unshifted codepoint is provided
+        else if (k.ch == 0 && k.unshifted != 0)
+        {
+            k.ch = k.unshifted;
+            if (k.ch >= 'A' && k.ch <= 'Z')
+            {
+                k.ch += 'a' - 'A';
+                k.mods.shift = true;
+            }
+        }
+        // 3. Uppercase character -> lowercase + shift
+        else if (k.ch >= 'A' && k.ch <= 'Z')
+        {
+            k.ch += 'a' - 'A';
+            k.mods.shift = true;
+        }
     }
     return k;
 }
@@ -788,7 +813,7 @@ unittest
         {
             const c = b.path[prefix.length];
             const ev = KeyEvent(c.key, c.ch, Mods(ctrl: c.ctrl, alt: c.alt,
-                shift: c.shift == ShiftReq.yes));
+                shift: c.shift == ShiftReq.yes, super_: c.super_));
             const r = resolve(testBindings, prefix, ev, ctx);
 
             const isLeaf = b.depth == prefix.length + 1 && b.group.length == 0;
@@ -867,4 +892,26 @@ unittest
         == TestCommand.leave);
     assert(commandFor(flat, KeyEvent(Key.char_, 'y'), BareContext()).cmd
         == TestCommand.none);
+}
+
+@("ui.keymap.normaliseControlChordsAndUnshifted")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.input.events : KeyAction;
+
+    // Raw ASCII control character 0x03 (Ctrl+C)
+    const rawCtrlC = KeyEvent(Key.char_, '\x03');
+    const norm1 = normalise(rawCtrlC);
+    assert(norm1.key == Key.char_ && norm1.ch == 'c' && norm1.mods.ctrl);
+
+    // Unshifted layout codepoints with ch == 0
+    const unshiftedC = KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'c');
+    const norm2 = normalise(unshiftedC);
+    assert(norm2.key == Key.char_ && norm2.ch == 'c' && norm2.mods.ctrl);
+
+    // Uppercase unshifted codepoints fold to lowercase + shift
+    const unshiftedShiftR = KeyEvent(Key.char_, 0, Mods(), KeyAction.press, 'R');
+    const norm3 = normalise(unshiftedShiftR);
+    assert(norm3.key == Key.char_ && norm3.ch == 'r' && norm3.mods.shift);
 }

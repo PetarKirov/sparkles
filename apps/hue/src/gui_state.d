@@ -326,14 +326,15 @@ struct CopyModes
 
 /// The transient feedback state (M15 GROUP-T of the GuiState hoist): the
 /// copied-checkmark flash beside a fence's copy button (the copied fence
-/// itself is `vm.copiedFenceSrc`), the copy-mode toast a 'y'/'t' toggle
-/// flashes in the status bar, and the armed vim 'z' fold sequence ('z'
-/// arms it for ~a second; the next key picks the op).
+/// itself is `vm.copiedFenceSrc`), the in-app toast (`toastSuccess` is the
+/// copy path's ✓; mode toggles and errors stay undecorated), and the armed
+/// vim 'z' fold sequence ('z' arms it for ~a second; the next key picks the op).
 struct Flashes
 {
     Timeline copiedFlash;
     bool copiedShown; // the ✔ glyph is in the tree; rebuild when the flash ends
     string copyModeMsg;
+    bool toastSuccess;
     Timeline toast;
 }
 
