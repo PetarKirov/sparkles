@@ -60,20 +60,22 @@ derived material lands.
 Every SDL test added after S0 must identify one of these classes in its test
 comment when the source is not wholly original.
 
-| Fixture family                                                              | Classification                                      | Planned use                                                                                                                                                             |
-| --------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scalar-kind and canonical-writer matrix                                     | Original                                            | Derived from `SPEC.md` §§3.4 and 9; covers every scalar kind, boundaries, signed zero, escapes, Base64, civil time, zones, duration fractions, and non-finite rejection |
-| Lexer acceptance/rejection matrix                                           | Adapted                                             | Cases selected from `sdlang/lexer.d`, rewritten against `Expected`, stable error codes, and byte spans; each test cites the upstream path and revision                  |
-| Parser regression cases for SDLang-D issues 16 and 31                       | Direct port if retained verbatim; otherwise adapted | Pins the anonymous/numeric parser regressions from `sdlang/parser.d`; direct ports carry an in-file zlib/libpng notice                                                  |
-| Ordered arena and repeated-name fixtures                                    | Adapted                                             | Semantic shapes selected from `sdlang/ast.d`, rewritten for flat arenas and borrowed ranges                                                                             |
-| DUB recipe semantic snapshots                                               | Adapted                                             | Reduced cases selected from `recipe/sdl.d` for authors, dependencies, configurations, platform attributes, namespaces, and nested settings                              |
-| Typed defaults, strictness, hooks, and source paths                         | Adapted                                             | Behavioural cases selected from `configy/read.d` and `configy/dub_test.d`, expressed through wired policies rather than Configy's class interface                       |
-| Error-code, allocator, lifetime, fuzz-smoke, and generated round-trip tests | Original                                            | Derived from the sparkles SDL specification and implementation invariants                                                                                               |
+| Fixture family                                                              | Classification                                      | Planned use                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scalar-kind and canonical-writer matrix                                     | Original                                            | Derived from `SPEC.md` §§3.4 and 9; covers every scalar kind, boundaries, signed zero, escapes, Base64, civil time, zones, duration fractions, and non-finite rejection                                                       |
+| Lexer acceptance/rejection matrix                                           | Adapted                                             | Cases selected from `sdlang/lexer.d`, rewritten against `Expected`, stable error codes, and byte spans; each test cites the upstream path and revision                                                                        |
+| Parser regression cases for SDLang-D issues 16 and 31                       | Direct port if retained verbatim; otherwise adapted | Pins the anonymous/numeric parser regressions from `sdlang/parser.d`; direct ports carry an in-file zlib/libpng notice                                                                                                        |
+| Ordered arena and repeated-name fixtures                                    | Adapted                                             | Semantic shapes selected from `sdlang/ast.d`, rewritten for flat arenas and borrowed ranges                                                                                                                                   |
+| DUB recipe semantic snapshots                                               | Adapted                                             | Reduced cases selected from `recipe/sdl.d` for authors, dependencies, configurations, platform attributes, namespaces, and nested settings                                                                                    |
+| Pinned DUB recipe snapshot (`dub.sdl` @ `5efed360`)                         | Direct copy (unmodified)                            | Byte-exact `sdlDubRecipe` compatibility corpus; provenance and license identification sit beside the file in `libs/wired/src/sparkles/wired/sdl/fixtures/README.md`, with the MIT notice retained in `THIRD_PARTY_NOTICES.md` |
+| Typed defaults, strictness, hooks, and source paths                         | Adapted                                             | Behavioural cases selected from `configy/read.d` and `configy/dub_test.d`, expressed through wired policies rather than Configy's class interface                                                                             |
+| Error-code, allocator, lifetime, fuzz-smoke, and generated round-trip tests | Original                                            | Derived from the sparkles SDL specification and implementation invariants                                                                                                                                                     |
 
-No direct source port is planned. If implementation work later makes one
-necessary, the destination file must say that it is altered from the named
-upstream path, retain the applicable notice, and update this table before the
-port lands.
+The pinned DUB recipe snapshot is the only direct copy, and it is byte-exact
+(unaltered) upstream material with its notice retained. If implementation work
+later adds an altered direct port, the destination file must say that it is
+altered from the named upstream path, retain the applicable notice, and update
+this table before the port lands.
 
 ## Audit Rule
 
