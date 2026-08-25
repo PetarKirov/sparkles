@@ -350,13 +350,17 @@
             # `pkgs.curl` coerces to the `-bin` output.
             disallowedReferences = [
               pkgs.ldc
-              pkgs.ldc.include
+            ]
+            ++ lib.optionals (pkgs.ldc ? include) [ pkgs.ldc.include ]
+            ++ [
               pkgs.curl.out
               pkgs.tzdata
             ];
             preFixup = ''
               find "$out" -type f -exec remove-references-to \
-                -t ${pkgs.ldc} -t ${pkgs.ldc.include} -t ${pkgs.curl.out} -t ${pkgs.tzdata} '{}' +
+                -t ${pkgs.ldc} ${
+                  lib.optionalString (pkgs.ldc ? include) "-t ${pkgs.ldc.include}"
+                } -t ${pkgs.curl.out} -t ${pkgs.tzdata} '{}' +
             '';
 
             # The example carries its own inline `dub.sdl` block, so this is

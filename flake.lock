@@ -260,13 +260,13 @@
     "ldc-windows-x64": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-scvuSRg6Ky+dOKqab/bfXiwCZYD1Cv70KpTe8A141wI=",
+        "narHash": "sha256-aQjpG32S5QIK85Oa8SxkJjt/o0/jLYPQV2uH9wa7DDw=",
         "type": "file",
-        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-windows-x64.7z"
+        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z"
       },
       "original": {
         "type": "file",
-        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.41.0/ldc2-1.41.0-windows-x64.7z"
+        "url": "https://github.com/ldc-developers/ldc/releases/download/v1.42.0/ldc2-1.42.0-windows-x64.7z"
       }
     },
     "maple-font": {

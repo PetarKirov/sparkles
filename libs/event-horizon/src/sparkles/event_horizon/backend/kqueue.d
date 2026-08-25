@@ -1464,7 +1464,7 @@ unittest
         b.close();
 
     int[2] fds;
-    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, fds.ptr) == 0);
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0);
     scope (exit)
     {
         close_(fds[0]);

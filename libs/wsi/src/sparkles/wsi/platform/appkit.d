@@ -449,6 +449,9 @@ private class SparklesWsiView : NSView
 private class SparklesWsiWindow : NSWindow
 {
     static SparklesWsiWindow alloc() @selector("alloc");
+    override SparklesWsiWindow initWithContentRect(NSRect contentRect, ulong styleMask,
+        ulong backing, bool defer_)
+        @selector("initWithContentRect:styleMask:backing:defer:");
 
     bool windowShouldClose(NSObject sender) @selector("windowShouldClose:")
     {
@@ -630,7 +633,7 @@ struct AppKitWsi
         if (window is null)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                 "SparklesWsiWindow.alloc returned nil");
-        window = cast(SparklesWsiWindow) window.initWithContentRect(rect,
+        window = window.initWithContentRect(rect,
             style, NSBackingStoreBuffered, false);
         if (window is null)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
