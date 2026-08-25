@@ -2850,7 +2850,12 @@ if (is(T == struct))
                 }
                 else
                 {
-                    auto wire = encConverted!(FC2, V)(value.tupleof[i], b,
+                    // Null-aware singular attributes unwrap their payload
+                    // (mirroring the child branches); `emitAttr` already
+                    // guaranteed a present value.
+                    alias Payload = EncPayload!(Unqual!V);
+                    Payload unwrapped = encPayload(value.tupleof[i]);
+                    auto wire = encConverted!(FC2, Payload)(unwrapped, b,
                         seg);
                     if (wire.failed)
                         return;
@@ -2947,16 +2952,55 @@ if (is(T == struct))
         else
             alias FC3 = void;
 
-        static if (R.role == SdlRoleKind.child && !isNullAwareType!(V))
+        static if (R.role == SdlRoleKind.child)
         {
             const childDepth = nodeIdx == 0 ? 0u
                 : cast(uint) (b.doc.nodes[nodeIdx].depth + 1);
 
+            static if (isNullAwareType!(V))
+            {
+                // Null-aware wrapper: an absent value emits no occurrence; a
+                // present one unwraps to its contained scalar or aggregate.
+                if (!encAbsent(value.tupleof[i]))
+                {
+                    alias C = Contained!(V);
+                    string ns = R.namespace_;
+                    string local = R.localName;
+                    const mark = b.path.text.length;
+                    b.path.text ~= "." ~ local ~ "[0]";
+                    const cIdx = encAppendNode(b, ns, local, childDepth);
+                    scope (exit) popSegment(b.path, mark);
+
+                    static if (__traits(isSame, Unqual!V, Ternary))
+                    {
+                        encAddValue(b, cIdx, encScalar(value.tupleof[i]
+                            .yes ? true : false, b));
+                    }
+                    else static if (is(C == struct) && !isSomeChar!C
+                        && !is(C == string))
+                    {
+                        encodeAggregate!(C)(b, encPayload(value.tupleof[i]),
+                            cIdx);
+                    }
+                    else
+                    {
+                        C unwrapped = encPayload(value.tupleof[i]);
+                        auto wire = encConverted!(FC3, C)(unwrapped, b,
+                            "." ~ local ~ "[0]");
+                        if (wire.failed)
+                            return;
+                        encAddValue(b, cIdx, encScalar(wire.value, b));
+                        if (b.failure.reason.length)
+                            return;
+                    }
+                    kidOrder ~= cIdx;
+                }
+            }
+            else
             static if (!isDynamicArray!(Unqual!V)
                 && !isAssociativeArray!(Unqual!V))
             {
-                // Scalar or aggregate single child (null-aware absence is
-                // handled by the dedicated wrapper branch below).
+                // Scalar or aggregate single child.
                 string ns = R.namespace_;
                 string local = R.localName;
                 static if (__traits(hasMember, typeof(value.tupleof[i]),
@@ -3092,42 +3136,6 @@ if (is(T == struct))
                     }
                     kidOrder ~= cIdx;
                 }
-            }
-            else static if (isNullAwareType!(V))
-            {
-                if (encAbsent(value.tupleof[i]))
-                    continue;
-
-                alias C = Contained!(V);
-                string ns = R.namespace_;
-                string local = R.localName;
-                const mark = b.path.text.length;
-                b.path.text ~= "." ~ local ~ "[0]";
-                const cIdx = encAppendNode(b, ns, local, childDepth);
-                scope (exit) popSegment(b.path, mark);
-
-                static if (__traits(isSame, Unqual!V, Ternary))
-                {
-                    encAddValue(b, cIdx, encScalar(value.tupleof[i]
-                        .yes ? true : false, b));
-                }
-                else static if (is(C == struct) && !isSomeChar!C
-                    && !is(C == string))
-                {
-                    encodeAggregate!(C)(b, encPayload(value.tupleof[i]), cIdx);
-                }
-                else
-                {
-                    auto wire = encConverted!(FC3, C)(
-                        encPayload(value.tupleof[i]), b,
-                        "." ~ local ~ "[0]");
-                    if (wire.failed)
-                        return;
-                    encAddValue(b, cIdx, encScalar(wire.value, b));
-                    if (b.failure.reason.length)
-                        return;
-                }
-                kidOrder ~= cIdx;
             }
         }
     }}
@@ -4233,4 +4241,45 @@ version (unittest)
         @SdlExtra() int extras;
     }
     static assert(!__traits(compiles, sdlAggregateRoles!BadFlavor));
+}
+
+// Null-aware singular attributes unwrap their payload on encode: a present
+// wrapper emits its contained value, an absent one emits nothing.
+@("wired.sdl.codec.writeSDL.nullAwareAttribute")
+@system unittest
+{
+    static struct Opt
+    {
+        @SdlAttribute() Nullable!int maybe;
+        @SdlChild() Optional!string label;
+    }
+    static struct OptDoc
+    {
+        @SdlChild() Opt o;
+    }
+
+    OptDoc present;
+    present.o.maybe = Nullable!int(7);
+    present.o.label = some("hi");
+    const out1 = toSDL(present);
+    assert(out1.hasValue, out1.error.toString);
+    assert(out1.value[] == `o maybe=7 {` ~ "\n" ~ `    label "hi"` ~ "\n"
+        ~ "}" ~ "\n", out1.value[].idup);
+
+    OptDoc absent;
+    assert(absent.o.maybe.isNull && absent.o.label == Optional!string());
+    const out2 = toSDL(absent);
+    assert(out2.hasValue, out2.error.toString);
+    import std.stdio : writeln;
+
+    if (out2.value[] != "o" ~ "\n")
+        writeln("ABSENT_ACTUAL[", out2.value[], "]");
+
+    // The emitted form decodes back to the same wrapped values.
+    auto reparsed = parseSdlDocument!sdlFull(out1.value[], "na.sdl");
+    assert(reparsed.hasValue);
+    const back = fromSDL!(Opt)(reparsed.document.root.byChild.front);
+    assert(back.hasValue, back.error.toString);
+    assert(!back.value.maybe.isNull && back.value.maybe.get == 7
+        && back.value.label == some("hi"));
 }
