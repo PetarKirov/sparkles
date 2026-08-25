@@ -19,11 +19,13 @@ Chord grammar:
 ---
 path      := chord (" " chord)*                 (1..3 chords)
 chord     := (mod "+")* keytoken
-mod       := "ctrl" | "alt" | "shift"
+mod       := "ctrl" | "alt" | "shift" | "super"
 keytoken  := keyname | range | printable
 keyname   := "space" | "leader" | "up" | ... | "f12"   (see keyNames)
 range     := printable "-" printable            ("1-9", one ranged row)
 ---
+`cmd`/`command`/`⌘` parse as `super`; `opt`/`option`/`meta`/`⌥` parse as
+`alt`. Canonical unparse is `super+` / `alt+`.
 A bare printable binds Shift-agnostically (`ShiftReq.ignore`); `shift+r` or
 an uppercase letter binds the shifted form (`ShiftReq.yes`), folded exactly
 as `normalise` folds events. `ShiftReq.no` has no v1 spelling — rebinding
@@ -32,9 +34,10 @@ shifted one is one more line; `unshift+` is reserved for later.
 */
 module keymap_config;
 
-import std.sumtype : match;
-
-import sparkles.input.events : Key;
+import sparkles.input.events : Key,
+    InputChordPath = ChordPath,
+    parseInputChordPath = parseChordPath,
+    unparseInputChordPath = unparseChordPath;
 import sparkles.wired.policy : WireConvert;
 import ui_keymap = sparkles.ui.keymap;
 import sparkles.ui.keymap : Chord, chordRange, maxPathLength, ModeReq, ShiftReq;
@@ -65,28 +68,6 @@ struct ChordPath
     ubyte depth = 1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The codec.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// The named-key vocabulary, both directions. `space`/`leader` both spell
-/// the leader code point today; when CFG18 makes the leader configurable,
-/// chord parsing must run after that setting resolves.
-private immutable string[] keyNames = [
-    "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
-    "insert", "delete", "enter", "tab", "backspace", "escape", "back", "menu",
-    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-];
-
-/// ditto
-private immutable Key[] keyValues = [
-    Key.up, Key.down, Key.left, Key.right, Key.home, Key.end, Key.pageUp,
-    Key.pageDown, Key.insert, Key.delete_, Key.enter, Key.tab, Key.backspace,
-    Key.escape, Key.back, Key.menu,
-    Key.f1, Key.f2, Key.f3, Key.f4, Key.f5, Key.f6, Key.f7, Key.f8, Key.f9,
-    Key.f10, Key.f11, Key.f12,
-];
-
 /// A chord-parse failure, Expected-shaped for wired's converter seam (§8).
 struct ChordError
 {
@@ -112,149 +93,27 @@ wired renders as a located decode error at the offending key.
 */
 ChordParsed parseChordPath(string text) @safe pure
 {
-    import std.algorithm.iteration : splitter;
-    import std.utf : byDchar, count;
-
-    ChordPath p;
-    size_t n;
-    foreach (part; text.splitter(' '))
-    {
-        if (!part.length)
-            return chordFail("empty chord (double space?)");
-        if (n >= maxPathLength)
-            return chordFail("a binding path holds at most 3 chords");
-
-        Chord c;
-        // Mods: every '+'-separated token but the last.
-        string rest = part;
-        while (true)
-        {
-            import std.string : indexOf;
-
-            const plus = rest.indexOf('+');
-            if (plus < 0 || plus + 1 >= rest.length)
-                break; // no '+', or a trailing '+' names the '+' key itself
-            const mod = rest[0 .. plus];
-            switch (mod)
-            {
-                case "ctrl":         c.ctrl = true; break;
-                case "cmd", "super": c.super_ = true; break;
-                case "alt":          c.alt = true; break;
-                case "shift":        c.shift = ShiftReq.yes; break;
-                default:
-                    return chordFail("unknown modifier '" ~ mod
-                        ~ "' (ctrl, cmd/super, alt, shift)");
-            }
-            rest = rest[plus + 1 .. $];
-        }
-        if (!rest.length)
-            return chordFail("chord names no key");
-
-        const units = rest.count;
-        if (units == 3)
-        {
-            // A possible range: x-y over single code points.
-            dchar[3] cp;
-            size_t ci;
-            foreach (d; rest.byDchar)
-                cp[ci++] = d;
-            if (cp[1] == '-')
-            {
-                if (cp[0] >= cp[2])
-                    return chordFail("range '" ~ rest ~ "' is not ascending");
-                if (c.shift != ShiftReq.ignore)
-                    return chordFail("a range cannot take shift");
-                c.key = Key.char_;
-                c.ch = cp[0];
-                c.chEnd = cp[2];
-                p.path[n++] = c;
-                continue;
-            }
-        }
-        if (units == 1)
-        {
-            dchar d;
-            foreach (u; rest.byDchar)
-                d = u;
-            // Uppercase folds to lower + shift, exactly as `normalise` folds
-            // the event stream, so the table invariant holds for user rows.
-            if (d >= 'A' && d <= 'Z')
-            {
-                d = d - 'A' + 'a';
-                c.shift = ShiftReq.yes;
-            }
-            c.key = Key.char_;
-            c.ch = d;
-            p.path[n++] = c;
-            continue;
-        }
-        switch (rest)
-        {
-            case "space", "leader":
-                c.key = Key.char_;
-                c.ch = leader;
-                break;
-            default:
-                bool found;
-                foreach (i, name; keyNames)
-                    if (rest == name)
-                    {
-                        c.key = keyValues[i];
-                        found = true;
-                        break;
-                    }
-                if (!found)
-                    return chordFail("unknown key '" ~ rest ~ "'");
-        }
-        p.path[n++] = c;
-    }
-    if (n == 0)
-        return chordFail("empty binding path");
-    p.depth = cast(ubyte) n;
-    return ChordParsed(p);
+    InputChordPath p;
+    string err;
+    if (!parseInputChordPath(text, p, err, leader))
+        return chordFail(err);
+    ChordPath res;
+    res.path = p.path;
+    res.depth = p.depth;
+    return ChordParsed(res);
 }
 
-/// The canonical spelling: mods in `ctrl+alt+shift` order, named keys by
-/// their table above, `' '` as `space`, chords joined by single spaces.
-/// `parseChordPath ∘ unparseChordPath` is the identity (pinned by test).
+/// The canonical spelling: mods in `ctrl+alt+shift+super` order, named keys
+/// by their table above, `' '` as `space`, chords joined by single spaces.
+/// Aliases (`cmd`, `opt`, `meta`, …) and symbols (`⌘`, `⌥`) parse in and
+/// unparse as `super+` / `alt+`. `parseChordPath ∘ unparseChordPath` is the
+/// identity on canonical spellings (pinned by test).
 string unparseChordPath(ChordPath p) @safe pure
 {
-    import std.conv : text;
-
-    string s;
-    foreach (i; 0 .. p.depth)
-    {
-        if (i)
-            s ~= ' ';
-        const c = p.path[i];
-        if (c.super_)
-            s ~= "cmd+";
-        if (c.ctrl)
-            s ~= "ctrl+";
-        if (c.alt)
-            s ~= "alt+";
-        if (c.shift == ShiftReq.yes)
-            s ~= "shift+";
-        if (c.key == Key.char_)
-        {
-            if (c.chEnd != 0)
-                s ~= text(c.ch, '-', c.chEnd);
-            else if (c.ch == ' ')
-                s ~= "space";
-            else
-                s ~= text(c.ch);
-        }
-        else
-        {
-            foreach (j, k; keyValues)
-                if (k == c.key)
-                {
-                    s ~= keyNames[j];
-                    break;
-                }
-        }
-    }
-    return s;
+    InputChordPath ip;
+    ip.path = p.path;
+    ip.depth = p.depth;
+    return unparseInputChordPath(ip, leader);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -467,7 +326,7 @@ version (unittest)
 @safe pure unittest
 {
     // Canonical spellings survive parse ∘ unparse exactly.
-    foreach (s; ["j", "shift+r", "ctrl+c", "ctrl+alt+delete", "z 1-9",
+    foreach (s; ["j", "shift+r", "ctrl+c", "super+c", "ctrl+alt+delete", "z 1-9",
         "space u s", "f11", "pageup", "escape", "+", "-", "ctrl+="])
         assert(unparseChordPath(cp(s)) == s, s);
 
@@ -484,9 +343,26 @@ version (unittest)
     assert(cp("f11").path[0].key == Key.f11);
     assert(cp("space").path[0].ch == ' ');
 
+    // Aliases and symbols parse to their canonical typed chords and unparse
+    // as `super+` / `alt+`.
+    assert(cp("meta+x").path[0].alt);
+    assert(cp("opt+x").path[0].alt);
+    assert(cp("option+x").path[0].alt);
+    assert(cp("cmd+c").path[0].super_);
+    assert(cp("⌘c").path[0].super_);
+    assert(cp("⌥f").path[0].alt);
+    assert(cp("⎋").path[0].key == Key.escape);
+    assert(cp("⏎").path[0].key == Key.enter);
+    assert(unparseChordPath(cp("cmd+c")) == "super+c");
+    assert(unparseChordPath(cp("⌘c")) == "super+c");
+    assert(unparseChordPath(cp("meta+x")) == "alt+x");
+    assert(unparseChordPath(cp("opt+x")) == "alt+x");
+    assert(unparseChordPath(cp("option+x")) == "alt+x");
+    assert(unparseChordPath(cp("⌥x")) == "alt+x");
+
     // Rejections carry reasons.
     assert(parseChordPath("").bad);
-    assert(parseChordPath("meta+x").bad);
+    assert(parseChordPath("nosuchmod+x").bad);
     assert(parseChordPath("9-1").bad);
     assert(parseChordPath("a b c d").bad);
     assert(parseChordPath("nosuchkey").bad);

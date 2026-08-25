@@ -87,14 +87,3 @@ void main() @system
 }
 
 string sizeText(TermSize sz) @safe => text(sz.width, "×", sz.height, " cells");
-
-string describeKey(in KeyEvent e) @safe
-{
-    string m;
-    if (e.mods.ctrl) m ~= "Ctrl+";
-    if (e.mods.alt) m ~= "Alt+";
-    if (e.mods.shift) m ~= "Shift+";
-    if (e.key == Key.char_)
-        return text("key ", m, "'", e.ch, "'");
-    return text("key ", m, e.key);
-}

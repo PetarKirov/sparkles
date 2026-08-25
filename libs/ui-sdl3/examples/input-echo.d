@@ -170,10 +170,6 @@ string actionOf(KeyAction a) @safe pure nothrow @nogc
 
 string modsOf(in Mods m) @safe
 {
-    string s;
-    if (m.ctrl)   s ~= " ctrl";
-    if (m.alt)    s ~= " alt";
-    if (m.shift)  s ~= " shift";
-    if (m.super_) s ~= " super";
-    return s;
+    const s = formatMods(m, false);
+    return s.length ? " " ~ s : "";
 }
