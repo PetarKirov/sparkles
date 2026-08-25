@@ -146,7 +146,7 @@ private enum Shape : ubyte
     other,
 }
 
-private Shape shapeAt(in WireSchema s, size_t ni)
+private Shape shapeAt(const WireSchema s, size_t ni)
 {
     final switch (s.nodes[ni].kind)
     {
@@ -167,12 +167,21 @@ private Shape shapeAt(in WireSchema s, size_t ni)
     case NodeKind.map:
         return Shape.map;
     case NodeKind.unionType:
+    {
+        // A union whose every variant is scalar-convertible is itself
+        // scalar-convertible for attribute/value channels (SPEC §6).
+        foreach (edge; s.edges[s.nodes[ni].firstEdge
+                .. s.nodes[ni].firstEdge + s.nodes[ni].edgeCount])
+            if (shapeAt(s, edge) != Shape.scalarSingle)
+                return Shape.other;
+        return Shape.scalarSingle;
+    }
     case NodeKind.passthrough:
         return Shape.other;
     }
 }
 
-private Shape shapeElement(in WireSchema s, size_t elementIndex, bool)
+private Shape shapeElement(const WireSchema s, size_t elementIndex, bool)
 {
     final switch (shapeAt(s, elementIndex))
     {
@@ -190,7 +199,7 @@ private Shape shapeElement(in WireSchema s, size_t elementIndex, bool)
 
 /// Whether the node serializes as a string or a name-represented enum —
 /// the required type class for AA keys and dynamic tag-name fields.
-private bool nameBearing(in WireSchema s, size_t ni)
+private bool nameBearing(const WireSchema s, size_t ni)
 {
     const target = s.nodes[ni].kind == NodeKind.reference
         ? s.nodes[ni].referenceIndex : ni;
