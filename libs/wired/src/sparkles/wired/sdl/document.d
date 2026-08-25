@@ -251,6 +251,13 @@ struct SdlScalar
     /// The active payload kind.
     SdlScalarKind kind() const scope @safe pure nothrow @nogc => _kind;
 
+    package static SdlScalar invalidScalar() @safe pure nothrow @nogc
+    {
+        SdlScalar result;
+        result._kind = SdlScalarKind.none;
+        return result;
+    }
+
     /// Exact original token span; default/standalone values have an empty span.
     SdlSpan span() const scope @safe pure nothrow @nogc => _span;
 
@@ -363,6 +370,9 @@ package struct SdlNodeCell
     size_t childStart;
     size_t childCount;
     uint depth;
+    /// Source had an explicit child block (canonical writer emits braces
+    /// even when the block was empty).
+    bool hasBlock;
 }
 
 package struct SdlValueCell
@@ -556,6 +566,9 @@ struct SdlNode
     /// Number of direct children, including repeated names.
     size_t childCount() const scope @safe pure nothrow @nogc
         => this.cell.childCount;
+    /// Whether the source declaration carried a `{ }` block.
+    bool hasBlock() const scope @safe pure nothrow @nogc
+        => (() @trusted => _nodes[_cell].hasBlock)();
 
     /// Forward range over positional values in source order.
     SdlValueRange byValue() const return scope @safe pure nothrow @nogc

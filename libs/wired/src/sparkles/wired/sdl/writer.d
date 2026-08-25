@@ -10,10 +10,21 @@ import sparkles.wired.json.writer : writeJsonDouble, writeJsonLong;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
 
+version (unittest)
+{
+    private import sparkles.wired.sdl.config : sdlDubRecipe, sdlFull;
+    private import sparkles.wired.sdl.reader : parseSdlDocument;
+}
+
 /// Owning text returned by SDL convenience APIs.
 alias SdlString = SmallBuffer!(char, 256);
 
-/// Canonical document-writer options, used by the later document milestone.
+/** Canonical document-writer options (SPEC §9/§11).
+
+`indent` may be any non-empty string; the canonical default is four ASCII
+spaces. `newlineForEmptyDocument` controls whether a document with no
+top-level tags emits a single LF or nothing at all.
+*/
 struct SdlWriteOptions
 {
     string indent = "    ";
@@ -521,6 +532,228 @@ SdlExpected!void writeSdlScalar(Writer)(scope const ref SdlScalar scalar,
     return sdlOk();
 }
 
+// ── Canonical document emission (SPEC §9) ────────────────────────────────────
+
+/** Writes one parsed document in canonical SDL form.
+
+The output is UTF-8 without BOM, LF newlines, one declaration per logical
+line, exactly one final LF for a non-empty document, positional values then
+attributes then children in stored order with single-space separators, and
+four-space indentation by default (any non-empty `options.indent`). A
+child-bearing tag writes `" {"` and LF, and its closing `}` sits on its own
+indented line; empty child blocks still open and close on their own lines.
+Anonymous tags emit their bare values with no name. Comments and source
+trivia are never reproduced; spans and the source name are ignored. An empty
+document emits nothing, plus exactly one LF when `newlineForEmptyDocument`
+is set.
+
+Every failure — including non-finite floats, invalid scalars, and an empty
+`indent` — leaves the writer untouched and returns a structured encode-stage
+error whose role path names the offending member, e.g. `$.child[2]@attr` or
+`$<value[0]>` (SPEC §7).
+
+`Document` is any SdlDocument-like arena exposing `valid()` and `root()`.
+Attributes infer from `Writer`; over $(LREF SmallBuffer) the structural path
+performs no GC allocation (the floating-point kernels may format through
+Phobos).
+*/
+SdlExpected!void writeSdlDocument(Document, Writer)(
+    return scope const ref Document document,
+    ref Writer writer,
+    SdlWriteOptions options = SdlWriteOptions.init)
+{
+    if (!document.valid || document.root.childCount == 0)
+    {
+        if (options.newlineForEmptyDocument)
+            put(writer, '\n');
+        return sdlOk();
+    }
+    if (options.indent.length == 0)
+        return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
+            "indent must be a non-empty string"));
+
+    SmallBuffer!(char, 96) rolePath;
+
+    SdlExpected!void attach(SdlError error)
+    {
+        error.rolePath ~= rolePath[];
+        return sdlErr!void(error);
+    }
+
+    void putIndent(ref Writer sink, size_t depth)
+    {
+        foreach (_; 0 .. depth)
+            put(sink, options.indent);
+    }
+
+    void putName(W)(ref W sink, SdlQualifiedName name)
+    {
+        if (name.namespace_.length)
+        {
+            put(sink, name.namespace_);
+            put(sink, ':');
+        }
+        put(sink, name.localName);
+    }
+
+    SdlExpected!void writeScalar(ref Writer sink, SdlScalar scalar)
+    {
+        auto result = writeSdlScalar(scalar, sink);
+        if (result.hasError)
+            return attach(result.error);
+        return sdlOk();
+    }
+
+    SdlQualifiedName childNameAt(SdlNode node, size_t position)
+    {
+        auto walker = node.byChild;
+        foreach (_; 0 .. position)
+            walker.popFront();
+        return walker.front.qualifiedName;
+    }
+
+    /// Occurrence index of `position` among same-qualified-name siblings.
+    ///
+    /// Children repeat freely, so the path segment counts equal qualified
+    /// names before `position`; two bounded walks keep this allocation-free.
+    size_t occurrenceOf(SdlNode node, size_t position)
+    {
+        const target = childNameAt(node, position);
+
+        auto prior = node.byChild;
+        size_t occurrence;
+        foreach (_; 0 .. position)
+        {
+            if (prior.front.qualifiedName == target)
+                occurrence++;
+            prior.popFront();
+        }
+        return occurrence;
+    }
+
+    void appendChildSegment(SdlNode node, size_t position)
+    {
+        rolePath ~= ".";
+        putName(rolePath, childNameAt(node, position));
+        rolePath ~= "[";
+        {
+            import sparkles.base.text.writers : writeInteger;
+
+            writeInteger(rolePath, occurrenceOf(node, position));
+        }
+        rolePath ~= "]";
+    }
+
+    SdlExpected!void writeNode(ref Writer sink, SdlNode node,
+        size_t depth, bool named)
+    {
+        putIndent(sink, depth);
+        size_t seen;
+        if (named)
+        {
+            putName(sink, node.qualifiedName);
+            seen = 1;
+        }
+        auto valueRange = node.byValue;
+        for (size_t index = 0; !valueRange.empty; valueRange.popFront(), index++)
+        {
+            const value = valueRange.front;
+            if (seen++ != 0)
+                put(sink, ' ');
+            const mark = rolePath.length;
+            rolePath ~= "<value[";
+            {
+                import sparkles.base.text.writers : writeInteger;
+
+                writeInteger(rolePath, index);
+            }
+            rolePath ~= "]>";
+            const written = writeScalar(sink, value);
+            rolePath.length = mark;
+            if (written.hasError)
+                return written;
+        }
+        foreach (attribute; node.byAttribute)
+        {
+            if (seen++ != 0)
+                put(sink, ' ');
+            putName(sink, attribute.qualifiedName);
+            put(sink, '=');
+            const mark = rolePath.length;
+            rolePath ~= "@";
+            putName(rolePath, attribute.qualifiedName);
+            const written = writeScalar(sink, attribute.value);
+            rolePath.length = mark;
+            if (written.hasError)
+                return written;
+        }
+        if (!node.hasBlock)
+        {
+            put(sink, '\n');
+            return sdlOk();
+        }
+        put(sink, " {\n");
+        auto childRange = node.byChild;
+        for (size_t position = 0; !childRange.empty;
+            childRange.popFront(), position++)
+        {
+            const child = childRange.front;
+            const mark = rolePath.length;
+            appendChildSegment(node, position);
+            const written = writeNode(sink, child, depth + 1,
+                child.qualifiedName.localName.length != 0
+                    || child.qualifiedName.namespace_.length != 0);
+            rolePath.length = mark;
+            if (written.hasError)
+                return written;
+        }
+        putIndent(sink, depth);
+        put(sink, "}\n");
+        return sdlOk();
+    }
+
+    const root = document.root;
+    auto topLevel = root.byChild;
+    for (size_t position = 0; !topLevel.empty;
+        topLevel.popFront(), position++)
+    {
+        const child = topLevel.front;
+        const mark = rolePath.length;
+        appendChildSegment(root, position);
+        const written = writeNode(writer, child, 0,
+            child.qualifiedName.localName.length != 0
+                || child.qualifiedName.namespace_.length != 0);
+        rolePath.length = mark;
+        if (written.hasError)
+            return written;
+    }
+    return sdlOk();
+}
+
+/** Package seam: semantic document equality for the SPEC §10 law tests.
+
+Two documents are semantically equal when their canonical serializations are
+byte-identical — which by construction ignores source spans and source names
+while preserving every ordered channel, scalar kind, and payload byte.
+*/
+package bool sdlDocumentsSemanticallyEqual(A, B)(
+    return scope const ref A left, return scope const ref B right)
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    static bool canonical(D)(scope const ref D document,
+        ref SmallBuffer!(char, 512) bytes)
+    {
+        return !writeSdlDocument(document, bytes).hasError;
+    }
+
+    SmallBuffer!(char, 512) leftBytes;
+    SmallBuffer!(char, 512) rightBytes;
+    if (!canonical(left, leftBytes) || !canonical(right, rightBytes))
+        return false;
+    return leftBytes[] == rightBytes[];
+}
+
 version (unittest)
 {
     private long parseSignedHarness(scope const(char)[] token)
@@ -989,4 +1222,332 @@ version (unittest)
     auto badCharacter = SdlScalar(cast(dchar) 0x11_0000);
     auto character = writeSdlScalar(badCharacter, writer);
     assert(character.hasError && writer.length == 0);
+}
+
+version (unittest)
+{
+    private string renderDocument(A)(scope const ref A document)
+    {
+        SmallBuffer!(char, 1024) bytes;
+        auto written = writeSdlDocument(document, bytes);
+        assert(!written.hasError, written.error.toString);
+        return bytes[].idup;
+    }
+
+    private struct LawRandom
+    {
+        uint state;
+        uint next() @safe pure nothrow @nogc
+        {
+            state = state * 1_664_525 + 1_013_904_223;
+            return state;
+        }
+    }
+
+    private string pick(ref LawRandom rng, scope immutable(string)[] items)
+    {
+        return items[rng.next() % items.length];
+    }
+
+    private string pickValue(ref LawRandom rng, bool recipeOnly)
+    {
+        static immutable string[] full = [
+            "null", "true", "false", "on", "off", "'x'",
+            `"str\"q"`, `"multi\nline"`, "`raw`", "-42", "42L",
+            "0.5F", "-0.0D", "0.125BD", "[TQ==]",
+        ];
+        static immutable string[] recipe = [`"a"`, `"b\nc"`, "true", "false"];
+        return recipeOnly ? recipe[rng.next() % recipe.length]
+            : full[rng.next() % full.length];
+    }
+
+    private void generateTag(ref LawRandom rng, ref string out_,
+        size_t depth, bool recipeOnly)
+    {
+        if (!recipeOnly && rng.next() % 7 == 0)
+            out_ ~= "# note\n";
+        if (rng.next() % 11 == 0)
+            out_ ~= "\n";
+        foreach (_; 0 .. depth)
+            out_ ~= "    ";
+
+        const anonymous = !recipeOnly && depth < 2 && rng.next() % 5 == 0;
+        if (!anonymous)
+            out_ ~= pick(rng, recipeOnly
+                ? ["alpha", "beta"] : ["alpha", "beta", "x:gamma", "dup"]);
+
+        const valueCount = anonymous ? 1 + rng.next() % 3 : rng.next() % 4;
+        foreach (index; 0 .. valueCount)
+        {
+            out_ ~= index == 0 && !anonymous ? " " : "";
+            if (index != 0 || anonymous)
+                out_ ~= " ";
+            out_ ~= pickValue(rng, recipeOnly);
+        }
+        foreach (_; 0 .. 1 + rng.next() % 2)
+        {
+            out_ ~= anonymous && valueCount == 0 ? "" : " ";
+            out_ ~= pick(rng, recipeOnly
+                ? ["opt", "x:plat"] : ["opt", "ver", "x:plat"]);
+            out_ ~= "=";
+            out_ ~= pickValue(rng, recipeOnly);
+        }
+
+        if (depth < 3 && rng.next() % 3 != 0)
+        {
+            out_ ~= " {\n";
+            foreach (_; 0 .. 1 + rng.next() % 3)
+                generateTag(rng, out_, depth + 1, recipeOnly);
+            foreach (_; 0 .. depth)
+                out_ ~= "    ";
+            out_ ~= "}";
+            out_ ~= rng.next() % 4 == 0 ? ";" : "\n";
+        }
+        else
+            out_ ~= rng.next() % 4 == 0 ? ";\n" : "\n";
+    }
+
+    /// Space-bearing temporal literals are emitted as their own standalone
+    /// tags: the scanner legitimately fuses a leading date/clock with a
+    /// following digit-and-colon token, so adjacency would change meaning.
+    /// Scalars whose spelling may fuse with an adjacent digit-led token
+    /// (dates absorb a following clock; clocks/durations absorb dates) are
+    /// emitted as their own single-value tags.
+    private string pickTemporal(ref LawRandom rng)
+    {
+        static immutable string[] temporal = [
+            "2024/2/29",
+            "01:02:03.0000001",
+            "2d:00:00:00",
+            "-0:00:00.5",
+            "2024/2/29 01:02:03.05",
+            "2024/2/29 01:02:03-Europe/X",
+            "2024/2/29 01:02:03-GMT+02:00",
+        ];
+        return temporal[rng.next() % temporal.length];
+    }
+
+    private string generateDocument(ref LawRandom rng, bool recipeOnly)
+    {
+        string source;
+        foreach (_; 0 .. 1 + rng.next() % 3)
+        {
+            if (!recipeOnly && rng.next() % 5 == 0)
+                source ~= pick(rng, ["alpha", "beta", "dup"])
+                    ~ " " ~ pickTemporal(rng) ~ "\n";
+            generateTag(rng, source, 0, recipeOnly);
+        }
+        return source;
+    }
+}
+
+@("sdl.writer.canonicalGolden")
+@system unittest
+{
+    enum source =
+        "# line comment\n"
+        ~ "/* block */\n"
+        ~ `ns:tag on off x:v=` ~ "`raw`" ~ ` y="re\ng"` ~ "\n"
+        ~ `"a" 42L` ~ "\n"
+        ~ "empty {\n}\n"
+        ~ "deep {\n"
+        ~ "    inner -0D .5F .25D .1BD [AAEC/v8=] null 'x'\n"
+        ~ "}\n"
+        ~ "dt 2024/2/29 01:02:03.5-GMT+02:00\n"
+        ~ "dur 2d:03:04:05.0000007\n"
+        ~ "neg -0:00:00.5\n";
+    auto parsed = parseSdlDocument!sdlFull(source, "golden.sdl");
+    assert(parsed.hasValue, parsed.error.toString);
+
+    enum expected =
+        `ns:tag true false x:v="raw" y="re\ng"` ~ "\n"
+        ~ "\"a\" 42L\n"
+        ~ "empty {\n}\n"
+        ~ "deep {\n"
+        ~ "    inner -0.0D 0.5F 0.25D 0.1BD [AAEC/v8=] null 'x'\n"
+        ~ "}\n"
+        ~ "dt 2024/2/29 01:02:03.5-GMT+02:00\n"
+        ~ "dur 2d:03:04:05.0000007\n"
+        ~ "neg -00:00:00.5\n";
+
+    const rendered = renderDocument(parsed.document);
+    assert(rendered == expected, rendered);
+
+    // LAW 2 spot check on the golden: double canonicalization is identity.
+    const reparsed = parseSdlDocument!sdlFull(rendered, "golden2.sdl");
+    assert(reparsed.hasValue, reparsed.error.toString);
+    assert(renderDocument(reparsed.document) == rendered);
+}
+
+@("sdl.writer.canonicalOptions")
+@system unittest
+{
+    auto nested = parseSdlDocument!sdlFull("a {\nb\n}\n");
+    assert(nested.hasValue);
+    SmallBuffer!(char, 64) tabbed;
+    assert(!writeSdlDocument(nested.document, tabbed,
+        SdlWriteOptions(indent: "\t")).hasError);
+    assert(tabbed[] == "a {\n\tb\n}\n");
+
+    SmallBuffer!(char, 8) emptyDefault;
+    auto blank = parseSdlDocument!sdlFull("");
+    assert(blank.hasValue);
+    assert(!writeSdlDocument(blank.document, emptyDefault).hasError);
+    assert(emptyDefault.length == 0);
+
+    SmallBuffer!(char, 8) blankNewline;
+    assert(!writeSdlDocument(blank.document, blankNewline,
+        SdlWriteOptions(newlineForEmptyDocument: true)).hasError);
+    assert(blankNewline[] == "\n");
+
+    SmallBuffer!(char, 8) untouched;
+    auto rejected = writeSdlDocument(nested.document, untouched,
+        SdlWriteOptions(indent: ""));
+    assert(rejected.hasError && rejected.error.code == SdlErrorCode.checkFailed);
+    assert(untouched.length == 0);
+}
+
+@("sdl.writer.pathedFailures")
+@system unittest
+{
+    import core.exception : AssertError;
+
+    static void checkPath(string source, size_t valueIndex, size_t attributeIndex,
+        SdlScalar replacement, SdlErrorCode code, string path)
+    {
+        auto parsed = parseSdlDocument!sdlFull(source, "bad.sdl");
+        if (!parsed.hasValue)
+            throw new AssertError(parsed.error.toString);
+        if (valueIndex != size_t.max)
+            parsed.document.values[valueIndex].value = replacement;
+        else
+            parsed.document.attributes[attributeIndex].value = replacement;
+
+        SmallBuffer!(char, 128) sink;
+        const failure = writeSdlDocument(parsed.document, sink);
+        assert(failure.hasError);
+        assert(failure.error.code == code);
+        assert(failure.error.rolePath[] == path, failure.error.toString);
+    }
+
+    checkPath("t {\nc \"v\" x=1\n}\n", 0, size_t.max,
+        SdlScalar.invalidScalar, SdlErrorCode.unexpectedKind,
+        ".t[0].c[0]<value[0]>");
+    checkPath("t {\nc \"v\" x=1\n}\nw \"s\"\n", 1, size_t.max,
+        SdlScalar.invalidScalar, SdlErrorCode.unexpectedKind,
+        ".w[0]<value[0]>");
+    checkPath("t {\nc \"v\" x=1\n}\nw \"s\"\n", size_t.max, 0,
+        SdlScalar(double.nan), SdlErrorCode.valueOutOfRange,
+        ".t[0].c[0]@x");
+
+    // Non-finite positional value keeps its value-segment path.
+    checkPath("root -42L\n", 0, size_t.max,
+        SdlScalar(double.infinity), SdlErrorCode.valueOutOfRange,
+        ".root[0]<value[0]>");
+}
+
+@("sdl.writer.laws.generatedDocuments")
+@system unittest
+{
+    uint lawCase;
+    void runLaws(bool recipeOnly)(uint seedValue, size_t cases)
+    {
+        LawRandom rng;
+        foreach (_; 0 .. cases)
+        {
+            rng.state = seedValue += 0x9E37_79B9;
+            const source = generateDocument(rng, recipeOnly);
+            auto first = parseSdlDocument!(recipeOnly
+                ? sdlDubRecipe : sdlFull)(source, "law.sdl");
+            if (!first.hasValue)
+                throw new Exception(first.error.toString ~ "\n---\n" ~ source);
+
+            SmallBuffer!(char, 512) once;
+            auto written = writeSdlDocument(first.document, once);
+            if (written.hasError)
+                throw new Exception(written.error.toString ~ "\n---\n" ~ source);
+
+            auto second = parseSdlDocument!(recipeOnly
+                ? sdlDubRecipe : sdlFull)(once[], "law2.sdl");
+            if (!second.hasValue)
+                throw new Exception(second.error.toString ~ "\n---\n"
+                    ~ once[].idup);
+
+            // LAW 1: parse(write(parse(s))) == parse(s), spans excluded.
+            assert(sdlDocumentsSemanticallyEqual(first.document,
+                second.document));
+
+            SmallBuffer!(char, 512) twice;
+            auto rewritten = writeSdlDocument(second.document, twice);
+            assert(!rewritten.hasError);
+            // LAW 2: canonicalization is byte-idempotent.
+            assert(twice[] == once[]);
+            lawCase++;
+        }
+    }
+
+    runLaws!false(0x1D0C_5EED, 400);
+    runLaws!true(0xB0B5_CAFE, 200);
+    assert(lawCase == 600);
+}
+
+@("sdl.writer.laws.dubCorpusRoundTrip")
+@system unittest
+{
+    import core.exception : AssertError;
+    import std.file : SpanMode, dirEntries, isSymlink, readText;
+    import std.path : baseName;
+
+    static void roundTrip(string path)
+    {
+        const source = readText(path);
+        auto first = parseSdlDocument!sdlDubRecipe(source, path);
+        if (!first.hasValue)
+            throw new AssertError(path ~ ": " ~ first.error.toString);
+
+        SmallBuffer!(char, 512) once;
+        auto written = writeSdlDocument(first.document, once);
+        if (written.hasError)
+            throw new AssertError(path ~ ": " ~ written.error.toString);
+
+        auto second = parseSdlDocument!sdlDubRecipe(once[], path);
+        if (!second.hasValue)
+            throw new AssertError(path ~ ": " ~ second.error.toString);
+
+        SmallBuffer!(char, 512) twice;
+        auto rewritten = writeSdlDocument(second.document, twice);
+        assert(!rewritten.hasError);
+        assert(twice[] == once[]);
+        assert(sdlDocumentsSemanticallyEqual(first.document, second.document));
+    }
+
+    static void visit(string directory, ref size_t count)
+    {
+        foreach (entry; dirEntries(directory, SpanMode.shallow))
+        {
+            if (entry.isDir)
+            {
+                const name = entry.name.baseName;
+                if (name == ".git" || name == ".direnv" || name == ".dub"
+                    || name == "build" || name == "node_modules"
+                    || isSymlink(entry.name))
+                    continue;
+                visit(entry.name, count);
+            }
+            else if (entry.isFile && entry.name.baseName == "dub.sdl")
+            {
+                roundTrip(entry.name);
+                count++;
+            }
+        }
+    }
+
+    size_t count;
+    visit(".", count);
+    assert(count > 100);
+
+    // Direct compatibility fixture: dlang/dub dub.sdl at
+    // 5efed360e1c9342453bc5dd19339c75981526d83 (MIT; fixture README/notices).
+    roundTrip("libs/wired/src/sparkles/wired/sdl/fixtures/"
+        ~ "dub-5efed360-recipe.snapshot.sdl");
 }
