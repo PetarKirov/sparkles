@@ -111,8 +111,7 @@ private SdlError lexicalError(SdlErrorCode code, SdlSpan span,
     result.stage = SdlErrorStage.lex;
     result.code = code;
     result.span = span;
-    const count = sourceName.length < 40 ? sourceName.length : 40;
-    result.sourceName ~= sourceName[0 .. count];
+    result.sourceName ~= sourceName;
     result.reason ~= reason;
     return result;
 }
@@ -1428,15 +1427,30 @@ private SdlExpected!Duration decodeDurationValue(SdlParserConfig config)(
     return sdlOk(signed.hnsecs);
 }
 
-/** Decodes one scalar token using only kernels enabled by `config`.
+/** Decodes one scalar token into the public borrowed scratch storage.
 
-The `static if` branches are the binary-size contract: disabled profile
-families do not reference, instantiate, or link their semantic primitives.
-Malformed or out-of-range token spellings return a structured error and never
-produce a usable `SdlScalar`. Text and binary results borrow `storage`.
+Unchanged external surface from S2: text and binary results borrow `storage`
+until its next decode or destruction. Disabled families never instantiate
+their conversion kernels.
 */
 SdlExpected!SdlScalar decodeSdlScalar(SdlParserConfig config = sdlFull)(
     in SdlToken token, return ref SdlScalarStorage storage)
+{
+    return decodeSdlScalarInto!(config, SdlScalarStorage)(token, storage);
+}
+
+/** Package seam: decodes one scalar token into caller-provided exact storage.
+
+The parser milestone uses this with fixed-target buffers so decoded string and
+binary payloads are written directly into document-owned pool bytes without an
+intermediate growable temporary. The `static if` branches are the binary-size
+contract: disabled profile families do not reference, instantiate, or link
+their semantic primitives. Malformed or out-of-range token spellings return a
+structured error and never produce a usable `SdlScalar`.
+*/
+package SdlExpected!SdlScalar decodeSdlScalarInto(
+    SdlParserConfig config = sdlFull, Storage)(
+    in SdlToken token, return ref Storage storage)
 {
     import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 
@@ -1615,16 +1629,15 @@ SdlExpected!SdlScalar decodeSdlScalar(SdlParserConfig config = sdlFull)(
     case binary:
         static if (config.scalars.binary)
         {
-            import sparkles.base.text.base_codecs : decodeBase64;
-
             if (token.raw.length < 2)
                 return sdlErr!SdlScalar(decodeError(SdlErrorCode.invalidBase64,
                     token, "binary token has no closing delimiter"));
             if (token.raw[0] != '[' || token.raw[$ - 1] != ']')
                 return sdlErr!SdlScalar(decodeError(SdlErrorCode.invalidBase64,
                     token, "binary token has invalid delimiters"));
-            SmallBuffer!(char, 256) compact;
             size_t at = 1;
+            char[4] quartet;
+            size_t quartetLength;
             while (at + 1 < token.raw.length)
             {
                 size_t width;
@@ -1645,10 +1658,24 @@ SdlExpected!SdlScalar decodeSdlScalar(SdlParserConfig config = sdlFull)(
                         continue;
                     }
                 }
-                compact ~= token.raw[at++];
+                quartet[quartetLength++] = token.raw[at++];
+                if (quartetLength == 4)
+                {
+                    const a = base64Value(quartet[0]);
+                    const b = base64Value(quartet[1]);
+                    storage.bytes ~= cast(ubyte)((a << 2) | (b >> 4));
+                    if (quartet[2] != '=')
+                    {
+                        const c = base64Value(quartet[2]);
+                        storage.bytes ~= cast(ubyte)((b << 4) | (c >> 2));
+                        if (quartet[3] != '=')
+                            storage.bytes ~= cast(ubyte)((c << 6)
+                                | base64Value(quartet[3]));
+                    }
+                    quartetLength = 0;
+                }
             }
-            auto decoded = decodeBase64(storage.bytes, compact[]);
-            if (decoded.hasError)
+            if (quartetLength != 0)
                 return sdlErr!SdlScalar(decodeError(SdlErrorCode.invalidBase64,
                     token, "invalid Base64 payload"));
             return sdlOk(SdlScalar(storage.bytes[]));
