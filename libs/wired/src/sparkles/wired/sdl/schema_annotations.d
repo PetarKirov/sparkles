@@ -18,11 +18,13 @@ unchanged.
 */
 module sparkles.wired.sdl.schema_annotations;
 
-import std.traits : getUDAs;
+import std.traits : getUDAs, Unqual;
 
-import sparkles.wired.policy : Repr, hasExplicitWireName,
-    resolvedFieldPolicies;
-import sparkles.wired.schema : NodeKind, ScalarKind, WireSchema, wireSchemaOf;
+import sparkles.wired.policy : AnyFormat, Repr, WireStrict, hasExplicitWireName,
+    hasWireStrict, resolvedFieldPolicies;
+import sparkles.wired.schema : NodeKind, ScalarKind, WireSchema,
+    isWirePassthrough, wireSchemaOf;
+import sparkles.wired.sdl.document : OwnedSdlExtras, SdlExtras;
 
 // ── Format marker ────────────────────────────────────────────────────────────
 
@@ -134,6 +136,9 @@ struct SdlAggregateRoles
     /// Schema node indices of the fields, parallel to $(LREF roles).
     size_t[] fieldNodeIndices;
     SdlFieldRole[] roles;
+    /// Whether `@WireStrict` (exact `Sdl` or `AnyFormat`) applies — unknown
+    /// members are decode errors instead of being ignored (SPEC §8 forbid).
+    bool strictUnknown;
 }
 
 private enum Shape : ubyte
@@ -310,9 +315,17 @@ $(LIST
     * at most one $(LREF SdlTagName), $(LREF SdlTagNamespace), and
     $(LREF SdlExtra) per aggregate; tag-name/namespace fields must be
     `string` or name-represented enums;
+    * an `@SdlExtra` field must have type $(LREF SdlExtras) (borrowed) or
+    $(LREF OwnedSdlExtras) (owned);
+    * `@WireStrict` together with `@SdlExtra` is a compile-time contradiction —
+    forbid versus preserve (SPEC §8); the diagnostic names the aggregate;
     * when `isDocumentRoot`, dynamic identity fields are forbidden on the root
     aggregate.
 )
+
+The projection also resolves the aggregate's unknown-member policy:
+$(LREF SdlAggregateRoles.strictUnknown) reports whether `@WireStrict!Sdl`
+(or the format-less spelling) applies.
 */
 template sdlAggregateRoles(T, bool isDocumentRoot = false)
 if (is(T == struct))
@@ -326,6 +339,10 @@ if (is(T == struct))
 
     private alias policies = resolvedFieldPolicies!(Sdl, T);
     private enum fieldCount = policies.length;
+
+    // SPEC §8 forbid policy: an exact-`Sdl` @WireStrict wins over AnyFormat.
+    private enum bool strictUnknown = hasWireStrict!(Sdl, T)
+        || hasWireStrict!(AnyFormat, T);
 
     // Per-field compile-time facts, gathered once for both validation and
     // sidecar construction.
@@ -528,6 +545,11 @@ if (is(T == struct))
                 break;
             case SdlRoleKind.extra:
                 extraSeen++;
+                static if (!is(typeof(T.tupleof[i]) == SdlExtras)
+                    && !is(typeof(T.tupleof[i]) == OwnedSdlExtras))
+                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
+                        ~ ": @SdlExtra requires an SdlExtras (borrowed) or "
+                        ~ "OwnedSdlExtras (owned) field";
                 break;
             }
         }}
@@ -541,6 +563,10 @@ if (is(T == struct))
         if (extraSeen > 1)
             err ~= "wired.sdl: " ~ T.stringof
                 ~ ": at most one @SdlExtra field per aggregate";
+        if (extraSeen && strictUnknown)
+            err ~= "wired.sdl: " ~ T.stringof
+                ~ ": @WireStrict and @SdlExtra are contradictory unknown-"
+                ~ "member policies (forbid versus preserve)";
         if (hasDynamicSuffix && dynamicIndex <= maxFixedIndex)
             err ~= "wired.sdl: " ~ T.stringof
                 ~ ": the dynamic @SdlTagValue sequence must have the "
@@ -561,6 +587,7 @@ if (is(T == struct))
     /// The projected roles, parallel to the aggregate's declared fields.
     static immutable SdlAggregateRoles sdlFieldRoles = () {
         SdlAggregateRoles result;
+        result.strictUnknown = strictUnknown;
         static foreach (i; 0 .. fieldCount)
         {{
             alias F = FieldFacts!(T.tupleof[i], i);
@@ -633,6 +660,63 @@ if (is(T == struct))
 
 }
 
+// ── Unknown-member helpers ───────────────────────────────────────────────────
+
+/** Whether aggregate `T` — or any aggregate nested in its (struct-valued)
+fields — declares its $(LREF SdlExtra) field with the *borrowed*
+$(LREF SdlExtras) flavor.
+
+Such aggregates decode only from a caller-kept-alive $(LREF SdlNode) — the
+text convenience overload rejects them at compile time because its temporary
+document cannot outlive the returned value (SPEC §8). Container indirection
+(sequences, maps, null-aware wrappers) around nested aggregates is not
+followed.
+*/
+package template hasBorrowedSdlExtras(T)
+if (is(T == struct))
+{
+    enum bool hasBorrowedSdlExtras = borrowedExtrasAt!(Unqual!T, 0)
+        || borrowedNestedFields!(Unqual!T, 0);
+}
+
+/// Whether field `i`.. of `T` carries an annotated borrowed-extras field.
+private template borrowedExtrasAt(T, size_t i)
+{
+    static if (i >= T.tupleof.length)
+        enum bool borrowedExtrasAt = false;
+    else static if (getUDAs!(T.tupleof[i], SdlExtraAttr).length
+        && is(typeof(T.tupleof[i]) == SdlExtras))
+        enum bool borrowedExtrasAt = true;
+    else
+        enum bool borrowedExtrasAt = borrowedExtrasAt!(T, i + 1);
+}
+
+private template borrowedNestedFields(T, size_t i)
+{
+    static if (i >= T.tupleof.length)
+        enum bool borrowedNestedFields = false;
+    else static if (borrowedThroughField!(T, i))
+        enum bool borrowedNestedFields = true;
+    else
+        enum bool borrowedNestedFields = borrowedNestedFields!(T, i + 1);
+}
+
+/// Whether field `i` of `T` — itself or through its aggregate descent —
+/// carries a borrowed-extras field. Termination needs no cycle guard:
+/// direct aggregate fields cannot form containment cycles in D.
+private template borrowedThroughField(T, size_t i)
+{
+    static if (!is(Unqual!(typeof(T.tupleof[i])) == struct)
+        || is(Unqual!(typeof(T.tupleof[i])) == SdlExtras)
+        || isWirePassthrough!(Unqual!(typeof(T.tupleof[i]))))
+        enum bool borrowedThroughField = false;
+    else
+    {
+        alias FT = Unqual!(typeof(T.tupleof[i]));
+        enum bool borrowedThroughField = borrowedExtrasAt!(FT, 0)
+            || borrowedNestedFields!(FT, 0);
+    }
+}
 // ── Tests ────────────────────────────────────────────────────────────────────
 version (unittest)
 {
@@ -663,7 +747,7 @@ version (unittest)
         @SdlChild() Dep[string] byId;
         @SdlTagName() string tagNameField;
         @SdlTagNamespace() string tagNsField;
-        @SdlExtra() int extras;
+        @SdlExtra() SdlExtras extras;
     }
 
     private struct Plain
@@ -681,7 +765,7 @@ version (unittest)
         Dep[string] byId;
         string tagNameField;
         string tagNsField;
-        int extras;
+        SdlExtras extras;
     }
 }
 
@@ -886,4 +970,77 @@ version (unittest)
         @SdlChild() @SdlAttribute() int ambiguous;
     }
     static assert(!__traits(compiles, sdlAggregateRoles!MultipleRolesOneField));
+
+    // SPEC §8: @WireStrict (forbid) and @SdlExtra (preserve) are contradictory.
+    @WireStrict!Sdl
+    static struct StrictAndExtras
+    {
+        int plain;
+        @SdlExtra() SdlExtras extras;
+    }
+    static assert(!__traits(compiles, sdlAggregateRoles!StrictAndExtras));
+
+    // The format-less spelling contradicts just the same.
+    @WireStrict
+    static struct AnyStrictAndExtras
+    {
+        int plain;
+        @SdlExtra() OwnedSdlExtras extras;
+    }
+    static assert(!__traits(compiles, sdlAggregateRoles!AnyStrictAndExtras));
+
+    // An @SdlExtra field must be one of the two capture flavors.
+    static struct BadExtraType
+    {
+        @SdlExtra() int extras;
+    }
+    static assert(!__traits(compiles, sdlAggregateRoles!BadExtraType));
+
+    // Strict alone is fine, in either spelling, and is projected.
+    @WireStrict!Sdl
+    static struct JustStrict
+    {
+        int plain;
+    }
+    static assert(sdlAggregateRoles!JustStrict.sdlFieldRoles.strictUnknown);
+
+    @WireStrict
+    static struct AnyStrict
+    {
+        int plain;
+    }
+    static assert(sdlAggregateRoles!AnyStrict.sdlFieldRoles.strictUnknown);
+
+    static struct Lenient
+    {
+        int plain;
+    }
+    static assert(!sdlAggregateRoles!Lenient.sdlFieldRoles.strictUnknown);
+
+    // The borrowed/owned flavor probe.
+    static struct Borrowed
+    {
+        @SdlExtra() SdlExtras extras;
+    }
+    static struct Owned
+    {
+        @SdlExtra() OwnedSdlExtras extras;
+    }
+    static struct Neither
+    {
+        int plain;
+    }
+    static struct Wrapper
+    {
+        Borrowed inner;
+    }
+    static struct OwnerWrapper
+    {
+        Owned inner;
+    }
+    static assert(hasBorrowedSdlExtras!Borrowed);
+    static assert(!hasBorrowedSdlExtras!Owned);
+    static assert(!hasBorrowedSdlExtras!Neither);
+    static assert(hasBorrowedSdlExtras!Wrapper);
+    static assert(!hasBorrowedSdlExtras!OwnerWrapper);
 }

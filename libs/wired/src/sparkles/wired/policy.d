@@ -121,6 +121,39 @@ WireOptionalAttr!Format WireOptional(Format = AnyFormat)(
     WireInvalid onInvalid = WireInvalid.reject) @safe pure nothrow @nogc
     => WireOptionalAttr!Format(skip, onInvalid);
 
+/// `@WireStrict!F` — unknown members of an annotated aggregate are decode
+/// errors under format `F` (§5.3). An all-template struct (like $(LREF
+/// WireConvert)), so the bare `@WireStrict!F` and `@WireStrict` spellings
+/// attach directly. Combining it with a preserve-extras field is
+/// contradictory; backends reject that at compile time.
+struct WireStrict(Format_ = AnyFormat)
+{
+    alias Format = Format_; /// the format this policy applies under
+}
+
+/// Whether aggregate `T` carries a `@WireStrict` whose format is exactly `Fmt`
+/// or $(LREF AnyFormat) (§5.3). The bare `@WireStrict` spelling attaches the
+/// uninstantiated template and counts as the AnyFormat form.
+template hasWireStrict(F, T)
+if (is(T == struct))
+{
+    enum bool hasWireStrict = () {
+        foreach (uda; __traits(getAttributes, T))
+        {
+            // Bare `@WireStrict` — the template itself.
+            static if (__traits(isSame, uda, WireStrict))
+                return true;
+            else static if (__traits(compiles,
+                    __traits(isSame, TemplateOf!uda, WireStrict)))
+                static if (__traits(isSame, TemplateOf!uda, WireStrict))
+                    static if (is(TemplateArgsOf!uda[0] == F)
+                        || is(TemplateArgsOf!uda[0] == AnyFormat))
+                        return true;
+        }
+        return false;
+    }();
+}
+
 /// `@WireConvert!(toWire, fromWire[, F])` — an arbitrary value transform at the
 /// wire boundary (§8). `fromWire` may be `void` for a serialize-only converter.
 /// This one is a type UDA (all-template, no value arguments): `@WireConvert!(a, b)`.
@@ -218,6 +251,47 @@ struct WireMatch
     static assert(getUDAs!(S.i, WireMatchPolicy)[0].strategy == MatchStrategy.first);
     static assert(getUDAs!(S.j, WireMatchPolicy)[0].strategy == MatchStrategy.first);
     static assert(is(getUDAs!(S.j, WireMatchPolicy)[0].Format == Json));
+}
+
+// `@WireStrict!F` is a type-level UDA in both spellings, and its format tag
+// discriminates exact-format from AnyFormat use.
+@("wired.policy.strictUda")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    struct Toml
+    {
+    }
+
+    @WireStrict!Json
+    static struct Tagged
+    {
+        int a;
+    }
+
+    @WireStrict
+    static struct Untagged
+    {
+        int a;
+    }
+
+    static struct Plain
+    {
+        int a;
+    }
+
+    // Exact-format applies under Json only; the untagged spelling applies
+    // under every format; nothing applies to an unannotated aggregate.
+    static assert(hasWireStrict!(Json, Tagged));
+    static assert(!hasWireStrict!(Toml, Tagged));
+    static assert(!hasWireStrict!(AnyFormat, Tagged));
+    static assert(hasWireStrict!(Json, Untagged));
+    static assert(hasWireStrict!(Toml, Untagged));
+    static assert(hasWireStrict!(AnyFormat, Untagged));
+    static assert(!hasWireStrict!(Json, Plain));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

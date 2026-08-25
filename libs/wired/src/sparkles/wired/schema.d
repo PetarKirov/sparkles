@@ -53,6 +53,23 @@ enum ScalarKind : ubyte
     sysTime,
 }
 
+/** Design-by-Introspection seam: a type declaring
+`static enum bool wirePassthrough = true;` reifies as an opaque
+$(LREF NodeKind.passthrough) leaf in every wire schema, for every format.
+
+This is how a backend's own capture/payload containers (e.g. the SDL
+`SdlExtras` unknown-member store) participate in schemas without their
+internals becoming wire vocabulary. A passthrough node is inert to the shared
+walkers; only the owning backend gives it meaning.
+*/
+template isWirePassthrough(T)
+{
+    static if (__traits(compiles, T.wirePassthrough) && T.wirePassthrough)
+        enum bool isWirePassthrough = true;
+    else
+        enum bool isWirePassthrough = false;
+}
+
 /// The three null-aware wrapper families supported by wired.
 enum NullAwareKind : ubyte
 {
@@ -244,6 +261,8 @@ private WireSchema buildWireSchema(F, T)()
             nextAncestors ~= index;
 
             static if (is(V == JSONValue))
+                schema.nodes[index].kind = NodeKind.passthrough;
+            else static if (isWirePassthrough!V)
                 schema.nodes[index].kind = NodeKind.passthrough;
             else static if (is(V == bool))
             {

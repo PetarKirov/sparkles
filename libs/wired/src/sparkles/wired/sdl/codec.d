@@ -1,5 +1,6 @@
 /**
-Typed SDL decode over the shared wired schema (SPEC §6).
+Typed SDL decode over the shared wired schema (SPEC §6) plus typed canonical
+emission (SPEC §9) and the unknown-member policies (SPEC §8).
 
 $(LREF fromSDL) fills a D aggregate from a parsed $(LREF SdlNode) by walking
 the reified `wireSchemaOf!(Sdl, T)` arena through the S5 role projection
@@ -14,7 +15,19 @@ fallbacks), enums resolve through the shared name/case/repr policy, null-aware
 wrappers absorb SDL `null` and absent channels, and `SumType`s trial-decode
 their variants under the shared $(LREF MatchStrategy).
 
-Every failure carries `stage = decode`, a stable code, the offending token/tag
+Unknown members follow the aggregate's three-way policy (SPEC §8). The default
+ignores them. `@WireStrict!Sdl` forbids: the first unmatched occurrence —
+scanned in canonical grammar order (values by position, then attributes, then
+children) — is an `unknownMember` decode error at that occurrence's span with
+its composed role path. wired does not yet expose the shared error-sink
+protocol of expressiveness §7.1, so strict decoding reports only that first
+occurrence; when the sink lands, this walk will feed it instead of aborting.
+`@SdlExtra` preserves: every unmatched occurrence is captured into the
+aggregate's `SdlExtras` (borrowed) or `OwnedSdlExtras` (owned) field with its
+channel, channel ordinal, qualified name, payload, and source span, and encode
+splices extras back into their original channels at those ordinals.
+
+Every failure carries `stage`, a stable code, the offending token/tag
 span (or the containing tag's terminating span when a required member is
 missing), and composed SDL role paths exactly as SPEC §7 defines them.
 */
@@ -29,6 +42,7 @@ import std.traits : fullyQualifiedName,
     TemplateArgsOf,
     Unqual,
     ValueType,
+    getUDAs,
     isAssociativeArray,
     isDynamicArray,
     isFloatingPoint,
@@ -49,18 +63,21 @@ import sparkles.wired.policy : Repr, WireInvalid, WireTarget, convertOf,
     hasConvert, resolveCaseStyle, resolveRepr, resolvedFieldPolicies, wireNames;
 import sparkles.wired.schema : NodeKind, ScalarKind;
 import sparkles.wired.sdl.config : SdlParserConfig, sdlFull;
-import sparkles.wired.sdl.document : SdlNode, SdlQualifiedName, SdlScalar,
-    SdlScalarKind;
+import sparkles.wired.sdl.document : OwnedSdlExtras, SdlDocument,
+    SdlExtraChannel, SdlExtraMember, SdlExtras, SdlNode, SdlQualifiedName,
+    SdlScalar, SdlScalarKind, SdlOwnedExtraAttribute, SdlOwnedExtraMember,
+    SdlOwnedExtraNode, poolName, poolScalar;
 import sparkles.wired.policy : MatchStrategy, WireSkip;
 import sparkles.wired.sdl.document : SdlAttributeView, SdlSpan;
 import sparkles.wired.sdl.error : SdlError, SdlErrorCode, SdlErrorStage,
     SdlExpected, sdlErr, sdlOk;
-import sparkles.wired.sdl.schema_annotations : SdlFieldRole;
+import sparkles.wired.sdl.schema_annotations : SdlFieldRole,
+    hasBorrowedSdlExtras;
 import sparkles.wired.sdl.reader : parseSdlDocument;
 import sparkles.wired.sdl.writer : SdlString, writeSdlDocument;
 import sparkles.wired.sdl.schema_annotations : Sdl, SdlAttribute, SdlChild,
-    SdlChildShape, SdlExtra, SdlRoleKind, SdlTagNamespace, SdlTagName,
-    SdlTagValue, sdlAggregateRoles;
+    SdlChildShape, SdlExtra, SdlExtraAttr, SdlRoleKind, SdlTagNamespace,
+    SdlTagName, SdlTagValue, sdlAggregateRoles;
 
 version (unittest)
 {
@@ -708,10 +725,37 @@ private size_t collectChildren(scope const ref SdlNode node,
 
 /// Narrow trust: copies one borrowed scalar (its payload slices stay owned
 /// by the document pool; callers treat the copy as equally short-lived).
-private SdlScalar copyBorrowedScalar(scope const ref SdlScalar s) @trusted
+private SdlScalar copyBorrowedScalar(scope const ref SdlScalar s)
+    @trusted pure nothrow @nogc
 {
     const ps = &s;
     return *ps;
+}
+
+/// ditto — an attribute occurrence's qualified name.
+private SdlQualifiedName copyQualifiedName(
+    scope const SdlAttributeView a) @trusted pure nothrow @nogc
+{
+    const view = a;
+    const pa = &view;
+    return (*pa).qualifiedName();
+}
+
+/// ditto — a child view's qualified name.
+private SdlQualifiedName copyQualifiedName(scope const SdlNode n)
+    @trusted pure nothrow @nogc
+{
+    const view = n;
+    const pn = &view;
+    return (*pn).qualifiedName;
+}
+
+/// ditto — a child view itself.
+private SdlNode copyBorrowedNode(scope const SdlNode n)
+    @trusted pure nothrow @nogc
+{
+    const pn = &n;
+    return *pn;
 }
 
 private SdlScalar firstValueOf(scope const ref SdlNode n) @safe
@@ -810,8 +854,309 @@ private DRes!V decodeElement(alias Parent, size_t i, V, alias Conv = void)(
         return decodeLeaf!V(s, path, failure);
 }
 
-/** Decodes aggregate `T` from one SDL node, filling every declared role. */
-private DRes!T decodeAggregate(T)(scope const ref SdlNode node,
+// ── Unknown-member policy (SPEC §8) ──────────────────────────────────────────
+
+/// Whether positional slot `pos` is consumed by declared tag-value role `r`.
+private bool slotConsumesValue(scope const SdlFieldRole r, size_t pos)
+    @safe pure nothrow @nogc
+{
+    if (r.role != SdlRoleKind.tagValue)
+        return false;
+    if (r.dynamicValueSuffix)
+        return pos >= r.positionalIndex;
+    return pos >= r.positionalIndex
+        && pos < r.positionalIndex + (r.staticCount ? r.staticCount : 1);
+}
+
+/** Runtime matching tables for one aggregate's unknown occurrences.
+
+Built once per aggregate walk: which attribute/child identities are declared,
+which namespaces a map-shaped child field consumes, which singular children
+own their names outright, and the positional-slot facts (kept as a slice of
+the aggregate's projected roles). The same tables drive both the strict
+first-error scan and the preserve capture, guaranteeing the two policies agree
+on what "unmatched" means.
+*/
+private struct UnknownMatcher
+{
+    const(SdlFieldRole)[] roles;
+    string[] attrNamespaces;
+    string[] attrLocals;
+    string[] childNamespaces;
+    string[] childLocals;
+    string[] mapNamespaces;
+    string[] claimedLocals;
+    SdlQualifiedName[] childSingles;
+
+    /// Whether positional occurrence `pos` is consumed by a declared slot.
+    bool valueConsumed(size_t pos) const scope @safe pure nothrow @nogc
+    {
+        foreach (r; roles)
+            if (slotConsumesValue(r, pos))
+                return true;
+        return false;
+    }
+
+    /// Whether an attribute matches any declared attribute field.
+    bool attributeKnown(scope const SdlQualifiedName name) const scope
+        @safe pure nothrow @nogc
+    {
+        foreach (i; 0 .. attrLocals.length)
+            if (name.namespace_ == attrNamespaces[i]
+                && name.localName == attrLocals[i])
+                return true;
+        return false;
+    }
+
+    /// Whether a child tag is consumed by a named field or a same-namespace
+    /// map field (which claims every unclaimed sibling, mirroring decode).
+    bool childKnown(scope const SdlQualifiedName name) const scope
+        @safe pure nothrow @nogc
+    {
+        foreach (i; 0 .. childLocals.length)
+            if (name.namespace_ == childNamespaces[i]
+                && name.localName == childLocals[i])
+                return true;
+        foreach (ns; mapNamespaces)
+            if (name.namespace_ == ns && !contains(claimedLocals,
+                    name.localName))
+                return true;
+        return false;
+    }
+
+    private static bool contains(scope const(string)[] haystack,
+        scope const(char)[] needle) @safe pure nothrow @nogc
+    {
+        foreach (s; haystack)
+            if (s == needle)
+                return true;
+        return false;
+    }
+}
+
+private UnknownMatcher unknownMatcher(T)()
+    @safe pure nothrow
+if (is(T == struct))
+{
+    import std.traits : isDynamicArray;
+
+    alias projected = sdlAggregateRoles!(Unqual!T).sdlFieldRoles;
+    UnknownMatcher m;
+    m.roles = projected.roles;
+    static foreach (j; 0 .. T.tupleof.length)
+    {{
+        enum RJ = projected.roles[j];
+        static if (RJ.role == SdlRoleKind.attribute)
+        {
+            m.attrNamespaces ~= RJ.namespace_;
+            m.attrLocals ~= RJ.localName;
+        }
+        else static if (RJ.role == SdlRoleKind.child)
+        {{
+            static foreach (k; 0 .. T.tupleof.length)
+                static if (k != j && projected.roles[k].role
+                    == SdlRoleKind.child)
+                    m.claimedLocals ~= projected.roles[k].localName;
+            static if (RJ.childShape == SdlChildShape.map)
+                m.mapNamespaces ~= RJ.namespace_;
+            else
+            {
+                m.childNamespaces ~= RJ.namespace_;
+                m.childLocals ~= RJ.localName;
+                static if (RJ.childShape == SdlChildShape.scalarSingle
+                    || RJ.childShape == SdlChildShape.aggregateSingle)
+                    m.childSingles ~= SdlQualifiedName(RJ.namespace_,
+                        RJ.localName);
+            }
+        }}
+    }}
+    return m;
+}
+
+/** Composes the strict-mode error for the FIRST unmatched occurrence of the
+containing tag, scanning values by position, then attributes, then children.
+Returns false when nothing is unmatched. */
+private bool reportFirstUnknown(scope const ref UnknownMatcher m,
+    scope const ref SdlNode node, ref WalkPath path,
+    ref SdlError failure) @safe
+{
+    size_t index;
+    foreach (v; node.byValue)
+    {
+        if (!m.valueConsumed(index))
+        {
+            const mark = path.text.length;
+            path.text ~= "<value[" ~ index.to!string ~ "]>";
+            failure = attachPath(path, baseError(
+                SdlErrorCode.unknownMember, v.span(),
+                "unknown positional value " ~ index.to!string));
+            popSegment(path, mark);
+            return true;
+        }
+        index++;
+    }
+
+    index = 0;
+    foreach (a; node.byAttribute)
+    {
+        const name = a.qualifiedName;
+        if (!m.attributeKnown(name))
+        {
+            const mark = path.text.length;
+            path.text ~= "@" ~ attrKey(name.namespace_, name.localName);
+            failure = attachPath(path, baseError(
+                SdlErrorCode.unknownMember, a.span(), "unknown attribute \""
+                    ~ attrKey(name.namespace_, name.localName) ~ "\""));
+            popSegment(path, mark);
+            return true;
+        }
+        index++;
+    }
+
+    index = 0;
+    foreach (c; node.byChild)
+    {
+        const name = c.qualifiedName;
+        if (!m.childKnown(name))
+        {
+            const mark = path.text.length;
+            path.text ~= "." ~ attrKey(name.namespace_, name.localName)
+                ~ "[" ~ sameNameOccurrence(node, index).to!string ~ "]";
+            failure = attachPath(path, baseError(
+                SdlErrorCode.unknownMember, c.span(), "unknown child tag \""
+                    ~ attrKey(name.namespace_, name.localName) ~ "\""));
+            popSegment(path, mark);
+            return true;
+        }
+        index++;
+    }
+    return false;
+}
+
+/// Occurrence index of the child at channel position `index` among its
+/// same-qualified-name siblings (SPEC §7 path convention).
+private size_t sameNameOccurrence(scope const ref SdlNode node,
+    size_t index) @safe pure
+{
+    const targetName = childNameAt(node, index);
+    size_t seen;
+    size_t occurrence;
+    foreach (c; node.byChild)
+    {
+        if (seen++ >= index)
+            break;
+        if (copyQualifiedName(c) == targetName)
+            occurrence++;
+    }
+    return occurrence;
+}
+
+/// The qualified name of the child at channel position `position`.
+private SdlQualifiedName childNameAt(scope const ref SdlNode node,
+    size_t position) @safe pure
+in (position < node.childCount)
+{
+    foreach (c; node.byChild)
+        if (position-- == 0)
+            return copyQualifiedName(c);
+    assert(false, "wired.sdl: child position out of range");
+}
+
+/** Captures every unmatched occurrence of the containing tag into `captured`,
+in canonical grammar order: values by position, then attributes, then children
+in occurrence order. */
+private void captureUnknowns(scope const ref UnknownMatcher m,
+    scope const ref SdlNode node, ref SdlExtraMember[] captured) @safe
+{
+    size_t index;
+    foreach (v; node.byValue)
+    {
+        if (!m.valueConsumed(index))
+            captured ~= SdlExtraMember(SdlExtraChannel.value, index,
+                SdlQualifiedName(null, null), copyBorrowedScalar(v),
+                SdlNode.init, v.span());
+        index++;
+    }
+
+    index = 0;
+    foreach (a; node.byAttribute)
+    {
+        if (!m.attributeKnown(copyQualifiedName(a)))
+        {
+            const attrScalar = a.value;
+            captured ~= SdlExtraMember(SdlExtraChannel.attribute, index,
+                copyQualifiedName(a), copyBorrowedScalar(attrScalar),
+                SdlNode.init, a.span());
+        }
+        index++;
+    }
+
+    index = 0;
+    foreach (c; node.byChild)
+    {
+        if (!m.childKnown(copyQualifiedName(c)))
+            captured ~= SdlExtraMember(SdlExtraChannel.child, index,
+                copyQualifiedName(c), SdlScalar.invalidScalar(),
+                copyBorrowedNode(c), c.span());
+        index++;
+    }
+}
+
+/** Converts borrowed captures into their owned flavor: scalar payloads pool
+their bytes and every child subtree materializes recursively. */
+private OwnedSdlExtras ownCaptures(scope const SdlExtraMember[] captured)
+    @safe pure
+{
+    OwnedSdlExtras owned;
+    foreach (member; captured)
+    {
+        SdlOwnedExtraMember converted;
+        converted.channel = member.channel();
+        converted.ordinal = member.ordinal();
+        converted.span = member.span();
+        final switch (member.channel()) with (SdlExtraChannel)
+        {
+        case value:
+        case attribute:
+            converted.name = poolName(member.name(), owned._strings);
+            converted.scalar = poolScalar(member.scalar(),
+                owned._strings, owned._binaries);
+            break;
+        case child:
+            converted.name = poolName(member.name(), owned._strings);
+            converted.node = ownSubtree(member.node(), owned._strings,
+                owned._binaries);
+            break;
+        }
+        owned.members ~= converted;
+    }
+    return owned;
+}
+
+private SdlOwnedExtraNode ownSubtree(SdlNode n,
+    ref char[][] strings, ref ubyte[][] binaries) @safe pure
+{
+    SdlOwnedExtraNode tree;
+    tree.name = poolName(n.qualifiedName, strings);
+    foreach (v; n.byValue)
+        tree.values ~= poolScalar(v, strings, binaries);
+    foreach (a; n.byAttribute)
+        tree.attributes ~= SdlOwnedExtraAttribute(
+            poolName(a.qualifiedName, strings), poolScalar(a.value, strings,
+                binaries));
+    foreach (c; n.byChild)
+        tree.children ~= ownSubtree(c, strings, binaries);
+    tree.hasBlock = n.hasBlock();
+    return tree;
+}
+
+/** Decodes aggregate `T` from one SDL node, filling every declared role.
+
+`return scope` (not plain `scope`) because a `@SdlExtra` capture legitimately
+stores borrowed arena views into the returned value; callers keep the owning
+document alive for such aggregates (SPEC §8).
+*/
+private DRes!T decodeAggregate(T)(return scope const ref SdlNode node,
     ref WalkPath path, ref SdlError failure) @safe
 if (is(T == struct))
 {
@@ -821,6 +1166,18 @@ if (is(T == struct))
     alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
     alias policies = resolvedFieldPolicies!(Sdl, U);
     U result;
+
+    // SPEC §8 forbid policy: the first unmatched occurrence — scanned values
+    // by position, then attributes, then children — fails the walk before any
+    // field is filled. wired has no shared error-sink protocol yet, so exactly
+    // that one occurrence is reported (see module DDoc). Strict and preserve
+    // are mutually exclusive at compile time.
+    static if (roles.strictUnknown)
+    {
+        auto strictMatcher = unknownMatcher!(U);
+        if (reportFirstUnknown(strictMatcher, node, path, failure))
+            return DRes!(U)(true);
+    }
 
     static assert(roles.roles.length == U.tupleof.length);
     static foreach (i, symbol; U.tupleof)
@@ -1191,10 +1548,24 @@ if (is(T == struct))
             assignField(result.tupleof[i], identityString!(V)(
                 node.qualifiedName.namespace_));
         }
-        else
+        else static if (R.role == SdlRoleKind.extra)
         {
-            // extra: captured by S8's unknown-field milestone.
+            // SPEC §8 preserve: capture every unmatched occurrence in
+            // canonical grammar order (values by position, then attributes,
+            // then children).
+            auto preserveMatcher = unknownMatcher!(U);
+            SdlExtraMember[] captured;
+            captureUnknowns(preserveMatcher, node, captured);
+            static if (is(V == OwnedSdlExtras))
+                assignField(result.tupleof[i], ownCaptures(captured));
+            else static if (is(V == SdlExtras))
+                assignField(result.tupleof[i], SdlExtras(captured));
+            else
+                static assert(false, "wired.sdl: unreachable @SdlExtra "
+                    ~ "flavor");
         }
+        else
+            static assert(false, "wired.sdl: unreachable role kind");
     }}
     return DRes!(U)(false, result);
 }
@@ -1295,9 +1666,11 @@ private V identityString(V)(scope const(char)[] raw)
 /** Decodes aggregate `T` rooted at one already-parsed SDL node (SPEC §11).
 
 The node is the containing tag for `T`: its channels are the aggregate's
-declared roles. The document owning the node must outlive only the call —
-every decoded string/binary payload is copied, so the returned value never
-borrows the arena.
+declared roles. Every decoded string/binary payload of declared fields is
+copied, but a `@SdlExtra` field of borrowed $(LREF SdlExtras) flavor keeps
+arena views — the document owning `node` must outlive the returned value for
+such aggregates (`-preview=dip1000` tracks the accessor chain). Owned
+$(LREF OwnedSdlExtras) captures carry no such obligation.
 
 Root aggregates may not declare $(LREF SdlTagName) or $(LREF SdlTagNamespace)
 fields (SPEC §5); the S5 projection rejects those shapes at compile time.
@@ -1315,10 +1688,20 @@ if (is(T == struct))
 
 /// ditto — parses `text` under `config` first; lex/parse failures propagate
 /// unchanged with their own stages, codes, spans, and owned source name.
+///
+/// Borrowed extras cannot survive this overload's temporary document, so an
+/// aggregate declaring an `@SdlExtra` field of $(LREF SdlExtras) flavor is a
+/// compile-time error here: decode from a kept-alive $(LREF SdlNode), or
+/// switch the field to $(LREF OwnedSdlExtras).
 SdlExpected!T fromSDL(T, alias config = sdlParserConfigFor!T)(
     scope const(char)[] text, scope const(char)[] sourceName = null) @safe
 if (is(T == struct))
 {
+    static assert(!hasBorrowedSdlExtras!(Unqual!T),
+        "wired.sdl: " ~ T.stringof ~ ": a borrowed @SdlExtra (SdlExtras) "
+        ~ "field cannot outlive this overload's temporary document; decode "
+        ~ "from a kept-alive SdlNode with fromSDL!T(node), or declare the "
+        ~ "extras field as OwnedSdlExtras");
     auto parsed = parseSdlDocument!config(text, sourceName);
     if (!parsed.hasValue)
         return sdlErr!T(parsed.error);
@@ -1332,7 +1715,7 @@ version (unittest)
     private import std.algorithm.sorting : sort;
 
     import sparkles.wired.policy : WireCase, WireConvert, WireMatch,
-        WireName, WireOptional, WireRepr, WireSkip;
+        WireName, WireOptional, WireRepr, WireSkip, WireStrict;
 
     private struct Dep
     {
@@ -1802,22 +2185,23 @@ private struct EncBuilder
 }
 
 private size_t encAppendNode(ref EncBuilder b, scope const(char)[] ns,
-    scope const(char)[] local, uint depth)
+    scope const(char)[] local, uint depth) @safe
 {
     import sparkles.wired.sdl.document : SdlNodeCell;
 
     SdlNodeCell cell;
     cell.qualifiedName = SdlQualifiedName(ns, local);
     cell.depth = depth;
-    b.doc.nodes ~= cell;
+    // Narrow trust: the cell aliases caller-owned name bytes that stay alive
+    // for the whole synchronous build-and-write.
+    () @trusted { b.doc.nodes ~= cell; }();
     b.kids.length = b.doc.nodes.length;
     b.vals.length = b.doc.nodes.length;
     b.attrs.length = b.doc.nodes.length;
     return b.doc.nodes.length - 1;
 }
 
-private void encAddValue(ref EncBuilder b, size_t node,
-    scope const ref SdlScalar s)
+private void encAddValue(ref EncBuilder b, size_t node, SdlScalar s) @safe
 {
     import sparkles.wired.sdl.document : SdlValueCell;
 
@@ -1830,18 +2214,20 @@ private void encAddValue(ref EncBuilder b, size_t node,
 }
 
 private void encAddAttribute(ref EncBuilder b, size_t node,
-    SdlQualifiedName name, scope const ref SdlScalar s)
+    SdlQualifiedName name, SdlScalar s) @safe
 {
     import sparkles.wired.sdl.document : SdlAttributeCell;
 
-    SdlAttributeCell cell;
-    cell.qualifiedName = name;
-    cell.value = s;
-    b.doc.attributes ~= cell;
-    b.attrs[node] ~= cell;
+    () @trusted {
+        SdlAttributeCell cell;
+        cell.qualifiedName = name;
+        cell.value = s;
+        b.doc.attributes ~= cell;
+        b.attrs[node] ~= cell;
+    }();
 }
 
-private string encOwn(ref EncBuilder b, scope const(char)[] s)
+private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe
 {
     string owned = s.idup;
     () @trusted { b.strings ~= owned.dup; }();
@@ -1874,7 +2260,9 @@ private void encFinish(ref EncBuilder b)
     {
         node.childStart = childCursor;
         node.childCount = b.kids[i].length;
-        node.hasBlock = b.kids[i].length != 0;
+        // Declared emission derives block presence from the child count;
+        // copied extra subtrees preset it so empty `{ }` blocks survive.
+        node.hasBlock = b.kids[i].length != 0 || node.hasBlock;
         childCursor += b.kids[i].length;
     }
     b.doc.childIndexes.length = childCursor;
@@ -1968,6 +2356,192 @@ private SdlScalar encScalar(T)(scope const ref T v, ref EncBuilder b,
 }
 
 
+
+// ── Extras re-emission (SPEC §8) ─────────────────────────────────────────────
+
+/// Field index of `T`'s `@SdlExtra` field, or `size_t.max` when absent.
+private template sdlExtrasIndex(T)
+if (is(T == struct))
+{
+    enum size_t sdlExtrasIndex = sdlExtrasIndexImpl!(T, 0);
+}
+
+private template sdlExtrasIndexImpl(T, size_t i)
+{
+    static if (i >= T.tupleof.length)
+        enum size_t sdlExtrasIndexImpl = size_t.max;
+    else static if (__traits(getAttributes, T.tupleof[i]).length
+        && getUDAs!(T.tupleof[i], SdlExtraAttr).length)
+        enum size_t sdlExtrasIndexImpl = i;
+    else
+        enum size_t sdlExtrasIndexImpl = sdlExtrasIndexImpl!(T, i + 1);
+}
+
+/** Output order merging declared channel emissions with extra occurrences:
+extras claim their recorded ordinals; declared emissions fill the remaining
+positions in emission order; sparse programmatic leftovers append last.
+
+Returned elements index into the concatenation
+`[declared emissions…, extras…]` — values below `declaredCount` select a
+declared item, values at or above select an extra.
+*/
+private size_t[] mergeOrdinalOrder(size_t declaredCount,
+    scope const size_t[] extraOrdinals) @safe pure
+{
+    import std.algorithm.sorting : sort;
+
+    static struct Ordinal
+    {
+        size_t at;
+        size_t index;
+    }
+
+    Ordinal[] sorted;
+    foreach (i, o; extraOrdinals)
+        sorted ~= Ordinal(o, i);
+    sorted = sorted.sort!((a, b) => a.at < b.at).release;
+
+    size_t[] order;
+    size_t nextDeclared;
+    size_t nextExtra;
+    for (size_t pos; order.length < declaredCount + extraOrdinals.length;
+        pos++)
+    {
+        if (nextExtra < sorted.length && sorted[nextExtra].at == pos)
+            order ~= declaredCount + sorted[nextExtra++].index;
+        else if (nextDeclared < declaredCount)
+            order ~= nextDeclared++;
+        else if (nextExtra < sorted.length)
+            order ~= declaredCount + sorted[nextExtra++].index;
+        else
+            break;
+    }
+    return order;
+}
+
+/** Spelled SDL identity of a qualified name: `ns:local` or plain `local`. */
+private string extraSpelling(scope const SdlQualifiedName name) @safe
+=> attrKey(name.namespace_, name.localName);
+
+/// Uniform field accessors over the two $(LREF SdlExtraMember) flavors.
+private SdlExtraChannel exChannel(T)(scope const ref T m)
+    @safe pure nothrow @nogc
+{
+    static if (is(T == SdlExtraMember))
+        return m.channel();
+    else
+        return m.channel;
+}
+
+/// ditto
+private size_t exOrdinal(T)(scope const ref T m) @safe pure nothrow @nogc
+{
+    static if (is(T == SdlExtraMember))
+        return m.ordinal();
+    else
+        return m.ordinal;
+}
+
+/// ditto
+private SdlQualifiedName exName(T)(scope const ref T m)
+    @safe pure nothrow @nogc
+{
+    static if (is(T == SdlExtraMember))
+        return m.name();
+    else
+        return m.name;
+}
+
+/// ditto
+private SdlScalar exScalar(T)(scope const ref T m) @safe pure nothrow @nogc
+{
+    static if (is(T == SdlExtraMember))
+        return m.scalar();
+    else
+        return m.scalar;
+}
+
+/// ditto
+private auto exNode(T)(return scope const ref T m)
+{
+    static if (is(T == SdlExtraMember))
+        return m.node();
+    else
+        return m.node;
+}
+
+/** Sorts parallel `(memberIndex, ordinal)` pairs ascending by ordinal —
+extras arrive in occurrence order, which equals ascending ordinal only within
+a capture; programmatic construction may interleave. */
+private void sortByOrdinal(ref size_t[] memberIndices,
+    ref size_t[] ordinals) @safe pure nothrow
+{
+    foreach (a; 0 .. ordinals.length)
+        foreach (c; a + 1 .. ordinals.length)
+        {
+            if (ordinals[c] < ordinals[a])
+            {
+                import std.algorithm.mutation : swap;
+
+                swap(ordinals[a], ordinals[c]);
+                swap(memberIndices[a], memberIndices[c]);
+            }
+        }
+}
+
+/** Copies one borrowed child subtree into the encoder arena verbatim —
+names, scalar kinds, duplicate attributes, nested repetitions, and the
+source's `{ }` presence. Payload slices stay owned by the source document,
+which outlives the synchronous write. */
+private size_t copyExtraSubtree(ref EncBuilder b, return scope const SdlNode n,
+    uint depth) @safe
+{
+    const name = n.qualifiedName;
+    const idx = encAppendNode(b, name.namespace_, name.localName, depth);
+    {
+        auto cell = b.doc.nodes[idx];
+        cell.hasBlock = n.hasBlock();
+        b.doc.nodes[idx] = cell;
+    }
+    foreach (v; n.byValue)
+        encAddValue(b, idx, copyBorrowedScalar(v));
+    foreach (a; n.byAttribute)
+    {
+        const attrScalar = a.value;
+        encAddAttribute(b, idx, copyQualifiedName(a),
+            copyBorrowedScalar(attrScalar));
+    }
+    foreach (c; n.byChild)
+    {
+        const kid = copyExtraSubtree(b, c, depth + 1);
+        () @trusted { b.kids[idx] ~= kid; }();
+    }
+    return idx;
+}
+
+/// ditto — materializes an owned $(LREF SdlOwnedExtraNode) capture into the
+/// encoder arena.
+private size_t appendOwnedSubtree(ref EncBuilder b,
+    scope const ref SdlOwnedExtraNode tree, uint depth) @safe
+{
+    const idx = encAppendNode(b, tree.name.namespace_, tree.name.localName,
+        depth);
+    {
+        auto cell = b.doc.nodes[idx];
+        cell.hasBlock = tree.hasBlock;
+        b.doc.nodes[idx] = cell;
+    }
+    foreach (v; tree.values)
+        encAddValue(b, idx, v);
+    foreach (a; tree.attributes)
+        encAddAttribute(b, idx, a.name, a.value);
+    foreach (ref c; tree.children)
+    {
+        const kid = appendOwnedSubtree(b, c, depth + 1);
+        () @trusted { b.kids[idx] ~= kid; }();
+    }
+    return idx;
+}
 
 // ── Aggregate emission ───────────────────────────────────────────────────────
 
@@ -2160,12 +2734,73 @@ if (is(T == struct))
 
     auto orderedSlots = slotScalars.keys.dup;
     sort(orderedSlots);
+
+    SdlScalar[] emittedValues;
     foreach (slot; orderedSlots)
-        encAddValue(b, nodeIdx, slotScalars[slot]);
-    foreach (s; suffixItems)
-        encAddValue(b, nodeIdx, s);
+        emittedValues ~= slotScalars[slot];
+
+    static if (sdlExtrasIndex!T < T.tupleof.length)
+    {{
+        // SPEC §8: splice value-channel extras back at their ordinals. A
+        // singular declared slot occupies its canonical position, so an
+        // extra claiming an ordinal below the fixed-slot count collides.
+        alias Extras = typeof(T.tupleof[sdlExtrasIndex!T]);
+        const extras = value.tupleof[sdlExtrasIndex!T];
+        size_t[] valueMembers;
+        size_t[] valueOrdinals;
+        foreach (mi; 0 .. extras.length)
+        {
+            static if (is(Extras == SdlExtras))
+                const member = extras.at(mi);
+            else
+                const member = extras.members[mi];
+            if (exChannel(member) != SdlExtraChannel.value)
+                continue;
+            if (exOrdinal(member) < emittedValues.length)
+            {
+                const mark = b.path.text.length;
+                b.path.text ~= "<value[" ~ exOrdinal(member).to!string ~ "]>";
+                scope (exit) popSegment(b.path, mark);
+                b.failure = attachPath(b.path, encBaseError(
+                    SdlErrorCode.duplicateRole,
+                    "extra occurrence collides with a declared singular "
+                    ~ "positional value slot"));
+                return;
+            }
+            valueMembers ~= mi;
+            valueOrdinals ~= exOrdinal(member);
+        }
+        sortByOrdinal(valueMembers, valueOrdinals);
+        foreach (s; emittedValues)
+            encAddValue(b, nodeIdx, s);
+        const order = mergeOrdinalOrder(suffixItems.length, valueOrdinals);
+        foreach (o; order)
+        {
+            if (o < suffixItems.length)
+            {
+                encAddValue(b, nodeIdx, suffixItems[o]);
+                continue;
+            }
+            static if (is(Extras == SdlExtras))
+                const chosen = extras.at(valueMembers[o - suffixItems.length]);
+            else
+                const chosen = extras.members[valueMembers[o
+                    - suffixItems.length]];
+            encAddValue(b, nodeIdx, exScalar(chosen));
+        }
+    }}
+    else
+    {
+        foreach (slot; orderedSlots)
+            encAddValue(b, nodeIdx, slotScalars[slot]);
+        foreach (s; suffixItems)
+            encAddValue(b, nodeIdx, s);
+    }
 
     // ── Attributes ───────────────────────────────────────────────────────
+    import sparkles.wired.sdl.document : SdlAttributeCell;
+
+    SdlAttributeCell[] attrCells;
     static foreach (i, symbol; T.tupleof)
     {{
         enum R = roles.roles[i];
@@ -2207,7 +2842,10 @@ if (is(T == struct))
                         auto s = encScalar(wire.value, b);
                         if (b.failure.reason.length)
                             return;
-                        encAddAttribute(b, nodeIdx, attrName, s);
+                        auto cell_ = SdlAttributeCell.init;
+                        cell_.qualifiedName = attrName;
+                        cell_.value = s;
+                        attrCells ~= cell_;
                     }
                 }
                 else
@@ -2219,12 +2857,87 @@ if (is(T == struct))
                     auto s = encScalar(wire.value, b);
                     if (b.failure.reason.length)
                         return;
-                    encAddAttribute(b, nodeIdx, attrName, s);
+                    auto cell_ = SdlAttributeCell.init;
+                    cell_.qualifiedName = attrName;
+                    cell_.value = s;
+                    attrCells ~= cell_;
                 }
             }
         }    }}
 
+    // Splice attribute-channel extras back at their ordinals; a singular
+    // declared attribute owns its name outright, so a same-name extra is a
+    // collision (repeated-capable sequence targets absorb same-name extras).
+    static if (sdlExtrasIndex!T < T.tupleof.length)
+    {{
+        alias Extras = typeof(T.tupleof[sdlExtrasIndex!T]);
+        const extras = value.tupleof[sdlExtrasIndex!T];
+
+        static immutable string[] singularAttrs = () {
+            string[] names;
+            static foreach (j; 0 .. T.tupleof.length)
+                static if (roles.roles[j].role == SdlRoleKind.attribute)
+                {
+                    alias VJ = typeof(T.tupleof[j]);
+                    static if (!isDynamicArray!(Unqual!VJ) || is(VJ == string))
+                        names ~= attrKey(roles.roles[j].namespace_,
+                            roles.roles[j].localName);
+                }
+            return names;
+        }();
+
+        size_t[] attrMembers;
+        size_t[] attrOrdinals;
+        foreach (mi; 0 .. extras.length)
+        {
+            static if (is(Extras == SdlExtras))
+                const member = extras.at(mi);
+            else
+                const member = extras.members[mi];
+            if (exChannel(member) != SdlExtraChannel.attribute)
+                continue;
+            const spelling = extraSpelling(exName(member));
+            foreach (claimed; singularAttrs)
+                if (spelling == claimed)
+                {
+                    const mark = b.path.text.length;
+                    b.path.text ~= "@" ~ spelling;
+                    scope (exit) popSegment(b.path, mark);
+                    b.failure = attachPath(b.path, encBaseError(
+                        SdlErrorCode.duplicateRole,
+                        "extra occurrence collides with the declared "
+                        ~ "singular attribute \"" ~ spelling.idup ~ "\""));
+                    return;
+                }
+            attrMembers ~= mi;
+            attrOrdinals ~= exOrdinal(member);
+        }
+        sortByOrdinal(attrMembers, attrOrdinals);
+        const order = mergeOrdinalOrder(attrCells.length, attrOrdinals);
+        foreach (o; order)
+        {
+            if (o < attrCells.length)
+            {
+                encAddAttribute(b, nodeIdx, attrCells[o].qualifiedName,
+                    attrCells[o].value);
+                continue;
+            }
+            static if (is(Extras == SdlExtras))
+                const chosen = extras.at(attrMembers[o - attrCells.length]);
+            else
+                const chosen = extras.members[attrMembers[o
+                    - attrCells.length]];
+            encAddAttribute(b, nodeIdx, exName(chosen), exScalar(chosen));
+        }
+    }}
+    else
+    {
+        foreach (cell_; attrCells)
+            encAddAttribute(b, nodeIdx, cell_.qualifiedName, cell_.value);
+    }
+
     // ── Children ─────────────────────────────────────────────────────────
+    size_t[] kidOrder;
     static foreach (i, symbol; T.tupleof)
     {{
         enum R = roles.roles[i];
@@ -2274,7 +2987,7 @@ if (is(T == struct))
                     if (b.failure.reason.length)
                         return;
                 }
-                () @trusted { b.kids[nodeIdx] ~= cIdx; }();
+                kidOrder ~= cIdx;
             }
             else static if (isDynamicArray!(Unqual!V) && !is(V == string)
                 && !isAssociativeArray!(Unqual!V))
@@ -2292,12 +3005,12 @@ if (is(T == struct))
 
                         const mark = b.path.text.length;
                         b.path.text ~= "." ~ local ~ "["
-                            ~ b.kids[nodeIdx].length.to!string ~ "]";
+                            ~ kidOrder.length.to!string ~ "]";
                         const cIdx = encAppendNode(b, ns, local, childDepth);
                         scope (exit) popSegment(b.path, mark);
 
                         encodeAggregate!(E)(b, elem, cIdx);
-                        () @trusted { b.kids[nodeIdx] ~= cIdx; }();
+                        kidOrder ~= cIdx;
                         if (b.failure.reason.length)
                             return;
                     }
@@ -2307,26 +3020,27 @@ if (is(T == struct))
                     // Scalar sequence: ONE child holding every element. An
                     // empty sequence emits no occurrence (SPEC §5.2: an empty
                     // sequence emits none), keeping canonical output stable.
-                    if (value.tupleof[i].length == 0)
-                        return;
-                    const mark = b.path.text.length;
-                    b.path.text ~= "." ~ R.localName ~ "[0]";
-                    const cIdx = encAppendNode(b, R.namespace_, R.localName,
-                        childDepth);
-                    scope (exit) popSegment(b.path, mark);
-
-                    foreach (elem; value.tupleof[i])
+                    if (value.tupleof[i].length != 0)
                     {
-                        auto wire = encConverted!(FC3, E)(elem, b,
-                            "." ~ R.localName ~ "[0]");
-                        if (wire.failed)
-                            return;
-                        auto s = encScalar(wire.value, b);
-                        if (b.failure.reason.length)
-                            return;
-                        encAddValue(b, cIdx, s);
+                        const mark = b.path.text.length;
+                        b.path.text ~= "." ~ R.localName ~ "[0]";
+                        const cIdx = encAppendNode(b, R.namespace_,
+                            R.localName, childDepth);
+                        scope (exit) popSegment(b.path, mark);
+
+                        foreach (elem; value.tupleof[i])
+                        {
+                            auto wire = encConverted!(FC3, E)(elem, b,
+                                "." ~ R.localName ~ "[0]");
+                            if (wire.failed)
+                                return;
+                            auto s = encScalar(wire.value, b);
+                            if (b.failure.reason.length)
+                                return;
+                            encAddValue(b, cIdx, s);
+                        }
+                        kidOrder ~= cIdx;
                     }
-                    () @trusted { b.kids[nodeIdx] ~= cIdx; }();
                 }
             }
             else static if (isAssociativeArray!(Unqual!V))
@@ -2376,7 +3090,7 @@ if (is(T == struct))
                         if (b.failure.reason.length)
                             return;
                     }
-                    () @trusted { b.kids[nodeIdx] ~= cIdx; }();
+                    kidOrder ~= cIdx;
                 }
             }
             else static if (isNullAwareType!(V))
@@ -2413,10 +3127,85 @@ if (is(T == struct))
                     if (b.failure.reason.length)
                         return;
                 }
-                () @trusted { b.kids[nodeIdx] ~= cIdx; }();
+                kidOrder ~= cIdx;
             }
         }
     }}
+
+    // Splice child-channel extras back at their ordinals; a singular declared
+    // child owns its name outright, so a same-name extra is a collision.
+    static if (sdlExtrasIndex!T < T.tupleof.length)
+    {{
+        alias Extras = typeof(T.tupleof[sdlExtrasIndex!T]);
+        const extras = value.tupleof[sdlExtrasIndex!T];
+        const extraDepth = nodeIdx == 0 ? 0u
+            : cast(uint) (b.doc.nodes[nodeIdx].depth + 1);
+
+        static immutable string[] singularChildNames = () {
+            string[] names;
+            static foreach (j; 0 .. T.tupleof.length)
+                static if (roles.roles[j].role == SdlRoleKind.child)
+                    static if (roles.roles[j].childShape
+                        == SdlChildShape.scalarSingle
+                        || roles.roles[j].childShape
+                            == SdlChildShape.aggregateSingle)
+                        names ~= attrKey(roles.roles[j].namespace_,
+                            roles.roles[j].localName);
+            return names;
+        }();
+
+        size_t[] childMembers;
+        size_t[] childOrdinals;
+        size_t[] extraKids;
+        foreach (mi; 0 .. extras.length)
+        {
+            static if (is(Extras == SdlExtras))
+                const member = extras.at(mi);
+            else
+                const member = extras.members[mi];
+            if (exChannel(member) != SdlExtraChannel.child)
+                continue;
+            const spelling = extraSpelling(exName(member));
+            foreach (claimed; singularChildNames)
+                if (spelling == claimed)
+                {
+                    const mark = b.path.text.length;
+                    b.path.text ~= "." ~ spelling ~ "["
+                        ~ exOrdinal(member).to!string ~ "]";
+                    scope (exit) popSegment(b.path, mark);
+                    b.failure = attachPath(b.path, encBaseError(
+                        SdlErrorCode.duplicateRole,
+                        "extra occurrence collides with the declared "
+                        ~ "singular child \"" ~ spelling.idup ~ "\""));
+                    return;
+                }
+            static if (is(Extras == SdlExtras))
+            {
+                const built = copyExtraSubtree(b, exNode(member), extraDepth);
+                extraKids ~= built;
+            }
+            else
+            {
+                const built = appendOwnedSubtree(b, member.node, extraDepth);
+                extraKids ~= built;
+            }
+            childMembers ~= mi;
+            childOrdinals ~= exOrdinal(member);
+        }
+        sortByOrdinal(childMembers, childOrdinals);
+        const order = mergeOrdinalOrder(kidOrder.length, childOrdinals);
+        size_t[] merged;
+        foreach (o; order)
+        {
+            if (o < kidOrder.length)
+                merged ~= kidOrder[o];
+            else
+                merged ~= extraKids[o - kidOrder.length];
+        }
+        () @trusted { b.kids[nodeIdx] = merged; }();
+    }}
+    else
+        () @trusted { b.kids[nodeIdx] = kidOrder; }();
 
     // Dynamic identity overrides for THIS node come from its own fields;
     // they were applied by the parent before this call when the field is a
@@ -2428,6 +3217,13 @@ if (is(T == struct))
 canonical lexicographic key order governs AA entries. Dynamic tag-name and
 tag-namespace fields override each occurrence's identity; null-aware absent
 wrappers emit nothing.
+
+A `@SdlExtra` field (SPEC §8) splices its captured occurrences back into their
+original channels: extras claim their recorded channel ordinals while declared
+emissions fill the surrounding positions, repeated attribute/child extras stay
+repeated, and borrowed child subtrees are copied verbatim. An extra colliding
+with a declared singular value slot or singular attribute/child name is a
+structured encode error whose role path points at the extra occurrence.
 
 The arena built here feeds $(LREF writeSdlDocument) directly, so indentation,
 ordering, and every scalar spelling come from the S4 kernels — there is no
@@ -2822,4 +3618,619 @@ version (unittest)
         const rewritten = toSDL(decodedDoc);
         assert(rewritten.hasValue && rewritten.value[] == encoded.value[]);
     }
+}
+
+// ── Unknown fields and passthrough (SPEC §8)
+version (unittest)
+{
+    private static size_t probeUseIt(scope ref SdlDocument!() document) @safe
+    {
+        auto node = document.root.byChild.front;
+        const decoded = fromSDL!(Keep)(node);
+        size_t total;
+        if (decoded.hasValue)
+            total = decoded.value.extras.length();
+        return total;
+    }
+    static assert(__traits(compiles, probeUseIt), "A");
+
+    private static size_t probeUseIt2(scope ref SdlDocument!() document) @safe
+    {
+        auto node = document.root.byChild.front;
+        const decoded = fromSDL!(Keep)(node);
+        if (decoded.hasValue)
+            return decoded.value.extras.length();
+        return 0;
+    }
+
+    private static size_t probeUseIt3(scope ref SdlDocument!() document) @safe
+    {
+        auto node = document.root.byChild.front;
+        const decoded = fromSDL!(Keep)(node);
+        return decoded.hasValue ? 1 : 0;
+    }
+}
+// ─────────────────────────────────
+
+version (unittest)
+{
+    private import std.string : indexOf;
+
+    /// One tag exercising all three unknown channels at once; the spelling is
+    /// already canonical, so document-engine output equals typed encode.
+    private enum matrixSource =
+        `config "svc" 99 verbose=true stray=7 x:opt="y" {` ~ "\n"
+        ~ `dep id="d"` ~ "\n"
+        ~ `ghost "g" lvl=2 {` ~ "\n"
+        ~ `deep 5` ~ "\n"
+        ~ `}` ~ "\n"
+        ~ `}` ~ "\n";
+
+    private enum matrixCanonical =
+        `config "svc" 99 verbose=true stray=7 x:opt="y" {` ~ "\n"
+        ~ `    dep id="d"` ~ "\n"
+        ~ `    ghost "g" lvl=2 {` ~ "\n"
+        ~ `        deep 5` ~ "\n"
+        ~ `    }` ~ "\n"
+        ~ `}` ~ "\n";
+
+    private static struct Matrix
+    {
+        @SdlTagValue(0) string name;
+        @SdlAttribute() bool verbose;
+        @SdlChild() Dep dep;
+    }
+
+    private static struct MatrixDoc
+    {
+        @SdlChild() Matrix config;
+    }
+
+    private static struct Keep
+    {
+        @SdlTagValue(0) string name;
+        @SdlAttribute() bool verbose;
+        @SdlChild() Dep dep;
+        @SdlExtra() SdlExtras extras;
+    }
+
+    private static struct KeepDoc
+    {
+        @SdlChild() Keep config;
+    }
+
+    @WireStrict!Sdl
+    private static struct Forbid
+    {
+        @SdlTagValue(0) string name;
+        @SdlAttribute() bool verbose;
+        @SdlChild() Dep dep;
+    }
+
+    private static struct ForbidDoc
+    {
+        @SdlChild() Forbid config;
+    }
+
+    static struct PlainDoc
+    {
+        @SdlChild() Plain m;
+    }
+
+    static struct Plain
+    {
+        @SdlTagValue(0) int k;
+    }
+
+    static struct KeepDups
+    {
+        @SdlTagValue(0) int k;
+        @SdlExtra() SdlExtras extras;
+    }
+
+    static struct KeepDupsDoc
+    {
+        @SdlChild() KeepDups m;
+    }
+
+    @WireStrict!Sdl
+    static struct ForbidDups
+    {
+        @SdlTagValue(0) int k;
+    }
+
+    static struct ForbidDupsDoc
+    {
+        @SdlChild() ForbidDups m;
+    }
+
+    static struct Kids
+    {
+        @SdlChild() Dep dep;
+        @SdlExtra() SdlExtras extras;
+    }
+
+    @WireStrict!Sdl
+    static struct StrictKids
+    {
+        @SdlChild() Dep dep;
+    }
+
+    static struct StrictKidsDoc
+    {
+        @SdlChild() StrictKids p;
+    }
+
+    static struct Own
+    {
+        @SdlTagValue(0) string name;
+        @SdlAttribute() bool verbose;
+        @SdlChild() Dep dep;
+        @SdlExtra() OwnedSdlExtras extras;
+    }
+}
+
+// Default policy: unmatched values/attributes/children decode as nothing and
+// canonical encode drops them.
+@("wired.sdl.codec.unknown.ignore")
+@system unittest
+{
+    const decoded = fromSDL!(MatrixDoc, sdlFull)(matrixSource, "m.sdl");
+    assert(decoded.hasValue, decoded.error.toString);
+    const encoded = toSDL(decoded.value);
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == `config "svc" verbose=true {` ~ "\n"
+        ~ `    dep id="d"` ~ "\n}" ~ "\n", encoded.value[].idup);
+}
+
+// @WireStrict!Sdl: the first unmatched occurrence — scanned in canonical
+// grammar order (values, then attributes, then children) — is an
+// unknownMember decode error at that occurrence's span with a composed role
+// path. wired has no shared error-sink protocol yet, so exactly that one
+// occurrence is reported.
+@("wired.sdl.codec.unknown.forbidFirstUnmatchedMatrix")
+@system unittest
+{
+    const forbidden = fromSDL!(ForbidDoc, sdlFull)(matrixSource, "f.sdl");
+    assert(forbidden.hasError, "expected the unknown value to fail");
+    assert(forbidden.error.stage == SdlErrorStage.decode);
+    assert(forbidden.error.code == SdlErrorCode.unknownMember);
+    // The value channel is scanned first even though attributes appear later.
+    assert(forbidden.error.rolePath[] == ".config[0]<value[1]>");
+    assert(forbidden.error.span.start.byteOffset == matrixSource.indexOf("99"));
+
+    // Attributes only: the first unknown attribute is reported.
+    @WireStrict!Sdl
+    static struct AttrOnly
+    {
+        @SdlAttribute() bool known;
+    }
+    static struct AttrOnlyDoc
+    {
+        @SdlChild() AttrOnly t;
+    }
+    const attrCase = fromSDL!(AttrOnlyDoc, sdlFull)(
+        `t known=true ghost=1 {` ~ "\nstray 1\n}");
+    assert(attrCase.hasError && attrCase.error.code
+        == SdlErrorCode.unknownMember);
+    assert(attrCase.error.rolePath[] == ".t[0]@ghost");
+    assert(attrCase.error.span.start.byteOffset
+        == `t known=true ghost=1 {`.indexOf("ghost"));
+
+    // Children only: the first unknown child is reported with its same-name
+    // occurrence index (SPEC §7 path convention).
+    @WireStrict!Sdl
+    static struct ChildOnly
+    {
+        @SdlChild() Dep dep;
+    }
+    static struct ChildOnlyDoc
+    {
+        @SdlChild() ChildOnly p;
+    }
+    enum childSource = `p {` ~ "\ndep id=\"x\"" ~ "\nstray \"s\"\n}";
+    const childCase = fromSDL!(ChildOnlyDoc, sdlFull)(childSource, "c.sdl");
+    assert(childCase.hasError && childCase.error.code
+        == SdlErrorCode.unknownMember);
+    assert(childCase.error.rolePath[] == ".p[0].stray[0]");
+    assert(childCase.error.span.start.byteOffset
+        == childSource.indexOf("stray"));
+}
+
+// @SdlExtra preserves every unmatched occurrence with channel, ordinal,
+// qualified name, payload, and source span — in canonical grammar order.
+@("wired.sdl.codec.unknown.preserveCaptureMetadata")
+@system unittest
+{
+    auto parsed = parseSdlDocument!sdlFull(matrixSource, "k.sdl");
+    assert(parsed.hasValue, parsed.error.toString);
+    const preserved = fromSDL!(Keep)(parsed.document.root.byChild.front);
+    assert(preserved.hasValue, preserved.error.toString);
+    const extras = preserved.value.extras;
+    assert(extras.length == 4);
+
+    // Value beyond declared slot 0: ordinal 1, integer payload kept exact.
+    const v = extras.at(0);
+    assert(v.channel() == SdlExtraChannel.value);
+    assert(v.ordinal() == 1);
+    assert(v.name().namespace_.length == 0 && v.name().localName.length == 0);
+    assert(v.scalar().kind == SdlScalarKind.integer && v.scalar().integer
+        == 99);
+    assert(v.span().start.byteOffset == matrixSource.indexOf("99"));
+
+    // Attributes in occurrence order with full ordinals among ALL attributes.
+    const a1 = extras.at(1);
+    assert(a1.channel() == SdlExtraChannel.attribute && a1.ordinal() == 1);
+    assert(a1.name().localName == "stray");
+    assert(a1.scalar().kind == SdlScalarKind.integer);
+    const a2 = extras.at(2);
+    assert(a2.ordinal() == 2);
+    assert(a2.name().namespace_ == "x" && a2.name().localName == "opt");
+    assert(a2.scalar().kind == SdlScalarKind.string_
+        && a2.scalar().stringValue == "y");
+    assert(a2.span().start.byteOffset == matrixSource.indexOf("x:opt"));
+
+    // Child capture carries the whole borrowed subtree view.
+    const c = extras.at(3);
+    assert(c.channel() == SdlExtraChannel.child && c.ordinal() == 1);
+    assert(c.name().localName == "ghost");
+    assert(c.scalar().kind == SdlScalarKind.none);
+    assert(c.node().valueCount == 1);
+    assert(c.node().byValue.front.stringValue == "g");
+    assert(c.node().attributeCount == 1);
+    assert(c.node().childCount == 1);
+}
+
+// Preserved extras re-encode into their original channels at their original
+// ordinals and stay byte-stable through decode→encode→decode.
+@("wired.sdl.codec.unknown.preserveRoundTripByteStable")
+@system unittest
+{
+    auto parsed = parseSdlDocument!sdlFull(matrixSource, "rt.sdl");
+    assert(parsed.hasValue, parsed.error.toString);
+    auto keptResult = fromSDL!(Keep)(parsed.document.root.byChild.front);
+    assert(keptResult.hasValue, keptResult.error.toString);
+
+    KeepDoc preservedDoc;
+    preservedDoc.config = keptResult.value;
+    const once = toSDL(preservedDoc);
+    assert(once.hasValue, once.error.toString);
+    assert(once.value[] == matrixCanonical, once.value[].idup);
+
+    auto reparsed = parseSdlDocument!sdlFull(once.value[], "rt2.sdl");
+    assert(reparsed.hasValue);
+    auto againResult = fromSDL!(Keep)(reparsed.document.root.byChild.front);
+    assert(againResult.hasValue, againResult.error.toString);
+    assert(againResult.value.extras.length == 4);
+    assert(againResult.value.extras.at(0).ordinal() == 1);
+    assert(againResult.value.extras.at(1).name().localName == "stray");
+    assert(againResult.value.extras.at(3).node().childCount == 1);
+
+    KeepDoc againDoc;
+    againDoc.config = againResult.value;
+    const twice = toSDL(againDoc);
+    assert(twice.hasValue && twice.value[] == once.value[]);
+}
+
+// Three-way matrix on duplicate namespaced attributes: ignore drops both,
+// forbid reports the first, preserve keeps both in occurrence order.
+@("wired.sdl.codec.unknown.duplicateNamespacedAttributeMatrix")
+@system unittest
+{
+    enum src = `m 5 x:a=1 x:a=2`;
+
+    const ignored = fromSDL!(PlainDoc, sdlFull)(src);
+    assert(ignored.hasValue && ignored.value.m.k == 5);
+
+    const forbidden = fromSDL!(ForbidDupsDoc, sdlFull)(src);
+    assert(forbidden.hasError && forbidden.error.code
+        == SdlErrorCode.unknownMember);
+    assert(forbidden.error.rolePath[] == ".m[0]@x:a");
+    assert(forbidden.error.span.start.byteOffset == src.indexOf("x:a"));
+
+    auto parsed = parseSdlDocument!sdlFull(src, "dup.sdl");
+    assert(parsed.hasValue);
+    auto keptResult = fromSDL!(KeepDups)(parsed.document.root.byChild.front);
+    assert(keptResult.hasValue, keptResult.error.toString);
+
+    assert(keptResult.value.extras.length == 2);
+    // Both occurrences are unknown; their ordinals count among ALL attribute
+    // occurrences of the tag.
+    assert(keptResult.value.extras.at(0).ordinal() == 0);
+    assert(keptResult.value.extras.at(1).ordinal() == 1);
+    assert(keptResult.value.extras.at(0).name().namespace_ == "x");
+    assert(keptResult.value.extras.at(1).name().namespace_ == "x");
+
+    // Re-encoding keeps the duplicates repeated, in order.
+    KeepDupsDoc keptDoc;
+    keptDoc.m = keptResult.value;
+    const encoded = toSDL(keptDoc);
+    assert(encoded.hasValue
+        && encoded.value[] == `m 5 x:a=1 x:a=2` ~ "\n",
+        encoded.value[].idup);
+}
+
+// Three-way matrix on mixed repeated unknown children; preserved extras keep
+// their interleaving with the declared child and survive byte-for-byte.
+@("wired.sdl.codec.unknown.mixedRepeatedChildrenMatrix")
+@system unittest
+{
+    enum src = `p {` ~ "\nzz 1" ~ "\nzz 2" ~ "\ndep id=\"d\"" ~ "\nyy"
+        ~ "\nhollow {" ~ "\n}" ~ "\n}";
+
+    const forbidden = fromSDL!(StrictKidsDoc, sdlFull)(src);
+    assert(forbidden.hasError && forbidden.error.code
+        == SdlErrorCode.unknownMember);
+    assert(forbidden.error.rolePath[] == ".p[0].zz[0]");
+    assert(forbidden.error.span.start.byteOffset == src.indexOf("zz"));
+
+    auto parsed = parseSdlDocument!sdlFull(src, "kids.sdl");
+    assert(parsed.hasValue);
+    auto keptResult = fromSDL!(Kids)(parsed.document.root.byChild.front);
+    assert(keptResult.hasValue, keptResult.error.toString);
+    const kept = keptResult.value;
+
+    // Children channel: zz@0, zz@1, (dep consumed), yy@3, hollow@4.
+    assert(kept.extras.length == 4);
+    assert(kept.extras.at(0).name().localName == "zz"
+        && kept.extras.at(0).ordinal() == 0);
+    assert(kept.extras.at(0).node().byValue.front.integer == 1);
+    assert(kept.extras.at(1).name().localName == "zz");
+    assert(kept.extras.at(1).node().byValue.front.integer == 2);
+    assert(kept.extras.at(2).ordinal() == 3);
+    assert(kept.extras.at(2).name().localName == "yy");
+    assert(kept.extras.at(3).ordinal() == 4);
+    assert(kept.extras.at(3).name().localName == "hollow");
+
+    // Merge: declared dep fills its non-extra ordinal (2), extras keep their
+    // relative order around it, and the hollow extra's empty child block
+    // survives canonical emission.
+    static struct KidsDoc
+    {
+        @SdlChild() Kids p;
+    }
+    enum expected = `p {` ~ "\n    zz 1" ~ "\n    zz 2"
+        ~ "\n    dep id=\"d\"" ~ "\n    yy" ~ "\n    hollow {" ~ "\n    }"
+        ~ "\n}" ~ "\n";
+    KidsDoc kidsDoc;
+    kidsDoc.p = keptResult.value;
+    const encoded = toSDL(kidsDoc);
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == expected, encoded.value[].idup);
+
+    // Byte-stable second cycle.
+    auto reparsed = parseSdlDocument!sdlFull(encoded.value[], "kids2.sdl");
+    assert(reparsed.hasValue);
+    auto againResult = fromSDL!(Kids)(reparsed.document.root.byChild.front);
+    assert(againResult.hasValue && againResult.value.extras.length == 4);
+    const again = againResult.value;
+
+    KidsDoc againDoc;
+    againDoc.p = againResult.value;
+    const twice = toSDL(againDoc);
+    assert(twice.hasValue && twice.value[] == encoded.value[]);
+}
+
+// Encode collisions between an extra occurrence and a declared singular slot,
+// attribute, or child are structured errors pointing at the extra occurrence;
+// sequence targets absorb same-name extras as additional repetitions.
+@("wired.sdl.codec.unknown.collisionErrors")
+@system unittest
+{
+    // Value ordinal inside the declared fixed slots.
+    static struct CollideVal
+    {
+        @SdlTagValue(0) int slot;
+        @SdlExtra() SdlExtras extras;
+    }
+    CollideVal cv;
+    cv.slot = 7;
+    cv.extras = SdlExtras([SdlExtraMember(SdlExtraChannel.value, 0,
+        SdlQualifiedName(null, null), SdlScalar("boom"), SdlNode.init,
+        SdlSpan.init)]);
+    const valCase = toSDL(cv);
+    assert(valCase.hasError);
+    assert(valCase.error.stage == SdlErrorStage.encode);
+    assert(valCase.error.code == SdlErrorCode.duplicateRole);
+    assert(valCase.error.rolePath[] == "<value[0]>");
+
+    // Attribute name owned by a singular declared field.
+    static struct CollideAttr
+    {
+        @SdlAttribute() bool verbose;
+        @SdlExtra() SdlExtras extras;
+    }
+    CollideAttr ca;
+    ca.verbose = true;
+    ca.extras = SdlExtras([SdlExtraMember(SdlExtraChannel.attribute, 5,
+        SdlQualifiedName(null, "verbose"), SdlScalar(true), SdlNode.init,
+        SdlSpan.init)]);
+    const attrCase = toSDL(ca);
+    assert(attrCase.hasError && attrCase.error.code
+        == SdlErrorCode.duplicateRole);
+    assert(attrCase.error.rolePath[] == "@verbose");
+
+    // Child name owned by a singular declared field.
+    static struct CollideChild
+    {
+        @SdlChild() Dep dep;
+        @SdlExtra() SdlExtras extras;
+    }
+    CollideChild cc;
+    cc.dep.id = "d";
+    cc.extras = SdlExtras([SdlExtraMember(SdlExtraChannel.child, 0,
+        SdlQualifiedName(null, "dep"), SdlScalar.invalidScalar(),
+        SdlNode.init, SdlSpan.init)]);
+    const childCase = toSDL(cc);
+    assert(childCase.hasError && childCase.error.code
+        == SdlErrorCode.duplicateRole);
+    assert(childCase.error.rolePath[] == ".dep[0]");
+
+    // A sequence-typed attribute target absorbs same-name extras.
+    static struct Absorb
+    {
+        @SdlAttribute() string[] aliases;
+        @SdlExtra() SdlExtras extras;
+    }
+    Absorb ab;
+    ab.aliases = ["base"];
+    char[] pooled = "extra".dup;
+    ab.extras = SdlExtras([SdlExtraMember(SdlExtraChannel.attribute, 1,
+        SdlQualifiedName(null, "aliases"), SdlScalar(pooled), SdlNode.init,
+        SdlSpan.init)]);
+    static struct AbsorbDoc
+    {
+        @SdlChild() Absorb a;
+    }
+    const absorbed = toSDL(AbsorbDoc(ab));
+    assert(absorbed.hasValue, absorbed.error.toString);
+    assert(absorbed.value[] == `a aliases="base" aliases="extra"` ~ "\n",
+        absorbed.value[].idup);
+}
+
+// The owned flavor captures identically and stays usable after both the input
+// buffer is overwritten and the source document is destroyed.
+@("wired.sdl.codec.unknown.ownedSurvivesInputTeardown")
+@system unittest
+{
+    static struct Own
+    {
+        @SdlTagValue(0) string name;
+        @SdlAttribute() bool verbose;
+        @SdlChild() Dep dep;
+        @SdlExtra() OwnedSdlExtras extras;
+    }
+
+    auto src = matrixSource.dup;
+    auto parsed = parseSdlDocument!sdlFull(src, "own.sdl");
+    assert(parsed.hasValue);
+    auto ownResult = fromSDL!(Own)(parsed.document.root.byChild.front);
+    assert(ownResult.hasValue, ownResult.error.toString);
+    const decoded = ownResult.value;
+
+    // Tear down every input-side resource before touching the capture.
+    () @trusted { destroy(parsed.document); }();
+    src[] = 'z';
+
+    const extras = ownResult.value.extras;
+    assert(extras.length == 4);
+    assert(extras.members[0].channel == SdlExtraChannel.value
+        && extras.members[0].scalar.kind == SdlScalarKind.integer
+        && extras.members[0].scalar.integer == 99);
+    assert(extras.members[1].name.localName == "stray");
+    assert(extras.members[3].name.localName == "ghost");
+    assert(extras.members[3].node.values.length == 1
+        && extras.members[3].node.values[0].stringValue == "g");
+    assert(extras.members[3].node.children.length == 1);
+    assert(extras.members[3].node.children[0].name.localName == "deep");
+
+    static struct OwnDoc
+    {
+        @SdlChild() Own config;
+    }
+    OwnDoc ownDoc;
+    ownDoc.config = ownResult.value;
+    const encoded = toSDL(ownDoc);
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == matrixCanonical, encoded.value[].idup);
+
+    // And it re-decodes stably through the text overload (owned flavor only).
+    const back = fromSDL!(OwnDoc, sdlFull)(encoded.value[], "own2.sdl");
+    assert(back.hasValue, back.error.toString);
+    assert(back.value.config.extras.length == 4);
+    const twice = toSDL(back.value);
+    assert(twice.hasValue && twice.value[] == encoded.value[]);
+}
+
+// DIP1000 lifetime contract: borrowed extras are usable while their document
+// lives and may not outlive it at the payload-slice level.
+@("wired.sdl.codec.unknown.borrowedLifetimeProbes")
+@safe unittest
+{
+    // Positive: decoding from a scope-bound node and reading metadata inside
+    // the document's scope compiles.
+    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+        auto node = document.root.byChild.front;
+        const decoded = fromSDL!(Keep)(node);
+        size_t total;
+        if (decoded.hasValue)
+            total = decoded.value.extras.length();
+        return total;
+    }));
+
+    // Negative: a payload slice reached through that decode may not escape
+    // the scope'd document parameter.
+    static assert(!__traits(compiles, {
+        const(char)[] escape(scope ref SdlDocument!() document) @safe
+        {
+            auto node = document.root.byChild.front;
+            const decoded = fromSDL!(Keep)(node);
+            if (!decoded.hasValue)
+                return null;
+            return decoded.value.extras.at(0).scalar().stringValue;
+        }
+    }), "borrowed extra payloads must not outlive their document");
+
+    // Negative: child-subtree identity data may not escape either.
+    static assert(!__traits(compiles, {
+        const(char)[] escape(scope ref SdlDocument!() document) @safe
+        {
+            auto node = document.root.byChild.front;
+            const decoded = fromSDL!(Keep)(node);
+            if (!decoded.hasValue)
+                return null;
+            return decoded.value.extras.at(3).name().localName;
+        }
+    }), "borrowed extra names must not outlive their document");
+}
+
+// Borrowed extras cannot survive the text overload's temporary document: the
+// rejection is a compile-time error naming the aggregate. Owned extras can.
+@("wired.sdl.codec.unknown.textOverloadRejectsBorrowed")
+@system unittest
+{
+    static assert(!__traits(compiles,
+        fromSDL!(KeepDoc, sdlFull)(matrixSource)));
+    static assert(hasBorrowedSdlExtras!KeepDoc);
+
+    // Nested case: a wrapper around an extras-carrying aggregate is rejected
+    // too, so no borrowed view hides behind one level of aggregation.
+    static struct Wrap
+    {
+        @SdlChild() Keep inner;
+    }
+    static assert(hasBorrowedSdlExtras!Wrap);
+    static assert(!__traits(compiles, fromSDL!(Wrap, sdlFull)(matrixSource)));
+}
+
+// SPEC §8: @WireStrict and @SdlExtra on one aggregate are a compile-time
+// contradiction naming the aggregate — unreachable at runtime.
+@("wired.sdl.codec.unknown.strictExtrasContradiction")
+@system unittest
+{
+    @WireStrict!Sdl
+    static struct Contradict
+    {
+        @SdlTagValue(0) string name;
+        @SdlExtra() SdlExtras extras;
+    }
+    static assert(!__traits(compiles, sdlAggregateRoles!Contradict));
+    static assert(!__traits(compiles, fromSDL!(Contradict, sdlFull)("t x")));
+    static assert(!__traits(compiles, toSDL(Contradict.init)));
+
+    // The format-less spelling contradicts just the same.
+    @WireStrict
+    static struct AnyContradict
+    {
+        @SdlTagValue(0) string name;
+        @SdlExtra() OwnedSdlExtras extras;
+    }
+    static assert(!__traits(compiles, sdlAggregateRoles!AnyContradict));
+
+    // An @SdlExtra field must be one of the two capture flavors.
+    static struct BadFlavor
+    {
+        @SdlExtra() int extras;
+    }
+    static assert(!__traits(compiles, sdlAggregateRoles!BadFlavor));
 }
