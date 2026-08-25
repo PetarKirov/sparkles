@@ -1,14 +1,10 @@
-/**
-SDL semantic scalar and source-location vocabulary.
-
-The aggregate arenas and borrowed node ranges land with the parser milestone;
-these value types are independent and already form the scalar cells consumed by
-the canonical writer.
-*/
+/** SDL semantic values and the owning ordered arena document. */
 module sparkles.wired.sdl.document;
 
 import core.time : Duration;
 import std.datetime.date : Date;
+import std.experimental.allocator.common : stateSize;
+import std.experimental.allocator.mallocator : Mallocator;
 
 /// Exact semantic kind retained for every SDL scalar.
 enum SdlScalarKind : ubyte
@@ -35,6 +31,50 @@ struct SdlQualifiedName
 {
     const(char)[] namespace_;
     const(char)[] localName;
+
+    /// Full identity equality; namespaces are never implicit wildcards.
+    bool opEquals(scope const SdlQualifiedName rhs) const
+        @safe pure nothrow @nogc
+        => namespace_ == rhs.namespace_ && localName == rhs.localName;
+}
+
+/// Namespace matching policy for a qualified-name query.
+enum SdlNamespaceMatch : ubyte
+{
+    exact,
+    wildcard,
+}
+
+/** A lookup-only qualified-name query.
+
+`wildcard` matches every namespace for `name.localName`. It is deliberately a
+query option and cannot be stored as an SDL qualified name.
+*/
+struct SdlNameQuery
+{
+    SdlQualifiedName name;
+    SdlNamespaceMatch namespaceMatch;
+
+    /// Constructs an exact full-qualified-name query.
+    this(return scope SdlQualifiedName name) @safe pure nothrow @nogc
+    {
+        this.name = name;
+    }
+
+    /// Constructs an explicit namespace-wildcard query for `localName`.
+    static SdlNameQuery anyNamespace(return scope const(char)[] localName)
+        @safe pure nothrow @nogc
+    {
+        SdlNameQuery result = SdlNameQuery(SdlQualifiedName(null, localName));
+        result.namespaceMatch = SdlNamespaceMatch.wildcard;
+        return result;
+    }
+
+    private bool matches(scope const SdlQualifiedName candidate) const scope
+        @safe pure nothrow @nogc
+        => candidate.localName == name.localName
+            && (namespaceMatch == SdlNamespaceMatch.wildcard
+                || candidate.namespace_ == name.namespace_);
 }
 
 /// One source position: zero-based byte offset and one-based display position.
@@ -90,6 +130,7 @@ alive through the write.
 struct SdlScalar
 {
     private SdlScalarKind _kind = SdlScalarKind.null_;
+    private SdlSpan _span;
     private union Payload
     {
         bool booleanValue;
@@ -173,7 +214,7 @@ struct SdlScalar
     }
 
     /// Constructs an SDL binary value.
-    this(const(ubyte)[] value) @safe pure nothrow @nogc
+    this(return scope const(ubyte)[] value) @safe pure nothrow @nogc
     {
         _kind = SdlScalarKind.binary;
         _payload.binaryValue = value;
@@ -208,10 +249,18 @@ struct SdlScalar
     }
 
     /// The active payload kind.
-    SdlScalarKind kind() const @safe pure nothrow @nogc => _kind;
+    SdlScalarKind kind() const scope @safe pure nothrow @nogc => _kind;
+
+    /// Exact original token span; default/standalone values have an empty span.
+    SdlSpan span() const scope @safe pure nothrow @nogc => _span;
+
+    package void setSpan(SdlSpan value) scope @safe pure nothrow @nogc
+    {
+        _span = value;
+    }
 
     /// Active boolean payload.
-    bool boolean() const @safe pure nothrow @nogc
+    bool boolean() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.boolean)
     {
         return (() @trusted => _payload.booleanValue)();
@@ -225,42 +274,42 @@ struct SdlScalar
     }
 
     /// Active character payload.
-    dchar character() const @safe pure nothrow @nogc
+    dchar character() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.character)
     {
         return (() @trusted => _payload.characterValue)();
     }
 
     /// Active 32-bit integer payload.
-    int integer() const @safe pure nothrow @nogc
+    int integer() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.integer)
     {
         return (() @trusted => _payload.integerValue)();
     }
 
     /// Active 64-bit integer payload.
-    long longInteger() const @safe pure nothrow @nogc
+    long longInteger() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.longInteger)
     {
         return (() @trusted => _payload.longValue)();
     }
 
     /// Active binary32 payload.
-    float floatValue() const @safe pure nothrow @nogc
+    float floatValue() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.float_)
     {
         return (() @trusted => _payload.floatValue)();
     }
 
     /// Active binary64 payload.
-    double doubleValue() const @safe pure nothrow @nogc
+    double doubleValue() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.double_)
     {
         return (() @trusted => _payload.doubleValue)();
     }
 
     /// Active extended-decimal payload.
-    real decimalValue() const @safe pure nothrow @nogc
+    real decimalValue() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.decimal)
     {
         return (() @trusted => _payload.decimalValue)();
@@ -274,31 +323,433 @@ struct SdlScalar
     }
 
     /// Active date payload.
-    Date date() const @safe pure nothrow @nogc
+    Date date() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.date)
     {
         return (() @trusted => _payload.dateValue)();
     }
 
     /// Active local date-time payload.
-    SdlDateTime dateTime() const @safe pure nothrow @nogc
+    SdlDateTime dateTime() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.dateTime)
     {
         return (() @trusted => _payload.dateTimeValue)();
     }
 
     /// Active zoned date-time payload.
-    SdlZonedDateTime zonedDateTime() const @safe pure nothrow @nogc
+    SdlZonedDateTime zonedDateTime() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.zonedDateTime)
     {
         return (() @trusted => _payload.zonedDateTimeValue)();
     }
 
     /// Active duration payload.
-    Duration duration() const @safe pure nothrow @nogc
+    Duration duration() const scope @safe pure nothrow @nogc
     in (_kind == SdlScalarKind.duration)
     {
         return (() @trusted => _payload.durationValue)();
+    }
+}
+
+package struct SdlNodeCell
+{
+    SdlQualifiedName qualifiedName;
+    SdlSpan nameSpan;
+    SdlSpan span;
+    size_t valueStart;
+    size_t valueCount;
+    size_t attributeStart;
+    size_t attributeCount;
+    size_t childStart;
+    size_t childCount;
+    uint depth;
+}
+
+package struct SdlValueCell
+{
+    SdlScalar value;
+}
+
+package struct SdlAttributeCell
+{
+    SdlQualifiedName qualifiedName;
+    SdlSpan nameSpan;
+    SdlSpan span;
+    SdlScalar value;
+}
+
+/** Owning, movable, non-copyable parsed SDL document.
+
+The synthetic root always has the empty/default qualified name and a
+zero-width span at the source start after UTF-8 BOM handling.
+*/
+struct SdlDocument(Allocator = Mallocator)
+{
+    static if (stateSize!Allocator)
+        package Allocator alloc;
+    else
+        package alias alloc = Allocator.instance;
+
+    package SdlNodeCell[] nodes;
+    package SdlValueCell[] values;
+    package SdlAttributeCell[] attributes;
+    package size_t[] childIndexes;
+    package ubyte[] pool;
+    private void[] nodeBlock;
+    private void[] valueBlock;
+    private void[] attributeBlock;
+    private void[] childBlock;
+    private void[] poolBlock;
+    package const(char)[] ownedSourceName;
+
+    @disable this(this);
+
+    /// Move assignment transfers every allocation and allocator state.
+    void opAssign(SdlDocument rhs)
+    {
+        import std.algorithm.mutation : swap;
+
+        static if (stateSize!Allocator)
+            swap(alloc, rhs.alloc);
+        swap(nodes, rhs.nodes);
+        swap(values, rhs.values);
+        swap(attributes, rhs.attributes);
+        swap(childIndexes, rhs.childIndexes);
+        swap(pool, rhs.pool);
+        swap(nodeBlock, rhs.nodeBlock);
+        swap(valueBlock, rhs.valueBlock);
+        swap(attributeBlock, rhs.attributeBlock);
+        swap(childBlock, rhs.childBlock);
+        swap(poolBlock, rhs.poolBlock);
+        swap(ownedSourceName, rhs.ownedSourceName);
+    }
+
+    /// Whether this document contains its synthetic root.
+    bool valid() const @safe pure nothrow @nogc => nodes.length != 0;
+
+    /// Borrowed synthetic root view.
+    SdlNode root() return scope const @safe pure nothrow @nogc
+    in (valid, "empty document has no root")
+        => SdlNode(nodes[], values[], attributes[], childIndexes[], 0);
+
+    /// Owned source label supplied to the parser.
+    const(char)[] sourceName() const return scope @safe pure nothrow @nogc
+        => ownedSourceName;
+
+    ~this()
+    {
+        release();
+    }
+
+    package bool acquire(size_t nodeCount, size_t valueCount,
+        size_t attributeCount, size_t childCount, size_t poolBytes)
+    {
+        if (!acquireBlock(nodes, nodeBlock, nodeCount)
+            || !acquireBlock(values, valueBlock, valueCount)
+            || !acquireBlock(attributes, attributeBlock, attributeCount)
+            || !acquireBlock(childIndexes, childBlock, childCount)
+            || !acquireBlock(pool, poolBlock, poolBytes))
+        {
+            release();
+            return false;
+        }
+        return true;
+    }
+
+    private bool acquireBlock(T)(ref T[] target, ref void[] owner, size_t count)
+    {
+        if (count == 0)
+            return true;
+        if (count > size_t.max / T.sizeof)
+            return false;
+        auto block = alloc.allocate(count * T.sizeof);
+        if (block is null || block.length < count * T.sizeof)
+        {
+            static if (__traits(hasMember, Allocator, "deallocate"))
+                if (block !is null)
+                    () @trusted { alloc.deallocate(block); }();
+            return false;
+        }
+        target = () @trusted {
+            return (cast(T*) block.ptr)[0 .. count];
+        }();
+        owner = block;
+        return true;
+    }
+
+    private void release()
+    {
+        static if (__traits(hasMember, Allocator, "deallocate"))
+        {
+            releaseBlock(nodeBlock);
+            releaseBlock(valueBlock);
+            releaseBlock(attributeBlock);
+            releaseBlock(childBlock);
+            releaseBlock(poolBlock);
+        }
+        nodes = null;
+        values = null;
+        attributes = null;
+        childIndexes = null;
+        pool = null;
+        nodeBlock = null;
+        valueBlock = null;
+        attributeBlock = null;
+        childBlock = null;
+        poolBlock = null;
+        ownedSourceName = null;
+    }
+
+    private void releaseBlock(ref void[] block)
+    {
+        if (block.length)
+            () @trusted { alloc.deallocate(block); }();
+        block = null;
+    }
+}
+
+/** Copyable borrowed view of one SDL node.
+
+Views store slices of the document's arenas, so `dip1000` tracks every view,
+range, and payload slice back to the owning document: a view cannot outlive
+the `SdlDocument` it was reached through.
+*/
+struct SdlNode
+{
+    private const(SdlNodeCell)[] _nodes;
+    private const(SdlValueCell)[] _values;
+    private const(SdlAttributeCell)[] _attributes;
+    private const(size_t)[] _childIndexes;
+    private size_t _cell;
+
+    private this(return scope const(SdlNodeCell)[] nodes,
+        return scope const(SdlValueCell)[] values,
+        return scope const(SdlAttributeCell)[] attributes,
+        return scope const(size_t)[] childIndexes, size_t cell)
+        @safe pure nothrow @nogc
+    {
+        _nodes = nodes;
+        _values = values;
+        _attributes = attributes;
+        _childIndexes = childIndexes;
+        _cell = cell;
+    }
+
+    private SdlNodeCell cell() const scope @trusted pure nothrow @nogc
+        => _nodes[_cell];
+
+    /// Full stored name. The synthetic root returns the empty/default name.
+    SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
+        => (() @trusted => _nodes[_cell].qualifiedName)();
+
+    /// Exact qualified-name span, or the root's zero-width source-start span.
+    SdlSpan nameSpan() const scope @safe pure nothrow @nogc => this.cell.nameSpan;
+
+    /// Complete declaration span.
+    SdlSpan span() const scope @safe pure nothrow @nogc => this.cell.span;
+
+    /// Number of positional scalar values.
+    size_t valueCount() const scope @safe pure nothrow @nogc => this.cell.valueCount;
+    /// Number of attributes, including duplicates.
+    size_t attributeCount() const scope @safe pure nothrow @nogc
+        => this.cell.attributeCount;
+    /// Number of direct children, including repeated names.
+    size_t childCount() const scope @safe pure nothrow @nogc
+        => this.cell.childCount;
+
+    /// Forward range over positional values in source order.
+    SdlValueRange byValue() const return scope @safe pure nothrow @nogc
+    {
+        const owned = this.cell;
+        return (() @trusted => SdlValueRange(_values[owned.valueStart
+            .. owned.valueStart + owned.valueCount]))();
+    }
+
+    /// Forward range over every attribute in source order.
+    SdlAttributeRange byAttribute() const return scope @safe pure nothrow @nogc
+    {
+        const owned = this.cell;
+        return (() @trusted => SdlAttributeRange(
+            _attributes[owned.attributeStart
+                .. owned.attributeStart + owned.attributeCount]))();
+    }
+
+    /// Every attribute matching an exact full qualified name.
+    SdlFilteredAttributeRange byAttribute(return scope SdlQualifiedName name) const
+        return scope @safe pure nothrow @nogc
+        => byAttribute(SdlNameQuery(name));
+
+    /// Every attribute matching `query`, retaining source order.
+    SdlFilteredAttributeRange byAttribute(return scope SdlNameQuery query) const
+        return scope @safe pure nothrow @nogc
+        => SdlFilteredAttributeRange(byAttribute, query);
+
+    /// Forward range over direct children in source order.
+    SdlChildRange byChild() const return scope @safe pure nothrow @nogc
+    {
+        const owned = this.cell;
+        return (() @trusted => SdlChildRange(_nodes, _values, _attributes,
+            _childIndexes, _childIndexes[owned.childStart
+                .. owned.childStart + owned.childCount]))();
+    }
+
+    /// Every direct child matching an exact full qualified name.
+    SdlFilteredChildRange byChild(return scope SdlQualifiedName name) const
+        return scope @safe pure nothrow @nogc
+        => byChild(SdlNameQuery(name));
+
+    /// Every direct child matching `query`, retaining source order.
+    SdlFilteredChildRange byChild(return scope SdlNameQuery query) const
+        return scope @safe pure nothrow @nogc
+        => SdlFilteredChildRange(byChild, query);
+}
+
+/// Borrowed attribute occurrence.
+struct SdlAttributeView
+{
+    private const(SdlAttributeCell)[] _cells;
+    private size_t _cell;
+
+    private this(return scope const(SdlAttributeCell)[] cells, size_t cell)
+        @safe pure nothrow @nogc
+    {
+        _cells = cells;
+        _cell = cell;
+    }
+
+    private SdlAttributeCell cell() const scope @trusted pure nothrow @nogc
+        => _cells[_cell];
+
+    /// Full stored attribute name.
+    SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
+        => (() @trusted => _cells[_cell].qualifiedName)();
+    /// Exact qualified-name source span.
+    SdlSpan nameSpan() const scope @safe pure nothrow @nogc => this.cell.nameSpan;
+    /// Span from name start through scalar end.
+    SdlSpan span() const scope @safe pure nothrow @nogc => this.cell.span;
+    /// Borrowed scalar value and its exact token span.
+    SdlScalar value() const return scope @safe pure nothrow @nogc => this.cell.value;
+}
+
+/// Forward range over scalar values.
+struct SdlValueRange
+{
+    private const(SdlValueCell)[] _cells;
+    private size_t _index;
+    private this(return scope const(SdlValueCell)[] cells)
+        @safe pure nothrow @nogc
+    {
+        _cells = cells;
+    }
+    bool empty() const scope @safe pure nothrow @nogc => _index >= _cells.length;
+    SdlScalar front() const return scope @safe pure nothrow @nogc
+    in (!empty) => (() @trusted => _cells[_index].value)();
+    void popFront() scope @safe pure nothrow @nogc
+    in (!empty) { _index++; }
+    SdlValueRange save() const return scope @safe pure nothrow @nogc => this;
+}
+
+/// Forward range over attributes.
+struct SdlAttributeRange
+{
+    private const(SdlAttributeCell)[] _cells;
+    private size_t _index;
+    private this(return scope const(SdlAttributeCell)[] cells)
+        @safe pure nothrow @nogc
+    {
+        _cells = cells;
+    }
+    bool empty() const scope @safe pure nothrow @nogc => _index >= _cells.length;
+    SdlAttributeView front() const return scope @safe pure nothrow @nogc
+    in (!empty) => SdlAttributeView(_cells, _index);
+    void popFront() scope @safe pure nothrow @nogc
+    in (!empty) { _index++; }
+    SdlAttributeRange save() const return scope @safe pure nothrow @nogc => this;
+}
+
+/// Forward range over direct child nodes.
+///
+/// Iteration walks the parent's contiguous index window; every yielded
+/// view carries the full arena slices so deeper descendants keep whole-
+/// document addressing.
+struct SdlChildRange
+{
+    private const(SdlNodeCell)[] _nodes;
+    private const(SdlValueCell)[] _values;
+    private const(SdlAttributeCell)[] _attributes;
+    private const(size_t)[] _allIndexes;
+    private const(size_t)[] _window;
+    private size_t _index;
+    private this(return scope const(SdlNodeCell)[] nodes,
+        return scope const(SdlValueCell)[] values,
+        return scope const(SdlAttributeCell)[] attributes,
+        return scope const(size_t)[] allIndexes,
+        return scope const(size_t)[] window) @safe pure nothrow @nogc
+    {
+        _nodes = nodes;
+        _values = values;
+        _attributes = attributes;
+        _allIndexes = allIndexes;
+        _window = window;
+    }
+    bool empty() const scope @safe pure nothrow @nogc => _index >= _window.length;
+    SdlNode front() const return scope @safe pure nothrow @nogc
+    in (!empty) => (() @trusted => SdlNode(_nodes, _values, _attributes,
+        _allIndexes, _window[_index]))();
+    void popFront() scope @safe pure nothrow @nogc
+    in (!empty) { _index++; }
+    SdlChildRange save() const return scope @safe pure nothrow @nogc => this;
+}
+
+/// Qualified-name-filtered attribute range preserving every match.
+struct SdlFilteredAttributeRange
+{
+    private SdlAttributeRange source;
+    private SdlNameQuery query;
+    this(return scope SdlAttributeRange source, return scope SdlNameQuery query)
+        @safe pure nothrow @nogc
+    {
+        this.source = source;
+        this.query = query;
+        skip();
+    }
+    bool empty() const scope @safe pure nothrow @nogc => source.empty;
+    SdlAttributeView front() const return scope @safe pure nothrow @nogc
+    in (!empty) => source.front;
+    void popFront() scope @safe pure nothrow @nogc
+    in (!empty) { source.popFront(); skip(); }
+    SdlFilteredAttributeRange save() const return scope @safe pure nothrow @nogc
+        => this;
+    private void skip() scope @safe pure nothrow @nogc
+    {
+        while (!source.empty && !query.matches(source.front.qualifiedName))
+            source.popFront();
+    }
+}
+
+/// Qualified-name-filtered child range preserving every match.
+struct SdlFilteredChildRange
+{
+    private SdlChildRange source;
+    private SdlNameQuery query;
+    this(return scope SdlChildRange source, return scope SdlNameQuery query)
+        @safe pure nothrow @nogc
+    {
+        this.source = source;
+        this.query = query;
+        skip();
+    }
+    bool empty() const scope @safe pure nothrow @nogc => source.empty;
+    SdlNode front() const return scope @safe pure nothrow @nogc
+    in (!empty) => source.front;
+    void popFront() scope @safe pure nothrow @nogc
+    in (!empty) { source.popFront(); skip(); }
+    SdlFilteredChildRange save() const return scope @safe pure nothrow @nogc
+        => this;
+    private void skip() scope @safe pure nothrow @nogc
+    {
+        while (!source.empty && !query.matches(source.front.qualifiedName))
+            source.popFront();
     }
 }
 
