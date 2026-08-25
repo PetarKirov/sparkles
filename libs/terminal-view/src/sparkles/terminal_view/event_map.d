@@ -43,6 +43,10 @@ GhosttyKey ghosttyKeyOf(in KeyEvent k)
         // (Android back = dismiss) before anything reaches the encoder.
         case Key.back:      return GHOSTTY_KEY_UNIDENTIFIED;
         case Key.menu:      return GHOSTTY_KEY_UNIDENTIFIED;
+        case Key.ctrl:      return GHOSTTY_KEY_UNIDENTIFIED;
+        case Key.alt:       return GHOSTTY_KEY_UNIDENTIFIED;
+        case Key.shift:     return GHOSTTY_KEY_UNIDENTIFIED;
+        case Key.super_:    return GHOSTTY_KEY_UNIDENTIFIED;
     }
 }
 

@@ -58,58 +58,12 @@ fullscreen and the platform dismiss key working mid-sequence (`LTN10`).
 module sparkles.ui.keymap;
 
 import sparkles.input.events : Key, KeyEvent;
+public import sparkles.input.events : Chord, chord, chordRange, ChordPath, maxPathLength,
+    parseChord, parseChordPath, ShiftReq, unparseChord, unparseChordPath;
 
 // ---------------------------------------------------------------------------
 // The vocabulary.
 // ---------------------------------------------------------------------------
-
-/**
-Whether a binding cares about Shift.
-
-Three states rather than a `bool`, because real tables genuinely want all
-three and conflating them loses a distinction an `if` chain expressed by
-$(I where) it tested `mods.shift`. `j` scrolls down whether or not Shift is
-held ($(LREF ignore)); `r` refreshes only unshifted and `R` re-roots only
-shifted ($(LREF no)/$(LREF yes)). A two-state encoding would need the shifted
-row to be checked first and would silently break if the table were reordered —
-this one does not depend on order at all.
-*/
-enum ShiftReq : ubyte
-{
-    ignore, /// Shift is not part of the binding
-    no,     /// binds only when Shift is $(I not) held
-    yes,    /// binds only when Shift $(I is) held
-}
-
-/**
-One key in a binding's path.
-
-`chEnd` makes a contiguous code-point range one row: `z1`–`z9` is a single
-binding whose $(LREF KeyCommand.arg) is derived from which key landed, so a
-whole family stays one table row and one guide item.
-*/
-struct Chord
-{
-    Key key = Key.none;
-    dchar ch = 0;    /// the code point, when `key == Key.char_`
-    dchar chEnd = 0; /// inclusive range end; `0` for a single code point
-    ShiftReq shift;
-    bool ctrl;
-    bool alt;
-    bool super_;
-}
-
-/// A `char_` chord.
-Chord chord(dchar ch, ShiftReq shift = ShiftReq.ignore) @safe pure nothrow @nogc
-    => Chord(key: Key.char_, ch: ch, shift: shift);
-
-/// A named-key chord.
-Chord chord(Key key, ShiftReq shift = ShiftReq.ignore) @safe pure nothrow @nogc
-    => Chord(key: key, shift: shift);
-
-/// A `char_` chord spanning `lo`..`hi` inclusive.
-Chord chordRange(dchar lo, dchar hi) @safe pure nothrow @nogc
-    => Chord(key: Key.char_, ch: lo, chEnd: hi);
 
 /// Marks a scope enum member whose activation ends resolution whether or not
 /// a row matched — the scopes an `if` chain `return`ed from.
@@ -133,10 +87,6 @@ enum ModeReq : ubyte
     normal,  /// only outside a line-editing mode
     editing, /// only inside one
 }
-
-/// The longest binding path a table may hold — enough for a three-level
-/// leader tree. Inline, so a $(LREF Binding) carries no indirection.
-enum maxPathLength = 3;
 
 /**
 One row of an application's table: a key path, what it does, and where it

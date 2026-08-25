@@ -29,7 +29,8 @@ without caring which command or scope enums parameterise it.
 module sparkles.ui.components.lantern_view;
 
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.input.events : Key;
+import sparkles.input.events : altModifierName, Key, namedKeyLabel, superModifierName;
+public import sparkles.input.events : formatKbdChord, formatSymbolChord;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
@@ -138,14 +139,20 @@ private Span writeKeyLabel(ref LabelArena arena, in Chord c)
 {
     const start = cast(uint) arena.length;
 
-    if (c.super_)
-        arena ~= "D-";
     if (c.ctrl)
-        arena ~= "C-";
+        arena ~= "Ctrl+";
     if (c.alt)
-        arena ~= "M-";
+    {
+        arena ~= altModifierName;
+        arena ~= '+';
+    }
     if (c.shift == ShiftReq.yes)
-        arena ~= "S-";
+        arena ~= "Shift+";
+    if (c.super_)
+    {
+        arena ~= superModifierName;
+        arena ~= '+';
+    }
 
     if (c.key == Key.char_)
     {
@@ -204,48 +211,6 @@ private void appendChar(ref LabelArena arena, dchar ch) @safe nothrow @nogc
         n = 4;
     }
     arena ~= buf[0 .. n];
-}
-
-/// ditto, for the named keys.
-private string namedKeyLabel(Key k) @safe pure nothrow @nogc
-{
-    final switch (k)
-    {
-        case Key.none:      return "?";
-        case Key.char_:     return "?";
-        // Spelled out, not as glyphs: the separator is itself an
-        // arrow, and "→ → next theme" asks a reader to tell two
-        // arrows apart by role. `Home`/`End`/`PgUp` are words for
-        // the same reason.
-        case Key.up:        return "Up";
-        case Key.down:      return "Down";
-        case Key.left:      return "Left";
-        case Key.right:     return "Right";
-        case Key.home:      return "Home";
-        case Key.end:       return "End";
-        case Key.pageUp:    return "PgUp";
-        case Key.pageDown:  return "PgDn";
-        case Key.insert:    return "Ins";
-        case Key.delete_:   return "Del";
-        case Key.enter:     return "↵";
-        case Key.tab:       return "⇥";
-        case Key.backspace: return "⌫";
-        case Key.escape:    return "Esc";
-        case Key.f1:        return "F1";
-        case Key.f2:        return "F2";
-        case Key.f3:        return "F3";
-        case Key.f4:        return "F4";
-        case Key.f5:        return "F5";
-        case Key.f6:        return "F6";
-        case Key.f7:        return "F7";
-        case Key.f8:        return "F8";
-        case Key.f9:        return "F9";
-        case Key.f10:       return "F10";
-        case Key.f11:       return "F11";
-        case Key.f12:       return "F12";
-        case Key.back:      return "Back";
-        case Key.menu:      return "Menu";
-    }
 }
 
 /// The widest key label and the widest description among `items`, which is
@@ -482,8 +447,9 @@ unittest
     }
 
     assert(lbl(chord('j')) == "j");
-    assert(lbl(chord('r', ShiftReq.yes)) == "S-r");
-    assert(lbl(Chord(key: Key.char_, ch: 'c', ctrl: true)) == "C-c");
+    assert(lbl(chord('r', ShiftReq.yes)) == "Shift+r");
+    assert(lbl(Chord(key: Key.char_, ch: 'c', ctrl: true)) == "Ctrl+c");
+    assert(lbl(Chord(key: Key.char_, ch: 'c', super_: true)) == superModifierName ~ "+c");
     assert(lbl(chord(Key.enter)) == "↵");
     assert(lbl(chord(Key.backspace)) == "⌫");
 
@@ -494,6 +460,18 @@ unittest
     // A leader must be visible. A blank cell reads as "no binding", which
     // is exactly wrong for the one key a whole map hangs off.
     assert(lbl(chord(' ')) == "Space");
+}
+
+@("ui.lantern_view.formatKbdChord")
+@safe
+unittest
+{
+    import sparkles.ui.keymap : Chord;
+
+    assert(formatKbdChord(Chord(key: Key.char_, ch: ' ', ctrl: true, alt: true))
+        == "<kbd>Ctrl</kbd> + <kbd>" ~ altModifierName ~ "</kbd> + <kbd>Space</kbd>");
+    assert(formatKbdChord(Chord(key: Key.char_, ch: 'c', super_: true))
+        == "<kbd>" ~ superModifierName ~ "</kbd> + <kbd>c</kbd>");
 }
 
 @("ui.lantern_view.everyLabelSurvivesTheArenaGrowing")
