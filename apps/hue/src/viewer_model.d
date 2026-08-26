@@ -368,6 +368,10 @@ struct ViewerModel
     /// file, and recomputing it under the layout is how a gutter oscillates.
     GutterChannel[] channels;
 
+    /// Horizontal cells per keystroke scroll (`scroll.hScrollStep`); a
+    /// field since the config owns it, seeded with the historical 8.
+    long hScrollStep = 8;
+
 @system:
 
     /// Whether the file line-number channel is on (`NUM2`; `l` toggles it).
@@ -695,13 +699,6 @@ struct ViewerModel
         hsb = hsb.scrolledTo(next);
         return true;
     }
-
-    /// Cells a keystroke scrolls sideways. Bigger than one: a table column is
-    /// wider than a character, and a reviewer stepping past one wants to
-    /// arrive somewhere, not to hold the key down.
-    /// Horizontal cells per keystroke scroll (`scroll.hScrollStep`); a
-    /// field since the config owns it, seeded with the historical 8.
-    long hScrollStep = 8;
 
     /// Out to the right edge. The pair to $(LREF scrollHomeHorizontal), and
     /// not just for symmetry: a wide table's last columns are usually the
@@ -1320,6 +1317,14 @@ struct ViewerModel
         inspEnd = 0;
         inspectRects = null;
     }
+
+    /// Gets the inspector start byte offset.
+    size_t inspectStart() const pure nothrow @nogc => inspStart;
+    /// Gets the inspector end byte offset.
+    size_t inspectEnd() const pure nothrow @nogc => inspEnd;
+    /// Whether an inspector extent is active.
+    bool hasInspectExtent() const pure nothrow @nogc
+        => inspStart != size_t.max && inspEnd > inspStart;
 
     private void rebuildInspectRects()
     {

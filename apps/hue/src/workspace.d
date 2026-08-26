@@ -259,7 +259,69 @@ struct WorkspaceTui
         if (treeVisible)
             tree.rebuild();
         viewer.relayout();
+        if (initialLine > 0 && !initialLocApplied)
+        {
+            applyInitialLocation();
+            initialLocApplied = true;
+        }
         commitPaneScrolls();
+    }
+
+    size_t initialLine = 0;
+    size_t initialCol = 0;
+    size_t endLine = 0;
+    size_t endCol = 0;
+    private bool initialLocApplied = false;
+
+    void applyInitialLocation() @system
+    {
+        if (initialLine == 0)
+            return;
+
+        import sparkles.ui.state : Selection;
+        import source_loc : SourceLoc;
+
+        const loc = SourceLoc("", initialLine, initialCol, endLine, endCol);
+        size_t sByte, eByte;
+        if (loc.byteRange(viewer.vm.source, viewer.vm.lineStarts, sByte, eByte))
+        {
+            long targetVisual = -1;
+            long endVisual = -1;
+            foreach (idx, ref const r; viewer.vm.rows)
+            {
+                if (r.srcStart == size_t.max)
+                    continue;
+                const bool intersects = (r.srcStart < eByte && r.srcEnd > sByte)
+                    || (sByte == eByte && r.srcStart <= sByte && r.srcEnd >= sByte)
+                    || (r.srcStart == r.srcEnd && r.srcStart >= sByte && r.srcStart < eByte);
+                if (intersects)
+                {
+                    if (targetVisual < 0)
+                        targetVisual = cast(long) idx;
+                    endVisual = cast(long) idx;
+                }
+            }
+
+            if (targetVisual < 0)
+                targetVisual = viewer.vm.visualOfSrc(initialLine > 0 ? initialLine - 1 : 0);
+            if (endVisual < 0)
+            {
+                const eLine = endLine > 0 ? endLine : initialLine;
+                endVisual = viewer.vm.visualOfSrc(eLine > 0 ? eLine - 1 : 0);
+            }
+
+            viewer.vm.scrollTo(targetVisual);
+            if (initialCol > 0 || endCol > 0)
+            {
+                viewer.setSelection(Selection!long.cleared);
+                viewer.vm.setInspectExtent(sByte, eByte);
+            }
+            else
+            {
+                viewer.vm.clearInspectExtent();
+                viewer.setSelection(Selection!long(true, targetVisual, endVisual));
+            }
+        }
     }
 
     private Rect inspRect;
@@ -1659,7 +1721,9 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     string tableCopyFlag = "auto",
     ScrollAnchorMode scrollAnchor = ScrollAnchorMode.segment,
     string gutter = "all", bool lineNumbers = true,
-    ConfigStore* configStore = null) @system
+    ConfigStore* configStore = null,
+    size_t initialLine = 0, size_t initialCol = 0,
+    size_t endLine = 0, size_t endCol = 0) @system
 {
     WorkspaceTui w;
     w.cfg = configStore;
@@ -1758,7 +1822,17 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             w.startLive(target, initial.twoslash.code.length != 0);
     }
     else if (!isDir && target.length)
+    {
         w.openDoc(target);
+    }
+
+    w.initialLine = initialLine;
+    w.initialCol = initialCol;
+    w.endLine = endLine;
+    w.endCol = endCol;
+    if (initialLine > 0)
+        w.applyInitialLocation();
+
 
     // The terminal session is a block of its own: the live-types notice must
     // reach a restored screen, never the alt screen (`PRJ15`).
@@ -3370,4 +3444,68 @@ unittest
     w.arrange(50, 200); // taller than the whole document
     assert(w.viewer.vm.rows[cast(size_t) w.viewer.vm.top].srcStart == anchor,
         "a taller workspace scrolled the document up to fill itself");
+}
+
+@("workspace.initialLocationSelection")
+@system
+unittest
+{
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    const labels = LabelSet.standard();
+
+    const src = "line one\nline two identifier\nline three\nline four\n";
+    auto initialDoc = WorkspaceDoc(title: "test.d", source: src,
+        events: [HighlightEvent.sourceSpan(0, src.length)]);
+
+    WorkspaceTui w;
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = labels;
+    w.viewer.setTheme(0);
+    w.viewer.setDocument(initialDoc.title, initialDoc.source, initialDoc.events,
+        initialDoc.preview, startPreview: true);
+
+    // 1. Single line: line 2
+    w.initialLine = 2;
+    w.initialCol = 0;
+    w.endLine = 2;
+    w.endCol = 0;
+    w.arrange(80, 24);
+    assert(w.viewer.selection.active);
+    assert(w.viewer.selection.lo == 1);
+    assert(w.viewer.selection.hi == 1);
+
+    // 2. Line range with column extent: line 2 col 10 to line 2 col 20 ("identifier")
+    w.initialLine = 2;
+    w.initialCol = 10;
+    w.endLine = 2;
+    w.endCol = 20;
+    w.initialLocApplied = false;
+    w.arrange(80, 24);
+    assert(!w.viewer.selection.active, "line selection is inactive for char precision");
+    assert(w.viewer.vm.hasInspectExtent);
+    assert(w.viewer.vm.source[w.viewer.vm.inspectStart .. w.viewer.vm.inspectEnd] == "identifier");
+    assert(w.viewer.vm.inspectRects.length > 0);
+    assert(w.viewer.vm.inspectRects[0].width == 10);
+
+    // 3. package.json 3-5
+    import std.file : readText;
+    const pkgSrc = readText("package.json");
+    auto pkgDoc = WorkspaceDoc(title: "package.json", source: pkgSrc,
+        events: [HighlightEvent.sourceSpan(0, pkgSrc.length)]);
+    w.viewer.setDocument(pkgDoc.title, pkgDoc.source, pkgDoc.events,
+        pkgDoc.preview, startPreview: true);
+
+    w.initialLine = 3;
+    w.initialCol = 0;
+    w.endLine = 5;
+    w.endCol = 0;
+    w.initialLocApplied = false;
+    w.arrange(80, 24);
+
+    assert(w.viewer.vm.top == 2, "line 3 is at the top");
+    assert(w.viewer.selection.active);
+    assert(w.viewer.selection.lo == 2, "selection starts at line 3 (row 2)");
+    assert(w.viewer.selection.hi == 4, "selection ends at line 5 (row 4)");
 }
