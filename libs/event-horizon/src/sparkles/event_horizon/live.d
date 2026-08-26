@@ -320,6 +320,32 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
     plain field. Reading the Linux spelling unconditionally is what stopped
     this module compiling the moment kqueue grew a `WAITID` lowering.
     */
+    version (OSX)
+    {
+        // Druntime's core.sys.posix.signal.siginfo_t on Darwin is missing
+        // __pad[7], resulting in 72 bytes instead of the 104 bytes Darwin libc's
+        // waitid writes. Using a full 104-byte struct prevents stack corruption.
+        struct SigInfo
+        {
+            int si_signo;
+            int si_errno;
+            int si_code;
+            int si_pid;
+            uint si_uid;
+            int si_status;
+            void* si_addr;
+            size_t si_value;
+            long si_band;
+            ulong[7] __pad;
+        }
+        static assert(SigInfo.sizeof >= 104);
+    }
+    else
+    {
+        import core.sys.posix.signal : siginfo_t;
+        alias SigInfo = siginfo_t;
+    }
+
     private int childStatusOf(Info)(ref const Info info) @trusted nothrow @nogc
     {
         version (linux)
@@ -330,7 +356,6 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
     IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
     {
-        import core.sys.posix.signal : siginfo_t;
         import core.sys.posix.sys.wait : WEXITED, idtype_t;
 
         if (pid <= 0)
@@ -338,7 +363,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                 IoErrorStage.submit, "no child to reap");
 
         // The siginfo out-buffer lives on this parked frame (SPEC §6.5).
-        siginfo_t info;
+        SigInfo info;
         auto o = s.await(OpWaitid(cast(int) idtype_t.P_PID,
             cast(uint) pid, cast(void*) &info, WEXITED));
         if (o.res < 0)
