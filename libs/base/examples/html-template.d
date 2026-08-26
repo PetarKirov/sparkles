@@ -23,7 +23,8 @@ module html_template_example;
 
 import std.stdio : writeln;
 
-import sparkles.base.html_template : htmlText, writeHtml;
+import sparkles.base.html_template : attr, attrs, Attr, cssValue, htmlText,
+    HtmlErrorCode, json, raw, writeHtml, writeHtmlChecked;
 import sparkles.base.smallbuffer : SmallBuffer;
 
 void main()
@@ -51,9 +52,38 @@ void main()
     const hostile = "javascript:steal(document.cookie)";
     writeln(htmlText(i`<a href=$(safe)>ok</a> <a href=$(hostile)>blocked</a>`));
 
+    // Escape hatches, each unlocking exactly one position: `raw` for markup
+    // that is already correct (so templates compose), `attr`/`attrs` for a
+    // dynamic attribute NAME, `json`/`cssValue` for the two elements no escape
+    // can reach into.
+    const cell = htmlText(i`<td>$(user)</td>`);
+    writeln(htmlText(i`<tr>$(raw(cell))</tr>`));
+
+    const Attr[3] pairs = [attr("class", cssClass), attr("hidden", false),
+        attr("data-role", "row")];
+    writeln(htmlText(i`<div $(attrs(pairs[]))>spread</div>`));
+
+    const payload = `</script><img src=x onerror=alert(1)>`;
+    writeln(htmlText(i`<script>const p = $(json(payload));</script>`));
+    writeln(htmlText(i`<style>.a { content: $(cssValue("</style><script>")); }</style>`));
+
+    // `writeHtmlChecked` reports what the plain form silently made safe.
+    reportUnsafe();
+
     // The primitive writes into any output range and allocates nothing: with a
     // `@nogc` writer the whole path is `@safe pure nothrow @nogc`.
     nogcRender();
+}
+
+void reportUnsafe()
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    const link = "javascript:steal(document.cookie)";
+    const r = writeHtmlChecked(w, i`<a href="$(link)">report</a>`);
+    writeln(w[], "   (", r.hasError ? r.error.code : HtmlErrorCode.none,
+        " on `", r.hasError ? r.error.expression : "", "`)");
 }
 
 void nogcRender() @safe pure nothrow @nogc

@@ -40,6 +40,8 @@ module sparkles.base.html_template;
 
 import core.interpolation;
 
+import expected : Expected, err, ok;
+
 import sparkles.base.text.html : writeHtmlEscaped;
 import sparkles.base.text.percent : encodePercent, percentComponent,
     percentPathSegment, PercentSet;
@@ -58,12 +60,41 @@ Attributes are inferred and the path allocates nothing (`HTL15`): with a
 $(LREF sparkles.base.text.writers.writeValue) handles natively), this is
 `@safe pure nothrow @nogc`.
 +/
-void writeHtml(Writer, Args...)(
+void writeHtml(HtmlCheck check = HtmlCheck.fragment, Writer, Args...)(
+    ref Writer w, InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    cast(void) writeHtmlImpl!check(w, header, args, footer);
+}
+
+/++
+$(LREF writeHtml), reporting what it had to substitute rather than only doing
+it (`HTL6`, `HTL11`).
+
+The write path is `nothrow`, so a rejected URL or a malformed attribute name
+cannot throw; the output is still safe either way (the placeholder is written,
+the bad pair is dropped), and this arm is how a caller learns it happened. The
+first problem wins — one report per template keeps the result a plain value.
++/
+Expected!(void, HtmlError) writeHtmlChecked(HtmlCheck check = HtmlCheck.fragment,
+    Writer, Args...)(ref Writer w, InterpolationHeader header, Args args,
+    InterpolationFooter footer)
+{
+    HtmlError e = writeHtmlImpl!check(w, header, args, footer);
+    if (e.code == HtmlErrorCode.none)
+        return ok!HtmlError();
+    return err!void(e);
+}
+
+private HtmlError writeHtmlImpl(HtmlCheck check, Writer, Args...)(
     ref Writer w, InterpolationHeader, Args args, InterpolationFooter)
 {
     import std.range.primitives : put;
 
     enum contexts = contextsOf!Args;
+    enum skeleton = skeletonReport!(check, Args);
+    static assert(skeleton.length == 0, skeleton);
+
+    HtmlError firstError;
 
     static foreach (idx, arg; args)
     {{
@@ -73,47 +104,319 @@ void writeHtml(Writer, Args...)(
         else static if (is(T == InterpolatedExpression!code, string code))
         {
             enum ctx = contexts[exprIndexAt!(idx, Args)];
-            static assert(ctx != HtmlContext.tagName && ctx != HtmlContext.attrName,
-                "`" ~ code ~ "` interpolates into a tag or attribute NAME position:"
-                ~ " HTML structure must be static"
-                ~ " (docs/specs/base/html-template.md HTL7)");
-            static assert(ctx != HtmlContext.rawText,
-                "`" ~ code ~ "` interpolates into a <script>/<style> element, where"
-                ~ " no escape is safe — pass json(…) / cssValue(…) instead"
-                ~ " (docs/specs/base/html-template.md HTL8)");
-            static assert(ctx != HtmlContext.comment,
-                "`" ~ code ~ "` interpolates into an HTML comment, where `--` and `>`"
-                ~ " terminate unpredictably (docs/specs/base/html-template.md HTL9)");
-            static assert(ctx != HtmlContext.unquotedTail,
-                "`" ~ code ~ "` continues an UNQUOTED attribute value; quote the"
-                ~ " attribute so the value cannot end at a space"
-                ~ " (docs/specs/base/html-template.md HTL4)");
+            alias V = typeof(args[idx + 1]);
+            static assert(placementIsAllowed!(ctx, V), placementRefusal!(ctx, V, code));
         }
         else
         {
             // The value follows its own `InterpolatedExpression` marker.
             enum ctx = contexts[exprIndexAt!(idx - 1, Args)];
-            writeInContext!ctx(w, arg);
+            enum code = expressionAt!(idx - 1, Args);
+            const problem = writeInContext!ctx(w, arg);
+            if (problem != HtmlErrorCode.none
+                && firstError.code == HtmlErrorCode.none)
+                firstError = HtmlError(problem, code);
         }
     }}
+
+    return firstError;
+}
+
+/// How much structure a template must have on its own (`HTL10`).
+enum HtmlCheck
+{
+    /++
+    A fragment of a page: quotes, comments and raw-text elements must close,
+    and an end tag must match the element it closes, but an element may be left
+    open for a later template to close (which is how a page shell is written).
+    +/
+    fragment,
+
+    /// Also: every element the template opens, it closes.
+    balanced,
+}
+
+/// What `writeHtmlChecked` reports (`HTL6`, `HTL11`).
+enum HtmlErrorCode
+{
+    none,
+    unsafeUrlScheme,      /// a `javascript:`-family URL, replaced by the placeholder
+    invalidAttributeName, /// an `attrs`/`attr` pair whose name is not a name
+}
+
+/// ditto — with the interpolated expression's own source text, so a report
+/// names the same thing the compile-time refusals do.
+struct HtmlError
+{
+    HtmlErrorCode code;
+    string expression;
+
+    void toString(Writer)(ref Writer w) const
+    {
+        import std.range.primitives : put;
+
+        put(w, "`");
+        put(w, expression);
+        put(w, code == HtmlErrorCode.unsafeUrlScheme
+            ? "` is a URL with a scripting scheme; wrote " ~ unsafeUrlPlaceholder
+            : "` carries an attribute name that is not a valid HTML name");
+    }
 }
 
 /++
 The interpolated HTML literal as a fresh string. Allocates (GC) — the
 `@nogc` path is $(LREF writeHtml) into a caller-owned range.
 +/
-string htmlText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+string htmlText(HtmlCheck check = HtmlCheck.fragment, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer)
 {
     import std.array : appender;
 
     auto w = appender!string;
-    writeHtml(w, header, args, footer);
+    writeHtml!check(w, header, args, footer);
     return w[];
 }
 
 /// A value the URL policy rejected is replaced by this, never emitted and never
 /// silently dropped (`HTL6`). `about:invalid` is the WHATWG-blessed inert URL.
 enum unsafeUrlPlaceholder = "about:invalid#unsafe-scheme";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Escape hatches — the explicit, greppable ways past the escaping (HTL11/HTL12)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/++
+Markup that is already correct for where it lands, written verbatim (`HTL11`).
+
+The one unescaped path in the module, and deliberately a named type rather than
+a flag: `raw` at the call site is what a reviewer greps for. It is accepted in
+text and quoted-attribute positions only — inside a URL, an unquoted attribute
+or a raw-text element there is no such thing as "already escaped", so those stay
+compile errors.
+
+`immutable` payload, so a `raw` cannot borrow a buffer that outlives the call.
++/
+struct HtmlFragment
+{
+    string markup;
+}
+
+/// ditto
+HtmlFragment raw(string markup) @safe pure nothrow @nogc => HtmlFragment(markup);
+
+/++
+The result of $(LREF htmlText) is itself an $(LREF HtmlFragment), so templates
+compose without double-escaping (`HTL12`):
+
+```d
+const row = htmlText(i`<td>$(cell)</td>`);
+writeHtml(w, i`<tr>$(row)</tr>`);   // `row` is written as-is
+```
++/
+alias htmlFragment = raw;
+
+/++
+One attribute, rendered in the attribute-name position of a tag (`HTL11`):
+
+```d
+writeHtml(w, i`<input $(attr("value", v)) $(attr("disabled", locked))>`);
+```
+
+A `bool` makes it a boolean attribute — present or absent, never `="false"`.
+A name that is not a valid HTML name is dropped and reported
+($(LREF HtmlErrorCode.invalidAttributeName)), because a name cannot be escaped
+into safety (`HTL7`).
++/
+struct Attr
+{
+    const(char)[] name;
+    const(char)[] value;
+    bool boolean;  /// a boolean attribute: rendered as the bare name
+    bool present = true;
+}
+
+/// ditto
+Attr attr(const(char)[] name, const(char)[] value) @safe pure nothrow @nogc
+    => Attr(name: name, value: value);
+
+/// ditto
+Attr attr(const(char)[] name, bool present) @safe pure nothrow @nogc
+    => Attr(name: name, boolean: true, present: present);
+
+/++
+A spread of attributes in the same position, from any input range of
+$(LREF Attr) (`HTL11`):
+
+```d
+Attr[2] a = [attr("class", cls), attr("hidden", !visible)];
+writeHtml(w, i`<div $(attrs(a[]))>…</div>`);
+```
++/
+struct Attrs(R)
+{
+    R pairs;
+}
+
+/// ditto
+Attrs!R attrs(R)(R pairs) => Attrs!R(pairs);
+
+/++
+A value for `<script>` (`HTL8`): JSON, with `<`, `>`, `&` and the two line
+separators escaped as `\uXXXX`, so the text cannot contain `</script` — the
+only thing that ends a raw-text element.
+
+Strings are quoted and escaped; `bool`, integers and floats are written as JSON
+literals; anything else renders through `writeValue` and is quoted.
++/
+struct JsonValue(T)
+{
+    T value;
+}
+
+/// ditto
+JsonValue!T json(T)(T value) => JsonValue!T(value);
+
+/++
+A value for `<style>` (`HTL8`): every byte outside a conservative CSS-safe set
+becomes a `\HH ` escape — including `<`, so the text cannot contain `</style`,
+and including `\`, `"`, `'`, `;`, `{`, `}` and `(`, so it cannot end a
+declaration or open a function.
++/
+struct CssValue
+{
+    const(char)[] value;
+}
+
+/// ditto
+CssValue cssValue(const(char)[] value) @safe pure nothrow @nogc => CssValue(value);
+
+/++
+Whether a value of type `V` may be interpolated into `ctx`.
+
+The plain-value rules are `HTL7`–`HTL9`; the wrappers each unlock exactly the
+context they exist for, and nothing else — a `raw` in a URL, or a `json` in text,
+is a mistake worth catching rather than a shortcut.
++/
+private template placementIsAllowed(HtmlContext ctx, V)
+{
+    static if (is(immutable V == immutable HtmlFragment))
+        enum placementIsAllowed = ctx == HtmlContext.text
+            || ctx == HtmlContext.attrQuoted;
+    else static if (is(V == Attrs!R, R) || is(immutable V == immutable Attr))
+        enum placementIsAllowed = ctx == HtmlContext.attrName;
+    else static if (is(V == JsonValue!T, T) || is(immutable V == immutable CssValue))
+        enum placementIsAllowed = ctx == HtmlContext.rawText;
+    else
+        enum placementIsAllowed = ctx != HtmlContext.tagName
+            && ctx != HtmlContext.attrName
+            && ctx != HtmlContext.rawText
+            && ctx != HtmlContext.comment
+            && ctx != HtmlContext.unquotedTail;
+}
+
+/// The compile-time message for a placement $(LREF placementIsAllowed) refuses.
+private template placementRefusal(HtmlContext ctx, V, string code)
+{
+    enum where = "`" ~ code ~ "` interpolates into ";
+    enum see = " (docs/specs/base/html-template.md ";
+
+    static if (is(immutable V == immutable HtmlFragment))
+        enum placementRefusal = where ~ "a position raw markup cannot be trusted"
+            ~ " in — `raw` is accepted in text and quoted attributes only" ~ see ~ "HTL11)";
+    else static if (is(V == Attrs!R, R) || is(immutable V == immutable Attr))
+        enum placementRefusal = where ~ "a value position, but `attr`/`attrs`"
+            ~ " render attribute NAMES — put them where an attribute would go,"
+            ~ " as `<div $(…)>`" ~ see ~ "HTL11)";
+    else static if (is(V == JsonValue!T, T) || is(immutable V == immutable CssValue))
+        enum placementRefusal = where ~ "a position outside <script>/<style>;"
+            ~ " a plain value belongs there instead" ~ see ~ "HTL8)";
+    else static if (ctx == HtmlContext.tagName || ctx == HtmlContext.attrName)
+        enum placementRefusal = where ~ "a tag or attribute NAME position: HTML"
+            ~ " structure must be static (use attr/attrs for a dynamic"
+            ~ " attribute)" ~ see ~ "HTL7)";
+    else static if (ctx == HtmlContext.rawText)
+        enum placementRefusal = where ~ "a <script>/<style> element, where no"
+            ~ " escape is safe — pass json(…) / cssValue(…) instead" ~ see ~ "HTL8)";
+    else static if (ctx == HtmlContext.comment)
+        enum placementRefusal = where ~ "an HTML comment, where `--` and `>`"
+            ~ " terminate unpredictably" ~ see ~ "HTL9)";
+    else
+        enum placementRefusal = where ~ "the middle of an UNQUOTED attribute"
+            ~ " value; quote the attribute so the value cannot end at a space"
+            ~ see ~ "HTL4)";
+}
+
+/// The interpolated expression's source text at tuple position `idx`.
+private template expressionAt(size_t idx, Args...)
+{
+    static if (is(Args[idx] == InterpolatedExpression!code, string code))
+        enum expressionAt = code;
+    else
+        enum expressionAt = "";
+}
+
+/++
+The skeleton's structural verdict as a compile-time message (`HTL10`), empty
+when it is sound. Folded over the literal parts, so it costs nothing at run
+time and names the tag and the byte offset in the literal text.
++/
+private template skeletonReport(HtmlCheck check, Args...)
+{
+    enum skeletonReport = () {
+        SkeletonScan s;
+        static foreach (A; Args)
+        {{
+            static if (is(A == InterpolatedLiteral!lit, string lit))
+                advance(s, lit);
+        }}
+        const e = finish(s, check == HtmlCheck.balanced);
+        if (e.kind == SkeletonErrorKind.none)
+            return "";
+
+        string at()
+        {
+            // CTFE-only, so plain concatenation is the clearest thing here.
+            size_t v = e.at;
+            if (v == 0)
+                return "0";
+            string digits;
+            while (v)
+            {
+                digits = cast(char)('0' + (v % 10)) ~ digits;
+                v /= 10;
+            }
+            return digits;
+        }
+
+        const name = e.name.idup;
+        final switch (e.kind)
+        {
+            case SkeletonErrorKind.mismatchedEndTag:
+                return "</" ~ name ~ "> at byte " ~ at()
+                    ~ " closes an element that is not open"
+                    ~ " (docs/specs/base/html-template.md HTL10)";
+            case SkeletonErrorKind.unclosedQuote:
+                return "an attribute value's quote is never closed, from byte "
+                    ~ at() ~ " (docs/specs/base/html-template.md HTL10)";
+            case SkeletonErrorKind.unclosedComment:
+                return "an HTML comment is never closed"
+                    ~ " (docs/specs/base/html-template.md HTL10)";
+            case SkeletonErrorKind.unclosedRawText:
+                return "<" ~ name ~ "> at byte " ~ at() ~ " is never closed;"
+                    ~ " everything after it is its content"
+                    ~ " (docs/specs/base/html-template.md HTL10)";
+            case SkeletonErrorKind.unclosedElement:
+                return "<" ~ name ~ "> at byte " ~ at() ~ " is left open;"
+                    ~ " HtmlCheck.balanced requires the template to close what"
+                    ~ " it opens (docs/specs/base/html-template.md HTL10)";
+            case SkeletonErrorKind.tooDeep:
+                return "more than 32 elements are open at <" ~ name ~ ">;"
+                    ~ " split the template (docs/specs/base/html-template.md HTL10)";
+            case SkeletonErrorKind.none:
+                return "";
+        }
+    }();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Contexts
@@ -133,7 +436,8 @@ enum HtmlContext
     urlFragment,   /// inside a URL, after `#`: `<a href="/p#HERE">`
     tagName,       /// `<HERE …>` — rejected
     attrName,      /// `<p HERE="1">` — rejected
-    rawText,       /// inside `<script>`/`<style>` — rejected
+    rawText,       /// inside `<script>`/`<style>` — needs `json`/`cssValue`
+    rcdata,        /// inside `<textarea>`/`<title>`: entity-escaped like text
     comment,       /// inside `<!-- … -->` — rejected
 }
 
@@ -166,18 +470,56 @@ unittest
 // The skeleton scanner (CTFE)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// How deep the skeleton's element stack goes before the scanner gives up on
+/// tracking balance (`HTL10`). Templates are fragments of a page, not the page.
+private enum maxElementDepth = 32;
+
 /// Longest attribute name the scanner remembers. Only the URL-attribute test
 /// reads it, and the longest of those is `background` — a longer name is
 /// truncated, which can only make it *not* match, never match wrongly.
 private enum maxAttrName = 24;
 
-/// Elements whose content is raw text: no character references, so nothing can
-/// be escaped into them (`HTL8`).
+/// Elements whose content is $(I raw text): no character references at all, so
+/// no escape can keep a value inside them (`HTL8`) — only `json`/`cssValue`,
+/// which encode into forms that cannot contain `<`.
 private bool isRawTextElement(scope const(char)[] name) @safe pure nothrow @nogc
 {
     switch (name)
     {
-        case "script", "style", "textarea", "title":
+        case "script", "style":
+            return true;
+        default:
+            return false;
+    }
+}
+
+/++
+Elements whose content is $(I RCDATA): no nested markup, but character
+references $(B do) work — so a value entity-escaped exactly as text is escaped
+is safe, since the `<` that would start `</textarea>` becomes `&lt;`.
++/
+private bool isRcdataElement(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    switch (name)
+    {
+        case "textarea", "title":
+            return true;
+        default:
+            return false;
+    }
+}
+
+/++
+Elements with no end tag (HTML §13.1.2). They are never pushed on the
+skeleton's element stack, so `<br>` does not look like an element left open
+(`HTL10`).
++/
+private bool isVoidElement(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    switch (name)
+    {
+        case "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr":
             return true;
         default:
             return false;
@@ -202,11 +544,28 @@ struct SkeletonScan
         bool sawFragment;    // a `#` appeared in the current URL value
         bool tagIsRawText;   // the tag being opened is script/style/…
         bool endTag;         // the tag being read is `</name>`, which opens nothing
-        bool inRawText;      // inside such an element's content
+        bool tagIsRcdata;    // the tag being opened is textarea/title
+        bool inRawText;      // inside a raw-text element's content
+        bool inRcdata;       // inside an RCDATA element's content
         bool inComment;      // inside `<!-- … -->`
         char quote;          // active attribute quote, 0 when unquoted
         char[maxAttrName] nameBuf;
         ubyte nameLen;
+
+        // The tag currently being read, kept once its name run ends (`nameBuf`
+        // goes on to hold attribute names).
+        char[maxAttrName] tagBuf;
+        ubyte tagLen;
+        size_t tagStart;     // offset of this tag's `<`, for the error message
+
+        // Open elements, innermost last (`HTL10`).
+        char[maxAttrName][maxElementDepth] openBuf;
+        ubyte[maxElementDepth] openLen;
+        size_t[maxElementDepth] openAt;
+        ubyte openDepth;
+
+        size_t offset;       // bytes of literal text consumed so far
+        SkeletonError firstError;
 
         void resetName() @safe pure nothrow @nogc
         {
@@ -221,7 +580,85 @@ struct SkeletonScan
 
         const(char)[] name() const return @safe pure nothrow @nogc
             => nameBuf[0 .. nameLen];
+
+        const(char)[] tagName() const return @safe pure nothrow @nogc
+            => tagBuf[0 .. tagLen];
+
+        void keepTagName() @safe pure nothrow @nogc
+        {
+            // Slice assignment, not `tagBuf = nameBuf`: CTFE aliases the
+            // whole-array form, so the tag name would follow every later write
+            // to `nameBuf` (the attribute names) and `<img src=…>` would stop
+            // looking like a void element — at compile time only.
+            tagBuf[] = nameBuf[];
+            tagLen = nameLen;
+        }
+
+        void note(SkeletonErrorKind kind, scope const(char)[] what, size_t at)
+            @safe pure nothrow @nogc
+        {
+            if (firstError.kind != SkeletonErrorKind.none)
+                return; // the first one is the one worth reporting
+            firstError.kind = kind;
+            firstError.at = at;
+            firstError.nameLen = 0;
+            foreach (char c; what)
+                if (firstError.nameLen < maxAttrName)
+                    firstError.nameBuf[firstError.nameLen++] = c;
+        }
+
+        void pushElement() @safe pure nothrow @nogc
+        {
+            if (openDepth == maxElementDepth)
+            {
+                note(SkeletonErrorKind.tooDeep, tagName, tagStart);
+                return;
+            }
+            openBuf[openDepth][] = tagBuf[];
+            openLen[openDepth] = tagLen;
+            openAt[openDepth] = tagStart;
+            ++openDepth;
+        }
+
+        void popElement() @safe pure nothrow @nogc
+        {
+            if (openDepth == 0)
+                return; // a fragment may close what an earlier one opened
+            const top = openBuf[openDepth - 1][0 .. openLen[openDepth - 1]];
+            if (top != tagName)
+            {
+                note(SkeletonErrorKind.mismatchedEndTag, tagName, tagStart);
+                return;
+            }
+            --openDepth;
+        }
     }
+}
+
+/// What is structurally wrong with a skeleton (`HTL10`).
+enum SkeletonErrorKind
+{
+    none,
+    mismatchedEndTag,  /// `</p>` where the innermost open element is not `p`
+    unclosedQuote,     /// an attribute value's quote never closes
+    unclosedComment,   /// `<!--` with no `-->`
+    unclosedRawText,   /// `<script>`/`<style>`/`<textarea>` never closed
+    unclosedElement,   /// only checked under `HtmlCheck.balanced`
+    tooDeep,           /// more than `maxElementDepth` open elements
+}
+
+/// The first structural problem the scan found, with the tag it is about and
+/// the byte offset (into the skeleton's literal text) where that tag started.
+struct SkeletonError
+{
+    SkeletonErrorKind kind;
+    size_t at;
+    private char[maxAttrName] nameBuf;
+    private ubyte nameLen;
+
+    /// The element the problem is about, when there is one.
+    const(char)[] name() const return @safe pure nothrow @nogc
+        => nameBuf[0 .. nameLen];
 }
 
 private char lower(char c) @safe pure nothrow @nogc
@@ -239,6 +676,10 @@ anywhere — including mid-attribute, mid-URL, or between two tags.
 +/
 void advance(ref SkeletonScan s, scope const(char)[] lit) @safe pure nothrow @nogc
 {
+    const base = s.offset;
+    scope (exit)
+        s.offset = base + lit.length;
+
     size_t i = 0;
     while (i < lit.length)
     {
@@ -256,15 +697,17 @@ void advance(ref SkeletonScan s, scope const(char)[] lit) @safe pure nothrow @no
             continue;
         }
 
-        if (s.inRawText)
+        if (s.inRawText || s.inRcdata)
         {
             // Leaves at the element's own end tag; any other `<` is content.
             if (c == '<' && i + 1 < lit.length && lit[i + 1] == '/')
             {
                 s.inRawText = false;
+                s.inRcdata = false;
                 s.inTag = true;
                 s.readingName = true;
                 s.endTag = true;
+                s.tagStart = base + i;
                 s.resetName();
                 i += 2;
                 continue;
@@ -287,9 +730,11 @@ void advance(ref SkeletonScan s, scope const(char)[] lit) @safe pure nothrow @no
                 s.inTag = true;
                 s.readingName = true;
                 s.tagIsRawText = false;
+                s.tagIsRcdata = false;
                 s.endTag = false;
                 s.afterEq = false;
                 s.quote = 0;
+                s.tagStart = base + i;
                 s.resetName();
                 if (i + 1 < lit.length && lit[i + 1] == '/')
                 {
@@ -325,7 +770,9 @@ void advance(ref SkeletonScan s, scope const(char)[] lit) @safe pure nothrow @no
         {
             if (isSpace(c) || c == '>' || c == '/')
             {
-                s.tagIsRawText = !s.endTag && isRawTextElement(s.name);
+                s.keepTagName();
+                s.tagIsRawText = !s.endTag && isRawTextElement(s.tagName);
+                s.tagIsRcdata = !s.endTag && isRcdataElement(s.tagName);
                 s.readingName = false;
                 s.resetName();
                 // fall through so `>` closes the tag on this iteration
@@ -340,9 +787,15 @@ void advance(ref SkeletonScan s, scope const(char)[] lit) @safe pure nothrow @no
 
         if (c == '>')
         {
+            const selfClosing = i > 0 && lit[i - 1] == '/';
             s.inTag = false;
             s.inRawText = s.tagIsRawText;
+            s.inRcdata = s.tagIsRcdata;
             s.afterEq = false;
+            if (s.endTag)
+                s.popElement();
+            else if (!selfClosing && !isVoidElement(s.tagName))
+                s.pushElement();
             s.resetName();
             ++i;
             continue;
@@ -404,6 +857,52 @@ private void endAttribute(ref SkeletonScan s) @safe pure nothrow @nogc
     s.resetName();
 }
 
+/++
+The skeleton's structural verdict once every part has been scanned (`HTL10`).
+
+`balanced` additionally requires the template to leave no element open — right
+for a whole document, wrong for the fragments a page is assembled from, which
+is why it is not the default.
++/
+SkeletonError finish(in SkeletonScan s, bool balanced = false) @safe pure nothrow @nogc
+{
+    if (s.firstError.kind != SkeletonErrorKind.none)
+        return s.firstError;
+
+    SkeletonError e;
+    if (s.quote != 0)
+    {
+        e.kind = SkeletonErrorKind.unclosedQuote;
+        e.at = s.tagStart;
+        return e;
+    }
+    if (s.inComment)
+    {
+        e.kind = SkeletonErrorKind.unclosedComment;
+        return e;
+    }
+    if (s.inRawText || s.inRcdata)
+    {
+        e.kind = SkeletonErrorKind.unclosedRawText;
+        e.at = s.tagStart;
+        foreach (char c; s.tagName)
+            if (e.nameLen < maxAttrName)
+                e.nameBuf[e.nameLen++] = c;
+        return e;
+    }
+    if (balanced && s.openDepth > 0)
+    {
+        const top = s.openDepth - 1;
+        e.kind = SkeletonErrorKind.unclosedElement;
+        e.at = s.openAt[top];
+        foreach (char c; s.openBuf[top][0 .. s.openLen[top]])
+            if (e.nameLen < maxAttrName)
+                e.nameBuf[e.nameLen++] = c;
+        return e;
+    }
+    return e;
+}
+
 /// The context an interpolation lands in, given the state before it (`HTL1`).
 HtmlContext contextAt(in SkeletonScan s) @safe pure nothrow @nogc
 {
@@ -411,6 +910,8 @@ HtmlContext contextAt(in SkeletonScan s) @safe pure nothrow @nogc
         return HtmlContext.comment;
     if (s.inRawText)
         return HtmlContext.rawText;
+    if (s.inRcdata)
+        return HtmlContext.rcdata;
     if (!s.inTag)
         return HtmlContext.text;
     if (s.readingName)
@@ -621,6 +1122,10 @@ private struct UrlSchemeSink(Writer)
             put(c);
     }
 
+    /// Whether the policy replaced this value (`HTL6`) — read after
+    /// $(LREF finish), and what `writeHtmlChecked` reports.
+    bool rejected() const scope @safe pure nothrow @nogc => state == State.blocked;
+
     /// Flushes a value that ended before the scheme question was settled.
     void finish() scope
     {
@@ -698,14 +1203,68 @@ private bool isSchemeChar(char c) @safe pure nothrow @nogc
 
 /// Renders `value` into `w` with the escape `ctx` calls for (`HTL1`, §4 of the
 /// design). Every arm writes straight through a sink — no temporaries.
-private void writeInContext(HtmlContext ctx, Writer, T)(ref Writer w, auto ref const T value)
+/++
+Renders `value` into `w` with the escape `ctx` calls for (`HTL1`, §4 of the
+design), returning what it had to substitute — nothing, in every ordinary case.
+Every arm writes straight through a sink; nothing is buffered (`HTL15`).
++/
+private HtmlErrorCode writeInContext(HtmlContext ctx, Writer, T)(
+    ref Writer w, auto ref const T value)
 {
     import std.range.primitives : put;
 
-    static if (ctx == HtmlContext.text || ctx == HtmlContext.attrQuoted)
+    // ── the escape hatches (HTL11) ──────────────────────────────────────────
+    static if (is(immutable T == immutable HtmlFragment))
+    {
+        put(w, value.markup);
+        return HtmlErrorCode.none;
+    }
+    else static if (is(immutable T == immutable Attr))
+    {
+        return writeAttr(w, value);
+    }
+    else static if (is(T == Attrs!R, R))
+    {
+        auto worst = HtmlErrorCode.none;
+        bool first = true;
+        foreach (ref const a; value.pairs)
+        {
+            // A pair that renders nothing — an absent boolean, or a name that
+            // is not a name — must not leave its separator behind either.
+            if (!isValidAttributeName(a.name))
+            {
+                if (worst == HtmlErrorCode.none)
+                    worst = HtmlErrorCode.invalidAttributeName;
+                continue;
+            }
+            if (a.boolean && !a.present)
+                continue;
+            if (!first)
+                put(w, ' ');
+            first = false;
+            const e = writeAttr(w, a);
+            if (e != HtmlErrorCode.none && worst == HtmlErrorCode.none)
+                worst = e;
+        }
+        return worst;
+    }
+    else static if (is(T == JsonValue!V, V))
+    {
+        writeJsonValue(w, value.value);
+        return HtmlErrorCode.none;
+    }
+    else static if (is(immutable T == immutable CssValue))
+    {
+        writeCssEscaped(w, value.value);
+        return HtmlErrorCode.none;
+    }
+    // ── the context escapes (HTL1) ──────────────────────────────────────────
+    else static if (ctx == HtmlContext.text || ctx == HtmlContext.attrQuoted
+        || ctx == HtmlContext.rcdata)
     {
         scope sink = HtmlEscapeSink!Writer(&w);
         writeValue(sink, value);
+        return HtmlErrorCode.none;
     }
     else static if (ctx == HtmlContext.attrUnquoted)
     {
@@ -713,6 +1272,7 @@ private void writeInContext(HtmlContext ctx, Writer, T)(ref Writer w, auto ref c
         scope sink = HtmlEscapeSink!Writer(&w);
         writeValue(sink, value);
         put(w, '"');
+        return HtmlErrorCode.none;
     }
     else static if (ctx == HtmlContext.urlWhole || ctx == HtmlContext.urlWholeUnquoted)
     {
@@ -723,8 +1283,10 @@ private void writeInContext(HtmlContext ctx, Writer, T)(ref Writer w, auto ref c
         scope sink = UrlSchemeSink!Writer(&w);
         writeValue(sink, value);
         sink.finish();
+        const rejected = sink.rejected;
         static if (ctx == HtmlContext.urlWholeUnquoted)
             put(w, '"');
+        return rejected ? HtmlErrorCode.unsafeUrlScheme : HtmlErrorCode.none;
     }
     else static if (ctx == HtmlContext.urlPath || ctx == HtmlContext.urlQuery
         || ctx == HtmlContext.urlFragment)
@@ -739,9 +1301,212 @@ private void writeInContext(HtmlContext ctx, Writer, T)(ref Writer w, auto ref c
 
         scope sink = PercentHtmlSink!(set, Writer)(&w);
         writeValue(sink, value);
+        return HtmlErrorCode.none;
     }
     else
         static assert(0, "context rejected earlier: " ~ ctx.stringof);
+}
+
+/// One `name="value"` (or a bare boolean attribute). A name that is not a name
+/// is dropped rather than written: unlike a value, it cannot be escaped into
+/// safety (`HTL7`).
+private HtmlErrorCode writeAttr(Writer)(ref Writer w, in Attr a)
+{
+    import std.range.primitives : put;
+
+    if (!isValidAttributeName(a.name))
+        return HtmlErrorCode.invalidAttributeName;
+    if (a.boolean)
+    {
+        if (a.present)
+            put(w, a.name);
+        return HtmlErrorCode.none;
+    }
+    put(w, a.name);
+    put(w, "=\"");
+    if (isUrlAttribute(a.name))
+    {
+        scope sink = UrlSchemeSink!Writer(&w);
+        sink.put(a.value);
+        sink.finish();
+        const rejected = sink.rejected;
+        put(w, '"');
+        return rejected ? HtmlErrorCode.unsafeUrlScheme : HtmlErrorCode.none;
+    }
+    writeHtmlEscaped(w, a.value);
+    put(w, '"');
+    return HtmlErrorCode.none;
+}
+
+/++
+HTML's attribute-name production, minus the characters no sane document uses:
+a name may not be empty and may not contain a space, quote, `/`, `=`, `<`, `>`
+or a control byte (HTML §13.1.2.3). Anything that passes cannot end the tag or
+start a second attribute.
++/
+bool isValidAttributeName(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    if (name.length == 0)
+        return false;
+    foreach (char c; name)
+    {
+        if (c <= ' ' || c == 0x7f)
+            return false;
+        switch (c)
+        {
+            case '"', '\'', '>', '/', '=', '<', '&':
+                return false;
+            default:
+                break;
+        }
+    }
+    return true;
+}
+
+///
+@("html_template.isValidAttributeName")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(isValidAttributeName("class") && isValidAttributeName("data-x")
+        && isValidAttributeName("aria-label"));
+    assert(!isValidAttributeName("") && !isValidAttributeName("a b")
+        && !isValidAttributeName(`x"`) && !isValidAttributeName("a=b")
+        && !isValidAttributeName("a>b"));
+}
+
+/// A JSON literal for `<script>`, with everything that could end the element
+/// escaped (`HTL8`).
+private void writeJsonValue(Writer, T)(ref Writer w, auto ref const T value)
+{
+    import std.range.primitives : put;
+    import std.traits : isFloatingPoint, isIntegral;
+
+    static if (is(immutable T == immutable bool))
+        put(w, value ? "true" : "false");
+    else static if (isIntegral!T || isFloatingPoint!T)
+        writeValue(w, value);
+    else
+    {
+        put(w, '"');
+        scope sink = JsonStringSink!Writer(&w);
+        writeValue(sink, value);
+        put(w, '"');
+    }
+}
+
+/// The JSON string body: RFC 8259 escapes, plus `<`, `>`, `&` and the two
+/// line separators as `\uXXXX` — which is what makes `</script` unwritable.
+private struct JsonStringSink(Writer)
+{
+    private Writer* target;
+    private ubyte pendingSeparator; // bytes matched of a U+2028/U+2029 sequence
+
+    void put(char c) scope
+    {
+        import std.range.primitives : put;
+
+        // U+2028/U+2029 are line terminators in JavaScript but not in JSON.
+        if (pendingSeparator == 0 && c == '\xe2')
+        {
+            pendingSeparator = 1;
+            return;
+        }
+        if (pendingSeparator == 1)
+        {
+            if (c == '\x80')
+            {
+                pendingSeparator = 2;
+                return;
+            }
+            flushSeparator();
+        }
+        else if (pendingSeparator == 2)
+        {
+            if (c == '\xa8' || c == '\xa9')
+            {
+                pendingSeparator = 0;
+                put(*target, c == '\xa8' ? "\\u2028" : "\\u2029");
+                return;
+            }
+            flushSeparator();
+        }
+
+        switch (c)
+        {
+            case '"':  put(*target, "\\\""); return;
+            case '\\': put(*target, "\\\\"); return;
+            case '\n': put(*target, "\\n"); return;
+            case '\r': put(*target, "\\r"); return;
+            case '\t': put(*target, "\\t"); return;
+            case '<':  put(*target, "\\u003C"); return;
+            case '>':  put(*target, "\\u003E"); return;
+            case '&':  put(*target, "\\u0026"); return;
+            default:
+                if (c < 0x20)
+                {
+                    import sparkles.base.text.writers : writeHexByte;
+
+                    put(*target, "\\u00");
+                    writeHexByte(*target, c);
+                }
+                else
+                {
+                    char[1] one = c;
+                    put(*target, one[]);
+                }
+                return;
+        }
+    }
+
+    void put(scope const(char)[] s) scope
+    {
+        foreach (char c; s)
+            put(c);
+    }
+
+    private void flushSeparator() scope
+    {
+        import std.range.primitives : put;
+
+        // Not a separator after all — write the bytes we held back.
+        if (pendingSeparator >= 1)
+            put(*target, "\xe2");
+        if (pendingSeparator == 2)
+            put(*target, "\x80");
+        pendingSeparator = 0;
+    }
+}
+
+/++
+CSS escaping for `<style>` (`HTL8`): alphanumerics and a small set of harmless
+punctuation pass; every other byte becomes `\HH ` — the CSS escape, which is
+valid inside both identifiers and strings. `<` is escaped, so `</style` cannot
+appear; so are `\`, quotes, `;`, `{`, `}` and `(`, so a value cannot end a
+declaration or open a function.
++/
+private void writeCssEscaped(Writer)(ref Writer w, scope const(char)[] value)
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.writers : writeHexByte;
+
+    foreach (char c; value)
+    {
+        const safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
+            || c == '%' || c == ' ' || c == ',' || c == '#';
+        if (safe)
+        {
+            char[1] one = c;
+            put(w, one[]);
+        }
+        else
+        {
+            put(w, '\\');
+            writeHexByte(w, c);
+            put(w, ' ');
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -985,9 +1750,11 @@ unittest
     advance(v, `<img src="/a.png"/>`);
     assert(contextAt(v) == HtmlContext.text);
 
+    // `textarea` is RCDATA, not raw text: character references work there, so a
+    // value escaped exactly as text is safe (`<` cannot start `</textarea>`).
     SkeletonScan t;
     advance(t, "<textarea>");
-    assert(contextAt(t) == HtmlContext.rawText);
+    assert(contextAt(t) == HtmlContext.rcdata);
     advance(t, "</textarea>");
     assert(contextAt(t) == HtmlContext.text);
 }
@@ -1005,4 +1772,226 @@ unittest
     SkeletonScan t;
     advance(t, `<a hreflang="`);
     assert(contextAt(t) == HtmlContext.attrQuoted);
+}
+
+// ── HTLM3: skeleton validation and the reporting arm ─────────────────────────
+
+/// The skeleton itself must be sound (`HTL10`): quotes, comments and raw-text
+/// elements close, and an end tag matches what it closes.
+@("html_template.skeleton.rejectsMalformedStructure")
+@safe unittest
+{
+    const x = "v";
+
+    static assert(!__traits(compiles, htmlText(i`<div><p>$(x)</div></p>`)));
+    static assert(!__traits(compiles, htmlText(i`<a href="/x>$(x)</a>`)));
+    static assert(!__traits(compiles, htmlText(i`<p>$(x)<!-- unfinished</p>`)));
+    static assert(!__traits(compiles, htmlText(i`<script>ok();<p>$(x)</p>`)));
+
+    // …while the same shapes, closed, are fine.
+    static assert(__traits(compiles, htmlText(i`<div><p>$(x)</p></div>`)));
+    static assert(__traits(compiles, htmlText(i`<a href="/x">$(x)</a>`)));
+    static assert(__traits(compiles, htmlText(i`<p>$(x)<!-- done --></p>`)));
+    static assert(__traits(compiles, htmlText(i`<script>ok();</script><p>$(x)</p>`)));
+}
+
+/// A template is a fragment by default — it may open an element for a later
+/// one to close, which is how a page shell is written. `HtmlCheck.balanced`
+/// is the opt-in that forbids it (`HTL10`).
+@("html_template.skeleton.fragmentVersusBalanced")
+@safe unittest
+{
+    const title = "Docs";
+
+    // Fragment: opening `<html><body>` here and closing it in another template.
+    static assert(__traits(compiles, htmlText(i`<html><body><h1>$(title)</h1>`)));
+    static assert(__traits(compiles, htmlText(i`</body></html>`)));
+
+    // Balanced: the same template must close what it opens.
+    static assert(!__traits(compiles,
+        htmlText!(HtmlCheck.balanced)(i`<html><body><h1>$(title)</h1>`)));
+    static assert(__traits(compiles,
+        htmlText!(HtmlCheck.balanced)(i`<section><h1>$(title)</h1></section>`)));
+    // Void elements are not "left open".
+    static assert(__traits(compiles,
+        htmlText!(HtmlCheck.balanced)(i`<p>$(title)<br><img src="/a.png"></p>`)));
+}
+
+/// `writeHtmlChecked` reports what `writeHtml` silently made safe (`HTL6`).
+@("html_template.checked.reportsUnsafeUrl")
+@safe unittest
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    const link = "javascript:alert(1)";
+    const r = writeHtmlChecked(w, i`<a href="$(link)">x</a>`);
+
+    assert(r.hasError);
+    assert(r.error.code == HtmlErrorCode.unsafeUrlScheme);
+    assert(r.error.expression == "link");
+    // The output is safe either way — reporting is in addition to substituting.
+    assert(w[] == `<a href="about:invalid#unsafe-scheme">x</a>`);
+
+    auto ok_ = appender!string;
+    const good = "/docs/index.html";
+    assert(!writeHtmlChecked(ok_, i`<a href="$(good)">x</a>`).hasError);
+}
+
+// ── HTLM4: the escape hatches ────────────────────────────────────────────────
+
+/// `raw` writes markup verbatim, and `htmlText`'s own result is such a
+/// fragment — so templates compose without double-escaping (`HTL11`/`HTL12`).
+@("html_template.raw.composesWithoutDoubleEscaping")
+@safe unittest
+{
+    const cell = "a & b";
+    const row = raw(htmlText(i`<td>$(cell)</td>`));
+    assert(htmlText(i`<tr>$(row)</tr>`) == `<tr><td>a &amp; b</td></tr>`);
+
+    // Without `raw` the same string is a value, and escapes as one.
+    const asValue = htmlText(i`<td>$(cell)</td>`);
+    assert(htmlText(i`<tr>$(asValue)</tr>`)
+        == `<tr>&lt;td&gt;a &amp;amp; b&lt;/td&gt;</tr>`);
+}
+
+/// `raw` is refused where "already escaped" has no meaning (`HTL11`).
+@("html_template.raw.refusedOutsideTextAndAttributes")
+@safe unittest
+{
+    const frag = raw("<b>x</b>");
+    static assert(__traits(compiles, htmlText(i`<p>$(frag)</p>`)));
+    static assert(__traits(compiles, htmlText(i`<p title="$(frag)">x</p>`)));
+    static assert(!__traits(compiles, htmlText(i`<a href="/x/$(frag)">y</a>`)));
+    static assert(!__traits(compiles, htmlText(i`<a href="$(frag)">y</a>`)));
+    static assert(!__traits(compiles, htmlText(i`<p class=$(frag)>y</p>`)));
+}
+
+/// `attr`/`attrs` are how a NAME becomes dynamic without the structure doing
+/// so: names are validated, values escaped, booleans present or absent
+/// (`HTL11`).
+@("html_template.attrs.renderPairs")
+@safe unittest
+{
+    const cls = `x" onload="evil()`;
+    assert(htmlText(i`<div $(attr("class", cls))>y</div>`)
+        == `<div class="x&quot; onload=&quot;evil()">y</div>`);
+
+    assert(htmlText(i`<input $(attr("disabled", true))$(attr("readonly", false))>`)
+        == `<input disabled>`);
+    // In a spread, a pair that renders nothing leaves no separator behind.
+    const Attr[3] mixed = [attr("id", "a"), attr("hidden", false), attr("lang", "en")];
+    assert(htmlText(i`<div $(attrs(mixed[]))>y</div>`) == `<div id="a" lang="en">y</div>`);
+
+    const Attr[2] pairs = [attr("id", "main"), attr("data-n", "3")];
+    assert(htmlText(i`<div $(attrs(pairs[]))>y</div>`)
+        == `<div id="main" data-n="3">y</div>`);
+
+    // A URL-valued attribute goes through the same scheme check as `href=…`.
+    assert(htmlText(i`<a $(attr("href", "javascript:x()"))>y</a>`)
+        == `<a href="about:invalid#unsafe-scheme">y</a>`);
+}
+
+/// A name that is not a name cannot be escaped into safety, so the pair is
+/// dropped — and `writeHtmlChecked` says so (`HTL7`/`HTL11`).
+@("html_template.attrs.invalidNameIsDroppedAndReported")
+@safe unittest
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    const bad = attr(`x" onload="evil()`, "1");
+    const r = writeHtmlChecked(w, i`<div $(bad)>y</div>`);
+
+    assert(w[] == `<div >y</div>`);
+    assert(r.hasError && r.error.code == HtmlErrorCode.invalidAttributeName);
+    assert(r.error.expression == "bad");
+}
+
+/// `json` is the only way a value reaches `<script>`, and it cannot end the
+/// element: `<`, `>` and `&` leave as `\uXXXX` (`HTL8`).
+@("html_template.json.cannotCloseTheScript")
+@safe unittest
+{
+    const payload = `</script><img src=x onerror=alert(1)>`;
+    const rendered = htmlText(i`<script>const p = $(json(payload));</script>`);
+    assert(rendered ==
+        `<script>const p = "\u003C/script\u003E\u003Cimg src=x onerror=alert(1)`
+        ~ `\u003E";</script>`, rendered);
+
+    // Numbers and booleans are JSON literals, not quoted strings.
+    assert(htmlText(i`<script>let n = $(json(42)), b = $(json(true));</script>`)
+        == `<script>let n = 42, b = true;</script>`);
+
+    // JS line terminators that JSON allows raw are escaped.
+    const sep = "a\u2028b";
+    assert(htmlText(i`<script>const s = $(json(sep));</script>`)
+        == `<script>const s = "a\u2028b";</script>`);
+}
+
+/// `cssValue` is the same bargain for `<style>`: anything outside a small safe
+/// set becomes a CSS escape, so a value cannot end the declaration or the
+/// element (`HTL8`).
+@("html_template.cssValue.escapesEverythingElse")
+@safe unittest
+{
+    const colour = "red";
+    assert(htmlText(i`<style>.a { color: $(cssValue(colour)); }</style>`)
+        == `<style>.a { color: red; }</style>`);
+
+    const hostile = "red; } body { display:none } </style><script>";
+    const rendered = htmlText(i`<style>.a { color: $(cssValue(hostile)); }</style>`);
+    assert(rendered.length > 0);
+    // The dangerous characters are gone: no `<`, no `{`, no `;` survives raw.
+    import std.algorithm.searching : canFind;
+
+    assert(!rendered["<style>".length .. $ - "</style>".length].canFind("</style>"));
+    assert(rendered.canFind(`\3b `) && rendered.canFind(`\7b `));
+}
+
+/// `json`/`cssValue` belong to their element and nowhere else — a plain value
+/// is what text and attributes take (`HTL8`).
+@("html_template.wrappers.refusedOutsideTheirElement")
+@safe unittest
+{
+    const j = json("x");
+    const c = cssValue("x");
+    static assert(!__traits(compiles, htmlText(i`<p>$(j)</p>`)));
+    static assert(!__traits(compiles, htmlText(i`<p>$(c)</p>`)));
+    static assert(!__traits(compiles, htmlText(i`<p class="$(j)">y</p>`)));
+    // …and a plain value is still refused inside <script>.
+    const plain = "x";
+    static assert(!__traits(compiles, htmlText(i`<script>var v = $(plain);</script>`)));
+}
+
+/// `<textarea>`/`<title>` are RCDATA, not raw text: character references work,
+/// so a value escapes exactly as text does and cannot close the element.
+@("html_template.rcdata.escapesLikeText")
+@safe unittest
+{
+    const draft = "</textarea><script>alert(1)</script>";
+    assert(htmlText(i`<textarea>$(draft)</textarea>`)
+        == `<textarea>&lt;/textarea&gt;&lt;script&gt;alert(1)&lt;/script&gt;</textarea>`);
+
+    const t = "R&D <notes>";
+    assert(htmlText(i`<title>$(t)</title>`) == `<title>R&amp;D &lt;notes&gt;</title>`);
+}
+
+/// The hatches keep the `@nogc` promise too (`HTL15`): every one of them writes
+/// straight through, so a `@nogc` writer stays `@safe pure nothrow @nogc`.
+@("html_template.hatches.stayNogc")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 512) buf;
+    const Attr[2] pairs = [attr("id", "main"), attr("hidden", true)];
+    const frag = raw("<b>ok</b>");
+    writeHtml(buf, i`<div $(attrs(pairs[]))>$(frag)</div>`);
+    writeHtml(buf, i`<style>.a { color: $(cssValue("red")); }</style>`);
+    writeHtml(buf, i`<script>var n = $(json(7));</script>`);
+    assert(buf[] == `<div id="main" hidden><b>ok</b></div>`
+        ~ `<style>.a { color: red; }</style>`
+        ~ `<script>var n = 7;</script>`, buf[]);
 }
