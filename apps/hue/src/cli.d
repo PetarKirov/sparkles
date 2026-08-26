@@ -51,6 +51,16 @@ import settings_overlay : applyOverlay, Origin, OriginKind, Sparse;
 
 // ── Option Groupings & Subcommands ──────────────────────────────────────────
 
+/// Supported document overlay kinds.
+enum OverlayKind
+{
+    @(Description("type annotations from a twoslash JSON payload (artifact: the payload; or make it the target — *.twoslash.json)"))
+    twoslash,
+
+    @(Description("code coverage from .lst, .gcov, .info or .json (artifact: the coverage report; or --cov=<artifact>)"))
+    coverage,
+}
+
 /// Standalone overlay configuration.
 struct OverlayOptions
 {
