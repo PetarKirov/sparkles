@@ -20,6 +20,7 @@ registration.
 */
 module sparkles.event_horizon.buffer;
 
+import core.stdc.errno : ENOBUFS;
 import std.experimental.allocator : dispose, makeArray, stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 
@@ -312,7 +313,7 @@ struct BufferPool(Allocator = Mallocator)
     IoResult!Buf acquire() @trusted nothrow @nogc
     {
         if (_freeCount == 0)
-            return ioErr!Buf(105 /* ENOBUFS */, OpKind.none, IoErrorStage.submit,
+            return ioErr!Buf(ENOBUFS, OpKind.none, IoErrorStage.submit,
                 "buffer pool exhausted");
         import core.lifetime : move;
 
@@ -579,7 +580,7 @@ unittest
 
     auto second = pool.acquire();
     assert(second.hasError);
-    assert(second.error.errnoValue == 105); // ENOBUFS
+    assert(second.error.errnoValue == ENOBUFS);
 
     held.release();
     assert(pool.available == 1);
