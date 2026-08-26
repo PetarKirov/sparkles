@@ -332,6 +332,12 @@ unittest
     assert(byPosition.hidden_);
 }
 
+/// Human-readable description for an enum member, option, or command.
+struct Description
+{
+    string text;
+}
+
 struct Subcommands {}
 
 struct SubCommandRegistration(T)

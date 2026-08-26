@@ -24,6 +24,7 @@ public import sparkles.core_cli.args.internal :
 public import sparkles.core_cli.args.uda :
     Argument,
     Command,
+    Description,
     Flatten,
     Option,
     SubCommandRegistration,
