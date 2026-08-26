@@ -193,12 +193,11 @@ struct RaylibCanvas
         EndScissorMode();
         if (!clips.length)
             return;
-        // The display list pushes pre-intersected effective rects, so the top
-        // of the stack is the active region — but an axis-only viewport
-        // (`clipX` without `clipY`) leaves the other axis UNBOUNDED (huge
-        // sentinels), so clamp to the window before pixel math or the
-        // scissor arithmetic overflows.
-        const r = clips[$ - 1];
+        // The active region is the cumulative intersection of all clips on the
+        // stack: an outer container clip (such as hue's pinned-gutter pass) must
+        // bound any inner viewport clips (a framed table or code fence) rather
+        // than being overwritten by them.
+        const r = effectiveClip(clips);
         const sw = cast(float) GetScreenWidth();
         const sh = cast(float) GetScreenHeight();
         static float cl(float v, float lo, float hi) pure nothrow @nogc @safe
@@ -209,7 +208,7 @@ struct RaylibCanvas
         const y0 = cl(originY + cast(long) r.y * cast(float) cellH, 0, sh);
         const x1 = cl(originX + (cast(long) r.x + r.width) * cast(float) cellW, 0, sw);
         const y1 = cl(originY + (cast(long) r.y + r.height) * cast(float) cellH, 0, sh);
-        if (x1 <= x0 || y1 <= y0)
+        if (r.empty || x1 <= x0 || y1 <= y0)
             BeginScissorMode(0, 0, 0, 0); // fully clipped away
         else
             BeginScissorMode(cast(int) x0, cast(int) y0,
@@ -720,4 +719,36 @@ unittest
     // Borders wider than the box do not invert it into negative geometry.
     foreach (e; borderEdges(0, 0, 2, 2, Insets.all(5)))
         assert(!e.empty || e.w <= 0 || e.h <= 0);
+}
+
+/// The cumulative intersection of a stack of clip rectangles.
+Rect effectiveClip(in Rect[] clips) pure nothrow @nogc @safe
+{
+    if (!clips.length)
+        return Rect.init;
+    Rect r = clips[0];
+    foreach (ref const c; clips[1 .. $])
+        r = r.intersection(c);
+    return r;
+}
+
+@("ui_raylib.raylib_canvas.effectiveClipCumulativeIntersection")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(effectiveClip(null) == Rect.init);
+    const Rect[1] single = [Rect(0, 0, 10, 20)];
+    assert(effectiveClip(single) == Rect(0, 0, 10, 20));
+
+    // Nested sub-rect is bounded by enclosing container
+    const Rect[2] stack1 = [Rect(0, 0, 5, 20), Rect(0, 5, 40, 10)];
+    assert(effectiveClip(stack1) == Rect(0, 5, 5, 10));
+
+    // Scrolled document pass intersection with wide table
+    const Rect[2] stack2 = [Rect(7, 0, 73, 24), Rect(0, 5, 80, 10)];
+    assert(effectiveClip(stack2) == Rect(7, 5, 73, 10));
+
+    // Disjoint clips yield empty rect
+    const Rect[2] stack3 = [Rect(0, 0, 5, 5), Rect(10, 10, 5, 5)];
+    assert(effectiveClip(stack3).empty);
 }

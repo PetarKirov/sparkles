@@ -147,8 +147,14 @@ struct CellGrid
     private Rect[] clips;
 
     private bool inBounds(int x, int y) const scope pure nothrow @nogc
-        => x >= 0 && x < width && y >= 0 && y < height
-            && (clips.length == 0 || clips[$ - 1].contains(Point(x, y)));
+    {
+        if (x < 0 || x >= width || y < 0 || y >= height)
+            return false;
+        foreach (ref const c; clips)
+            if (!c.contains(Point(x, y)))
+                return false;
+        return true;
+    }
 
     private ref Cell at(int x, int y) pure nothrow @nogc
         => cells[y * width + x];
@@ -709,4 +715,27 @@ static assert(isCanvas!CellGrid);
     // bar has to sit against the edge it names.
     foreach (px; 0 .. 8)
         assert(accentGlyph(px, true) != accentGlyph(px, false));
+}
+
+@("ui.cells.nestedClipsIntersect")
+@safe unittest
+{
+    auto grid = CellGrid(20, 10, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    grid.pushClip(Rect(0, 0, 10, 10)); // outer clip: left half [0, 10)
+    grid.pushClip(Rect(5, 0, 10, 10)); // inner clip: [5, 15)
+    // Effective intersection is [5, 10)
+    grid.textRun(Point(0, 0), "01234567890123456789", Visual.init);
+    assert(grid.at(0, 0).glyph == ' ');
+    assert(grid.at(4, 0).glyph == ' ');
+    assert(grid.at(5, 0).glyph == '5');
+    assert(grid.at(9, 0).glyph == '9');
+    assert(grid.at(10, 0).glyph == ' ');
+    assert(grid.at(14, 0).glyph == ' ');
+
+    grid.popClip();
+    // After pop, outer clip [0, 10) is restored
+    grid.textRun(Point(0, 1), "01234567890123456789", Visual.init);
+    assert(grid.at(0, 1).glyph == '0');
+    assert(grid.at(9, 1).glyph == '9');
+    assert(grid.at(10, 1).glyph == ' ');
 }
