@@ -1,0 +1,234 @@
+/**
+Presentation-free 2D table selection logic (spec `TBL1`/`TBL2`/`TBL5`):
+resolve a smart drag (+ Shift/Alt) into a $(LREF TableRegion), and serialize
+a region to clipboard text.
+
+Pure over $(REF GridHit, sparkles,ui,components,table,grid) and a cell-text
+accessor, independent of render backends.
+*/
+module sparkles.ui.components.table.selection;
+
+import sparkles.ui.components.table.render : GridHit;
+
+/// How a table grid selection serializes to the clipboard (`CLI11`/`TBL2`;
+/// `source` per `dsv-preview.md` `DSC2`).
+enum TableCopyFormat : ubyte
+{
+    tsv,      /// rows as lines, cells tab-separated (spreadsheet-friendly)
+    markdown, /// re-emitted `| … |` rows (first selected row as header)
+    /// the document's own DSV dialect: cells joined by its delimiter, rows by
+    /// newline — the accessor supplies **raw** cell bytes (original quoting
+    /// preserved), so the serializer never re-quotes. DSV documents only.
+    source,
+}
+
+/// A resolved table selection: either a **sub-cell** byte range within one cell,
+/// or a **rectangle** of whole cells (inclusive bounds).
+struct TableRegion
+{
+    bool subCell;
+    // sub-cell: the cell and a `[charLo, charHi)` byte range into its content.
+    size_t row, col, charLo, charHi;
+    // rectangle: inclusive grid bounds.
+    size_t rowLo, rowHi, colLo, colHi;
+}
+
+/**
+Resolve a drag from `anchor` to `head` (both cells from the table map) under the
+Shift/Alt modifiers into a $(LREF TableRegion) (`TBL1`):
+
+$(UL
+$(LI same cell and no modifier → a **sub-cell** character range;)
+$(LI otherwise a **rectangle** spanning both cells, with **Shift** snapping to
+    full rows (all columns) and **Alt** to full columns (all rows).))
+*/
+TableRegion tableSelection(GridHit anchor, GridHit head, bool shift, bool alt,
+    size_t numRows, size_t numCols) @safe pure nothrow @nogc
+{
+    static size_t lo(size_t a, size_t b) => a < b ? a : b;
+    static size_t hi(size_t a, size_t b) => a < b ? b : a;
+
+    TableRegion r;
+    if (!shift && !alt && anchor.row == head.row && anchor.col == head.col)
+    {
+        r.subCell = true;
+        r.row = anchor.row;
+        r.col = anchor.col;
+        r.charLo = lo(anchor.charInCell, head.charInCell);
+        r.charHi = hi(anchor.charInCell, head.charInCell);
+        return r;
+    }
+
+    r.rowLo = lo(anchor.row, head.row);
+    r.rowHi = hi(anchor.row, head.row);
+    r.colLo = lo(anchor.col, head.col);
+    r.colHi = hi(anchor.col, head.col);
+    if (shift) { r.colLo = 0; r.colHi = numCols ? numCols - 1 : 0; }
+    if (alt)   { r.rowLo = 0; r.rowHi = numRows ? numRows - 1 : 0; }
+    return r;
+}
+
+/**
+Serialize `reg` to clipboard text via a `cell(row, col)` content accessor, per
+`fmt` (`TBL2`): a sub-cell → the cell substring; a rectangle → cells joined by
+`\t`/`\n` (`tsv`) or re-emitted as a `| … |` markdown table (`markdown`, with a
+`| --- |` delimiter after the first selected row so the copy is a valid table).
+*/
+string serializeTable(in TableRegion reg,
+    scope const(char)[] delegate(size_t, size_t) @safe cell, TableCopyFormat fmt,
+    char srcDelimiter = ',', size_t stubCols = 0, size_t skipRows = 0) @safe
+{
+    import std.array : appender;
+
+    if (reg.subCell)
+    {
+        if (reg.col < stubCols || reg.row < skipRows)
+            return ""; // chrome, never serialized (`DSG5`/`DSD3`)
+        const t = cell(reg.row, reg.col);
+        const a = reg.charLo > t.length ? t.length : reg.charLo;
+        const b = reg.charHi > t.length ? t.length : reg.charHi;
+        return t[a .. b].idup;
+    }
+
+    // Stub columns (the record-number gutter) and skipped rows (a synthetic
+    // header) are view chrome: excluded from every format.
+    const colLo = reg.colLo < stubCols ? stubCols : reg.colLo;
+    const rowLo = reg.rowLo < skipRows ? skipRows : reg.rowLo;
+    if (colLo > reg.colHi || rowLo > reg.rowHi)
+        return "";
+    const cols = reg.colHi - colLo + 1;
+    auto w = appender!string;
+
+    // Emit one line of `cols` cells, taking each from `at(i)` (0-based within the
+    // selected column range).
+    void line(scope const(char)[] delegate(size_t) @safe at)
+    {
+        foreach (i; 0 .. cols)
+        {
+            if (fmt == TableCopyFormat.markdown)
+                w ~= i == 0 ? "| " : " | ";
+            else if (i)
+                w ~= fmt == TableCopyFormat.source ? srcDelimiter : '\t';
+            w ~= at(i);
+        }
+        if (fmt == TableCopyFormat.markdown)
+            w ~= " |";
+    }
+
+    bool first = true;
+    foreach (r; rowLo .. reg.rowHi + 1)
+    {
+        if (!first)
+            w ~= '\n';
+        line(i => cell(r, colLo + i));
+        if (fmt == TableCopyFormat.markdown && first)
+        {
+            w ~= '\n';
+            line(_ => "---"); // the header delimiter row
+        }
+        first = false;
+    }
+    return w[];
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    // A 3×3 stub grid `r,c` → "rXcY".
+    private const(char)[] stubCell(size_t r, size_t c) @safe
+    {
+        static immutable string[3][3] g = [
+            ["Name", "Age", "City"],
+            ["Ann", "30", "Rome"],
+            ["Bo", "9", "Oslo"],
+        ];
+        return g[r][c];
+    }
+
+    private GridHit at(size_t r, size_t c, size_t ch = 0) @safe pure nothrow @nogc
+        => GridHit(r, c, ch);
+}
+
+@("ui.components.table.selection.subCell")
+@safe unittest
+{
+    // Same cell, no modifier → a sub-cell char range (ordered).
+    const r = tableSelection(at(1, 0, 3), at(1, 0, 1), false, false, 3, 3);
+    assert(r.subCell && r.row == 1 && r.col == 0 && r.charLo == 1 && r.charHi == 3);
+}
+
+@("ui.components.table.selection.rectangle")
+@safe unittest
+{
+    // Cross-cell drag → an ordered rectangle regardless of drag direction.
+    const r = tableSelection(at(2, 2), at(0, 1), false, false, 3, 3);
+    assert(!r.subCell && r.rowLo == 0 && r.rowHi == 2 && r.colLo == 1 && r.colHi == 2);
+}
+
+@("ui.components.table.selection.modifiers")
+@safe unittest
+{
+    // Shift → full rows (all columns); Alt → full columns (all rows).
+    const rows = tableSelection(at(1, 1), at(1, 1), true, false, 3, 3);
+    assert(!rows.subCell && rows.rowLo == 1 && rows.rowHi == 1 && rows.colLo == 0 && rows.colHi == 2);
+
+    const colsSel = tableSelection(at(0, 2), at(2, 2), false, true, 3, 3);
+    assert(colsSel.rowLo == 0 && colsSel.rowHi == 2 && colsSel.colLo == 2 && colsSel.colHi == 2);
+}
+
+@("ui.components.table.selection.serialize.tsv")
+@safe unittest
+{
+    const r = tableSelection(at(0, 0), at(1, 1), false, false, 3, 3);
+    assert(serializeTable(r, (size_t r, size_t c) => stubCell(r, c), TableCopyFormat.tsv)
+        == "Name\tAge\nAnn\t30");
+}
+
+@("ui.components.table.selection.serialize.markdown")
+@safe unittest
+{
+    const r = tableSelection(at(0, 0), at(1, 1), false, false, 3, 3);
+    assert(serializeTable(r, (size_t r, size_t c) => stubCell(r, c), TableCopyFormat.markdown)
+        == "| Name | Age |\n| --- | --- |\n| Ann | 30 |");
+}
+
+@("ui.components.table.selection.serialize.sourceDialect")
+@safe unittest
+{
+    // `source`: raw cells joined by the document's delimiter, no re-quoting
+    // (the accessor already supplies original bytes, quotes included).
+    const raw = [
+        ["#", "name", "price"],
+        ["1", `"a,b"`, "1,5"],
+        ["2", "plain", "27"],
+    ];
+    const(char)[] rawCell(size_t r, size_t c) @safe => raw[r][c];
+
+    const all = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 2);
+    // stubCols excludes the gutter from every format.
+    assert(serializeTable(all, &rawCell, TableCopyFormat.source, ';', 1)
+        == "name;price\n\"a,b\";1,5\nplain;27");
+    assert(serializeTable(all, &rawCell, TableCopyFormat.tsv, ',', 1)
+        == "name\tprice\n\"a,b\"\t1,5\nplain\t27");
+
+    // skipRows drops a synthetic header row; a gutter sub-cell is chrome.
+    assert(serializeTable(all, &rawCell, TableCopyFormat.source, ';', 1, 1)
+        == "\"a,b\";1,5\nplain;27");
+    const gutter = TableRegion(subCell: true, row: 1, col: 0, charLo: 0, charHi: 1);
+    assert(serializeTable(gutter, &rawCell, TableCopyFormat.source, ';', 1) == "");
+
+    // A region entirely inside the chrome serializes to nothing.
+    const onlyGutter = TableRegion(rowLo: 0, rowHi: 2, colLo: 0, colHi: 0);
+    assert(serializeTable(onlyGutter, &rawCell, TableCopyFormat.source, ';', 1) == "");
+}
+
+@("ui.components.table.selection.serialize.subCell")
+@safe unittest
+{
+    // "Name"[1..3] == "am"; out-of-range hi clamps to the cell length.
+    const r = TableRegion(subCell: true, row: 0, col: 0, charLo: 1, charHi: 3);
+    assert(serializeTable(r, (size_t r, size_t c) => stubCell(r, c), TableCopyFormat.tsv) == "am");
+    const r2 = TableRegion(subCell: true, row: 0, col: 0, charLo: 0, charHi: 99);
+    assert(serializeTable(r2, (size_t r, size_t c) => stubCell(r, c), TableCopyFormat.tsv) == "Name");
+}

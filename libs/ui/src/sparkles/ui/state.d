@@ -371,7 +371,7 @@ codepoint), so a pointer hit on the painted glyph maps to the byte that
 produced it — the shared hit-test for precise selection on every backend.
 The topmost (latest-painted) content under the point wins.
 */
-long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
+long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p) @safe pure nothrow @nogc
 {
     long found = -1;
 
@@ -387,11 +387,19 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
             if (p.x >= x && p.x < x + w && s.srcStart != size_t.max)
             {
                 // Column → byte: stride codepoints (the layout's own measure).
-                import std.utf : stride;
-
                 size_t o;
                 foreach (_; 0 .. p.x - x)
-                    o += stride(s.text[o .. $]);
+                {
+                    if (o >= s.text.length)
+                        break;
+                    const ubyte b = cast(ubyte) s.text[o];
+                    size_t st = 1;
+                    if (b < 0x80) st = 1;
+                    else if ((b & 0xE0) == 0xC0) st = s.text.length - o >= 2 ? 2 : 1;
+                    else if ((b & 0xF0) == 0xE0) st = s.text.length - o >= 3 ? 3 : 1;
+                    else if ((b & 0xF8) == 0xF0) st = s.text.length - o >= 4 ? 4 : 1;
+                    o += st;
+                }
                 found = cast(long)(s.srcStart + o);
             }
             x += w;
