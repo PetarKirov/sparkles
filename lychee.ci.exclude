@@ -169,3 +169,11 @@
 # (docs/research/application-packaging/artifact-formats.md `[appimage-spec]`) at
 # a web.archive.org snapshot, the way the os-apis surveys pin bot-hostile hosts.
 ^https?://docs\.appimage\.org/
+# git.kernel.org (cgit tree/commit permalinks, cited throughout the
+# autological-artifacts survey for `binfmt_misc`, `fs-verity`, IMA and Landlock)
+# answers 503 Service Unavailable to every request from GitHub Actions, while
+# the same URLs return 200 from a developer machine (probed 2026-08-26: the
+# full run is 0 errors locally and 17 x 503 in CI). cgit is expensive to serve
+# and kernel.org sheds load from shared CI ranges, so this is throttling rather
+# than rot. Same class as the sourceware/gnu entries above.
+^https?://git\.kernel\.org/
