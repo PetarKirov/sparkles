@@ -3,8 +3,9 @@
 _Audience: developers and coding agents building against `sparkles:base`. This
 document is normative: it states what an interpolated HTML literal means, which
 escape each interpolation receives, and which templates are rejected at compile
-time. Status: **`HTLM1` and `HTLM2` implemented** in
-`libs/base/src/sparkles/base/html_template.d`; `HTLM3`–`HTLM5` are open (§8)._
+time. Status: **`HTLM1`–`HTLM4` implemented** in
+`libs/base/src/sparkles/base/html_template.d`; `HTLM5` (adoption by
+`sparkles:docs`) is open (§8)._
 
 ## 1. Overview
 
@@ -86,7 +87,9 @@ the tuple `(inTag, quote, afterEq, attrName, urlSection, rawTextElement)`.
 | `urlFragment`      | inside a URL attribute, after `#`        | `<a href="/p#$(anchor)">`  |
 | `tagName`          | inside `<…` before the first space       | `<$(t)>` — **error**       |
 | `attrName`         | in a tag, not after `=`                  | `<p $(a)="1">` — **error** |
-| `rawText`          | inside `<script>`/`<style>`              | **error** unless §5        |
+| `rawText`          | inside `<script>`/`<style>`              | needs `json`/`cssValue`    |
+| `rcdata`           | inside `<textarea>`/`<title>`            | entity-escaped, like text  |
+| `attrName`+wrapper | in a tag, with `attr`/`attrs`            | `<div $(attrs(a))>`        |
 | `comment`          | inside `<!-- … -->`                      | **error**                  |
 
 `urlWhole` is distinguished from `urlPath` by one bit: whether any literal byte
@@ -106,7 +109,11 @@ and is checked rather than encoded (HTL6).
 | `urlFragment`             | `encodePercent!percentComponent` → `writeHtmlEscaped`      |
 | `urlWhole`                | scheme check (HTL6) → `writeHtmlEscaped`                   |
 | `urlWholeUnquoted`        | `'"'`, as `urlWhole`, `'"'`                                |
-| `raw(x)` / `HtmlFragment` | verbatim                                                   |
+| `rcdata`                  | `writeHtmlEscaped` (character references work there)       |
+| `raw(x)` / `HtmlFragment` | verbatim — text and quoted attributes only                 |
+| `attr` / `attrs`          | validated name, escaped value; URL values scheme-checked   |
+| `json(x)`                 | JSON, with `<` `>` `&` U+2028 U+2029 as `\uXXXX`           |
+| `cssValue(x)`             | CSS `\HH ` escapes for everything outside a safe set       |
 
 `percentComponent` in a query — rather than `percentQuery` — is deliberate: the
 interpolation is one parameter's name or value, so `&` and `=` must not survive
@@ -120,38 +127,55 @@ survives the second unchanged, and a literal `&` in a path becomes `&amp;`).
 ## 5. API surface
 
 ```d
-// The primitive.
-void writeHtml(Writer, Args...)(ref Writer w, InterpolationHeader, Args, InterpolationFooter);
+// The primitives. `check` decides how much structure the template must have on
+// its own: `fragment` (the default — quotes, comments and raw-text elements
+// close, an end tag matches what it closes) or `balanced` (also: it closes
+// every element it opens).
+enum HtmlCheck { fragment, balanced }
 
-// Conveniences.
-HtmlFragment htmlText(Args...)(InterpolationHeader, Args, InterpolationFooter);   // allocates
-auto         html    (Args...)(InterpolationHeader, Args, InterpolationFooter);   // lazy: toString + writer
+void writeHtml(HtmlCheck check = HtmlCheck.fragment, Writer, Args...)
+    (ref Writer w, InterpolationHeader, Args, InterpolationFooter);
 
-// An already-escaped fragment. `HtmlFragment` is what `htmlText` returns, so
-// templates compose (HTL12); `raw` is the assertion a caller makes about text
-// from elsewhere, and the only unescaped path (HTL11).
-struct HtmlFragment { string value; alias value this; }
-HtmlFragment raw(scope const(char)[] markup);
+// The same write, reporting what it had to substitute (HTL6, HTL11).
+Expected!(void, HtmlError) writeHtmlChecked(HtmlCheck check = HtmlCheck.fragment, …);
+enum HtmlErrorCode { none, unsafeUrlScheme, invalidAttributeName }
+struct HtmlError { HtmlErrorCode code; string expression; }  // `expression` is the source text
 
-// Contexts that no escape can make safe (HTL8).
-struct JsonValue  { … }  JsonValue json(T)(auto ref T value);       // for <script>
-struct CssValue   { … }  CssValue  cssValue(scope const(char)[] v); // for <style>
+string htmlText(HtmlCheck check = HtmlCheck.fragment, Args...)(…);  // allocates
 
-// A spread of attributes in tag position: `<div $(attrs(m))>`.
-struct Attrs(R) { R pairs; }  Attrs!R attrs(R)(R nameValuePairs);
+// Markup already correct for where it lands — the only unescaped path, and a
+// named type precisely so a reviewer can grep for it. Accepted in text and
+// quoted attributes; refused inside a URL, an unquoted attribute or raw text.
+struct HtmlFragment { string markup; }
+HtmlFragment raw(string markup);
 
-// Conditional/boolean attributes: `<input $(attr("disabled", isLocked))>`.
-struct Attr { const(char)[] name; const(char)[] value; bool present = true; }
+// A dynamic attribute NAME, which the structure rules otherwise forbid. An
+// invalid name is dropped and reported — a name cannot be escaped into safety.
+struct Attr { const(char)[] name; const(char)[] value; bool boolean; bool present = true; }
 Attr attr(const(char)[] name, const(char)[] value);
-Attr attr(const(char)[] name, bool present);
+Attr attr(const(char)[] name, bool present);       // boolean attribute
+struct Attrs(R) { R pairs; }
+Attrs!R attrs(R)(R pairs);                          // any input range of Attr
+
+// The two elements no escape can reach into (HTL8).
+struct JsonValue(T) { T value; }  JsonValue!T json(T)(T value);   // <script>
+struct CssValue { const(char)[] value; }  CssValue cssValue(const(char)[] v);  // <style>
 ```
 
-Runtime failures (HTL6 is the only one) follow the repository's
-[`Expected`](../../guidelines/idioms/expected/index.md) convention on the
-writer path: `writeHtmlChecked` returns `Expected!(void, HtmlError)`, while
-`writeHtml` treats a rejected scheme as a hard error (`recycledErrorInstance`)
-— a URL the policy refuses is never silently emitted, and never silently
-dropped either.
+Each wrapper unlocks exactly the context it exists for and nothing else: a
+`raw` inside a URL, a `json` in text, an `attr` in a value position are all
+compile errors, because each would be a mistake rather than a shortcut. `attrs`
+skips a pair that renders nothing — an absent boolean, an invalid name — so no
+stray separator is left behind.
+
+Runtime failures follow the repository's
+[`Expected`](../../guidelines/idioms/expected/index.md) convention, but the
+write path is `nothrow` (`HTL15`), so nothing throws: `writeHtml` always
+produces safe output (the URL placeholder, the dropped pair) and
+`writeHtmlChecked` is how a caller learns it happened. There are two such
+reports — `unsafeUrlScheme` and `invalidAttributeName` — and each carries the
+interpolated expression's own source text, so a runtime report names the same
+thing the compile-time refusals do.
 
 ## 6. Attributes and cost
 
@@ -185,15 +209,15 @@ writer, so the bytes are escaped as they are produced. The `urlPath` and
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | HTLM1 | **Delivered.** Scanner + context classification + the text and attribute escapes; `writeHtml`/`htmlText`.                                                                                        |
 | HTLM2 | **Delivered.** URL contexts (`HTL5`/`HTL6`) and the escaping sinks that remove the temporary (§6).                                                                                               |
-| HTLM3 | The rejections shipped with `HTLM1` (`HTL3`, `HTL7`–`HTL9`, and the unquoted-tail case); what is left is whole-skeleton validation (`HTL10`) and the `Expected`-returning `writeHtmlChecked`.    |
-| HTLM4 | `raw`/`HtmlFragment`/`attrs`/`attr` (HTL11–HTL12); `json`/`cssValue`.                                                                                                                            |
+| HTLM3 | **Delivered.** Whole-skeleton validation (`HTL10`) with `HtmlCheck.fragment`/`balanced`, and the reporting arm `writeHtmlChecked`. The placement refusals shipped with `HTLM1`.                  |
+| HTLM4 | **Delivered.** `raw`/`HtmlFragment`, `attr`/`attrs`, `json`/`cssValue` (`HTL11`–`HTL12`), plus the RCDATA context — `<textarea>`/`<title>` take a plain value, character references work there.  |
 | HTLM5 | Adoption: `sparkles.docs.breadcrumbs` and `sparkles.docs.sidebar` first (smallest, most markup-dense), then `page_shell`. A/B the generated site — byte-identical output is the acceptance test. |
 
 ## 9. Evidence
 
 The module's own tests pin every row of §4; `dub test :base -- -i html_template`
-runs 17 of them, one `@safe pure nothrow @nogc` (`HTL15`) and one asserting the
-rejections do not compile. `libs/base/examples/html-template.d` is the runnable
+runs 31 of them, two `@safe pure nothrow @nogc` (`HTL15`) and four asserting
+that rejected placements and malformed skeletons do not compile. `libs/base/examples/html-template.d` is the runnable
 tour. Given
 
 ```d
