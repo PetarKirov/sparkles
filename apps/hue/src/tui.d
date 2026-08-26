@@ -18,7 +18,7 @@ import sparkles.diff.model : DiffDoc;
 import diff_session : DiffSession, SessionEntry;
 import diff_view : TypeOverlay;
 import sparkles.source_view.markdown : FenceScroll, TableScroll;
-import table_select : serializeTable, TableCopyFormat, TableRegion;
+import table_select : serializeTable, TableCopyFormat, TableRegion, tableSelection;
 import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
@@ -53,6 +53,7 @@ import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
     ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt,
     Timeline;
+import sparkles.ui.selection : SelectionDrag, SelectionHit, SelectionRegime;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
     TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
@@ -198,10 +199,10 @@ struct PreviewTui
     private char[256] qbuf;
     private size_t qlen;
 
-    // Selection (mouse drag) → OSC 52 copy: the shared STM3 machine over
-    // visual line indices; `selBg` tints the selected lines. `clip` holds a
-    // pending OSC 52 sequence that the loop flushes after a copy.
-    private Selection!long sel;
+    // Selection (mouse drag) → OSC 52 copy: the shared SelectionDrag state machine;
+    // `selBg` tints the selected regions. `clip` holds a pending OSC 52 sequence
+    // that the loop flushes after a copy.
+    SelectionDrag drag;
     private RgbColor selBg;
     private SmallBuffer!char clip;
     private bool clipReady;
@@ -341,14 +342,32 @@ struct PreviewTui
     /// explorer pane when ←/→ cycles the theme (`XPL5`).
     size_t themeIndex() const @safe pure nothrow @nogc => themeIdx;
 
-    /// The active line selection, read-only — the workspace (and its tests)
+    /// The active selection, read-only — the workspace (and its tests)
     /// observe it to verify pointer-capture routing.
-    Selection!long selection() const @safe pure nothrow @nogc => sel;
+    SelectionDrag selection() const @safe pure nothrow @nogc => drag;
 
-    /// Sets the active line selection.
+    /// Sets the active selection.
+    void setSelection(SelectionDrag d) @safe pure nothrow @nogc
+    {
+        drag = d;
+    }
+
+    /// Sets the active selection from line bounds (legacy compatibility).
     void setSelection(Selection!long s) @safe pure nothrow @nogc
     {
-        sel = s;
+        if (s.active && s.lo >= 0 && s.lo < cast(long) vm.rows.length)
+        {
+            drag.regime = SelectionRegime.text;
+            drag.anchorLo = vm.rows[cast(size_t) s.lo].srcStart != size_t.max
+                ? cast(long) vm.rows[cast(size_t) s.lo].srcStart : 0;
+            const endRow = s.hi < cast(long) vm.rows.length ? s.hi : cast(long) vm.rows.length - 1;
+            drag.anchorHi = drag.anchorLo;
+            drag.headLo = drag.anchorLo;
+            drag.headHi = vm.rows[cast(size_t) endRow].srcEnd != size_t.max
+                ? cast(long) vm.rows[cast(size_t) endRow].srcEnd : drag.anchorLo;
+        }
+        else
+            drag.clear();
     }
 
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
@@ -462,19 +481,9 @@ struct PreviewTui
         vm.clampView();
     }
 
-    private void clampSel() @safe pure nothrow @nogc
-    {
-        if (!sel.active)
-            return;
-        const last = lineCount - 1;
-        long clamp(long v) => v > last ? last : (v < 0 ? 0 : v);
-        sel = Selection!long(true, clamp(sel.anchor), clamp(sel.focus));
-    }
-
-    // Copy the selected visual lines' **original source** (SEL parity): the min
-    // src offset .. max src end over the selected lines' content runs (decoration
-    // runs have no src offset and are excluded), written to the system clipboard
-    // via OSC 52. Clears the selection.
+    // Copy the current selection: a text range → `vm.source[min..max]`
+    // or a table region → TSV / markdown cells (SEL/TBL), written to the
+    // system clipboard via OSC 52. Clears the selection.
     private void copySelection() @system
     {
         if (vm.hasInspectExtent)
@@ -484,36 +493,41 @@ struct PreviewTui
             if (s < e && e <= vm.source.length)
                 writeClipboard(vm.source[s .. e]);
             vm.clearInspectExtent();
-            sel = Selection!long.cleared;
+            drag.clear();
+            showToast("Copied to clipboard");
             return;
         }
-        if (!sel.active || lineCount == 0)
-            return;
-        const lo = sel.lo, hi = sel.hi;
-        size_t a = size_t.max, b;
-        bool any;
-        foreach (i; lo .. hi + 1)
+
+        if (drag.regime == SelectionRegime.text && drag.selMax > drag.selMin
+            && drag.selMax <= cast(long) vm.source.length && drag.selMin >= 0)
         {
-            if (i < 0 || i >= lineCount)
-                continue;
-            // The aggregated identity channel: one source range per row.
-            const r = mdRows[cast(size_t) i];
-            if (r.srcStart == size_t.max)
-                continue; // decoration-only row (band, border, rule)
-            any = true;
-            if (r.srcStart < a)
-                a = r.srcStart;
-            if (r.srcEnd > b)
-                b = r.srcEnd;
+            auto txt = vm.source[cast(size_t) drag.selMin .. cast(size_t) drag.selMax];
+            writeClipboard(txt);
+            drag.clear();
+            showToast("Copied to clipboard");
         }
-        if (!any || a >= b || b > source.length)
+        else if (drag.regime == SelectionRegime.table && drag.selTable >= 0)
         {
-            sel = Selection!long.cleared;
-            return;
+            const dims = vm.tableDims(drag.selTable);
+            const reg = tableSelection(drag.tblAnchor, drag.tblHead, drag.tblShift, drag.tblAlt,
+                dims.rows, dims.cols);
+            const(char)[] cellText(size_t r, size_t c)
+            {
+                foreach (ref const mc; vm.cellList)
+                    if (mc.table == drag.selTable && mc.row == r && mc.col == c
+                        && mc.span.end <= vm.source.length)
+                        return vm.source[mc.span.start .. mc.span.end];
+                return "";
+            }
+            const txt = serializeGridCopy(dsvCopy, reg, dims.rows, dims.cols,
+                &cellText, tableFmt);
+            if (txt.length)
+            {
+                writeClipboard(txt);
+                drag.clear();
+                showToast("Copied to clipboard");
+            }
         }
-        writeClipboard(source[a .. b]);
-        sel = Selection!long.cleared;
-        showToast("Copied to clipboard");
     }
 
     // Queue `text` for the system clipboard. The PAYLOAD, not a sequence:
@@ -591,7 +605,7 @@ struct PreviewTui
         dsvCopy = DsvCopy.init;
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
-        sel = Selection!long.cleared;
+        drag.clear();
         searching = false;
         qlen = 0;
         vm.inlineFoldMarker = true;
@@ -826,16 +840,20 @@ struct PreviewTui
             }
         }
 
-        if (!sel.active)
-            return;
-        const selFill = Color.fromRgb(selBg);
-        foreach (i; sel.lo .. sel.hi + 1)
+        const selRects = vm.selectionRectsFor(drag);
+        if (selRects.length)
         {
-            const gy = 1 + i - top;
-            if (gy < 1 || gy > rows)
-                continue;
-            foreach (x; 0 .. (contentWidth > 0 ? contentWidth : 0))
-                g[cast(ushort)(originX + x), cast(ushort) gy].style.bg = selFill;
+            const selFill = Color.fromRgb(selBg);
+            foreach (ref const r; selRects)
+            {
+                const gy = 1 + r.y - top;
+                if (gy < 1 || gy > rows)
+                    continue;
+                foreach (x; r.x - hx .. r.x - hx + r.width)
+                    if (x >= 0 && x < contentWidth)
+                        g[cast(ushort)(originX + x), cast(ushort) gy]
+                            .style.bg = selFill;
+            }
         }
     }
 
@@ -1171,11 +1189,19 @@ struct PreviewTui
             clampTop();
             return;
         }
-        const rowIdx = sel.active ? sel.lo : top;
-        if (rowIdx < 0 || rowIdx >= cast(long) mdRows.length
-            || mdRows[cast(size_t) rowIdx].srcStart == size_t.max)
+        long off = -1;
+        if (drag.regime == SelectionRegime.text && drag.selMax > drag.selMin)
+            off = drag.selMin;
+        else
+        {
+            const t0 = top;
+            if (mdRows.length && t0 >= 0 && t0 < cast(long) mdRows.length
+                && mdRows[cast(size_t) t0].srcStart != size_t.max)
+                off = cast(long) mdRows[cast(size_t) t0].srcStart;
+        }
+        if (off < 0)
             return;
-        vm.foldAt(cast(long) mdRows[cast(size_t) rowIdx].srcStart, op);
+        vm.foldAt(off, op);
         clampTop();
     }
 
@@ -1646,6 +1672,7 @@ struct PreviewTui
         if (e.button == PointerButton.left
             && e.action == PointerAction.release)
         {
+            drag.selecting = false;
             if (!externalScroll)
             {
                 sb = sb.released();
@@ -1719,11 +1746,12 @@ struct PreviewTui
             // Content hits live in the (possibly) horizontally scrolled
             // space — the paint shifts left by the bar's offset (IXB2).
             const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+            const pinned = hx > 0 ? vm.pinnedCols : 0;
+            const p = Point(e.pos.x < pinned ? e.pos.x : e.pos.x + hx, cast(int) line);
             if (showPreview && e.action == PointerAction.press
                 && tw.code.length)
             {
-                const off = sourceOffsetAt(mdTree, mdFrames,
-                    Point(e.pos.x + hx, cast(int) line));
+                const off = sourceOffsetAt(mdTree, mdFrames, p);
                 if (off >= 0)
                     foreach (i, ni; hoverNodes)
                         if (off >= cast(long) tw.nodes[ni].start
@@ -1743,7 +1771,6 @@ struct PreviewTui
             }
             if (e.action == PointerAction.press)
             {
-                const p = Point(e.pos.x + hx, cast(int) line);
                 foreach_reverse (ref const t; mdTargets)
                 {
                     if (t.hitId >= foldHitBase && t.rect.contains(p))
@@ -1794,10 +1821,19 @@ struct PreviewTui
                     return true;
             }
             if (e.action == PointerAction.press)
+            {
                 vm.clearInspectExtent();
-            sel = e.action == PointerAction.press
-                ? Selection!long.started(line) : sel.extended(line);
-            clampSel();
+                const hit = vm.hitAt(p);
+                drag.begin(hit);
+            }
+            else if (e.action == PointerAction.drag)
+            {
+                if (drag.selecting)
+                {
+                    const hit = vm.hitAt(p);
+                    drag.extend(hit, e.mods.shift, e.mods.alt);
+                }
+            }
         }
         return true;
     }
@@ -1984,13 +2020,13 @@ unittest
         action: PointerAction.press, pos: Point(59, 3)))));
     assert(t.sb.dragging);
     const grabbed = t.top;
-    assert(!t.sel.active, "a scrollbar press never starts a selection");
+    assert(!t.drag.active, "a scrollbar press never starts a selection");
 
     // ...and the drag keeps scrolling even off the column — no selection.
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(10, 4)))));
     assert(t.top > grabbed, "the drag kept scrolling off the column");
-    assert(!t.sel.active, "a scrollbar drag never selects text");
+    assert(!t.drag.active, "a scrollbar drag never selects text");
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(10, 4)))));
     assert(!t.sb.dragging);
@@ -2000,10 +2036,10 @@ unittest
     const topBefore = t.top;
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.press, pos: Point(5, 2)))));
-    assert(t.sel.active);
+    assert(t.drag.active);
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(59, 3)))));
-    assert(t.sel.active && t.sel.lo != t.sel.hi, "the selection extended");
+    assert(t.drag.active && t.drag.selMin != t.drag.selMax, "the selection extended");
     assert(t.top == topBefore, "a selection drag never scrolls the thumb");
 }
 
@@ -2315,7 +2351,7 @@ unittest
         if (r.srcStart >= 17 && r.srcStart != size_t.max && r.srcEnd <= 23)
             bodyRow = i;
     assert(bodyRow > 0);
-    t.sel = Selection!long.started(bodyRow);
+    t.setSelection(Selection!long.started(bodyRow));
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
     assert(t.mdRows.length < openRows, "the fold collapsed the fence");
@@ -2326,7 +2362,7 @@ unittest
         if (r.srcStart == 12)
             ph = i;
     assert(ph >= 0, "placeholder row with the fold's source identity");
-    t.sel = Selection!long.started(ph);
+    t.setSelection(Selection!long.started(ph));
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'a'))); // za, like zz
     assert(t.mdRows.length == openRows, "the fold reopened");

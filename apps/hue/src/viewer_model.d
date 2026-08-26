@@ -33,11 +33,13 @@ import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
-import sparkles.ui.geometry : Constraints, Rect;
+import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, ElementStore,
-    HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects;
+    HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects, sourceOffsetAt;
+import sparkles.ui.selection : SelectionDrag, SelectionHit, SelectionRegime;
+import sparkles.ui.components.table : GridHit;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
@@ -1267,6 +1269,88 @@ struct ViewerModel
                     d.cols = mc.col + 1;
             }
         return d;
+    }
+
+    /// Maps a point in document cell coordinates `Point(cx, cy)` to a $(REF SelectionHit, sparkles,ui,selection).
+    SelectionHit hitAt(Point p) const @safe pure nothrow @nogc
+    {
+        SelectionHit h;
+        const cy = p.y;
+        if (cy < 0 || cy >= cast(long) rows.length)
+            return h;
+        const off = sourceOffsetAt(tree, frames, p);
+        // Inside a keyed table cell: a grid hit (2-D drag.regime anchor),
+        // with the char offset relative to the cell's source span.
+        foreach (ref const kr; cells)
+            if (kr.rect.contains(p))
+            {
+                const cellStart = kr.key - tableKeyBase;
+                foreach (mi, ref const mc; cellList)
+                    if (mc.span.start == cellStart)
+                    {
+                        h.table = true;
+                        h.tableIdx = mc.table;
+                        h.cell = GridHit(mc.row, mc.col,
+                            off >= cast(long) cellStart
+                                ? cast(size_t)(off - cellStart) : 0);
+                        h.lo = h.hi = off >= 0 ? off : cast(long) cellStart;
+                        h.ok = true;
+                        return h;
+                    }
+                break;
+            }
+        if (off >= 0) // char-precise content
+        {
+            h.ok = true;
+            h.lo = h.hi = off;
+            return h;
+        }
+        // Decoration under the cursor (band/border/pre-styled ANSI):
+        // fall back to the row's whole source span (block-granular).
+        if (rows[cast(size_t) cy].srcStart != size_t.max)
+        {
+            h.ok = true;
+            h.lo = cast(long) rows[cast(size_t) cy].srcStart;
+            h.hi = cast(long) rows[cast(size_t) cy].srcEnd;
+        }
+        return h;
+    }
+
+    /// Returns 1-row visual rects for a text or 2D table grid selection drag.
+    Rect[] selectionRectsFor(in SelectionDrag drag) const @safe
+    {
+        import table_select : TableRegion, tableSelection;
+
+        if (drag.regime == SelectionRegime.text && drag.selMax > drag.selMin)
+        {
+            return selectionRects(tree, frames,
+                cast(size_t) drag.selMin, cast(size_t) drag.selMax);
+        }
+        else if (drag.regime == SelectionRegime.table && drag.selTable >= 0)
+        {
+            Rect[] result;
+            const dims = tableDims(drag.selTable);
+            const reg = tableSelection(drag.tblAnchor, drag.tblHead,
+                drag.tblShift, drag.tblAlt, dims.rows, dims.cols);
+            foreach (ref const mc; cellList)
+            {
+                if (mc.table != drag.selTable)
+                    continue;
+                if (reg.subCell)
+                {
+                    if (mc.row == reg.row && mc.col == reg.col)
+                        result ~= selectionRects(tree, frames,
+                            mc.span.start + reg.charLo, mc.span.start + reg.charHi);
+                }
+                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
+                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
+                {
+                    result ~= selectionRects(tree, frames, mc.span.start, mc.span.end);
+                }
+            }
+            return result;
+        }
+        return null;
     }
 
     // ── search ──────────────────────────────────────────────────────────────

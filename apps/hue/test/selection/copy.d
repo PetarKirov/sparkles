@@ -53,9 +53,11 @@ struct TuiModeAdapter
 
     void select(long minOffset, long maxOffset)
     {
-        // Left-press at row 1 (content row) selects the line
-        t.handle(Event(PointerEvent(action: PointerAction.press,
-            button: PointerButton.left, pos: Point(1, 1))));
+        t.drag.regime = Regime.text;
+        t.drag.anchorLo = minOffset;
+        t.drag.anchorHi = minOffset;
+        t.drag.headLo = maxOffset;
+        t.drag.headHi = maxOffset;
     }
 
     bool sendKey(in KeyEvent k)
@@ -216,4 +218,28 @@ unittest
     // Advance toast past hold duration
     adapter.t.tickToast(2000.msecs);
     assert(!adapter.t.toastVisible, "toast should expire after its duration");
+}
+
+@("selection.copy.tuiCharPreciseMouseDrag")
+@system
+unittest
+{
+    TuiModeAdapter adapter;
+    adapter.open("Hello, world! This is a test.");
+    // Mouse press at col 7 (start of "world"), drag to col 12 (end of "world") on row 1 (the text row)
+    adapter.t.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(7, 1))));
+    adapter.t.handle(Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(12, 1))));
+    adapter.t.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(12, 1))));
+
+    assert(adapter.t.drag.active);
+    assert(adapter.t.drag.regime == Regime.text);
+    assert(adapter.t.drag.selMin == 7);
+    assert(adapter.t.drag.selMax == 12);
+
+    adapter.sendKey(KeyEvent(Key.char_, 'c', Mods(ctrl: true)));
+    assert(adapter.clipReady);
+    assert(adapter.clipboard == "world");
 }
