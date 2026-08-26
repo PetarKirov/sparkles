@@ -130,3 +130,12 @@ apps/hue/twoslash
 # gitlab.freedesktop.org are cited elsewhere and both pass. Cited for the XDND
 # spec from os-apis/x11/f16-clipboard-dnd.md.
 ^https?://(www\.)?freedesktop\.org/wiki/
+
+# langsec.org serves a certificate lychee does not trust ("SSL certificate not
+# trusted"), which is a host misconfiguration rather than link rot: the pages
+# resolve and are the canonical home of the LangSec programme, including the
+# Sassaman/Patterson/Bratus/Locasto papers cited from
+# research/autological-artifacts/parser-differentials.md. Wayback snapshots
+# exist but the paper PDFs time out repeatedly on retrieval, so excluding the
+# host keeps the citations pointing at the primary source.
+^https?://(www\.)?langsec\.org/
