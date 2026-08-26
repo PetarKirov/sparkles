@@ -40,6 +40,23 @@ enum Backend : ubyte
 bool isInteractive(Backend b) pure nothrow @nogc
     => b == Backend.gui || b == Backend.tui;
 
+import sparkles.input.tier : InteractionTier;
+
+/// The highest $(REF InteractionTier, sparkles,input,tier) `b` serves.
+InteractionTier interactionTier(Backend b) pure nothrow @nogc
+{
+    final switch (b)
+    {
+        case Backend.gui:
+            return InteractionTier.precise;
+        case Backend.tui:
+            return InteractionTier.interactive;
+        case Backend.html:
+        case Backend.ansi:
+            return InteractionTier.passive;
+    }
+}
+
 /**
 Everything the decision reads, gathered by the caller.
 
@@ -212,6 +229,10 @@ unittest
     // two it must hand back for the application to render once.
     assert(Backend.gui.isInteractive && Backend.tui.isInteractive);
     assert(!Backend.html.isInteractive && !Backend.ansi.isInteractive);
+    assert(Backend.gui.interactionTier == InteractionTier.precise);
+    assert(Backend.tui.interactionTier == InteractionTier.interactive);
+    assert(Backend.html.interactionTier == InteractionTier.passive);
+    assert(Backend.ansi.interactionTier == InteractionTier.passive);
 }
 
 @("ui_app.backend.platformForcedBackend")
