@@ -186,16 +186,24 @@ struct GitHubForge
     */
     ForgeResult!string fetchFile(in ForgeFileRef fileRef, scope Transport http) @system
     {
+        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.styled_template : writeStyled;
+
         // 1. If authenticated, fetch via GitHub REST API with bearer token:
         if (token.length)
         {
-            string url = apiBase ~ "/repos/" ~ fileRef.repo.owner ~ "/" ~ fileRef.repo.name
-                ~ "/contents/" ~ fileRef.filePath ~ "?ref=" ~ fileRef.ref_;
+            SmallBuffer!char urlBuf;
+            writeStyled(urlBuf, i"$(apiBase)/repos/$(fileRef.repo.owner)/$(fileRef.repo.name)/contents/$(fileRef.filePath)?ref=$(fileRef.ref_)");
+            string url = urlBuf[].idup;
+
+            SmallBuffer!char authHeader;
+            writeStyled(authHeader, i"Authorization: Bearer $(token)");
+
             string[] headers = [
                 "Accept: application/vnd.github.raw+json",
                 "X-GitHub-Api-Version: 2022-11-28",
                 "User-Agent: hue",
-                "Authorization: Bearer " ~ token,
+                authHeader[].idup,
             ];
             auto res = http(HttpRequest(url, headers));
             if (res.hasError)
@@ -206,8 +214,9 @@ struct GitHubForge
         }
 
         // 2. If unauthenticated (or if token failed on public repo), fall back to raw CDN:
-        string rawUrl = "https://raw.githubusercontent.com/" ~ fileRef.repo.owner ~ "/"
-            ~ fileRef.repo.name ~ "/" ~ fileRef.ref_ ~ "/" ~ fileRef.filePath;
+        SmallBuffer!char rawUrlBuf;
+        writeStyled(rawUrlBuf, i"https://raw.githubusercontent.com/$(fileRef.repo.owner)/$(fileRef.repo.name)/$(fileRef.ref_)/$(fileRef.filePath)");
+        string rawUrl = rawUrlBuf[].idup;
         string[] rawHeaders = [
             "User-Agent: hue",
         ];
