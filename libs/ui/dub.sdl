@@ -38,6 +38,7 @@ dependency "sparkles:fuzzy" path="../.."
 dependency "expected" version="~>0.4.1"
 
 dflags "-preview=in" "-preview=dip1000"
+targetType "library"
 
 configuration "library" {
     // A real library, not a sourceLibrary: the toolkit carries the whole
