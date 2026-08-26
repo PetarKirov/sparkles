@@ -1373,8 +1373,29 @@ unittest
 unittest
 {
     import core.stdc.errno : ECHILD;
-    import core.sys.posix.signal : siginfo_t;
     import core.sys.posix.sys.wait : idtype_t, WEXITED;
+
+    version (OSX)
+    {
+        struct SigInfo
+        {
+            int si_signo;
+            int si_errno;
+            int si_code;
+            int si_pid;
+            uint si_uid;
+            int si_status;
+            void* si_addr;
+            size_t si_value;
+            long si_band;
+            ulong[7] __pad;
+        }
+    }
+    else
+    {
+        import core.sys.posix.signal : siginfo_t;
+        alias SigInfo = siginfo_t;
+    }
 
     KqueueBackend b;
     if (!openOrSkip(b))
@@ -1385,10 +1406,10 @@ unittest
     // Above every pid this OS hands out, so it names nothing and never will.
     enum uint ghost = 999_999;
 
-    siginfo_t si;
+    SigInfo si;
     OpSlot slot;
     assert(b.trySubmit(OpWaitid(cast(int) idtype_t.P_PID, ghost,
-        () @trusted { return &si; }(), WEXITED),
+        () @trusted { return cast(void*) &si; }(), WEXITED),
         OpToken.pack(5, 1, OpClass.user), slot));
 
     int res = 1;

@@ -596,6 +596,8 @@ private:
         {
             if (n.state != CancelContext.State.on)
                 continue;
+            if (n.deadlineAt == MonoTime.max)
+                continue;
             const until = n.deadlineAt <= now ? Duration.zero : n.deadlineAt - now;
             if (until < best)
                 best = until;
