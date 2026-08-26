@@ -353,6 +353,109 @@ ForgeResult!PrRef parsePrTarget(const(char)[] spec, const RepoId fallback)
     return typeof(return)(PrRef(fallback, toNumber(text)));
 }
 
+/// What a forge file URL names: a repository, a git ref (branch/tag/commit SHA), and a file path inside the repo.
+struct ForgeFileRef
+{
+    RepoId repo;
+    string ref_;      /// Branch name, tag, or commit SHA
+    string filePath;  /// Path within the repository
+}
+
+/**
+Parses a forge file URL (web blob view or raw URL) into a `ForgeFileRef`.
+
+Handles GitHub and GitLab URL formats:
+- GitHub blob: `https://github.com/owner/repo/blob/ref/path/to/file.ext`
+- GitHub raw: `https://raw.githubusercontent.com/owner/repo/ref/path/to/file.ext`
+- GitLab blob: `https://gitlab.com/owner/repo/-/blob/ref/path/to/file.ext`
+- GitLab raw: `https://gitlab.com/owner/repo/-/raw/ref/path/to/file.ext`
+*/
+ForgeResult!ForgeFileRef parseForgeFileUrl(const(char)[] spec) @safe pure
+{
+    import std.string : indexOf;
+
+    static ForgeResult!ForgeFileRef fail(string detail) @safe pure
+        => err!ForgeFileRef(ForgeError(ForgeErrorKind.unknownRemote, detail));
+
+    auto text = spec;
+    if (text.length == 0)
+        return fail("empty URL");
+
+    const schemeIdx = text.indexOf("://");
+    if (schemeIdx < 0)
+        return fail("not a URL: " ~ spec.idup);
+
+    auto rest = text[schemeIdx + 3 .. $];
+    const hostEnd = rest.indexOf('/');
+    if (hostEnd <= 0)
+        return fail(spec.idup);
+
+    string host = rest[0 .. hostEnd].idup;
+    rest = rest[hostEnd + 1 .. $];
+
+    const(char)[][] parts;
+    size_t at;
+    foreach (i, c; rest)
+    {
+        if (c == '/')
+        {
+            parts ~= rest[at .. i];
+            at = i + 1;
+        }
+    }
+    if (at < rest.length)
+        parts ~= rest[at .. $];
+
+    // Case 1: raw.githubusercontent.com/owner/repo/ref/path...
+    if (host == "raw.githubusercontent.com")
+    {
+        if (parts.length < 4)
+            return fail(spec.idup);
+        const owner = parts[0].idup;
+        const repo = parts[1].idup;
+        const ref_ = parts[2].idup;
+        string filePath;
+        foreach (i, p; parts[3 .. $])
+        {
+            if (i > 0) filePath ~= "/";
+            filePath ~= p;
+        }
+        return typeof(return)(ForgeFileRef(RepoId("github.com", owner, repo), ref_, filePath));
+    }
+
+    // Case 2: github.com/owner/repo/blob/ref/path... or raw/ref/path...
+    if (parts.length >= 5 && (parts[2] == "blob" || parts[2] == "raw"))
+    {
+        const owner = parts[0].idup;
+        const repo = parts[1].idup;
+        const ref_ = parts[3].idup;
+        string filePath;
+        foreach (i, p; parts[4 .. $])
+        {
+            if (i > 0) filePath ~= "/";
+            filePath ~= p;
+        }
+        return typeof(return)(ForgeFileRef(RepoId(host, owner, repo), ref_, filePath));
+    }
+
+    // Case 3: gitlab.com/owner/repo/-/blob/ref/path... or -/raw/ref/path...
+    if (parts.length >= 6 && parts[2] == "-" && (parts[3] == "blob" || parts[3] == "raw"))
+    {
+        const owner = parts[0].idup;
+        const repo = parts[1].idup;
+        const ref_ = parts[4].idup;
+        string filePath;
+        foreach (i, p; parts[5 .. $])
+        {
+            if (i > 0) filePath ~= "/";
+            filePath ~= p;
+        }
+        return typeof(return)(ForgeFileRef(RepoId(host, owner, repo), ref_, filePath));
+    }
+
+    return fail(spec.idup);
+}
+
 // ── Token discovery ─────────────────────────────────────────────────────────
 
 /**
@@ -654,4 +757,39 @@ string assemblePatch(in PrFile[] files) @safe pure
     // Every row is a removal — the session badges the file `D` from this.
     foreach (i; 0 .. parsed.value.rows.length)
         assert(parsed.value.rows[i].kind == RowKind.removed);
+}
+
+@("forge.parseForgeFileUrl.githubAndGitlab")
+@safe unittest
+{
+    // GitHub blob
+    auto gh = parseForgeFileUrl("https://github.com/PetarKirov/sparkles/blob/7af0824d2808a298fb6df7abba66fd83bde3c8f8/.prettierrc.cjs");
+    assert(!gh.hasError);
+    assert(gh.value.repo.host == "github.com");
+    assert(gh.value.repo.owner == "PetarKirov");
+    assert(gh.value.repo.name == "sparkles");
+    assert(gh.value.ref_ == "7af0824d2808a298fb6df7abba66fd83bde3c8f8");
+    assert(gh.value.filePath == ".prettierrc.cjs");
+
+    // GitHub raw
+    auto ghRaw = parseForgeFileUrl("https://raw.githubusercontent.com/PetarKirov/sparkles/master/libs/base/src/app.d");
+    assert(!ghRaw.hasError);
+    assert(ghRaw.value.repo.host == "github.com");
+    assert(ghRaw.value.repo.owner == "PetarKirov");
+    assert(ghRaw.value.repo.name == "sparkles");
+    assert(ghRaw.value.ref_ == "master");
+    assert(ghRaw.value.filePath == "libs/base/src/app.d");
+
+    // GitLab blob
+    auto gl = parseForgeFileUrl("https://gitlab.com/gitlab-org/gitlab/-/blob/4376c202d7af89fb9718050fab628a4cbb55c1b1/.gitlab-ci.yml");
+    assert(!gl.hasError);
+    assert(gl.value.repo.host == "gitlab.com");
+    assert(gl.value.repo.owner == "gitlab-org");
+    assert(gl.value.repo.name == "gitlab");
+    assert(gl.value.ref_ == "4376c202d7af89fb9718050fab628a4cbb55c1b1");
+    assert(gl.value.filePath == ".gitlab-ci.yml");
+
+    // Non-forge URL
+    auto plain = parseForgeFileUrl("https://example.com/file.d");
+    assert(plain.hasError);
 }
