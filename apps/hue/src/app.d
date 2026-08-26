@@ -63,6 +63,7 @@ import sparkles.ui_app.backend : Backend, BackendPolicy,
 import sparkles.ui_app.display : displayAvailable;
 
 import cli;
+import source_loc : SourceLoc;
 import settings : HueConfig;
 import settings_load : LoadedConfig;
 import settings_store : ConfigStore;
@@ -131,10 +132,19 @@ int executeView(in HueCli root, in View view)
     }
 
     bool forceTwoslash;
-    string target = view.paths.length ? view.paths[0] : "";
+    string rawTarget = view.paths.length ? view.paths[0] : "";
+    if (rawTarget.length == 0 && isTerminal(StdStream.stdin))
+        rawTarget = ".";
+
     string coverageArtifact;
-    if (!resolveOverlayTarget(root, forceTwoslash, target, coverageArtifact))
+    if (!resolveOverlayTarget(root, forceTwoslash, rawTarget, coverageArtifact))
         return 1;
+
+    import source_loc : parseSourceLoc;
+    const loc = parseSourceLoc(rawTarget);
+    string target = loc.path.length ? loc.path : rawTarget;
+    const size_t initialLine = loc.line;
+    const size_t initialCol = loc.col;
 
     ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
@@ -197,51 +207,49 @@ int executeView(in HueCli root, in View view)
                     tableCopyFlag: opt.tableCopy,
                     configStore: &gStore);
             }
-        const openSet = backend == Backend.gui
-            || (forceTwoslash && backend == Backend.tui);
-        if (!openSet)
-            return runDirectoryTarget(target, forceTwoslash, opt.theme, view.sink.html, "");
-        docSet = collectSources(target, twoslash: forceTwoslash);
-        if (docSet.empty)
+        if (backend == Backend.gui)
         {
-            stderr.writeln("hue: no renderable files in '", target, "'");
-            return 1;
+            dirTarget = target;
         }
-        haveSet = true;
-        dirTarget = target;
-        target = docSet.current.path;
+        else
+        {
+            return runDirectoryTarget(target, forceTwoslash, opt.theme, view.sink.html, "");
+        }
     }
 
     Document doc;
-    try
+    if (dirTarget.length == 0)
     {
-        if (target == "-" || (target.length == 0 && !isTerminal(StdStream.stdin)))
+        try
         {
-            const stdinText = readStdinText();
-            import document : looksLikePatch;
-
-            if (stdinText.length && (view.patch || looksLikePatch(stdinText)))
-                doc = pipeline.fromPatchSource("", "stdin", stdinText);
-            else if (stdinText.length)
+            if (target == "-" || (target.length == 0 && !isTerminal(StdStream.stdin)))
             {
-                const string lang = view.language.length
-                    ? canonicalLanguage(view.language)
-                    : (view.markdown ? "markdown" : "");
-                doc = pipeline.fromSource("", "stdin", stdinText, lang);
+                const stdinText = readStdinText();
+                import document : looksLikePatch;
+
+                if (stdinText.length && (view.patch || looksLikePatch(stdinText)))
+                    doc = pipeline.fromPatchSource("", "stdin", stdinText);
+                else if (stdinText.length)
+                {
+                    const string lang = view.language.length
+                        ? canonicalLanguage(view.language)
+                        : (view.markdown ? "markdown" : "");
+                    doc = pipeline.fromSource("", "stdin", stdinText, lang);
+                }
+                else
+                    doc = pipeline.fromSource("", "app.d", import("app.d"), "d");
             }
             else
-                doc = pipeline.fromSource("", "app.d", import("app.d"), "d");
+                doc = (target.length && target != "-")
+                    ? pipeline.load(target, forceTwoslash, view.language)
+                    : pipeline.fromSource("", "app.d", import("app.d"),
+                        view.language.length ? canonicalLanguage(view.language) : "d");
         }
-        else
-            doc = (target.length && target != "-")
-                ? pipeline.load(target, forceTwoslash, view.language)
-                : pipeline.fromSource("", "app.d", import("app.d"),
-                    view.language.length ? canonicalLanguage(view.language) : "d");
-    }
-    catch (Exception e)
-    {
-        stderr.writeln("hue: ", e.msg);
-        return 1;
+        catch (Exception e)
+        {
+            stderr.writeln("hue: ", e.msg);
+            return 1;
+        }
     }
 
     // `FMV8`: the one-shot sinks render the FORMATTED buffer — synchronous,
@@ -259,7 +267,7 @@ int executeView(in HueCli root, in View view)
     }
 
     return renderDocument(backend, opt, doc, labels, theme, registry, cache,
-        haveSet ? &docSet : null, &pipeline, dirTarget);
+        haveSet ? &docSet : null, &pipeline, dirTarget, loc);
 }
 
 int executeDiff(in HueCli root, in Diff diff)
@@ -975,21 +983,22 @@ int executeConfig(in HueCli root, in ConfigCmd cmd)
 private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Document doc,
     in LabelSet labels, in ResolvedTheme theme, ref GrammarRegistry registry,
     ref TsConfigCache cache, scope SourceSet* docSet,
-    scope DocumentPipeline* pipeline, string dirTarget)
+    scope DocumentPipeline* pipeline, string dirTarget,
+    const SourceLoc loc = SourceLoc.init)
 {
     final switch (backend)
     {
         case Backend.gui:
             return runGuiSink(opt, doc, labels, theme, cache,
-                docSet, pipeline, dirTarget);
+                docSet, pipeline, dirTarget, loc);
         case Backend.html:
             return runHtmlSink(doc, theme, registry, cache,
-                parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers);
+                parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers, loc);
         case Backend.tui:
             return runTuiSink(opt, doc, labels, theme, cache,
-                docSet, pipeline);
+                docSet, pipeline, loc);
         case Backend.ansi:
-            return runAnsiSink(opt, doc, theme, cache);
+            return runAnsiSink(opt, doc, theme, cache, loc);
     }
 }
 
@@ -1217,7 +1226,8 @@ int main(string[] args)
 
 /// Static ANSI to stdout (piped / redirected / non-tty).
 private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
-    in ResolvedTheme theme, ref TsConfigCache cache) @system
+    in ResolvedTheme theme, ref TsConfigCache cache,
+    const SourceLoc loc = SourceLoc.init) @system
 {
     GutterSelection gutterSel;
     if (!gutterSel.parse(opt.gutter))
@@ -1310,6 +1320,17 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 CodeViewOptions copt;
                 if (doc.hasCoverage)
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
+                if (loc.line > 0)
+                {
+                    import gui_text : buildLineStarts;
+                    import sparkles.source_view.code : TintedRange;
+                    import sparkles.ui.style : Slot;
+
+                    auto starts = buildLineStarts(doc.source);
+                    size_t sByte, eByte;
+                    if (loc.byteRange(doc.source, starts, sByte, eByte))
+                        copt.tintedRanges ~= TintedRange(sByte, eByte, Slot.highlight);
+                }
                 // A writer emitting to a stream has no pane to reflow to.
                 copt.wrap = TextWrap.none;
 
@@ -1432,7 +1453,7 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
 private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache,
     DiffLayout diffLayout = DiffLayout.unified, string gutter = "all",
-    bool lineNumbers = true) @system
+    bool lineNumbers = true, const SourceLoc loc = SourceLoc.init) @system
 {
     GutterSelection gutterSel;
     if (!gutterSel.parse(gutter))
@@ -1472,6 +1493,17 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
                 CodeViewOptions copt;
                 if (doc.hasCoverage)
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
+                if (loc.line > 0)
+                {
+                    import gui_text : buildLineStarts;
+                    import sparkles.source_view.code : TintedRange;
+                    import sparkles.ui.style : Slot;
+
+                    auto starts = buildLineStarts(doc.source);
+                    size_t sByte, eByte;
+                    if (loc.byteRange(doc.source, starts, sByte, eByte))
+                        copt.tintedRanges ~= TintedRange(sByte, eByte, Slot.highlight);
+                }
                 copt.wrap = TextWrap.none;   // a document, not a pane
 
                 SmallBuffer!char htmlOut;
@@ -1543,7 +1575,8 @@ private string stylesheetLink(string href) @safe pure
 /// elsewhere the theme-selection previewer (no raw-termios TUI) fills in.
 private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet labels,
     in ResolvedTheme theme, ref TsConfigCache cache,
-    scope SourceSet* docSet, scope DocumentPipeline* pipeline = null) @system
+    scope SourceSet* docSet, scope DocumentPipeline* pipeline = null,
+    const SourceLoc loc = SourceLoc.init) @system
 {
     import sparkles.docs.source_set : SourceSet;
 
@@ -1554,7 +1587,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
 
     version (Android)
     {
-        return runAnsiSink(opt, doc, theme, cache);
+        return runAnsiSink(opt, doc, theme, cache, loc);
     }
     else version (Posix)
     {
@@ -1591,11 +1624,13 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             tableCopyFlag: opt.tableCopy,
             scrollAnchor: parseScrollAnchor(opt.scrollAnchor),
             gutter: opt.gutter, lineNumbers: opt.lineNumbers,
-            configStore: &gStore);
+            configStore: &gStore,
+            initialLine: loc.line, initialCol: loc.col,
+            endLine: loc.endLine, endCol: loc.endCol);
     }
     else
     {
-        return runAnsiSink(opt, doc, theme, cache);
+        return runAnsiSink(opt, doc, theme, cache, loc);
     }
 }
 
@@ -1604,7 +1639,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
 private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet labels,
     in ResolvedTheme theme, ref TsConfigCache cache,
     scope SourceSet* docSet, scope DocumentPipeline* pipeline,
-    string treeRoot = null) @system
+    string treeRoot = null, const SourceLoc loc = SourceLoc.init) @system
 {
     import sparkles.docs.source_set : SourceSet;
 
@@ -1708,6 +1743,10 @@ private int runGuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             initialHasCoverage: doc.hasCoverage,
             capture: capture,
             configStore: &gStore,
+            initialLine: loc.line,
+            initialCol: loc.col,
+            initialEndLine: loc.endLine,
+            initialEndCol: loc.endCol,
         ));
     }
     else

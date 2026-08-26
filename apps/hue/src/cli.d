@@ -877,6 +877,7 @@ string walkStartFor(in CommandNode!HueCli root)
 {
     import std.file : getcwd;
     import std.path : dirName;
+    import source_loc : parseSourceLoc;
 
     string start;
     try
@@ -887,7 +888,8 @@ string walkStartFor(in CommandNode!HueCli root)
         (in CommandNode!View v) {
             if (v.value.paths.length && v.value.paths[0] != "-")
             {
-                const t = v.value.paths[0];
+                const loc = parseSourceLoc(v.value.paths[0]);
+                const t = loc.path.length ? loc.path : v.value.paths[0];
                 start = isDirectoryPath(t) ? t : t.dirName;
             }
         },
@@ -1086,4 +1088,53 @@ GuiOptions guiOptionsOf(const HueConfig eff) @safe
     assert(opt.gui.fontSize == 13);
     assert(opt.gui.theme == "builtin-dark");
     assert(opt.gui.windowWidth == 120);
+}
+
+@("cli.defaultViewInvocation")
+@system unittest
+{
+    // 1. `hue` -> selects View with empty paths
+    const bare = parseCli!HueCli(["hue"]);
+    assert(bare, bare.error.message);
+    assert(bare.value.commandSelected);
+    bare.value.command.match!(
+        (const CommandNode!View v) { assert(v.value.paths.length == 0); },
+        (_ ) { assert(false, "Expected View command"); }
+    );
+
+    // 2. `hue .` -> selects View with paths = ["."]
+    const dot = parseCli!HueCli(["hue", "."]);
+    assert(dot, dot.error.message);
+    assert(dot.value.commandSelected);
+    dot.value.command.match!(
+        (const CommandNode!View v) { assert(v.value.paths == ["."]); },
+        (_ ) { assert(false, "Expected View command"); }
+    );
+
+    // 3. `hue <path>` -> selects View with paths = ["<path>"]
+    const path = parseCli!HueCli(["hue", "some/path.d"]);
+    assert(path, path.error.message);
+    assert(path.value.commandSelected);
+    path.value.command.match!(
+        (const CommandNode!View v) { assert(v.value.paths == ["some/path.d"]); },
+        (_ ) { assert(false, "Expected View command"); }
+    );
+
+    // 4. `hue 'File "foo.py", line 7, in func'` -> selects View with the traceback string
+    const tb = parseCli!HueCli(["hue", `File "/home/some/path/exception_hooks.py", line 7, in do_stuff`]);
+    assert(tb, tb.error.message);
+    assert(tb.value.commandSelected);
+    tb.value.command.match!(
+        (const CommandNode!View v) { assert(v.value.paths == [`File "/home/some/path/exception_hooks.py", line 7, in do_stuff`]); },
+        (_ ) { assert(false, "Expected View command"); }
+    );
+
+    // 5. `hue diff a.d b.d` -> selects Diff
+    const diff = parseCli!HueCli(["hue", "diff", "a.d", "b.d"]);
+    assert(diff, diff.error.message);
+    assert(diff.value.commandSelected);
+    diff.value.command.match!(
+        (const CommandNode!Diff d) { assert(d.value.targets == ["a.d", "b.d"]); },
+        (_ ) { assert(false, "Expected Diff command"); }
+    );
 }
