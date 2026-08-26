@@ -97,3 +97,9 @@ indent_style = unset
 # reformatting the evidence.
 [docs/research/ui-backend-seam/{pango-harfbuzz,godot-textserver,mosaic}.md]
 indent_style = unset
+
+# These deep-dives quote real Linux kernel `arm64` assembly and gofmt'd Go
+# source, both of which upstream writes with literal tabs — keep the evidence
+# byte-exact rather than reformatting it.
+[docs/research/autological-artifacts/{boot-hybrids,content-addressed-chunking}.md]
+indent_style = unset
