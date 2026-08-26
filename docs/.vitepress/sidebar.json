@@ -5193,6 +5193,177 @@
             ]
           }
         ]
+      },
+      {
+        "text": "Autological Artifacts",
+        "link": "/research/autological-artifacts/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts",
+            "link": "/research/autological-artifacts/concepts"
+          },
+          {
+            "text": "Comparison & Synthesis",
+            "link": "/research/autological-artifacts/comparison"
+          },
+          {
+            "text": "Open Questions",
+            "link": "/research/autological-artifacts/open-questions"
+          },
+          {
+            "text": "Format Superposition",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Cosmopolitan / APE / redbean",
+                "link": "/research/autological-artifacts/cosmopolitan-ape/"
+              },
+              {
+                "text": "ZIP Suffix Parasitism",
+                "link": "/research/autological-artifacts/zip-parasitism"
+              },
+              {
+                "text": "Polyglot Craft",
+                "link": "/research/autological-artifacts/polyglot-craft"
+              },
+              {
+                "text": "Boot-Adjacent Hybrids",
+                "link": "/research/autological-artifacts/boot-hybrids"
+              },
+              {
+                "text": "Parser Differentials & LangSec",
+                "link": "/research/autological-artifacts/parser-differentials"
+              }
+            ]
+          },
+          {
+            "text": "Binary as Database",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SELF / selfdb / self-httpd",
+                "link": "/research/autological-artifacts/self-selfdb/"
+              },
+              {
+                "text": "sqlelf",
+                "link": "/research/autological-artifacts/sqlelf"
+              },
+              {
+                "text": "Format-to-Query Layers",
+                "link": "/research/autological-artifacts/binary-inspection-libraries"
+              },
+              {
+                "text": "Relational System Surfaces",
+                "link": "/research/autological-artifacts/relational-system-surfaces"
+              },
+              {
+                "text": "Code as a Database",
+                "link": "/research/autological-artifacts/code-as-database"
+              }
+            ]
+          },
+          {
+            "text": "Dispatch",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "binfmt_misc",
+                "link": "/research/autological-artifacts/binfmt-misc"
+              },
+              {
+                "text": "The Dynamic Loader",
+                "link": "/research/autological-artifacts/dynamic-linking"
+              },
+              {
+                "text": "Wasm Component Model",
+                "link": "/research/autological-artifacts/wasm-component-model"
+              }
+            ]
+          },
+          {
+            "text": "Index Anchoring",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Footer-Indexed Formats",
+                "link": "/research/autological-artifacts/footer-indexed-formats"
+              },
+              {
+                "text": "Range-Request Consumption",
+                "link": "/research/autological-artifacts/range-request-access"
+              },
+              {
+                "text": "Debug Info & OOB Indexes",
+                "link": "/research/autological-artifacts/debug-info-and-indexes"
+              }
+            ]
+          },
+          {
+            "text": "Closure & Deduplication",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "The Nix Store & Closures",
+                "link": "/research/autological-artifacts/nix-store-closures"
+              },
+              {
+                "text": "Content Addressing & Chunking",
+                "link": "/research/autological-artifacts/content-addressed-chunking"
+              }
+            ]
+          },
+          {
+            "text": "Self-Mutation & Substrate",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Image-Based Systems",
+                "link": "/research/autological-artifacts/image-based-systems"
+              },
+              {
+                "text": "SQLite as an App File Format",
+                "link": "/research/autological-artifacts/sqlite-application-file-format"
+              },
+              {
+                "text": "The SQLite VFS Seam",
+                "link": "/research/autological-artifacts/sqlite-vfs-substrate"
+              }
+            ]
+          },
+          {
+            "text": "Provenance & Trust",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Embedded Provenance",
+                "link": "/research/autological-artifacts/embedded-provenance"
+              },
+              {
+                "text": "Threat Model",
+                "link": "/research/autological-artifacts/threat-model"
+              }
+            ]
+          },
+          {
+            "text": "Prior Art",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Single-Level Store",
+                "link": "/research/autological-artifacts/single-level-store"
+              },
+              {
+                "text": "Plan 9 & 9P",
+                "link": "/research/autological-artifacts/plan9-namespaces"
+              }
+            ]
+          },
+          {
+            "text": "Method & Measurement",
+            "link": "/research/autological-artifacts/measurement"
+          }
+        ]
       }
     ]
   }

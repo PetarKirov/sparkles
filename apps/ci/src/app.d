@@ -33,7 +33,7 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, and the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`)
+    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
@@ -194,7 +194,7 @@ struct CliParams
     @(Option(`audit-scope`, description: "With --audit-fences: which side of the config srcExclude split to census - site (default), all, or excluded."))
     string auditScope = "site";
 
-    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, and the per-subject examples directories under docs/research/platform-ui-guidelines/."))
+    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, the per-subject examples directories under docs/research/platform-ui-guidelines/, and the per-subject examples directories under docs/research/autological-artifacts/."))
     bool exampleFiles;
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
@@ -890,6 +890,8 @@ private string[] standaloneExampleGlobs()
         "docs/research/platform-ui-guidelines/gnome/examples/*.d",
         "docs/research/platform-ui-guidelines/kde/examples/*.d",
         "docs/research/platform-ui-guidelines/terminal/examples/*.d",
+        "docs/research/autological-artifacts/cosmopolitan-ape/examples/*.d",
+        "docs/research/autological-artifacts/self-selfdb/examples/*.d",
     ];
 }
 
