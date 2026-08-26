@@ -161,8 +161,38 @@ export default withMermaid(
 
     themeConfig: {
       // Built-in local search (MiniSearch) — fully client-side, no third-party APIs.
+      //
+      // The whole index ships as ONE JavaScript chunk, and Cloudflare Pages
+      // refuses any file over 25 MiB. Indexing every page's full prose put that
+      // chunk at 26.0 MiB (measured 2026-08-26), which fails the deploy outright.
+      //
+      // `docs/research/` is ~30 MiB of the ~34 MiB of markdown in the tree and
+      // therefore ~88% of the index: excluding it entirely drops the chunk to
+      // 3.20 MiB, and indexing it by heading alone drops it to 7.95 MiB. The
+      // second is what we do, because it keeps every research page findable by
+      // its title and section headings — which is how the surveys are actually
+      // navigated — while leaving ~17 MiB of headroom for the corpus to grow.
+      //
+      // If full-text search over the research corpus becomes necessary, the
+      // answer is a hosted index (Algolia DocSearch), not a bigger chunk.
       search: {
         provider: 'local',
+        options: {
+          _render(src, env, md) {
+            // Preserve VitePress's own opt-out.
+            if (env.frontmatter?.search === false) return '';
+
+            if (env.relativePath?.startsWith('research/')) {
+              const headings = src
+                .split(/\r?\n/)
+                .filter(line => /^#{1,6}\s/.test(line))
+                .join('\n');
+              return md.render(headings, env);
+            }
+
+            return md.render(src, env);
+          },
+        },
       },
 
       nav: [
