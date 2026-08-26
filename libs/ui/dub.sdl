@@ -59,8 +59,8 @@ configuration "unittest" {
     // shim would close `ui -> test-runner -> impl -> core-cli -> ui`. Source-
     // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
     // do for the same reason.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../dql/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src" "../dql/src"
 
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.
