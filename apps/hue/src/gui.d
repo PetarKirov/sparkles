@@ -258,6 +258,10 @@ struct GuiArgs
     bool initialHasCoverage = false;     // ditto
     GuiCapture capture = GuiCapture.init; // deterministic-capture hooks (CLI6)
     ConfigStore* configStore = null;     // the shared runtime config (SET*)
+    size_t initialLine = 0;              // 1-based initial line (RNG4)
+    size_t initialCol = 0;               // 1-based initial column (RNG4)
+    size_t initialEndLine = 0;           // 1-based initial end line (RNG4)
+    size_t initialEndCol = 0;            // 1-based initial end column (RNG4)
 }
 /// The GUI run's whole mutable state (`P2.B4` second slice): every
 /// loop-carried group as one value — the fields the component will own when
@@ -3709,7 +3713,25 @@ int runGui(GuiArgs guiArgs) @system
             vm.showPreview = false;
             vm.rebuild();
         }
-        vm.scrollTo(initialTop);
+        if (initialLine > 0)
+        {
+            const targetVisual = vm.visualOfSrc(initialLine > 0 ? initialLine - 1 : 0);
+            vm.scrollTo(targetVisual);
+
+            import source_loc : SourceLoc;
+            const loc = SourceLoc("", initialLine, initialCol, initialEndLine, initialEndCol);
+            size_t sByte, eByte;
+            if (loc.byteRange(vm.source, vm.lineStarts, sByte, eByte))
+            {
+                drag.regime = Regime.text;
+                drag.anchorLo = sByte;
+                drag.anchorHi = sByte;
+                drag.headLo = eByte;
+                drag.headHi = eByte;
+            }
+        }
+        else
+            vm.scrollTo(initialTop);
         if (docPath.length)
             pn.tree.reveal(docPath);
 

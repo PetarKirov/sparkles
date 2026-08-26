@@ -345,6 +345,12 @@ struct PreviewTui
     /// observe it to verify pointer-capture routing.
     Selection!long selection() const @safe pure nothrow @nogc => sel;
 
+    /// Sets the active line selection.
+    void setSelection(Selection!long s) @safe pure nothrow @nogc
+    {
+        sel = s;
+    }
+
     /// Sets the pane size in cells (the workspace arranges; `relayout` after).
     void resize(int w, int h) @safe pure nothrow @nogc
     {
@@ -471,6 +477,16 @@ struct PreviewTui
     // via OSC 52. Clears the selection.
     private void copySelection() @system
     {
+        if (vm.hasInspectExtent)
+        {
+            const s = vm.inspectStart;
+            const e = vm.inspectEnd;
+            if (s < e && e <= vm.source.length)
+                writeClipboard(vm.source[s .. e]);
+            vm.clearInspectExtent();
+            sel = Selection!long.cleared;
+            return;
+        }
         if (!sel.active || lineCount == 0)
             return;
         const lo = sel.lo, hi = sel.hi;
@@ -794,10 +810,10 @@ struct PreviewTui
         }
         // The inspector's extent tint (TSI2): the selected CST node's rects,
         // through the same identity channel the search matches use — a
-        // fainter band than the line selection, char-precise.
+        // char-precise band.
         if (vm.inspectRects.length)
         {
-            const inspFill = Color.fromRgb(mix(pageBg, selBg, 0.55));
+            const inspFill = Color.fromRgb(selBg);
             foreach (ref const r; vm.inspectRects)
             {
                 const gy = 1 + r.y - top;
@@ -1777,6 +1793,8 @@ struct PreviewTui
                 if (dsvHeaderSortAt(p, e.mods.shift))
                     return true;
             }
+            if (e.action == PointerAction.press)
+                vm.clearInspectExtent();
             sel = e.action == PointerAction.press
                 ? Selection!long.started(line) : sel.extended(line);
             clampSel();
