@@ -17,8 +17,8 @@ module forge_client;
 import expected : err;
 
 import forge : CommentThread, discoverToken, ForgeError, ForgeErrorKind,
-    ForgeResult, hasCapability, HttpRequest, HttpResponse, parsePrTarget,
-    PrRef, PullRequest, repoFromRemote, RepoId;
+    ForgeFileRef, ForgeResult, hasCapability, HttpRequest, HttpResponse,
+    parseForgeFileUrl, parsePrTarget, PrRef, PullRequest, repoFromRemote, RepoId;
 import forge_github : GitHubForge;
 
 version (HueCurl)
@@ -162,21 +162,18 @@ discovers a token, fetches, and assembles the files into the patch the diff
 pipeline already reads. Every failure on the way is a $(LREF ForgeError) with
 a kind, so the shell can say something useful (`DPR6`).
 */
-ForgeResult!FetchedPr fetchPullRequest(string target) @system
+ForgeResult!FetchedPr fetchPullRequest(string spec) @system
 {
     import forge : assemblePatch;
 
-    auto ref_ = parsePrTarget(target, currentRepo());
-    if (ref_.hasError)
-        return err!FetchedPr(ref_.error);
-    const pr = ref_.value;
+    auto prRef = parsePrTarget(spec, currentRepo());
+    if (prRef.hasError)
+        return err!FetchedPr(prRef.error);
+    const pr = prRef.value;
 
     if (!GitHubForge.handles(pr.repo.host))
         return err!FetchedPr(ForgeError(ForgeErrorKind.unknownRemote,
-            pr.repo.host ~ " has no adapter yet (GitHub is the only one)"));
-    if (!canFetch)
-        return err!FetchedPr(ForgeError(ForgeErrorKind.unsupported,
-            "this build has no HTTP transport (built without libcurl)"));
+            pr.repo.host ~ " is not a supported forge"));
 
     auto forge = GitHubForge(token: tokenFor(pr.repo.host));
     auto fetched = forge.pullRequest(pr, (in HttpRequest req) => fetchHttp(req));
@@ -203,6 +200,39 @@ ForgeResult!FetchedPr fetchPullRequest(string target) @system
             out_.threads = threads.value;
     }
     return ForgeResult!FetchedPr(out_);
+}
+
+/**
+Fetches source file text from a remote URL (`SRC3`).
+
+If the URL matches a recognized forge (e.g. GitHub), it uses the corresponding
+adapter and authentication. Otherwise, it performs a generic HTTP GET.
+*/
+ForgeResult!string fetchUrl(string url) @system
+{
+    // Check if it's a recognized forge file URL (GitHub blob/raw, etc.):
+    const fileRef = parseForgeFileUrl(url);
+    if (!fileRef.hasError)
+    {
+        if (GitHubForge.handles(fileRef.value.repo.host))
+        {
+            auto forge = GitHubForge(token: tokenFor(fileRef.value.repo.host));
+            return forge.fetchFile(fileRef.value, (in HttpRequest req) => fetchHttp(req));
+        }
+    }
+
+    // Generic HTTP GET:
+    string[] headers = [
+        "User-Agent: hue",
+    ];
+    auto res = fetchHttp(HttpRequest(url, headers));
+    if (res.hasError)
+        return err!string(res.error);
+    if (res.value.status >= 200 && res.value.status < 300)
+        return ForgeResult!string(res.value.body_);
+    import std.conv : text;
+    return err!string(ForgeError(ForgeErrorKind.network,
+        "HTTP " ~ text(res.value.status) ~ " fetching " ~ url));
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

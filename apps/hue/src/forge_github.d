@@ -16,7 +16,7 @@ module forge_github;
 import expected : err;
 
 import forge : Comment, CommentThread, ForgeError, ForgeErrorKind,
-    ForgeResult, HttpRequest, HttpResponse, isForge, PrFile, PrRef,
+    ForgeFileRef, ForgeResult, HttpRequest, HttpResponse, isForge, PrFile, PrRef,
     PullRequest, RepoId, ThreadSide, Transport;
 
 import sparkles.wired.policy : CaseStyle, WireCase, WireInvalid,
@@ -179,6 +179,42 @@ struct GitHubForge
         if (res.hasError)
             return err!string(res.error);
         return classify(res.value, url, token.length != 0);
+    }
+
+    /**
+    Fetches raw file contents for a repository file ref.
+    */
+    ForgeResult!string fetchFile(in ForgeFileRef fileRef, scope Transport http) @system
+    {
+        // 1. If authenticated, fetch via GitHub REST API with bearer token:
+        if (token.length)
+        {
+            string url = apiBase ~ "/repos/" ~ fileRef.repo.owner ~ "/" ~ fileRef.repo.name
+                ~ "/contents/" ~ fileRef.filePath ~ "?ref=" ~ fileRef.ref_;
+            string[] headers = [
+                "Accept: application/vnd.github.raw+json",
+                "X-GitHub-Api-Version: 2022-11-28",
+                "User-Agent: hue",
+                "Authorization: Bearer " ~ token,
+            ];
+            auto res = http(HttpRequest(url, headers));
+            if (res.hasError)
+                return err!string(res.error);
+            auto classified = classify(res.value, url, true);
+            if (!classified.hasError)
+                return classified;
+        }
+
+        // 2. If unauthenticated (or if token failed on public repo), fall back to raw CDN:
+        string rawUrl = "https://raw.githubusercontent.com/" ~ fileRef.repo.owner ~ "/"
+            ~ fileRef.repo.name ~ "/" ~ fileRef.ref_ ~ "/" ~ fileRef.filePath;
+        string[] rawHeaders = [
+            "User-Agent: hue",
+        ];
+        auto rawRes = http(HttpRequest(rawUrl, rawHeaders));
+        if (rawRes.hasError)
+            return err!string(rawRes.error);
+        return classify(rawRes.value, rawUrl, token.length != 0);
     }
 }
 
@@ -703,4 +739,30 @@ private ForgeResult!T parse(T)(scope const(char)[] json) @safe
 
     assert(body_.canFind(`"p":9`) && body_.canFind(`"n":"r"`),
         "the variables name the PR being asked about");
+}
+
+@("forge_github.fetchFile.anonymousAndAuthenticated")
+@system unittest
+{
+    import forge : HttpRequest;
+
+    // Anonymous fetch goes to raw.githubusercontent.com:
+    string fetchedUrl;
+    auto mockTransport = delegate ForgeResult!HttpResponse(in HttpRequest req) @system {
+        fetchedUrl = req.url;
+        return ForgeResult!HttpResponse(HttpResponse(200, "hello world content"));
+    };
+
+    auto anon = GitHubForge();
+    const fileRef = ForgeFileRef(RepoId("github.com", "owner", "repo"), "main", "src/app.d");
+    auto resAnon = anon.fetchFile(fileRef, mockTransport);
+    assert(!resAnon.hasError);
+    assert(resAnon.value == "hello world content");
+    assert(fetchedUrl == "https://raw.githubusercontent.com/owner/repo/main/src/app.d");
+
+    // Authenticated fetch goes to api.github.com:
+    auto auth = GitHubForge(token: "secret");
+    auto resAuth = auth.fetchFile(fileRef, mockTransport);
+    assert(!resAuth.hasError);
+    assert(fetchedUrl == "https://api.github.com/repos/owner/repo/contents/src/app.d?ref=main");
 }

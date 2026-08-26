@@ -493,14 +493,14 @@ struct DocumentPipeline
                     attachCoverage(doc, coverageArtifact);
                 return doc;
             case diff:
-                return fromPatchSource(path, baseName(path), readText(path));
+                return fromPatchSource(path, baseName(path), readSourceText(path));
             case dsv:
-                return fromDsvSource(path, baseName(path), readText(path),
+                return fromDsvSource(path, baseName(path), readSourceText(path),
                     path.extension.chompPrefix("."));
             case markdown:
             case code:
                 const ext = path.extension.chompPrefix(".");
-                const contents = readText(path);
+                const contents = readSourceText(path);
                 const lang = language.length ? canonicalLanguage(language)
                     : canonicalLanguageOfPath(path);
                 // Opening a coverage artifact shows the source it describes,
@@ -546,6 +546,20 @@ struct DocumentPipeline
                     attachCoverage(doc, artifact);
                 return doc;
         }
+    }
+
+    private static string readSourceText(string path) @system
+    {
+        if (path.startsWith("http://") || path.startsWith("https://"))
+        {
+            import forge_client : fetchUrl;
+
+            auto res = fetchUrl(path);
+            if (res.hasError)
+                throw new Exception(res.error.toString);
+            return res.value;
+        }
+        return readText(path);
     }
 
     /// A diff document from unified-patch text (`DVS2`: a `.patch`/`.diff`
