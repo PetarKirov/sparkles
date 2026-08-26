@@ -16,6 +16,7 @@ module sparkles.dsv;
 public import sparkles.dsv.dialect : detectHeader, minConsistencyPercent,
     minDsvRecords, seedForExtension, sniff, SniffResult, sniffMaxBytes,
     sniffMaxRecords;
+public import sparkles.dsv.dql : DsvRecordResolver;
 public import sparkles.dsv.model : CellFlags, classifyValue, ColumnType,
     decodeCell, Dialect, DsvCell, DsvDoc, DsvRecord, HeaderMode,
     inferColumnTypes, inferColumnTypesFrom, Span, Terminator, ValueKind;
