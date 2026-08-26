@@ -314,9 +314,28 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                 if (selected.error.isHelp || selected.error.message.length)
                     return error!(string[])(selected.error);
 
-                // No variant matched the given subcommand name. In a
-                // subcommand-bearing context this is an unknown command,
-                // not a stray positional argument.
+                // No variant matched the given subcommand name. If a default
+                // child command is registered, dispatch the remaining arguments to it.
+                static if (!is(defaultChild!Cli == void))
+                {
+                    alias DefaultType = defaultChild!Cli;
+                    CommandNode!DefaultType defaultCmd;
+                    auto subInfo = childHelpInfo!(Root, DefaultType)(helpInfo);
+                    auto remainingArgs = args[index .. $];
+                    auto parsedDefault = parseCommandImpl!(Root, DefaultType)(
+                        defaultCmd, remainingArgs, subInfo, keepUnknown, handOff);
+                    if (parsedDefault)
+                    {
+                        receiver.command = defaultCmd;
+                        receiver.commandSelected = true;
+                        return parsedDefault;
+                    }
+                    if (parsedDefault.error.isHelp || parsedDefault.error.message.length)
+                        return error!(string[])(parsedDefault.error);
+                }
+
+                // In a subcommand-bearing context without a default child this is
+                // an unknown command, not a stray positional argument.
                 return error!(string[])(CliError(
                     kind: CliError.Kind.parse,
                     message: "Unknown command: " ~ arg,
@@ -343,6 +362,34 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                         return error!(string[])(viaParent.error);
                     if (viaParent.value)
                         continue;
+                }
+
+                static if (hasChildren && !is(defaultChild!Cli == void))
+                {
+                    alias DefaultType = defaultChild!Cli;
+                    CommandNode!DefaultType defaultCmd;
+                    auto subInfo = childHelpInfo!(Root, DefaultType)(helpInfo);
+                    auto remainingArgs = args[index .. $];
+                    ParentOptionHandler defaultHandOff =
+                        (ref string[] a, ref size_t i)
+                        {
+                            auto here = parseNamedOption(valueOf(), a, i, seen, commandBoundary);
+                            if (!here || here.value)
+                                return here;
+                            if (parentOption !is null)
+                                return parentOption(a, i);
+                            return here;
+                        };
+                    auto parsedDefault = parseCommandImpl!(Root, DefaultType)(
+                        defaultCmd, remainingArgs, subInfo, keepUnknown, defaultHandOff);
+                    if (parsedDefault)
+                    {
+                        receiver.command = defaultCmd;
+                        receiver.commandSelected = true;
+                        return parsedDefault;
+                    }
+                    if (parsedDefault.error.isHelp || parsedDefault.error.message.length)
+                        return error!(string[])(parsedDefault.error);
                 }
 
                 if (keepUnknown)
@@ -375,17 +422,45 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
 
     static if (hasChildren)
     {
-        // `isDefault_` means the parent itself can run when no subcommand
-        // is selected. Dispatch picks that up via `commandSelected` in
-        // `runParsedCliImpl`.
-        static if (commandInfoRaw!Cli().isDefault_)
-            return ok(unknown);
-        else
-            return error!(string[])(CliError(
-                kind: CliError.Kind.parse,
-                message: "Missing subcommand",
-                help: formatHelp!(Root, Cli)(helpInfo),
-            ));
+        if (!receiver.commandSelected)
+        {
+            static if (!is(defaultChild!Cli == void))
+            {
+                alias DefaultType = defaultChild!Cli;
+                CommandNode!DefaultType defaultCmd;
+                auto subInfo = childHelpInfo!(Root, DefaultType)(helpInfo);
+                string[] emptyArgs = [];
+                ParentOptionHandler defaultHandOff =
+                    (ref string[] a, ref size_t i)
+                    {
+                        auto here = parseNamedOption(valueOf(), a, i, seen, commandBoundary);
+                        if (!here || here.value)
+                            return here;
+                        if (parentOption !is null)
+                            return parentOption(a, i);
+                        return here;
+                    };
+                auto parsedDefault = parseCommandImpl!(Root, DefaultType)(
+                    defaultCmd, emptyArgs, subInfo, keepUnknown, defaultHandOff);
+                if (parsedDefault)
+                {
+                    receiver.command = defaultCmd;
+                    receiver.commandSelected = true;
+                    return ok(unknown);
+                }
+                if (parsedDefault.error.isHelp || parsedDefault.error.message.length)
+                    return error!(string[])(parsedDefault.error);
+            }
+            else static if (commandInfoRaw!Cli().isDefault_)
+                return ok(unknown);
+            else
+                return error!(string[])(CliError(
+                    kind: CliError.Kind.parse,
+                    message: "Missing subcommand",
+                    help: formatHelp!(Root, Cli)(helpInfo),
+                ));
+        }
+        return ok(unknown);
     }
     else
         return ok(unknown);
@@ -1026,6 +1101,21 @@ package template allChildren(T)
     }
     else
         alias allChildren = commandChildren!T;
+}
+
+package template defaultChild(T)
+{
+    private template findDefault(Types...)
+    {
+        static if (Types.length == 0)
+            alias findDefault = void;
+        else static if (commandInfoRaw!(Types[0])().isDefault_)
+            alias findDefault = Types[0];
+        else
+            alias findDefault = findDefault!(Types[1 .. $]);
+    }
+
+    alias defaultChild = findDefault!(allChildren!T);
 }
 
 package template subcommandsFieldName(T)
@@ -2427,4 +2517,100 @@ unittest
     auto satisfied = parseCli!Tool(["tool", "--token=xyz"]);
     assert(satisfied);
     assert(satisfied.value.auth.token == "xyz");
+}
+
+@("args.defaultSubcommand.delegation")
+@system
+unittest
+{
+    @(Command("view", isDefault: true))
+    static struct View
+    {
+        @(Argument("paths", optional: true))
+        string[] paths;
+
+        @(Option("raw"))
+        bool raw;
+
+        int run(Program)(in Program) { return 42; }
+    }
+
+    @(Command("diff"))
+    static struct Diff
+    {
+        @(Argument("targets", optional: true))
+        string[] targets;
+
+        int run(Program)(in Program) { return 99; }
+    }
+
+    @(Command("tool"))
+    static struct Tool
+    {
+        @(Option("theme"))
+        string theme = "mocha";
+
+        @Subcommands
+        SumType!(View, Diff) command;
+    }
+
+    // 1. Bare invocation `tool` -> selects View with empty paths
+    auto bare = parseCli!Tool(["tool"]);
+    assert(bare, bare.error.message);
+    assert(bare.value.commandSelected);
+    bare.value.command.match!(
+        (CommandNode!View v) { assert(v.value.paths.length == 0); },
+        (CommandNode!Diff) { assert(false); }
+    );
+    assert(runParsedCli(bare.value) == 42);
+
+    // 2. Positional `tool some/file.d` -> selects View with paths
+    auto pos = parseCli!Tool(["tool", "some/file.d"]);
+    assert(pos, pos.error.message);
+    assert(pos.value.commandSelected);
+    pos.value.command.match!(
+        (CommandNode!View v) { assert(v.value.paths == ["some/file.d"]); },
+        (CommandNode!Diff) { assert(false); }
+    );
+
+    // 3. Child option `tool --raw some/file.d` -> selects View with raw = true
+    auto opt = parseCli!Tool(["tool", "--raw", "some/file.d"]);
+    assert(opt, opt.error.message);
+    assert(opt.value.commandSelected);
+    opt.value.command.match!(
+        (CommandNode!View v) {
+            assert(v.value.raw == true);
+            assert(v.value.paths == ["some/file.d"]);
+        },
+        (CommandNode!Diff) { assert(false); }
+    );
+
+    // 4. Root option + positional `tool --theme=latte some/file.d`
+    auto mixed = parseCli!Tool(["tool", "--theme=latte", "some/file.d"]);
+    assert(mixed, mixed.error.message);
+    assert(mixed.value.theme == "latte");
+    assert(mixed.value.commandSelected);
+    mixed.value.command.match!(
+        (CommandNode!View v) { assert(v.value.paths == ["some/file.d"]); },
+        (CommandNode!Diff) { assert(false); }
+    );
+
+    // 5. Explicit subcommand `tool diff a.d b.d` -> selects Diff
+    auto explicitDiff = parseCli!Tool(["tool", "diff", "a.d", "b.d"]);
+    assert(explicitDiff, explicitDiff.error.message);
+    assert(explicitDiff.value.commandSelected);
+    explicitDiff.value.command.match!(
+        (CommandNode!View) { assert(false); },
+        (CommandNode!Diff d) { assert(d.value.targets == ["a.d", "b.d"]); }
+    );
+    assert(runParsedCli(explicitDiff.value) == 99);
+
+    // 6. Explicit default subcommand `tool view a.d` -> selects View
+    auto explicitView = parseCli!Tool(["tool", "view", "a.d"]);
+    assert(explicitView, explicitView.error.message);
+    assert(explicitView.value.commandSelected);
+    explicitView.value.command.match!(
+        (CommandNode!View v) { assert(v.value.paths == ["a.d"]); },
+        (CommandNode!Diff) { assert(false); }
+    );
 }
