@@ -132,34 +132,37 @@ modules never import ring, loop, or scheduler modules (nor `during`), so a
 future extraction into a standalone `sparkles:effects` package is mechanical.
 _Loop-side_ modules may import anything.
 
-| Module                   | Stratum      | Contents                                                                                                                             |
-| ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `errors`                 | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                 |
-| `cause`                  | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                       |
-| `capability`             | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                           |
-| `scope_`                 | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                              |
-| `schedule`               | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                |
-| `clock`                  | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                      |
-| `net`                    | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                         |
-| `testing`                | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                    |
-| `buffer`                 | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                          |
-| `op`                     | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`    |
-| `handle`                 | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                     |
-| `backend.concept`        | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                 |
-| `backend.probe`          | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                    |
-| `backend.uring`          | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                             |
-| `loop`                   | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                       |
-| `sched`                  | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                             |
-| `io`                     | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3) |
-| `live`                   | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row    |
-| `proc`                   | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                              |
-| `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                               |
-| `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                            |
-| `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
-| `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                |
-| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8); target M19                                                |
-| `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
-| `package`                | —            | public re-exports                                                                                                                    |
+| Module                   | Stratum      | Contents                                                                                                                                                                |
+| ------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `errors`                 | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                                                    |
+| `cause`                  | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                                                          |
+| `capability`             | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                                                              |
+| `scope_`                 | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                                                                 |
+| `schedule`               | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                                                   |
+| `clock`                  | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                                                         |
+| `net`                    | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                                                            |
+| `testing`                | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                                                       |
+| `buffer`                 | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                                                             |
+| `op`                     | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`                                       |
+| `handle`                 | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                                                        |
+| `backend.concept`        | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                                                    |
+| `backend.probe`          | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                                                       |
+| `backend.uring`          | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                                |
+| `loop`                   | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                                                          |
+| `sched`                  | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                                                                |
+| `io`                     | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3)                                    |
+| `live`                   | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
+| `proc`                   | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
+| `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
+| `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                               |
+| `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
+| `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
+| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
+| `cgroup`                 | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
+| `sampling`               | loop-side    | the bounded, tiered, transactional tree sampler (§13.8): fail-closed root anchor, bounded CPU ledger, per-sample work budget; the Darwin stub                           |
+| `supervise`              | loop-side    | supervised runs (§13.5–§13.8): the shielded workers, the one-shot clocks, the sampler handshake, the tree-state machine and the terminal sequence                       |
+| `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                                                               |
+| `package`                | —            | public re-exports                                                                                                                                                       |
 
 **Foundation:** `sparkles:base` supplies the `Buffer` family (staging buffers,
 test helpers) and `recycledErrorInstance`; the `expected` package (`~>0.4.1`)
@@ -535,6 +538,36 @@ queued and completes with `-errno`, the same shape a bad SQE already has on
 io_uring. The loop's retry path depends on this: a `false` it cannot clear
 by flushing is an infinite retry.
 
+**Cancellation is guaranteed on a driven loop.** `cancel` never fails on
+backpressure: internal cancels serialize through one reserved slot outside the
+user slab budget (index `opSlots`, its own lifecycle and generation, never on
+the user free list), and a request that cannot be submitted right now — the
+reserved slot is busy, or the backend queue is full — moves the target to
+`cancelQueued` on the loop's pending set instead of being refused. The set is
+threaded through dedicated slot links (never the free-list link) and a queued
+target that completes naturally is unlinked _before_ its slot is released and
+its callback runs, so a callback may reuse the index at once; a nonterminal
+multishot completion keeps the links. Repeating a request is idempotent.
+`detach` clears callback ownership only: a queued or submitted cancel for a
+detached op still reaches its terminal completion, so a detached
+non-completing read is still driven to completion and the loop can still
+drain. The guarantee is conditional on the owner continuing to drive the loop
+(§5.4).
+
+**Hard backend failure is process-fatal.** A submission, flush, or wait error
+that is not backpressure (`EAGAIN`/`EBUSY`/`EINTR`/`ENOBUFS`) has no
+recoverable structured-cleanup contract: an accepted, non-completing op can
+never reach a terminal CQE once new submissions (cancels included) are
+rejected, and no userspace-visible backend abort can prove buffer-ownership
+return. The loop therefore invokes `LoopConfig.fatalHook` — a `noreturn`,
+`nothrow @nogc` function pointer defaulting to a raw-`write(2)` diagnostic plus
+`abort()` — **immediately at every detection site** (a public `submit`, a
+`cancel`, the drive, or any of those from inside a completion callback) and
+never returns an `IoError` for it: returning would let destructors, scope
+guards, and callers run against parked fibers, kernel-owned buffers, and
+in-flight pool jobs. The hook must not acquire application locks; embedders
+may install one that logs before `_exit`.
+
 ### 5.3 Timers
 
 Timers are in-ring `TIMEOUT` operations when `hasNativeTimeout!Backend`;
@@ -553,6 +586,15 @@ but must not re-enter `runOnce`** (contract-checked). CQ overflow (`-EBADR`
 under `nodrop`) triggers an internal drain cycle before surfacing an error.
 `run()` loops `runOnce` until `stop()` or until the loop is drained (no live
 ops, no timers). Off-thread stop: set the flag, then `waker().wake()`.
+
+Queued cancellations (§5.2) are retried by the loop itself — not by a
+scheduler above it — at three points: before every wait, after every dispatch
+batch (which frees the reserved slot and backend queue space), and when an
+internal cancel completes. A stopped `runOnce` still performs the one
+nonblocking pre-wait retry before returning `stopped`; `stop()` leaves live and
+cancel-pending operations legal, and `drained` is never reported while a
+queued target or an in-flight internal cancel exists. `destroy` additionally
+requires the pending set empty and the reserved slot idle.
 
 ### 5.5 Type-erased access
 
@@ -902,6 +944,20 @@ cancel function **exactly once** (swap-to-null before invoking — the Eio
 discipline that makes the complete-vs-cancel race impossible by
 construction). Cancellation requests stop work; they do not report errors —
 failures travel via `Scope.fail`.
+
+A scope can also host **shielded children** (package-internal
+`Scope.spawnShielded`): the owner places a protected node beneath the scope's
+node and spawns workers under it, so neither the scope's own sweep (`cancel`,
+`fail`, a defect) nor an enclosing cancellation or deadline reaches them. They
+are ordinary members for the join — the scope cannot exit until they end — and
+only the owner ends them (`cancelTree` on the shield, or a direct interrupt) at
+its terminal boundary. This is the shape supervision needs for workers that must
+outlive the cancellation of the run they serve: a drain whose read must reach
+its terminal completion, a reap that must consume the child. A shielded body
+catches every `Throwable` it can raise; an escaping defect fails the scope
+through the ordinary sweep, which does not reach the shielded siblings, so the
+owner's failure guard must end them. Every exiting child unlinks from the node
+it actually ran under, the scope's own or a shield.
 
 ### 8.3 Deadlines
 
@@ -1429,10 +1485,11 @@ by `package`, so consumer spellings do not change).
 Today it is publicly re-exported and tested on Linux; kqueue has a shipped
 `EVFILT_PROC` reap lowering, but the process modules are not yet exported or
 covered by the package test suite on macOS. Windows has no process surface:
-its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.9
-are the approved M19 target needed to move `apps/ci` off
-`sparkles.core_cli.process_utils`; they are normative targets, not claims about
-the current implementation.
+its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.8
+shipped in M19 on Linux (the `supervise`, `sampling`, `cgroup` and
+`blocking_pool` modules); §13.9 and the `apps/ci` port remain M19 targets — see
+[PLAN M19](./PLAN.md#m19--cross-platform-supervised-processes-for-appsci) for
+the delivery status.
 
 The design premise, taken from what `apps/hue`
 actually runs: **background work in this repository is subprocess-shaped**
@@ -1472,7 +1529,7 @@ struct ProcessConfig
     StdioSpec stdoutSpec = StdioSpec(StdioMode.pipe);
     StdioSpec stderrSpec = StdioSpec(StdioMode.inherit);
     const(char[])[] env = null;   /// null = inherit; entries are "KEY=value"
-    const(EnvironmentChange)[] envOverlay; /// target M19: environment edits
+    const(EnvironmentChange)[] envOverlay; /// environment edits (M19)
     const(char)[] cwd = null;     /// null = inherit
     bool newProcessGroup = false; /// setpgid(0, 0) in the child (kill the tree)
 }
@@ -1485,8 +1542,8 @@ struct EnvironmentChange
 }
 ```
 
-Spawning is `posix_spawnp` (PATH-searched), never `fork` — a fiber stack is
-the worst possible place for a fork. The argv/env staging buffer grows on
+Spawning is `posix_spawn`, never `fork` — a fiber stack is the worst possible
+place for a fork. The argv/env staging buffer grows on
 the heap (the M7 4 KiB static budget and its `E2BIG` are gone); spawn is a
 setup-phase operation and may allocate.
 
@@ -1498,6 +1555,19 @@ Windows. An invalid name/value fails spawn before a child exists. PATH lookup
 uses the resulting environment. This overlay rule is shared by low-level spawn
 and supervised runs; callers do not need to snapshot and rebuild the parent
 environment to set one variable.
+
+The PATH search is driven by the spawn itself, never by an `access(2)`
+pre-check (`access` answers for the real uid while exec answers for the
+effective one, and a fabricated `ENOENT` would hide every other failure) and
+never by `posix_spawnp` (whose search consults the parent's PATH and retries
+scripts through `/bin/sh`). Each candidate is attempted with `posix_spawn`, so
+its exec runs in the child's cwd with the child's credentials, under execvp's
+rules: `ENOENT`/`ENOTDIR` move to the next component; `EACCES` is remembered
+and reported when nothing later succeeds; any other error — `ENOEXEC`
+included, there is no shell fallback — ends the search and is reported as is.
+A name containing `/` is spawned as spelled. An empty PATH component is the
+child cwd; an unset PATH searches `_CS_PATH`. A failed attempt leaves no child
+behind.
 
 ### 13.2 The child handle
 
@@ -1555,6 +1625,17 @@ IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
     scope const(ubyte)[] stdinBytes = null);
 ```
 
+No exit of `capture` leaves a zombie. A drain fiber that cannot be admitted, a
+read that fails, and a cancellation that interrupts the run each end the child
+(`SIGKILL`) and consume its reap right on the shared pool's termination-critical
+lane (§13.8) under `protect`, so a latched interrupt is delivered at the
+caller's next checkpoint and never between the kill and the reap. The error
+reported is the first cause — the admission error (`ENOBUFS`), the read error,
+or the interrupt as `ECANCELED`; a failed read is never mistaken for EOF and
+never surfaces as truncated-but-successful output. The shared pool and the
+scheduler's inbox waker are secured before the child is spawned, so the reap
+can never depend on a resource acquired afterwards.
+
 Portability as shipped: io_uring lowers `OpWaitid` to `WAITID`; kqueue lowers
 it to `EVFILT_PROC`/`NOTE_EXIT` and closes the register-vs-exit race with a
 `waitpid(WNOHANG)` back-check. The kqueue lowering is not yet reachable through
@@ -1603,7 +1684,7 @@ double: scripted per-command stdout bytes and exit statuses, with no
 process and no ring — the double that makes an application's "run git,
 parse, decide" path a unit test.
 
-### 13.5 Supervised runs (target M19)
+### 13.5 Supervised runs (M19)
 
 The application-facing operation is one ownership boundary around spawn,
 stdin, output, timeout/cancellation, sampling, drain, and reap:
@@ -1617,14 +1698,32 @@ struct ProcessLine
 {
     ProcessStream stream;
     const(ubyte)[] bytes; /// callback-borrowed; line terminator excluded
-    bool terminated;      /// false only for the final EOF fragment
+    bool terminated;      /// false for the final EOF fragment and a truncated head
+    bool truncated;       /// the first maxLineBytes payload bytes of an over-cap line
 }
+
+enum SampleSource  : ubyte { none, cgroupFull, cgroupMembers, procScan }
+enum MetricSource  : ubyte { none, procfs, cgroup, rusage }
+enum MetricQuality : ubyte { unmeasured, exact, lowerBound }
 
 struct ProcessResourceUsage
 {
     size_t peakRssBytes, peakProcesses, sampleCount;
     Duration wallTime, userTime, systemTime;
     bool sampled;         /// false when the host has no tree sampler
+
+    size_t peakCgroupMemoryBytes;    /// memory.peak (page cache included)
+    size_t peakTasks;                /// pids.peak — tasks, not processes
+    Duration cgroupUserTime, cgroupSystemTime; /// CPU charged to the run cgroup
+
+    MetricSource memorySource, processSource, cpuSource,
+                 cgroupMemorySource, tasksSource, cgroupCpuSource;
+    MetricQuality memoryQuality, processQuality, cpuQuality,
+                  cgroupMemoryQuality, tasksQuality, cgroupCpuQuality;
+
+    SampleSource source;
+    bool accountingSaturated; /// a per-sample work budget was hit
+    bool samplingDegraded;    /// a sample was skipped, aborted, or refused
 }
 
 struct ProcessEvent
@@ -1632,7 +1731,8 @@ struct ProcessEvent
     ProcessEventKind kind;
     ProcessLine line;             /// valid for line
     ProcessResourceUsage usage;   /// valid for sample
-    ExitStatus status;            /// valid for exited
+    ExitStatus status;            /// valid for exited ONLY when reap == reaped
+    ReapOutcome reap;             /// valid for exited
     ProcessEnd end;               /// valid for exited
 }
 
@@ -1643,6 +1743,11 @@ struct SupervisedProcessConfig
     Duration terminateGrace = 5.seconds;
     Duration sampleInterval = 250.msecs;   /// zero = final accounting only
     bool collectOutput = true;
+    size_t maxLineBytes = 1024 * 1024;     /// framer cap per line; 0 = unbounded
+    size_t maxCapturedBytes = 64 * 1024 * 1024; /// per raw stream; 0 = unbounded
+    ResidualPolicy residualPolicy = ResidualPolicy.bounded; /// after root exit (§13.7)
+    Duration outputGrace = 5.seconds;     /// bounded (and wait's fallback): output grace
+    Duration killDrainWindow = 1.seconds; /// post-kill / detach drain budget before forced EOF
 }
 
 struct SupervisedProcessResult
@@ -1653,7 +1758,22 @@ struct SupervisedProcessResult
     SharedBuffer!(ubyte, 256) stdout_;
     SharedBuffer!(ubyte, 256) stderr_;
     IoError spawnError;             /// valid only for spawnFailed
+    size_t truncatedLines;          /// lines that exceeded maxLineBytes
+    bool stdoutTruncated;           /// raw collection hit maxCapturedBytes
+    bool stderrTruncated;
+    bool eofForced;             /// a still-open pipe was forced closed at a drain window
+    bool terminationDegraded;   /// a REQUESTED hard tree kill fell below the tier's promise
+    IoError terminationError;   /// the primary cause (pgid error first, else cgroup)
+    bool residualPolicyDegraded; /// `wait` fell back to `bounded`
+    IoError residualPolicyError;
+    bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    ReapOutcome reap;           /// `status` is valid ONLY when reap == reaped
 }
+
+enum ReapOutcome : ubyte { notApplicable, reaped, lostToExternalReaper }
+enum ResidualPolicy : ubyte { bounded, wait, detach }
+struct KillOutcome { KillResult kind; int errnoValue; }
+enum KillResult : ubyte { notAttempted, delivered, targetAbsent, failed }
 
 alias ProcessEventSink = void delegate(in ProcessEvent event);
 
@@ -1669,7 +1789,9 @@ operation, process wait, timer, sample, or blocking-pool job owned by the run is
 live. Stdout and stderr are separate byte streams even when events interleave;
 `mergeStdout` is the explicit exception and reports all merged lines as
 `stdout_`. `collectOutput` controls accumulation only, never draining or event
-delivery. Spawn failure creates no child, emits no `exited` event, and is
+delivery. Every buffer a run keeps is bounded: `maxLineBytes` caps one framed line
+and `maxCapturedBytes` caps each raw collection; overflow is reported in the events
+and the result (§13.6), never silent. Spawn failure creates no child, emits no `exited` event, and is
 reported as `spawnFailed` plus `spawnError`; non-zero child exit is data, not an
 `IoError`.
 
@@ -1682,7 +1804,7 @@ event/sample path so application policy remains testable without a host process.
 Scope cancellation remains latched on the fiber (§8.4); supervision delays its
 delivery only long enough to complete cleanup and publish the final event.
 
-### 13.6 Line framing and stream ordering (target M19)
+### 13.6 Line framing and stream ordering (M19)
 
 Each pipe has an independent incremental framer over arbitrary bytes. `LF`
 ends a line; one immediately preceding `CR` is removed, so LF and CRLF produce
@@ -1695,12 +1817,20 @@ as line boundaries.
 Order is preserved within each stream. There is no invented total order
 between separate stdout and stderr pipes: events are delivered in completion
 order. Callers requiring one kernel stream and one total order select
-`mergeStdout`. Framing storage grows for a long line subject to the run's
-allocator/OOM policy; it never truncates silently. The final collected buffers
-contain the exact raw bytes, including original terminators, independently of
-the normalized line events.
+`mergeStdout`. Framing storage is bounded by `maxLineBytes` (payload bytes; a CR
+counts only when no LF follows it, so a cap of 3 accepts `"abc\r"` + `"\n"` as the
+untruncated line `abc`). A line longer than the cap is delivered exactly once as
+its first `maxLineBytes` payload bytes with `terminated == false` and
+`truncated == true`; the remainder of that line is discarded through its LF and
+framing resumes on the next line. EOF during that discard emits nothing extra.
+Nothing is ever truncated silently: the result counts `truncatedLines`, and the
+raw collections stop at `maxCapturedBytes` with `stdoutTruncated`/`stderrTruncated`
+set. Framing is linear in the bytes read — a long line arriving in many reads is
+never rescanned. The final collected buffers contain the exact raw bytes, including
+original terminators, independently of the normalized line events, up to the
+collection cap.
 
-### 13.7 Timeout, cancellation, drain, and reap (target M19)
+### 13.7 Timeout, cancellation, drain, and reap (M19)
 
 Timeout and scope cancellation use one idempotent state machine:
 
@@ -1727,7 +1857,152 @@ termination request is an idempotent no-op where cleanup calls need it, or
 `ECHILD`/`ESRCH` on the explicit low-level API. PID/handle reuse can never make
 a stale operation target another process.
 
-### 13.8 Resource samples and scheduler-integrated blocking work (target M19)
+**Containment tiers (Linux).** A supervised run owns one cgroup v2 directory
+beneath the process's own cgroup, `<own>/eh-run-<pid>-<id>`, and what that
+directory can do decides the tier:
+
+| tier        | means                                                                    | hard kill                  | observation                                          |
+| ----------- | ------------------------------------------------------------------------ | -------------------------- | ---------------------------------------------------- |
+| `none`      | no owned directory (cgroup v1, no delegation, a read-only cgroupfs)      | pgid only                  | `/proc` scan                                         |
+| `owned`     | a directory with `cgroup.kill`, `cgroup.events` and `cgroup.procs`       | pgid **and** `cgroup.kill` | members + `cpu.stat`; peaks from `/proc`             |
+| `accounted` | `owned`, and the memory and pids controllers are enabled for the subtree | as `owned`                 | `memory.peak` / `pids.peak` exact for the run cgroup |
+
+The probe reports what exists: `cgroup.subtree_control` cannot be written on a
+cgroup that has processes (the no-internal-process rule), so a library that
+finds itself in a populated delegated cgroup — the ordinary case — gets
+`owned`, and `accounted` only where the host prepared the controllers. Every
+tier keeps the private process group; the cgroup adds recursion (a `setsid`
+escapee that stayed in the cgroup) and, on every hard kill, `cgroup.kill` is
+written whenever the capability is owned — an empty subtree is an idempotent
+success, never a reason to skip it.
+
+Acquisition is transactional: `dirCreated` is published the moment `mkdir`
+succeeds, and whoever observes it owns the bottom-up cleanup, whatever later
+failure lowered the tier (a failed control-file open, a failed migration). The
+`cgroup.kill` capability is a property of the created directory, retained until
+cleanup — never inferred from a membership snapshot: `cgroup.procs` lists direct
+members only, and a nested cgroup can hold live processes while it reads empty.
+`cgroup.events`' `populated` bit is the only recursive evidence (1 iff the
+cgroup or any descendant has a live process); a failed read is `unknown`, never
+`empty`. Evidence drives the residual policy, telemetry, and cleanup — it never
+gates a requested kill.
+
+Lane assignment (§13.8): the pre-spawn probe and `mkdir` and the post-spawn
+`cgroup.procs` migration run on the public lane, and a refused submission
+degrades the run (the tier, or only that run's sampling) before or without a
+child at risk; `cgroup.kill` and the cleanup run on the termination-critical
+lane. The cleanup waits — deadline-bounded (~2 s), on the `cgroup.events`
+descriptor, never by polling the scheduler — for `populated 0`, then removes
+nested cgroups bottom-up and the run directory; a directory that remained is
+reported as `cgroupCleanupLeaked`, which describes directory removal only,
+never a failed kill. Cleanup completes before the final result is read.
+
+A process the root forks before the post-spawn `cgroup.procs` migration lands
+is outside the run cgroup: the write is issued inline the moment the spawn
+returns (a bounded in-memory kernfs operation, microseconds against the
+hundreds a fresh program needs to reach its first fork), which closes the
+window in practice but not by construction — the private process group still
+covers such a fork for termination; `wait` and the cgroup roster do not see it.
+Containment by construction needs `clone3(CLONE_INTO_CGROUP)`, a planned spawn
+path.
+
+**The control plane.** Every worker of a run — the two drains, the stdin
+feeder, the root observer, the clock, the sampler and (under `wait`) the
+evidence observer — is a shielded child of one scope (§8.2) that only the
+supervising fiber ends. The supervising fiber is the single owner of the
+tree-state machine and of every kill; the root observer performs the one
+non-consuming `WNOWAIT` wait through an explicit lifecycle
+(`notAdmitted → initializing → inFlight → observed | lost | failed`, or
+`laneOwned` when the emergency owner takes the observation over with finite
+`WNOHANG` probes and alarm backoff), so no second wait for the same child can
+ever be submitted; the clock owns six one-shot, ring-free alarms — timeout,
+grace, the descendant output grace, `wait`'s fallback grace, the post-kill
+drain window, the detach drain window — each armed at most once per run.
+Clocks and the sampler never block and never initiate termination: they
+publish level-triggered command bits carrying the epoch they were armed under
+plus one best-effort wake token, and the supervisor drains the bit set after
+every relay message, clearing each bit before acting on it; a command whose
+epoch is stale is discarded.
+
+**The tree-state machine.** One machine drives the natural-root path and every
+requested termination:
+
+```text
+live ─(root observed)─┬─ bounded, streams terminal ───────▶ killQueued
+                      ├─ bounded, streams open ─▶ graceArmed(natural) ─(expiry)─▶ killQueued
+                      ├─ wait ──▶ waitPopulated ─(populated 0)─▶ waited
+                      │                         └─(evidence lost)─▶ graceArmed(fallback)
+                      └─ detach ─▶ detached ─(drain window)─▶ forceEof ─▶ detachedDrained
+graceArmed(natural|fallback) + streams terminal ──▶ killQueued   [the output grace ends with the output]
+graceArmed(requested) + root observed + streams terminal ──▶ killQueued
+requestTermination(any pre-kill state) ───────────▶ graceArmed(requested)  [TERM+CONT once; first trigger wins]
+killQueued ─(pgid SIGKILL, then cgroup.kill)──────▶ killSettled | killFailedAwaitRoot
+killFailedAwaitRoot ─(natural root observation)───▶ killSettled
+killSettled + streams terminal ───────────────────▶ drainDone   [else the drain window forces EOF]
+resolved: waited | detachedDrained | drainDone
+```
+
+`ResidualPolicy` (`SupervisedProcessConfig.residualPolicy`): `bounded` (the
+default) is an **output** grace — after root exit, descendants still holding an
+output pipe get `outputGrace`; once root exit and EOF both hold, the tree is
+killed at once, so a daemon that cleanly closed stdio gets no lifetime grace
+and a trivial run costs one `kill(-pgid, SIGKILL)` against a group holding
+only the zombie. `wait` (owned-cgroup tiers only; `EOPNOTSUPP` after
+negotiation elsewhere) stays until EOF **and** the run cgroup reads
+recursively `populated 0`; it is cgroup-scoped by definition — a descendant
+that left the cgroup while staying in the pgid is neither waited for nor
+killed — and degrades to `bounded` (with `residualPolicyDegraded` and its
+error) when the evidence is persistently unavailable or the migration failed.
+`detach` gives up termination ownership, not promptness: pipes still open at
+`killDrainWindow` after root exit are forced closed (`eofForced`), cleanup
+does not wait for the residual, and `cgroupCleanupLeaked` may say so.
+
+On **every** `killQueued` entry the identity-pinned pgid SIGKILL and, whenever
+the run owns the capability, `cgroup.kill` are both issued unconditionally —
+evidence never suppresses a requested kill. Each action yields a recorded
+`KillOutcome`; the public truth table: pgid delivered + cgroup delivered or
+not owned → not degraded; pgid delivered + cgroup failed → degraded, error =
+cgroup errno; pgid failed (or `ESRCH` under the pinned zombie) → degraded,
+error = pgid errno, whatever the cgroup did. When both mechanisms fail while
+the root is still live, no ownership boundary permits returning: the run
+enters `killFailedAwaitRoot` and stays until the root's natural exit — the one
+state no configured duration bounds. `terminationDegraded`/`terminationError`
+cover every requested hard tree kill (timeout, cancellation, the residual
+policy) that fell below the tier's promise; `cgroupCleanupLeaked` describes
+directory removal only.
+
+**The terminal sequence.** The reap predicate is the terminal predicate —
+streams terminal ∧ root resolved ∧ tree resolved — so the WNOWAIT-observed
+zombie pins the process group for the whole active run and no post-reap group
+signal is possible by construction. Protection is a property of that
+boundary: the supervisor enters `protect` at the terminal decision and stays
+protected through the control freeze, the sampler-finalization handshake
+(§13.8 — the final sample runs before the reap), the reap, and the worker
+stop; it re-enters `protect` for the shared post-join finalization (cgroup
+cleanup on the termination-critical lane, the frozen fields, the exactly-once
+`exited` event), and only then is a latched interrupt resolved: an outer
+cancellation keeps first-trigger precedence and is delivered at the caller's
+next checkpoint; the scope's own admission sweep is consumed. The reap follows
+a result table: an in-ring success consumes the right; `ECHILD` — and only
+`ECHILD` — proves it lost (`ReapOutcome.lostToExternalReaper`; `status`
+invalid, the `exited` event self-described by its `reap` field); transient
+errors retry inside the boundary; any other in-ring error goes to the
+termination-critical `waitpid` fallback while identity is still pinned; a
+fallback that can neither succeed nor prove loss has no ownership boundary and
+ends the process through the loop's fatal hook (§5.2). A defect in the
+supervisor, or a post-spawn admission failure, runs the same sequence as a
+pre-join emergency phase inside the scope body — protected as its first
+statement — so the join never waits on workers only the owner can end.
+
+**Return bounds** (worst-case shapes, not exact paths): the drain boundary
+for `timeout == 0` under `bounded` is `rootExit + outputGrace +
+termination-lane service delay + killDrainWindow`; for a requested
+termination, `timeout + terminateGrace + termination-lane service delay +
+killDrainWindow`; the public return adds the cleanup job's queue delay, the
+populated-wait deadline (~2 s) and the recursive removal work.
+`killFailedAwaitRoot` is exempt.
+
+### 13.8 Resource samples and scheduler-integrated blocking work (M19)
 
 Samples cover the supervised process tree, not only the root. They report peak
 summed RSS, peak live-process count, elapsed wall time, and best-effort
@@ -1739,20 +2014,91 @@ carry cumulative values. Final usage is always emitted in the result;
 rather than fabricating zero-valued measurements.
 At most one sample operation is in flight per run. If sampling takes longer than
 its interval, missed instants coalesce into the next cumulative sample rather
-than queuing stale tree walks.
+than queuing stale tree walks. The sampler owns all sampling: every sample runs
+on the blocking pool's public lane (a refused submission skips that instant),
+never on the loop thread, and the final sample is a request/ack handshake the
+supervisor completes **before** the reap — the reap deletes `/proc/<pid>`. The
+sampler's lifecycle (`notAdmitted → initializing → running → finalRequested →
+acked → exited`, or `skipped` when the owner decides first) makes
+`running → finalRequested → acked` the only sampled terminal path; anything
+else is a degraded skip, and `samplingDegraded` is monotonic.
+
+**Sources and the metric truth table.** A run's sample source follows its
+containment tier (§13.7): `cgroupFull` (an `accounted` cgroup), `cgroupMembers`
+(an `owned` one: the roster from `cgroup.procs`, `cpu.stat`, peaks from procfs)
+or `procScan` (no cgroup: `/proc` scanned for the root's descendants and its
+process group). Every metric carries its source and its quality — what the
+number is the truth about:
+
+| metric                               | source                     | quality                                                                                                                                                   |
+| ------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `peakRssBytes`, `peakProcesses`      | procfs, every tier         | `lowerBound` (sampled peaks)                                                                                                                              |
+| `userTime`, `systemTime` (tree CPU)  | procfs, or cgroup          | **always** `lowerBound`: containment is unenforced (a same-uid descendant can leave the cgroup unobserved); fed from max(procfs accumulation, cgroup CPU) |
+| `cgroupUserTime`, `cgroupSystemTime` | cgroup `cpu.stat`          | `exact` for the run cgroup while every read succeeds; `lowerBound` after a failed read                                                                    |
+| `peakCgroupMemoryBytes`, `peakTasks` | cgroup peaks (`accounted`) | `exact` while every read succeeds; `lowerBound` after a failed read                                                                                       |
+
+"No migration observed" never upgrades tree CPU to exact.
+
+**Fail-closed root anchor and transactional samples.** The root's `/proc/<pid>`
+directory is held open from one named point — immediately after the child
+exists, before any worker runs — together with its identity (pid + start time
+read through that handle); both live until the reap and are released on every
+path. Acquisition failure disables pid-based sampling for the run (procfs
+metrics stay `unmeasured`, `samplingDegraded`; cgroup counters are unaffected).
+Every proc sample validates the anchor first, collects into sample-local
+scratch, validates again, and only then merges — a disappearance or mismatch
+at either validation discards the whole sample (metrics and ledger changes
+alike): a replacement root and its fresh descendants would otherwise satisfy
+the numeric descent and group tests. Members hold no persistent descriptor:
+each is opened, validated by start time (and, in the cgroup tiers, by its
+`/proc/<pid>/cgroup` line equal to the run path or continuing with `/`, read
+through the same handle), read, and closed within one sample.
+
+**Bounded cumulative CPU ledger.** CPU is a live map with its own capacity
+(1024), a scalar of retired contributions, and a bounded retired-key set
+(4096); the total is `retired + Σ live`, so a sample costs O(live members).
+A newly discovered identity is admitted only while a live slot is free and the
+ledger is not sealed; a present member updates its running maximum; a member
+that disappeared — or whose pid now carries another start time — moves its
+last-known contribution (a lower bound) into the scalar and its key into the
+retired set; a scan omission, read failure, or exhausted budget retains the
+entry unchanged, never as proof of death. Once the retired set is full the
+ledger seals: no admission ever again, and a live entry that dies afterwards
+becomes a tombstone in place (`cpu = 0`, never summed, never re-admitted) in
+the same merge that moves its contribution — the total does not jump. Every
+saturation path degrades to a lower bound, never to an overcount.
+
+**Per-sample work budget.** Entries scanned or members probed, bytes read, and
+a cooperative time slice are bounded per sample; every live entry is re-probed
+from a rotating cursor so an early budget end does not starve the same tail;
+a budget hit sets `accountingSaturated` and keeps the qualities at
+`lowerBound`. The budget is a bound on work, never a reap-latency proof.
 
 Operations that cannot be represented by the platform completion backend run
 on `BlockingPool`, a bounded scheduler service distinct from `RawCpuPool` and
 `WorkStealingPool`. Submission parks the calling fiber, a persistent DRuntime
 worker performs the blocking host call, and completion enters the owner loop
-through its thread-safe completed queue plus `Waker`. Queue saturation returns
-`EAGAIN`; it never runs blocking work inline on the loop thread. Cancellation
-detaches policy from execution but does not free the job context: the worker's
-terminal completion is still drained before the scope can exit. Pool shutdown
-rejects new jobs, joins workers, and dispatches every accepted completion
-exactly once. POSIX spawn portability helpers, Darwin sampling calls, and any
-fallback process wait may use this pool; no path introduces `Thread.sleep`, a
-polling wait, or a second application scheduler.
+through the scheduler's own blocking-completion inbox plus `Waker` (the inbox
+is scheduler-owned: no registration, no capacity, no stale callback — a pending
+job implies a parked caller, which is what forbids destroying that scheduler).
+Public queue saturation returns `EAGAIN`; it never runs blocking work inline on
+the loop thread. A package-internal **termination-critical lane** admits reap and
+teardown jobs beyond `queueCapacity`: intrusive and frame-resident, so admission
+needs no queue slot, serviced by one reserved worker that takes nothing else,
+with ordinary workers helping only while the public queue is empty. Its
+guarantee is eventual FIFO service under finite, terminating jobs — no numeric
+bound — and its aggregate size is the sum of the live fiber slabs of every bound
+scheduler. Preparation (`prepare(ref Sched)`, which arms the scheduler's waker
+and consumes one op slot) happens before a supervised child is spawned, so a
+later slab saturation cannot block the reap. Cancellation is the entry
+checkpoint only: an accepted job is uncancellable until its completion is
+delivered, and a latched interrupt is delivered at the caller's next checkpoint
+afterwards. Pool shutdown rejects new jobs, lets workers finish and **post**
+every accepted completion exactly once, then joins them; delivery still
+requires the owning scheduler to tick, which a scheduler with a parked `run`
+caller necessarily does. POSIX spawn portability helpers, Darwin sampling calls,
+and any fallback process wait use this pool; no path introduces `Thread.sleep`,
+a polling wait, or a second application scheduler.
 
 ```d
 alias BlockingCall = void function(void* context) nothrow;
@@ -1982,22 +2328,22 @@ silent behavioral fork.
 
 Re-exported from `sparkles.event_horizon` (`package.d`):
 
-| Area                     | Symbols                                                                                                                                                                                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Errors                   | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                    |
-| Causes                   | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                  |
-| Tier A                   | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
-| Buffers                  | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                     |
-| Probing                  | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                        |
-| Tier B                   | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                 |
-| Subprocesses             | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                  |
-| Supervision (M19 target) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool`                                           |
-| Channels                 | `Channel`                                                                                                                                                                                                                                                  |
-| Scopes                   | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                            |
-| Capabilities             | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                            |
-| Schedules                | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                |
-| Topology                 | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                       |
-| Veneer (M12)             | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                         |
+| Area              | Symbols                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Errors            | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                                                                                         |
+| Causes            | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                                                                                       |
+| Tier A            | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle`                                                                      |
+| Buffers           | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                                                                                          |
+| Probing           | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                                                                                             |
+| Tier B            | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                                                                                      |
+| Subprocesses      | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                                                                                       |
+| Supervision (M19) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SampleSource`, `MetricSource`, `MetricQuality`, `ResidualPolicy`, `ReapOutcome`, `KillOutcome`, `KillResult`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool` |
+| Channels          | `Channel`                                                                                                                                                                                                                                                                                                                       |
+| Scopes            | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                                                                                                 |
+| Capabilities      | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                                                                                                 |
+| Schedules         | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                                                                                     |
+| Topology          | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                                                                                            |
+| Veneer (M12)      | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                                                                                              |
 
 Memory-management policy (normative): allocating types follow the
 [composable-allocator guidelines](../../guidelines/allocators/index.md) —

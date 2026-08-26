@@ -27,6 +27,18 @@ version (Windows)
     public import sparkles.event_horizon.io;
 }
 
+// The process surface is portable-shaped POSIX (SPEC §13, PLAN M19 item 1):
+// the kqueue backend lowers `OpWaitid` via `EVFILT_PROC`, so `live`'s
+// spawn/capture/supervise machinery and `proc`'s vocabulary are reachable
+// through the public import on every POSIX host. `liveEnv` picks the row's
+// capabilities per backend.
+version (Posix)
+{
+    public import sparkles.event_horizon.live;
+    public import sparkles.event_horizon.proc;
+    public import sparkles.event_horizon.supervise;
+}
+
 version (OSX)
 {
     public import sparkles.event_horizon.backend.kqueue;
@@ -41,11 +53,13 @@ version (linux)
     public import sparkles.event_horizon.loop;
     public import sparkles.event_horizon.sched;
     public import sparkles.event_horizon.io;
-    public import sparkles.event_horizon.live;
     public import sparkles.event_horizon.group;
     public import sparkles.event_horizon.pool;
     public import sparkles.event_horizon.fs;
-    public import sparkles.event_horizon.proc;
     public import sparkles.event_horizon.signals;
     public import sparkles.event_horizon.watch;
+
+    // Linux-only internals kept behind their gates: io_uring probing and the
+    // /proc-backed sampling of `fs`/`watch`; the work-stealing pool's CPU
+    // pinning.
 }

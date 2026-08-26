@@ -327,15 +327,25 @@ alias OpCallback = void function(void* ctx, ref Completion done) nothrow @nogc;
 /// ---
 /// free ──submit──▶ armed ──terminal CQE──▶ (callback) ──▶ free
 /// armed ──CQE with flags.more──▶ armed              (multishot fan-out)
-/// armed ──cancel()──▶ cancelRequested ──terminal CQE──▶ (callback) ──▶ free
-/// armed | cancelRequested ──detach()──▶ detached ──terminal CQE──▶ free
+/// armed ──cancel(), submits──▶ cancelSubmitted ──terminal CQE──▶ (callback) ──▶ free
+/// armed ──cancel(), cannot submit──▶ cancelQueued ──retry submits──▶ cancelSubmitted
+/// cancelQueued ──terminal CQE wins──▶ unlink ──▶ (callback) ──▶ free
+/// any live state ──detach()──▶ same state + detached: callback never runs,
+///                                cancellation progress unchanged
 /// ---
+///
+/// Cancellation progress and callback ownership are orthogonal: `detach`
+/// clears ownership only, so a detached non-completing read still reaches
+/// its terminal CQE (the queued cancel is still submitted for it) and the
+/// loop can still drain.
 enum OpState : ubyte
 {
     free,            /// recyclable
     armed,           /// in flight
-    cancelRequested, /// `ASYNC_CANCEL` submitted; terminal CQE still pending
-    detached,        /// owner gone: callback never runs, resources recycle silently
+    /// Cancel accepted but not yet submittable (reserved slot busy or the
+    /// backend full): on the loop's pending set, retried at every drive.
+    cancelQueued,
+    cancelSubmitted, /// `ASYNC_CANCEL` submitted; terminal CQE still pending
 }
 
 /// Why a cancellation reached this op — disambiguates `-ECANCELED` at the
@@ -388,10 +398,19 @@ struct OpSlot
     OpClass cls;              /// completion routing class
     CancelProvenance provenance; /// why `-ECANCELED`, when it arrives
     ubyte pendingCqes = 1;    /// CQEs before the slot may be released (linked pairs: 2)
+    /// Owner gone: the callback never runs and resources recycle silently;
+    /// orthogonal to cancellation progress.
+    bool detached;
     uint generation = 1;      /// bumped on release; token must match to resolve
     Buf pinned;               /// keep-alive across the in-flight window
     OperandStore operands;    /// kernel-stable operands
     uint nextFree;            /// intrusive free list
+    /// Pending-cancel set links (loop-owned; `uint.max` = unlinked). Kept in
+    /// dedicated fields, never `nextFree`, and the loop unlinks a queued
+    /// target $(B before) `release` — so natural completion of a queued slot
+    /// can never corrupt the set, and a callback may reuse the index at once.
+    uint pendPrev = uint.max;
+    uint pendNext = uint.max;
     SockAddr peerOut;         /// recvFrom: where the kernel-written address lands
 }
 
@@ -411,14 +430,15 @@ struct OpSlab(Allocator = Mallocator)
     else
         alias alloc = Allocator.instance;
 
-    /// Allocates `capacity` slots; all-or-nothing.
+    /// Allocates `capacity` user slots plus the one reserved internal cancel
+    /// slot (index `capacity`, never on the user free list); all-or-nothing.
     IoResult!void initialize(uint capacity) @trusted
     in (_slots is null, "already initialized")
     in (capacity > 0)
     {
         import sparkles.event_horizon.errors : IoErrorStage, ioErr, ioOk;
 
-        auto mem = alloc.makeArray!OpSlot(capacity);
+        auto mem = alloc.makeArray!OpSlot(capacity + 1);
         if (mem is null)
             return ioErr!void(12 /* ENOMEM */, OpKind.none, IoErrorStage.setup,
                 "op slab allocation failed");
@@ -427,16 +447,19 @@ struct OpSlab(Allocator = Mallocator)
         _liveCount = 0;
         foreach (i; 0 .. capacity)
             _slots[i].nextFree = i + 1 == capacity ? uint.max : i + 1;
+        _slots[capacity].nextFree = uint.max; // reserved: never linked
         _freeHead = 0;
+        _reservedActive = false;
         return ioOk();
     }
 
     /// Frees the slab; every slot must have been released.
     void terminate() @trusted
     in (_slots is null || _liveCount == 0, "op slots still in flight")
+    in (!_reservedActive, "internal cancel slot still active")
     {
         if (_slots !is null)
-            cast(void) alloc.dispose(_slots[0 .. _capacity]);
+            cast(void) alloc.dispose(_slots[0 .. _capacity + 1]);
         _slots = null;
         _capacity = 0;
         _liveCount = 0;
@@ -467,15 +490,18 @@ struct OpSlab(Allocator = Mallocator)
         slot.cls = cls;
         slot.provenance = CancelProvenance.none;
         slot.pendingCqes = 1;
+        slot.detached = false;
+        slot.pendPrev = slot.pendNext = uint.max;
         return OpToken.pack(idx, slot.generation, cls);
     }
 
-    /// Resolves a token to its live slot; `null` on stale generation or
-    /// out-of-range index (a recycled slot's late completion).
+    /// Resolves a token to its live slot — user or reserved — `null` on
+    /// stale generation or out-of-range index (a recycled slot's late
+    /// completion).
     OpSlot* resolve(OpToken t) @trusted nothrow @nogc
     {
         const idx = t.index;
-        if (idx >= _capacity)
+        if (idx > _capacity)
             return null;
         auto slot = &_slots[idx];
         if ((slot.generation & 0xFF_FFFF) != t.generation
@@ -484,16 +510,25 @@ struct OpSlab(Allocator = Mallocator)
         return slot;
     }
 
-    /// Recycles a slot: releases any still-pinned buffer, bumps the
+    /// The slot at `index` (live or not); the loop's pending-set walk.
+    OpSlot* slotAt(uint index) @trusted nothrow @nogc
+    in (index <= _capacity)
+        => &_slots[index];
+
+    /// Recycles a user slot: releases any still-pinned buffer, bumps the
     /// generation (skipping 0 on wrap), and pushes it on the free list.
     void release(OpToken t) @trusted nothrow @nogc
+    in (t.index < _capacity, "release of the reserved cancel slot")
     {
         auto slot = resolve(t);
         assert(slot !is null, "release of a stale token");
+        assert(slot.pendPrev == uint.max && slot.pendNext == uint.max,
+            "release of a slot still on the pending-cancel set");
         slot.pinned.release();
         slot.callback = null;
         slot.ctx = null;
         slot.state = OpState.free;
+        slot.detached = false;
         ++slot.generation;
         if ((slot.generation & 0xFF_FFFF) == 0)
             slot.generation = 1;
@@ -502,10 +537,59 @@ struct OpSlab(Allocator = Mallocator)
         --_liveCount;
     }
 
-    /// Slots currently armed / cancel-pending / detached.
+    // ── the reserved internal cancel slot ────────────────────────────────
+    // Index `capacity`, with its own lifecycle: it never touches `nextFree`
+    // or `_freeHead`, so it can never leak into the user budget; it keeps
+    // its own generation so a late internal CQE cannot match a newer
+    // cancellation; and only one internal cancel is ever in flight —
+    // cancellation is serialized through it.
+
+    /// Arms the reserved slot for one internal cancel; the invalid token
+    /// while it is still active (the caller queues the target instead).
+    OpToken acquireCancelSlot() @trusted nothrow @nogc
+    {
+        if (_reservedActive)
+            return OpToken.init;
+        auto slot = &_slots[_capacity];
+        slot.callback = null;
+        slot.ctx = null;
+        slot.state = OpState.armed;
+        slot.kind = OpKind.cancel;
+        slot.cls = OpClass.internal;
+        slot.provenance = CancelProvenance.none;
+        slot.pendingCqes = 1;
+        slot.detached = false;
+        slot.pendPrev = slot.pendNext = uint.max;
+        _reservedActive = true;
+        ++_liveCount;
+        return OpToken.pack(_capacity, slot.generation, OpClass.internal);
+    }
+
+    /// Releases the reserved slot: bumps its generation and marks it idle
+    /// — never writes `nextFree` or `_freeHead`.
+    void releaseCancelSlot(OpToken t) @trusted nothrow @nogc
+    in (t.index == _capacity, "not the reserved cancel slot")
+    {
+        auto slot = resolve(t);
+        assert(slot !is null && _reservedActive, "stale internal cancel token");
+        slot.state = OpState.free;
+        ++slot.generation;
+        if ((slot.generation & 0xFF_FFFF) == 0)
+            slot.generation = 1;
+        _reservedActive = false;
+        --_liveCount;
+    }
+
+    /// `true` while an internal cancel occupies the reserved slot.
+    bool reservedActive() const @safe pure nothrow @nogc => _reservedActive;
+
+    /// Slots currently armed / cancel-pending / detached — the reserved
+    /// slot counts while active (an in-flight internal cancel is work the
+    /// loop must still drive), the waker is excluded by the loop.
     uint liveCount() const @safe pure nothrow @nogc => _liveCount;
 
-    /// Total slots.
+    /// User slots (the admission budget); the reserved slot is not
+    /// advertised.
     uint capacity() const @safe pure nothrow @nogc => _capacity;
 
 private:
@@ -513,6 +597,7 @@ private:
     uint _capacity;
     uint _liveCount;
     uint _freeHead = uint.max;
+    bool _reservedActive;
 }
 
 @("op.OpToken.packRoundTrip")
