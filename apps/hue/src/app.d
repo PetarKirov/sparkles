@@ -59,7 +59,8 @@ import dsv_view : resolveTableCopy;
 import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
     defaultTheme, GuiOptions;
 import sparkles.ui_app.backend : Backend, BackendPolicy,
-    hostPickBackend = pickBackend, platformForcedBackend;
+    hostPickBackend = pickBackend, interactionTier, isInteractive, platformForcedBackend;
+import sparkles.input.tier : InteractionTier;
 import sparkles.ui_app.display : displayAvailable;
 
 import cli;
@@ -69,6 +70,22 @@ import settings_load : LoadedConfig;
 import settings_store : ConfigStore;
 
 // ── Subcommand Handlers ─────────────────────────────────────────────────────
+
+private void printOverlayKinds()
+{
+    import std.stdio : writefln;
+    import std.traits : EnumMembers, getUDAs, hasUDA;
+
+    static foreach (member; EnumMembers!OverlayKind)
+    {{
+        enum memberName = __traits(identifier, member);
+        static if (hasUDA!(member, Description))
+            enum desc = getUDAs!(member, Description)[0].text;
+        else
+            enum desc = "";
+        writefln("%-12s%s", memberName, desc);
+    }}
+}
 
 /// Resolves `--twoslash` / `--cov` / `--overlay <kind>[=<artifact>]` into the
 /// document target and the per-kind artifacts.
@@ -92,24 +109,31 @@ private bool resolveOverlayTarget(in HueCli root, ref bool forceTwoslash,
     {
         if (ovl.length == 0)
             continue;
+        import std.conv : to, ConvException;
         import std.string : indexOf;
         const eq = ovl.indexOf('=');
         const kind = eq >= 0 ? ovl[0 .. eq] : ovl;
         const artifact = eq >= 0 ? ovl[eq + 1 .. $] : "";
-        switch (kind)
+        try
         {
-            case "twoslash":
-                forceTwoslash = true;
-                if (artifact.length)
-                    target = artifact;
-                break;
-            case "coverage":
-                coverageArtifact = artifact;
-                break;
-            default:
-                stderr.writeln("hue: unknown overlay kind '", kind,
-                    "' (see --list-overlays)");
-                return false;
+            const ok = kind.to!OverlayKind;
+            final switch (ok)
+            {
+                case OverlayKind.twoslash:
+                    forceTwoslash = true;
+                    if (artifact.length)
+                        target = artifact;
+                    break;
+                case OverlayKind.coverage:
+                    coverageArtifact = artifact;
+                    break;
+            }
+        }
+        catch (ConvException)
+        {
+            stderr.writeln("hue: unknown overlay kind '", kind,
+                "' (see --list-overlays)");
+            return false;
         }
     }
     return true;
@@ -123,17 +147,15 @@ int executeView(in HueCli root, in View view)
 
     if (root.overlay.listOverlays)
     {
-        import std.stdio : writeln;
-        writeln("twoslash    type annotations from a twoslash JSON payload " ~
-            "(artifact: the payload; or make it the target — *.twoslash.json)");
-        writeln("coverage    code coverage from .lst, .gcov, .info or .json " ~
-            "(artifact: the coverage report; or --cov=<artifact>)");
+        printOverlayKinds();
         return 0;
     }
 
+    const backend = view.sink.resolveBackend(root.gui);
+
     bool forceTwoslash;
     string rawTarget = view.paths.length ? view.paths[0] : "";
-    if (rawTarget.length == 0 && isTerminal(StdStream.stdin))
+    if (rawTarget.length == 0 && backend.interactionTier >= InteractionTier.interactive)
         rawTarget = ".";
 
     string coverageArtifact;
@@ -163,8 +185,6 @@ int executeView(in HueCli root, in View view)
     pipeline.dsvHeader = view.dsvHeader;
     pipeline.coverageArtifact = coverageArtifact;
     pipeline.autoCoverage = !root.overlay.noAutoCov;
-
-    const backend = view.sink.resolveBackend(root.gui);
 
     // `FPR10`: fork the format zygote for the interactive views while the
     // process is still single-threaded (the fork-safety window). A refusal
@@ -902,11 +922,7 @@ int executeTheme(in HueCli root, in ThemeCmd cmd)
 int executeOverlay(in HueCli root, in OverlayCmd cmd)
 {
     initLogger(root.logLevel);
-    import std.stdio : writeln;
-
-    writeln("Available overlays:");
-    writeln("  twoslash    Type annotations and hover queries from TypeScript twoslash JSON payload");
-    writeln("  coverage    Per-line execution counts from a DMD .lst, gcov, LCOV or llvm-cov/V8 JSON report");
+    printOverlayKinds();
     return 0;
 }
 
