@@ -23,8 +23,230 @@ import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, io
 import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.op : OpWaitid;
-import sparkles.event_horizon.proc : ExitStatus, ProcessConfig, StdioMode, StdioSpec;
+import sparkles.event_horizon.errors : IoError;
+import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus,
+    ProcessConfig, ProcessEnd, ProcessEvent, ProcessEventKind,
+    ProcessEventSink, ProcessLine, ProcessResourceUsage, ProcessStream,
+    StdioMode, StdioSpec, SupervisedProcessConfig, SupervisedProcessResult;
 import sparkles.event_horizon.sched : Sched;
+
+private:
+
+extern (C) int access(const(char)* pathname, int mode) nothrow @nogc;
+
+extern (C) extern __gshared char** environ;
+
+/// The inherited environment as borrowed slices (`environ` itself, never
+/// mutated — overlays copy before editing, SPEC §13.1).
+package const(char)[][] inheritedEnvironment() @trusted nothrow
+{
+    import core.stdc.string : strlen;
+
+    size_t n;
+    while (environ[n] !is null)
+        ++n;
+    auto out_ = new const(char)[][](n);
+    foreach (i; 0 .. n)
+        out_[i] = environ[i][0 .. strlen(environ[i])];
+    return out_;
+}
+
+/// A "KEY=value" entry's name (everything before the first '=', or the whole
+/// entry — an entry without '=' is inherited-name-only by convention).
+package const(char)[] envNameOf(const(char)[] entry) @safe pure nothrow @nogc
+{
+    foreach (i, c; entry)
+        if (c == '=')
+            return entry[0 .. i];
+    return entry;
+}
+
+/**
+Validates and computes the child environment per SPEC §13.1: the base is
+$(LREF ProcessConfig.env) when non-null, else the inherited environment;
+`envOverlay` changes then apply in order — last change for a name wins,
+`unset` removes. Name matching is byte-exact on POSIX.
+
+An invalid edit (empty name, '=' or NUL anywhere in a name, NUL in a value)
+fails with `EINVAL` $(B before any child exists). The result is null exactly
+when the child should inherit unmodified (no custom base and no overlay);
+otherwise it is the full replacement block handed to `posix_spawnp`.
+*/
+package IoResult!(const(char)[][]) effectiveEnvironment(
+    in ProcessConfig cfg) @safe
+{
+    import core.lifetime : move;
+
+    enum EINVAL = 22;
+    if (cfg.env !is null)
+        foreach (entry; cfg.env)
+        {
+            size_t equals = size_t.max;
+            foreach (i, c; entry)
+            {
+                if (c == '\0')
+                    return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                        IoErrorStage.submit,
+                        "environment entry must not contain NUL");
+                if (c == '=' && equals == size_t.max)
+                    equals = i;
+            }
+            if (equals == size_t.max || equals == 0)
+                return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                    IoErrorStage.submit,
+                    "environment entry must be nonempty KEY=value");
+        }
+    foreach (change; cfg.envOverlay)
+    {
+        if (change.name.length == 0)
+            return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                IoErrorStage.submit, "environment name must not be empty");
+        foreach (c; change.name)
+            if (c == '=' || c == '\0')
+                return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                    IoErrorStage.submit, "environment name must not contain"
+                    ~ " '=' or NUL");
+        if (!change.unset)
+            foreach (c; change.value)
+                if (c == '\0')
+                    return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                        IoErrorStage.submit,
+                        "environment value must not contain NUL");
+    }
+
+    alias EnvBlock = const(char)[][];
+    if (cfg.env is null && cfg.envOverlay.length == 0)
+        return ioOk(EnvBlock.init);
+
+    const(char)[][] entries;
+    if (cfg.env !is null)
+    {
+        entries.length = cfg.env.length;
+        foreach (i, e; cfg.env)
+            entries[i] = e.dup;
+    }
+    else
+        entries = inheritedEnvironment();
+
+    foreach (change; cfg.envOverlay)
+    {
+        // Remove every prior spelling, including duplicates inherited from a
+        // caller-supplied replacement block. A set then appends exactly one.
+        size_t writeAt;
+        foreach (entry; entries)
+            if (envNameOf(entry) != change.name)
+                entries[writeAt++] = entry;
+        entries.length = writeAt;
+        if (!change.unset)
+        {
+            entries ~= change.name ~ "=" ~ change.value;
+        }
+    }
+    return ioOk(move(entries));
+}
+
+/// Whether `candidate` is an existing regular file this user may execute.
+private bool isExecutableFile(scope const(char)[] candidate) @trusted nothrow
+{
+    import core.sys.posix.sys.stat : S_ISREG, stat, stat_t;
+    import core.sys.posix.unistd : X_OK;
+    import std.string : toStringz;
+
+    auto z = candidate.toStringz;
+    stat_t status;
+    if (stat(z, &status) != 0 || !S_ISREG(status.st_mode))
+        return false;
+    return access(z, X_OK) == 0;
+}
+
+/// The fallback search path for a child whose environment carries no PATH:
+/// what `execvp`-family implementations use (the `_CS_PATH` confstr, which
+/// is `/bin:/usr/bin` wherever that confstr is unavailable to us).
+private string defaultPath() @trusted nothrow
+{
+    import core.sys.posix.unistd : _CS_PATH, confstr;
+
+    char[1024] buf;
+    const n = confstr(_CS_PATH, buf.ptr, buf.length);
+    if (n == 0 || n > buf.length)
+        return "/bin:/usr/bin";
+    // confstr includes the terminating NUL in its count.
+    return buf[0 .. n - 1].idup;
+}
+
+/**
+Resolves `program` against the EFFECTIVE child environment's PATH (SPEC
+§13.1: "PATH lookup uses the resulting environment").
+
+libc implementations differ about whose PATH `posix_spawnp` consults, so
+whenever a custom environment was built we pre-resolve here — first
+executable regular file across the resulting `PATH` (or the `_CS_PATH`
+fallback when it has none), empty components meaning the current directory.
+A program containing '/' is never searched. Resolution failure returns
+`program` unchanged, so `posix_spawnp` produces its usual `ENOENT`.
+*/
+package const(char)[] resolveProgram(const(char)[] program,
+    scope const(char)[][] envEntries, bool customEnv,
+    const(char)[] childCwd = null) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : canFind;
+    import std.path : isAbsolute;
+
+    if (!customEnv || program.canFind('/'))
+        return program;
+
+    const(char)[] pathValue;
+    bool hasPath;
+    foreach (entry; envEntries)
+        if (entry.length >= 5 && entry[0 .. 5] == "PATH=")
+        {
+            pathValue = entry[5 .. $];
+            hasPath = true;
+            break;
+        }
+    const searchPath = hasPath ? pathValue.idup : defaultPath();
+
+    if (searchPath.length == 0)
+        // PATH="" is exactly one empty component: exec from the child cwd.
+        // Keep a slash in the returned spelling so no libc PATH search can
+        // substitute the parent's environment if exec later reports ENOENT.
+        return "./" ~ program;
+
+    foreach (segment; searchPath.splitter(':'))
+    {
+        // Search as the child will after its chdir file action. The returned
+        // spelling is relative to that cwd; the probe spelling is relative to
+        // the parent because the child does not exist yet.
+        const childDir = segment.length ? segment : ".";
+        const childCandidate = childDir.idup ~ "/" ~ program;
+        const probeCandidate = childCwd !is null && !childDir.isAbsolute
+            ? childCwd.idup ~ "/" ~ childCandidate
+            : childCandidate;
+        if (isExecutableFile(probeCandidate))
+            return childCandidate;
+    }
+    return program;
+}
+
+private IoResult!void validateSpawnStrings(scope const(char[])[] argv,
+    const(char)[] cwd) @safe pure nothrow @nogc
+{
+    enum EINVAL = 22;
+    foreach (arg; argv)
+        foreach (c; arg)
+            if (c == '\0')
+                return ioErr!void(EINVAL, OpKind.none, IoErrorStage.submit,
+                    "argv entries must not contain NUL");
+    if (cwd !is null)
+        foreach (c; cwd)
+            if (c == '\0')
+                return ioErr!void(EINVAL, OpKind.none, IoErrorStage.submit,
+                    "cwd must not contain NUL");
+    return ioOk();
+}
+
+public:
 
 /// The live clock capability: monotonic time and an in-ring timer sleep.
 struct RingClock
@@ -177,6 +399,7 @@ struct ChildProcess
                 "killGroup failed");
         return ioOk();
     }
+
 }
 
 /**
@@ -191,8 +414,9 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     in ProcessConfig cfg = ProcessConfig()) @trusted
 {
     import core.stdc.errno : errno;
-    import core.sys.posix.fcntl : O_RDONLY, O_WRONLY;
-    import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
+    import core.sys.posix.fcntl : F_GETFD, F_SETFD, FD_CLOEXEC, O_RDONLY,
+        O_WRONLY, fcntl;
+    import core.sys.posix.spawn : posix_spawn, posix_spawn_file_actions_adddup2,
         posix_spawn_file_actions_addclose, posix_spawn_file_actions_addopen,
         posix_spawn_file_actions_destroy, posix_spawn_file_actions_init,
         posix_spawn_file_actions_t, posix_spawnattr_destroy,
@@ -204,10 +428,34 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     if (argv.length == 0)
         return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
             IoErrorStage.submit, "empty argv");
+    auto stringsValid = validateSpawnStrings(argv, cfg.cwd);
+    if (stringsValid.hasError)
+        return ioErr!ChildProcess(stringsValid.error);
+
+    // Environment overlay (SPEC §13.1): validated before pipes or file
+    // actions exist, so an invalid edit fails with no child.
+    auto envBuilt = effectiveEnvironment(cfg);
+    if (envBuilt.hasError)
+        return ioErr!ChildProcess(envBuilt.error);
+    const customEnv = cfg.env !is null || cfg.envOverlay.length > 0;
+    const program = resolveProgram(argv[0], envBuilt.value, customEnv, cfg.cwd);
+    if (customEnv)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (!argv[0].canFind('/') && program == argv[0])
+            return ioErr!ChildProcess(2 /* ENOENT */, OpKind.none,
+                IoErrorStage.submit, "program not found in child PATH");
+    }
 
     // Parent/child pipe ends per stream; -1 = not piped.
     int[2] inPipe = -1, outPipe = -1, errPipe = -1;
-    scope (failure) closePipes(inPipe, outPipe, errPipe);
+    int[3] restoreFlags = [-1, -1, -1];
+    scope (exit) closePipes(inPipe, outPipe, errPipe);
+    scope (exit)
+        foreach (fd, flags; restoreFlags)
+            if (flags >= 0)
+                cast(void) fcntl(cast(int) fd, F_SETFD, flags);
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
@@ -224,16 +472,39 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
                 if (!openPipe(pipeFds))
                     return false;
                 const childEnd = childReads ? pipeFds[0] : pipeFds[1];
-                posix_spawn_file_actions_adddup2(&actions, childEnd, childFd);
-                posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
-                posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
+                if (childEnd != childFd)
+                    posix_spawn_file_actions_adddup2(
+                        &actions, childEnd, childFd);
+                else
+                {
+                    const flags = fcntl(childEnd, F_GETFD);
+                    if (flags < 0
+                        || fcntl(childEnd, F_SETFD, flags & ~FD_CLOEXEC) != 0)
+                        return false;
+                }
+                // A pipe endpoint may itself be fd 0/1/2 when the parent had
+                // that descriptor closed. Never close the child target after
+                // installing (or retaining) it.
+                if (pipeFds[0] != childFd)
+                    posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
+                if (pipeFds[1] != childFd)
+                    posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
                 return true;
             case StdioMode.nullDev:
                 posix_spawn_file_actions_addopen(&actions, childFd,
                     "/dev/null", childReads ? O_RDONLY : O_WRONLY, 0);
                 return true;
             case StdioMode.fd:
-                posix_spawn_file_actions_adddup2(&actions, spec.fd, childFd);
+                if (spec.fd != childFd)
+                    posix_spawn_file_actions_adddup2(&actions, spec.fd, childFd);
+                else
+                {
+                    const flags = fcntl(spec.fd, F_GETFD);
+                    if (flags < 0
+                        || fcntl(spec.fd, F_SETFD, flags & ~FD_CLOEXEC) != 0)
+                        return false;
+                    restoreFlags[childFd] = flags;
+                }
                 return true;
             case StdioMode.mergeStdout:
                 // Valid for stderr only (checked before wiring). The stdout
@@ -273,21 +544,34 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     // the only thing keeping the inner `char[]`s reachable, and the child's
     // environment must survive until posix_spawnp has read it. `cargv` above
     // was already rooted this way; `cenv` was the one that was not.
-    auto cenvArray = cfg.env is null ? null : cstrings(cfg.env);
-    auto cenv = cfg.env is null ? environ : cenvArray.ptr;
+    auto cenvArray = customEnv ? cstrings(envBuilt.value) : null;
+    auto cenv = customEnv ? cenvArray.ptr : environ;
+    // Pre-resolved per §13.1 when a custom environment was built; otherwise
+    // the original spelling keeps libc's own PATH search semantics.
+    auto programZ = zstring(program);
 
     int pid;
-    const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
+    // A custom environment has already been searched against its own PATH.
+    // `posix_spawnp` would search the parent's PATH again after a miss.
+    const rc = customEnv
+        ? posix_spawn(&pid, programZ, &actions, &attr, cargv.ptr, cenv)
+        : posix_spawnp(&pid, programZ, &actions, &attr, cargv.ptr, cenv);
 
     // Parent keeps only its own ends; the child-side ends close now.
     closeIf(cfg.stdinSpec, inPipe[0]);
+    inPipe[0] = -1;
     closeIf(cfg.stdoutSpec, outPipe[1]);
+    outPipe[1] = -1;
     closeIf(cfg.stderrSpec, errPipe[1]);
+    errPipe[1] = -1;
     if (rc != 0)
     {
         closeIf(cfg.stdinSpec, inPipe[1]);
+        inPipe[1] = -1;
         closeIf(cfg.stdoutSpec, outPipe[0]);
+        outPipe[0] = -1;
         closeIf(cfg.stderrSpec, errPipe[0]);
+        errPipe[0] = -1;
         return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
             "posix_spawnp failed");
     }
@@ -297,6 +581,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     child.stdinW = FileHandle(inPipe[1]);
     child.stdoutR = FileHandle(outPipe[0]);
     child.stderrR = FileHandle(errPipe[0]);
+    inPipe[1] = outPipe[0] = errPipe[0] = -1;
     return ioOk(child);
 }
 
@@ -354,9 +639,10 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             return info.si_status;
     }
 
-    IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
+    private IoResult!ExitStatus waitPidFlags(ref Sched s, int pid,
+        int flags) @trusted
     {
-        import core.sys.posix.sys.wait : WEXITED, idtype_t;
+        import core.sys.posix.sys.wait : idtype_t;
 
         if (pid <= 0)
             return ioErr!ExitStatus(10 /* ECHILD */, OpKind.waitid,
@@ -365,7 +651,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         // The siginfo out-buffer lives on this parked frame (SPEC §6.5).
         SigInfo info;
         auto o = s.await(OpWaitid(cast(int) idtype_t.P_PID,
-            cast(uint) pid, cast(void*) &info, WEXITED));
+            cast(uint) pid, cast(void*) &info, flags));
         if (o.res < 0)
             return ioErr!ExitStatus(-o.res, OpKind.waitid);
 
@@ -374,6 +660,22 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         return ioOk(info.si_code == CLD_EXITED
             ? ExitStatus(false, code)
             : ExitStatus(true, code));
+    }
+
+    IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
+    {
+        import core.sys.posix.sys.wait : WEXITED;
+
+        return waitPidFlags(s, pid, WEXITED);
+    }
+
+    /// Waits for exit without consuming the zombie, so final accounting can
+    /// inspect `/proc/<pid>` before the one real reap.
+    private IoResult!ExitStatus observeExit(ref Sched s, int pid) @trusted
+    {
+        import core.sys.posix.sys.wait : WEXITED, WNOWAIT;
+
+        return waitPidFlags(s, pid, WEXITED | WNOWAIT);
     }
 
     /// ditto — on the current fiber's scheduler, the tier-B convention
@@ -409,7 +711,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
 {
     import core.stdc.errno : errno;
     import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
-    import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
+    import core.sys.posix.spawn : posix_spawn, posix_spawn_file_actions_adddup2,
         posix_spawn_file_actions_addopen, posix_spawn_file_actions_destroy,
         posix_spawn_file_actions_init, posix_spawn_file_actions_t,
         posix_spawnattr_destroy, posix_spawnattr_init,
@@ -420,8 +722,25 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     if (argv.length == 0)
         return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
             IoErrorStage.submit, "empty argv");
+    auto stringsValid = validateSpawnStrings(argv, cfg.cwd);
+    if (stringsValid.hasError)
+        return ioErr!ChildProcess(stringsValid.error);
 
-    const master = posix_openpt(O_RDWR | O_NOCTTY);
+    auto envBuilt = effectiveEnvironment(cfg);
+    if (envBuilt.hasError)
+        return ioErr!ChildProcess(envBuilt.error);
+    const customEnv = cfg.env !is null || cfg.envOverlay.length > 0;
+    const program = resolveProgram(argv[0], envBuilt.value, customEnv, cfg.cwd);
+    if (customEnv)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (!argv[0].canFind('/') && program == argv[0])
+            return ioErr!ChildProcess(2 /* ENOENT */, OpKind.none,
+                IoErrorStage.submit, "program not found in child PATH");
+    }
+
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
     if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0)
     {
         if (master >= 0)
@@ -429,7 +748,9 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
         return ioErr!ChildProcess(errno ? errno : 5, OpKind.none,
             IoErrorStage.setup, "pty allocation failed");
     }
-    scope (failure) close(master);
+    scope (exit)
+        if (master >= 0)
+            close(master);
 
     const slavePath = ptsname(master);
     if (slavePath is null)
@@ -472,17 +793,20 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     posix_spawn_file_actions_addopen(&actions, 0, slavePath, O_RDWR, 0);
     posix_spawn_file_actions_adddup2(&actions, 0, 1);
     posix_spawn_file_actions_adddup2(&actions, 0, 2);
+    if (cfg.cwd !is null)
+        posix_spawn_file_actions_addchdir_np(&actions, zstring(cfg.cwd));
 
     auto cargv = cstrings(argv);
-    // Bound to a named local rather than used as a bare `.ptr`: the slice is
-    // the only thing keeping the inner `char[]`s reachable, and the child's
-    // environment must survive until posix_spawnp has read it. `cargv` above
-    // was already rooted this way; `cenv` was the one that was not.
-    auto cenvArray = cfg.env is null ? null : cstrings(cfg.env);
-    auto cenv = cfg.env is null ? environ : cenvArray.ptr;
+    // Bound to a named local rather than used as a bare `.ptr` (see
+    // `spawnProcess`); the overlay-computed block replaces it wholesale.
+    auto cenvArray = customEnv ? cstrings(envBuilt.value) : null;
+    auto cenv = customEnv ? cenvArray.ptr : environ;
+    auto programZ = zstring(program);
 
     int pid;
-    const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
+    const rc = customEnv
+        ? posix_spawn(&pid, programZ, &actions, &attr, cargv.ptr, cenv)
+        : posix_spawnp(&pid, programZ, &actions, &attr, cargv.ptr, cenv);
     if (rc != 0)
         return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
             "posix_spawnp failed");
@@ -490,6 +814,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     ChildProcess child;
     child.pid = pid;
     child.ptyMaster = FileHandle(master);
+    master = -1;
     return ioOk(child);
 }
 
@@ -549,6 +874,13 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         if (spawned.hasError)
             return ioErr!CapturedOutput(spawned.error);
         auto child = spawned.value;
+        scope (exit)
+        {
+            child.stdinW.close();
+            child.stdoutR.close();
+            child.stderrR.close();
+            child.ptyMaster.close();
+        }
 
         // Fibers capture plain locals, never `ref`/`scope` parameters (a
         // captured parameter slot outlives nothing — the tui-loop lesson).
@@ -628,6 +960,1152 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             => .wait(*_sched, child);
     }
 
+    // ── supervised runs (SPEC §13.5–§13.8) ─────────────────────────────
+
+    private struct ProcessIdentity
+    {
+        int pid;
+        ulong startTime;
+    }
+
+    private struct ProcessCpu
+    {
+        ulong userTicks;
+        ulong systemTicks;
+    }
+
+    /** One supervised run's state, mutated only by the supervising fiber. */
+    private struct SupervisionState
+    {
+        import sparkles.base.buffer : SharedBuffer;
+
+        ChildProcess* child;
+        int processGroup;
+        bool collect;
+
+        // Single-winner end decision (§13.7): the first timeout / cancel
+        // trigger names the reported ProcessEnd; later triggers only
+        // advance cleanup.
+        ProcessEnd end = ProcessEnd.exited;
+        bool endDecided;
+        bool termSent;
+        bool killSent;
+        bool reaped;
+        ExitStatus status; /// valid only once `reaped`
+        bool published;    /// the exited event went out exactly once
+
+        // Raw accumulation: exact bytes including original terminators
+        // (§13.6). One writer per field at any time.
+        SharedBuffer!(ubyte, 256) stdout_;
+        SharedBuffer!(ubyte, 256) stderr_;
+
+        ProcessResourceUsage usage;
+        MonoTime startedAt;
+        ProcessCpu[ProcessIdentity] observedCpu;
+        version (unittest)
+            int* signalAttempts;
+    }
+
+    private enum RelayKind : ubyte
+    {
+        bytes,
+        streamEof,
+        readError,
+        rootObserved,
+        waitError,
+        workerDefect,
+        timeout,
+        sampleDue,
+    }
+
+    /// Worker-to-supervisor messages. Workers never invoke application code.
+    private struct RelayMessage
+    {
+        import sparkles.base.buffer : SharedBuffer;
+
+        RelayKind kind;
+        ProcessStream stream;
+        SharedBuffer!(ubyte, 512) bytes;
+        IoError error;
+        Throwable defect;
+    }
+
+    private bool canPublishExited(in SupervisionState st,
+        bool stdoutFinished, bool stderrFinished) @safe pure nothrow @nogc
+        => st.reaped && stdoutFinished && stderrFinished;
+
+    private bool waitLostReapRight(in IoError error)
+        @safe pure nothrow @nogc
+        => error.errnoValue == 10 /* ECHILD */;
+
+    private bool transientProcessError(in IoError error)
+        @safe pure nothrow @nogc
+    {
+        import core.stdc.errno : EAGAIN, EINTR, ENOBUFS;
+
+        return error.errnoValue == EINTR || error.errnoValue == EAGAIN
+            || error.errnoValue == ENOBUFS;
+    }
+
+    private bool retryProcessError(in IoError error, uint attempts)
+        @safe pure nothrow @nogc
+        => transientProcessError(error) && attempts < 8;
+
+    private IoResult!ExitStatus waitPidAfterKill(int pid) @trusted nothrow
+    {
+        import core.stdc.errno : EINTR, errno;
+        import core.sys.posix.sys.wait : WEXITSTATUS, WIFEXITED, WIFSIGNALED,
+            WTERMSIG, waitpid;
+
+        int raw;
+        int rc;
+        do
+            rc = waitpid(pid, &raw, 0);
+        while (rc < 0 && errno == EINTR);
+        if (rc < 0)
+            return ioErr!ExitStatus(errno, OpKind.waitid,
+                IoErrorStage.completion, "waitpid fallback failed");
+        if (WIFEXITED(raw))
+            return ioOk(ExitStatus(false, WEXITSTATUS(raw)));
+        if (WIFSIGNALED(raw))
+            return ioOk(ExitStatus(true, WTERMSIG(raw)));
+        return ioErr!ExitStatus(5 /* EIO */, OpKind.waitid,
+            IoErrorStage.completion, "waitpid returned no terminal status");
+    }
+
+    /// The line-delivery callback shape of $(LREF LineFramer): borrowed
+    /// payload, valid for the call.
+    private alias LineEmit = void delegate(ProcessStream stream,
+        const(ubyte)[] bytes, bool terminated);
+
+    /**
+    Independent incremental LF/CRLF framer for one pipe (SPEC §13.6): LF ends
+    a line, one immediately preceding CR is stripped, embedded NUL and
+    invalid UTF-8 are preserved, empty lines are events, a line may span many
+    reads and a read may hold many lines. EOF flushes one final
+    `terminated == false` event iff bytes remain.
+    */
+    private struct LineFramer
+    {
+        import sparkles.base.buffer : SharedBuffer;
+
+        private SharedBuffer!(ubyte, 256) _pending;
+
+        /// Feeds raw read output, emitting complete lines through `emit`.
+        void push(scope const(ubyte)[] bytes, ProcessStream stream,
+            LineEmit emit)
+        {
+            _pending ~= bytes;
+            size_t lineStart;
+            foreach (i; 0 .. _pending.length)
+            {
+                if (_pending[i] != '\n')
+                    continue;
+                size_t end = i;
+                if (end > lineStart && _pending[end - 1] == '\r')
+                    --end;
+                emit(stream, _pending[lineStart .. end], true);
+                lineStart = i + 1;
+            }
+            if (lineStart > 0)
+            {
+                const remain = _pending.length - lineStart;
+                foreach (j; 0 .. remain)
+                    _pending[j] = _pending[lineStart + j];
+                _pending.length = remain;
+            }
+        }
+
+        /// EOF: one final unterminated fragment iff bytes remain.
+        void flushEof(ProcessStream stream, LineEmit emit)
+        {
+            if (_pending.length)
+            {
+                emit(stream, _pending[], false);
+                _pending.length = 0;
+            }
+        }
+    }
+
+    /// Advances the single-winner end decision; later triggers are no-ops.
+    private void decideEnd(ref SupervisionState st, ProcessEnd which)
+        @safe pure nothrow @nogc
+    {
+        if (!st.endDecided)
+        {
+            st.endDecided = true;
+            st.end = which;
+        }
+    }
+
+    private void timeoutOccurred(ref SupervisionState st)
+        @safe pure nothrow @nogc
+    {
+        decideEnd(st, ProcessEnd.timedOut);
+    }
+
+    private void signalGroup(ref SupervisionState st, int signal,
+        ref bool sent) @trusted nothrow
+    {
+        import core.sys.posix.signal : kill_ = kill;
+
+        if (sent || st.processGroup <= 0)
+            return;
+        sent = true;
+        version (unittest)
+            if (st.signalAttempts !is null)
+                ++*st.signalAttempts;
+        if (kill_(-st.processGroup, signal) != 0 && *st.child)
+            cast(void) kill_(st.child.pid, signal);
+    }
+
+    private void signalSavedGroup(int processGroup, int signal)
+        @trusted nothrow @nogc
+    {
+        import core.sys.posix.signal : kill_ = kill;
+
+        if (processGroup > 0)
+            cast(void) kill_(-processGroup, signal);
+    }
+
+    /// Sends the graceful termination request to the privately saved group.
+    private void sendTerm(ref SupervisionState st) @trusted nothrow
+    {
+        import core.sys.posix.signal : SIGTERM;
+
+        signalGroup(st, SIGTERM, st.termSent);
+    }
+
+    /// Sends the hard-kill request to the privately saved group once.
+    private void sendKill(ref SupervisionState st) @trusted nothrow
+    {
+        import core.sys.posix.signal : SIGKILL;
+
+        signalGroup(st, SIGKILL, st.killSent);
+    }
+
+    private void emergencyTerminateDrainReap(ref Sched s,
+        ref ChildProcess child, int processGroup,
+        int* signalAttempts = null) @trusted
+    {
+        import core.lifetime : move;
+        import core.sys.posix.signal : SIGKILL;
+        import core.time : msecs;
+
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.io : read, sleep;
+        import sparkles.event_horizon.scope_ : protect;
+
+        // Once wait has consumed the root, this low-level pid may be reused;
+        // exceptional cleanup has nothing left to signal in that case.
+        if (child.pid > 0)
+        {
+            version (unittest)
+                if (signalAttempts !is null)
+                    ++*signalAttempts;
+            signalSavedGroup(processGroup, SIGKILL);
+        }
+        child.stdinW.close();
+        cast(void) protect!(() {
+            void drainAndClose(ref FileHandle handle)
+            {
+                if (handle.fd >= 0)
+                {
+                    uint retries;
+                    for (;;)
+                    {
+                        SharedBuffer!(ubyte, 512) chunk;
+                        chunk.length = 512;
+                        auto got = read(handle, move(chunk));
+                        if (got.res.hasValue && got.res.value == 0)
+                            break;
+                        if (got.res.hasError)
+                        {
+                            if (!transientProcessError(got.res.error)
+                                || retries++ >= 8)
+                            {
+                                break;
+                            }
+                            cast(void) sleep(s, 1.msecs);
+                        }
+                        else
+                            retries = 0;
+                    }
+                }
+                handle.close();
+            }
+
+            drainAndClose(child.stdoutR);
+            drainAndClose(child.stderrR);
+            uint waitRetries;
+            while (child)
+            {
+                auto waited = .wait(s, child);
+                if (waited.hasValue)
+                    break;
+                if (waited.error.errnoValue == 10 /* ECHILD */)
+                {
+                    child.pid = -1;
+                    break;
+                }
+                if (retryProcessError(waited.error, waitRetries++))
+                {
+                    cast(void) sleep(s, 1.msecs);
+                    continue;
+                }
+                auto fallback = waitPidAfterKill(child.pid);
+                if (fallback.hasValue || fallback.error.errnoValue == 10)
+                    child.pid = -1;
+                break;
+            }
+        })(s);
+    }
+
+    version (linux)
+    {
+        /// Parses `/proc/<pid>/stat`'s ppid, CPU ticks, and resident pages.
+        private bool parseProcStat(int pid, out int ppid, out int pgrp,
+            out ulong utime, out ulong stime, out ulong startTime,
+            out ulong rssPages) @trusted
+        {
+            import core.stdc.stdio : fclose, fgets, fopen;
+            import core.stdc.string : strlen;
+            import std.array : split;
+            import std.conv : to;
+            import std.format : format;
+            import std.string : toStringz;
+
+            auto file = fopen(format("/proc/%d/stat", pid).toStringz, "r");
+            if (file is null)
+                return false;
+            scope (exit) fclose(file);
+
+            char[2048] lineBuf;
+            if (fgets(lineBuf.ptr, lineBuf.length, file) is null)
+                return false;
+            const text = lineBuf[0 .. strlen(lineBuf.ptr)];
+
+            // comm may contain spaces and parens: split after its last ')'.
+            long close_ = -1;
+            foreach (i, c; text)
+                if (c == ')')
+                    close_ = i;
+            if (close_ < 0)
+                return false;
+            const rest = text[close_ + 1 .. $]; // fields restart at #3
+
+            static long parseField(const(char)[] tok)
+            {
+                import std.conv : ConvException;
+
+                try
+                    return to!long(tok);
+                catch (ConvException _)
+                    // The kernel spells some -1 fields as their unsigned
+                    // wraparound (`18446744073709551615`) — notably on
+                    // zombies.
+                    return cast(long) to!ulong(tok);
+            }
+
+            try
+            {
+                // Token 0 is the state LETTER ("S"/"R"/…); later fields can
+                // be negative (`tpgid = -1` without a controlling tty), so
+                // everything parses signed and widens.
+                long[22] f = void;
+                size_t seen;
+                foreach (tok; rest.split(' '))
+                {
+                    if (tok.length == 0)
+                        continue;
+                    if (seen == 0)
+                    {
+                        ++seen;
+                        continue;
+                    }
+                    if (seen < f.length + 1)
+                        f[seen - 1] = parseField(tok);
+                    ++seen;
+                }
+                if (seen < 22)
+                    return false;
+                // With the state letter skipped, f[j] holds field j+4.
+                ppid = cast(int) f[0]; // field 4
+                pgrp = cast(int) f[1]; // field 5
+                utime = cast(ulong) f[10]; // field 14
+                stime = cast(ulong) f[11]; // field 15
+                startTime = cast(ulong) f[18]; // field 22
+                rssPages = cast(ulong) f[20]; // field 24
+                return true;
+            }
+            catch (Exception _)
+            {
+                return false; // malformed stat line: skip this pid
+            }
+        }
+
+        private __gshared size_t pageSizeCache;
+
+        private size_t pageSize() @trusted nothrow @nogc
+        {
+            import core.sys.posix.unistd : _SC_PAGESIZE, sysconf;
+
+            if (pageSizeCache == 0)
+                pageSizeCache = cast(size_t) sysconf(_SC_PAGESIZE);
+            return pageSizeCache;
+        }
+
+        private long clockTicksPerSecond() @trusted nothrow @nogc
+        {
+            import core.sys.posix.unistd : _SC_CLK_TCK, sysconf;
+
+            return sysconf(_SC_CLK_TCK);
+        }
+
+        private Duration ticksToDuration(ulong ticks, long hz)
+            @safe pure nothrow @nogc
+        {
+            import core.time : usecs;
+
+            if (hz <= 0)
+                return Duration.zero;
+            return usecs(cast(long) ticks * 1_000_000L / hz);
+        }
+
+        /**
+        Walks `/proc` once and folds the root's whole descendant tree into
+        `usage`: peak summed RSS, peak live-process count, cumulative
+        user/system CPU over live members (best-effort, SPEC §13.8). A walk
+        that cannot see the root leaves the peaks untouched.
+        */
+        package void sampleTreeLinux(int rootPid,
+            ref ProcessResourceUsage usage,
+            ref ProcessCpu[ProcessIdentity] observedCpu) @safe
+        {
+            import core.stdc.string : strlen;
+            import core.sys.posix.dirent : closedir, dirent, opendir,
+                readdir;
+            import std.conv : to;
+
+            // Raw readdir, not std.file.dirEntries: the latter stats every
+            // entry and THROWS when a short-lived process vanishes between
+            // getdents and stat, aborting the walk mid-stream. A vanished
+            // pid here skips one tree member instead.
+            auto procDir = (() @trusted => opendir("/proc"))();
+            if (procDir is null)
+                return;
+            scope (exit) (() @trusted => closedir(procDir))();
+
+            struct Snapshot
+            {
+                int ppid;
+                int pgrp;
+                ulong userTicks;
+                ulong systemTicks;
+                ulong startTime;
+                ulong rssPages;
+            }
+
+            Snapshot[int] processes;
+            for (;;)
+            {
+                auto entry = (() @trusted => readdir(procDir))();
+                if (entry is null)
+                    break;
+                const nameLen = (() @trusted => strlen(entry.d_name.ptr))();
+                const name = entry.d_name[0 .. nameLen];
+                bool numeric = name.length > 0 && name.length <= 7;
+                foreach (c; name)
+                    if (c < '0' || c > '9')
+                    {
+                        numeric = false;
+                        break;
+                    }
+                if (!numeric)
+                    continue;
+                int pid;
+                try
+                    pid = to!int(name.idup);
+                catch (Exception _)
+                    continue;
+                int ppid;
+                int pgrp;
+                ulong u, s2, startTime, rss;
+                if (!parseProcStat(pid, ppid, pgrp, u, s2, startTime, rss))
+                    continue; // vanished or unreadable: skip this member
+                processes[pid] = Snapshot(ppid, pgrp, u, s2, startTime, rss);
+            }
+
+            bool descendedFrom(int pid)
+            {
+                int walker = pid;
+                foreach (_; 0 .. 4096)
+                {
+                    if (walker == rootPid)
+                        return true;
+                    auto next = walker in processes;
+                    if (next is null || walker <= 1)
+                        return false;
+                    walker = next.ppid;
+                }
+                return false;
+            }
+
+            size_t liveCount;
+            ulong rssSum, userTicks, systemTicks;
+            foreach (pid, snapshot; processes)
+            {
+                if (!descendedFrom(pid)
+                    && snapshot.pgrp != rootPid)
+                    continue;
+                ++liveCount;
+                rssSum += snapshot.rssPages * pageSize();
+                // Mutable, not const: DMD deprecates using a const AA key as
+                // the lvalue of an assignment (and the build captures the
+                // diagnostic into example-output verification).
+                auto identity = ProcessIdentity(pid, snapshot.startTime);
+                auto prior = identity in observedCpu;
+                if (prior is null)
+                    observedCpu[identity] = ProcessCpu(
+                        snapshot.userTicks, snapshot.systemTicks);
+                else
+                {
+                    if (snapshot.userTicks > prior.userTicks)
+                        prior.userTicks = snapshot.userTicks;
+                    if (snapshot.systemTicks > prior.systemTicks)
+                        prior.systemTicks = snapshot.systemTicks;
+                }
+            }
+
+            if (liveCount == 0)
+                return; // root not visible: keep prior peaks (§13.8)
+
+            if (rssSum > usage.peakRssBytes)
+                usage.peakRssBytes = rssSum;
+            if (liveCount > usage.peakProcesses)
+                usage.peakProcesses = liveCount;
+            ++usage.sampleCount;
+            usage.sampled = true;
+            foreach (cpu; observedCpu)
+            {
+                userTicks += cpu.userTicks;
+                systemTicks += cpu.systemTicks;
+            }
+            const hz = clockTicksPerSecond();
+            usage.userTime = ticksToDuration(userTicks, hz);
+            usage.systemTime = ticksToDuration(systemTicks, hz);
+        }
+    }
+    else
+    {
+        /**
+        Darwin stub: SPEC §13.8 names `proc_pid_rusage` +
+        `proc_listchildpids` as the eventual source. Until that lands,
+        sampling reports `sampled == false` rather than fabricated numbers;
+        wall time still comes from the run itself.
+        */
+        private void sampleTreeLinux(int, ref ProcessResourceUsage usage,
+            ref ProcessCpu[ProcessIdentity] observedCpu)
+            @safe
+        {
+        }
+    }
+
+    /** One tree sample folded into the cumulative usage, with wall time. */
+    private bool takeSample(ref SupervisionState st) @safe
+    {
+        const before = st.usage.sampleCount;
+        sampleTreeLinux(st.processGroup, st.usage, st.observedCpu);
+        st.usage.wallTime = MonoTime.currTime - st.startedAt;
+        // A walk that could not see the tree (just-exited root mid-teardown,
+        // transient /proc race) changes no cumulative counter; reporting it
+        // would repeat stale values and break cumulative monotonicity.
+        return st.usage.sampleCount != before;
+    }
+
+    /**
+    Runs `argv` under full supervision (SPEC §13.5–§13.7): spawn, stdin feed,
+    concurrent independent line framing of both pipes (§13.6), optional raw
+    collection, cumulative tree samples (§13.8), and one ownership boundary
+    around timeout/cancellation teardown (§13.7).
+
+    Guarantees:
+
+    $(UL
+        $(LI both output streams are piped (stderr via `mergeStdout` when so
+            configured) so they can always be drained;)
+        $(LI a fresh process group exists regardless of
+            `ProcessConfig.newProcessGroup`, because TERM/KILL target the
+            tree;)
+        $(LI non-null `stdinBytes` upgrades an inherit stdin to a pipe, is
+            fed fully, and closed for EOF;)
+        $(LI spawn failure creates no child, emits no event, and returns
+            `end == spawnFailed` with `spawnError`;)
+        $(LI the first timeout/cancel trigger wins the reported `ProcessEnd`;
+            TERM goes to the process group, KILL follows one monotonic
+            grace; natural exit during grace suppresses the kill;)
+        $(LI both pipes drain to EOF and the child is reaped exactly once on
+            every path — including surrounding-scope cancellation, which
+            latches on the caller and is delivered only after cleanup and
+            the final published event (§13.5 last paragraph);)
+        $(LI exactly one `exited` event, only after both EOFs and the reap;
+            no callback runs after `supervise` returns;)
+        $(LI a sample runs before the exit check, so a just-exited root
+            stays observable; missed instants coalesce (one walk at a
+            time).)
+    )
+
+    Non-zero exit is data (`status`), never an `IoError`. Worker fibers relay
+    raw completions only: framing and every callback run synchronously on the
+    original supervising fiber, including throughout cancellation cleanup.
+    */
+    IoResult!SupervisedProcessResult supervise(ref Sched s,
+        scope const(char[])[] argv,
+        in SupervisedProcessConfig cfg = SupervisedProcessConfig(),
+        scope const(ubyte)[] stdinBytes = null,
+        scope ProcessEventSink onEvent = null)
+        => superviseImpl(s, argv, cfg, stdinBytes, onEvent, null);
+
+    private alias RelayTestHook = void delegate(RelayKind kind);
+
+    private IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
+        scope const(char[])[] argv,
+        in SupervisedProcessConfig cfg,
+        scope const(ubyte)[] stdinBytes,
+        scope ProcessEventSink onEvent,
+        scope RelayTestHook beforeHandle,
+        int* signalAttempts = null) @trusted
+    {
+        import core.lifetime : move;
+        import core.time : Duration, MonoTime, msecs;
+
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.channel : Channel;
+        import sparkles.event_horizon.io : read, sleep, write;
+        import sparkles.event_horizon.scope_ : protect, withScope;
+
+        SupervisedProcessResult result;
+
+        // §13.7: supervise owns the group; §13.5: supervision pipes both
+        // streams so they can always be drained to EOF.
+        ProcessConfig spawnCfg = cfg.process;
+        spawnCfg.newProcessGroup = true;
+        spawnCfg.stdoutSpec = StdioSpec(StdioMode.pipe);
+        spawnCfg.stderrSpec = cfg.process.stderrSpec.mode == StdioMode.mergeStdout
+            ? cfg.process.stderrSpec : StdioSpec(StdioMode.pipe);
+        if (stdinBytes !is null
+            && spawnCfg.stdinSpec.mode == StdioMode.inherit)
+            spawnCfg.stdinSpec = StdioSpec(StdioMode.pipe);
+
+
+
+        auto spawned = spawnProcess(argv, spawnCfg);
+        if (spawned.hasError)
+        {
+            result.end = ProcessEnd.spawnFailed;
+            result.spawnError = spawned.error;
+            return ioOk(move(result));
+        }
+        auto child = spawned.value;
+        const savedGroup = child.pid;
+        scope (exit)
+        {
+            child.stdinW.close();
+            child.stdoutR.close();
+            child.stderrR.close();
+            child.ptyMaster.close();
+        }
+
+        try
+        {
+        // Fibers capture plain locals, never `ref`/`scope` parameters (the
+        // tui-loop lesson; same shape as `capture`).
+        SupervisionState st;
+        st.child = &child;
+        st.processGroup = savedGroup;
+        st.collect = cfg.collectOutput;
+        st.startedAt = MonoTime.currTime;
+        version (unittest)
+            st.signalAttempts = signalAttempts;
+        cast(void) takeSample(st);
+
+        SharedBuffer!(ubyte, 256) stdinCopy;
+        if (stdinBytes !is null)
+            stdinCopy ~= stdinBytes;
+
+        auto childP = &child;
+        auto stP = &st;
+        auto schedP = &s;
+        Channel!(RelayMessage, 32) relay;
+        auto relayP = &relay;
+        ProcessEventSink sink = onEvent;
+        Throwable sinkDefect;
+        IoError operationError;
+        bool hasOperationError;
+        bool stdoutFinished, stderrFinished;
+        bool abortWorkers, stopProducer, terminationRequested;
+        bool resourceExhausted;
+        MonoTime graceDeadline;
+        LineFramer stdoutFramer, stderrFramer;
+
+        void rememberError(IoError error)
+        {
+            if (!hasOperationError)
+            {
+                hasOperationError = true;
+                operationError = error;
+            }
+        }
+
+        auto outcome = withScope!((ref sc) {
+            void abortRun() nothrow
+            {
+                abortWorkers = true;
+                relay.close();
+                childP.stdinW.close();
+                sendKill(*stP);
+                stopProducer = true;
+            }
+
+            try
+            {
+            bool publish(RelayMessage msg)
+            {
+                if (abortWorkers)
+                    return false;
+                return !relayP.put(*schedP, move(msg)).hasError;
+            }
+
+            bool spawnWorker(bool daemon, void delegate() body)
+            {
+                void guarded()
+                {
+                    try
+                        body();
+                    catch (Throwable defect)
+                    {
+                        RelayMessage msg;
+                        msg.kind = RelayKind.workerDefect;
+                        msg.defect = defect;
+                        cast(void) publish(move(msg));
+                    }
+                }
+
+                const accepted = daemon
+                    ? sc.spawnDaemon(&guarded)
+                    : sc.spawn(&guarded);
+                if (!accepted)
+                    resourceExhausted = true;
+                return accepted;
+            }
+
+            bool spawnDrain(FileHandle f, ProcessStream stream)
+            {
+                if (f.fd < 0)
+                {
+                    if (stream == ProcessStream.stdout_)
+                        stdoutFinished = true;
+                    else
+                        stderrFinished = true;
+                    return true;
+                }
+                return spawnWorker(false, () {
+                    cast(void) protect!(() {
+                        uint retries;
+                        for (;;)
+                        {
+                            if (abortWorkers)
+                                return;
+                            SharedBuffer!(ubyte, 512) chunk;
+                            chunk.length = 512;
+                            auto got = read(f, move(chunk));
+                            chunk = move(got.buf);
+                            RelayMessage msg;
+                            msg.stream = stream;
+                            if (got.res.hasError)
+                            {
+                                if (retryProcessError(got.res.error, retries++))
+                                {
+                                    cast(void) sleep(*schedP, 1.msecs);
+                                    continue;
+                                }
+                                msg.kind = RelayKind.readError;
+                                msg.error = got.res.error;
+                                cast(void) publish(move(msg));
+                                return;
+                            }
+                            retries = 0;
+                            if (got.res.value == 0)
+                            {
+                                msg.kind = RelayKind.streamEof;
+                                cast(void) publish(move(msg));
+                                return;
+                            }
+                            msg.kind = RelayKind.bytes;
+                            msg.bytes ~= chunk[][0 .. got.res.value];
+                            if (!publish(move(msg)))
+                                return;
+                        }
+                    })(*schedP);
+                });
+            }
+
+            cast(void) spawnDrain(childP.stdoutR, ProcessStream.stdout_);
+            cast(void) spawnDrain(childP.stderrR, ProcessStream.stderr_);
+
+            // Non-consuming exit observation remains cancellable while the
+            // supervisor waits on pipes, then the supervisor performs reap.
+            if (!spawnWorker(false, () {
+                cast(void) protect!(() {
+                    uint retries;
+                    for (;;)
+                    {
+                        if (abortWorkers)
+                            return;
+                        auto observed = observeExit(*schedP, childP.pid);
+                        if (observed.hasValue)
+                        {
+                            RelayMessage msg;
+                            msg.kind = RelayKind.rootObserved;
+                            cast(void) publish(move(msg));
+                            return;
+                        }
+                        if (!retryProcessError(observed.error, retries++))
+                        {
+                            RelayMessage msg;
+                            msg.kind = RelayKind.waitError;
+                            msg.error = observed.error;
+                            cast(void) publish(move(msg));
+                            return;
+                        }
+                        cast(void) sleep(*schedP, 1.msecs);
+                    }
+                })(*schedP);
+            }))
+                resourceExhausted = true;
+
+            // One protected producer owns timeout, grace, and sample clocks.
+            // Its timeout transition precedes publication, so queue pressure
+            // cannot make a later cancellation win.
+            if (!spawnWorker(false, () {
+                cast(void) protect!(() {
+                    auto nextSample = cfg.sampleInterval > Duration.zero
+                        ? MonoTime.currTime + cfg.sampleInterval
+                        : MonoTime.max;
+                    const timeoutAt = cfg.timeout > Duration.zero
+                        ? stP.startedAt + cfg.timeout : MonoTime.max;
+                    bool timeoutFired, killFired;
+                    while (!stopProducer && !abortWorkers)
+                    {
+                        const now = MonoTime.currTime;
+                        if (!timeoutFired && now >= timeoutAt)
+                        {
+                            timeoutFired = true;
+                            timeoutOccurred(*stP);
+                            childP.stdinW.close();
+                            sendTerm(*stP);
+                            if (!terminationRequested)
+                            {
+                                terminationRequested = true;
+                                graceDeadline = now + cfg.terminateGrace;
+                            }
+                            RelayMessage msg;
+                            msg.kind = RelayKind.timeout;
+                            cast(void) publish(move(msg));
+                        }
+                        if (terminationRequested && !killFired
+                            && now >= graceDeadline)
+                        {
+                            killFired = true;
+                            sendKill(*stP);
+                        }
+                        if (now >= nextSample)
+                        {
+                            RelayMessage msg;
+                            msg.kind = RelayKind.sampleDue;
+                            cast(void) publish(move(msg));
+                            nextSample = now + cfg.sampleInterval;
+                        }
+                        cast(void) sleep(*schedP, 5.msecs);
+                    }
+                })(*schedP);
+            }))
+                resourceExhausted = true;
+
+            if (childP.stdinW.fd >= 0)
+                if (!spawnWorker(false, () {
+                    cast(void) protect!(() {
+                        size_t offset;
+                        while (offset < stdinCopy.length && !abortWorkers)
+                        {
+                            SharedBuffer!(ubyte, 512) piece;
+                            const n = (stdinCopy.length - offset) < 512
+                                ? stdinCopy.length - offset : 512;
+                            piece ~= stdinCopy[offset .. offset + n];
+                            auto sent = write(childP.stdinW, move(piece));
+                            if (sent.res.hasError || sent.res.value == 0)
+                                break;
+                            offset += sent.res.value;
+                        }
+                        childP.stdinW.close();
+                    })(*schedP);
+                }))
+                    resourceExhausted = true;
+
+            void requestTermination(ProcessEnd end)
+            {
+                decideEnd(*stP, end);
+                childP.stdinW.close();
+                sendTerm(*stP);
+                if (!terminationRequested)
+                {
+                    terminationRequested = true;
+                    graceDeadline = MonoTime.currTime + cfg.terminateGrace;
+                }
+            }
+
+            void invoke(ProcessEvent ev)
+            {
+                if (sink is null || sinkDefect !is null)
+                    return;
+                try
+                    sink(ev);
+                catch (Throwable defect)
+                {
+                    sinkDefect = defect;
+                    sink = null;
+                    requestTermination(ProcessEnd.cancelled);
+                }
+            }
+
+            LineEmit emit = (stream, bytes, terminated) {
+                ProcessEvent ev;
+                ev.kind = ProcessEventKind.line;
+                ev.line = ProcessLine(stream, bytes, terminated);
+                invoke(ev);
+            };
+
+            bool streamsFinished() => stdoutFinished && stderrFinished;
+            bool rootObserved;
+
+            void handle(RelayMessage msg)
+            {
+                if (beforeHandle !is null)
+                    beforeHandle(msg.kind);
+                final switch (msg.kind)
+                {
+                    case RelayKind.bytes:
+                        const view = msg.bytes[];
+                        if (stP.collect)
+                            (msg.stream == ProcessStream.stdout_
+                                ? stP.stdout_ : stP.stderr_) ~= view;
+                        (msg.stream == ProcessStream.stdout_
+                            ? stdoutFramer : stderrFramer).push(
+                                view, msg.stream, emit);
+                        break;
+                    case RelayKind.streamEof:
+                        (msg.stream == ProcessStream.stdout_
+                            ? stdoutFramer : stderrFramer).flushEof(
+                                msg.stream, emit);
+                        if (msg.stream == ProcessStream.stdout_)
+                            stdoutFinished = true;
+                        else
+                            stderrFinished = true;
+                        break;
+                    case RelayKind.readError:
+                        rememberError(msg.error);
+                        if (msg.stream == ProcessStream.stdout_)
+                        {
+                            childP.stdoutR.close();
+                            stdoutFinished = true;
+                        }
+                        else
+                        {
+                            childP.stderrR.close();
+                            stderrFinished = true;
+                        }
+                        requestTermination(ProcessEnd.cancelled);
+                        break;
+                    case RelayKind.rootObserved:
+                        rootObserved = true;
+                        break;
+                    case RelayKind.waitError:
+                        rememberError(msg.error);
+                        if (waitLostReapRight(msg.error))
+                        {
+                            // SIGCHLD=SIG_IGN can consume the root behind our
+                            // wait, but descendants still belong to the fresh
+                            // group and may still own the output writers.
+                            requestTermination(ProcessEnd.cancelled);
+                            childP.pid = -1;
+                        }
+                        else
+                        {
+                            requestTermination(ProcessEnd.cancelled);
+                            sendKill(*stP);
+                        }
+                        rootObserved = true;
+                        break;
+                    case RelayKind.workerDefect:
+                        throw msg.defect;
+                    case RelayKind.timeout:
+                        break; // producer already recorded the occurrence
+                    case RelayKind.sampleDue:
+                        if (takeSample(*stP))
+                        {
+                            ProcessEvent ev;
+                            ev.kind = ProcessEventKind.sample;
+                            ev.usage = stP.usage;
+                            invoke(ev);
+                        }
+                        break;
+                }
+            }
+
+            if (resourceExhausted)
+            {
+                abortWorkers = true;
+                relay.close();
+                stopProducer = true;
+                rememberError(IoError(105 /* ENOBUFS */, OpKind.none,
+                    IoErrorStage.submit, "supervision worker unavailable"));
+                childP.stdinW.close();
+                sendKill(*stP);
+                return;
+            }
+
+            while (!streamsFinished() || (!rootObserved && !stP.reaped))
+            {
+                auto next = relayP.take(*schedP);
+                if (next.hasError)
+                {
+                    RelayMessage buffered;
+                    while (relayP.tryTake(buffered))
+                        handle(move(buffered));
+                    requestTermination(ProcessEnd.cancelled);
+                    cast(void) protect!(() {
+                        while (!streamsFinished()
+                            || (!rootObserved && !stP.reaped))
+                        {
+                            auto cleanup = relayP.take(*schedP);
+                            assert(cleanup.hasValue);
+                            handle(move(cleanup.value));
+                        }
+                    })(*schedP);
+                    break;
+                }
+                handle(move(next.value));
+            }
+
+            if (!stP.reaped)
+            {
+                cast(void) takeSample(*stP);
+                cast(void) protect!(() {
+                    uint retries;
+                    for (;;)
+                    {
+                        auto waited = .wait(*schedP, *childP);
+                        if (waited.hasValue)
+                        {
+                            stP.status = waited.value;
+                            stP.reaped = true;
+                            break;
+                        }
+                        if (waitLostReapRight(waited.error))
+                        {
+                            rememberError(waited.error);
+                            childP.pid = -1;
+                            break;
+                        }
+                        if (retryProcessError(waited.error, retries++))
+                        {
+                            cast(void) sleep(*schedP, 1.msecs);
+                            continue;
+                        }
+                        rememberError(waited.error);
+                        sendKill(*stP);
+                        auto fallback = waitPidAfterKill(childP.pid);
+                        if (fallback.hasValue)
+                        {
+                            stP.status = fallback.value;
+                            stP.reaped = true;
+                            childP.pid = -1;
+                        }
+                        else
+                        {
+                            rememberError(fallback.error);
+                            if (waitLostReapRight(fallback.error))
+                                childP.pid = -1;
+                        }
+                        break;
+                    }
+                })(*schedP);
+            }
+
+            // Terminal boundary: stop every producer, invalidate private
+            // group ownership, then leave the scope so all workers join.
+            stopProducer = true;
+            stP.processGroup = -1;
+            relay.close(); // releases any producer blocked behind stale data
+            }
+            catch (Throwable defect)
+            {
+                // Explicit catch, not scope(failure): Error unwinding may skip
+                // scope guards, but workers must be released before joining.
+                abortRun();
+                throw defect;
+            }
+        })(s);
+
+        if (resourceExhausted)
+        {
+            emergencyTerminateDrainReap(s, child, savedGroup, signalAttempts);
+            return ioErr!SupervisedProcessResult(105 /* ENOBUFS */,
+                OpKind.none, IoErrorStage.submit,
+                "supervision worker unavailable");
+        }
+
+        // Scope exit joined timeout/grace/drain/wait workers. The final event
+        // therefore cannot race a producer or trigger process termination.
+        st.usage.wallTime = MonoTime.currTime - st.startedAt;
+        if (canPublishExited(st, stdoutFinished, stderrFinished))
+        {
+            st.published = true;
+            if (sink !is null && sinkDefect is null)
+            {
+                ProcessEvent exited;
+                exited.kind = ProcessEventKind.exited;
+                exited.status = st.status;
+                exited.end = st.end;
+                try
+                    sink(exited);
+                catch (Throwable defect)
+                    sinkDefect = defect;
+            }
+        }
+
+        if (sinkDefect !is null)
+            throw sinkDefect;
+        if (hasOperationError)
+            return ioErr!SupervisedProcessResult(operationError);
+        if (outcome.hasError)
+            return ioErr!SupervisedProcessResult(125 /* ECANCELED */,
+                OpKind.none, IoErrorStage.completion,
+                "supervision worker failed");
+        result.end = st.end;
+        result.status = st.status;
+        result.usage = st.usage;
+        result.stdout_ = move(st.stdout_);
+        result.stderr_ = move(st.stderr_);
+        return ioOk(move(result));
+    }
+        catch (Throwable defect)
+        {
+            emergencyTerminateDrainReap(s, child, savedGroup, signalAttempts);
+            throw defect;
+        }
+    }
+
     /// The default live capability row handed to the root fiber (SPEC §11).
     alias Env = CtxOf!(RingClock, RingNet, RingProc);
 }
@@ -652,8 +2130,6 @@ Env liveEnv(Sched* sched) @safe pure nothrow @nogc
 // ── spawn plumbing ──────────────────────────────────────────────────────────
 
 private:
-
-extern (C) extern __gshared char** environ;
 
 // glibc ≥ 2.29 / musl ≥ 1.1.24; absent from druntime's posix.spawn.
 extern (C) int posix_spawn_file_actions_addchdir_np(
@@ -756,10 +2232,13 @@ void closePipes(ref int[2] a, ref int[2] b, ref int[2] c) @trusted nothrow @nogc
 
 version (unittest)
 {
+    import core.thread : Thread;
+
     import sparkles.event_horizon.capability : hasCaps;
     import sparkles.event_horizon.clock : isClock;
     import sparkles.event_horizon.net : isNet;
     import sparkles.event_horizon.proc : isProc;
+    import sparkles.test_runner.skip : skipTest;
 
     static assert(isClock!RingClock);
     static assert(isNet!RingNet);
@@ -768,6 +2247,12 @@ version (unittest)
     {
         static assert(isProc!RingProc);
         static assert(hasCaps!(Env, "clock", "net", "proc"));
+    }
+
+    private void requireSingleThreadedProcess() @system
+    {
+        if (Thread.getAll().length != 1)
+            skipTest("mutates process-global descriptors/signals; run with -t 1");
     }
 }
 
@@ -1058,6 +2543,29 @@ unittest
     assert(!r.hasError);
 }
 
+@("live.killGroup.afterWaitIsLocalEsrch")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.newProcessGroup = true;
+        cfg.stdoutSpec = StdioSpec(StdioMode.inherit);
+        auto spawned = spawnProcess(["true"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        auto status = wait(s, child);
+        assert(status.hasValue && status.value.ok);
+        auto killed = child.killGroup();
+        assert(killed.hasError && killed.error.errnoValue == 3 /* ESRCH */,
+            "a reaped low-level handle never signals a reusable PGID");
+    });
+    assert(!r.hasError);
+}
+
 @("live.spawnPty.sessionLeaderOnTheMaster")
 @safe
 unittest
@@ -1092,4 +2600,1537 @@ unittest
         });
         assert(!r.hasError);
     }
+}
+
+// ── environment overlays (SPEC §13.1) ───────────────────────────────────────
+
+@("live.env.overlaySetReplaceUnsetInherit")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    // Pure-function matrix over effectiveEnvironment first: no child needed
+    // to prove ordering, last-wins, unset, and inheritance.
+    ProcessConfig cfg;
+    cfg.env = cast(const(char[])[]) ["A=base", "B=base", "PATH=/bin"];
+    cfg.envOverlay = cast(const(EnvironmentChange)[])([
+        EnvironmentChange("C", "new"),      // set on top of the base
+        EnvironmentChange("A", "over"),     // replace
+        EnvironmentChange("A", "over2"),    // last change wins
+        EnvironmentChange("B", null, true), // remove
+        EnvironmentChange("D", "v", true),  // unset of absent: no-op
+    ]);
+    const built = effectiveEnvironment(cfg);
+    assert(built.hasValue, built.error.context);
+    const entries = built.value;
+    bool has(const(char)[] entry) @safe pure nothrow @nogc
+    {
+        foreach (e; entries)
+            if (e == entry)
+                return true;
+        return false;
+    }
+    assert(has("A=over2"), "last change for a name wins");
+    assert(!has("A=base") && !has("B=base"), "unset removes");
+    assert(has("C=new") && has("PATH=/bin"), "sets and replaces landed");
+    assert(!has("D=v"),
+        "unsetting an absent name is a no-op, not an insert");
+}
+
+@("live.env.overlayOnInheritedKeepsParentValues")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // One edit on top of the INHERITED environment: the parent's other
+        // variables ride along untouched (§13.1's whole point vs. `env=`).
+        ProcessConfig cfg;
+        cfg.envOverlay = cast(const(EnvironmentChange)[])([
+            EnvironmentChange("EH_PROBE", "overlay"),
+        ]);
+        auto got = capture(s, ["sh", "-c", "echo $EH_PROBE"], cfg);
+        assert(got.hasValue, got.error.context);
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "overlay\n");
+        assert(got.value.status.ok);
+    });
+    assert(!r.hasError);
+}
+
+@("live.env.emptyReplacementStaysEmptyAndDuplicatesCollapse")
+@safe
+unittest
+{
+    // A zero-length non-null slice is a complete replacement, not inherit.
+    auto storage = new const(char)[][1];
+    ProcessConfig empty;
+    empty.env = storage[0 .. 0];
+    assert(empty.env !is null);
+    auto builtEmpty = effectiveEnvironment(empty);
+    assert(builtEmpty.hasValue && builtEmpty.value.length == 0);
+
+    Sched s;
+    schedOrSkip(s);
+    auto ran = s.run(() {
+        auto child = capture(s, ["/usr/bin/env"], empty);
+        assert(child.hasValue, child.hasError ? child.error.context : "");
+        assert(child.value.status.ok && child.value.stdout_.length == 0,
+            "a non-null empty replacement reaches the child as empty");
+    });
+    assert(!ran.hasError);
+
+    ProcessConfig duplicate;
+    duplicate.env = cast(const(char[])[]) ["A=one", "A=two", "B=keep"];
+    duplicate.envOverlay = cast(const(EnvironmentChange)[]) [
+        EnvironmentChange("A", "final"),
+    ];
+    auto built = effectiveEnvironment(duplicate);
+    assert(built.hasValue);
+    size_t aCount;
+    foreach (entry; built.value)
+        if (envNameOf(entry) == "A")
+        {
+            ++aCount;
+            assert(entry == "A=final");
+        }
+    assert(aCount == 1, "an overlay removes every duplicate before setting");
+}
+
+@("live.env.invalidEditsFailBeforeAnyChild")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    static void expectEinvalid(scope const(EnvironmentChange)[] edits)
+    {
+        ProcessConfig cfg;
+        cfg.envOverlay = edits;
+        const bad = effectiveEnvironment(cfg);
+        assert(bad.hasError);
+        assert(bad.error.errnoValue == 22 /* EINVAL */);
+        assert(bad.error.stage == IoErrorStage.submit,
+            "a pre-spawn rejection is a submit-stage failure");
+    }
+
+    expectEinvalid([EnvironmentChange(null, "v", false)]); // empty name
+    expectEinvalid([EnvironmentChange("na=me", "v", false)]); // '=' in name
+    expectEinvalid([EnvironmentChange("na\0me", "v", false)]); // NUL in name
+    expectEinvalid([EnvironmentChange("ok", "va\0l", false)]); // NUL in value
+
+    foreach (entry; ["", "NOVALUE", "=value", "NA\0ME=value",
+        "NAME=va\0lue"])
+    {
+        ProcessConfig replacement;
+        replacement.env = [entry];
+        const bad = effectiveEnvironment(replacement);
+        assert(bad.hasError && bad.error.errnoValue == 22,
+            "malformed replacement entries fail before spawn");
+    }
+
+    // And through the public spawner, which must not leave a child behind.
+    ProcessConfig cfg;
+    cfg.envOverlay = [EnvironmentChange("bad=name", "v", false)];
+    const refused = spawnProcess(["true"], cfg);
+    assert(refused.hasError && refused.error.errnoValue == 22);
+}
+
+@("live.spawn.rejectsNulInArgvAndCwdBeforeChild")
+@safe
+unittest
+{
+    ProcessConfig cfg;
+    auto badArg = spawnProcess(["true", "bad\0tail"], cfg);
+    assert(badArg.hasError && badArg.error.errnoValue == 22);
+
+    cfg.cwd = "/tmp\0ignored";
+    auto badCwd = spawnProcess(["true"], cfg);
+    assert(badCwd.hasError && badCwd.error.errnoValue == 22);
+
+    cfg.cwd = "";
+    auto emptyCwd = validateSpawnStrings(["true"], cfg.cwd);
+    assert(!emptyCwd.hasError, "empty cwd contains no invalid byte");
+}
+
+@("live.spawn.pipeFdCollisionKeepsChildStdinOpen")
+@system
+unittest
+{
+    import core.sys.posix.signal : SIG_IGN, SIGPIPE, sigaction,
+        sigaction_t, sigemptyset;
+    import core.sys.posix.unistd : STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO,
+        close, dup, dup2;
+
+    requireSingleThreadedProcess();
+    Sched s;
+    schedOrSkip(s);
+
+    sigaction_t ignored, previousPipe;
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    assert(sigaction(SIGPIPE, &ignored, &previousPipe) == 0);
+
+    IoResult!void runResult;
+    try
+    {
+        runResult = s.run(() {
+            void withClosedFd(int fd, scope void delegate() body)
+            {
+                const saved = dup(fd);
+                assert(saved >= 0 && close(fd) == 0);
+                try
+                    body();
+                catch (Throwable defect)
+                {
+                    cast(void) dup2(saved, fd);
+                    close(saved);
+                    throw defect;
+                }
+                assert(dup2(saved, fd) == fd);
+                close(saved);
+            }
+
+            withClosedFd(STDIN_FILENO, () {
+                auto got = capture(s, ["cat"], ProcessConfig(),
+                    cast(const(ubyte)[]) "fd-zero-survives");
+                assert(got.hasValue && got.value.status.ok);
+                assert(got.value.stdout_[]
+                    == cast(const(ubyte)[]) "fd-zero-survives");
+            });
+            withClosedFd(STDOUT_FILENO, () {
+                auto got = capture(s, ["sh", "-c", "printf stdout"]);
+                assert(got.hasValue && got.value.status.ok);
+                assert(got.value.stdout_[] == cast(const(ubyte)[]) "stdout");
+            });
+            withClosedFd(STDERR_FILENO, () {
+                ProcessConfig cfg;
+                cfg.stdoutSpec = StdioSpec(StdioMode.nullDev);
+                cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+                auto got = capture(s, ["sh", "-c", "printf stderr >&2"], cfg);
+                assert(got.hasValue && got.value.status.ok);
+                assert(got.value.stderr_[] == cast(const(ubyte)[]) "stderr");
+            });
+        });
+    }
+    catch (Throwable defect)
+    {
+        cast(void) sigaction(SIGPIPE, &previousPipe, null);
+        throw defect;
+    }
+    const signalRestored = sigaction(SIGPIPE, &previousPipe, null);
+
+    assert(signalRestored == 0);
+    assert(!runResult.hasError,
+        "dup2(fd, fd) must not be followed by a child close action");
+}
+
+version (unittest)
+private string makeProbeDir(string marker) @system
+{
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+    import std.file : mkdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    const dir = buildPath(tempDir(),
+        text("eh-path-probe-", marker, "-", getpid()));
+    mkdirRecurse(dir);
+    {
+        import std.string : toStringz;
+        import core.sys.posix.sys.stat : chmod;
+
+        const script = buildPath(dir, "ehprobe");
+        write(script, "#!/bin/sh\necho from-overlay\n");
+        enum uint mode755 = 493; // 0o755
+        cast(void) chmod(script.toStringz, mode755);
+    }
+    return dir;
+}
+
+@("live.env.pathLookupUsesTheOverlayResult")
+@system
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    const probeDir = makeProbeDir("lookup");
+    const scriptPath = probeDir ~ "/ehprobe";
+
+    auto r = s.run(() {
+        // Control: without the overlay the bare name is not findable.
+        const missing = capture(s, ["ehprobe"]);
+        assert(missing.hasError, "the probe name must not resolve by luck");
+
+        // With PATH overlaid onto the inherited environment, the lookup
+        // runs against the RESULTING environment and finds our script.
+        ProcessConfig cfg;
+        cfg.envOverlay = cast(const(EnvironmentChange)[])([
+            EnvironmentChange("PATH", probeDir),
+        ]);
+        auto found = capture(s, ["ehprobe"], cfg);
+        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.value.status.ok);
+        assert(found.value.stdout_[] == cast(const(ubyte)[]) "from-overlay\n");
+
+        // A PATH-less environment still resolves through the `_CS_PATH`
+        // fallback, so plain system tools keep working.
+        ProcessConfig noPath;
+        noPath.env = cast(const(char[])[]) ["EH_PROBE=x"]; // no PATH entry
+        auto fallback = capture(s, ["sh", "-c", "echo fallback"], noPath);
+        assert(fallback.hasValue, fallback.error.context);
+        assert(fallback.value.stdout_[] == cast(const(ubyte)[]) "fallback\n");
+    });
+    assert(!r.hasError);
+
+    import std.file : remove;
+
+    remove(scriptPath);
+}
+
+@("live.env.customPathMissAndChildCwdRelativeLookup")
+@system
+unittest
+{
+    import core.sys.posix.sys.stat : chmod;
+    import std.file : mkdirRecurse, remove, rmdir, tempDir, write;
+    import std.path : buildPath;
+    import std.string : toStringz;
+
+    Sched s;
+    schedOrSkip(s);
+
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+
+    const root = buildPath(tempDir(), text("eh-path-cwd-probe-", getpid()));
+    const bin = buildPath(root, "bin");
+    const script = buildPath(bin, "cwdprobe");
+    const emptyScript = buildPath(root, "emptyprobe");
+    mkdirRecurse(bin);
+    write(script, "#!/bin/sh\nprintf cwd-relative\n");
+    write(emptyScript, "#!/bin/sh\nprintf cwd-empty\n");
+    cast(void) chmod(script.toStringz, 493 /* 0o755 */);
+    cast(void) chmod(emptyScript.toStringz, 493 /* 0o755 */);
+    scope (exit)
+    {
+        remove(script);
+        remove(emptyScript);
+        rmdir(bin);
+        rmdir(root);
+    }
+
+    auto r = s.run(() {
+        ProcessConfig excluded;
+        excluded.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
+        auto missing = capture(s, ["sh", "-c", "exit 0"], excluded);
+        assert(missing.hasError && missing.error.errnoValue == 2,
+            "a custom PATH miss must not retry through the parent PATH");
+
+        // The cwd contains an executable with this bare name, but PATH does
+        // not. Returning the bare spelling after a miss would let the child
+        // chdir make it executable despite the configured PATH exclusion.
+        ProcessConfig cwdExcluded;
+        cwdExcluded.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
+        cwdExcluded.cwd = root;
+        auto cwdMiss = capture(s, ["emptyprobe"], cwdExcluded);
+        assert(cwdMiss.hasError && cwdMiss.error.errnoValue == 2,
+            "PATH miss is ENOENT before child creation, even when cwd matches");
+
+        ProcessConfig relative;
+        relative.env = cast(const(char[])[]) ["PATH=bin"];
+        relative.cwd = root;
+        auto found = capture(s, ["cwdprobe"], relative);
+        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.value.status.ok);
+        assert(found.value.stdout_[] == cast(const(ubyte)[]) "cwd-relative");
+
+        ProcessConfig emptyComponent;
+        emptyComponent.env = cast(const(char[])[]) ["PATH="];
+        emptyComponent.cwd = root;
+        auto foundEmpty = capture(s, ["emptyprobe"], emptyComponent);
+        assert(foundEmpty.hasValue,
+            foundEmpty.hasError ? foundEmpty.error.context : "");
+        assert(foundEmpty.value.stdout_[] == cast(const(ubyte)[]) "cwd-empty",
+            "an empty PATH component resolves in the configured child cwd");
+    });
+    assert(!r.hasError);
+}
+
+// ── supervised runs (SPEC §13.5–§13.8) ──────────────────────────────────────
+
+version (unittest)
+{
+    /// Event collector bound as a `ProcessEventSink`.
+    private struct EventLog
+    {
+        ProcessEvent[] events;
+
+        private void put(in ProcessEvent ev)
+        {
+            events ~= ev;
+            if (ev.kind == ProcessEventKind.line)
+                lineBytes ~= ev.line.bytes.dup; // the spec-mandated copy
+        }
+
+        const(ubyte)[][] lineBytes;
+
+        /// `@trusted`: the collector provably outlives every supervised run
+        /// that borrows its method (the test frame parks on `s.run`).
+        ProcessEventSink sink() @trusted pure nothrow @nogc
+            => &put;
+    }
+}
+
+@("live.supervise.naturalExitLinesCollectAndUsage")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        auto got = supervise(s,
+            ["sh", "-c", `printf 'a\nb\n'`],
+            SupervisedProcessConfig(), null, log.sink());
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+
+        // Exactly one exited event, after the two framed lines.
+        assert(log.events.length == 3);
+        assert(log.events[0].kind == ProcessEventKind.line
+            && log.lineBytes[0] == cast(const(ubyte)[]) "a"
+            && log.events[0].line.terminated);
+        assert(log.lineBytes[1] == cast(const(ubyte)[]) "b");
+        assert(log.events[2].kind == ProcessEventKind.exited);
+        assert(log.events[2].end == ProcessEnd.exited);
+        assert(log.events[2].status.ok);
+
+        // Raw collection keeps exact bytes including terminators.
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "a\nb\n");
+        assert(got.value.stderr_.length == 0);
+        assert(got.value.end == ProcessEnd.exited);
+        assert(got.value.status.ok);
+
+        // Final accounting is always present; Linux observes the tree via
+        // /proc, Darwin stubs to sampled == false until §13.8 lands there.
+        assert(got.value.usage.wallTime > Duration.zero);
+        assert(got.value.usage.sampleCount >= 1);
+        version (linux)
+            assert(got.value.usage.sampled);
+        else
+            assert(!got.value.usage.sampled);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.finalSampleOccursBeforeReap")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.sampleInterval = Duration.zero;
+        auto got = supervise(s, ["true"], cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        version (linux)
+            assert(got.value.usage.sampleCount >= 2,
+                "initial and final pre-reap samples both see the root");
+        else
+            assert(!got.value.usage.sampled);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.internalDefectCleanupPrimitiveReaps")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.newProcessGroup = true;
+        cfg.stdinSpec = StdioSpec(StdioMode.nullDev);
+        cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+        auto spawned = spawnProcess(["sh", "-c",
+            "echo out; echo err >&2; sleep 30"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        const group = child.pid;
+        emergencyTerminateDrainReap(s, child, group);
+        assert(!child, "exceptional cleanup consumed the reap right");
+        child.stdoutR.close();
+        child.stderrR.close();
+    });
+    assert(!r.hasError);
+    assert(MonoTime.currTime - before < 2.seconds,
+        "internal-defect cleanup does not strand workers or the child");
+}
+
+@("live.supervise.nullSinkNaturalExitIsPrompt")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.terminateGrace = 5.seconds;
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["true"], cfg, null, null);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.end == ProcessEnd.exited && got.value.status.ok);
+        assert(MonoTime.currTime - before < 1.seconds,
+            "natural exit never waits out terminateGrace");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.callbacksStayOnSupervisorAndDefectsStillCleanUp")
+@system
+unittest
+{
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        auto supervisor = s.currentContext();
+        size_t exitedCount;
+        auto normal = supervise(s, ["sh", "-c", "printf 'line\\n'"],
+            SupervisedProcessConfig(), null, (in ProcessEvent ev) {
+                assert(s.currentContext() is supervisor,
+                    "every callback runs on the original supervising fiber");
+                if (ev.kind == ProcessEventKind.exited)
+                    ++exitedCount;
+            });
+        assert(normal.hasValue && exitedCount == 1);
+
+        foreach (throwOn; [ProcessEventKind.line, ProcessEventKind.exited])
+        {
+            size_t callsAfterDefect;
+            bool threw;
+            const script = throwOn == ProcessEventKind.line
+                ? "echo started; sleep 30" : "true";
+            const before = MonoTime.currTime;
+            try
+                cast(void) supervise(s,
+                    ["sh", "-c", script],
+                    SupervisedProcessConfig(), null, (in ProcessEvent ev) {
+                        assert(s.currentContext() is supervisor);
+                        if (callsAfterDefect != 0)
+                            assert(0, "a known-failing sink was invoked again");
+                        if (ev.kind == throwOn)
+                        {
+                            ++callsAfterDefect;
+                            throw new Exception("sink defect");
+                        }
+                    });
+            catch (Exception e)
+            {
+                threw = e.msg == "sink defect";
+            }
+            assert(threw, "the callback defect is rethrown after cleanup");
+            assert(MonoTime.currTime - before < 2.seconds,
+                "callback failure did not strand termination or reap");
+        }
+
+        auto after = supervise(s, ["true"]);
+        assert(after.hasValue && after.value.status.ok,
+            "the scheduler remains usable after callback defects");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.finalCallbackCannotRetriggerTermination")
+@safe
+unittest
+{
+    import core.time : msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        // No timeout: no producer trigger exists, so a yielding final
+        // callback must observe — and keep — the natural outcome, with zero
+        // signal attempts (no retermination path may fire from the sink).
+        int signalAttempts;
+        ProcessEnd yieldedEnd;
+        auto yielded = superviseImpl(s, ["true"], SupervisedProcessConfig(),
+            null, (in ProcessEvent ev) {
+                if (ev.kind == ProcessEventKind.exited)
+                {
+                    assert(!sleep(s, 150.msecs).hasError);
+                    yieldedEnd = ev.end;
+                }
+            }, null, &signalAttempts);
+        assert(yielded.hasValue);
+        assert(yielded.value.end == ProcessEnd.exited
+            && yieldedEnd == ProcessEnd.exited,
+            "a yielding final callback cannot mutate a terminal run");
+        assert(signalAttempts == 0,
+            "yielding final callback cannot signal the retired group");
+
+        // With a deadline that may legitimately expire while the run is
+        // still observing under parallel load, whichever trigger won before
+        // the publish stays frozen: publish-time and return-time ends agree.
+        signalAttempts = 0;
+        ProcessEnd racedEnd;
+        SupervisedProcessConfig raced;
+        raced.timeout = 100.msecs;
+        auto racedResult = superviseImpl(s, ["true"], raced, null,
+            (in ProcessEvent ev) {
+                if (ev.kind == ProcessEventKind.exited)
+                {
+                    assert(!sleep(s, 150.msecs).hasError);
+                    racedEnd = ev.end;
+                }
+            }, null, &signalAttempts);
+        assert(racedResult.hasValue);
+        assert(racedResult.value.end == racedEnd,
+            "joined producers cannot mutate the outcome after publish");
+
+        signalAttempts = 0;
+        ProcessEnd thrownEnd;
+        bool threw;
+        try
+            cast(void) superviseImpl(s, ["true"], SupervisedProcessConfig(), null,
+                (in ProcessEvent ev) {
+                    if (ev.kind == ProcessEventKind.exited)
+                    {
+                        thrownEnd = ev.end;
+                        throw new Exception("final sink defect");
+                    }
+                }, null, &signalAttempts);
+        catch (Exception e)
+            threw = e.msg == "final sink defect";
+        assert(threw && thrownEnd == ProcessEnd.exited);
+        assert(signalAttempts == 0,
+            "throwing final callback only rethrows after terminal cleanup");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.framingMatrix")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // One read burst carrying: plain LF, CRLF, an empty line, and a
+        // binary tail with an embedded NUL and NO terminator.
+        enum src = `printf 'one\ntwo\r\n\nx\0y'`;
+        EventLog log;
+        auto got = supervise(s, ["sh", "-c", src], SupervisedProcessConfig(),
+            null, log.sink());
+        assert(got.hasValue, got.error.context);
+
+        const(ubyte)[][] lines;
+        bool[] terminatedFlags;
+        foreach (i, ev; log.events)
+            if (ev.kind == ProcessEventKind.line
+                && ev.line.stream == ProcessStream.stdout_)
+            {
+                lines ~= log.lineBytes[i].dup; // retained copy, per spec
+                terminatedFlags ~= ev.line.terminated;
+            }
+        assert(lines.length == 4, "LF/CRLF/empty/final-partial");
+        assert(lines[0] == cast(const(ubyte)[]) "one" && terminatedFlags[0]);
+        assert(lines[1] == cast(const(ubyte)[]) "two" && terminatedFlags[1],
+            "CR stripped");
+        assert(lines[2].length == 0 && terminatedFlags[2], "empty line");
+        assert(lines[3] == cast(const(ubyte)[]) "x\0y" && !terminatedFlags[3],
+            "embedded NUL preserved; EOF fragment unterminated");
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "one\ntwo\r\n\nx\0y",
+            "raw bytes keep original terminators");
+
+        // A line split across kernel reads is invisible as chunking.
+        EventLog splitLog;
+        auto split = supervise(s,
+            ["sh", "-c", `printf hel; sleep 0.15; printf 'lo world\n'`],
+            SupervisedProcessConfig(), null, splitLog.sink());
+        assert(split.hasValue);
+        size_t helloLines;
+        foreach (ev; splitLog.events)
+            if (ev.kind == ProcessEventKind.line
+                && ev.line.bytes == cast(const(ubyte)[]) "hello world")
+                ++helloLines;
+        assert(helloLines == 1, "split writes frame as ONE line");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.streamsAreIndependentMergeIsTotalOrder")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // Separate pipes: per-stream ORDER holds; no cross-stream claim.
+        EventLog log;
+        auto separate = supervise(s,
+            ["sh", "-c",
+            `for i in 1 2 3; do echo "o$i"; sleep 0.02; echo "e$i" 1>&2; sleep 0.02; done`],
+            SupervisedProcessConfig(), null, log.sink());
+        assert(separate.hasValue);
+        assert(separate.value.stderr_.length > 0);
+        const(char)[][] outLines;
+        foreach (i, ev; log.events)
+            if (ev.kind == ProcessEventKind.line)
+            {
+                if (ev.line.stream == ProcessStream.stdout_)
+                    outLines ~= cast(const(char)[]) log.lineBytes[i].dup;
+                else
+                    assert((cast(const(char)[]) log.lineBytes[i])[0] == 'e');
+            }
+        assert(outLines == ["o1", "o2", "o3"], "per-stream order");
+
+        // mergeStdout: one pipe, one total order, all reported as stdout_.
+        ProcessConfig merged;
+        merged.stderrSpec = StdioSpec(StdioMode.mergeStdout);
+        EventLog mergedLog;
+        auto together = supervise(s,
+            ["sh", "-c", "echo o1; echo e1 1>&2; echo o2"],
+            SupervisedProcessConfig(merged), null, mergedLog.sink());
+        assert(together.hasValue);
+        assert(together.value.stderr_.length == 0);
+        assert(together.value.stdout_[]
+            == cast(const(ubyte)[]) "o1\ne1\no2\n", "output order kept");
+        const(char)[][] mergedOrder;
+        foreach (i, ev; mergedLog.events)
+            if (ev.kind == ProcessEventKind.line)
+            {
+                mergedOrder ~= cast(const(char)[]) mergedLog.lineBytes[i].dup;
+                assert(ev.line.stream == ProcessStream.stdout_,
+                    "merged lines report as stdout_");
+            }
+        assert(mergedOrder == ["o1", "e1", "o2"]);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.collectOutputControlsAccumulationOnly")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        cfg.collectOutput = false;
+        auto got = supervise(s, ["sh", "-c", "echo streamed"], cfg, null,
+            log.sink());
+        assert(got.hasValue);
+        assert(got.value.stdout_.length == 0, "no accumulation requested");
+        assert(got.value.stderr_.length == 0);
+
+        size_t lineEvents;
+        foreach (ev; log.events)
+            if (ev.kind == ProcessEventKind.line)
+                ++lineEvents;
+        assert(lineEvents == 1, "events still flow");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.stdinFeedRoundTrip")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        auto got = supervise(s, ["cat"], SupervisedProcessConfig(),
+            cast(const(ubyte)[]) "fed through supervision");
+        assert(got.hasValue, got.error.context);
+        assert(got.value.status.ok);
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "fed through supervision",
+            "stdin fed fully, then EOF so cat could exit");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.spawnFailureEmitsNothing")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        auto got = supervise(s, ["/definitely-not-a-binary-eh"],
+            SupervisedProcessConfig(), null, log.sink());
+        assert(got.hasValue);
+        assert(got.value.end == ProcessEnd.spawnFailed);
+        assert(got.value.spawnError.errnoValue == 2 /* ENOENT */);
+        assert(log.events.length == 0, "no child, no exited event");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.timeoutTermExitsTheChild")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        cfg.timeout = 80.msecs;
+        cfg.terminateGrace = 500.msecs; // TERM wins well before any KILL
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sleep", "30"], cfg, null, log.sink());
+        assert(got.hasValue, got.error.context);
+        const elapsed = MonoTime.currTime - before;
+
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(got.value.status.signaled && got.value.status.code == 15,
+            "SIGTERM death decoded as data");
+        assert(elapsed < 2.seconds, "the deadline ended the run promptly");
+
+        bool sawExited;
+        foreach (ev; log.events)
+            if (ev.kind == ProcessEventKind.exited)
+            {
+                sawExited = true;
+                assert(ev.end == ProcessEnd.timedOut);
+            }
+        assert(sawExited);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.graceExpiryEscalatesToKill")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // Ignores TERM entirely, so the grace must expire into SIGKILL.
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        cfg.timeout = 60.msecs;
+        cfg.terminateGrace = 120.msecs;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s,
+            ["sh", "-c", `trap '' TERM; sleep 30`], cfg, null, log.sink());
+        assert(got.hasValue, got.error.context);
+        const elapsed = MonoTime.currTime - before;
+
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(got.value.status.signaled && got.value.status.code == 9,
+            "grace expiry escalated to SIGKILL");
+        assert(elapsed >= 180.msecs, "the grace actually ran");
+        assert(elapsed < 5.seconds, "and did not linger");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.exitedRootStillTerminatesGroupHoldingPipe")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.timeout = 60.msecs;
+        cfg.terminateGrace = 2.seconds;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s,
+            ["sh", "-c", `{ sleep 30; } & exit 0`], cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(got.value.status.ok,
+            "the exited root keeps its real successful status");
+        assert(MonoTime.currTime - before < 1.seconds,
+            "TERM targets the private group while root remains waitable");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.exitedRootDescendantIgnoringTermGetsKilledAfterGrace")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.timeout = 50.msecs;
+        cfg.terminateGrace = 100.msecs;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sh", "-c",
+            `{ trap '' TERM; while :; do sleep 30; done; } & exit 0`], cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        const elapsed = MonoTime.currTime - before;
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(got.value.status.ok, "root status is not descendant status");
+        assert(elapsed >= 140.msecs, "SIGTERM-ignoring descendant reached grace");
+        assert(elapsed < 2.seconds,
+            "SIGKILL still targets the private group after root exit");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.autoReapedRootStillCleansItsProcessGroup")
+@system
+unittest
+{
+    import core.sys.posix.signal : SIGCHLD, SIG_IGN, sigaction,
+        sigaction_t, sigemptyset;
+    import core.time : MonoTime, msecs, seconds;
+
+    requireSingleThreadedProcess();
+    sigaction_t ignored, previous;
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    assert(sigaction(SIGCHLD, &ignored, &previous) == 0);
+
+    Sched s;
+    try
+        schedOrSkip(s);
+    catch (Throwable defect)
+    {
+        cast(void) sigaction(SIGCHLD, &previous, null);
+        throw defect;
+    }
+
+    bool bounded, preservedEchild;
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.timeout = 50.msecs;
+        cfg.terminateGrace = 100.msecs;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sh", "-c", "sleep 30 & exit 0"], cfg);
+        bounded = MonoTime.currTime - before < 2.seconds;
+        preservedEchild = got.hasError && got.error.errnoValue == 10;
+    });
+    const restored = sigaction(SIGCHLD, &previous, null);
+
+    assert(restored == 0);
+    assert(!r.hasError);
+    assert(bounded && preservedEchild,
+        "ECHILD still terminates/drains the saved process group promptly");
+}
+
+@("live.supervise.scopeCancellationLatchesThenConverges")
+@safe
+unittest
+{
+    import core.time : seconds;
+    import sparkles.event_horizon.scope_ : JoinHandle, checkCancellation,
+        withScope;
+
+    Sched s;
+    schedOrSkip(s);
+
+    SupervisedProcessResult got;
+    bool sawLine, returnedCleanly, latchAfterReturn;
+
+    auto r = s.run(() {
+        auto outcome = withScope!((ref outer) {
+            JoinHandle!(void) h;
+            outer.fork(h, () {
+                EventLog log;
+                SupervisedProcessConfig cfg;
+                cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                auto supervised = supervise(s,
+                    ["sh", "-c", `echo started; sleep 30`], cfg, null,
+                    (in ProcessEvent ev) {
+                        if (ev.kind == ProcessEventKind.line)
+                        {
+                            sawLine = true;
+                            outer.cancel(); // the trigger under test
+                        }
+                    });
+                assert(supervised.hasValue, supervised.error.context);
+                got = supervised.value;
+                returnedCleanly = true;
+                latchAfterReturn = checkCancellation(s).hasError;
+                return ioOk();
+            });
+            // The fork's join collects the latched interrupt; nothing here
+            // fails the outer scope.
+            auto joined = h.join(s);
+        })(s);
+        assert(!outcome.hasError);
+    });
+    assert(!r.hasError);
+
+    assert(sawLine && returnedCleanly, "supervise ran to its own conclusion");
+    assert(got.end == ProcessEnd.cancelled);
+    assert(got.usage.wallTime > Duration.zero);
+    assert(latchAfterReturn,
+        "the caller's cancellation was delivered only AFTER cleanup "
+        ~ "and the final event (SPEC §13.5)");
+}
+
+@("live.supervise.cancellationDrainsAndFramesFinalFragment")
+@safe
+unittest
+{
+    import sparkles.event_horizon.scope_ : JoinHandle, withScope;
+
+    Sched s;
+    schedOrSkip(s);
+
+    foreach (collect; [true, false])
+    {
+        SupervisedProcessResult got;
+        bool sawFinal;
+        auto r = s.run(() {
+            auto outcome = withScope!((ref outer) {
+                JoinHandle!void h;
+                outer.fork(h, () {
+                    SupervisedProcessConfig cfg;
+                    cfg.collectOutput = collect;
+                    cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                    auto run = supervise(s, ["sh", "-c",
+                        `trap 'printf final; exit 0' TERM; echo ready; while :; do sleep 1; done`],
+                        cfg, null, (in ProcessEvent ev) {
+                            if (ev.kind != ProcessEventKind.line)
+                                return;
+                            if (ev.line.bytes == cast(const(ubyte)[]) "ready")
+                                outer.cancel();
+                            if (ev.line.bytes == cast(const(ubyte)[]) "final")
+                            {
+                                sawFinal = true;
+                                assert(!ev.line.terminated,
+                                    "TERM output keeps EOF-fragment framing");
+                            }
+                        });
+                    assert(run.hasValue, run.hasError ? run.error.context : "");
+                    got = move(run.value);
+                    return ioOk();
+                });
+                cast(void) h.join(s);
+            })(s);
+            assert(!outcome.hasError);
+        });
+        assert(!r.hasError);
+        assert(got.end == ProcessEnd.cancelled && sawFinal);
+        if (collect)
+            assert(got.stdout_[] == cast(const(ubyte)[]) "ready\nfinal");
+        else
+            assert(got.stdout_.length == 0 && got.stderr_.length == 0,
+                "collectOutput=false never accumulates cleanup bytes");
+    }
+}
+
+@("live.supervise.externalCancellationStillEscalatesPastTerm")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.scope_ : JoinHandle, withScope;
+
+    Sched s;
+    schedOrSkip(s);
+    SupervisedProcessResult got;
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref outer) {
+            JoinHandle!void h;
+            outer.fork(h, () {
+                SupervisedProcessConfig cfg;
+                cfg.terminateGrace = 100.msecs;
+                cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                auto run = supervise(s, ["sh", "-c",
+                    `trap '' TERM; echo ready; while :; do sleep 30; done`],
+                    cfg, null, (in ProcessEvent ev) {
+                        if (ev.kind == ProcessEventKind.line)
+                            outer.cancel();
+                    });
+                assert(run.hasValue, run.hasError ? run.error.context : "");
+                got = move(run.value);
+                return ioOk();
+            });
+            cast(void) h.join(s);
+        })(s);
+        assert(!outcome.hasError);
+    });
+    assert(!r.hasError);
+    assert(got.end == ProcessEnd.cancelled);
+    assert(MonoTime.currTime - before >= 90.msecs);
+    assert(MonoTime.currTime - before < 2.seconds,
+        "reserved grace escalation survives the cancelling outer scope");
+}
+
+@("live.supervise.fiberExhaustionKillsDrainsAndReaps")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 2; // root + first worker; later admissions must fail
+    schedOrSkip(s, opts);
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = supervise(s,
+            ["sh", "-c", "echo out; echo err >&2; sleep 30"], cfg);
+        assert(got.hasError && got.error.errnoValue == 105 /* ENOBUFS */);
+    });
+    assert(!r.hasError);
+    assert(MonoTime.currTime - before < 2.seconds,
+        "admission failure converges instead of parking forever");
+}
+
+@("live.supervise.waitFailureTransitionIsBounded")
+@safe pure nothrow @nogc
+unittest
+{
+    const transient = IoError(5, OpKind.waitid, IoErrorStage.completion);
+    const interrupted = IoError(4, OpKind.waitid, IoErrorStage.completion);
+    const noChild = IoError(10, OpKind.waitid, IoErrorStage.completion);
+    assert(!waitLostReapRight(transient),
+        "transient errors retain the reap right and must retry");
+    assert(waitLostReapRight(noChild), "ECHILD is terminal but not success");
+    assert(retryProcessError(interrupted, 0));
+    assert(retryProcessError(interrupted, 7));
+    assert(!retryProcessError(interrupted, 8),
+        "wait/read retries are bounded before terminal fallback");
+}
+
+@("live.supervise.exitedRequiresRealEofAndStatus")
+@system
+unittest
+{
+    SupervisionState st;
+    assert(!canPublishExited(st, true, true),
+        "zero-initialized status is not a reap result");
+    st.reaped = true;
+    assert(!canPublishExited(st, false, true),
+        "both drains must reach a terminal state before publication");
+    assert(canPublishExited(st, true, true));
+
+    const interrupted = IoError(4, OpKind.read, IoErrorStage.completion);
+    const again = IoError(11, OpKind.read, IoErrorStage.submit);
+    const badFd = IoError(9, OpKind.read, IoErrorStage.completion);
+    assert(transientProcessError(interrupted));
+    assert(transientProcessError(again));
+    assert(!transientProcessError(badFd),
+        "permanent read errors hard-close instead of retrying forever");
+
+    LineFramer framer;
+    bool emitted;
+    framer.push(cast(const(ubyte)[]) "unterminated",
+        ProcessStream.stdout_, (stream, bytes, terminated) {
+            emitted = true;
+        });
+    assert(!emitted,
+        "pending bytes are emitted only by real EOF, never read error");
+}
+
+@("live.supervise.callbackDefectWithSaturatedOutputStillCleansUp")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        bool threw;
+        try
+            cast(void) superviseImpl(s, ["sh", "-c",
+                `awk 'BEGIN{for(i=0;i<10000;i++)printf "chunk-%05d\n",i}'; sleep 30`],
+                SupervisedProcessConfig(), null, null,
+                (RelayKind kind) {
+                    if (kind == RelayKind.bytes)
+                        throw new Exception("injected relay handler defect");
+                });
+        catch (Exception e)
+            threw = e.msg == "injected relay handler defect";
+        assert(threw);
+    });
+    assert(!r.hasError);
+    assert(MonoTime.currTime - before < 2.seconds,
+        "more than a relay's capacity cannot strand protected publishers");
+}
+
+@("live.supervise.cancelAfterBothEofStillTerminatesRoot")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.io : sleep;
+    import sparkles.event_horizon.scope_ : JoinHandle, withScope;
+
+    Sched s;
+    schedOrSkip(s);
+    SupervisedProcessResult got;
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref outer) {
+            JoinHandle!void h;
+            outer.fork(h, () {
+                SupervisedProcessConfig cfg;
+                cfg.terminateGrace = 100.msecs;
+                cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                auto run = supervise(s, ["sh", "-c",
+                    `exec 1>&- 2>&-; trap '' TERM; sleep 30`], cfg);
+                assert(run.hasValue, run.hasError ? run.error.context : "");
+                got = move(run.value);
+                return ioOk();
+            });
+            assert(!sleep(s, 40.msecs).hasError,
+                "allow both child streams to reach EOF first");
+            outer.cancel();
+            cast(void) h.join(s);
+        })(s);
+        assert(!outcome.hasError);
+    });
+    assert(!r.hasError);
+    assert(got.end == ProcessEnd.cancelled);
+    assert(got.status.signaled && got.status.code == 9,
+        "cancellation remains observable while only root exit is pending");
+    assert(MonoTime.currTime - before < 2.seconds);
+}
+
+@("live.supervise.timeoutWinsBeforeRelayPublication")
+@safe pure nothrow @nogc
+unittest
+{
+    SupervisionState st;
+    timeoutOccurred(st); // producer records occurrence before relay.put
+    decideEnd(st, ProcessEnd.cancelled); // cancelled take observed second
+    assert(st.end == ProcessEnd.timedOut,
+        "the earlier buffered timeout remains the first trigger");
+}
+
+@("live.supervise.cooperativeTermSuppressesKillAndGraceDelay")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.timeout = 60.msecs;
+        cfg.terminateGrace = 3.seconds;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sh", "-c",
+            `trap 'printf cooperative; exit 0' TERM; while :; do sleep 1; done`],
+            cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(got.value.status.ok,
+            "the TERM handler exited normally before hard kill");
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "cooperative");
+        assert(MonoTime.currTime - before < 1.seconds,
+            "natural exit during grace suppresses KILL and the full wait");
+    });
+    assert(!r.hasError);
+}
+
+version (linux)
+@("live.supervise.repeatedRunsDoNotLeakDescriptors")
+@system
+unittest
+{
+    import core.sys.posix.dirent : closedir, opendir, readdir;
+
+    static size_t fdCount()
+    {
+        auto dir = opendir("/proc/self/fd");
+        assert(dir !is null);
+        scope (exit) closedir(dir);
+        size_t count;
+        while (readdir(dir) !is null)
+            ++count;
+        return count;
+    }
+
+    Sched s;
+    schedOrSkip(s);
+    size_t before, after;
+    auto r = s.run(() {
+        auto warm = supervise(s, ["true"]);
+        assert(warm.hasValue && warm.value.status.ok);
+        before = fdCount();
+        foreach (_; 0 .. 64)
+        {
+            auto got = supervise(s, ["sh", "-c", "printf x; printf y >&2"]);
+            assert(got.hasValue && got.value.status.ok);
+        }
+        after = fdCount();
+    });
+    assert(!r.hasError);
+    // Other parallel unittests share this process and may transiently own a
+    // handful of descriptors. A supervision leak grows by two per run here,
+    // so this tight noise allowance still catches the adversarial shape.
+    assert(after <= before + 4,
+        "the run loop must not retain one or more stdio fds per child");
+}
+
+@("live.supervise.exitBeforeEofWaitsForGrandchildren")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // The root exits at once; its backgrounded subshell keeps the stdout
+        // pipe open and writes 250ms later. Exited may be knowable early,
+        // but the run ends only after BOTH EOFs AND the reap (§13.7).
+        EventLog log;
+        const before = MonoTime.currTime;
+        auto got = supervise(s,
+            ["sh", "-c", `{ sleep 0.25; echo late; } & exec true`],
+            SupervisedProcessConfig(), null, log.sink());
+        assert(got.hasValue, got.error.context);
+        const elapsed = MonoTime.currTime - before;
+
+        assert(got.value.status.ok);
+        assert(got.value.end == ProcessEnd.exited);
+        assert(elapsed >= 200.msecs,
+            "EOF waits out the grandchild holding the pipe");
+
+        size_t lateAt = size_t.max, exitedAt = size_t.max;
+        foreach (i, ev; log.events)
+        {
+            if (ev.kind == ProcessEventKind.line
+                && ev.line.bytes == cast(const(ubyte)[]) "late")
+                lateAt = i;
+            if (ev.kind == ProcessEventKind.exited)
+                exitedAt = i;
+        }
+        assert(exitedAt != size_t.max && lateAt != size_t.max
+            && lateAt < exitedAt,
+            "the grandchild line precedes the single exited event");
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "late\n");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.eofBeforeExitStillReaps")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // Both pipes close immediately; the process itself lingers 250ms.
+        EventLog log;
+        const before = MonoTime.currTime;
+        auto got = supervise(s,
+            ["sh", "-c", `echo done; exec 1>&- 2>&-; sleep 0.25`],
+            SupervisedProcessConfig(), null, log.sink());
+        assert(got.hasValue, got.error.context);
+        const elapsed = MonoTime.currTime - before;
+
+        assert(got.value.status.ok);
+        assert(got.value.end == ProcessEnd.exited);
+        assert(elapsed >= 200.msecs, "the reap waited out the living child");
+
+        size_t doneAt = size_t.max, exitedAt;
+        foreach (i, ev; log.events)
+            if (ev.kind == ProcessEventKind.exited)
+                exitedAt = i;
+            else if (ev.kind == ProcessEventKind.line
+                && ev.line.bytes == cast(const(ubyte)[]) "done")
+                doneAt = i;
+        assert(doneAt != size_t.max && exitedAt > doneAt,
+            "exited still comes last, after EOF and reap");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.chattyDualStreamsCannotDeadlock")
+@system unittest
+{
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // 200 KiB on EACH stream — far past any pipe buffer — while the
+        // framing machinery does its work: parked concurrent drains make
+        // the blocking-write deadlock impossible (SPEC §13.2/§13.7).
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sh", "-c",
+            `awk 'BEGIN{for(i=0;i<20000;i++){printf "out-%05d\n", i; printf "err-%05d\n", i > "/dev/stderr"}}'`],
+            SupervisedProcessConfig(), null, null);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(MonoTime.currTime - before < 30.seconds);
+
+        assert(got.value.status.ok);
+        assert(got.value.stdout_.length == 10 * 20_000,
+            "every stdout byte collected");
+        assert(got.value.stderr_.length == 10 * 20_000,
+            "every stderr byte collected — no deadlock against undrained pipes");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.samplesCumulativeAndCoalesced")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        // Nominal cadence is 16 ticks over the 400 ms run; requiring three
+        // survives an 8x sustained scheduler stall without weakening the
+        // repeated-sampling property (missed instants coalesce by design,
+        // SPEC §13.8 — they do not queue).
+        cfg.sampleInterval = 25.msecs;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = supervise(s, ["sleep", "0.4"], cfg, null, log.sink());
+        assert(got.hasValue, got.error.context);
+
+        size_t samples;
+        size_t lastCount;
+        foreach (ev; log.events)
+            if (ev.kind == ProcessEventKind.sample)
+            {
+                ++samples;
+                assert(ev.usage.sampleCount > lastCount,
+                    "sample counters are cumulative");
+                lastCount = ev.usage.sampleCount;
+                assert(ev.usage.wallTime > Duration.zero);
+            }
+        version (linux)
+        {
+            assert(samples >= 3, "interval sampling fired repeatedly");
+            assert(lastCount >= samples);
+            assert(got.value.usage.sampled);
+            assert(got.value.usage.peakProcesses >= 1,
+                "the tree sampler saw at least the root");
+        }
+        else
+        {
+            assert(samples == 0, "darwin stub emits no fabricated samples");
+            assert(!got.value.usage.sampled);
+        }
+        assert(got.value.usage.wallTime >= 300.msecs);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.samplesCpuMonotonicAndTracksExitedRootsGroup")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        cfg.sampleInterval = 20.msecs;
+        auto got = supervise(s, ["sh", "-c",
+            `{ i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 0.2; } & exit 0`],
+            cfg, null, log.sink());
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+
+        Duration lastUser, lastSystem;
+        foreach (ev; log.events)
+            if (ev.kind == ProcessEventKind.sample)
+            {
+                assert(ev.usage.userTime >= lastUser);
+                assert(ev.usage.systemTime >= lastSystem);
+                lastUser = ev.usage.userTime;
+                lastSystem = ev.usage.systemTime;
+            }
+        version (linux)
+            assert(got.value.usage.peakProcesses >= 2,
+                "same-group descendant remains visible after root exit");
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.samplesAccumulateSequentialDescendantCpu")
+@safe
+unittest
+{
+    import core.time : Duration, msecs;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.sampleInterval = 5.msecs;
+        const worker = `awk 'BEGIN{for(i=0;i<8000000;i++) x+=i}'`;
+
+        auto one = supervise(s, ["sh", "-c", worker], cfg);
+        assert(one.hasValue, one.hasError ? one.error.context : "");
+        auto two = supervise(s, ["sh", "-c", worker ~ "; " ~ worker], cfg);
+        assert(two.hasValue, two.hasError ? two.error.context : "");
+
+        version (linux)
+        {
+            const oneCpu = one.value.usage.userTime
+                + one.value.usage.systemTime;
+            const twoCpu = two.value.usage.userTime
+                + two.value.usage.systemTime;
+            assert(oneCpu > Duration.zero);
+            assert(twoCpu > oneCpu + oneCpu / 2,
+                "two sequential workers retain roughly their summed CPU");
+        }
+    });
+    assert(!r.hasError);
 }

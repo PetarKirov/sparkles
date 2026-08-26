@@ -60,17 +60,19 @@ if (isFiberExecutor!X)
     /// Spawns a child bound to this scope; its defect (escaped `Throwable`)
     /// feeds the failure policy as `Cause.die`. `body_` is an ordinary
     /// delegate (see `Sched.spawn` — a capturing closure's frame must
-    /// outlive this call).
-    void spawn(void delegate() body_)
+    /// outlive this call). Returns whether a fiber slot was accepted; a
+    /// rejection still records the scope's ordinary ENOBUFS failure.
+    bool spawn(void delegate() body_)
     {
-        spawnImpl(body_, SpawnOptions(daemon: false));
+        return spawnImpl(body_, SpawnOptions(daemon: false));
     }
 
     /// Spawns a daemon child: it does not keep the scope alive and is
-    /// reaped with `InterruptKind.daemon` once only daemons remain.
-    void spawnDaemon(void delegate() body_)
+    /// reaped with `InterruptKind.daemon` once only daemons remain. Returns
+    /// whether a fiber slot was accepted.
+    bool spawnDaemon(void delegate() body_)
     {
-        spawnImpl(body_, SpawnOptions(daemon: true));
+        return spawnImpl(body_, SpawnOptions(daemon: true));
     }
 
     /// Forks a child whose typed outcome is collected via `handle.join`
@@ -138,20 +140,21 @@ package:
         _opts = opts;
     }
 
-    void spawnImpl(void delegate() body_, SpawnOptions opts)
+    bool spawnImpl(void delegate() body_, SpawnOptions opts)
     {
         auto child = _exec.spawnFiber(&node, opts, body_);
         if (child is null)
         {
             fail(Cause!E.fromFailure(E(105 /* ENOBUFS */, OpKind.none,
                 IoErrorStage.submit, "fiber slab exhausted")));
-            return;
+            return false;
         }
         child.onExitFn = &childExit;
         child.onExitCtx = (() @trusted => cast(void*) &this)();
         ++_childCount;
         if (opts.daemon)
             ++_childDaemons;
+        return true;
     }
 
     /// Runs on each exiting child fiber (SPEC §8.6): accounting, defect
@@ -513,6 +516,31 @@ unittest
         assert(children == 2, "exit joins all children");
     });
     assert(!r.hasError);
+}
+
+@("scope.spawn.reportsFiberAdmission")
+@safe
+unittest
+{
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 2; // root plus one scope child
+    schedOrSkip(s, opts);
+
+    bool firstAccepted, secondAccepted;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref sc) {
+            firstAccepted = sc.spawn(() {});
+            secondAccepted = sc.spawn(() {});
+        })(s);
+        assert(outcome.hasError,
+            "rejected spawn retains the scope's existing failure policy");
+    });
+    assert(!r.hasError);
+    assert(firstAccepted && !secondAccepted,
+        "callers can distinguish admission from ENOBUFS rejection");
 }
 
 @("scope.siblingFailure.cancelsIoPark")

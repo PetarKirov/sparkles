@@ -16,8 +16,11 @@ no worker threads, no polling.
 */
 module sparkles.event_horizon.proc;
 
+import core.time : Duration;
+
 import sparkles.event_horizon.capability : isCapability;
-import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
+import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind,
+    ioErr, ioOk;
 
 // ── the spawn vocabulary (SPEC §13.1) ───────────────────────────────────────
 
@@ -50,8 +53,26 @@ struct ProcessConfig
     StdioSpec stdoutSpec = StdioSpec(StdioMode.pipe);
     StdioSpec stderrSpec = StdioSpec(StdioMode.inherit);
     const(char[])[] env = null;   /// null = inherit; entries are "KEY=value"
+
+    /// Environment edits applied on top of $(LREF ProcessConfig.env) when that
+    /// is non-null, else on top of the inherited environment (SPEC §13.1,
+    /// target M19): changes apply in order, the last change for a name wins,
+    /// `unset` removes. Name matching is byte-exact on POSIX.
+    const(EnvironmentChange)[] envOverlay;
+
     const(char)[] cwd = null;     /// null = inherit
     bool newProcessGroup = false; /// `setpgid(0, 0)` in the child (kill the tree)
+}
+
+/// One environment edit (SPEC §13.1, target M19). Applied in array order:
+/// a set assigns `name=value` over the base environment, an unset removes
+/// `name`. Matching is byte-exact on POSIX (case-insensitive on Windows,
+/// §13.9).
+struct EnvironmentChange
+{
+    const(char)[] name;  /// non-empty; must not contain '=' or NUL
+    const(char)[] value; /// ignored when `unset`; must not contain NUL
+    bool unset;          /// remove `name` instead of assigning `value`
 }
 
 /// How a child ended (SPEC §13.2).
@@ -190,3 +211,104 @@ unittest
     assert(!ExitStatus(false, 1).ok);
     assert(!ExitStatus(true, 9).ok, "a signaled death is never ok");
 }
+
+// ── supervised runs (SPEC §13.5–§13.8, target M19) ──────────────────────────
+
+/// Which output stream a line came from (SPEC §13.5). With
+/// `StdioMode.mergeStdout` every framed line reports `stdout_` — the merged
+/// pipe is one kernel stream with one total order.
+enum ProcessStream : ubyte
+{
+    stdout_, ///
+    stderr_,
+}
+
+/// What a $(LREF ProcessEvent) carries (SPEC §13.5).
+enum ProcessEventKind : ubyte
+{
+    line,   /// one framed line; `line` is valid
+    sample, /// a cumulative resource sample; `usage` is valid
+    exited, /// the final event for a created child; `status`/`end` are valid
+}
+
+/// How a supervised run ended (SPEC §13.5). The first timeout/cancel trigger
+/// wins; later triggers only advance cleanup (SPEC §13.7).
+enum ProcessEnd : ubyte
+{
+    exited,      /// the child ended on its own (any exit code is data)
+    timedOut,    /// `SupervisedProcessConfig.timeout` fired first
+    cancelled,   /// the surrounding scope was cancelled first
+    spawnFailed, /// no child was ever created (`spawnError` is valid)
+}
+
+/// One framed output line (SPEC §13.6). The bytes are borrowed for the
+/// duration of the sink call — copy to retain. The terminator is excluded;
+/// `terminated == false` marks the final EOF fragment.
+struct ProcessLine
+{
+    ProcessStream stream;
+    const(ubyte)[] bytes; /// callback-borrowed; line terminator excluded
+    bool terminated;      /// false only for the final EOF fragment
+}
+
+/// Cumulative resource usage of the supervised process tree (SPEC §13.8):
+/// peak summed RSS and peak live-process count over the run, elapsed wall
+/// time, and best-effort user/system CPU. Unsupported counters leave
+/// `sampled == false` rather than fabricating zero-valued measurements;
+/// `wallTime` is always valid.
+struct ProcessResourceUsage
+{
+    size_t peakRssBytes;
+    size_t peakProcesses;
+    size_t sampleCount;
+    Duration wallTime;
+    Duration userTime;
+    Duration systemTime;
+    bool sampled;
+}
+
+/// One supervision event (SPEC §13.5): exactly one field is meaningful,
+/// selected by `kind`. Delivered synchronously on the original supervising
+/// scheduler fiber; the sink must not retain `line.bytes`.
+struct ProcessEvent
+{
+    ProcessEventKind kind;
+    ProcessLine line;           /// valid for `ProcessEventKind.line`
+    ProcessResourceUsage usage; /// valid for `ProcessEventKind.sample`
+    ExitStatus status;          /// valid for `ProcessEventKind.exited`
+    ProcessEnd end;             /// valid for `ProcessEventKind.exited`
+}
+
+/// Knobs of one supervised run (SPEC §13.5). Zero `timeout` means no
+/// deadline; zero `sampleInterval` means final accounting only.
+struct SupervisedProcessConfig
+{
+    import core.time : Duration, msecs, seconds;
+
+    ProcessConfig process;
+    Duration timeout = Duration.zero;    /// zero = no deadline
+    Duration terminateGrace = 5.seconds; /// TERM → grace → KILL
+    Duration sampleInterval = 250.msecs; /// zero = final accounting only
+    bool collectOutput = true;           /// accumulation only; never draining
+}
+
+/// The outcome of one supervised run (SPEC §13.5). `stdout_`/`stderr_`
+/// hold the exact raw bytes including original terminators, independently
+/// of the normalized line events; empty unless that stream was piped.
+struct SupervisedProcessResult
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    ProcessEnd end;
+    ExitStatus status; /// valid once a child existed and was reaped
+    ProcessResourceUsage usage;
+    SharedBuffer!(ubyte, 256) stdout_;
+    SharedBuffer!(ubyte, 256) stderr_;
+    IoError spawnError; /// valid only for `ProcessEnd.spawnFailed`
+}
+
+/// The synchronous event callback of $(LREF sparkles.event_horizon.live.supervise)
+/// (SPEC §13.5): runs on the original supervising scheduler fiber, must not retain
+/// `event.line.bytes`, and reports failure by throwing — which cancels the
+/// run's scope and converges on the same teardown as any other cancellation.
+alias ProcessEventSink = void delegate(in ProcessEvent event);
