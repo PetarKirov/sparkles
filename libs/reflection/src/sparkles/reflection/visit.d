@@ -46,25 +46,25 @@ struct NoopVisitor {}
 //
 // Visitor contract (all hooks optional, probed per instantiation):
 //   VisitControl enterType(T)()        — before T; skip omits it
-//   void leaveType(T)()                — after T's members
+//   void leaveType(T)()                — after T's subtree (every type)
 //   bool includeField(T, size_t i)()   — default: visit every declared field
 //   void enterField(T, size_t i)()     — before field i's type
 //   void leaveField(T, size_t i)()     — after field i's type
 //   void leaf(T)()                     — a scalar/text/enum leaf type
 //   void property(alias getter)()      — a public @property getter symbol
 //   void sumAlternative(V, size_t i)() — SumType alternative before its type
-//   void sequenceElement(E)()          — a sequence's element type (once)
+//   void sequenceElement(A, E)()       — a sequence type A, element E (once)
 //   void associativeEntry(K, V)()      — an AA's key and value types (once)
 //   void cycle(T)()                    — T re-entered along one descent path
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Walks `T`'s structure depth-first, field order, driving `visitor`.
-void visitType(T, Visitor)(scope ref Visitor visitor)
+void visitType(T, Visitor)(ref Visitor visitor)
 {
     visitTypeImpl!(T, Visitor)(visitor);
 }
 
-private void visitTypeImpl(T, Visitor, Seen...)(scope ref Visitor visitor)
+private void visitTypeImpl(T, Visitor, Seen...)(ref Visitor visitor)
 {
     // Cycle detection is per descent path: `Seen` holds the types on the
     // current branch, so two sibling fields of the same type both visit.
@@ -80,7 +80,7 @@ private void visitTypeImpl(T, Visitor, Seen...)(scope ref Visitor visitor)
         visitTypeBody!(T, Visitor, Seen)(visitor);
 }
 
-private void visitTypeBody(T, Visitor, Seen...)(scope ref Visitor visitor)
+private void visitTypeBody(T, Visitor, Seen...)(ref Visitor visitor)
 {
     static if (__traits(compiles, visitor.enterType!T()))
     {
@@ -136,9 +136,25 @@ private void visitTypeBody(T, Visitor, Seen...)(scope ref Visitor visitor)
     else static if (K == TypeKind.sequence)
     {
         alias Element = typeof(T.init[0]);
-        static if (__traits(compiles, visitor.sequenceElement!Element()))
-            visitor.sequenceElement!Element();
-        visitTypeImpl!(Element, Visitor, Seen, T)(visitor);
+        // The array type rides along so a visitor can expand static indices.
+        // A VisitControl-returning hook decides whether the shell also
+        // descends into the element type; a void or absent hook always
+        // descends.
+        static if (__traits(compiles, visitor.sequenceElement!(T, Element)())
+            && is(typeof(visitor.sequenceElement!(T, Element)())
+                == VisitControl))
+        {
+            if (visitor.sequenceElement!(T, Element)()
+                == VisitControl.descend)
+                visitTypeImpl!(Element, Visitor, Seen, T)(visitor);
+        }
+        else
+        {
+            static if (__traits(compiles,
+                visitor.sequenceElement!(T, Element)()))
+                visitor.sequenceElement!(T, Element)();
+            visitTypeImpl!(Element, Visitor, Seen, T)(visitor);
+        }
     }
     else static if (K == TypeKind.associative)
     {
@@ -158,8 +174,9 @@ private void visitTypeBody(T, Visitor, Seen...)(scope ref Visitor visitor)
             visitor.leaf!T();
     }
 
-    static if ((K == TypeKind.aggregate || K == TypeKind.sumType)
-        && __traits(compiles, visitor.leaveType!T()))
+    // Fires for every type, so a visitor can pop per-alternative marks of a
+    // SumType descent even when the alternative is a leaf.
+    static if (__traits(compiles, visitor.leaveType!T()))
         visitor.leaveType!T();
 }
 
@@ -185,13 +202,13 @@ private void visitTypeBody(T, Visitor, Seen...)(scope ref Visitor visitor)
 /// the function being inferred, a cycle attribute inference cannot settle —
 /// the same posture the property tree's resolver takes. Hook methods must
 /// therefore be `@safe`; a hook that is not simply never matches its probe.
-bool visitValue(T, Visitor)(ref T value, scope ref Visitor visitor) @safe
+bool visitValue(T, Visitor)(ref T value, ref Visitor visitor) @safe
 {
     return visitValueImpl!(T, Visitor)(value, visitor);
 }
 
 private bool visitValueImpl(T, Visitor)(ref T value,
-    scope ref Visitor visitor) @safe
+    ref Visitor visitor) @safe
 {
     alias K = typeKindOf!T;
 
