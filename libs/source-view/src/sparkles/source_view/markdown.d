@@ -187,6 +187,13 @@ struct MdViewOptions
     /// default; the header keeps its heavy rule either way.
     bool tableRowRules = true;
 
+    /// Where link destinations are interned for the terminal's OSC 8 channel.
+    /// Non-null and every link's spans are stamped with an id; null (the
+    /// default) and the view emits no hyperlink identity at all, which is what
+    /// a GPU backend wants — there the pointer shape is the affordance. The
+    /// caller owns the table and passes its `uris` to the renderer.
+    MdLinkTable* linkTable;
+
     /// Non-zero punches the whole-table copy button into a cutout of the
     /// table's top border, just before the corner (`╭──   ╮` — `TBL6`):
     /// `hitId = tableCopyHitBase + table.span.start`, source-anchored like
@@ -427,6 +434,43 @@ WidgetTree viewMarkdown(const MdDoc doc, MdViewOptions opt = MdViewOptions.init)
 uint viewMarkdownInto(ref Builder b, const MdDoc doc,
     MdViewOptions opt = MdViewOptions.init)
     => blocksColumn(b, doc.root.children, doc.source, opt);
+
+/**
+The frame's OSC 8 URI table: destinations interned to small ids, so a
+`TextSpan` carries a `ushort` rather than a slice and the terminal renderer
+turns a run of equal ids into one hyperlink.
+
+Hand one to $(LREF MdViewOptions.linkTable) and it fills as the view is built;
+pass `uris` to $(REF Screen.render, sparkles,tui,render) alongside the grid.
+Ids are 1-based, `0` meaning "not a hyperlink". The entries borrow from the
+document source, so the table must not outlive it.
+
+Interning is a linear scan: a document has few distinct link destinations, and
+one id per DESTINATION (rather than per link) means a URL repeated across a
+page opens one hyperlink identity — which is what a terminal wants for
+highlight-on-hover of all occurrences.
+*/
+struct MdLinkTable
+{
+    /// The destinations, indexed from 1 by a span's `linkId`.
+    const(char)[][] uris;
+
+    /// `dest`'s id, adding it if new. Returns `0` for an empty destination, or
+    /// once the id space is exhausted (65535 distinct URLs on one screen is
+    /// not a real document, and silently wrapping would mislink text).
+    ushort intern(const(char)[] dest) @safe
+    {
+        if (dest.length == 0)
+            return 0;
+        foreach (i, u; uris)
+            if (u == dest)
+                return cast(ushort)(i + 1);
+        if (uris.length >= ushort.max)
+            return 0;
+        uris ~= dest;
+        return cast(ushort) uris.length;
+    }
+}
 
 /// One rendered link: the source byte range its LABEL occupies, plus where it
 /// points. The range is the link inline's own span, which contains every byte
@@ -1039,7 +1083,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 spans ~= TextSpan(opt.glyphs.headingIcons[lvl - 1] ~ " ",
                     opt.proseSlot, style, fg: accent, hasFg: true, noBreak: true);
                 inlinesToSpans(blk.inlines, src, style, opt.proseSlot, spans,
-                    &opt.theme, opt.emph);
+                    &opt.theme, opt.emph, opt.linkTable);
                 foreach (ref s; spans[1 .. $])
                     if (!s.hasFg)
                     {
@@ -1054,7 +1098,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 return b.add(w);
             }
             inlinesToSpans(blk.inlines, src, style, Slot.chromeAccent, spans,
-                null, opt.emph);
+                null, opt.emph, opt.linkTable);
             return proseRow(b, spans, opt);
         }
 
@@ -1062,7 +1106,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         {
             TextSpan[] spans;
             inlinesToSpans(blk.inlines, src, opt.baseStyle, opt.proseSlot, spans,
-                opt.theme.present ? &opt.theme : null, opt.emph);
+                opt.theme.present ? &opt.theme : null, opt.emph, opt.linkTable);
             return proseRow(b, spans, opt);
         }
 
@@ -1135,7 +1179,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 const inls = item.inlines.length ? item.inlines
                     : (item.children.length ? item.children[0].inlines : null);
                 inlinesToSpans(inls, src, opt.baseStyle, opt.proseSlot, spans,
-                    opt.theme.present ? &opt.theme : null, opt.emph);
+                    opt.theme.present ? &opt.theme : null, opt.emph,
+                    opt.linkTable);
                 const lead = leaderHang(leader);
                 rows ~= proseRow(b, spans, opt, lead);
                 // Nested blocks (a sub-list, a nested paragraph) after the
@@ -1521,7 +1566,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     style.bold = ri == 0; // the header row
                     inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
                         spans, opt.theme.present ? &opt.theme : null,
-                        cellOpt.emph);
+                        cellOpt.emph, opt.linkTable);
                     fillDiffTints(spans); // the cell path is not a prose row
                     trimCellEdges(spans); // measured text sizes the track
                     // The sort-rank badge (`DSS1`): chrome, not content —
@@ -1806,7 +1851,7 @@ the same markdown view" means concretely.
 */
 void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
     Slot slot, ref TextSpan[] spans, scope const(MdViewTheme)* vt = null,
-    scope const(MdEmphasis)* em = null)
+    scope const(MdEmphasis)* em = null, scope MdLinkTable* links = null)
 {
     foreach (ref const inl; inls)
         final switch (inl.kind) with (MdInlineKind)
@@ -1819,21 +1864,21 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
             {
                 auto s = base;
                 s.bold = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt, em);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links);
                 break;
             }
             case emphasis:
             {
                 auto s = base;
                 s.italic = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt, em);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links);
                 break;
             }
             case strikethrough:
             {
                 auto s = base;
                 s.strikethrough = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt, em);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links);
                 break;
             }
             case codeSpan:
@@ -1854,7 +1899,7 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                 auto s = base;
                 s.underline = UnderlineStyle.single;
                 const before = spans.length;
-                inlinesToSpans(inl.children, src, s, Slot.info, spans, vt, em);
+                inlinesToSpans(inl.children, src, s, Slot.info, spans, vt, em, links);
                 if (vt !is null)
                     foreach (ref sp; spans[before .. $])
                         if (!sp.hasFg)
@@ -1862,11 +1907,20 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                             sp.fg = vt.linkFg;
                             sp.hasFg = true;
                         }
+                // The terminal hyperlink covers the LABEL only: the title that
+                // follows annotates the link rather than being part of it, so
+                // it must not become clickable text.
+                if (links !is null)
+                {
+                    const id = links.intern(inl.linkDest);
+                    foreach (ref sp; spans[before .. $])
+                        sp.linkId = id;
+                }
                 pushLinkTitle(inl.linkTitle, base, spans, vt);
                 break;
             }
             case image:
-                inlinesToSpans(inl.children, src, base, slot, spans, vt, em);
+                inlinesToSpans(inl.children, src, base, slot, spans, vt, em, links);
                 pushLinkTitle(inl.linkTitle, base, spans, vt);
                 break;
             case lineBreak:
@@ -2087,7 +2141,8 @@ private uint calloutPanel(ref Builder b, ref const MdBlock blk,
             inlinesToSpans(trimLeadingBytes(c.inlines,
                     c.span.start + co.markerLen), src,
                 opt.baseStyle, opt.proseSlot, spans,
-                opt.theme.present ? &opt.theme : null, opt.emph);
+                opt.theme.present ? &opt.theme : null, opt.emph,
+                opt.linkTable);
             if (spans.length)
                 rows ~= proseRow(b, spans, opt);
             continue;
@@ -2870,6 +2925,42 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
             assert(s.srcStart == size_t.max,
                 "the title carries no source identity");
         }
+}
+
+/// With a link table, a link's LABEL spans carry its interned id and the title
+/// does not — the annotation must not become clickable text. One id per
+/// destination, so a repeated URL is one hyperlink identity.
+@("md.render_widgets.linkTableStampsTheLabelOnly")
+@safe unittest
+{
+    const src = "one two";
+    static MdInline link(size_t a, size_t b, string dest, string title = "")
+        => MdInline(kind: MdInlineKind.link, span: Span(a, b),
+            linkDest: dest, linkTitle: title,
+            children: [MdInline(kind: MdInlineKind.text, span: Span(a, b))]);
+
+    auto table = MdLinkTable();
+    TextSpan[] spans;
+    inlinesToSpans([
+        link(0, 3, "http://x", "T"),
+        link(4, 7, "http://x"), // the same URL again
+    ], src, TextStyle.init, Slot.inherit, spans, null, null, &table);
+
+    assert(table.uris == ["http://x"], "one id per destination");
+
+    foreach (ref const s; spans)
+        if (s.text == "one" || s.text == "two")
+            assert(s.linkId == 1, "both labels share the destination's id");
+        else
+            assert(s.linkId == 0,
+                "the title annotation is not part of the hyperlink");
+
+    // Without a table the channel stays inert.
+    TextSpan[] plain;
+    inlinesToSpans([link(0, 3, "http://x")], src, TextStyle.init,
+        Slot.inherit, plain);
+    foreach (ref const s; plain)
+        assert(s.linkId == 0);
 }
 
 /// `mdLinkRanges` reports every link — including one inside a table cell and

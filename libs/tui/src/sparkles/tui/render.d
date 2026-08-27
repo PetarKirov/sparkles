@@ -52,15 +52,25 @@ struct Screen
         }
     }
 
-    /// Diff `target` against the retained frame and emit the minimal byte stream
-    /// into `w`. The first frame (and any resize) repaints fully; afterwards only
-    /// changed cell runs are written. `target` becomes the new retained frame.
-    void render(Writer)(in Grid target, ref Writer w)
+    /**
+    Diff `target` against the retained frame and emit the minimal byte stream
+    into `w`. The first frame (and any resize) repaints fully; afterwards only
+    changed cell runs are written. `target` becomes the new retained frame.
+
+    `links` is the frame's OSC 8 URI table: a cell's `linkId` indexes it from
+    1, and `0` means "no hyperlink". Pass none (the default) and no hyperlink
+    sequence is ever emitted. A hyperlink is opened and closed $(B inside) each
+    redrawn run, never across the cursor move between runs — a terminal binds
+    the open link to every cell it goes on to write, so a link left open would
+    capture unrelated content the diff repaints next.
+    */
+    void render(Writer)(in Grid target, ref Writer w,
+        scope const(char)[][] links = null)
     {
         const resized = target.cols != _prev.cols || target.rows != _prev.rows;
         if (!_havePrev || resized)
         {
-            paintFull(w, target, _depth);
+            paintFull(w, target, _depth, links);
             _prev = target;
             _havePrev = true;
             return;
@@ -92,6 +102,11 @@ struct Screen
                 }
                 // A run of changed cells: one cursor move, then the run's bytes.
                 writeCursorTo(w, cast(uint)(y + 1), cast(uint)(x + 1));
+                // Hyperlink state, unlike style, is NOT carried across the
+                // cursor move that starts each run: an open link binds every
+                // cell the terminal writes next, so leaving one open would
+                // capture the unrelated cells of the following run.
+                ushort curLink;
                 while (x < target.cols && target[x, y] != _prev[x, y])
                 {
                     const c = target[x, y];
@@ -106,9 +121,13 @@ struct Screen
                         cur = c.style;
                         haveStyle = true;
                     }
+                    if (links.length)
+                        writeLink(w, c.linkId, curLink, links);
                     put(w, c.grapheme);
                     x++;
                 }
+                if (curLink != 0)
+                    writeLink(w, 0, curLink, links);
             }
         }
 
@@ -214,13 +233,45 @@ struct Screen
     }
 }
 
+/**
+Emit the OSC 8 transition taking the hyperlink state from `cur` to `want`,
+and update `cur`.
+
+`links` is the frame's URI table, indexed from 1 — `0` means "no hyperlink",
+matching the cell's own convention. An id with no entry closes rather than
+opening a dangling link.
+
+$(B Never let link state span a cursor move.) A terminal attaches the open
+hyperlink to every cell it subsequently writes, so an unclosed link would
+capture whatever the next positioned run paints. Callers close before every
+`CUP` and at the end of a row.
+*/
+private void writeLink(Writer)(ref Writer w, ushort want, ref ushort cur,
+    scope const(char)[][] links)
+{
+    if (want == cur)
+        return;
+    const valid = want != 0 && want <= links.length;
+    put(w, "\x1b]8;;");
+    if (valid)
+        put(w, links[want - 1]);
+    put(w, "\x1b\\");
+    cur = valid ? want : 0;
+}
+
 /// Emit a row's cells (style coalesced per run, wide-glyph continuations
 /// skipped), folded to `depth`, with no cursor positioning. The first cell always
 /// emits its style (a full `ESC[0;…m`), so the row is self-establishing.
-void serializeRow(Writer)(ref Writer w, in Cell[] row, ColorDepth depth = ColorDepth.trueColor)
+///
+/// `links` is the frame's OSC 8 URI table (see $(LREF Screen.render)); an
+/// empty one emits no hyperlink sequences at all. Any link open at the end of
+/// the row is closed, so the row never leaks its state to the next one.
+void serializeRow(Writer)(ref Writer w, in Cell[] row,
+    ColorDepth depth = ColorDepth.trueColor, scope const(char)[][] links = null)
 {
     bool first = true;
     CellStyle cur;
+    ushort curLink;
     foreach (const ref c; row)
     {
         if (c.width == 0)
@@ -231,23 +282,154 @@ void serializeRow(Writer)(ref Writer w, in Cell[] row, ColorDepth depth = ColorD
             cur = c.style;
             first = false;
         }
+        if (links.length)
+            writeLink(w, c.linkId, curLink, links);
         put(w, c.grapheme);
     }
+    if (curLink != 0)
+        writeLink(w, 0, curLink, links);
 }
 
 /// Emit one absolutely-positioned row: `CUP(y+1,1)` then the serialized row.
-void paintRow(Writer)(ref Writer w, in Grid g, ushort y, ColorDepth depth = ColorDepth.trueColor)
+void paintRow(Writer)(ref Writer w, in Grid g, ushort y,
+    ColorDepth depth = ColorDepth.trueColor, scope const(char)[][] links = null)
 {
     writeCursorTo(w, cast(uint)(y + 1), 1);
-    serializeRow(w, g.row(y), depth);
+    serializeRow(w, g.row(y), depth, links);
 }
 
 /// Full repaint: every row absolutely positioned, then park in the default style.
-void paintFull(Writer)(ref Writer w, in Grid g, ColorDepth depth = ColorDepth.trueColor)
+void paintFull(Writer)(ref Writer w, in Grid g,
+    ColorDepth depth = ColorDepth.trueColor, scope const(char)[][] links = null)
 {
     foreach (ushort y; 0 .. g.rows)
-        paintRow(w, g, y, depth);
+        paintRow(w, g, y, depth, links);
     writeStyle(w, CellStyle.init, depth);
+}
+
+/// A run of linked cells is wrapped in one OSC 8 pair; the cells around it are
+/// untouched, and no hyperlink escape is emitted at all without a URI table.
+@("render.osc8.wrapsTheLinkedRunOnly")
+@safe nothrow
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.tui.cell : CellStyle;
+    import std.algorithm.searching : canFind, count;
+
+    Grid g;
+    g.resize(8, 1);
+    g.putText(0, 0, "go here now", CellStyle.init);
+    foreach (ushort x; 3 .. 7) // "here"
+        g[x, 0].linkId = 1;
+
+    const(char)[][] links = ["http://x"];
+
+    SmallBuffer!char buf;
+    paintRow(buf, g, 0, ColorDepth.trueColor, links);
+    const s = buf[];
+    assert(s.canFind("\x1b]8;;http://x\x1b\\"), s);
+    assert(s.canFind("\x1b]8;;\x1b\\"), s); // closed again
+    assert(s.count("\x1b]8;;") == 2, "one open + one close, not per cell");
+    // The link opens immediately before the linked text and closes after it.
+    assert(s.canFind("\x1b]8;;http://x\x1b\\here"), s);
+
+    // Without a table the channel is inert.
+    SmallBuffer!char plain;
+    paintRow(plain, g, 0);
+    assert(!plain[].canFind("\x1b]8;;"), plain[]);
+}
+
+/// A hyperlink never survives the cursor move between two redrawn runs: the
+/// terminal would bind it to whatever the next run paints.
+@("render.osc8.closesBeforeEachCursorMove")
+@safe nothrow
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.tui.cell : CellStyle;
+    import std.algorithm.searching : canFind, count;
+
+    // `std.string.lastIndexOf` decodes UTF and so is not `nothrow`; these are
+    // raw escape bytes anyway.
+    static ptrdiff_t lastAt(scope const(char)[] hay, scope const(char)[] needle)
+        @safe pure nothrow @nogc
+    {
+        if (needle.length > hay.length)
+            return -1;
+        for (ptrdiff_t i = hay.length - needle.length; i >= 0; --i)
+            if (hay[i .. i + needle.length] == needle)
+                return i;
+        return -1;
+    }
+
+    Grid g;
+    g.resize(8, 1);
+    g.putText(0, 0, "abcdefgh", CellStyle.init);
+
+    Screen scr;
+    SmallBuffer!char first;
+    const(char)[][] links = ["http://x"];
+    scr.render(g, first, links);
+
+    // Two separated cells change; only the first is linked.
+    g[1, 0].setCodepoint('X', 1, CellStyle.init, 1);
+    g[6, 0].setCodepoint('Y', 1, CellStyle.init, 0);
+    SmallBuffer!char diff;
+    scr.render(g, diff, links);
+    const s = diff[];
+
+    assert(s.count("\x1b]8;;") == 2, s); // opened and closed, once
+    // The close precedes the cursor move that starts the second run.
+    const closeAt = lastAt(s, "\x1b]8;;");
+    const secondCup = lastAt(s, "\x1b[1;7H");
+    assert(closeAt >= 0 && secondCup >= 0 && closeAt < secondCup, s);
+}
+
+/// A cell whose hyperlink changed differs, so the retained diff repaints it
+/// even though its glyph and style are identical.
+@("render.osc8.linkChangeRepaintsTheCell")
+@safe nothrow
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.tui.cell : CellStyle;
+    import std.algorithm.searching : canFind;
+
+    Grid g;
+    g.resize(4, 1);
+    g.putText(0, 0, "ab", CellStyle.init);
+
+    Screen scr;
+    SmallBuffer!char first;
+    const(char)[][] links = ["http://x"];
+    scr.render(g, first, links);
+
+    // Same glyph, same style — only the link differs.
+    g[0, 0].setCodepoint('a', 1, CellStyle.init, 1);
+    SmallBuffer!char diff;
+    scr.render(g, diff, links);
+    assert(diff[].canFind("\x1b]8;;http://x\x1b\\"), diff[]);
+}
+
+/// An id with no entry in the table closes rather than opening a dangling
+/// hyperlink.
+@("render.osc8.unknownIdDoesNotOpen")
+@safe nothrow
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.tui.cell : CellStyle;
+    import std.algorithm.searching : canFind;
+
+    Grid g;
+    g.resize(4, 1);
+    g.putText(0, 0, "ab", CellStyle.init);
+    g[0, 0].linkId = 7; // out of range
+
+    SmallBuffer!char buf;
+    paintRow(buf, g, 0, ColorDepth.trueColor, ["http://x"]);
+    assert(!buf[].canFind("http://x"), buf[]);
 }
 
 @("render.screen.fullThenDiff")
