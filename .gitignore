@@ -91,6 +91,7 @@ bazel-*
 /apps/hue/tools/gen-coverage-fixtures
 /apps/hue/tools/preview_widget
 /apps/hue/tools/tui_ab
+/apps/ci/tools/add_sidebar_entry
 /apps/hue/tools/gui_ab
 /apps/hue/tools/resize_probe
 /apps/hue/tools/dub.selections.json
