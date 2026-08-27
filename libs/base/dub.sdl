@@ -14,6 +14,10 @@ dflags "-preview=in" "-preview=dip1000"
 dflags "-linkonce-templates" platform="ldc"
 
 dependency "expected" version="~>0.4.1"
+// Structural classification for the shared value-writing dispatch: the text
+// writers, the property tree, and query engines answer "what shape is this
+// value" from one ladder.
+dependency "sparkles:reflection" path="../.."
 
 targetType "library"
 
