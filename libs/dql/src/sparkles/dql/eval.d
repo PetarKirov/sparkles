@@ -2,11 +2,15 @@ module sparkles.dql.eval;
 
 import std.math : isNaN;
 import std.regex : matchFirst;
-import std.sumtype : match;
+import std.sumtype : SumType, match;
+import std.traits : isBoolean, isFloatingPoint, isIntegral, isSomeString,
+    isUnsigned;
 
 import sparkles.base.text.span : TextSpan;
 import sparkles.dql.ast;
 import sparkles.dql.engine : DqlEngine;
+import sparkles.dql.resolve : resolveDqlCategory, resolveDqlPath;
+import sparkles.dql.schema : DqlResolution, enumValueMatches;
 import sparkles.fuzzy.common : CandidateView;
 import sparkles.fuzzy.glob : globMatch;
 import sparkles.fuzzy.match : MatchKind, match;
@@ -405,6 +409,183 @@ bool evalDql(Resolver)(ref DqlEngine engine, scope ref const DqlFilter filter, s
     if (filter.empty)
         return filter.allowAllByDefault;
     return evalAstNode(engine, filter, filter.rootIndex, resolver);
+}
+
+private bool compareReflected(V)(ref DqlEngine engine, in V actual,
+    DqlOp op, in DqlValue target)
+{
+    static if (is(V == enum))
+        return target.match!(
+            (in TextSpan text) => (op == DqlOp.eq || op == DqlOp.neq)
+                && (enumValueMatches!V(actual, engine.textOf(text))
+                    == (op == DqlOp.eq)),
+            _ => false,
+        );
+    else static if (isSomeString!V)
+        return target.match!(
+            (in TextSpan text) => compareString(actual, op,
+                engine.textOf(text)),
+            _ => false,
+        );
+    else static if (isBoolean!V)
+        return compareValues(engine, DqlValue(cast(bool) actual), op, target);
+    else static if (isIntegral!V && isUnsigned!V)
+        return compareValues(engine, DqlValue(cast(ulong) actual), op, target);
+    else static if (isIntegral!V)
+        return compareValues(engine, DqlValue(cast(long) actual), op, target);
+    else static if (isFloatingPoint!V)
+        return compareValues(engine, DqlValue(cast(double) actual), op, target);
+    else
+        return false;
+}
+
+private struct CompareSink
+{
+    DqlEngine* engine;
+    DqlOp op;
+    DqlValue target;
+    bool* result;
+
+    void opCall(V)(in V value)
+    {
+        *result = compareReflected!V(*engine, value, op, target);
+    }
+}
+
+private struct IgnoreSink
+{
+    void opCall(V)(in V) @safe pure nothrow @nogc {}
+}
+
+private struct RegexSink
+{
+    DqlEngine* engine;
+    RegexPayload pattern;
+    bool* result;
+
+    void opCall(V)(in V value)
+    {
+        static if (isSomeString!V)
+            *result = evalRegex(*engine, value, pattern);
+    }
+}
+
+private struct GlobSink
+{
+    DqlEngine* engine;
+    GlobPayload pattern;
+    bool* result;
+
+    void opCall(V)(in V value)
+    {
+        static if (isSomeString!V)
+            *result = evalGlob(*engine, value, pattern);
+    }
+}
+
+private struct FuzzySink
+{
+    DqlEngine* engine;
+    FuzzyPayload pattern;
+    bool* result;
+
+    void opCall(V)(in V value)
+    {
+        static if (isSomeString!V)
+            *result = evalFuzzy(*engine, value, pattern);
+    }
+}
+
+private bool evalReflectedNode(Schema)(ref DqlEngine engine,
+    scope ref const DqlFilter filter, uint nodeIndex,
+    scope ref const Schema.Subject subject)
+{
+    if (nodeIndex >= filter.nodes.length)
+        return true;
+    const node = filter.nodes[nodeIndex];
+    return node.payload.match!(
+        (in CategoryPayload category) => resolveDqlCategory!Schema(subject,
+            engine.textOf(category.name)),
+        (in BinaryPayload binary) => node.kind == DqlNodeKind.and_
+            ? evalReflectedNode!Schema(engine, filter, binary.left, subject)
+                && evalReflectedNode!Schema(engine, filter, binary.right, subject)
+            : evalReflectedNode!Schema(engine, filter, binary.left, subject)
+                || evalReflectedNode!Schema(engine, filter, binary.right, subject),
+        (in UnaryPayload unary) => !evalReflectedNode!Schema(engine, filter,
+            unary.child, subject),
+        (in ComparePayload comparison) {
+            bool result;
+            CompareSink sink = {
+                engine: &engine,
+                op: comparison.op,
+                target: comparison.target,
+                result: &result,
+            };
+            const resolved = resolveDqlPath!Schema(subject,
+                engine.textOf(comparison.path), sink);
+            return resolved == DqlResolution.value && result;
+        },
+        (in NullCheckPayload check) {
+            const resolved = resolveDqlPath!Schema(subject,
+                engine.textOf(check.path), IgnoreSink.init);
+            return check.isNull ? resolved == DqlResolution.absent
+                : resolved == DqlResolution.value;
+        },
+        (in RegexPayload pattern) {
+            bool result;
+            RegexSink sink = { engine: &engine, pattern: pattern,
+                result: &result };
+            return resolveDqlPath!Schema(subject,
+                engine.textOf(pattern.path), sink) == DqlResolution.value
+                && result;
+        },
+        (in GlobPayload pattern) {
+            bool result;
+            GlobSink sink = { engine: &engine, pattern: pattern,
+                result: &result };
+            return resolveDqlPath!Schema(subject,
+                engine.textOf(pattern.path), sink) == DqlResolution.value
+                && result;
+        },
+        (in FuzzyPayload pattern) {
+            bool result;
+            FuzzySink sink = { engine: &engine, pattern: pattern,
+                result: &result };
+            return resolveDqlPath!Schema(subject,
+                engine.textOf(pattern.path), sink) == DqlResolution.value
+                && result;
+        },
+        (in CustomPayload) => true,
+    );
+}
+
+/// Evaluates a filter directly against its reflected schema subject.
+bool evalDql(Schema)(ref DqlEngine engine, scope ref const DqlFilter filter,
+    scope ref const Schema.Subject subject)
+{
+    if (filter.empty)
+        return filter.allowAllByDefault;
+    return evalReflectedNode!Schema(engine, filter, filter.rootIndex, subject);
+}
+
+@("dql.eval: reflected schemas distinguish absent variants")
+@safe
+unittest
+{
+    import sparkles.dql.parser : parseDql;
+    import sparkles.dql.schema : DqlSchema;
+
+    struct AEvent { int value; }
+    struct BEvent { bool enabled; }
+    alias Event = SumType!(AEvent, BEvent);
+    alias Schema = DqlSchema!Event;
+    DqlEngine engine;
+    Event event = AEvent(9);
+
+    auto value = parseDql!Schema(engine, "a.value == 9");
+    assert(value.hasValue && evalDql!Schema(engine, value.value, event));
+    auto absent = parseDql!Schema(engine, "b.enabled == null");
+    assert(absent.hasValue && evalDql!Schema(engine, absent.value, event));
 }
 
 @("dql.eval: typed value comparisons")
