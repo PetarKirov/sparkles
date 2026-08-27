@@ -3163,6 +3163,25 @@ int runGui(GuiArgs guiArgs) @system
                 && formatPreviewRulerHits(vm, rulerColF()));
 
         const fenceShape = vm.barShape();
+        // A link in the rendered preview wants the hand (`MDP23`), resolved
+        // through the identity channel like every other sub-widget hit. It is
+        // the LAST hover contribution: the ruler and the bars are chrome
+        // affordances offering an action on the view, and chrome outranks
+        // content (`DCK9`).
+        PointerShape hoverShape()
+        {
+            if (rulerHovering)
+                return PointerShape.ewResize;
+            if (fenceShape != PointerShape.default_)
+                return fenceShape;
+            if (!vm.showPreview || !inp.capture.isFree
+                || inp.fin.pos.x < gutterPx)
+                return PointerShape.default_;
+            return vm.linkShape(Point(
+                contentColOf(cast(int) inp.fin.pos.x, gutterPx, cellW, dhx, pinned),
+                cast(int)(vm.top + cast(long)((inp.fin.pos.y - docY0) / cellH))));
+        }
+
         // The settings pane is modal: while it owns the pointer, the frame's
         // one shape call reports ITS bar machine, not the chrome beneath.
         window.pointerShape(settingsPane.active
@@ -3170,7 +3189,7 @@ int runGui(GuiArgs guiArgs) @system
             : pn.dock.shape(
                 rulerGrabbing ? PointerShape.ewResize
                 : vm.barGrabbing ? fenceShape : PointerShape.default_,
-                rulerHovering ? PointerShape.ewResize : fenceShape));
+                hoverShape()));
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;

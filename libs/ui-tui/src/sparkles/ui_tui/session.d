@@ -68,6 +68,12 @@ struct TerminalSession
     /// painting chrome by hand still needs it — see the module note.
     Grid grid;
 
+    /// The frame's OSC 8 URI table, indexed from 1 by a cell's `linkId` — set
+    /// it while painting and the terminal itself makes those cells clickable.
+    /// Public for the same reason `grid` is, and empty by default, so a
+    /// surface with no hyperlinks emits no hyperlink sequences.
+    const(char)[][] links;
+
     @disable this(this);
 
     /// Enters raw mode and starts the input reader.
@@ -107,7 +113,7 @@ struct TerminalSession
     }
 
     /// Presents the surface — the retained diff, so only changed cells go out.
-    void present() @system => term.draw(grid);
+    void present() @system => term.draw(grid, links);
 
     /**
     Writes a control sequence straight to the terminal, outside the cell diff.

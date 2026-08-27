@@ -178,6 +178,11 @@ struct TuiHost
     /// The cell grid, for an application still painting some chrome by hand.
     ref auto grid() @system => session.grid;
 
+    /// The frame's OSC 8 URI table (see `TerminalSession.links`): an
+    /// application that paints hyperlinked cells by hand sets it here, and the
+    /// diff emits the hyperlinks around them.
+    ref auto links() @system => session.links;
+
     /// The canvas over that grid (`HST3`) — the terminal counterpart of
     /// `GuiHost.canvas`, so a component that paints through `host.canvas` in
     /// its draw phase (`HST13`) instantiates on both arms instead of needing

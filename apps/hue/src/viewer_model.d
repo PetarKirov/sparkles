@@ -22,8 +22,8 @@ import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
 import sparkles.source_view.code : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
-    foldableSpans, highlightedFenceRenderer, MdViewOptions, MdViewTheme,
-    viewMarkdownInto;
+    foldableSpans, highlightedFenceRenderer, MdLinkRange, MdLinkTable,
+    mdLinkRanges, MdViewOptions, MdViewTheme, viewMarkdownInto;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
     GutterChannel, gutterWidth, withGutterColumns, withinBudget;
 import sparkles.code_instrumentation : maxCountWidth;
@@ -33,11 +33,12 @@ import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
-import sparkles.ui.geometry : Constraints, Rect;
+import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, ElementStore,
-    HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects;
+    HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects,
+    sourceOffsetAt;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
@@ -325,6 +326,17 @@ struct ViewerModel
     size_t copiedTableSrc = size_t.max; /// span start of the just-copied table
     DisclosureState!size_t folds = DisclosureState!size_t(true);
     Span[] foldable;
+    /// Every markdown link's source range + destination, derived with the
+    /// tree. A link cannot be a hover target — a whole prose row is one `rich`
+    /// widget and a `TextSpan` carries no `hitId` — so "is the pointer over a
+    /// link?" is answered through the identity channel instead:
+    /// `sourceOffsetAt` then a lookup here (`linkAt`).
+    MdLinkRange[] mdLinks;
+    /// The OSC 8 destinations the preview's spans index, in the order the view
+    /// interned them. Handed to the TUI renderer so the terminal itself makes
+    /// link text clickable; the GUI ignores it (there the hand cursor is the
+    /// affordance).
+    MdLinkTable mdLinkTable;
     /// The showing fence of each code group, by `codeBody.start` (`MDP22`)
     /// — source-anchored like the fold set, so a rebuild keeps the
     /// reader's tab.
@@ -1132,6 +1144,11 @@ struct ViewerModel
         // what sizes the per-fence scrollbars — it must match the width the
         // first pass lays out at or the two passes wrap differently.
         opt.maxWidth = contentWidthCols;
+        // Rebuilt with the tree: both the hyperlink table the spans index and
+        // the link ranges the pointer is tested against describe THIS build.
+        mdLinkTable = MdLinkTable.init;
+        opt.linkTable = &mdLinkTable;
+        mdLinks = mdLinkRanges(preview.doc);
         auto mb = Builder();
         const mdRoot = viewMarkdownInto(mb, preview.doc, opt);
         tree = gutter(mb, mdRoot);
@@ -1591,6 +1608,37 @@ struct ViewerModel
         const sv = activeBar();
         return sv !is null ? sv.shape() : PointerShape.default_;
     }
+
+    /**
+    The link under document point `p`, or null.
+
+    Resolved through the identity channel, not a hit target: a whole prose row
+    is one `rich` widget and a `TextSpan` carries no `hitId`, so a link is not
+    individually addressable in the tree. `sourceOffsetAt` maps the pointer
+    cell to the source byte that produced the glyph, and the byte is looked up
+    among the document's link ranges — the same source-anchored idiom folds,
+    fences, table cells and twoslash hover already use, and the reason this
+    works inside a table cell (whose spans keep their source identity) as well
+    as in prose.
+    */
+    const(MdLinkRange)* linkAt(Point p) const @trusted
+    {
+        if (mdLinks.length == 0)
+            return null;
+        const off = sourceOffsetAt(tree, frames, p);
+        if (off < 0)
+            return null;
+        foreach (ref const r; mdLinks)
+            if (r.contains(cast(size_t) off))
+                return &r;
+        return null;
+    }
+
+    /// The pointer shape the document content wants at `p` — the link hand
+    /// over a link, the default elsewhere. The hosts compose this beneath
+    /// every bar and divider shape (`DCK9`: chrome outranks content).
+    PointerShape linkShape(Point p) const @safe
+        => linkAt(p) !is null ? PointerShape.pointer : PointerShape.default_;
 
     /// Whether any bar grab owns the pointer.
     bool barGrabbing() const @safe pure nothrow @nogc
@@ -2406,6 +2454,83 @@ struct ViewerModel
     assert(vm.matches.length == 1);
     assert(vm.visualOfMatch(vm.matches[0]) == 2);
     assert(vm.matchRects.length == 1 && vm.matchRects[0].length == 1);
+}
+
+/**
+`MDP23`/`MDP24`: the pointer over a link in the rendered preview asks for the
+hand, and one cell off it goes back to the default. Every link form counts —
+inline, autolink and reference-style — and a link inside a TABLE CELL counts
+too, which is the case `trimCellEdges` could have broken by rewriting the edge
+spans' source identity.
+
+The frame's OSC 8 table is built alongside, so the same run proves the
+terminal gets the destinations it needs to make the text clickable.
+*/
+@("viewer_model.linkHover.everyFormAndInsideATable")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 60;
+    vm.applyTheme(0);
+
+    const src = "an [inline](http://inline) link\n"
+        ~ "\n"
+        ~ "a [reference][ref] link\n"
+        ~ "\n"
+        ~ "| a | b |\n"
+        ~ "| - | - |\n"
+        ~ "| [cell](http://cell) | x |\n"
+        ~ "\n"
+        ~ "[ref]: http://reference\n";
+
+    PreviewModel pm;
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    pm.doc = extractMarkdown(reg, src);
+    pm.present = true;
+    vm.setDocument("t.md", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], pm, TwoslashReturn.init);
+    assert(vm.showPreview);
+
+    // Every destination reached the hyperlink table, the reference form
+    // included — proof the resolution survives all the way to the terminal.
+    assert(vm.mdLinkTable.uris.canFind("http://inline"), "inline");
+    assert(vm.mdLinkTable.uris.canFind("http://reference"), "reference");
+    assert(vm.mdLinkTable.uris.canFind("http://cell"), "in a table cell");
+
+    // Walk the laid-out frame: every cell whose byte lies in a link range must
+    // report the hand, and there must be at least one per destination.
+    bool[string] sawHand;
+    bool sawDefault;
+    foreach (y; 0 .. cast(int) vm.rows.length)
+        foreach (x; 0 .. vm.widthCols)
+        {
+            const p = Point(x, y);
+            if (auto lr = vm.linkAt(p))
+            {
+                assert(vm.linkShape(p) == PointerShape.pointer,
+                    "over a link the pointer is the hand");
+                sawHand[lr.dest.idup] = true;
+            }
+            else if (vm.linkShape(p) == PointerShape.default_)
+                sawDefault = true;
+        }
+
+    assert("http://inline" in sawHand, "an inline link is hoverable");
+    assert("http://reference" in sawHand, "a REFERENCE link is hoverable");
+    assert("http://cell" in sawHand, "a link inside a table cell is hoverable");
+    assert(sawDefault, "off a link the shape returns to the default");
 }
 
 @("viewer_model.cstFoldsInTheRawView")
