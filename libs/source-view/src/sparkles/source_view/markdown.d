@@ -2963,6 +2963,62 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
         assert(s.linkId == 0);
 }
 
+/**
+The hyperlink id survives the WHOLE pipeline, not just the span mapper.
+
+This crosses the display list on purpose. The id has to squeeze through `Ink`,
+the compact per-operation payload the command buffer stores instead of a whole
+`Visual` — and a field missing there is invisible to any test that stops at
+`TextSpan` or starts at a hand-built grid, which is exactly how the terminal
+came to emit no hyperlinks at all while every unit test passed.
+*/
+@("md.render_widgets.linkIdReachesThePaintedCells")
+@safe unittest
+{
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    const src = "see here now";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, src.length), inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 4)),
+            MdInline(kind: MdInlineKind.link, span: Span(4, 8),
+                linkDest: "http://x", children: [
+                    MdInline(kind: MdInlineKind.text, span: Span(4, 8))]),
+            MdInline(kind: MdInlineKind.text, span: Span(8, src.length)),
+        ]),
+    ]), src);
+
+    // Heap-allocated so `opt` does not become `scope` under dip1000 (a
+    // pointer to a local would infect it and `viewMarkdown` takes its options
+    // by value).
+    auto table = new MdLinkTable;
+    MdViewOptions opt = {maxWidth: 40, linkTable: table};
+    auto tree = viewMarkdown(doc, opt);
+    assert(table.uris == ["http://x"]);
+
+    auto frames = layout(tree, Constraints(maxW: 40));
+    const r = frames[tree.root].rect;
+    const fg = RgbColor(0xcc, 0xcc, 0xcc), bg = RgbColor(0x1e, 0x1e, 0x1e);
+    auto grid = CellGrid(r.width, r.height, fg, bg);
+    paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(), fg, bg));
+
+    // "here" is four cells, and only those four.
+    size_t linked;
+    foreach (ref const c; grid.cells)
+        if (c.linkId != 0)
+        {
+            assert(c.linkId == 1);
+            ++linked;
+        }
+    assert(linked == 4, "exactly the label's cells carry the hyperlink");
+}
+
 /// `mdLinkRanges` reports every link — including one inside a table cell and
 /// one nested in emphasis — and skips destination-less inlines.
 @("md.render_widgets.mdLinkRanges")

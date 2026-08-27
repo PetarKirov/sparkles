@@ -119,6 +119,10 @@ struct Ink
     FontRole fontRole;        /// which font family the run wants
     ushort styleBits;         /// packed `TextAttr` flags (bold/italic/…)
     ushort fontScale = 100;   /// font size as a percentage of 1em
+    /// The OSC 8 hyperlink this run belongs to — an index into the frame's URI
+    /// table, `0` for none. A cell backend turns a run of equal ids into one
+    /// terminal hyperlink; a GPU backend ignores it.
+    ushort linkId;
 }
 
 /**
@@ -490,7 +494,7 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
     => Ink(fg: v.fg, fgAlpha: v.fgAlpha, bg: v.bg, bgAlpha: v.bgAlpha,
         hasBg: v.hasBg, underline: v.underline,
         underlineAlpha: v.underlineAlpha, fontRole: v.fontRole,
-        styleBits: v.styleBits, fontScale: v.fontScale);
+        styleBits: v.styleBits, fontScale: v.fontScale, linkId: v.linkId);
 
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
@@ -511,6 +515,7 @@ Visual visualOf(in Ink ink) @safe pure nothrow @nogc
     v.fontRole = ink.fontRole;
     v.styleBits = ink.styleBits;
     v.fontScale = ink.fontScale;
+    v.linkId = ink.linkId;
     return v;
 }
 

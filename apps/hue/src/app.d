@@ -1265,7 +1265,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             break;
         case markdown:
         case dsv:
-            import sparkles.source_view.markdown : MdViewOptions,
+            import sparkles.source_view.markdown : MdLinkTable, MdViewOptions,
                 MdViewTheme, viewMarkdown;
             import sparkles.ui.display_list : buildDisplayList;
             import sparkles.ui.geometry : Constraints;
@@ -1292,6 +1292,11 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                     : opt.tableMaxLines < 0 ? 0 : opt.tableMaxLines,
                 tableExtras: doc.preview.tableExtras,
             };
+            // Links become real OSC 8 hyperlinks here too (`MDP26`): a
+            // one-shot emit lands in a terminal just as the interactive view
+            // does, so `hue view --ansi doc.md` should be as clickable.
+            MdLinkTable linkTable;
+            mopt.linkTable = &linkTable;
             auto tree = viewMarkdown(doc.preview.doc, mopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth()));
             const r = frames[tree.root].rect;
@@ -1300,7 +1305,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 pageFg, pageBg));
             grid.writeAnsi(output, depth,
                 bgMode == BackgroundMode.full ? BgEmit.full
-                : bgMode == BackgroundMode.spans ? BgEmit.spans : BgEmit.none);
+                : bgMode == BackgroundMode.spans ? BgEmit.spans : BgEmit.none,
+                linkTable.uris);
             output ~= '\n';
             break;
         case code:
