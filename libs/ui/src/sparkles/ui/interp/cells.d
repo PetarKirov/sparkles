@@ -17,7 +17,7 @@ module sparkles.ui.interp.cells;
 
 import std.range.primitives : put;
 
-import sparkles.ui.canvas : isCanvas, LineStyle;
+import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.ui.style : BorderStyle;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
@@ -399,6 +399,68 @@ struct CellGrid
         {
             c.bg = blend(c.hasBg ? c.bg : pageBg, v.bg, v.bgAlpha);
             c.hasBg = true;
+        }
+    }
+
+    /**
+    A hairline along one edge of `r`, on the CORRECT side of the cell.
+
+    The peer of $(REF GridCanvas.rule, sparkles,ui_tui,grid_canvas) — one
+    degradation, two cell backends, so a board looks the same in a terminal and
+    under `--render`. Only `bottom` is an underline; a cell has no overline and
+    no side attributes, so the other three edges are the eighth-blocks the
+    accent borders already use.
+    */
+    void rule(in Rect r, RuleEdge edge, in Visual v)
+    {
+        if (r.empty)
+            return;
+
+        void stroke(int x, int y, dchar glyph)
+        {
+            if (!inBounds(x, y))
+                return;
+            auto c = &at(x, y);
+            c.glyph = glyph;
+            c.fg = v.fg;
+        }
+
+        void underline(int y)
+        {
+            foreach (x; r.x .. r.x + r.width)
+                if (inBounds(x, y))
+                {
+                    auto c = &at(x, y);
+                    c.underline = true;
+                    c.curly = false;
+                    c.underColor = v.fg;
+                }
+        }
+
+        final switch (edge) with (RuleEdge)
+        {
+            case top:
+                foreach (x; r.x .. r.x + r.width)
+                    stroke(x, r.y, '\u2594'); // ▔
+                break;
+            case bottom:
+                underline(r.y + r.height - 1);
+                break;
+            case centerY:
+                underline(r.y + r.height / 2);
+                break;
+            case left:
+                foreach (y; r.y .. r.y + r.height)
+                    stroke(r.x, y, accentGlyph(1, left: true));
+                break;
+            case right:
+                foreach (y; r.y .. r.y + r.height)
+                    stroke(r.x + r.width - 1, y, accentGlyph(1, left: false));
+                break;
+            case centerX:
+                foreach (y; r.y .. r.y + r.height)
+                    stroke(r.x + r.width / 2, y, accentGlyph(1, left: true));
+                break;
         }
     }
 
