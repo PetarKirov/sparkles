@@ -27,11 +27,16 @@ alias PhysicalPosition = ScreenPosition!int;
 alias PhysicalSize = ScreenSize!uint;
 
 /// Physical pixels per logical unit.
+///
+/// A fieldless value with one `@property`: structural reflection presents it
+/// as its value (a leaf), not as a wrapper around one.
 struct ScaleFactor
 {
-    double value = 1.0;
+    private double value_ = 1.0;
 
-    bool valid() const pure nothrow @nogc => value > 0.0 && isFinite(value);
+    @property double value() const pure nothrow @nogc => value_;
+
+    bool valid() const pure nothrow @nogc => value_ > 0.0 && isFinite(value_);
 }
 
 /// One atomic logical/physical/scale observation.
