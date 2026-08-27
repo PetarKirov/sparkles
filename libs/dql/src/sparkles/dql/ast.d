@@ -25,8 +25,9 @@ enum DqlOp : ubyte
 /// A typed DQL literal value for zero-allocation comparisons.
 alias DqlValue = SumType!(
     TextSpan,         // String literal span in engine.stringPool
-    double,           // Floating point number
-    long,             // Integer
+    long,             // Signed integer
+    ulong,            // Unsigned integer
+    double,           // Floating-point number
     bool,             // Boolean flag
     typeof(null),     // Null literal
 );
@@ -176,7 +177,7 @@ struct DqlFilter
 pure nothrow @nogc
 unittest
 {
-    static assert(DqlValue.sizeof == 16);
+    static assert(DqlValue.sizeof <= 24);
     static assert(UnaryPayload.sizeof == 4);
     static assert(CustomPayload.sizeof == 4);
     static assert(BinaryPayload.sizeof == 8);

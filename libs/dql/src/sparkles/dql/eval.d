@@ -1,5 +1,6 @@
 module sparkles.dql.eval;
 
+import std.math : isNaN;
 import std.regex : matchFirst;
 import std.sumtype : match;
 
@@ -15,32 +16,120 @@ import sparkles.fuzzy.match : MatchKind, match;
 /// Compares two typed AST `DqlValue` literals under relational or equality operator `op`.
 bool compareValues(ref const DqlEngine engine, in DqlValue actual, DqlOp op, in DqlValue target) pure nothrow @nogc
 {
-    return actual.match!(
-        (in TextSpan aSpan) => target.match!(
-            (in TextSpan tSpan) => compareString(engine.textOf(aSpan), op, engine.textOf(tSpan)),
-            _ => false
-        ),
-        (in typeof(null)) => target.match!(
-            (in typeof(null)) => (op == DqlOp.eq),
-            _ => false
-        ),
-        (in bool aBool) => target.match!(
-            (in bool tBool) => (op == DqlOp.eq) ? (aBool == tBool) : ((op == DqlOp.neq) ? (aBool != tBool) : false),
-            _ => false
-        ),
-        (in long aInt) => target.match!(
-            (in bool tBool) => false,
-            (in long tInt) => compareScalar(aInt, op, tInt),
-            (in double tNum) => compareScalar(cast(double) aInt, op, tNum),
-            _ => false
-        ),
-        (in double aNum) => target.match!(
-            (in bool tBool) => false,
-            (in long tInt) => compareScalar(aNum, op, cast(double) tInt),
-            (in double tNum) => compareScalar(aNum, op, tNum),
-            _ => false
-        ),
-    );
+    return actual.match!((auto ref a) => target.match!(
+        (auto ref t) => compareLiteral(engine, a, op, t)));
+}
+
+private bool compareLiteral(A, T)(ref const DqlEngine engine, in A actual,
+    DqlOp op, in T target) @safe pure nothrow @nogc
+{
+    static if (is(A == TextSpan) && is(T == TextSpan))
+        return compareString(engine.textOf(actual), op, engine.textOf(target));
+    else static if (is(A == typeof(null)) && is(T == typeof(null)))
+        return op == DqlOp.eq;
+    else static if (is(A == bool) && is(T == bool))
+        return compareScalar(actual, op, target);
+    else static if (is(A == long) && is(T == long))
+        return compareScalar(actual, op, target);
+    else static if (is(A == long) && is(T == ulong))
+        return actual < 0 ? compareOrder(NumericOrder.less, op)
+            : compareScalar(cast(ulong) actual, op, target);
+    else static if (is(A == ulong) && is(T == long))
+        return target < 0 ? compareOrder(NumericOrder.greater, op)
+            : compareScalar(actual, op, cast(ulong) target);
+    else static if (is(A == ulong) && is(T == ulong))
+        return compareScalar(actual, op, target);
+    else static if (is(A == long) && is(T == double))
+        return compareOrder(orderSignedDouble(actual, target), op);
+    else static if (is(A == double) && is(T == long))
+        return compareOrder(reverse(orderSignedDouble(target, actual)), op);
+    else static if (is(A == ulong) && is(T == double))
+        return compareOrder(orderUnsignedDouble(actual, target), op);
+    else static if (is(A == double) && is(T == ulong))
+        return compareOrder(reverse(orderUnsignedDouble(target, actual)), op);
+    else static if (is(A == double) && is(T == double))
+        return compareScalar(actual, op, target);
+    else
+        return false;
+}
+
+private enum NumericOrder : ubyte { less, equal, greater, unordered }
+
+private bool compareOrder(NumericOrder order, DqlOp op) @safe pure nothrow @nogc
+{
+    if (order == NumericOrder.unordered)
+        return op == DqlOp.neq;
+    final switch (op)
+    {
+        case DqlOp.eq:  return order == NumericOrder.equal;
+        case DqlOp.neq: return order != NumericOrder.equal;
+        case DqlOp.lt:  return order == NumericOrder.less;
+        case DqlOp.lte: return order != NumericOrder.greater;
+        case DqlOp.gt:  return order == NumericOrder.greater;
+        case DqlOp.gte: return order != NumericOrder.less;
+    }
+}
+
+private NumericOrder orderOf(T)(T a, T b) @safe pure nothrow @nogc
+    => a < b ? NumericOrder.less
+        : a > b ? NumericOrder.greater : NumericOrder.equal;
+
+private NumericOrder reverse(NumericOrder order) @safe pure nothrow @nogc
+{
+    final switch (order)
+    {
+        case NumericOrder.less: return NumericOrder.greater;
+        case NumericOrder.equal: return NumericOrder.equal;
+        case NumericOrder.greater: return NumericOrder.less;
+        case NumericOrder.unordered: return NumericOrder.unordered;
+    }
+}
+
+private NumericOrder orderSignedUnsigned(long a, ulong b)
+    @safe pure nothrow @nogc
+    => a < 0 ? NumericOrder.less : orderOf(cast(ulong) a, b);
+
+private NumericOrder orderUnsignedSigned(ulong a, long b)
+    @safe pure nothrow @nogc
+    => reverse(orderSignedUnsigned(b, a));
+
+private NumericOrder orderSignedDouble(long a, double b)
+    @safe pure nothrow @nogc
+{
+    if (isNaN(b))
+        return NumericOrder.unordered;
+    enum double lower = -9_223_372_036_854_775_808.0;
+    enum double upper = 9_223_372_036_854_775_808.0;
+    if (b < lower)
+        return NumericOrder.greater;
+    if (b >= upper)
+        return NumericOrder.less;
+    const integral = cast(long) b;
+    const compared = orderOf(a, integral);
+    if (compared != NumericOrder.equal)
+        return compared;
+    return cast(double) integral < b ? NumericOrder.less
+        : cast(double) integral > b ? NumericOrder.greater
+        : NumericOrder.equal;
+}
+
+private NumericOrder orderUnsignedDouble(ulong a, double b)
+    @safe pure nothrow @nogc
+{
+    if (isNaN(b))
+        return NumericOrder.unordered;
+    if (b < 0)
+        return NumericOrder.greater;
+    enum double upper = 18_446_744_073_709_551_616.0;
+    if (b >= upper)
+        return NumericOrder.less;
+    const integral = cast(ulong) b;
+    const compared = orderOf(a, integral);
+    if (compared != NumericOrder.equal)
+        return compared;
+    return cast(double) integral < b ? NumericOrder.less
+        : cast(double) integral > b ? NumericOrder.greater
+        : NumericOrder.equal;
 }
 
 /// Compares two string slices under the specified operator.
@@ -137,6 +226,16 @@ private bool resolveFieldInt(Resolver)(auto ref Resolver resolver, scope const(c
         return false;
 }
 
+private bool resolveFieldUInt(Resolver)(auto ref Resolver resolver, scope const(char)[] path, out ulong value) @safe
+{
+    static if (__traits(compiles, () @safe => resolver.resolveUInt(path, value)))
+        return resolver.resolveUInt(path, value);
+    else static if (__traits(compiles, () @safe => resolver.resolveValue(path, value)))
+        return resolver.resolveValue(path, value);
+    else
+        return false;
+}
+
 private bool resolveFieldBool(Resolver)(auto ref Resolver resolver, scope const(char)[] path, out bool value) @safe
 {
     static if (__traits(compiles, () @safe => resolver.resolveBool(path, value)))
@@ -151,6 +250,81 @@ private bool resolveFieldNull(Resolver)(auto ref Resolver resolver, scope const(
 {
     static if (__traits(compiles, () @safe => resolver.resolveIsNull(path, isNull)))
         return resolver.resolveIsNull(path, isNull);
+    else
+        return false;
+}
+
+private bool evalCompareTarget(T, Resolver)(ref DqlEngine engine,
+    scope const(char)[] path, DqlOp op, in T target,
+    scope ref Resolver resolver)
+{
+    static if (is(T == TextSpan))
+    {
+        const(char)[] actual;
+        return resolveFieldString(resolver, path, actual)
+            && compareString(actual, op, engine.textOf(target));
+    }
+    else static if (is(T == typeof(null)))
+    {
+        bool isNull;
+        if (resolveFieldNull(resolver, path, isNull))
+            return op == DqlOp.eq ? isNull : !isNull;
+        const(char)[] s;
+        double d;
+        bool b;
+        long i;
+        ulong u;
+        const present = resolveFieldString(resolver, path, s)
+            || resolveFieldNumber(resolver, path, d)
+            || resolveFieldBool(resolver, path, b)
+            || resolveFieldInt(resolver, path, i)
+            || resolveFieldUInt(resolver, path, u);
+        return present && op == DqlOp.neq;
+    }
+    else static if (is(T == bool))
+    {
+        bool actual;
+        return resolveFieldBool(resolver, path, actual)
+            && compareScalar(actual, op, target);
+    }
+    else static if (is(T == long))
+    {
+        long actualInt;
+        if (resolveFieldInt(resolver, path, actualInt))
+            return compareScalar(actualInt, op, target);
+        ulong actualUInt;
+        if (resolveFieldUInt(resolver, path, actualUInt))
+            return target < 0 ? compareOrder(NumericOrder.greater, op)
+                : compareScalar(actualUInt, op, cast(ulong) target);
+        double actualNum;
+        return resolveFieldNumber(resolver, path, actualNum)
+            && compareOrder(reverse(orderSignedDouble(target, actualNum)), op);
+    }
+    else static if (is(T == ulong))
+    {
+        ulong actualUInt;
+        if (resolveFieldUInt(resolver, path, actualUInt))
+            return compareScalar(actualUInt, op, target);
+        long actualInt;
+        if (resolveFieldInt(resolver, path, actualInt))
+            return actualInt < 0 ? compareOrder(NumericOrder.less, op)
+                : compareScalar(cast(ulong) actualInt, op, target);
+        double actualNum;
+        return resolveFieldNumber(resolver, path, actualNum)
+            && compareOrder(reverse(orderUnsignedDouble(target, actualNum)), op);
+    }
+    else static if (is(T == double))
+    {
+        double actualNum;
+        if (resolveFieldNumber(resolver, path, actualNum))
+            return compareScalar(actualNum, op, target);
+        long actualInt;
+        if (resolveFieldInt(resolver, path, actualInt))
+            return compareOrder(orderSignedDouble(actualInt, target), op);
+        ulong actualUInt;
+        return resolveFieldUInt(resolver, path, actualUInt)
+            && compareOrder(orderUnsignedDouble(actualUInt, target), op);
+    }
     else
         return false;
 }
@@ -178,50 +352,8 @@ bool evalAstNode(Resolver)(
         (in UnaryPayload un) => !evalAstNode(engine, filter, un.child, resolver),
         (in ComparePayload cmp) {
             const path = engine.textOf(cmp.path);
-            return cmp.target.match!(
-                (in TextSpan tSpan) {
-                    const(char)[] actualStr;
-                    if (!resolveFieldString(resolver, path, actualStr))
-                        return false;
-                    return compareString(actualStr, cmp.op, engine.textOf(tSpan));
-                },
-                (in typeof(null)) {
-                    bool isNull;
-                    if (resolveFieldNull(resolver, path, isNull))
-                        return (cmp.op == DqlOp.eq) ? isNull : !isNull;
-                    const(char)[] s;
-                    if (resolveFieldString(resolver, path, s))
-                        return (cmp.op == DqlOp.neq);
-                    double d;
-                    if (resolveFieldNumber(resolver, path, d))
-                        return (cmp.op == DqlOp.neq);
-                    bool b;
-                    if (resolveFieldBool(resolver, path, b))
-                        return (cmp.op == DqlOp.neq);
-                    return (cmp.op == DqlOp.eq);
-                },
-                (in bool tBool) {
-                    bool actualBool;
-                    if (!resolveFieldBool(resolver, path, actualBool))
-                        return false;
-                    return (cmp.op == DqlOp.eq) ? (actualBool == tBool) : ((cmp.op == DqlOp.neq) ? (actualBool != tBool) : false);
-                },
-                (in long tInt) {
-                    long actualInt;
-                    if (resolveFieldInt(resolver, path, actualInt))
-                        return compareScalar(actualInt, cmp.op, tInt);
-                    double actualNum;
-                    if (resolveFieldNumber(resolver, path, actualNum))
-                        return compareScalar(actualNum, cmp.op, cast(double) tInt);
-                    return false;
-                },
-                (in double tNum) {
-                    double actualNum;
-                    if (!resolveFieldNumber(resolver, path, actualNum))
-                        return false;
-                    return compareScalar(actualNum, cmp.op, tNum);
-                }
-            );
+            return cmp.target.match!((auto ref target) =>
+                evalCompareTarget(engine, path, cmp.op, target, resolver));
         },
         (in RegexPayload reg) {
             const(char)[] s;
@@ -255,7 +387,13 @@ bool evalAstNode(Resolver)(
             bool b;
             if (resolveFieldBool(resolver, path, b))
                 return !nc.isNull;
-            return nc.isNull;
+            long i;
+            if (resolveFieldInt(resolver, path, i))
+                return !nc.isNull;
+            ulong u;
+            if (resolveFieldUInt(resolver, path, u))
+                return !nc.isNull;
+            return false;
         },
         (in CustomPayload c) => true,
     );
@@ -270,7 +408,7 @@ bool evalDql(Resolver)(ref DqlEngine engine, scope ref const DqlFilter filter, s
 }
 
 @("dql.eval: typed value comparisons")
-pure nothrow @nogc
+@safe pure nothrow @nogc
 unittest
 {
     DqlEngine engine;
@@ -283,9 +421,50 @@ unittest
     assert(compareValues(engine, DqlValue(42.0), DqlOp.eq, DqlValue(42.0)));
     assert(compareValues(engine, DqlValue(100.5), DqlOp.gt, DqlValue(50.2)));
     assert(compareValues(engine, DqlValue(10L), DqlOp.lt, DqlValue(20L)));
+    assert(compareValues(engine, DqlValue(-1L), DqlOp.lt, DqlValue(0UL)));
+    assert(compareValues(engine, DqlValue(ulong.max), DqlOp.gt,
+        DqlValue(long.max)));
+    assert(!compareValues(engine, DqlValue(9_007_199_254_740_993L),
+        DqlOp.eq, DqlValue(9_007_199_254_740_992.0)));
 
     assert(compareValues(engine, DqlValue(true), DqlOp.eq, DqlValue(true)));
     assert(compareValues(engine, DqlValue(false), DqlOp.neq, DqlValue(true)));
+}
+
+@("dql.eval: unknown and present integer paths are not null")
+@safe
+unittest
+{
+    import sparkles.dql.parser : parseDql;
+
+    struct Resolver
+    {
+        bool resolveCategory(scope const(char)[]) @safe pure nothrow @nogc
+            => false;
+
+        bool resolveInt(scope const(char)[] path, out long value)
+            @safe pure nothrow @nogc
+        {
+            if (path != "n")
+                return false;
+            value = 12;
+            return true;
+        }
+    }
+
+    DqlEngine engine;
+    Resolver resolver;
+    foreach (query, expected; [
+        "n == null": false,
+        "n != null": true,
+        "missing == null": false,
+        "missing != null": false,
+    ])
+    {
+        auto parsed = parseDql(engine, query);
+        assert(parsed.hasValue);
+        assert(evalDql(engine, parsed.value, resolver) == expected);
+    }
 }
 
 @("dql.eval: end-to-end filter evaluation with engine")
