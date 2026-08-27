@@ -336,6 +336,43 @@
         ]
       },
       {
+        "text": "reflection",
+        "link": "/libs/reflection/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Tutorial",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Getting started",
+                "link": "/libs/reflection/tutorial/getting-started"
+              }
+            ]
+          },
+          {
+            "text": "Reference",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "API",
+                "link": "/libs/reflection/reference/api"
+              }
+            ]
+          },
+          {
+            "text": "Explanation",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Structure versus policy",
+                "link": "/libs/reflection/explanation/structure-vs-policy"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "metadata",
         "link": "/libs/metadata/",
         "collapsed": true,
