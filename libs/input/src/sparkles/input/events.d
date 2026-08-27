@@ -134,7 +134,7 @@ struct Mods
     bool ctrl;
     bool alt;
     bool shift;
-    bool super_;
+    @Name("meta") bool super_;
 }
 
 /// The platform-idiomatic name for the `super_` modifier key ("Cmd" on Apple, "Super" elsewhere).
@@ -706,12 +706,16 @@ struct KeyEvent
     private ubyte _textLength;
 
     /// The produced text, as a slice of this event's own storage.
-    const(char)[] text() const return @safe pure nothrow @nogc
+    ///
+    /// A `@property` getter, so structural-reflection consumers (the property
+    /// tree, query schemas) see it as the key's computed value without any
+    /// domain-specific projection.
+    @property const(char)[] text() const return @safe pure nothrow @nogc
         => _text[0 .. _textLength];
 
     /// Sets the produced text, truncating beyond `maxKeyText`. Unused bytes are
     /// zeroed, so two events carrying the same text compare equal.
-    void text(scope const(char)[] t) @safe pure nothrow @nogc
+    @property void text(scope const(char)[] t) @safe pure nothrow @nogc
     {
         _text[] = 0;
         const n = t.length > maxKeyText ? maxKeyText : t.length;
@@ -745,6 +749,7 @@ enum PointerAction : ubyte
 }
 
 /// A pointer event at a 0-based cell position.
+@Aliases("ptr")
 struct PointerEvent
 {
     PointerAction action;
@@ -779,6 +784,7 @@ pixels; both set `precise` and pass their own step, and every consumer scrolls
 by exactly what it is given. Without it, touch could not reuse this event at
 all — the historical ×3 applied by each consumer would have tripled a drag.
 */
+@Aliases("scroll")
 struct WheelEvent
 {
     int dx;
@@ -895,6 +901,7 @@ struct GestureEvent
 
 /// An unrecognized or incomplete input sequence — ignorable, but its presence
 /// is visible (e.g. to a raw-input debugger) rather than silently dropped.
+@Name("none")
 struct NoEvent
 {
 }
