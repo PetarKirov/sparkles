@@ -2631,6 +2631,46 @@
           {
             "text": "Grep long tail",
             "link": "/research/full-text-search/grep-long-tail"
+          },
+          {
+            "text": "Rust regex & RE2 lineage",
+            "link": "/research/full-text-search/rust-regex"
+          },
+          {
+            "text": "Phobos std.regex",
+            "link": "/research/full-text-search/std-regex"
+          },
+          {
+            "text": "RE2",
+            "link": "/research/full-text-search/re2"
+          },
+          {
+            "text": "PCRE2",
+            "link": "/research/full-text-search/pcre2"
+          },
+          {
+            "text": "Vectorscan",
+            "link": "/research/full-text-search/vectorscan"
+          },
+          {
+            "text": "Oniguruma",
+            "link": "/research/full-text-search/oniguruma"
+          },
+          {
+            "text": ".NET non-backtracking",
+            "link": "/research/full-text-search/dotnet-nonbacktracking"
+          },
+          {
+            "text": "Engine comparison",
+            "link": "/research/full-text-search/engine-comparison"
+          },
+          {
+            "text": "Literal prefilters",
+            "link": "/research/full-text-search/literal-prefilters"
+          },
+          {
+            "text": "Multi-pattern search",
+            "link": "/research/full-text-search/multi-pattern"
           }
         ]
       },
