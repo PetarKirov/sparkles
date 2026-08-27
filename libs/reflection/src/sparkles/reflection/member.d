@@ -132,6 +132,18 @@ template valueLikeGetter(T)
         alias valueLikeGetter = void;
 }
 
+/**
+The second value-like rule: a type that hides its storage and reads as UTF-8
+text through a `const` `opSlice()` — `sparkles.base.buffer`'s
+`InlineBuffer!(char, N)` and kin — $(B is) the text it slices to. Consumers
+present and query such a type as one text leaf rather than as the getters of
+its buffer API.
+*/
+enum bool isTextSliceLike(T) = (is(T == struct) || is(T == union)
+        || is(T == class))
+    && !hasPublicFields!T
+    && __traits(compiles, { const T v = T.init; const(char)[] s = v[]; });
+
 /// The names `T` exposes through `alias this`.
 template aliasThisMembers(T)
 {
@@ -275,6 +287,35 @@ string firstDuplicate(scope const(string)[] names) @safe pure
         @property int b() const => 2;
     }
     static assert(is(valueLikeGetter!TwoGetters == void));
+}
+
+@("reflection.member.isTextSliceLike")
+@safe pure unittest
+{
+    struct Text
+    {
+        private char[8] bytes_;
+        private ubyte length_;
+        const(char)[] opSlice() const return => bytes_[0 .. length_];
+        @property size_t length() const => length_;
+        @property bool empty() const => length_ == 0;
+    }
+    static assert(isTextSliceLike!Text);
+    static assert(is(valueLikeGetter!Text == void)); // two getters: not that rule
+
+    struct Ints
+    {
+        private int[4] data_;
+        const(int)[] opSlice() const return => data_[];
+    }
+    static assert(!isTextSliceLike!Ints); // slices, but not to text
+
+    struct Open
+    {
+        char[4] text;
+        const(char)[] opSlice() const return => text[];
+    }
+    static assert(!isTextSliceLike!Open); // public storage is addressable
 }
 
 @("reflection.member.fieldTable")

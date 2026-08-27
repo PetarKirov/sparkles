@@ -18,6 +18,7 @@ struct DqlPathDoc
     string typeName;
     string description;
     string example;
+    string[] aliases;
 }
 
 /// Formats a complete DQL reference guide, schema paths table, and tutorial to the given writer.
@@ -103,22 +104,16 @@ void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
     writeStyled(w, depth, i"    {cyan !}  or {cyan -}                 Logical NOT (negates the following predicate)\n");
     writeStyled(w, depth, i"    {cyan (...)}                    Group sub-expressions with parentheses for precedence\n\n");
 
-    // 4. Recipes
-    writeStyled(w, depth, i"{bold.green COMMON FILTER RECIPES}\n");
-    writeStyled(w, depth, i"  # Suppress pointer motion flood while keeping clicks and keystrokes:\n");
-    writeStyled(w, depth, i"  $(toolName) {yellow -F \"!motion\"}\n\n");
+}
 
-    writeStyled(w, depth, i"  # Isolate only keyboard and IME text input:\n");
-    writeStyled(w, depth, i"  $(toolName) {yellow -F \"key || text || composition\"}\n\n");
-
-    writeStyled(w, depth, i"  # Only log button presses and releases (drop motion):\n");
-    writeStyled(w, depth, i"  $(toolName) {yellow -F \"pointer.phase == pressed || pointer.phase == released\"}\n\n");
-
-    writeStyled(w, depth, i"  # Target specific key with Ctrl modifier held:\n");
-    writeStyled(w, depth, i"  $(toolName) {yellow -F \"key.action == press && modifiers.ctrl == true\"}\n\n");
-
-    writeStyled(w, depth, i"  # Complex multi-clause predicate:\n");
-    writeStyled(w, depth, i"  $(toolName) {yellow -F \"(key.action == press && modifiers.ctrl == true) || (pointer.phase == pressed && pointer.button == left)\"}\n\n");
+/// Formats help directly from a reflected schema.
+void writeDqlHelp(Schema, Writer)(ref Writer w, string toolName,
+    bool colored = true)
+{
+    string[] categories;
+    foreach (ref const category; Schema.categories)
+        categories ~= category.name;
+    writeDqlHelp(w, Schema.paths, categories, toolName, colored);
 }
 
 /// Helper that prints the DQL reference manual to standard output.
@@ -128,6 +123,15 @@ void printDqlHelp(scope const(DqlPathDoc)[] paths, scope const(string)[] categor
     () @trusted {
         auto outRange = stdout.lockingTextWriter;
         writeDqlHelp(outRange, paths, categories, toolName, colored);
+    }();
+}
+
+/// Prints help generated from a reflected schema.
+void printDqlHelp(Schema)(string toolName, bool colored = true)
+{
+    () @trusted {
+        auto outRange = stdout.lockingTextWriter;
+        writeDqlHelp!Schema(outRange, toolName, colored);
     }();
 }
 

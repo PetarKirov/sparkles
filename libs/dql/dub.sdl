@@ -13,6 +13,7 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:fuzzy" path="../.."
+dependency "sparkles:metadata" path="../.."
 
 configuration "library" {
     targetType "library"
@@ -20,6 +21,16 @@ configuration "library" {
 
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
+    // Integration schemas over the real event vocabularies: the queried
+    // types are ordinary library values; the DQL side reads them through the
+    // reflection kernel. Test-only edges — neither input nor wsi knows DQL.
+    dependency "sparkles:input" path="../.."
+    dependency "sparkles:wsi" path="../.."
+    // The integration schemas live outside `src/` so a consumer that
+    // source-includes `../dql/src` for its own unittests (the property tree
+    // does) never sees modules that would drag `sparkles:wsi` into its
+    // import closure.
+    sourcePaths "test"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

@@ -1,9 +1,10 @@
 module sparkles.dql.parser;
 
+import core.lifetime : move;
 import std.algorithm.comparison : among;
 import std.regex : regex;
 import std.string : strip;
-import std.sumtype : get, match;
+import std.sumtype : SumType, get, match;
 
 import expected : Expected, err, ok;
 import sparkles.base.buffer : UniqueBuffer;
@@ -12,6 +13,7 @@ import sparkles.base.text.readers : readQuotedString;
 import sparkles.base.text.span : TextSpan;
 import sparkles.dql.ast;
 import sparkles.dql.engine : DqlEngine, DqlParseError;
+import sparkles.dql.schema : isDqlCategory, isDqlPath;
 import sparkles.fuzzy.common : PathFlavor;
 import sparkles.fuzzy.glob : compileGlob, GlobProgram;
 import sparkles.fuzzy.query : parseQuery, QueryStorage;
@@ -628,6 +630,45 @@ Expected!(DqlFilter, DqlParseError) parseDql(ref DqlEngine engine, scope const(c
     return parser.parseFilter();
 }
 
+/// Parses and validates an expression against a reflected schema.
+Expected!(DqlFilter, DqlParseError) parseDql(Schema)(ref DqlEngine engine,
+    scope const(char)[] expr)
+{
+    auto parsed = parseDql(engine, expr);
+    if (parsed.hasError)
+        return err!DqlFilter(parsed.error);
+    foreach (ref const node; parsed.value.nodes)
+    {
+        bool valid = true;
+        node.payload.match!(
+            (in CategoryPayload value) {
+                valid = isDqlCategory!Schema(engine.textOf(value.name));
+            },
+            (in ComparePayload value) {
+                valid = isDqlPath!Schema(engine.textOf(value.path));
+            },
+            (in RegexPayload value) {
+                valid = isDqlPath!Schema(engine.textOf(value.path));
+            },
+            (in GlobPayload value) {
+                valid = isDqlPath!Schema(engine.textOf(value.path));
+            },
+            (in FuzzyPayload value) {
+                valid = isDqlPath!Schema(engine.textOf(value.path));
+            },
+            (in NullCheckPayload value) {
+                valid = isDqlPath!Schema(engine.textOf(value.path));
+            },
+            (_) {},
+        );
+        if (!valid)
+            return err!DqlFilter(DqlParseError(
+                "path or category is not present in the DQL schema",
+                node.span.startOffset, node.span.length));
+    }
+    return move(parsed);
+}
+
 @("dql.parser: parse expressions, operators, and functions")
 @safe
 unittest
@@ -697,4 +738,18 @@ unittest
 
     assert(parseDql(engine, "n == 18446744073709551616").hasError);
     assert(parseDql(engine, "n == 1__0").hasError);
+}
+
+@("dql.parser: reflected schemas reject unknown paths and categories")
+@safe
+unittest
+{
+    import sparkles.dql.schema : DqlSchema;
+
+    struct ClickEvent { int x; }
+    alias Schema = DqlSchema!(SumType!ClickEvent);
+    DqlEngine engine;
+    assert(parseDql!Schema(engine, "click.x == 1").hasValue);
+    assert(parseDql!Schema(engine, "click.typo == 1").hasError);
+    assert(parseDql!Schema(engine, "missing").hasError);
 }
