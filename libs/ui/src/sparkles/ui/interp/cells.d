@@ -45,6 +45,11 @@ struct Cell
     /// deleted blocks, which must not read as text that is still there. The
     /// rest of `styleBits` (bold, italic) still has no cell analog.
     bool strikethrough;
+    /// The OSC 8 hyperlink this cell belongs to — an index into the URI table
+    /// $(LREF CellGrid.writeAnsi) is given, `0` for none. Not a style: two
+    /// cells can share every colour and attribute while pointing at different
+    /// URLs, and `diff` must repaint a cell whose link changed.
+    ushort linkId;
 }
 
 /// How $(LREF CellGrid.writeAnsi) emits backgrounds — the terminal
@@ -55,6 +60,23 @@ enum BgEmit : ubyte
     spans, /// only cells whose content set a background (the default)
     full,  /// every cell, the page background filling the rest
     none,  /// foreground only
+}
+
+// Emit the OSC 8 transition from `cur` to `want`, and update `cur`. `links` is
+// indexed from 1; an id with no entry closes rather than opening a dangling
+// hyperlink. Callers close before anything that repositions the cursor — a
+// terminal binds the open link to every cell it subsequently writes.
+private void writeLink(Writer)(ref Writer w, ushort want, ref ushort cur,
+    scope const(char)[][] links)
+{
+    if (want == cur)
+        return;
+    const valid = want != 0 && want <= links.length;
+    put(w, "\x1b]8;;");
+    if (valid)
+        put(w, links[want - 1]);
+    put(w, "\x1b\\");
+    cur = valid ? want : 0;
 }
 
 /// Alpha-composites `over` onto `base` (`a` = 0 keeps `base`, 255 = `over`).
@@ -386,6 +408,9 @@ struct CellGrid
         auto c = &at(x, y);
         c.glyph = g;
         c.fg = v.fg;
+        // Assigned, not or-ed: a glyph painted over a linked cell replaces its
+        // hyperlink (or clears it), the same way it replaces the foreground.
+        c.linkId = v.linkId;
         c.strikethrough = (v.styleBits & TextAttr.strikethrough.bits) != 0;
         // A text-decoration underline rides the run's own visual (the tab
         // strip's bottom border); one another op composited stays.
@@ -445,13 +470,25 @@ struct CellGrid
     run of glyphs terminated by a reset + newline. A full frame (no cursor
     positioning); the diff path handles incremental repaints.
     */
+    /// `links` is the frame's OSC 8 URI table, indexed from 1 by a cell's
+    /// `linkId` (`0` = none): a run of equal ids is wrapped in one hyperlink,
+    /// closed at the end of its run and never carried across a row boundary.
+    /// Omit it and no hyperlink sequence is emitted.
     void writeAnsi(Writer)(ref Writer w, ColorDepth depth = ColorDepth.trueColor,
-        BgEmit bg = BgEmit.spans) const
+        BgEmit bg = BgEmit.spans, scope const(char)[][] links = null) const
     {
         foreach (y; 0 .. height)
         {
+            ushort curLink;
             foreach (x; 0 .. width)
-                writeCell(w, cells[y * width + x], depth, bg);
+            {
+                const c = cells[y * width + x];
+                if (links.length)
+                    writeLink(w, c.linkId, curLink, links);
+                writeCell(w, c, depth, bg);
+            }
+            if (curLink != 0)
+                writeLink(w, 0, curLink, links);
             put(w, "\x1b[0m");
             if (y + 1 < height)
                 put(w, '\n');
@@ -577,6 +614,32 @@ static assert(isCanvas!CellGrid);
     grid.fillRect(Rect(0, 0, 1, 1), Visual(bg: RgbColor(255, 255, 255), bgAlpha: 128, hasBg: true));
     const b = grid.at(0, 0).bg;
     assert(b.r >= 126 && b.r <= 128);
+}
+
+/// A run of linked cells is wrapped in one OSC 8 pair, closed before the row
+/// ends; without a URI table the channel emits nothing at all.
+@("ui.cells.writeAnsiWrapsLinkedRuns")
+@safe unittest
+{
+    import std.algorithm.searching : canFind, count;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    auto grid = CellGrid(4, 1, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    foreach (x; 1 .. 3)
+    {
+        grid.glyph(Point(x, 0), 'a' + x, Visual(fg: RgbColor(0, 0, 255),
+            linkId: 1));
+    }
+
+    const(char)[][] links = ["http://x"];
+    SmallBuffer!(char, 512) buf;
+    grid.writeAnsi(buf, ColorDepth.trueColor, BgEmit.spans, links);
+    assert(buf[].canFind("\x1b]8;;http://x\x1b\\"), buf[]);
+    assert(buf[].count("\x1b]8;;") == 2, "one open + one close for the run");
+
+    SmallBuffer!(char, 512) plain;
+    grid.writeAnsi(plain);
+    assert(!plain[].canFind("\x1b]8;;"), "inert without a table");
 }
 
 @("ui.cells.wavyLineIsUndercurl")
