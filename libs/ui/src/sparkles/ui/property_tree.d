@@ -105,18 +105,23 @@ enum LeafKind : ubyte
     opaque,      /// presented via `toString`; never editable in v1
 }
 
-/// The closed `static if` ladder from a D type to its `LeafKind`.
+/// The closed `static if` ladder from a D type to its `LeafKind` — a
+/// projection of the shared reflection kernel's classification, so the tree
+/// and every other consumer of `sparkles:reflection` agree on what a leaf is.
 template leafKindOf(T)
 {
-    static if (is(T == enum))
+    import sparkles.reflection.kind : TypeKind, typeKindOf;
+
+    static if (typeKindOf!T == TypeKind.enumeration)
         enum leafKindOf = LeafKind.enumeration;
-    else static if (isBoolean!T)
+    else static if (typeKindOf!T == TypeKind.boolean)
         enum leafKindOf = LeafKind.boolean;
-    else static if (isIntegral!T)
+    else static if (typeKindOf!T == TypeKind.signedInteger
+        || typeKindOf!T == TypeKind.unsignedInteger)
         enum leafKindOf = LeafKind.integral;
-    else static if (isFloatingPoint!T)
+    else static if (typeKindOf!T == TypeKind.floating)
         enum leafKindOf = LeafKind.floating;
-    else static if (isSomeString!T)
+    else static if (typeKindOf!T == TypeKind.text)
         enum leafKindOf = LeafKind.text;
     else
         enum leafKindOf = LeafKind.opaque;
