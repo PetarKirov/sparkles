@@ -22,6 +22,10 @@ importPaths "src" "../test-runner/src" "../math/src"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:metadata" path="../.."
+// The property tree's leaf classification dispatches on the shared
+// reflection kernel, so "is this a leaf" has one answer across the toolkit,
+// the text writers, and query engines.
+dependency "sparkles:reflection" path="../.."
 // A REAL edge, not import-only like math: DMD speculatively emits TypeInfo
 // for structs of merely-IMPORTED modules into the importing object, and the
 // plain fuzzy leaves (QueryText/Constraint/AnalysisProfile) have generated
