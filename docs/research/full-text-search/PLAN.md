@@ -41,21 +41,37 @@ full-text-search problem instead of conflating them under "search is fast now":
    streaming, cancellation, and the latency budget an interactive UI imposes.
 
 The synthesis must recommend a staged full-text-search architecture for Sparkles —
-specifically the content-search path behind `hue`'s picker — while keeping the
-research/design boundary explicit: deep-dives establish prior art, `comparison.md` and
-`recommendations.md` interpret it, and any implementation specification lands later
-under `docs/specs/`.
+while keeping the research/design boundary explicit: deep-dives establish prior art,
+`comparison.md` and `recommendations.md` interpret it, and any implementation
+specification lands later under `docs/specs/`.
+
+That architecture has **two** consumers in `hue`, not one, and the recommendation must
+serve both from one engine:
+
+1. **Cross-file content search** — the grep source behind the picker's `<leader>/`
+   ([picker `PKS2`/`PKL5`/`PKL6`](../../specs/hue/picker.md)), which does not exist yet.
+2. **In-document search** — `FND`, which exists twice. The GUI matches with
+   `std.string.indexOf` (case-sensitive, GC-allocating) and the TUI with a private
+   `containsIC` (ASCII case-insensitive, `@nogc`), so the same feature means different
+   things in the two backends of one application. That is a defect, and the fix has two
+   requirements the recommendation must meet: the implementation must be
+   **backend-independent** — one matcher above the `sparkles:ui-app` seam, not one per
+   canvas — and it must be built on **`sparkles:fuzzy`**, so a single engine and a
+   single case rule serve both consumers.
+
+Replacing hue's in-document search is therefore an outcome of this survey, not a
+by-product of it.
 
 ## 2. Relationship to existing catalogs
 
 Three trees already touch this territory. The plan's first obligation is to not
 duplicate them, and to state the seam in `index.md` so a reader lands in the right place.
 
-| Existing tree                                     | What it owns                                                                                                                     | Seam                                                                                                                                                                                                                                                                                           |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`fuzzy-matching/`](../fuzzy-matching/index.md)   | Ranked **subsequence** scoring over a candidate list: fzf, fzy, nucleo, frizbee, fff, picker hosts, the `tick`/injector contract | That tree answers "given 500k paths and the query `usr`, which rank highest". This tree answers "given 2 GB of file _content_ and a regex, which bytes match". `fzf`/`fff` are **not** re-surveyed here; they appear only as the consumer of a content-search backend (`fzf --reload 'rg …'`). |
-| [`parsing/hyperscan.md`](../parsing/hyperscan.md) | Hyperscan as a scanning/lexing engine for the syntax pipeline                                                                    | Extend rather than move. This tree cites it for the automata decomposition and adds Vectorscan's portable fork, licensing, and the streaming-mode contract that matters for search but not for lexing.                                                                                         |
-| [`parsing/theory/`](../parsing/theory/index.md)   | Formal languages, derivatives, general parsing                                                                                   | Regex-specific automata theory (Thompson vs Glushkov, determinization blow-up, lazy DFA caching, bit-parallel simulation) belongs **here**, in `theory/`, cross-linked to `parsing/theory/derivatives.md`.                                                                                     |
+| Existing tree                                     | What it owns                                                                                                                     | Seam                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`fuzzy-matching/`](../fuzzy-matching/index.md)   | Ranked **subsequence** scoring over a candidate list: fzf, fzy, nucleo, frizbee, fff, picker hosts, the `tick`/injector contract | That tree answers "given 500k paths and the query `usr`, which rank highest". This tree answers "given 2 GB of file _content_ and a regex, which bytes match". The split is by **organ**, not by project. `fzf` appears here only as a live-grep host (`fzf --reload 'rg …'`). **`fff` is the deliberate exception**: its fuzzy matcher belongs to that tree, its `fff-core/src/grep/` engine belongs to this one — [`picker.md`](../../specs/hue/picker.md) names it as hue's design source for grep's budget, cursor and mode-fallback behaviour, and the two organs share almost nothing. |
+| [`parsing/hyperscan.md`](../parsing/hyperscan.md) | Hyperscan as a scanning/lexing engine for the syntax pipeline                                                                    | Extend rather than move. This tree cites it for the automata decomposition and adds Vectorscan's portable fork, licensing, and the streaming-mode contract that matters for search but not for lexing.                                                                                                                                                                                                                                                                                                                                                                                       |
+| [`parsing/theory/`](../parsing/theory/index.md)   | Formal languages, derivatives, general parsing                                                                                   | Regex-specific automata theory (Thompson vs Glushkov, determinization blow-up, lazy DFA caching, bit-parallel simulation) belongs **here**, in `theory/`, cross-linked to `parsing/theory/derivatives.md`.                                                                                                                                                                                                                                                                                                                                                                                   |
 
 A fourth seam is internal: approximate matching. Edit-distance-bounded search over
 content (Levenshtein automata, Myers' bit-vector algorithm, agrep, `ugrep -Z`) is in
@@ -70,6 +86,16 @@ scope; affine-gap subsequence scoring is not — it is the fuzzy-matching tree's
    can observe?
 2. Which engine class does each tool use, and what is the worst case it is protecting
    against — catastrophic backtracking, DFA state explosion, or memory blow-up?
+   2a. What precisely makes **`std.regex`** unusable inside a `@safe nothrow @nogc`
+   job — the engine, the IR arena, the `Trie`/`CodepointSet` tables, per-match thread
+   allocation, the input-range machinery, or the exception surface? The answer decides
+   whether a bounded engine here is a **rewrite or a re-hosting**, which is the
+   difference between a milestone and a commit.
+   2b. Which of `std.regex`'s thirty IR opcodes (`std/regex/internal/ir.d:126-176`)
+   does a code-search grep actually need, and what does each cost against the eight in
+   `libs/fuzzy/.../glob.d`? Leftmost-first versus leftmost-longest, captures,
+   unanchored search, `\b`, counted repetition, `\p{…}`, and bitset versus sparse-set
+   thread lists are each a separate, costable sub-question.
 3. Where does the wall-clock actually go in an unindexed scan, and how much of the
    observed spread between `grep`, `rg`, and `ugrep` is engine versus prefilter versus
    I/O versus output formatting?
@@ -84,12 +110,26 @@ scope; affine-gap subsequence scoring is not — it is the fuzzy-matching tree's
    sparse) add over Boolean matching, and when is ranking the wrong frame for code?
 8. Which parts of this problem does specialized hardware genuinely win, and by how much
    under an honest end-to-end measurement including transfer?
+   8a. Is a **definition-line classifier** a heuristic, a parser, or an index? fff's
+   answer is 131 bytes-only lines its own module header calls a POC
+   (`fff-core/src/grep/classify.rs`); Zoekt's is a ctags-driven symbol index that ranks
+   symbol hits above text hits. Sparkles has a third option neither end has —
+   tree-sitter. This answers picker `PKL6`.
+   8b. How does a picker choose between plain, regex and fuzzy modes, and what happens on
+   zero hits — is auto-detection a _mode_ decided once, or a _ladder_ that tries, falls
+   back and annotates? fff ships both in different callers and they disagree; that
+   disagreement is the finding. This answers picker `PKS2`/`PKL5`.
 9. What must a search backend expose so an interactive UI stays responsive: first-result
    latency, streaming, cancellation, backpressure, result caps, stable ordering?
 10. Which published benchmark numbers survive scrutiny, and what corpus/methodology
     protocol should this repository adopt for its own measurements?
 11. What is the smallest staged path from Sparkles' current state to a credible content
     search behind `hue`, and which techniques are realistic in D with LDC?
+12. What does one engine have to expose so that **cross-file** search and
+    **in-document** search are the same matcher under two callers — incremental
+    re-query as the user types, match positions for highlighting, a shared case rule,
+    and bounded work — rather than the three divergent implementations the tree has
+    today?
 
 ## 4. Scope
 
@@ -169,11 +209,37 @@ To be filled with reviewed SHAs as each deep-dive lands.
 | Cluster      | Subjects to clone                                                                                                                                 |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scanners     | `grep` (GNU), `ripgrep`, `ugrep`, `the_silver_searcher`, `ucg`, `hypergrep`, `git`                                                                |
-| Engines      | `regex` (rust-lang), `re2`, `pcre2`, `vectorscan`, `oniguruma`, `runtime` (.NET, regex subtree)                                                   |
-| Primitives   | `memchr`, `aho-corasick`, `fst`, `sse4-strstr` (Muła)                                                                                             |
+| Engines      | `regex` (rust-lang), `re2`, `pcre2`, `vectorscan`, `oniguruma`, `phobos` (D, `std/regex/`), `runtime` (.NET, regex subtree)                       |
+| Primitives   | `memchr`, `aho-corasick`, `fst`, `sse4-strstr` (Muła), `intel-intrinsics` (D SIMD portability layer)                                              |
 | Indexes      | `zoekt`, `codesearch` (Google), `livegrep`, `tantivy`, `lucene`, `pisa`, `sdsl-lite`, `Move-r`, `Movi`, `b-move`, `sqlite` (FTS5), `duckdb` (fts) |
 | Structural   | `ast-grep`, `comby`, `semgrep`, `tree-sitter`                                                                                                     |
 | Acceleration | `cudf` (strings/regex), `hyperscan` (pre-relicense tag), published GPU artifacts                                                                  |
+
+**Cloned 2026-08-27 into `$REPOS/search/`**, with reviewed SHAs: `ripgrep`
+`3fce3b5b`, `regex` `72d650cb`, `memchr` `bd6068c3`, `aho-corasick` `6c0abf56`,
+`ugrep` `2db7c2b3`, `the_silver_searcher` `a61f1780`, `re2` `972a15ce`, `pcre2`
+`a2b146a3`, `vectorscan` `4724cff3`, `oniguruma` `f95747b4`, `hypergrep`
+`ee85b713`, `fst` `5907b473`, `sse4-strstr` `9cdc4b6d`, GNU `grep` `79da8e07`.
+Already present elsewhere and **not** to be re-cloned: `rust/fff` `3a0ce85c`,
+`dlang/phobos` `6be6c380`, `dlang/intel-intrinsics` `14477c6b`, `rust/zed`,
+`rust/helix`, `cpp/hyperscan`, `neovim/snacks.nvim`.
+
+`$REPOS/search/` as a bucket is safe: `indexClones` keys each clone by bare name
+_and_ `<parent>/<name>`, and `resolveClone` tries `org/repo` first and then the
+bare name, so `search/ripgrep` resolves via `ripgrep`.
+
+> [!WARNING]
+> Two sourcing hazards, both confirmed by inspection.
+>
+> **Duplicate `vscode` clones** exist at different revisions — `ts/vscode`
+> (`474a349a…`) and `typescript/vscode` (`106a3a45…`). Because `resolveClone`
+> falls back to the bare name, a `microsoft/vscode` citation is checked against
+> whichever `dirEntries` visited last, non-deterministically. Delete one before
+> citing VS Code.
+>
+> **GNU grep's URL form matters.** `lychee.exclude` excludes
+> `^https?://cgit\.git\.savannah\.gnu\.org/`, so cite
+> `cgit.git.savannah.gnu.org/...` and not `git.savannah.gnu.org/cgit/...`.
 
 ## 6. Catalog structure
 
@@ -199,8 +265,10 @@ docs/research/full-text-search/
 ├── silver-searcher.md
 ├── hypergrep.md
 ├── grep-long-tail.md            # ack, pt, sift, ucg, BSD grep
+├── fff-grep.md                  # fff-core/src/grep/ + the vendored fff-grep fork
 │
 ├── rust-regex.md                # regex + regex-automata (the meta-engine)
+├── std-regex.md                 # Phobos std.regex — the D-native prior art
 ├── re2.md
 ├── pcre2.md
 ├── vectorscan.md                # extends parsing/hyperscan.md, does not replace it
@@ -255,7 +323,8 @@ recording the absence explicitly where a dimension does not apply:
 4. **Corpus access** — read strategy, traversal, filtering, binary/encoding policy.
 5. **Concurrency** — unit of parallelism, work distribution, ordering guarantees.
 6. **Index (if any)** — structure, build cost, size ratio, freshness, mutation path.
-7. **Ranking and result model** — ordering, dedup, caps, context, output formats.
+7. **Ranking and result model** — ordering, dedup, caps, context, output formats, and
+   whether a hit is **classified** — definition/symbol versus mention — and how.
 8. **Unicode** — case folding, normalization, classes, boundaries, cost.
 9. **Interactive behaviour** — first-result latency, streaming, cancellation.
 10. **Measured evidence** — what the upstream benchmarks claim, under what protocol, and
@@ -331,27 +400,31 @@ The tree's strongest grounding. Each is a single-file `dub` program under a grad
 subject's `examples/`, compiled and run by `ci --example-files`, cross-linked to the
 prose section it backs. Candidates, in rough order of value:
 
-| Example                   | Claim it grounds                                                                        |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| `memchr-skip.d`           | Rare-byte skipping dominates naive scanning; measured on a fixed in-repo corpus.        |
-| `two-way-search.d`        | Critical factorization and its constant-space guarantee.                                |
-| `bitap-shift-or.d`        | Bit-parallel NFA simulation for patterns ≤ word size.                                   |
-| `myers-edit-distance.d`   | Bit-vector edit distance; the approximate-search primitive.                             |
-| `levenshtein-automaton.d` | Bounded-distance matching as a DFA over the pattern.                                    |
-| `aho-corasick-build.d`    | Goto/fail/output construction and single-transition-per-byte behaviour.                 |
-| `teddy-shape.d`           | Why SIMD multi-pattern prefilters cap at small pattern counts and short lengths.        |
-| `lazy-dfa-cache.d`        | DFA state explosion and the cache-reset behaviour a lazy DFA must handle.               |
-| `trigram-postings.d`      | Build a positional trigram index over the repo; show candidate-set shrinkage.           |
-| `trigram-query-plan.d`    | Regex → trigram boolean query, and the patterns that degenerate to a full scan.         |
-| `suffix-array-locate.d`   | SA construction + binary-search locate; the space/time baseline for compressed indexes. |
-| `bwt-lf-mapping.d`        | LF-mapping and backward search — the FM-index core in ~60 lines.                        |
-| `bm25-topk.d`             | BM25 over a toy postings list with a top-K heap; then the Block-Max early exit.         |
-| `read-vs-mmap.d`          | The mmap policy question: single large file vs many small files.                        |
-| `parallel-walk.d`         | Work-stealing traversal and the ordering guarantee it gives up.                         |
-| `utf8-case-fold.d`        | Simple vs full case folding, and what "smart case" actually decides.                    |
-| `binary-sniff.d`          | NUL-byte heuristics and the false-positive corpus.                                      |
-| `gpu-scan-compute.d`      | A Vulkan compute prefilter over a mapped buffer, using the repo's existing erupted      |
-|                           | bindings — the one example that makes the GPU cluster concrete rather than cited.       |
+| Example                   | Claim it grounds                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `memchr-skip.d`           | Rare-byte skipping dominates naive scanning; measured on a fixed in-repo corpus.         |
+| `two-way-search.d`        | Critical factorization and its constant-space guarantee.                                 |
+| `bitap-shift-or.d`        | Bit-parallel NFA simulation for patterns ≤ word size.                                    |
+| `pike-vm-line-search.d`   | An unanchored, leftmost-first Pike VM over `glob.d`'s existing opcode set, with a        |
+|                           | sparse-set thread list and one match-slot pair, `@safe pure nothrow @nogc`. Converts     |
+|                           | the regex decision from argued to measured; written beside the baseline's gap list.      |
+| `myers-edit-distance.d`   | Bit-vector edit distance; the approximate-search primitive.                              |
+| `levenshtein-automaton.d` | Bounded-distance matching as a DFA over the pattern.                                     |
+| `aho-corasick-build.d`    | Goto/fail/output construction and single-transition-per-byte behaviour.                  |
+| `teddy-shape.d`           | Why SIMD multi-pattern prefilters cap at small pattern counts and short lengths.         |
+| `lazy-dfa-cache.d`        | DFA state explosion and the cache-reset behaviour a lazy DFA must handle.                |
+| `trigram-postings.d`      | Build a positional trigram index over the repo; show candidate-set shrinkage.            |
+| `trigram-query-plan.d`    | Regex → trigram boolean query, and the patterns that degenerate to a full scan.          |
+| `suffix-array-locate.d`   | SA construction + binary-search locate; the space/time baseline for compressed indexes.  |
+| `bwt-lf-mapping.d`        | LF-mapping and backward search — the FM-index core in ~60 lines.                         |
+| `bm25-topk.d`             | BM25 over a toy postings list with a top-K heap; then the Block-Max early exit.          |
+| `read-vs-mmap.d`          | The mmap policy question: single large file vs many small files.                         |
+| `parallel-walk.d`         | Work-stealing traversal and the ordering guarantee it gives up.                          |
+| `utf8-case-fold.d`        | Simple vs full case folding, and what "smart case" actually decides.                     |
+| `binary-sniff.d`          | NUL-byte heuristics and the false-positive corpus.                                       |
+| `gpu-scan-compute.d`      | A Vulkan compute prefilter over a mapped buffer — the one example that makes the GPU     |
+|                           | cluster concrete rather than cited. \*\*Gated on `sparkles:vulkan` growing a compute     |
+|                           | path\*\*: it selects graphics queues only today, so this is a milestone, not an example. |
 
 Every example must be portable-green: gate on `platforms` in the embedded `dub.sdl`, and
 print `SKIP:` + exit `0` where the host lacks a capability (no Vulkan device, no AVX2).
@@ -395,11 +468,19 @@ Audit only what is observably true in the tree today:
 - whether any content search exists at all, and what it shells out to if so;
 - the `libs/base` text facilities available to a matcher (readers, Unicode analysis,
   `@nogc` text handling) and what is missing;
-- SIMD availability under LDC (`core.simd`, `ldc.simd`, intrinsics, target attributes,
-  runtime dispatch) and what the repo already does about runtime feature detection;
+- the bounded Thompson NFA that already ships — `libs/fuzzy/.../glob.d`: eight opcodes,
+  the fixed `GlobProgram`/`GlobMatchWorkspace`, the epsilon closure, the
+  `O(instructions × units)` bound, and the five gaps that stand between it and a content
+  matcher (anchored-only, no match positions, bitsets cleared per input unit rather than
+  a sparse set, path-separator semantics baked into three opcodes, no alternation
+  priority). This is the system under improvement for the regex question;
+- SIMD availability under LDC (`core.simd`, `ldc.simd`, intrinsics, target attributes),
+  the portability layer `intel-intrinsics` (`AuburnSounds/intel-intrinsics`, pinned in the baseline)
+  offers, and what the repo already does about runtime feature detection;
 - the async-I/O substrate already researched in [`async-io/`](../async-io/index.md) —
   particularly `io_uring` — and whether a search backend could plausibly use it;
-- the Vulkan/`erupted` compute path available for the GPU example;
+- the state of `sparkles:vulkan` as a compute target, and what it would have to grow
+  before a GPU prefilter example is writable at all;
 - the CI hosts available, so the plan does not promise host-verification it cannot do.
 
 ## 12. Execution phases

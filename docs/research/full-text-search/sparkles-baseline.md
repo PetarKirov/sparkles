@@ -12,7 +12,7 @@ measured against, and the one the recommendations (Phase 7) feed back into.
 | Path search today    | `sparkles:fuzzy` + hue's picker (`<leader>ff`), specified in [`fuzzy/SPEC.md`][fuzzy-spec] |
 | Pattern engine       | One bounded Thompson NFA, glob-shaped, anchored — `libs/fuzzy/.../glob.d`                  |
 | Regex                | `std.regex` only, in tooling and `sparkles:syntax`; never on a hot or `@nogc` path         |
-| SIMD                 | **No precedent.** No `core.simd`, no runtime feature detection                             |
+| SIMD                 | No precedent in-tree; `intel-intrinsics` + `core.cpuid` exist, the dispatch join does not  |
 | Index                | None                                                                                       |
 
 > **Last reviewed:** August 27, 2026.
@@ -70,9 +70,26 @@ byte range**, which is the shape a grep hit also needs. The TUI's `containsIC` i
 the only allocation-free substring primitive in the repository, and it is
 `private`.
 
-That divergence is itself a finding: the same feature, in one application, means
-two different things depending on the backend. Any content-search design must fix
-the case rule in one place rather than inherit this split.
+That divergence is itself a finding, and a defect: the same feature, in one
+application, means two different things depending on which canvas is painting.
+A user who searches `Foo` gets different results in `hue --tui` and `hue --gui`,
+and nothing in either implementation records that this was a choice.
+
+**Replacing it is an outcome of this survey, not a by-product**, under two
+requirements that follow from where the split came from:
+
+- **Backend-independent.** The matcher belongs above the `sparkles:ui-app` seam,
+  in one place both hosts call — the same rule the toolkit already holds
+  elsewhere, where one `view` serves the terminal and the window. A search
+  implementation per canvas is how the divergence happened.
+- **Built on `sparkles:fuzzy`.** One engine, one case rule, one set of match
+  positions, serving both the cross-file grep source and the in-document search.
+  A third hand-rolled matcher would entrench the split rather than close it.
+
+This is what makes the in-document search a _consumer_ of this survey alongside
+the picker's grep source, and it constrains the engine design: whatever is chosen
+must answer an incremental query over a single in-memory buffer as cheaply as it
+answers a bounded scan over a corpus, and must return positions in both cases.
 
 ## The bounded NFA that already ships
 
@@ -172,38 +189,63 @@ Whether a search backend should reach for `io_uring` for the _reads_ is open. Th
 loop exists and [`async-io/`][async-io] surveys the substrate, but nothing in the
 tree currently issues file reads through it.
 
-## SIMD: available, with zero precedent
+## SIMD: no precedent here, but not greenfield either
 
-LDC exposes `core.simd`, `ldc.simd`, the GCC-builtin modules and target
-attributes. **The repository uses none of them.** A tree-wide grep for
-`core.simd`, `ldc.simd`, `__vector` or `ldc.intrinsics` returns exactly one hit —
-`llvm_trap` in the test runner's extractor — which is unrelated to data
-parallelism.
+**The repository uses no SIMD at all.** A tree-wide grep for `core.simd`,
+`ldc.simd`, `__vector` or `ldc.intrinsics` returns exactly one hit — `llvm_trap`
+in the test runner's extractor — which is unrelated to data parallelism.
 
-There is also **no runtime CPU feature detection**. `sparkles.base.hw_caps`
-answers _how many_ CPUs may be used (quota, affinity mask, memory, load, swap) and
-says nothing about _what those CPUs can do_: no `cpuid`, no AVX/SSE probing, no
-dispatch table. Every measured prefilter in this catalog — `memchr`'s packed-pair
-heuristic, Teddy, ShiftOr over a word — would land on bare ground here, and the
-first one to arrive pays for the dispatch machinery.
+That is a statement about this tree, not about D. Two pieces already exist
+outside it, and they solve different halves of the problem.
 
-The benchmark build type already passes `-mcpu=native`, which is the opposite
-trade: it produces non-portable binaries and therefore cannot be how a shipped
-artifact selects an implementation.
+**Portability is solved** by
+[`intel-intrinsics`][intel-intrinsics]
+(v1.14.9, ~30 kLOC), the D analogue of `simd-everywhere`: one source using the
+Intel `_mm_` API, compiling under **DMD, LDC and GDC**, and — the property that
+matters most here — **targeting AArch64 at full speed without code change**.
+This repository's CI exercises both `x86_64-linux` and `aarch64-darwin`, so a
+hand-written x86 intrinsic would have to be written twice; through this library
+it is written once. Coverage runs MMX through SSE4.2, plus BMI2, AVX, F16C and
+AVX2 — **no AVX-512**, which costs nothing here given neither runner class offers
+it. Its stated guarantee is that _semantics_ are preserved above all, with no
+promise that any particular instruction is emitted.
 
-## GPU: further away than the plan assumed
+**Detection is solved too, and closer to hand than expected.** Druntime's
+`core.cpuid` reports `sse41`, `sse42`, `avx` and `avx2`, and its accessors
+compile clean under `@safe nothrow @nogc` — verified on this host
+`[host-verified: x86_64-linux]`, where it reports `AuthenticAMD` with all four
+true. Nothing in the repository reads it: `sparkles.base.hw_caps` answers _how
+many_ CPUs may be used (quota, affinity mask, memory, load, swap) and says
+nothing about _what those CPUs can do_. That is the natural home for a capability
+surface, and it does not have one.
 
-The repository has **in-house Vulkan bindings** (`sparkles:vulkan`,
-`sparkles:vulkan-wsi`) rather than `erupted`; `erupted` appears in the tree only
-as a citation inside `docs/research/vulkan/d-erupted.md`.
+**What is genuinely missing is the join between them.** `intel-intrinsics`
+selects its ISA at **compile time** — above SSE2 every level needs `-mattr=+…`
+under LDC — so shipping one binary that uses AVX2 where available and SSE4.2
+where not means compiling the same routine more than once and dispatching between
+the copies at runtime. Neither the multi-versioning nor the dispatch exists here,
+and the first vectorised prefilter to arrive pays to build both.
 
-More importantly, **there is no compute path**. `sparkles:vulkan-wsi` selects a
-queue family by `VK_QUEUE_GRAPHICS_BIT` (`libs/vulkan-wsi/.../context.d:303-304`)
-and a grep for `COMPUTE` across both libraries returns nothing: no compute queue
-selection, no compute pipeline, no descriptor plumbing for a storage buffer. A
-GPU prefilter example is therefore not a small program over existing bindings —
-it needs a compute path built first. That should be reflected in whatever
-acceleration work this catalog proposes.
+The `bench` build type already passes `-mcpu=native`, which is the opposite
+trade: it produces a binary tuned to the machine that built it, so it can measure
+an upper bound but can never be how a shipped artifact selects an implementation.
+
+## GPU: a compute path has to be built first
+
+The repository's Vulkan bindings are **in-house** — `sparkles:vulkan` and
+`sparkles:vulkan-wsi` — and that is the surface any GPU work here extends.
+
+They are, today, a rendering stack. **There is no compute path**:
+`sparkles:vulkan-wsi` selects a queue family by `VK_QUEUE_GRAPHICS_BIT`
+(`libs/vulkan-wsi/.../context.d:303-304`), and a grep for `COMPUTE` across both
+libraries returns nothing — no compute queue selection, no compute pipeline, no
+descriptor plumbing for a storage buffer.
+
+So a GPU prefilter is not a small program over existing bindings. It is
+`sparkles:vulkan` growing a compute queue, a pipeline and a buffer-binding path,
+and only then an example on top. Whatever acceleration work this catalog
+recommends has to carry that ordering, and thesis T4's transfer-and-compile tax
+should be read with the cost of that groundwork added to it.
 
 ## Hosts available for measurement
 
@@ -226,21 +268,25 @@ re-invented.
 
 ## Gap analysis
 
-| #   | Gap                                     | Consequence                                                                                                                     |
-| --- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | No content search at all                | `PKS2` starts from zero; there is no code to refactor, only to write                                                            |
-| 2   | No bounded regex engine                 | `std.regex` allocates and throws, so it cannot enter a pool job; the substrate that could carry one is `glob.d`, five gaps away |
-| 3   | No bounded file reader                  | The only read path slurps into GC memory and throws on invalid UTF-8                                                            |
-| 4   | No content binary sniff                 | Path/extension guards exist; nothing inspects bytes                                                                             |
-| 5   | No public substring primitive           | The one allocation-free implementation is `private` in `tui.d`, and the GUI uses a different, case-sensitive one                |
-| 6   | No SIMD precedent, no feature detection | The first vectorised prefilter pays for the dispatch machinery                                                                  |
-| 7   | No GPU compute path                     | An accelerator example needs a compute pipeline built first                                                                     |
-| 8   | No index of any kind                    | Every query is a full scan of whatever the walk yields                                                                          |
-| 9   | Case semantics are already forked       | Two in-document searches disagree; a third implementation would entrench it                                                     |
+| #   | Gap                                                | Consequence                                                                                                                       |
+| --- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | No content search at all                           | `PKS2` starts from zero; there is no code to refactor, only to write                                                              |
+| 2   | No bounded regex engine                            | `std.regex` allocates and throws, so it cannot enter a pool job; the substrate that could carry one is `glob.d`, five gaps away   |
+| 3   | No bounded file reader                             | The only read path slurps into GC memory and throws on invalid UTF-8                                                              |
+| 4   | No content binary sniff                            | Path/extension guards exist; nothing inspects bytes                                                                               |
+| 5   | No public substring primitive                      | The one allocation-free implementation is `private` in `tui.d`, and the GUI uses a different, case-sensitive one                  |
+| 6   | No SIMD, and no compile-time/runtime dispatch join | Portability and detection both exist outside the tree; nothing wires them together, so the first vectorised prefilter builds that |
+| 7   | No GPU compute path                                | `sparkles:vulkan` must grow a compute queue and pipeline before an accelerator example exists                                     |
+| 8   | No index of any kind                               | Every query is a full scan of whatever the walk yields                                                                            |
+| 9   | Case semantics are already forked                  | Two in-document searches disagree; a third implementation would entrench it. **Replacing them is an outcome of this survey**      |
 
-Gaps 1–5 are the content-search milestone. Gap 9 is a defect that milestone
-should close rather than widen. Gaps 6–8 are where this catalog's evidence
-decides whether the work is worth doing at all.
+Gaps 1–5 are the content-search milestone. **Gap 9 is a defect the same
+milestone must close**: one backend-independent matcher on `sparkles:fuzzy`
+replacing both in-document implementations, so the engine has two callers rather
+than the tree having three matchers. Gaps 6–8 are where this catalog's evidence
+decides whether the work is worth doing at all — and 6 and 7 are each smaller
+than they look, being a missing _join_ between existing pieces rather than a
+missing piece.
 
 ## Sources
 
@@ -256,8 +302,18 @@ and the claims above are `[source-verified]` against them:
 - `docs/specs/fuzzy/SPEC.md`, `docs/specs/fuzzy/benchmarks.md` — the path-search contract
 - `.github/workflows/ci.yml` — the runner matrix
 
+Read outside this repository, at the revisions named:
+
+- [`AuburnSounds/intel-intrinsics`][intel-intrinsics] `v1.14.9`
+  (`14477c6bcadea79c5b71085dec6ddf73ffb9c60c`) — the SIMD portability layer:
+  compiler matrix, ISA coverage and the AArch64 guarantee, read from its
+  `README.md` and `source/inteli/`
+- Druntime `core.cpuid` — capability reporting and its attribute surface, both
+  `[host-verified: x86_64-linux]` on this machine
+
 <!-- References -->
 
 [measurement]: ./measurement.md
 [fuzzy-spec]: ../../specs/fuzzy/SPEC.md
 [async-io]: ../async-io/index.md
+[intel-intrinsics]: https://github.com/AuburnSounds/intel-intrinsics/tree/14477c6bcadea79c5b71085dec6ddf73ffb9c60c

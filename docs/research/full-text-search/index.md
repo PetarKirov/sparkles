@@ -24,7 +24,17 @@ answer _"which of these 2 GB of file **contents** match this pattern"_. Nothing
 in the tree opens a second file looking for a byte pattern, and the
 [baseline](./sparkles-baseline.md) records exactly how far that gap runs.
 
-Closing it means choosing an engine class, a prefilter strategy, an I/O strategy
+There are **two** consumers waiting on the answer, and one engine has to serve
+both. The first is cross-file: the grep source behind the picker's `<leader>/`,
+which does not exist. The second already exists — twice. hue's in-document search
+is implemented separately in each backend, and the two
+[disagree on case](./sparkles-baseline.md#in-document-two-implementations-that-disagree):
+one is case-sensitive and GC-allocating, the other ASCII-case-insensitive and
+`@nogc`. Replacing that with a single backend-independent matcher built on
+`sparkles:fuzzy` is an outcome of this survey, not a by-product — a third
+divergent implementation would entrench the defect rather than close it.
+
+Serving them means choosing an engine class, a prefilter strategy, an I/O strategy
 and possibly an index — under constraints most of the field does not work under:
 `@safe pure nothrow @nogc`, fixed-capacity caller-owned workspaces, and a
 matching path that must run inside a closure-free job with no allocation and no
@@ -47,7 +57,7 @@ here is placed against them, and they are defined in
 A claim that one tool is faster than another is nearly always a claim about
 layers 3 and 4 wearing layer 2's name.
 
-## This survey answers fifteen questions
+## This survey answers sixteen questions
 
 **Semantics and engines**
 
@@ -106,6 +116,10 @@ layers 3 and 4 wearing layer 2's name.
 15. What is the smallest staged path from the [baseline](./sparkles-baseline.md)
     to a credible content search behind hue, and which techniques are realistic
     in D with LDC?
+16. What must one engine expose so that **cross-file** and **in-document** search
+    are the same matcher under two callers — incremental re-query as the user
+    types, match positions for highlighting, a shared case rule, and bounded work
+    — rather than the three divergent implementations the tree has today?
 
 ## Five theses to establish or refute
 
