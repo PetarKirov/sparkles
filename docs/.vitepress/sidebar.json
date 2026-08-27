@@ -2671,6 +2671,70 @@
           {
             "text": "Multi-pattern search",
             "link": "/research/full-text-search/multi-pattern"
+          },
+          {
+            "text": "Automata",
+            "link": "/research/full-text-search/theory/automata"
+          },
+          {
+            "text": "Bit-parallel matching",
+            "link": "/research/full-text-search/theory/bit-parallel"
+          },
+          {
+            "text": "String matching",
+            "link": "/research/full-text-search/theory/string-matching"
+          },
+          {
+            "text": "Approximate matching",
+            "link": "/research/full-text-search/theory/approximate"
+          },
+          {
+            "text": "Succinct indexes",
+            "link": "/research/full-text-search/theory/succinct-indexes"
+          },
+          {
+            "text": "Ranked retrieval",
+            "link": "/research/full-text-search/theory/ranked-retrieval"
+          },
+          {
+            "text": "n-gram indexes",
+            "link": "/research/full-text-search/trigram-indexes/"
+          },
+          {
+            "text": "Google Code Search",
+            "link": "/research/full-text-search/trigram-indexes/google-codesearch"
+          },
+          {
+            "text": "Zoekt",
+            "link": "/research/full-text-search/trigram-indexes/zoekt"
+          },
+          {
+            "text": "livegrep",
+            "link": "/research/full-text-search/livegrep"
+          },
+          {
+            "text": "Suffix structures",
+            "link": "/research/full-text-search/suffix-structures"
+          },
+          {
+            "text": "Compressed self-indexes",
+            "link": "/research/full-text-search/compressed-self-indexes"
+          },
+          {
+            "text": "Lucene",
+            "link": "/research/full-text-search/lucene"
+          },
+          {
+            "text": "tantivy",
+            "link": "/research/full-text-search/tantivy"
+          },
+          {
+            "text": "PISA",
+            "link": "/research/full-text-search/pisa"
+          },
+          {
+            "text": "Embedded FTS",
+            "link": "/research/full-text-search/embedded-fts"
           }
         ]
       },
