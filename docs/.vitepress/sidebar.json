@@ -2599,6 +2599,10 @@
           {
             "text": "Foundations (Theory)",
             "link": "/research/full-text-search/theory/"
+          },
+          {
+            "text": "fff (grep engine)",
+            "link": "/research/full-text-search/fff-grep"
           }
         ]
       },
