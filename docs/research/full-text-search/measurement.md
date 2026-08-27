@@ -4,7 +4,7 @@ The rules every comparative claim in this catalog is held to. Written **before**
 the first number, so that no page can quietly invent its own methodology, and
 cited by `comparison.md` (Phase 7) rather than restated there.
 
-> **Last reviewed:** August 27, 2026.
+> **Last reviewed:** August 28, 2026.
 
 > [!IMPORTANT]
 > The field's published search benchmarks disagree with each other mostly because

@@ -2735,6 +2735,58 @@
           {
             "text": "Embedded FTS",
             "link": "/research/full-text-search/embedded-fts"
+          },
+          {
+            "text": "Wide SIMD",
+            "link": "/research/full-text-search/wide-simd"
+          },
+          {
+            "text": "GPU automata",
+            "link": "/research/full-text-search/gpu-automata"
+          },
+          {
+            "text": "GPU retrieval",
+            "link": "/research/full-text-search/gpu-retrieval"
+          },
+          {
+            "text": "Hardware automata",
+            "link": "/research/full-text-search/hardware-automata"
+          },
+          {
+            "text": "Corpus access",
+            "link": "/research/full-text-search/corpus-access"
+          },
+          {
+            "text": "Unicode semantics",
+            "link": "/research/full-text-search/unicode-semantics"
+          },
+          {
+            "text": "Approximate search",
+            "link": "/research/full-text-search/approximate-search"
+          },
+          {
+            "text": "Structural search",
+            "link": "/research/full-text-search/structural-search"
+          },
+          {
+            "text": "Interactive contracts",
+            "link": "/research/full-text-search/interactive-contracts"
+          },
+          {
+            "text": "Live-grep hosts",
+            "link": "/research/full-text-search/live-grep-hosts"
+          },
+          {
+            "text": "Editor project search",
+            "link": "/research/full-text-search/editor-search"
+          },
+          {
+            "text": "Comparison",
+            "link": "/research/full-text-search/comparison"
+          },
+          {
+            "text": "Recommendations",
+            "link": "/research/full-text-search/recommendations"
           }
         ]
       },
