@@ -22,13 +22,13 @@ Alignments:
 
 Inline styles in cells:
 
-╭─────────┬─────────────┬──────────  ╮
-│ Feature │ Status      │ Notes       │
-┝━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━━━━━━┥
-│ code    │ done        │ with a link │
-├─────────┼─────────────┼─────────────┤
-│ italics │ was planned │ plain       │
-╰─────────┴─────────────┴─────────────╯
+╭─────────┬─────────────┬──────────────  ╮
+│ Feature │ Status      │ Notes           │
+┝━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━┥
+│ code    │ done        │ with a link     │
+├─────────┼─────────────┼─────────────────┤
+│ italics │ was planned │ and a reference │
+╰─────────┴─────────────┴─────────────────╯
 
 Ragged (missing trailing cells):
 

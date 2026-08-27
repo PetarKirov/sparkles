@@ -719,7 +719,7 @@ struct PreviewTui
     /// and for the same reason as `rulerHover`.
     private bool linkHover;
 
-    /// The pane's other shape contribution (`MDP23`): the link hand while the
+    /// The pane's other shape contribution (`MDP25`): the link hand while the
     /// pointer is over a link in the rendered preview.
     bool linkHovering() const @safe pure nothrow @nogc => linkHover;
 
@@ -1646,7 +1646,7 @@ struct PreviewTui
         if (e.button == PointerButton.none && e.action == PointerAction.move)
         {
             rulerHover = formatPreviewRulerHits(vm, rulerColF);
-            // A link under the pointer wants the hand (`MDP23`), kept here for
+            // A link under the pointer wants the hand (`MDP25`), kept here for
             // the same reason the ruler's hover is: the workspace composes
             // pane shapes without a position.
             linkHover = showPreview && vm.linkAt(docPointOf(e.pos)) !is null;

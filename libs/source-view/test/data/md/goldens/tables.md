@@ -19,7 +19,9 @@ Inline styles in cells:
 | Feature   | Status           | Notes                    |
 | --------- | ---------------- | ------------------------ |
 | `code`    | **done**         | with [a link](https://x) |
-| *italics* | ~~was planned~~  | plain                    |
+| *italics* | ~~was planned~~  | and [a reference][spec]  |
+
+[spec]: https://example.com/spec
 
 Ragged (missing trailing cells):
 

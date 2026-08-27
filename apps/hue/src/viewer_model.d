@@ -2457,7 +2457,7 @@ struct ViewerModel
 }
 
 /**
-`MDP23`/`MDP24`: the pointer over a link in the rendered preview asks for the
+`MDP25`/`MDP26`: the pointer over a link in the rendered preview asks for the
 hand, and one cell off it goes back to the default. Every link form counts —
 inline, autolink and reference-style — and a link inside a TABLE CELL counts
 too, which is the case `trimCellEdges` could have broken by rewriting the edge
