@@ -171,6 +171,10 @@ struct Visual
     ushort fontScale = 100; /// font size as a percentage of 1em (100 = 1em)
     UnderlineStyle underline; /// text-decoration underline (default: none)
     ubyte underlineAlpha = 0xFF; /// underline opacity (hover-fade)
+    /// The hyperlink this run belongs to — an index into the frame's URI
+    /// table, `0` for none. Carried from $(REF TextSpan.linkId, sparkles,ui,wrap);
+    /// a cell backend turns it into OSC 8, a GPU backend ignores it.
+    ushort linkId;
 }
 
 /// A widget's declared box decoration — slot-referencing and presentation-free

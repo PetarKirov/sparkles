@@ -61,6 +61,14 @@ struct TextSpan
     size_t srcStart = size_t.max;
     /// ditto
     size_t srcEnd;
+    /// The hyperlink this run belongs to: an index into the frame's URI table,
+    /// `0` meaning "not a hyperlink" (the same not-addressable convention as
+    /// `hitId`). Purely a $(B terminal) channel — a cell backend turns a run of
+    /// equal ids into one OSC 8 hyperlink, so the terminal itself makes the
+    /// text clickable; a GPU backend ignores it, because there the pointer
+    /// shape is the affordance. The id, not the URI, travels through the
+    /// pipeline so a `TextSpan` stays cheap to copy and slice.
+    ushort linkId;
 }
 
 /// How a text widget breaks into lines (the `LAY10` strategy seam). `none`

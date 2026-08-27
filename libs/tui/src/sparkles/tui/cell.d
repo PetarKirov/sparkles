@@ -47,13 +47,29 @@ struct CellT(uint MaxBytes = 16)
     char[MaxBytes] bytes = ' ';
     ubyte len = 1;
     ubyte width = 1;
+    /// The OSC 8 hyperlink this cell belongs to: an index into the URI table
+    /// the renderer is given, `0` for none.
+    ///
+    /// Here rather than in `style` on purpose. `CellStyle` is `TermStyle`, an
+    /// `align(1) uint[3]` that every builtin theme bakes into static data, and
+    /// a hyperlink is not a style: two cells can share every colour and
+    /// attribute while pointing at different URLs. It participates in
+    /// `opEquals` so the retained diff repaints a cell whose link changed.
+    ///
+    /// `ushort`, and placed here, so the cell stays tightly packed: a `uint`
+    /// would raise the whole struct's alignment from 1 to 4 and cost six bytes
+    /// per cell rather than two. No frame has 65535 distinct hyperlinks.
+    ushort linkId;
     CellStyle style;
 
     /// The grapheme cluster's bytes.
     const(char)[] grapheme() const @safe pure nothrow @nogc return => bytes[0 .. len];
 
     /// Set this cell to a single code point (encoded to UTF-8) with `width`.
-    void setCodepoint(dchar cp, ubyte w, in CellStyle st) @safe pure nothrow @nogc
+    /// `link` defaults to "no hyperlink", so a cell repainted by a writer that
+    /// knows nothing about links correctly loses the one it used to carry.
+    void setCodepoint(dchar cp, ubyte w, in CellStyle st, ushort link = 0)
+        @safe pure nothrow @nogc
     {
         char[4] buf = void;
         const n = encodeUtf8(cp, buf);
@@ -61,16 +77,20 @@ struct CellT(uint MaxBytes = 16)
         len = cast(ubyte) n;
         width = w;
         style = st;
+        linkId = link;
     }
 
     /// Set this cell to an already-encoded cluster slice (truncated to fit).
-    void setBytes(scope const(char)[] cluster, ubyte w, in CellStyle st) @safe pure nothrow @nogc
+    /// ditto
+    void setBytes(scope const(char)[] cluster, ubyte w, in CellStyle st,
+        ushort link = 0) @safe pure nothrow @nogc
     {
         const n = cluster.length > MaxBytes ? MaxBytes : cluster.length;
         bytes[0 .. n] = cluster[0 .. n];
         len = cast(ubyte) n;
         width = w;
         style = st;
+        linkId = link;
     }
 
     /// The first code point of this cell's grapheme (0x20 for a blank cell).
@@ -78,6 +98,7 @@ struct CellT(uint MaxBytes = 16)
 
     bool opEquals(in CellT o) const @safe pure nothrow @nogc
         => len == o.len && width == o.width && style == o.style
+            && linkId == o.linkId
             && bytes[0 .. len] == o.bytes[0 .. o.len];
 }
 
@@ -302,9 +323,11 @@ unittest
     assert(g[0, 0].grapheme == "h");
     assert(g[1, 0].style.attrs == TextAttr.bold);
     assert(g[2, 0].grapheme == " "); // untouched blank
-    // 16 grapheme bytes + len + width + the shaped 3-word (12 B) style.
+    // 16 grapheme bytes + len + width + the OSC 8 link id + the shaped
+    // 3-word (12 B) style. The id is a `ushort` rather than a `uint` to keep
+    // the struct's alignment at 1: a `uint` would cost six bytes here, not two.
     static assert(CellStyle.sizeof == 12);
-    static assert(Cell.sizeof == 30);
+    static assert(Cell.sizeof == 32);
 }
 
 @("cell.grid.wideGlyphContinuation")

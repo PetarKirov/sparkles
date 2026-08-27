@@ -153,6 +153,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                         vis.bg = span.bg;
                         vis.hasBg = true;
                     }
+                    vis.linkId = span.linkId; // the terminal hyperlink channel
                     const r = Rect(x, y, w, 1);
                     if (vis.hasBg)
                         ops.fillRect(r, slot, vis);

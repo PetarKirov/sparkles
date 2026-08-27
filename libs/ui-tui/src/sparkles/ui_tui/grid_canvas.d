@@ -496,10 +496,10 @@ struct GridCanvas
         }
         if (v.hasBg)
             st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
-        c.setCodepoint(cp, w, st);
+        c.setCodepoint(cp, w, st, v.linkId);
         // A wide glyph claims the next column as a zero-width continuation.
         if (w == 2 && inBounds(x + 1, y))
-            cell(x + 1, y).setCodepoint(' ', 0, st);
+            cell(x + 1, y).setCodepoint(' ', 0, st, v.linkId);
     }
 
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
