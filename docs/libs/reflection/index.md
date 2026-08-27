@@ -1,0 +1,17 @@
+# Reflection
+
+`sparkles:reflection` is the dependency-free structural reflection kernel of
+the monorepo: one closed type classification, member/field/property
+primitives with one-pass CTFE tables, and DbI type/value visitor shells whose
+hooks are all optional.
+
+Consumers supply semantics; the kernel supplies structure. The property tree,
+the text writers, query-path resolution, and serialization front ends
+dispatch on the same classification and the same field spine, so "what shape
+is this type" has exactly one answer across the repository.
+
+## Documentation
+
+- [Getting started](tutorial/getting-started.md)
+- [API reference](reference/api.md)
+- [Structure versus policy](explanation/structure-vs-policy.md)
