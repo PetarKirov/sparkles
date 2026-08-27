@@ -139,7 +139,9 @@ Three distinct prefilters, easily conflated:
    dropped when too rare (< ~3 %) or too common (≥ 90 %). False positives
    allowed, verified downstream by whole-file `memmem`. Peak build memory
    ≈ 625 MB at 500k files (two builders alive simultaneously). Worth
-   stealing only if a content-grep mode lands.
+   stealing only if a content-grep mode lands — and the n-gram family it belongs to
+   is surveyed in
+   [`full-text-search/trigram-indexes/`](../full-text-search/trigram-indexes/index.md).
 
 ## Memory strategy
 
@@ -181,7 +183,9 @@ cursor.** Those exist only in grep
 ([`grep.rs:537-610`][fff-grep]): `time_budget_ms`, an
 `Arc<AtomicBool>` abort polled every 8th file, never honored before at
 least 2 matches exist, and ramping chunk sizes. Any interactive-cancellation
-design for `sparkles:fuzzy` is new machinery informed by grep, not a port.
+design for `sparkles:fuzzy` is new machinery informed by grep, not a port. That
+grep engine is surveyed in its own right in
+[`full-text-search/fff-grep`](../full-text-search/fff-grep.md).
 
 ## Unicode & case handling
 
