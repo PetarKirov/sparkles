@@ -22,6 +22,7 @@ import std.sumtype : SumType;
 
 import sparkles.base.meta : isVersion;
 import sparkles.math : ScreenPosition, ScreenSize;
+public import sparkles.metadata : Aliases, Label, Name;
 
 /// Re-exported so consumers dispatch with `event.match!(…)` without importing
 /// `std.sumtype` themselves.
@@ -42,27 +43,12 @@ enum KeyRole : ubyte
     modifier,
 }
 
-/// Explicit primary wire/text name for an enum member or field.
-struct WireName
-{
-    string name;
-}
-
-/// Explicit secondary/alias wire/text names for an enum member or field.
-struct WireAliases
-{
-    string[] names;
-    this(Args...)(Args args) if (Args.length > 0)
-    {
-        this.names = [args];
-    }
-}
-
-/// Explicit UI display name for an enum member.
-struct WireDisplayName
-{
-    string name;
-}
+/// Compatibility names for the original input metadata vocabulary.
+alias WireName = Name;
+/// ditto
+alias WireAliases = Aliases;
+/// ditto
+alias WireDisplayName = Label;
 
 /// Canonical Unicode symbols representing a key.
 struct KeySymbols

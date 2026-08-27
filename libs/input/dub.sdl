@@ -16,6 +16,7 @@ sourcePaths "src"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
+dependency "sparkles:metadata" path="../.."
 
 configuration "library" {
     targetType "library"
