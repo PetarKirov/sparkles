@@ -4,7 +4,7 @@ The terms this catalog uses, defined once. Deep-dives assume these and do not
 redefine them; where a subject uses a word differently, its page says so
 explicitly.
 
-> **Last reviewed:** August 27, 2026.
+> **Last reviewed:** August 28, 2026.
 
 ---
 

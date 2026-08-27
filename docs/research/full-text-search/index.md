@@ -6,13 +6,17 @@ to compressed self-indexes, ranked inverted indexes and GPU automata engines —
 and which of those techniques a D implementation inside Sparkles can actually
 carry.
 
-> **Last reviewed:** August 27, 2026.
+> **Last reviewed:** August 28, 2026.
 
 > [!NOTE]
-> **Status: in progress.** The tree is being built in the phases its execution
-> plan sets out. Pages listed below without a link are planned, not written; the
-> phase column says when each arrives. Nothing here is a findings page until it
-> is linked.
+> **Status: complete.** All eight phases have landed. The survey's conclusions
+> are in [comparison](./comparison.md) and [recommendations](./recommendations.md);
+> the latter feeds [`docs/specs/hue/picker.md`](../../specs/hue/picker.md) and is
+> a research conclusion rather than a specification.
+>
+> Thirteen of the sixteen planned runnable examples were deferred with the reason
+> recorded in [theory](./theory/index.md), and thesis T4 is recorded as
+> **unresolved** rather than answered — see [gpu-automata](./gpu-automata.md).
 
 ---
 
@@ -176,24 +180,24 @@ share.
 | [literal-prefilters](./literal-prefilters.md) · [multi-pattern](./multi-pattern.md)                                                                                                                                                                                                                                                                                                            | Primitives                           | 2 ✅              |
 | [automata](./theory/automata.md) · [bit-parallel](./theory/bit-parallel.md) · [string-matching](./theory/string-matching.md) · [approximate](./theory/approximate.md) · [succinct-indexes](./theory/succinct-indexes.md) · [ranked-retrieval](./theory/ranked-retrieval.md)                                                                                                                    | Theory                               | 3 ✅              |
 | [trigram-indexes](./trigram-indexes/index.md) ([google-codesearch](./trigram-indexes/google-codesearch.md), [zoekt](./trigram-indexes/zoekt.md)) · [livegrep](./livegrep.md) · [suffix-structures](./suffix-structures.md) · [compressed-self-indexes](./compressed-self-indexes.md) · [lucene](./lucene.md) · [tantivy](./tantivy.md) · [pisa](./pisa.md) · [embedded-fts](./embedded-fts.md) | Indexes                              | 4 ✅              |
-| `gpu-automata` · `gpu-retrieval` · `hardware-automata` · `wide-simd`                                                                                                                                                                                                                                                                                                                           | Acceleration                         | 5                 |
-| `corpus-access` · `unicode-semantics` · `approximate-search` · `structural-search` · `interactive-contracts`                                                                                                                                                                                                                                                                                   | Systems & semantics                  | 6                 |
-| `comparison` · `recommendations`                                                                                                                                                                                                                                                                                                                                                               | Synthesis                            | 7                 |
+| [gpu-automata](./gpu-automata.md) · [gpu-retrieval](./gpu-retrieval.md) · [hardware-automata](./hardware-automata.md) · [wide-simd](./wide-simd.md)                                                                                                                                                                                                                                            | Acceleration                         | 5 ✅              |
+| [corpus-access](./corpus-access.md) · [unicode-semantics](./unicode-semantics.md) · [approximate-search](./approximate-search.md) · [structural-search](./structural-search.md) · [interactive-contracts](./interactive-contracts.md) · [live-grep-hosts](./live-grep-hosts.md) · [editor-search](./editor-search.md)                                                                          | Systems & semantics                  | 6 ✅              |
+| [comparison](./comparison.md) · [recommendations](./recommendations.md)                                                                                                                                                                                                                                                                                                                        | Synthesis                            | 7 ✅              |
 
 ## Reading paths
 
 **"I want to know whether we can write a bounded regex engine in D."**
 [baseline](./sparkles-baseline.md#the-bounded-nfa-that-already-ships) →
 [concepts § engine classes](./concepts.md#engine-classes) → [std-regex](./std-regex.md) →
-[rust-regex](./rust-regex.md) → `recommendations`.
+[rust-regex](./rust-regex.md) → [recommendations](./recommendations.md).
 
 **"I want to know whether we should build an index."**
 [concepts § precomputation](./concepts.md#precomputation) → [trigram-indexes](./trigram-indexes/index.md) →
-[zoekt](./trigram-indexes/zoekt.md) → [compressed-self-indexes](./compressed-self-indexes.md) → theses T2 and T3 in `comparison`.
+[zoekt](./trigram-indexes/zoekt.md) → [compressed-self-indexes](./compressed-self-indexes.md) → theses T2 and T3 in [comparison](./comparison.md).
 
 **"I am implementing hue's grep source."**
 [baseline](./sparkles-baseline.md) → [fff-grep](./fff-grep.md) → [ripgrep](./ripgrep.md) →
-`corpus-access` → `interactive-contracts` → `recommendations`.
+[corpus-access](./corpus-access.md) → [interactive-contracts](./interactive-contracts.md) → [recommendations](./recommendations.md).
 
 **"I need to make a performance claim."**
 [measurement](./measurement.md), first and in full.

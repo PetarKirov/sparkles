@@ -15,7 +15,7 @@ measured against, and the one the recommendations (Phase 7) feed back into.
 | SIMD                 | No precedent in-tree; `intel-intrinsics` + `core.cpuid` exist, the dispatch join does not  |
 | Index                | None                                                                                       |
 
-> **Last reviewed:** August 27, 2026.
+> **Last reviewed:** August 28, 2026.
 
 > [!NOTE]
 > This is a _baseline_ page, not a third-party deep-dive. It records only what is
