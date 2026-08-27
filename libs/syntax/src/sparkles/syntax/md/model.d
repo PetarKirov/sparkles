@@ -112,6 +112,24 @@ struct MdInline
     Span span;              /// the styled content extent (delimiters excluded)
     MdInline[] children;    /// nested spans (emphasis/strong/strikethrough/link/image)
     const(char)[] linkDest; /// link/image destination (raw), else ""
+    /// link/image title — the optional `"…"` after the destination, from either
+    /// an inline `[a](url "t")` or the reference definition the label resolved
+    /// against. Empty when there is none.
+    const(char)[] linkTitle;
+}
+
+/// One link reference definition: `[label]: dest "title"`.
+///
+/// Definitions render nothing, but every reference-style link
+/// (`[text][label]`, `[label][]`, `[label]`) resolves against them. They are
+/// collected into $(LREF MdDoc.linkDefs) during the block walk and applied to
+/// the inline trees afterwards, because a definition may appear $(I after) the
+/// paragraph that references it.
+struct MdLinkDef
+{
+    const(char)[] label; /// the raw label bytes (compare via `linkLabelEquals`)
+    const(char)[] dest;  /// the destination
+    const(char)[] title; /// the optional title, else ""
 }
 
 /// `DVN6`: what a rendered-preview diff found for one block.
@@ -144,6 +162,65 @@ struct MdDoc
 {
     MdBlock root;         /// a `document` block
     const(char)[] source; /// the bytes every `Span` slices
+    /// Every `[label]: dest "title"` in the document, in reading order. Kept
+    /// after resolution so a consumer can report an unresolved label, and
+    /// because `source` is the only owner of the bytes they slice.
+    MdLinkDef[] linkDefs;
+}
+
+/**
+CommonMark link-label equivalence: Unicode case-fold (ASCII here — the labels
+this model sees are compared byte-wise beyond ASCII) after stripping the outer
+whitespace and collapsing every internal whitespace run to one space.
+
+Normalizes $(I while) comparing so no normalized key is ever allocated, which
+is what lets resolution stay allocation-free over a document's whole
+definition table.
+*/
+bool linkLabelEquals(scope const(char)[] a, scope const(char)[] b)
+    @safe pure nothrow @nogc
+{
+    static bool isWs(char c) => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    static char fold(char c) => c >= 'A' && c <= 'Z' ? cast(char)(c + 32) : c;
+
+    size_t i, j;
+    while (i < a.length && isWs(a[i])) ++i;
+    while (j < b.length && isWs(b[j])) ++j;
+    size_t ae = a.length, be = b.length;
+    while (ae > i && isWs(a[ae - 1])) --ae;
+    while (be > j && isWs(b[be - 1])) --be;
+
+    while (i < ae && j < be)
+    {
+        if (isWs(a[i]) || isWs(b[j]))
+        {
+            // Both sides must have a run here; each collapses to one space.
+            if (!isWs(a[i]) || !isWs(b[j]))
+                return false;
+            while (i < ae && isWs(a[i])) ++i;
+            while (j < be && isWs(b[j])) ++j;
+            continue;
+        }
+        if (fold(a[i]) != fold(b[j]))
+            return false;
+        ++i;
+        ++j;
+    }
+    return i == ae && j == be;
+}
+
+@("md.model.linkLabelEquals")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(linkLabelEquals("ref", "ref"));
+    assert(linkLabelEquals("Ref-Link", "ref-link"));   // ASCII case-fold
+    assert(linkLabelEquals("  ref  ", "ref"));         // outer whitespace
+    assert(linkLabelEquals("a \n b", "a b"));          // internal run collapses
+    assert(!linkLabelEquals("ab", "a b"));             // a run is not nothing
+    assert(!linkLabelEquals("ref", "refs"));
+    assert(!linkLabelEquals("ref", ""));
+    assert(linkLabelEquals("", "   "));
 }
 
 /**
@@ -187,7 +264,12 @@ MdDoc extractMarkdown(ref GrammarRegistry registry, scope const(char)[] source) 
     doc.source = cleaned;
 
     auto ex = Extractor(cleaned, &inlineParser);
+    // Definitions first: a reference-style link may sit above the definition
+    // it resolves against, so the table must be complete before any inline is
+    // parsed.
+    ex.collectLinkDefs(tree.rootNode);
     doc.root.children = foldCodeGroups(ex.walkBlocks(tree.rootNode), cleaned);
+    doc.linkDefs = ex.linkDefs;
     return doc;
 }
 
@@ -343,6 +425,37 @@ unittest
     assert(codeLineCount("a\nb\n") == 2);
 }
 
+// `[label]` → `label`. The grammar's `link_label` node includes its brackets.
+private const(char)[] trimLabel(return scope const(char)[] s)
+    @safe pure nothrow @nogc
+    => s.length >= 2 && s[0] == '[' && s[$ - 1] == ']' ? s[1 .. $ - 1] : s;
+
+// `"title"` / `'title'` / `(title)` → `title`. The grammar keeps the quotes.
+private const(char)[] trimTitle(return scope const(char)[] s)
+    @safe pure nothrow @nogc
+{
+    if (s.length < 2)
+        return s;
+    const a = s[0], b = s[$ - 1];
+    if ((a == '"' && b == '"') || (a == '\'' && b == '\'')
+        || (a == '(' && b == ')'))
+        return s[1 .. $ - 1];
+    return s;
+}
+
+@("md.model.trimLabelAndTitle")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(trimLabel("[ref]") == "ref");
+    assert(trimLabel("ref") == "ref");
+    assert(trimLabel("[]") == "");
+    assert(trimTitle(`"a title"`) == "a title");
+    assert(trimTitle("'a'") == "a");
+    assert(trimTitle("(a)") == "a");
+    assert(trimTitle("bare") == "bare");
+}
+
 private void blankContinuations(TSNode n, char[] buf) @trusted nothrow
 {
     if (nodeType(n) == "block_continuation")
@@ -359,6 +472,9 @@ private struct Extractor
 {
     const(char)[] source;
     TsParser* inlineParser;
+    /// Filled by the block walk (`link_reference_definition`), consumed by the
+    /// resolution pass `extractMarkdown` runs afterwards.
+    MdLinkDef[] linkDefs;
 
     const(char)[] textOf(TSNode n) @trusted nothrow
         => source[nodeStartByte(n) .. nodeEndByte(n)];
@@ -421,7 +537,10 @@ private struct Extractor
                 blocks ~= MdBlock(kind: MdBlockKind.htmlBlock, span: extent(ch));
                 break;
             // link_reference_definition (incl. footnote defs) render nothing —
-            // reference definitions are invisible in a rendered preview.
+            // reference definitions are invisible in a rendered preview. Their
+            // label/dest/title was already harvested by `collectLinkDefs`
+            // before this walk, which is what lets a reference-style link
+            // resolve against a definition written BELOW it.
             default:
                 break;
             }
@@ -431,6 +550,50 @@ private struct Extractor
 
     Span extent(TSNode n) @trusted nothrow
         => Span(nodeStartByte(n), nodeEndByte(n));
+
+    /**
+    Harvest every `[label]: dest "title"` in the tree, depth-first.
+
+    Runs BEFORE the block walk, because a reference-style link may be written
+    above the definition it resolves against — so by the time any inline is
+    parsed, the whole table must already be known. Recursive because
+    definitions nest inside quotes and list items, not just at top level.
+
+    A definition missing a label or a destination is not one; it is skipped
+    rather than recorded as a label resolving to nothing.
+    */
+    void collectLinkDefs(TSNode n) @trusted nothrow
+    {
+        if (nodeType(n) == "link_reference_definition")
+        {
+            TSNode label, dest;
+            if (firstChild(n, "link_label", label)
+                && firstChild(n, "link_destination", dest))
+            {
+                MdLinkDef d = {
+                    label: trimLabel(textOf(label)),
+                    dest: textOf(dest),
+                };
+                TSNode title;
+                if (firstChild(n, "link_title", title))
+                    d.title = trimTitle(textOf(title));
+                linkDefs ~= d;
+            }
+            return; // nothing inside a definition is a definition
+        }
+        foreach (i; 0 .. nodeNamedChildCount(n))
+            collectLinkDefs(nodeNamedChild(n, i));
+    }
+
+    // The first definition matching `label`, or null. First wins, which is
+    // CommonMark's rule for a repeated label.
+    const(MdLinkDef)* lookupDef(scope const(char)[] label) @trusted nothrow
+    {
+        foreach (ref const d; linkDefs)
+            if (linkLabelEquals(d.label, label))
+                return &d;
+        return null;
+    }
 
     MdBlock heading(TSNode n, bool setext) @trusted nothrow
     {
@@ -658,8 +821,18 @@ private struct Extractor
                 cur = ce;
                 break;
             case "inline_link":
-            case "shortcut_link":
                 out_ ~= link(ch, base);
+                cur = ce;
+                break;
+            // The three reference forms. Each carries no destination of its
+            // own: `linkRef` records the label it must resolve against, and
+            // the pass in `extractMarkdown` fills `linkDest` once every
+            // definition is known (a definition may follow its use). One that
+            // never resolves is rewritten back to literal text there.
+            case "full_reference_link":
+            case "collapsed_reference_link":
+            case "shortcut_link":
+                out_ ~= linkRef(ch, base);
                 cur = ce;
                 break;
             case "image":
@@ -719,6 +892,49 @@ private struct Extractor
         TSNode txt;
         if (firstChild(n, "link_text", txt))
             walkInline(txt, base, nodeStartByte(txt), nodeEndByte(txt), s.children);
+        TSNode title;
+        if (firstChild(n, "link_title", title))
+            s.linkTitle = trimTitle(source[base + nodeStartByte(title)
+                .. base + nodeEndByte(title)]);
+        return s;
+    }
+
+    /**
+    A reference-style link — `[text][label]`, `[label][]`, or `[label]` —
+    resolved against the definitions harvested up front.
+
+    The lookup label is the explicit `link_label` when the form has one, else
+    the link text itself (the collapsed and shortcut forms name themselves).
+    The visible label is always `link_text`, walked recursively, so nested
+    emphasis/code inside it renders exactly as it does in an inline link.
+
+    An UNRESOLVED label is not a link: CommonMark renders it as the literal
+    text that was typed, brackets included, and so does this. That is also why
+    a GitHub callout marker survives — `[!NOTE]` parses as a shortcut link, has
+    no definition, and comes back out as the text `[!NOTE]`.
+    */
+    MdInline linkRef(TSNode n, size_t base) @trusted nothrow
+    {
+        const whole = Span(base + nodeStartByte(n), base + nodeEndByte(n));
+        TSNode txt;
+        const haveText = firstChild(n, "link_text", txt);
+
+        TSNode labelNode;
+        const(char)[] label = firstChild(n, "link_label", labelNode)
+            ? trimLabel(source[base + nodeStartByte(labelNode)
+                .. base + nodeEndByte(labelNode)])
+            : haveText
+                ? source[base + nodeStartByte(txt) .. base + nodeEndByte(txt)]
+                : "";
+
+        auto def = lookupDef(label);
+        if (def is null)
+            return MdInline(kind: MdInlineKind.text, span: whole);
+
+        MdInline s = {kind: MdInlineKind.link, span: whole,
+            linkDest: def.dest, linkTitle: def.title};
+        if (haveText)
+            walkInline(txt, base, nodeStartByte(txt), nodeEndByte(txt), s.children);
         return s;
     }
 
@@ -728,11 +944,40 @@ private struct Extractor
                 base + nodeEndByte(n))};
         TSNode dest;
         if (firstChild(n, "link_destination", dest))
+        {
             s.linkDest = source[base + nodeStartByte(dest) .. base + nodeEndByte(dest)];
+            TSNode title;
+            if (firstChild(n, "link_title", title))
+                s.linkTitle = trimTitle(source[base + nodeStartByte(title)
+                    .. base + nodeEndByte(title)]);
+        }
         TSNode alt;
-        if (firstChild(n, "image_description", alt))
+        const haveAlt = firstChild(n, "image_description", alt);
+        if (haveAlt)
             s.children ~= MdInline(kind: MdInlineKind.text,
                 span: Span(base + nodeStartByte(alt), base + nodeEndByte(alt)));
+        // A REFERENCE image (`![alt][label]`, `![label][]`, `![label]`) has no
+        // destination of its own — the grammar folds those forms into hidden
+        // rules under this same `image` node, so they arrive here with a
+        // `link_label` (or none, for the shortcut form) instead. Resolve them
+        // against the same table the links use. Unlike a link, an unresolved
+        // image still renders its alt text rather than degrading to literal
+        // source: the alt IS the fallback an image is supposed to have.
+        if (s.linkDest.length == 0)
+        {
+            TSNode labelNode;
+            const(char)[] label = firstChild(n, "link_label", labelNode)
+                ? trimLabel(source[base + nodeStartByte(labelNode)
+                    .. base + nodeEndByte(labelNode)])
+                : haveAlt
+                    ? source[base + nodeStartByte(alt) .. base + nodeEndByte(alt)]
+                    : "";
+            if (auto def = lookupDef(label))
+            {
+                s.linkDest = def.dest;
+                s.linkTitle = def.title;
+            }
+        }
         return s;
     }
 
@@ -1018,6 +1263,135 @@ unittest
     assert(a.linkDest == "http://example.com/x", a.linkDest);
     assert(a.children.length == 1 && a.children[0].kind == MdInlineKind.text);
     assert(d.source[a.children[0].span.start .. a.children[0].span.end] == "http://example.com/x");
+}
+
+@("md.model.linkTitle")
+@system
+unittest
+{
+    auto d = extractForTest(`see [text](http://x "The title") now` ~ "\n");
+    auto p = d.root.children[0];
+    MdInline* a;
+    foreach (ref inl; p.inlines)
+        if (inl.kind == MdInlineKind.link) a = &inl;
+    assert(a !is null);
+    assert(a.linkDest == "http://x", a.linkDest);
+    assert(a.linkTitle == "The title", a.linkTitle);
+}
+
+version (unittest)
+{
+    // The first link inline in the document's first paragraph, or null.
+    private const(MdInline)* firstLink(in MdDoc d) @safe
+    {
+        foreach (ref inl; d.root.children[0].inlines)
+            if (inl.kind == MdInlineKind.link)
+                return &inl;
+        return null;
+    }
+}
+
+/// The three reference forms all resolve against the definition table, and the
+/// definition may be written BELOW the paragraph that uses it.
+@("md.model.referenceLink.forms")
+@system
+unittest
+{
+    auto d = extractForTest(
+        "a [full reference][ref], a [collapsed][], and a [shortcut].\n"
+        ~ "\n"
+        ~ "[ref]: http://example.com/ref\n"
+        ~ "[collapsed]: http://example.com/collapsed\n"
+        ~ "[shortcut]: http://example.com/shortcut\n");
+
+    assert(d.linkDefs.length == 3, "every definition is collected");
+
+    const(MdInline)*[] links;
+    foreach (ref inl; d.root.children[0].inlines)
+        if (inl.kind == MdInlineKind.link)
+            links ~= &inl;
+    assert(links.length == 3, "all three forms became links");
+    assert(links[0].linkDest == "http://example.com/ref", links[0].linkDest);
+    assert(links[1].linkDest == "http://example.com/collapsed", links[1].linkDest);
+    assert(links[2].linkDest == "http://example.com/shortcut", links[2].linkDest);
+
+    // The visible label is the link TEXT, not the lookup label.
+    assert(d.source[links[0].children[0].span.start
+        .. links[0].children[0].span.end] == "full reference");
+}
+
+/// A definition's title travels with the destination, and label matching is
+/// CommonMark-normalized (case-insensitive, whitespace-collapsing).
+@("md.model.referenceLink.titleAndLabelFolding")
+@system
+unittest
+{
+    auto d = extractForTest(
+        "see [text][Ref  Link] now\n\n"
+        ~ `[ref link]: http://x "Ref title"` ~ "\n");
+    auto a = firstLink(d);
+    assert(a !is null, "the label matched despite case and spacing");
+    assert(a.linkDest == "http://x", a.linkDest);
+    assert(a.linkTitle == "Ref title", a.linkTitle);
+}
+
+/// Nested inline formatting inside a reference label survives, exactly as it
+/// does inside an inline link's text.
+@("md.model.referenceLink.formattedLabel")
+@system
+unittest
+{
+    auto d = extractForTest(
+        "see [**bold** `code` *note*][ref] now\n\n[ref]: http://x\n");
+    auto a = firstLink(d);
+    assert(a !is null);
+    MdInlineKind[] kinds;
+    foreach (ref c; a.children)
+        if (c.kind != MdInlineKind.text)
+            kinds ~= c.kind;
+    assert(kinds == [MdInlineKind.strong, MdInlineKind.codeSpan,
+        MdInlineKind.emphasis], "the label keeps its nested spans");
+}
+
+/// An unresolved label is NOT a link: CommonMark renders the literal source,
+/// brackets included. This is also what keeps a `[!NOTE]` callout marker —
+/// which parses as a shortcut link — from becoming a bogus empty-href link.
+@("md.model.referenceLink.undefinedDegradesToText")
+@system
+unittest
+{
+    auto d = extractForTest("see [not defined][missing] and [!NOTE] now\n");
+    foreach (ref inl; d.root.children[0].inlines)
+        assert(inl.kind != MdInlineKind.link,
+            "an undefined label must not become a link");
+
+    // The bytes survive verbatim, brackets and all.
+    string s;
+    foreach (ref inl; d.root.children[0].inlines)
+        s ~= d.source[inl.span.start .. inl.span.end];
+    import std.algorithm.searching : canFind;
+    assert(s.canFind("[not defined][missing]"), s);
+    assert(s.canFind("[!NOTE]"), s);
+}
+
+/// Reference images resolve through the same table. An unresolved one keeps
+/// its alt text rather than degrading to literal source — the alt IS an
+/// image's fallback.
+@("md.model.referenceImage")
+@system
+unittest
+{
+    auto d = extractForTest(
+        "![diagram][img] and ![absent][nope]\n\n"
+        ~ `[img]: diagram.png "A diagram"` ~ "\n");
+    const(MdInline)*[] imgs;
+    foreach (ref inl; d.root.children[0].inlines)
+        if (inl.kind == MdInlineKind.image)
+            imgs ~= &inl;
+    assert(imgs.length == 2, "both stayed images");
+    assert(imgs[0].linkDest == "diagram.png", imgs[0].linkDest);
+    assert(imgs[0].linkTitle == "A diagram", imgs[0].linkTitle);
+    assert(imgs[1].linkDest.length == 0, "the unresolved one has no dest");
 }
 
 @("md.model.htmlBlock")
