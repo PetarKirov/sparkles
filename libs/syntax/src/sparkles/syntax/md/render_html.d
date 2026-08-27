@@ -368,7 +368,9 @@ private void writeInline(Writer)(ref Writer w, scope const(char)[] src, in MdInl
         case MdInlineKind.link:
             put(w, `<a href="`);
             writeHtmlEscaped(w, inl.linkDest);
-            put(w, `">`);
+            put(w, `"`);
+            writeTitleAttr(w, inl.linkTitle);
+            put(w, `>`);
             writeInlines(w, src, inl.children);
             put(w, "</a>");
             break;
@@ -380,13 +382,27 @@ private void writeInline(Writer)(ref Writer w, scope const(char)[] src, in MdInl
             foreach (ref const c; inl.children) // alt = concatenated leaf text
                 if (c.kind == MdInlineKind.text)
                     writeHtmlEscaped(w, slice(src, c.span));
-            put(w, `">`);
+            put(w, `"`);
+            writeTitleAttr(w, inl.linkTitle);
+            put(w, `>`);
             break;
 
         case MdInlineKind.lineBreak:
             put(w, "<br>");
             break;
     }
+}
+
+// ` title="…"`, or nothing when there is no title. Emitted for links and
+// images alike — both carry one, from an inline `(url "t")` or from the
+// reference definition the label resolved against.
+private void writeTitleAttr(Writer)(ref Writer w, scope const(char)[] title)
+{
+    if (title.length == 0)
+        return;
+    put(w, ` title="`);
+    writeHtmlEscaped(w, title);
+    put(w, `"`);
 }
 
 private const(char)[] slice(return scope const(char)[] src, in Span s) @safe pure nothrow @nogc
@@ -545,6 +561,40 @@ unittest
         `<p>see <a href="http://x">text</a></p>`);
     assert(renderBlock("![alt](img.png)\n") ==
         `<p><img src="img.png" alt="alt"></p>`);
+}
+
+/// Reference-style links reach the emitter already resolved, so they render
+/// exactly like inline ones — and an undefined label is literal text, not an
+/// `href=""`.
+@("md.render_html.referenceLink")
+@system
+unittest
+{
+    assert(renderBlock("see [text][ref]\n\n[ref]: http://x\n") ==
+        `<p>see <a href="http://x">text</a></p>`);
+    assert(renderBlock("see [ref]\n\n[ref]: http://x\n") ==
+        `<p>see <a href="http://x">ref</a></p>`);
+    assert(renderBlock("see [missing][nope]\n") ==
+        `<p>see [missing][nope]</p>`);
+}
+
+/// Titles become a `title=` attribute, from either syntax, on links and
+/// images alike.
+@("md.render_html.linkTitle")
+@system
+unittest
+{
+    assert(renderBlock(`see [text](http://x "Hover me")` ~ "\n") ==
+        `<p>see <a href="http://x" title="Hover me">text</a></p>`);
+    assert(renderBlock("see [text][ref]\n\n" ~ `[ref]: http://x "From the def"` ~ "\n") ==
+        `<p>see <a href="http://x" title="From the def">text</a></p>`);
+    assert(renderBlock(`![alt](img.png "A diagram")` ~ "\n") ==
+        `<p><img src="img.png" alt="alt" title="A diagram"></p>`);
+    // A title is escaped like every other attribute value. (Angle brackets are
+    // not exercised here: the inline grammar treats a `<b>` inside the title as
+    // an HTML tag and abandons the link, so such a title never reaches us.)
+    assert(renderBlock(`[t](http://x "Tom & Jerry")` ~ "\n") ==
+        `<p><a href="http://x" title="Tom &amp; Jerry">t</a></p>`);
 }
 
 @("md.render_html.list")
