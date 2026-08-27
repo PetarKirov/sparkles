@@ -97,13 +97,18 @@ template propertyGetters(T)
 
 /// `true` when `T` exposes at least one public declared field.
 enum bool hasPublicFields(T) = () {
-    bool any;
-    static foreach (i; 0 .. fieldCount!T)
+    static if (is(T == struct) || is(T == union) || is(T == class))
     {
-        static if (__traits(getProtection, T.tupleof[i]) == "public")
-            any = true;
+        bool any;
+        static foreach (i; 0 .. fieldCount!T)
+        {
+            static if (__traits(getProtection, T.tupleof[i]) == "public")
+                any = true;
+        }
+        return any;
     }
-    return any;
+    else
+        return false; // enums and other non-aggregates have no fields
 }();
 
 /**
@@ -115,7 +120,12 @@ domain-specific projection hooks. `void` when `T` does not opt in.
 */
 template valueLikeGetter(T)
 {
-    static if (!hasPublicFields!T && propertyGetters!T.length == 1
+    // The aggregate guard comes first and short-circuits: for built-ins and
+    // enums the member queries do not instantiate, and a failed
+    // instantiation inside `is(... == void)` would read as "not void" —
+    // turning an error into a wrong yes.
+    static if ((is(T == struct) || is(T == union) || is(T == class))
+        && !hasPublicFields!T && propertyGetters!T.length == 1
         && isScalarKind(typeKindOf!(ReturnType!(propertyGetters!T[0]))))
         alias valueLikeGetter = propertyGetters!T[0];
     else
