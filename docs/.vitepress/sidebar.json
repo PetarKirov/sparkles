@@ -2580,6 +2580,29 @@
         ]
       },
       {
+        "text": "Full-Text Search",
+        "link": "/research/full-text-search/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/full-text-search/concepts"
+          },
+          {
+            "text": "Measurement Protocol",
+            "link": "/research/full-text-search/measurement"
+          },
+          {
+            "text": "Sparkles Baseline",
+            "link": "/research/full-text-search/sparkles-baseline"
+          },
+          {
+            "text": "Foundations (Theory)",
+            "link": "/research/full-text-search/theory/"
+          }
+        ]
+      },
+      {
         "text": "Diff Viewers & PR Review",
         "link": "/research/diff-review/",
         "collapsed": true,
