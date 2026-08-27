@@ -12,6 +12,7 @@ import std.traits : isSomeChar, isSomeString;
 
 import sparkles.base.term_style : Style;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
+import sparkles.reflection.kind : TypeKind, typeKindOf;
 
 version (unittest)
 {
@@ -735,71 +736,161 @@ unittest
     checkWriter!((ref b) { b ~= "keep:"; b.writeText(i" $(7)"); })("keep: 7");
 }
 
-/// Writes any value to an output range using best-effort @nogc conversion.
-///
-/// Dispatch order:
-/// 1. `bool` — writes `"true"` or `"false"`
-/// 2. Integral types — uses `writeInteger`
-/// 3. Floating-point types — uses `writeFloat`
-/// 4. `char` — writes the character directly
-/// 5. String/char slices — writes directly via `put`
-/// 6. User types with @nogc output range `toString` — calls `t.toString(writer)`
-/// 7. User types with @nogc sink `toString` — calls with a forwarding delegate
-/// 8. User types with @nogc `toString()` returning `string` — writes the result
-/// 9. User types with @nogc `string` cast — writes `cast(string) t`
-/// 10. Fallback — uses `std.conv.to!string` (GC-allocating)
-void writeValue(Writer, T)(ref Writer w, auto ref const T val)
+/**
+The presentation policy of plain `writeValue`: no styling, no escaping, and
+enums rendered as their underlying integer — byte-for-byte the behavior the
+pre-unification `writeValue` produced (integral-based enums matched its
+`isIntegral` branch and went through `writeInteger`).
+*/
+struct PlainValuePolicy {}
+
+/**
+The one shared scalar dispatch behind `writeValue` and `writeStyledValue`.
+
+Classification comes from `sparkles.reflection.kind`, so the writer ladder and
+every other consumer of the reflection kernel answer "what shape is this
+value" identically. `Policy` is a DbI hook (`Policy = PlainValuePolicy` is the
+baseline) whose optional primitives are:
+
+$(UL
+    $(LI `Style styleOf(T)(value)` — per-type/per-value style selection)
+    $(LI `enum bool escapeStrings` — write strings quoted and escaped)
+    $(LI `enum bool escapeChars` — write chars quoted and escaped)
+    $(LI `enum EnumRender enumRender` — how enum values are rendered)
+)
+*/
+private void writeValueBody(Policy, Writer, T)(ref Writer w,
+    auto ref const T value, in Policy policy)
 {
     import std.range.primitives : put;
-    import std.traits : isSomeChar, isSomeString;
+    import std.traits : OriginalType;
 
-    static if (is(T == bool))
+    static if (typeKindOf!T == TypeKind.null_)
     {
-        put(w, val ? "true" : "false");
+        put(w, "null");
     }
-    else static if (isSomeChar!T)
+    else static if (typeKindOf!T == TypeKind.enumeration)
     {
-        // Copy the char into a one-element stack array and write its slice;
-        // fully @safe, with no pointer aliasing of `val`.
-        T[1] arr = val;
-        put(w, arr[]);
+        static if (__traits(hasMember, Policy, "enumRender"))
+        {
+            final switch (Policy.enumRender) with (EnumRender)
+            {
+                case EnumRender.memberName:
+                    writeEnumMemberName(w, value);
+                    break;
+                case EnumRender.underlying:
+                    writeInteger(w, cast(OriginalType!T) value);
+                    break;
+            }
+        }
+        else
+            writeInteger(w, cast(OriginalType!T) value);
     }
-    else static if (__traits(isIntegral, T))
+    else static if (typeKindOf!T == TypeKind.boolean)
     {
-        writeInteger(w, val);
+        put(w, value ? "true" : "false");
     }
-    else static if (__traits(isFloating, T))
+    else static if (typeKindOf!T == TypeKind.character)
     {
-        writeFloat(w, val);
+        static if (__traits(hasMember, Policy, "escapeChars")
+            && Policy.escapeChars)
+            writeEscapedCharLiteral(w, value);
+        else
+        {
+            // Copy the char into a one-element stack array and write its
+            // slice; fully @safe, with no pointer aliasing of `value`.
+            T[1] arr = value;
+            put(w, arr[]);
+        }
     }
-    else static if (isSomeString!T || is(T : const(char)[]))
+    else static if (typeKindOf!T == TypeKind.text)
     {
-        put(w, val);
+        static if (__traits(hasMember, Policy, "escapeStrings")
+            && Policy.escapeStrings)
+            writeEscapedString(w, value);
+        else
+            put(w, value);
     }
-    else static if (hasNogcOutputRangeToString!T)
+    else static if (typeKindOf!T == TypeKind.signedInteger
+        || typeKindOf!T == TypeKind.unsignedInteger)
     {
-        // Best: direct output range — no allocation, no delegate
-        val.toString(w);
+        writeInteger(w, value);
     }
-    else static if (hasNogcSinkToString!T)
+    else static if (typeKindOf!T == TypeKind.floating)
     {
-        // Good: sink delegate — no allocation
-        val.toString((const(char)[] chunk) @nogc { put(w, chunk); });
-    }
-    else static if (hasNogcStringToString!T)
-    {
-        put(w, val.toString());
-    }
-    else static if (hasNogcStringCast!T)
-    {
-        put(w, cast(string) val);
+        writeFloat(w, value);
     }
     else
     {
-        // GC fallback
-        import std.conv : to;
-        put(w, val.to!string);
+        // Opaque value: the @nogc conversion capability chain, GC fallback
+        // last.
+        static if (hasNogcOutputRangeToString!T)
+        {
+            // Best: direct output range — no allocation, no delegate
+            value.toString(w);
+        }
+        else static if (hasNogcSinkToString!T)
+        {
+            // Good: sink delegate — no allocation
+            value.toString((const(char)[] chunk) @nogc { put(w, chunk); });
+        }
+        else static if (hasNogcStringToString!T)
+        {
+            put(w, value.toString());
+        }
+        else static if (hasNogcStringCast!T)
+        {
+            put(w, cast(string) value);
+        }
+        else
+        {
+            // GC fallback
+            import std.conv : to;
+            put(w, value.to!string);
+        }
     }
+}
+
+/// Opens the policy's style (when it offers one and `colored`), writes the
+/// value through the shared body, and closes the style.
+private void writeValueImpl(Policy, Writer, T)(ref Writer w,
+    auto ref const T value, in Policy policy, bool colored)
+{
+    Style style = Style.none;
+    static if (__traits(compiles, policy.styleOf(value)))
+    {
+        if (colored)
+            style = policy.styleOf(value);
+    }
+
+    if (style != Style.none)
+        writeEscapeSeq(w, style[0]);
+
+    writeValueBody!(Policy, Writer, T)(w, value, policy);
+
+    if (style != Style.none)
+        writeEscapeSeq(w, style[1]);
+}
+
+/// Writes any value to an output range using best-effort `@nogc` conversion.
+///
+/// One dispatch body shared with `writeStyledValue`, over the
+/// $(REF typeKindOf, sparkles, reflection, kind) classification:
+///
+/// $(OL
+///     $(LI `null` — writes `"null"` (no GC))
+///     $(LI enums — the underlying integer via `writeInteger`)
+///     $(LI `bool` — `"true"` / `"false"`)
+///     $(LI chars — written directly)
+///     $(LI strings and string-like values — written via `put`)
+///     $(LI integers — `writeInteger`; floats — `writeFloat`)
+///     $(LI user types — the `@nogc` `toString` capability chain: output
+///         range, sink delegate, string return, `string` cast)
+///     $(LI fallback — `std.conv.to!string` (GC-allocating))
+/// )
+void writeValue(Writer, T)(ref Writer w, auto ref const T val)
+{
+    writeValueImpl(w, val, PlainValuePolicy.init, false);
 }
 
 @("writeValue.bool")
@@ -853,6 +944,26 @@ unittest
     SharedBuffer!(char, 64) buf;
     writeValue(buf, "hello world");
     assert(buf[] == "hello world");
+}
+
+/// Enums render as their underlying integer under the plain policy — the
+/// pre-unification ladder caught integral-based enums in its `isIntegral`
+/// branch, and every markdown golden of that behavior still holds.
+@("writeValue.enum.rendersUnderlyingValue")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    enum Dir { north, south }
+
+    SmallBuffer!(char, 16) buf;
+    writeValue(buf, Dir.south);
+    assert(buf[] == "1");
+
+    buf.clear();
+    writeValue(buf, Dir.north);
+    assert(buf[] == "0");
 }
 
 @("writeValue.nogcOutputRangeType")
@@ -1023,26 +1134,21 @@ unittest
 /// Controls how enum values are rendered by `writeStyledValue`.
 enum EnumRender
 {
-    underlying, /// Write as underlying integer (default for `writeValue`)
+    underlying, /// Write as underlying integer (default for styled hooks)
     memberName, /// Write the member name string (e.g., `"green"`)
 }
 
 /// True if `T` is a leaf type that can be written by `writeStyledValue`
 /// without requiring recursive pretty-printing.
 ///
-/// Leaf types: `null`, `bool`, integrals, floating-point, `char`, `string`, `enum`.
+/// Leaf types: `null`, `bool`, integrals, floating-point, `char`, `string`,
+/// `enum` — exactly the scalar kinds of the shared
+/// $(REF typeKindOf, sparkles, reflection, kind) classification.
 template isLeafValue(T)
 {
-    import std.traits : isSomeChar, isSomeString;
+    import sparkles.reflection.kind : isScalarKind, typeKindOf;
 
-    enum isLeafValue =
-        is(T == typeof(null)) ||
-        is(T == bool) ||
-        is(T == enum) ||
-        __traits(isIntegral, T) ||
-        __traits(isFloating, T) ||
-        isSomeChar!T ||
-        isSomeString!T;
+    enum isLeafValue = isScalarKind(typeKindOf!T);
 }
 
 @("isLeafValue.builtinTypes")
@@ -1072,89 +1178,18 @@ unittest
 
 /// Writes a leaf value to an output range with optional ANSI styling.
 ///
-/// Parameterized by a DbI hook that controls:
-/// $(UL
-///   $(LI `Style styleOf(T)(val)` — per-type/per-value style selection)
-///   $(LI `enum bool escapeStrings` — write strings with quotes and escapes)
-///   $(LI `enum bool escapeChars` — write chars with quotes and escapes)
-///   $(LI `enum EnumRender enumRender` — how to render enum values)
-/// )
+/// A thin wrapper over the shared dispatch body
+/// (`writeValueImpl`): the hook's optional primitives — `styleOf`,
+/// `escapeStrings`, `escapeChars`, `enumRender` — select presentation only;
+/// type handling and the conversion chain are the shared body's, identical to
+/// plain `writeValue`.
 ///
-/// All hook primitives are optional (DbI §5). When absent, defaults apply:
-/// no styling, raw strings/chars, enums as underlying integers.
-void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool colored)
+/// Hook defaults when a primitive is absent: no styling, raw strings/chars,
+/// enums as underlying integers.
+void writeStyledValue(Hook, Writer, T)(ref Writer w, auto ref const T value,
+    in Hook hook, bool colored)
 {
-    import std.range.primitives : put;
-    import std.traits : isSomeChar, isSomeString, OriginalType;
-
-    // 1. Compute style from hook (optional primitive)
-    Style style = Style.none;
-    static if (__traits(compiles, hook.styleOf(value)))
-    {
-        if (colored)
-            style = hook.styleOf(value);
-    }
-
-    // 2. Open style
-    if (style != Style.none)
-        writeEscapeSeq(w, style[0]);
-
-    // 3. Dispatch by type
-    static if (is(T == typeof(null)))
-        put(w, "null");
-
-    else static if (is(T == enum))
-    {
-        // Hook-controlled enum rendering
-        static if (__traits(compiles, Hook.enumRender))
-            enum render = Hook.enumRender;
-        else
-            enum render = EnumRender.underlying;
-
-        static if (render == EnumRender.memberName)
-            writeEnumMemberName(w, value);
-        else static if (render == EnumRender.underlying)
-            writeInteger(w, cast(OriginalType!T) value);
-        else
-            static assert(false, "Unknown enum render value");
-    }
-    else static if (is(T == bool))
-        put(w, value ? "true" : "false");
-
-    else static if (isSomeChar!T)
-    {
-        static if (__traits(compiles, Hook.escapeChars) && Hook.escapeChars)
-            writeEscapedCharLiteral(w, value);
-        else
-        {
-            T[1] arr = value;
-            put(w, arr[]);
-        }
-    }
-    else static if (isSomeString!T)
-    {
-        static if (__traits(compiles, Hook.escapeStrings) && Hook.escapeStrings)
-            writeEscapedString(w, value);
-        else
-            put(w, value);
-    }
-    else static if (__traits(isIntegral, T))
-    {
-        writeInteger(w, value);
-    }
-    else static if (__traits(isFloating, T))
-    {
-        writeFloat(w, value);
-    }
-    else
-    {
-        // Non-leaf fallback: delegate to plain writeValue
-        writeValue(w, value);
-    }
-
-    // 4. Close style
-    if (style != Style.none)
-        writeEscapeSeq(w, style[1]);
+    writeValueImpl(w, value, hook, colored);
 }
 
 /// Default hook: no styling, no escaping, enums as integers.
