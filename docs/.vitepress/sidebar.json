@@ -2603,6 +2603,34 @@
           {
             "text": "fff (grep engine)",
             "link": "/research/full-text-search/fff-grep"
+          },
+          {
+            "text": "GNU grep",
+            "link": "/research/full-text-search/gnu-grep"
+          },
+          {
+            "text": "ripgrep",
+            "link": "/research/full-text-search/ripgrep"
+          },
+          {
+            "text": "ugrep",
+            "link": "/research/full-text-search/ugrep"
+          },
+          {
+            "text": "git grep",
+            "link": "/research/full-text-search/git-grep"
+          },
+          {
+            "text": "The Silver Searcher",
+            "link": "/research/full-text-search/silver-searcher"
+          },
+          {
+            "text": "hypergrep",
+            "link": "/research/full-text-search/hypergrep"
+          },
+          {
+            "text": "Grep long tail",
+            "link": "/research/full-text-search/grep-long-tail"
           }
         ]
       },
