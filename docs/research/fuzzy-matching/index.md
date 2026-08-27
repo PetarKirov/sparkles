@@ -43,6 +43,13 @@ This survey answers six questions:
 > its benchmark threads), fzf-lua (a wrapper around the fzf binary, no
 > matcher of its own), zf (Zig; filename-weighted ranking), and the
 > completion-engine consumers (blink.cmp).
+>
+> **Out of scope: content search.** This tree answers "given 500k paths and the
+> query `usr`, which rank highest". "Given 2 GB of file _content_ and a pattern,
+> which bytes match" is a different problem with a different literature, surveyed
+> in [Full-Text Search][full-text-search]. The split is by **organ**, not by
+> project — [fff]'s fuzzy matcher belongs here, its `fff-core/src/grep/` engine
+> belongs there.
 
 ---
 
@@ -135,6 +142,8 @@ This survey answers six questions:
   [snacks-picker] → the [comparison]'s architecture invariants.
 - **"I want the whole-engine view."** [fff] (ranking, frecency, query
   language, arena) → [comparison].
+- **"I want content search, not path search."** → [Full-Text
+  Search][full-text-search].
 - **"I'm designing `sparkles:fuzzy`."** [comparison] (consensus + delta
   table) → [fff] + [frizbee] (the porting sources) → the
   [`sparkles:fuzzy` spec][fuzzy-spec] and its [delivery plan][fuzzy-plan];
@@ -167,6 +176,7 @@ revisions surveyed here are fzf `0579bb0e`, fzy `34b88869`, nucleo
 [telescope-fzf-native]: ./telescope-fzf-native.md
 [snacks-picker]: ./snacks-picker.md
 [helix-integration]: ./helix-integration.md
+[full-text-search]: ../full-text-search/index.md
 [comparison]: ./comparison.md
 [frizbee-63]: https://github.com/Saghen/frizbee/issues/63
 [fuzzy-benches]: https://github.com/noib3/fuzzy-benches
