@@ -164,21 +164,21 @@ share.
 
 ## The catalog
 
-| Page                                                                                                                                                             | Category                             | Phase             |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------- |
-| [Concepts & vocabulary](./concepts.md)                                                                                                                           | Framing                              | 0 ✅              |
-| [Measurement protocol](./measurement.md)                                                                                                                         | Method                               | 0 ✅              |
-| [Sparkles baseline](./sparkles-baseline.md)                                                                                                                      | System under improvement             | 0 ✅              |
-| [Theory](./theory/index.md)                                                                                                                                      | Framing                              | 0 ✅ (pages in 3) |
-| `gnu-grep` · `ripgrep` · `ugrep` · `git-grep` · `silver-searcher` · `hypergrep` · `grep-long-tail`                                                               | Scanners                             | 1                 |
-| [fff (grep engine)](./fff-grep.md)                                                                                                                               | Scanner — hue's stated design source | 1 ✅              |
-| `rust-regex` · `std-regex` · `re2` · `pcre2` · `vectorscan` · `oniguruma` · `dotnet-nonbacktracking` · `engine-comparison`                                       | Engines                              | 2                 |
-| `literal-prefilters` · `multi-pattern`                                                                                                                           | Primitives                           | 2                 |
-| `theory/automata` · `bit-parallel` · `string-matching` · `approximate` · `succinct-indexes` · `ranked-retrieval`                                                 | Theory                               | 3                 |
-| `trigram-indexes/` (`google-codesearch`, `zoekt`, `livegrep`) · `suffix-structures` · `compressed-self-indexes` · `lucene` · `tantivy` · `pisa` · `embedded-fts` | Indexes                              | 4                 |
-| `gpu-automata` · `gpu-retrieval` · `hardware-automata` · `wide-simd`                                                                                             | Acceleration                         | 5                 |
-| `corpus-access` · `unicode-semantics` · `approximate-search` · `structural-search` · `interactive-contracts`                                                     | Systems & semantics                  | 6                 |
-| `comparison` · `recommendations`                                                                                                                                 | Synthesis                            | 7                 |
+| Page                                                                                                                                                                                                                  | Category                             | Phase             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------- |
+| [Concepts & vocabulary](./concepts.md)                                                                                                                                                                                | Framing                              | 0 ✅              |
+| [Measurement protocol](./measurement.md)                                                                                                                                                                              | Method                               | 0 ✅              |
+| [Sparkles baseline](./sparkles-baseline.md)                                                                                                                                                                           | System under improvement             | 0 ✅              |
+| [Theory](./theory/index.md)                                                                                                                                                                                           | Framing                              | 0 ✅ (pages in 3) |
+| [gnu-grep](./gnu-grep.md) · [ripgrep](./ripgrep.md) · [ugrep](./ugrep.md) · [git-grep](./git-grep.md) · [silver-searcher](./silver-searcher.md) · [hypergrep](./hypergrep.md) · [grep-long-tail](./grep-long-tail.md) | Scanners                             | 1 ✅              |
+| [fff (grep engine)](./fff-grep.md)                                                                                                                                                                                    | Scanner — hue's stated design source | 1 ✅              |
+| `rust-regex` · `std-regex` · `re2` · `pcre2` · `vectorscan` · `oniguruma` · `dotnet-nonbacktracking` · `engine-comparison`                                                                                            | Engines                              | 2                 |
+| `literal-prefilters` · `multi-pattern`                                                                                                                                                                                | Primitives                           | 2                 |
+| `theory/automata` · `bit-parallel` · `string-matching` · `approximate` · `succinct-indexes` · `ranked-retrieval`                                                                                                      | Theory                               | 3                 |
+| `trigram-indexes/` (`google-codesearch`, `zoekt`, `livegrep`) · `suffix-structures` · `compressed-self-indexes` · `lucene` · `tantivy` · `pisa` · `embedded-fts`                                                      | Indexes                              | 4                 |
+| `gpu-automata` · `gpu-retrieval` · `hardware-automata` · `wide-simd`                                                                                                                                                  | Acceleration                         | 5                 |
+| `corpus-access` · `unicode-semantics` · `approximate-search` · `structural-search` · `interactive-contracts`                                                                                                          | Systems & semantics                  | 6                 |
+| `comparison` · `recommendations`                                                                                                                                                                                      | Synthesis                            | 7                 |
 
 ## Reading paths
 
@@ -192,7 +192,7 @@ share.
 `zoekt` → `compressed-self-indexes` → theses T2 and T3 in `comparison`.
 
 **"I am implementing hue's grep source."**
-[baseline](./sparkles-baseline.md) → [fff-grep](./fff-grep.md) → `ripgrep` →
+[baseline](./sparkles-baseline.md) → [fff-grep](./fff-grep.md) → [ripgrep](./ripgrep.md) →
 `corpus-access` → `interactive-contracts` → `recommendations`.
 
 **"I need to make a performance claim."**
