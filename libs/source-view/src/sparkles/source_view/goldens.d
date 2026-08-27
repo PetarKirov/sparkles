@@ -44,13 +44,14 @@ import sparkles.ui.themes : builtinThemes;
 
 /// The fixture corpus: individual features first, then the composition.
 private static immutable fixtureNames = [
-    "headings", "inline", "lists", "tables", "tables-wide", "tables-tall",
-    "tables-wrap", "code", "code-tall", "callouts", "misc", "kitchen-sink",
+    "headings", "inline", "links", "lists", "tables", "tables-wide",
+    "tables-tall", "tables-wrap", "code", "code-tall", "callouts", "misc",
+    "kitchen-sink",
 ];
 
 /// Per-fixture option overrides: the corpus renders under one shared
 /// configuration, except where a fixture exists to pin a specific MODE —
-/// `tables-wrap` renders the wide-table corpus under `--table-overflow wrap`.
+/// `tables-wrap` has its own source and renders under `--table-overflow wrap`.
 private MdViewOptions fixtureOverrides(string name, MdViewOptions opt)
 {
     if (name == "tables-wrap")
@@ -138,7 +139,8 @@ private void checkFixtures(in string[] names, string suffix, bool interactive)
             continue;
         }
         assert(txtPath.exists, name ~ suffix ~ " is missing — regenerate "
-            ~ "with SPARKLES_UPDATE_GOLDENS=1 dub test :syntax -- -i md.goldens");
+            ~ "with SPARKLES_UPDATE_GOLDENS=1 dub test :source-view "
+            ~ "-- -i md.goldens");
         const expected = readText(txtPath);
         assert(rendered == expected, name ~ ": rendered grid differs from "
             ~ name ~ suffix ~ " (first divergence at line "

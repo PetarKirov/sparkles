@@ -3163,7 +3163,7 @@ int runGui(GuiArgs guiArgs) @system
                 && formatPreviewRulerHits(vm, rulerColF()));
 
         const fenceShape = vm.barShape();
-        // A link in the rendered preview wants the hand (`MDP23`), resolved
+        // A link in the rendered preview wants the hand (`MDP25`), resolved
         // through the identity channel like every other sub-widget hit. It is
         // the LAST hover contribution: the ruler and the bars are chrome
         // affordances offering an action on the view, and chrome outranks
