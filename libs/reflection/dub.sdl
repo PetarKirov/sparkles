@@ -1,0 +1,29 @@
+name "reflection"
+description "Dependency-free structural reflection: type classification, DbI type/value visitors, and CTFE field tables"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+targetType "library"
+
+sourcePaths "src"
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    targetType "library"
+}
+
+// Plain unittest configuration on purpose: every library below base (and the
+// test-runner-impl closure) will depend on this package, so the runner shim
+// cannot be a dependency edge here. Unittests run under dub's default module
+// unit tester.
+configuration "unittest" {
+    dflags "-checkaction=context" "-allinst"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
