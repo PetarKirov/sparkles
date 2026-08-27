@@ -715,6 +715,21 @@ struct PreviewTui
     bool rulerHovering() const @safe pure nothrow @nogc
         => formatPreviewActive(vm) && (rulerHover || vm.fmt.rulerDrag);
 
+    /// Pointer hover over a markdown link, kept by the same bare-move branch
+    /// and for the same reason as `rulerHover`.
+    private bool linkHover;
+
+    /// The pane's other shape contribution (`MDP23`): the link hand while the
+    /// pointer is over a link in the rendered preview.
+    bool linkHovering() const @safe pure nothrow @nogc => linkHover;
+
+    /// A pane cell → the document point the identity channel is indexed by:
+    /// the body starts at row 1 under the header, and the content is shifted
+    /// left by the horizontal bar's offset when it overflows (`IXB2`).
+    private Point docPointOf(in Point paneCell) const @safe pure nothrow @nogc
+        => Point(paneCell.x + (vm.hOverflows() ? cast(int) vm.hsb.offset : 0),
+            cast(int)(top + (paneCell.y - 1)));
+
     /// The format-preview ruler (`RUL1`). A vertical `rule` op is a silent
     /// no-op in the cell canvas, so paint by hand like the pane dividers:
     /// `│` into blank cells, a fg accent where a glyph already sits — the
@@ -1629,7 +1644,13 @@ struct PreviewTui
         const rulerColF = cast(double)(e.pos.x - originX
             + (vm.hOverflows() ? cast(int) vm.hsb.offset : 0));
         if (e.button == PointerButton.none && e.action == PointerAction.move)
+        {
             rulerHover = formatPreviewRulerHits(vm, rulerColF);
+            // A link under the pointer wants the hand (`MDP23`), kept here for
+            // the same reason the ruler's hover is: the workspace composes
+            // pane shapes without a position.
+            linkHover = showPreview && vm.linkAt(docPointOf(e.pos)) !is null;
+        }
         if (formatPreviewRulerDragging(vm) && e.button == PointerButton.left
             && (e.action == PointerAction.drag
                 || e.action == PointerAction.release))

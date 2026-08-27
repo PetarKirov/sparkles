@@ -140,11 +140,15 @@ struct Terminal
 
     /// Diff `grid` against the last frame and write the minimal update, wrapped in
     /// synchronized-output markers so the terminal composites it atomically.
-    void draw(in Grid grid) @trusted
+    ///
+    /// `links` is the frame's OSC 8 URI table, indexed from 1 by a cell's
+    /// `linkId` (see $(REF Screen.render, sparkles,tui,render)); omit it and no
+    /// hyperlink sequence is emitted.
+    void draw(in Grid grid, scope const(char)[][] links = null) @trusted
     {
         _buf.clear();
         writeEscapeSeq!(CtlSeq.syncBegin)(_buf);
-        _screen.render(grid, _buf);
+        _screen.render(grid, _buf, links);
         writeEscapeSeq!(CtlSeq.syncEnd)(_buf);
         writeAll(_outFd, _buf[]);
     }

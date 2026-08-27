@@ -1093,7 +1093,14 @@ struct WorkspaceTui
     {
         if (viewer.rulerHovering)
             return PointerShape.ewResize; // the ruler hover (`RUL3`/`RUL6`)
-        return viewer.vm.barShape();
+        const bar = viewer.vm.barShape();
+        if (bar != PointerShape.default_)
+            return bar;
+        // A link in the rendered preview wants the hand (`MDP23`), ranked
+        // last: the ruler and the bars are chrome affordances that offer an
+        // action ON the view, and chrome outranks content (`DCK9`).
+        return viewer.linkHovering
+            ? PointerShape.pointer : PointerShape.default_;
     }
 
     /// Applies one event; returns false to quit.
@@ -1694,6 +1701,12 @@ struct WorkspaceTui
         // which sequence out of band), which it captures exactly.
         static if (__traits(compiles, h.grid))
             paint(h.grid);
+        // The frame's hyperlink destinations, so the terminal itself makes the
+        // preview's link text clickable (`MDP24`). The view stamped each link's
+        // cells with an index into this table; handing it over is all the diff
+        // needs to wrap those runs in OSC 8.
+        static if (__traits(compiles, h.links))
+            h.links = viewer.vm.mdLinkTable.uris;
     }
 }
 
