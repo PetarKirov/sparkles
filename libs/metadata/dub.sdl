@@ -1,0 +1,25 @@
+name "metadata"
+description "Dependency-free passive metadata UDAs shared by Sparkles libraries"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "../../build"
+targetType "library"
+
+sourcePaths "src"
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    dflags "-checkaction=context" "-allinst"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

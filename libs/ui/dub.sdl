@@ -21,6 +21,7 @@ importPaths "src" "../test-runner/src" "../math/src"
 // sparkles:ui, never the reverse.
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
+dependency "sparkles:metadata" path="../.."
 // A REAL edge, not import-only like math: DMD speculatively emits TypeInfo
 // for structs of merely-IMPORTED modules into the importing object, and the
 // plain fuzzy leaves (QueryText/Constraint/AnalysisProfile) have generated

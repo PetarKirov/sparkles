@@ -50,6 +50,7 @@ import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind,
     Scoring;
 import sparkles.fuzzy.query : parseQuery, QueryStorage;
 import sparkles.fuzzy.rank : RankedResult, TopK;
+public import sparkles.metadata : Description, Label, Range;
 
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData;
@@ -63,14 +64,8 @@ import sparkles.ui.state : DisclosureState;
 // The metadata vocabulary (PRT9–PRT11).
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Display-name override for one member.
-struct Label { string text; }
-
-/// Documentation shown in details chrome and searched by the filter.
-struct Doc { string text; }
-
-/// Numeric bounds; enforced inside the generated dispatch before mutation.
-struct Range { double lo; double hi; double step = 0; }
+/// Compatibility spelling for property documentation.
+alias Doc = Description;
 
 /// Never presented, never searched, never addressable through the view.
 enum hidden;

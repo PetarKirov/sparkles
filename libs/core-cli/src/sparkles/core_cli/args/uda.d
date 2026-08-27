@@ -2,6 +2,8 @@ module sparkles.core_cli.args.uda;
 
 import std.traits : getUDAs, hasUDA;
 
+public import sparkles.metadata : Description;
+
 import sparkles.core_cli.help_formatting : Sections;
 
 private struct NamedOnly {}
@@ -330,12 +332,6 @@ unittest
     assert(byPosition.description_ == "Source path.");
     assert(byPosition.optional_);
     assert(byPosition.hidden_);
-}
-
-/// Human-readable description for an enum member, option, or command.
-struct Description
-{
-    string text;
 }
 
 struct Subcommands {}

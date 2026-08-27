@@ -336,6 +336,21 @@
         ]
       },
       {
+        "text": "metadata",
+        "link": "/libs/metadata/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Reference",
+            "link": "/libs/metadata/reference/attributes"
+          },
+          {
+            "text": "Explanation",
+            "link": "/libs/metadata/explanation/passive-metadata"
+          }
+        ]
+      },
+      {
         "text": "fuzzy",
         "link": "/libs/fuzzy/",
         "collapsed": true,
