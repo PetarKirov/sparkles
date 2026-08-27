@@ -324,6 +324,7 @@ private MdInline[] copyInlines(const(MdInline)[] inls) @safe
         copy.kind = inl.kind;
         copy.span = inl.span;
         copy.linkDest = inl.linkDest;
+        copy.linkTitle = inl.linkTitle;
         copy.children = copyInlines(inl.children);
         out_ ~= copy;
     }

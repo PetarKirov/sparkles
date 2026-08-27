@@ -428,6 +428,68 @@ uint viewMarkdownInto(ref Builder b, const MdDoc doc,
     MdViewOptions opt = MdViewOptions.init)
     => blocksColumn(b, doc.root.children, doc.source, opt);
 
+/// One rendered link: the source byte range its LABEL occupies, plus where it
+/// points. The range is the link inline's own span, which contains every byte
+/// the label's spans carry source identity for — so a pointer hit resolved
+/// through $(REF sourceOffsetAt, sparkles,ui,state) lands inside it.
+struct MdLinkRange
+{
+    size_t start; /// inclusive
+    size_t end;   /// exclusive
+    const(char)[] dest;  /// the resolved destination
+    const(char)[] title; /// the title, or "" — borrowed from the document
+
+    /// Whether `offset` falls inside this link.
+    bool contains(size_t offset) const @safe pure nothrow @nogc
+        => offset >= start && offset < end;
+}
+
+/**
+Every link in `doc`, in document order — the data a host needs to answer "is
+the pointer over a link?" without the widget tree learning about links.
+
+A `TextSpan` carries no interactive identity (only `srcStart`/`srcEnd`), and a
+whole prose row is one `rich` widget, so a link cannot be addressed by
+`Widget.hitId`. Instead the caller maps a pointer cell to a source byte with
+$(REF sourceOffsetAt, sparkles,ui,state) and looks it up here — the same
+source-anchored idiom folds, fences and table cells already use, and the one
+hue uses for twoslash token hover.
+
+Images are included: they have a destination too, and a preview that shows the
+alt text should still report the pointer over it. Links with no destination
+(an unresolved reference degrades to text before reaching here, but a
+malformed inline link can still produce one) are skipped — there is nothing to
+point at.
+*/
+MdLinkRange[] mdLinkRanges(const MdDoc doc) @safe
+{
+    MdLinkRange[] out_;
+
+    void walkInlines(const(MdInline)[] inls)
+    {
+        foreach (ref const inl; inls)
+        {
+            if ((inl.kind == MdInlineKind.link || inl.kind == MdInlineKind.image)
+                && inl.linkDest.length != 0)
+                out_ ~= MdLinkRange(inl.span.start, inl.span.end,
+                    inl.linkDest, inl.linkTitle);
+            walkInlines(inl.children); // a link inside an emphasis, say
+        }
+    }
+
+    void walkBlocks(const(MdBlock)[] blocks)
+    {
+        foreach (ref const b; blocks)
+        {
+            walkInlines(b.inlines); // headings, paragraphs and TABLE CELLS
+            walkBlocks(b.children);
+        }
+    }
+
+    walkBlocks(doc.root.children);
+    return out_;
+}
+
 // One column of blocks with a blank line's worth of gap between them. A
 // folded block collapses to its placeholder; a folded HEADING folds its whole
 // section (the sibling run up to the next heading of the same or higher level).
@@ -1800,15 +1862,49 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                             sp.fg = vt.linkFg;
                             sp.hasFg = true;
                         }
+                pushLinkTitle(inl.linkTitle, base, spans, vt);
                 break;
             }
             case image:
                 inlinesToSpans(inl.children, src, base, slot, spans, vt, em);
+                pushLinkTitle(inl.linkTitle, base, spans, vt);
                 break;
             case lineBreak:
                 spans ~= TextSpan("\n", slot, base); // hard break
                 break;
         }
+}
+
+/**
+A link/image title as a trailing ` (title)` annotation, or nothing when there
+is none.
+
+Deliberately NOT underlined and not in the link color: a title annotates the
+link, it is not part of it. It renders in the muted `quoteFg` role this view
+already uses for secondary text, so it needs no new theme role or glyph, and
+it is ordinary wrappable prose so it degrades at narrow widths like any other.
+
+It carries no source identity (`srcStart` stays unset): the parentheses and
+spacing are synthetic, and the title bytes may come from a reference
+definition somewhere else entirely in the document. Leaving it out of the
+identity channel keeps it from widening a link's hover range, joining a
+selection, or reaching `DocRow.sourceText`.
+*/
+private void pushLinkTitle(const(char)[] title, TextStyle base,
+    ref TextSpan[] spans, scope const(MdViewTheme)* vt)
+{
+    if (title.length == 0)
+        return;
+    auto s = base;
+    s.underline = UnderlineStyle.none;
+    s.bold = false;
+    s.italic = true;
+    spans ~= TextSpan(" (", Slot.inherit, s,
+        fg: vt !is null ? vt.quoteFg : RgbColor.init, hasFg: vt !is null);
+    spans ~= TextSpan(title, Slot.inherit, s,
+        fg: vt !is null ? vt.quoteFg : RgbColor.init, hasFg: vt !is null);
+    spans ~= TextSpan(")", Slot.inherit, s,
+        fg: vt !is null ? vt.quoteFg : RgbColor.init, hasFg: vt !is null);
 }
 
 /// Prose text as one styled span: whitespace runs (markdown soft wraps, tabs,
@@ -2741,6 +2837,77 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
         if (n.key != 0)
             keys ~= n.key - (1 << 20);
     assert(keys == [0, 2, 4, 6], "one source-anchored key per cell");
+}
+
+/// A link's title renders as a trailing ` (title)` annotation that is neither
+/// underlined nor part of the link's source identity.
+@("md.render_widgets.linkTitleIsAnAnnotation")
+@safe unittest
+{
+    const src = "see here now";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, src.length), inlines: [
+            MdInline(kind: MdInlineKind.link, span: Span(4, 8),
+                linkDest: "http://x", linkTitle: "The title", children: [
+                    MdInline(kind: MdInlineKind.text, span: Span(4, 8))]),
+        ]),
+    ]), src);
+
+    TextSpan[] spans;
+    inlinesToSpans(doc.root.children[0].inlines, src, TextStyle.init,
+        Slot.inherit, spans);
+
+    string all;
+    foreach (ref const s; spans)
+        all ~= s.text;
+    assert(all == "here (The title)", all);
+
+    foreach (ref const s; spans)
+        if (s.text == "The title")
+        {
+            assert(s.textStyle.underline == UnderlineStyle.none,
+                "the title annotates the link; it is not part of it");
+            assert(s.srcStart == size_t.max,
+                "the title carries no source identity");
+        }
+}
+
+/// `mdLinkRanges` reports every link — including one inside a table cell and
+/// one nested in emphasis — and skips destination-less inlines.
+@("md.render_widgets.mdLinkRanges")
+@safe unittest
+{
+    const src = "abcdefghijklmnop";
+    static MdInline link(size_t a, size_t b, string dest, string title = "")
+        => MdInline(kind: MdInlineKind.link, span: Span(a, b),
+            linkDest: dest, linkTitle: title);
+
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 8), inlines: [
+            link(0, 2, "http://a", "A"),
+            // nested inside emphasis — still a link
+            MdInline(kind: MdInlineKind.emphasis, span: Span(2, 4),
+                children: [link(2, 4, "http://b")]),
+            // no destination (a malformed inline link): nothing to point at
+            MdInline(kind: MdInlineKind.link, span: Span(4, 6)),
+        ]),
+        MdBlock(kind: MdBlockKind.table, children: [
+            MdBlock(kind: MdBlockKind.tableRow, children: [
+                MdBlock(kind: MdBlockKind.tableCell, span: Span(8, 12),
+                    inlines: [link(8, 12, "http://cell")]),
+            ]),
+        ]),
+    ]), src);
+
+    const ranges = mdLinkRanges(doc);
+    assert(ranges.length == 3, "the destination-less link is skipped");
+    assert(ranges[0].dest == "http://a" && ranges[0].title == "A");
+    assert(ranges[1].dest == "http://b", "a link nested in emphasis counts");
+    assert(ranges[2].dest == "http://cell", "a link in a TABLE CELL counts");
+
+    assert(ranges[0].contains(0) && ranges[0].contains(1));
+    assert(!ranges[0].contains(2), "the range is half-open");
+    assert(ranges[2].contains(11) && !ranges[2].contains(12));
 }
 
 @("md.render_widgets.calloutDetectedFromRawSource")
