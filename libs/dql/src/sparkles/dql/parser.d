@@ -3,12 +3,12 @@ module sparkles.dql.parser;
 import std.algorithm.comparison : among;
 import std.regex : regex;
 import std.string : strip;
-import std.sumtype : match;
+import std.sumtype : get, match;
 
 import expected : Expected, err, ok;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.float_conv : readDecimalFloat;
-import sparkles.base.text.readers : isHexDigit, readQuotedString, skipSpaces;
+import sparkles.base.text.readers : readQuotedString;
 import sparkles.base.text.span : TextSpan;
 import sparkles.dql.ast;
 import sparkles.dql.engine : DqlEngine, DqlParseError;
@@ -52,6 +52,7 @@ struct DqlToken
     double numberValue = 0.0;
     bool boolValue = false;
     TextSpan span;
+    DqlValue number;
 }
 
 /// Tokenizer for DQL expressions.
@@ -121,29 +122,18 @@ struct DqlLexer
 
         if (c == '<') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.opLt, engine.intern("<"), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
         if (c == '>') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.opGt, engine.intern(">"), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
-        if (c == '!' || c == '-') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.kwNot, engine.intern("!"), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
+        if (c == '!') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.kwNot, engine.intern("!"), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
         if (c == ',') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.kwOr, engine.intern(","), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
         if (c == '(') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.lParen, engine.intern("("), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
         if (c == ')') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.rParen, engine.intern(")"), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
 
         // 3. Numbers
-        if (c >= '0' && c <= '9')
-        {
-            const(char)[] numRest = source[cursor .. $];
-            auto floatRes = readDecimalFloat(numRest);
-            if (floatRes.hasValue)
-            {
-                const size_t consumed = source.length - cursor - numRest.length;
-                cursor += consumed;
-                return ok!DqlParseError(DqlToken(
-                    DqlTokenKind.numberLiteral,
-                    engine.intern(source[start .. cursor]),
-                    floatRes.value,
-                    false,
-                    TextSpan.of(cast(uint) start, cast(uint) cursor)
-                ));
-            }
-        }
+        if ((c >= '0' && c <= '9')
+            || (c == '-' && cursor + 1 < source.length
+                && source[cursor + 1] >= '0' && source[cursor + 1] <= '9'))
+            return numberToken(engine);
+
+        if (c == '-') { cursor++; return ok!DqlParseError(DqlToken(DqlTokenKind.kwNot, engine.intern("!"), 0, false, TextSpan.of(cast(uint) start, cast(uint) cursor))); }
 
         // 4. Identifiers, keywords, booleans, function names
         size_t idEnd = cursor;
@@ -182,6 +172,138 @@ struct DqlLexer
             TextSpan.of(cast(uint) start, cast(uint) cursor)
         ));
     }
+
+    private Expected!(DqlToken, DqlParseError) numberToken(ref DqlEngine engine)
+    {
+        const start = cursor;
+        const negative = source[cursor] == '-';
+        if (negative)
+            cursor++;
+
+        ubyte radix = 10;
+        bool based;
+        if (cursor + 1 < source.length && source[cursor] == '0')
+        {
+            switch (source[cursor + 1])
+            {
+                case 'x': case 'X': radix = 16; based = true; break;
+                case 'b': case 'B': radix = 2; based = true; break;
+                case 'o': case 'O': radix = 8; based = true; break;
+                default: break;
+            }
+            if (based)
+                cursor += 2;
+        }
+
+        ulong magnitude;
+        bool anyDigit;
+        bool previousUnderscore;
+        bool floating;
+        unescapeBuffer.length = 0;
+        if (negative)
+            unescapeBuffer ~= '-';
+
+        while (cursor < source.length)
+        {
+            const ch = source[cursor];
+            if (ch == '_')
+            {
+                if (!anyDigit || previousUnderscore)
+                    return numberError(start, "invalid numeric separator");
+                previousUnderscore = true;
+                cursor++;
+                continue;
+            }
+
+            uint digit;
+            if (ch >= '0' && ch <= '9')
+                digit = ch - '0';
+            else if (ch >= 'a' && ch <= 'f')
+                digit = ch - 'a' + 10;
+            else if (ch >= 'A' && ch <= 'F')
+                digit = ch - 'A' + 10;
+            else
+                digit = uint.max;
+
+            if (digit < radix)
+            {
+                anyDigit = true;
+                previousUnderscore = false;
+                unescapeBuffer ~= ch;
+                if (magnitude > (ulong.max - digit) / radix)
+                    return numberError(start, "integer literal overflow");
+                magnitude = magnitude * radix + digit;
+                cursor++;
+                continue;
+            }
+
+            if (!based && (ch == '.' || ch == 'e' || ch == 'E'))
+            {
+                floating = true;
+                break;
+            }
+            break;
+        }
+
+        if (!anyDigit || previousUnderscore)
+            return numberError(start, "invalid numeric literal");
+
+        if (floating)
+        {
+            while (cursor < source.length)
+            {
+                const ch = source[cursor];
+                if ((ch >= '0' && ch <= '9') || ch == '.' || ch == 'e'
+                    || ch == 'E' || ch == '+' || ch == '-')
+                {
+                    unescapeBuffer ~= ch;
+                    cursor++;
+                    continue;
+                }
+                if (ch == '_')
+                {
+                    cursor++;
+                    continue;
+                }
+                break;
+            }
+            auto rest = cast(const(char)[]) unescapeBuffer[];
+            auto parsed = readDecimalFloat(rest);
+            if (parsed.hasError || rest.length)
+                return numberError(start, "invalid floating-point literal");
+            return makeNumberToken(engine, start, DqlValue(parsed.value));
+        }
+
+        if (negative)
+        {
+            enum limit = cast(ulong) long.max + 1;
+            if (magnitude > limit)
+                return numberError(start, "signed integer literal overflow");
+            const value = magnitude == limit ? long.min : -cast(long) magnitude;
+            return makeNumberToken(engine, start, DqlValue(value));
+        }
+        if (magnitude <= long.max)
+            return makeNumberToken(engine, start, DqlValue(cast(long) magnitude));
+        return makeNumberToken(engine, start, DqlValue(magnitude));
+    }
+
+    private Expected!(DqlToken, DqlParseError) makeNumberToken(
+        ref DqlEngine engine, size_t start, DqlValue value)
+    {
+        DqlToken token = DqlToken(
+            DqlTokenKind.numberLiteral,
+            engine.intern(source[start .. cursor]),
+            0,
+            false,
+            TextSpan.of(cast(uint) start, cast(uint) cursor),
+        );
+        token.number = value;
+        return ok!DqlParseError(token);
+    }
+
+    private Expected!(DqlToken, DqlParseError) numberError(
+        size_t start, string message)
+        => err!DqlToken(DqlParseError(message, start, cursor - start));
 }
 
 /// Recursive Pratt parser with binding-power operator precedence.
@@ -348,7 +470,7 @@ struct DqlParser
 
                 DqlValue dqlVal;
                 if (valToken.kind == DqlTokenKind.numberLiteral)
-                    dqlVal = DqlValue(valToken.numberValue);
+                    dqlVal = valToken.number;
                 else if (valToken.kind == DqlTokenKind.boolLiteral)
                     dqlVal = DqlValue(valToken.boolValue);
                 else if (valToken.kind == DqlTokenKind.stringLiteral || valToken.kind == DqlTokenKind.identifier)
@@ -506,14 +628,8 @@ Expected!(DqlFilter, DqlParseError) parseDql(ref DqlEngine engine, scope const(c
     return parser.parseFilter();
 }
 
-/// Convenience overload using a local engine.
-Expected!(DqlFilter, DqlParseError) parseDql(scope const(char)[] expr)
-{
-    DqlEngine engine;
-    return parseDql(engine, expr);
-}
-
 @("dql.parser: parse expressions, operators, and functions")
+@safe
 unittest
 {
     DqlEngine engine;
@@ -548,4 +664,37 @@ unittest
     // Test commas inside quoted regex / glob
     auto res8 = parseDql(engine, `regexMatch(text.text, "^[a,b]+$")`);
     assert(!res8.hasError);
+}
+
+@("dql.parser: integer literals retain exact signedness and value")
+@safe
+unittest
+{
+    DqlEngine engine;
+
+    void check(T)(string text, T expected)
+    {
+        auto parsed = parseDql(engine, "n == " ~ text);
+        assert(parsed.hasValue, parsed.error.message);
+        const cmp = parsed.value.nodes[parsed.value.rootIndex]
+            .payload.get!ComparePayload;
+        assert(cmp.target.match!((T value) => value == expected, _ => false));
+    }
+
+    check("42", 42L);
+    check("9_007_199_254_740_993", 9_007_199_254_740_993L);
+    check("0x20", 32L);
+    check("0b1010", 10L);
+    check("0o17", 15L);
+    check("-9223372036854775808", long.min);
+    check("18446744073709551615", ulong.max);
+
+    auto realValue = parseDql(engine, "n == 1.25e2");
+    assert(realValue.hasValue);
+    const cmp = realValue.value.nodes[realValue.value.rootIndex]
+        .payload.get!ComparePayload;
+    assert(cmp.target.match!((double value) => value == 125.0, _ => false));
+
+    assert(parseDql(engine, "n == 18446744073709551616").hasError);
+    assert(parseDql(engine, "n == 1__0").hasError);
 }

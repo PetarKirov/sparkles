@@ -19,12 +19,18 @@ struct DqlParseError
     size_t length;
 }
 
-/// Execution engine: interned strings, compiled matchers, and reusable scratch.
-///
-/// Large glob/fuzzy workspaces (~1 MiB together) are heap-owned (`Unique`) and
-/// allocated on first use; compiled programs live in heap-only buffers so a
-/// 25 KiB `GlobProgram` is never inlined here. The engine struct itself stays
-/// small enough for a worker-thread stack (512 KiB on macOS).
+/**
+Execution engine: interned strings, compiled matchers, and reusable scratch.
+
+Large glob/fuzzy workspaces (~1 MiB together) are heap-owned (`Unique`) and
+allocated on first use; compiled programs live in heap-only buffers so a
+25 KiB `GlobProgram` is never inlined here. The engine struct itself stays
+small enough for a worker-thread stack (512 KiB on macOS).
+
+Every `DqlFilter` parsed through this engine contains handles into these
+buffers. The engine must therefore outlive its filters and must not be moved
+while one is evaluated.
+*/
 struct DqlEngine
 {
     UniqueBuffer!(char, 64) stringPool;
