@@ -168,6 +168,16 @@
               compiler
             ]
             ++ lib.optionals (compiler ? include) [ compiler.include ]
+            # The compiler underneath, when `compiler` is a wrapper — which the
+            # repo's is: `nix/d-toolchain.nix` `symlinkJoin`s over dlang.nix's
+            # ldc to fix its config and dynamic linker. druntime's asserts bake
+            # `__FILE__` strings naming the *inner* path into every binary
+            # (`…-ldc-1.42.0/include/d/core/atomic.d`), so scrubbing only the
+            # join removed a path that was never there while `disallowedReferences`
+            # asserted against that same absent path — the leak passed straight
+            # through the check meant to catch it. One surviving dead string was
+            # worth 1.4 GiB of closure (ldc-binary + llvm-lib + gcc-wrapper).
+            ++ lib.optionals (compiler ? unwrapped) [ compiler.unwrapped ]
             ++ [
               pkgs.curl.out
               pkgs.tzdata
