@@ -112,12 +112,30 @@ then disable the project (CircleCI) or the workflow triggers (GitHub).
 > run it at all (see below). Deliberate either way: a failed preview deploy
 > should not block a merge.
 
-> [!WARNING]
-> On GitHub Actions everything except `lint` is guarded by
-> `if: github.event_name != 'push'`, so a run on `main` deliberately does only
-> the cache seeding. That was written while CircleCI ran the full matrix on
-> `main`. Once CircleCI is disabled, **nothing runs the full suite on `main`**
-> — only per-PR. Drop those guards if you want post-merge coverage back.
+> [!NOTE]
+> **Post-merge coverage on GitHub Actions is `main-checks.yml`, not `ci.yml`.**
+> A merge here is a rebase, so the commit that lands on `main` has a SHA no run
+> has seen. Rather than rebuild it or leave it bare, `main-checks.yml` compares
+> the landed **tree** against the tree the pull request built and, when they
+> match, mirrors that pull request's checks onto the commit (`ci --mirror-checks`,
+> run from the 121 MiB `.#ci-minimal` output rather than the 2.4 GiB `.#ci`).
+> When they differ — the base moved under the pull request, so the merge produced
+> content nothing has built — it calls `ci.yml` as a reusable workflow so the
+> real jobs report against that commit.
+> `ci --ci-stats --merges` measures the split: 75.7% mirrored, 24.3% rebuilt,
+> about 2.7 full runs a week.
+>
+> This is also why no job in `ci.yml` carries an `if:` guard any more. A called
+> workflow reports the _caller's_ event, so on the rebuild path the event is
+> `push`, and a job gated to `pull_request` would make that rebuild report green
+> having built nothing. A merge-queue run is the same trap from the other side:
+> it is the only run that sees the batched result, so skipping the matrix there
+> would gate merges on nothing. `main-checks.yml` also carries a
+> `workflow_dispatch` (defaulting to a dry run) so the mirror can be rehearsed
+> against a commit without waiting for a merge.
+>
+> CircleCI still runs its full matrix on `main` unconditionally, and posts no
+> status that is visible on the commit today.
 
 ## Setting up the CircleCI project
 
