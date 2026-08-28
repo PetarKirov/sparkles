@@ -141,9 +141,17 @@
                         wrapProgram "$out/bin/$drv" --add-flags "-conf=${cleanLdcConfig}"
                       done
                     '';
-                    passthru = lib.optionalAttrs (rawLdc ? include) {
-                      inherit (rawLdc) include;
-                    };
+                    passthru =
+                      lib.optionalAttrs (rawLdc ? include) {
+                        inherit (rawLdc) include;
+                      }
+                      // {
+                        # The package this joins over. Consumers scrubbing compiler
+                        # paths out of a built binary need it: druntime bakes
+                        # `__FILE__` strings naming *this* store path into every
+                        # assert, and scrubbing the join is scrubbing the wrong one.
+                        unwrapped = rawLdc;
+                      };
                     meta = rawLdc.meta // {
                       mainProgram = "ldc2";
                     };
@@ -157,9 +165,17 @@
                       ln -s ${linuxHostElfCompilerWrapper "${rawLdc}/bin/ldc2"} "$out/bin/ldc2"
                       ln -s ${linuxHostElfCompilerWrapper "${rawLdc}/bin/ldmd2"} "$out/bin/ldmd2"
                     '';
-                    passthru = lib.optionalAttrs (rawLdc ? include) {
-                      inherit (rawLdc) include;
-                    };
+                    passthru =
+                      lib.optionalAttrs (rawLdc ? include) {
+                        inherit (rawLdc) include;
+                      }
+                      // {
+                        # The package this joins over. Consumers scrubbing compiler
+                        # paths out of a built binary need it: druntime bakes
+                        # `__FILE__` strings naming *this* store path into every
+                        # assert, and scrubbing the join is scrubbing the wrong one.
+                        unwrapped = rawLdc;
+                      };
                     meta = rawLdc.meta // {
                       mainProgram = "ldc2";
                     };
@@ -193,6 +209,7 @@
                         --add-flags "-L--dynamic-linker=${prev.stdenv.cc.bintools.dynamicLinker}" \
                         --add-flags "-L-rpath=${prev.stdenv.cc.libc}/lib"
                     '';
+                    passthru.unwrapped = raw;
                     meta = raw.meta // {
                       mainProgram = "dmd";
                     };
