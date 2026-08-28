@@ -238,7 +238,14 @@ Result!T fetchAndDeserializeJson(T)(
     try
     {
         auto http = HTTP(url);
-        http.method = (method == "POST" ? HTTP.Method.post : HTTP.Method.get);
+        // PATCH joins GET/POST for the issue-state writes in `link_rot`; an
+        // unknown verb falls back to GET rather than silently sending a body
+        // under the wrong method.
+        http.method = method == "POST"
+            ? HTTP.Method.post
+            : method == "PATCH" ? HTTP.Method.patch
+            : method == "PUT" ? HTTP.Method.put
+            : HTTP.Method.get;
 
         http.addRequestHeader("Accept", "application/vnd.github+json");
         http.addRequestHeader("X-GitHub-Api-Version", "2022-11-28");
@@ -247,7 +254,7 @@ Result!T fetchAndDeserializeJson(T)(
         foreach (k, v; extraHeaders)
             http.addRequestHeader(k, v);
 
-        if (method == "POST" && body.length)
+        if (method != "GET" && body.length)
             http.setPostData(body, "application/json");
 
         ubyte[] buf;
@@ -678,7 +685,7 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
     // *run* runCiStats here: it spins up a real stdout live region and would paint
     // a stray failed-task frame into every `dub test :ci`. `__traits(compiles)`
     // instantiates the whole path (semantic3) without executing it.
-    auto dummyFetch(T)(string, string = "GET", string = null, string[string] = null)
+    static auto dummyFetch(T)(string, string = "GET", string = null, string[string] = null)
         => failure!T("mock not populated in this compile-test");
     auto o = CiStatsOptions("owner/repo", "", 5);
     static assert(__traits(compiles, runCiStats!dummyFetch(o)));

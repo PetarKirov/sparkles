@@ -319,6 +319,58 @@ struct CliParams
     @(Option(`step-jobs`,
         description: "How many job names --steps expands (default 3)."))
     int stepJobs = 3;
+
+    @(Option(`badge-dir`,
+        description: "With --ci-stats --merges: also write the shields.io endpoint documents the "
+        ~ "README badges read (merged-prs.json, merged-green.json) into this directory."))
+    string badgeDir;
+
+    @(Option(`mirror-checks`,
+        description: "Give a commit on the default branch the checks its pull request already "
+        ~ "earned, when the landed tree is byte-identical to the tree that pull request built. "
+        ~ "Needs --repo and --sha; exits reporting mirrored=false when the trees differ, so the "
+        ~ "caller can run the real build instead."))
+    bool mirrorChecks;
+
+    @(Option(`sha`,
+        description: "With --mirror-checks: the commit to attach the mirrored checks to."))
+    string sha;
+
+    @(Option(`skip-check`,
+        description: "With --mirror-checks: a check-run name never to mirror, repeatable. Use it "
+        ~ "for checks whose own workflow also runs on this push, which would otherwise land twice."))
+    string[] skipCheck;
+
+    @(Option(`dry-run`,
+        description: "With --mirror-checks: report what would be mirrored without creating "
+        ~ "anything."))
+    bool dryRun;
+
+    @(Option(`report-link-rot`,
+        description: "Keep one standing issue in step with the link sweep: a failing sweep opens "
+        ~ "or rewrites it, a passing one closes it. Needs --repo; reads the sweep log named by "
+        ~ "--report and the verdict from --rotten."))
+    bool reportLinkRot;
+
+    @(Option(`report`,
+        description: "With --report-link-rot: path to the sweep log to quote in the issue."))
+    string report;
+
+    @(Option(`rotten`,
+        description: "With --report-link-rot: the sweep found dead links. Without it the sweep "
+        ~ "is treated as clean and the standing issue is closed."))
+    bool rotten;
+
+    @(Option(`run-url`,
+        description: "With --report-link-rot: URL of the run to link from the issue body."))
+    string runUrl;
+
+    @(Option(`merges`,
+        description: "With --ci-stats: audit what merged pull requests actually landed on the "
+        ~ "default branch -- commits carried, whether the landed tree is the tree CI built, "
+        ~ "and the share green at the head. Answers what mirroring PR checks onto the branch "
+        ~ "would cover, and what a rebuild policy would cost."))
+    bool merges;
 }
 
 enum ProgramMode
@@ -336,6 +388,8 @@ enum ProgramMode
     checkDocsSidebar,
     checkBlobPaths,
     ciStats,
+    mirrorChecks,
+    reportLinkRot,
     auditFences,
 }
 
@@ -469,6 +523,12 @@ int ciMain(string[] args)
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
 
+    if (mode == ProgramMode.mirrorChecks)
+        return runMirrorChecksMode(cli);
+
+    if (mode == ProgramMode.reportLinkRot)
+        return runReportLinkRotMode(cli);
+
 
     auto inputFiles = collectInputFiles(cli, mode);
 
@@ -564,6 +624,12 @@ private string validateCliMode(
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
         return "--ci-stats cannot be combined with other modes";
 
+    if (cli.mirrorChecks && cli.sha.length == 0)
+        return "--mirror-checks requires --sha";
+
+    if (cli.mirrorChecks && cli.repo.length == 0)
+        return "--mirror-checks requires --repo owner/repo";
+
     if (cli.ciStats && cli.limit <= 0)
         return "--limit must be a positive integer";
 
@@ -603,6 +669,12 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.ciStats)
         return ProgramMode.ciStats;
+
+    if (cli.mirrorChecks)
+        return ProgramMode.mirrorChecks;
+
+    if (cli.reportLinkRot)
+        return ProgramMode.reportLinkRot;
 
     if (cli.exampleFiles)
         return ProgramMode.runExampleFiles;
@@ -658,6 +730,8 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
+        case ProgramMode.mirrorChecks:       return "--mirror-checks";
+        case ProgramMode.reportLinkRot:      return "--report-link-rot";
         case ProgramMode.auditFences:        return "--audit-fences";
     }
 }
@@ -1153,6 +1227,8 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 rc = 1;
                 break;
             case ProgramMode.ciStats:
+            case ProgramMode.mirrorChecks:
+            case ProgramMode.reportLinkRot:
             case ProgramMode.auditFences:
                 rc = 1;   // handled earlier in main(); should never reach here
                 break;
@@ -4412,6 +4488,12 @@ private int runCiStatsMode(in CliParams cli)
     if (token.length == 0)
         token = environment.get("GITHUB_TOKEN", "");
 
+    // `--merges` audits what landed on the branch rather than how long jobs
+    // took: a different question over a different endpoint, sharing only the
+    // repo/token/limit options.
+    if (cli.merges)
+        return runMergeAudit(cli.repo, token, cli.limit, cli.badgeDir);
+
     auto opts = CiStatsOptions(
         repo: cli.repo,
         token: token,
@@ -4435,5 +4517,110 @@ private int runCiStatsMode(in CliParams cli)
         return 1;
     }
 
+    return 0;
+}
+
+/// `--ci-stats --merges`: what landed on the default branch, and what it would
+/// cost to verify the part the pull requests did not already prove.
+private int runMergeAudit(string repo, string token, int limit, string badgeDir)
+{
+    import sparkles.base.logger : error, info;
+
+    import ci_stats : fetchAndDeserializeJson;
+    import merge_audit : auditMerges, fetchMergedPrs, renderMergeAudit, writeBadges;
+
+    if (repo.length == 0)
+    {
+        error(i"--merges needs --repo owner/repo");
+        return 1;
+    }
+
+    auto prs = fetchMergedPrs!fetchAndDeserializeJson(repo, token, limit);
+    if (prs.hasError)
+    {
+        string errMsg = prs.error;
+        error(i"merge audit failed: $(errMsg)");
+        return 1;
+    }
+
+    const audit = auditMerges(prs.value);
+    renderMergeAudit(prs.value, audit);
+
+    // The badge is written from the same aggregate the table renders, so the
+    // number in the README can never disagree with the number here.
+    if (badgeDir.length)
+    {
+        writeBadges(audit, badgeDir);
+        info(i"wrote badge endpoints to $(badgeDir)");
+    }
+
+    return 0;
+}
+
+/// `--mirror-checks`: attach a pull request's checks to the commit its work
+/// landed as, when the landed tree is the tree that pull request built.
+private int runMirrorChecksMode(in CliParams cli)
+{
+    import std.process : environment;
+
+    import sparkles.base.logger : error, info;
+
+    import check_mirror : mirrorChecks, publishOutcome;
+    import ci_stats : fetchAndDeserializeJson;
+
+    string token = cli.githubToken;
+    if (token.length == 0)
+        token = environment.get("GITHUB_TOKEN", "");
+
+    auto res = mirrorChecks!fetchAndDeserializeJson(
+        cli.repo, token, cli.sha, cli.skipCheck, cli.dryRun);
+    if (res.hasError)
+    {
+        string errMsg = res.error;
+        error(i"mirror-checks failed: $(errMsg)");
+        return 1;
+    }
+
+    const outcome = res.value;
+    string reason = outcome.reason;
+    info(i"$(reason)");
+    publishOutcome(outcome);
+
+    // Not mirroring is a routine answer, not a failure: the caller reads
+    // `mirrored` and builds the commit for real.
+    return 0;
+}
+
+/// `--report-link-rot`: reconcile the standing link-rot issue with the sweep's
+/// verdict, so its presence means "links are broken" and nothing else does.
+private int runReportLinkRotMode(in CliParams cli)
+{
+    import std.file : exists, readText;
+    import std.process : environment;
+
+    import sparkles.base.logger : error, info;
+
+    import ci_stats : fetchAndDeserializeJson;
+    import link_rot : reportLinkRot;
+
+    string token = cli.githubToken;
+    if (token.length == 0)
+        token = environment.get("GITHUB_TOKEN", "");
+
+    string report;
+    if (cli.report.length && cli.report.exists)
+        report = cli.report.readText;
+
+    auto res = reportLinkRot!fetchAndDeserializeJson(
+        cli.repo, token, cli.rotten, report, cli.runUrl);
+    if (res.hasError)
+    {
+        string errMsg = res.error;
+        error(i"report-link-rot failed: $(errMsg)");
+        return 1;
+    }
+
+    string action = res.value.action;
+    info(i"$(action)");
     return 0;
 }
