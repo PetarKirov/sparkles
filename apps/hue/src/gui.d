@@ -74,8 +74,8 @@ import sparkles.ui.components.tree_view : viewSlice;
 import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
 import dsv_browser : DsvBrowser, fuzzyRowMask, PaletteRow, paletteRows;
-import dsv_view : adaptDsv, DsvCopy, DsvInfo, dsvStatusNote, flagsOf,
-    resolveTableCopy, serializeGridCopy;
+import dsv_view : adaptDsv, DsvCopy, DsvInfo, dsvStatusNote, DsvWindow,
+    flagsOf, resolveTableCopy, serializeGridCopy;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -842,7 +842,7 @@ int runGui(GuiArgs guiArgs) @system
     /// replayed), rebuild the preview, re-arm the copy state, and compose the
     /// `DSK5` chrome into the status bar's summary segment. Scroll and search
     /// reset; the copy format and document identity survive.
-    void applyDsvBrowser()
+    void applyDsvBrowser(uint firstRow = uint.max)
     {
         import gui_preview : previewOf;
 
@@ -851,7 +851,13 @@ int runGui(GuiArgs guiArgs) @system
             return;
         auto proj = dsvBrowser.projection(st.info.columns);
         proj.rowMask = fuzzyRowMask(st.rawText, st.info, dsvBrowser.fuzzyParts);
-        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj);
+        // `DSN4`: re-materialize the window the grid is looking at.
+        const gridTop = firstRow != uint.max ? firstRow
+            : ((0 in vm.tableScrollAt) ? cast(uint) (*(0 in vm.tableScrollAt)).y : 0);
+        const paneLines = vm.resolvedTableMaxLines();
+        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj,
+            DsvWindow(start: gridTop,
+                rows: paneLines > 0 ? cast(uint) paneLines + 8 : 0));
         auto pm = previewOf(*vm.cache, adapted.doc);
         pm.tableExtras = adapted.extras;
         auto ev = new HighlightEvent[](1);
@@ -866,6 +872,42 @@ int runGui(GuiArgs guiArgs) @system
         vm.docPath = path;
         dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
         cm.tableFmt = fmt;
+    }
+
+    /// Does this document's grid own the vertical axis? (`DSN4`)
+    bool gridOwnsVertical()
+        => vm.showPreview && dsvCopy.info.present
+            && dsvCopy.info.windowRows != 0;
+
+    /// Scrolls the grid by `delta` rows; false when there is no grid, so the
+    /// caller falls back to the document scroll.
+    bool scrollGridV(long delta)
+        => gridOwnsVertical()
+            && vm.scrollTableV(0, cast(int)(delta > int.max ? int.max
+                : (delta < int.min ? int.min : delta)));
+
+    /// `DSN4`: the grid's viewport may have moved this frame — by a key, a
+    /// wheel notch or the bar — and the window it names then has to be
+    /// re-materialized before the next paint. The GUI reconciles per frame
+    /// rather than through `onWindowScroll`: its frame locals include
+    /// scoped-destruction values, so the loop cannot host a closure.
+    void syncGridWindow()
+    {
+        if (!gridOwnsVertical())
+            return;
+        auto cur = 0 in vm.tableScrollAt;
+        const want = cur && cur.y > 0 ? cast(uint) cur.y : 0;
+        if (want != dsvCopy.info.windowStart)
+            applyDsvBrowser(want);
+    }
+
+    /// Jumps the grid to an absolute row (clamped); same contract.
+    bool scrollGridTo(int row)
+    {
+        if (!gridOwnsVertical())
+            return false;
+        auto cur = 0 in vm.tableScrollAt;
+        return vm.setTableScroll(0, cur ? cur.x : 0, row);
     }
 
     /// The palette's rows (`DSB3`), derived fresh from the browser + the
@@ -2052,6 +2094,10 @@ int runGui(GuiArgs guiArgs) @system
     // Returns false when the capture is finished and the run is over.
     bool frameTail()
     {
+        // `DSN4`: reconcile the grid's window with wherever its viewport
+        // ended up this frame (a key, a wheel notch, a bar drag).
+        syncGridWindow();
+
         // On-demand atlas growth: drawText requests any covered-but-unrasterized
         // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
         // after the frame ends so the reupload never lands mid-frame.
@@ -2747,19 +2793,26 @@ int runGui(GuiArgs guiArgs) @system
                     break;
 
                 // ── viewer ───────────────────────────────────────────────
+                // `DSN4`: a DSV grid is a WINDOW onto a longer view, so the
+                // document under it has nothing to scroll — the vertical
+                // keys drive the grid's viewport, as in the TUI.
                 case Command.viewDown:
-                    vm.scrollVertical(1, docRows);
+                    if (!scrollGridV(1))
+                        vm.scrollVertical(1, docRows);
                     break;
                 case Command.viewUp:
-                    vm.scrollVertical(-1, docRows);
+                    if (!scrollGridV(-1))
+                        vm.scrollVertical(-1, docRows);
                     break;
                 case Command.viewHome:
                 case Command.viewTop:
-                    vm.scrollTo(0);
+                    if (!scrollGridTo(0))
+                        vm.scrollTo(0);
                     break;
                 case Command.viewEnd:
                 case Command.viewBottom:
-                    vm.scrollTo(maxTop);
+                    if (!scrollGridTo(int.max))
+                        vm.scrollTo(maxTop);
                     break;
                 case Command.quit:
                     // The TUI has always had `q`; the GUI gains it here so one
@@ -2778,10 +2831,12 @@ int runGui(GuiArgs guiArgs) @system
                     // rather than growing a second, worse spelling of hover.
                     break;
                 case Command.viewPageDown:
-                    vm.scrollVertical(visibleRows, docRows);
+                    if (!scrollGridV(visibleRows))
+                        vm.scrollVertical(visibleRows, docRows);
                     break;
                 case Command.viewPageUp:
-                    vm.scrollVertical(-visibleRows, docRows);
+                    if (!scrollGridV(-visibleRows))
+                        vm.scrollVertical(-visibleRows, docRows);
                     break;
 
                 // ── shared, normal mode ──────────────────────────────────
