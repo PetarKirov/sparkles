@@ -15,6 +15,7 @@ import sparkles.input.gesture : PointF;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.components.table : GridHit;
 import sparkles.ui.components.dock : DockContainer, PaneId;
+public import sparkles.ui.selection : SelectionDrag, SelectionHit, SelectionRegime;
 import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
 
 import explorer : ExplorerTui;
@@ -23,81 +24,7 @@ import lantern : LanternState;
 import table_select : TableCopyFormat;
 
 /// Which selection regime a drag runs (`SEL`/`TBL`).
-enum Regime
-{
-    none,
-    text,
-    table,
-}
-
-/// The mouse-selection drag state (M15 GROUP-S of the GuiState hoist):
-/// which regime the drag runs (text span vs table grid), the live anchors,
-/// and the modifier snapshot a table drag copies with.
-struct SelectionDrag
-{
-    Regime regime;
-    bool selecting;
-    long anchorLo, anchorHi, headLo, headHi;
-    int selTable = -1;
-    GridHit tblAnchor, tblHead;
-    bool tblShift, tblAlt;
-
-    long selMin() const @safe pure nothrow @nogc
-        => anchorLo < headLo ? anchorLo : headLo;
-    long selMax() const @safe pure nothrow @nogc
-        => anchorHi > headHi ? anchorHi : headHi;
-
-    /**
-    Begins a drag from the press's hit: `true` when a drag actually starts —
-    the caller's cue to take the pointer capture. The regime and anchors come
-    from what was under the pointer; a miss still runs (regime `none`,
-    nothing selecting), exactly as the inline version did.
-
-    Templated over the hit (`ok`/`table`/`tableIdx`/`cell`/`lo`/`hi`) because
-    the concrete hit type is frame-local to the GUI's `hitAt` — and a test's
-    fake hit is then just another instantiation.
-    */
-    bool begin(H)(in H h)
-    {
-        selecting = h.ok;
-        if (h.table)
-        {
-            regime = Regime.table;
-            selTable = h.tableIdx;
-            tblAnchor = tblHead = h.cell;
-            tblShift = tblAlt = false;
-        }
-        else if (h.ok)
-        {
-            regime = Regime.text;
-            anchorLo = headLo = h.lo;
-            anchorHi = headHi = h.hi;
-        }
-        else
-            regime = Regime.none;
-        return selecting;
-    }
-
-    /// Extends the running drag with the hover's hit. A table drag only
-    /// follows hits in $(B its own) table and carries the modifier snapshot
-    /// its copy serializes with; a text drag extends over anything with a
-    /// source span — including a table line's block span, so a drag from
-    /// outside sweeps across it.
-    void extend(H)(in H h, bool shiftMod, bool altMod)
-    {
-        if (regime == Regime.table && h.table && h.tableIdx == selTable)
-        {
-            tblHead = h.cell;
-            tblShift = shiftMod;
-            tblAlt = altMod;
-        }
-        else if (regime == Regime.text && h.ok)
-        {
-            headLo = h.lo;
-            headHi = h.hi;
-        }
-    }
-}
+alias Regime = SelectionRegime;
 
 version (unittest)
 {

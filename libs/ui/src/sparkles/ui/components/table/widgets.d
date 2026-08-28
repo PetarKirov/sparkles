@@ -641,7 +641,10 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             parts ~= b.add(clip);
         }
         else
-            parts ~= ruleRun(centerRun.to!string);
+        {
+            const centerCarve = rightW > 0 ? 0 : carve;
+            parts ~= ruleRun(centerRun[0 .. $ - centerCarve].to!string);
+        }
         if (rightW > 0)
             parts ~= ruleRun(rightRun[0 .. $ - carve].to!string);
         if (withCutout)
@@ -1369,4 +1372,24 @@ version (unittest)
     auto tree2 = b2.finish(res2.root);
     foreach (ref n; tree2.nodes)
         assert(n.hitId != 999);
+
+    // Framed table (vOver = true, hOver = false): top border must be exactly
+    // res.width wide, never expanded by iconW.
+    auto b3 = Builder();
+    const res3 = buildTableWidgets(b3, cells, TableProps(), style,
+        TableViewportSpec(maxLines: 1));
+    assert(res3.vBar && !res3.hBar);
+    auto tree3 = b3.finish(res3.root);
+    auto frames3 = layout(tree3, Constraints(maxW: res3.width));
+    assert(frames3[res3.root].rect.width == res3.width);
+
+    // The icon in the framed top border is still hit-testable at the right edge.
+    bool sawFramedIcon;
+    foreach (i, ref n; tree3.nodes)
+        if (n.hitId == 999)
+        {
+            sawFramedIcon = true;
+            assert(frames3[i].rect == Rect(res3.width - 4, 0, 3, 1));
+        }
+    assert(sawFramedIcon);
 }

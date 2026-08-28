@@ -313,13 +313,19 @@ struct WorkspaceTui
             viewer.vm.scrollTo(targetVisual);
             if (initialCol > 0 || endCol > 0)
             {
-                viewer.setSelection(Selection!long.cleared);
+                viewer.drag.clear();
                 viewer.vm.setInspectExtent(sByte, eByte);
             }
             else
             {
+                import sparkles.ui.selection : SelectionRegime;
+
                 viewer.vm.clearInspectExtent();
-                viewer.setSelection(Selection!long(true, targetVisual, endVisual));
+                viewer.drag.regime = SelectionRegime.text;
+                viewer.drag.anchorLo = cast(long) sByte;
+                viewer.drag.anchorHi = cast(long) sByte;
+                viewer.drag.headLo = cast(long) eByte;
+                viewer.drag.headHi = cast(long) eByte;
             }
         }
     }
@@ -2728,7 +2734,7 @@ unittest
     assert(!w.treeFocused, "the press focused the viewer");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(5, 5)))));
-    assert(w.viewer.selection.active && w.viewer.selection.lo != w.viewer.selection.hi,
+    assert(w.viewer.selection.active && w.viewer.selection.selMin != w.viewer.selection.selMax,
         "the selection extended across the divider");
     assert(!w.treeFocused, "a drag never steals focus");
     assert(w.handle(Event(PointerEvent(button: PointerButton.left,
@@ -2856,11 +2862,12 @@ unittest
     assert(w.handle(Event(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: edge))));
     const before = w.viewer.selection;
-    assert(before.active && w.dock.nextTickIn() != Duration.max);
+    assert(before.active, "selection should be active");
+    assert(w.dock.nextTickIn() != Duration.max, "dock tick should be scheduled");
 
     assert(w.tickDock(16.msecs), "the edge tick emitted a synthetic drag");
     assert(w.viewer.vm.top > 0, "the content advanced under the held pointer");
-    assert(w.viewer.selection.hi > before.hi,
+    assert(w.viewer.selection.selMax > before.selMax,
         "the unchanged pointer extended over the newly revealed row");
 
     w.handle(Event(PointerEvent(action: PointerAction.release,
@@ -3473,8 +3480,8 @@ unittest
     w.endCol = 0;
     w.arrange(80, 24);
     assert(w.viewer.selection.active);
-    assert(w.viewer.selection.lo == 1);
-    assert(w.viewer.selection.hi == 1);
+    assert(w.viewer.selection.selMin == 9);
+    assert(w.viewer.selection.selMax == 29);
 
     // 2. Line range with column extent: line 2 col 10 to line 2 col 20 ("identifier")
     w.initialLine = 2;
@@ -3506,6 +3513,6 @@ unittest
 
     assert(w.viewer.vm.top == 2, "line 3 is at the top");
     assert(w.viewer.selection.active);
-    assert(w.viewer.selection.lo == 2, "selection starts at line 3 (row 2)");
-    assert(w.viewer.selection.hi == 4, "selection ends at line 5 (row 4)");
+    assert(w.viewer.selection.selMin == w.viewer.vm.lineStarts[2], "selection starts at line 3");
+    assert(w.viewer.selection.selMax == (5 < w.viewer.vm.lineStarts.length ? w.viewer.vm.lineStarts[5] : pkgSrc.length), "selection ends at line 5");
 }

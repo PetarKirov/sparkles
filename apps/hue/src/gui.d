@@ -1524,40 +1524,8 @@ int runGui(GuiArgs guiArgs) @system
         void tintRow(long screenRow, int xStartCol, int xEndCol)
             => tintCells(xStartCol, screenRow, xEndCol - xStartCol,
                 Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
-        // Tint a source byte range on the widget path: the toolkit derives the
-        // char-precise rects (document cell coordinates) once for any backend.
-        void tintSrcRange(long lo, long hi)
-        {
-            if (hi <= lo)
-                return;
-            foreach (r; selectionRects(vm.tree, vm.frames,
-                cast(size_t) lo, cast(size_t) hi))
-                tintRow(r.y - vm.top, r.x, r.x + r.width);
-        }
-        if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
-            // One pass covers prose, code and table cells alike — every
-            // span with source identity inside [smin, smax) tints.
-            tintSrcRange(drag.selMin(), drag.selMax());
-        else if (drag.regime == Regime.table && drag.selTable >= 0)
-        {
-            const dims = vm.tableDims(drag.selTable);
-            const reg = tableSelection(drag.tblAnchor, drag.tblHead, drag.tblShift, drag.tblAlt,
-                dims.rows, dims.cols);
-            foreach (ref const mc; vm.cellList)
-            {
-                if (mc.table != drag.selTable)
-                    continue;
-                if (reg.subCell)
-                {
-                    if (mc.row == reg.row && mc.col == reg.col)
-                        tintSrcRange(cast(long)(mc.span.start + reg.charLo),
-                            cast(long)(mc.span.start + reg.charHi));
-                }
-                else if (mc.row >= reg.rowLo && mc.row <= reg.rowHi
-                    && mc.col >= reg.colLo && mc.col <= reg.colHi)
-                    tintSrcRange(cast(long) mc.span.start, cast(long) mc.span.end);
-            }
-        }
+        foreach (r; vm.selectionRectsFor(drag))
+            tintRow(r.y - vm.top, r.x, r.x + r.width);
 
         // Search-match overlay (raw view only): a translucent tint over each
         // visible match, its rects derived once from the identity channel
@@ -3460,57 +3428,15 @@ int runGui(GuiArgs guiArgs) @system
                 }
         }
 
-        // Mouse selection (both views). `hitAt` classifies the cursor: over a
-        // table → a grid cell (`TBL`); else a source byte span (`SEL`) — a
-        // char point for prose/code (through the identity channel on the
-        // widget path), or a decoration row's whole source span.
-        struct Hit { bool ok, table; long lo, hi; int tableIdx; GridHit cell; }
-        Hit hitAt(float mx, float my)
+        // Mouse selection (both views). Translates screen (mx, my) to document-space Point(cx, cy)
+        // and delegates hit classification to `vm.hitAt`.
+        SelectionHit hitAt(float mx, float my)
         {
-            Hit h;
-            if (my < 0)
-                return h;
+            if (my < 0 || mx < gutterPx)
+                return SelectionHit.init;
             const cx = contentColOf(cast(int) mx, gutterPx, cellW, dhx, pinned);
             const cy = vm.top + cast(long)((my - docY0) / cellH);
-            if (mx < gutterPx || cy < 0 || cy >= cast(long) vm.rows.length)
-                return h; // left of the content (tree/gutter) hits nothing
-            const p = Point(cx, cast(int) cy);
-            const off = sourceOffsetAt(vm.tree, vm.frames, p);
-            // Inside a keyed table cell: a grid hit (2-D drag.regime anchor),
-            // with the char offset relative to the cell's source span.
-            foreach (ref const kr; vm.cells)
-                if (kr.rect.contains(p))
-                {
-                    const cellStart = kr.key - vm.tableKeyBase;
-                    foreach (mi, ref const mc; vm.cellList)
-                        if (mc.span.start == cellStart)
-                        {
-                            h.table = true;
-                            h.tableIdx = mc.table;
-                            h.cell = GridHit(mc.row, mc.col,
-                                off >= cast(long) cellStart
-                                    ? cast(size_t)(off - cellStart) : 0);
-                            h.lo = h.hi = off >= 0 ? off : cast(long) cellStart;
-                            h.ok = true;
-                            return h;
-                        }
-                    break;
-                }
-            if (off >= 0) // char-precise content
-            {
-                h.ok = true;
-                h.lo = h.hi = off;
-                return h;
-            }
-            // Decoration under the cursor (band/border/pre-styled ANSI):
-            // fall back to the row's whole source span (block-granular).
-            if (vm.rows[cast(size_t) cy].srcStart != size_t.max)
-            {
-                h.ok = true;
-                h.lo = cast(long) vm.rows[cast(size_t) cy].srcStart;
-                h.hi = cast(long) vm.rows[cast(size_t) cy].srcEnd;
-            }
-            return h;
+            return vm.hitAt(Point(cx, cast(int) cy));
         }
 
         // INS6 source→tree, the picker half (DevTools' semantics): while the

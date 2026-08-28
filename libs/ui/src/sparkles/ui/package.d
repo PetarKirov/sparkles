@@ -29,3 +29,4 @@ public import sparkles.ui.components.dock;
 public import sparkles.ui.display_list;
 public import sparkles.ui.interp.immediate;
 public import sparkles.ui.interp.cells;
+public import sparkles.ui.selection;
