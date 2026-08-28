@@ -250,3 +250,63 @@ brace style, literal-form selection — are the **rewrite tier**, specified in
 [`D9`](../../../../specs/dmd-fmt/index.md) and not yet implemented; their pages appear here as they
 land, in this same executed form. Transformations that need resolved types are
 [codemods](../../../../specs/dmd-fmt/codemods.md), a separate tool.
+
+---
+
+## Declarations
+
+### A UDA on its own line stays at its declaration's column {#p22}
+
+<!-- fmt id=P22 -->
+
+Attributes you put on their own line are a heading for the declaration below them, not a wrapped
+continuation of it, so both sit in the same column. A break _after_ the declaration's head has
+started is a genuine continuation and still indents one level.
+
+::: code-group
+
+```d [Before]
+@("module.symbol.case")
+@safe unittest
+{
+    assert(1 + 1 == 2);
+}
+```
+
+```d [After]
+@("module.symbol.case")
+@safe unittest
+{
+    assert(1 + 1 == 2);
+}
+```
+
+:::
+
+### An empty body keeps the shape the author gave it {#p34}
+
+<!-- fmt id=P34 -->
+
+`{}` written on one line stays on one line; braces the author put on separate lines stay on
+separate lines, with nothing between them. The formatter has no opinion here — but it will not
+insert a blank line into a body that has no statements.
+
+::: code-group
+
+```d [Before]
+void inline() {}
+
+void spread()
+{
+}
+```
+
+```d [After]
+void inline() {}
+
+void spread()
+{
+}
+```
+
+:::
