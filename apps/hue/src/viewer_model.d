@@ -1906,9 +1906,21 @@ struct ViewerModel
             tableScrollAt.remove(spanStart);
         else
             tableScrollAt[spanStart] = next;
-        rebuild();
+        // `DSN4`: when the document is a WINDOW onto a longer view, moving
+        // the viewport means materializing different rows — a re-layout of
+        // what is already built would just re-draw the same window. The host
+        // that owns the projection re-adapts (and rebuilds) instead.
+        if (onWindowScroll !is null)
+            onWindowScroll(spanStart, next.x, next.y);
+        else
+            rebuild();
         return true;
     }
+
+    /// `DSN4`: set by a host whose document materializes only a window of a
+    /// longer view (hue's DSV grid). Null for every ordinary document, whose
+    /// tables carry all their own rows and only need the re-layout.
+    void delegate(size_t spanStart, int x, int y) @system onWindowScroll;
 
     /// Scrolls a table sideways by `delta` cells; true when it moved.
     bool scrollTable(size_t spanStart, int delta)

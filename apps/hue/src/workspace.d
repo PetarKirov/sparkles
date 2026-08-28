@@ -45,7 +45,9 @@ import ansi_model : BackgroundMode;
 import diff_view : DiffLayout;
 import document : Document;
 import dsv_browser : DsvBrowser, fuzzyRowMask, PaletteRow, paletteRows;
-import dsv_view : adaptDsv, DsvCopy, dsvStatusNote, flagsOf, resolveTableCopy;
+import dsv_view : adaptDsv, DsvCopy, dsvStatusNote, DsvWindow, flagsOf,
+    resolveTableCopy;
+import sparkles.source_view.markdown : TableScroll;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 
@@ -1032,7 +1034,7 @@ struct WorkspaceTui
     /// (`DSB1`): re-adapt (no re-sniff — the resolved dialect is replayed),
     /// rebuild the preview, and re-arm the copy state; scroll resets, the
     /// keymap and format survive.
-    void applyDsvBrowser() @system
+    void applyDsvBrowser(uint firstRow = uint.max) @system
     {
         import gui_preview : previewOf;
         import sparkles.syntax : HighlightEvent;
@@ -1042,7 +1044,12 @@ struct WorkspaceTui
             return;
         auto proj = dsvBrowser.projection(st.info.columns);
         proj.rowMask = fuzzyRowMask(st.rawText, st.info, dsvBrowser.fuzzyParts);
-        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj);
+        // `DSN4`: re-materialize the window the grid is looking at. A
+        // projection edit (sort, filter, columns) reads the current scroll;
+        // a scroll passes the row it just moved to.
+        const top = firstRow == uint.max ? dsvGridTop() : firstRow;
+        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj,
+            DsvWindow(start: top, rows: dsvWindowRows()));
         auto pm = previewOf(*viewer.cache, adapted.doc);
         pm.tableExtras = adapted.extras;
         auto ev = new HighlightEvent[](1);
@@ -1060,10 +1067,35 @@ struct WorkspaceTui
         wireDsvHooks();
     }
 
+    /// `DSN4`: how many grid rows the DSV window materializes — the pane's
+    /// interior plus a little slack, so a row that wraps to two lines cannot
+    /// leave a gap at the bottom of the view. Extra rows cost only their
+    /// build; the viewport clips them.
+    private uint dsvWindowRows() const @safe pure nothrow @nogc
+    {
+        const lines = viewer.vm.resolvedTableMaxLines();
+        const rows = lines > 0 ? lines : viewerRows;
+        return rows > 0 ? cast(uint) rows + 8 : 0;
+    }
+
+    /// The grid's current first visible row, in view coordinates — the
+    /// table's own vertical offset, which the windowed bar reports against
+    /// the whole view (`DSN4`).
+    private uint dsvGridTop() const @safe
+    {
+        if (auto ts = 0 in viewer.vm.tableScrollAt)
+            return ts.y > 0 ? cast(uint) ts.y : 0;
+        return 0;
+    }
+
     /// The viewer reports browser intent; the workspace owns the state and
     /// the reprojection (`DSB`).
     void wireDsvHooks() @system
     {
+        // `DSN4`: a vertical scroll of the grid re-materializes the window.
+        viewer.vm.onWindowScroll = (size_t spanStart, int x, int y) @system {
+            applyDsvBrowser(y > 0 ? cast(uint) y : 0);
+        };
         viewer.onDsvSort = (uint col, bool append) @system {
             dsvBrowser.cycleSort(col, append);
             applyDsvBrowser();

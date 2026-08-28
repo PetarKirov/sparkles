@@ -261,6 +261,11 @@ struct MdTableExtras
     /// the columns do not re-fit — and the grid does not jitter — as the
     /// window scrolls over rows of differing width (`DSN3`).
     const(size_t)[] columnMinWidths;
+    /// `TableViewportSpec.virtualLines`/`virtualOffset` (`DSN4`): the extent
+    /// of the view this table is a WINDOW onto, and where the window sits in
+    /// it. 0 = the table carries its own rows and its bar describes them.
+    size_t virtualRows;
+    size_t virtualRowOffset; /// ditto
     /// Per-column alignment overrides. An `inherit` entry (or a column past
     /// the array) keeps the document's own `ColAlign`; `Align.decimal`
     /// engages the core's decimal-pad solver (`DSG7`).
@@ -1663,7 +1668,14 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 vps = TableViewportSpec(
                     availWidth: availW,
                     maxLines: opt.tableMaxLines > 0 ? opt.tableMaxLines : 0,
-                    x: ts.x, y: ts.y,
+                    x: ts.x,
+                    // `DSN4`: a windowed table was handed exactly the rows
+                    // its viewport shows, so the scroll already happened —
+                    // applying it again inside the table would skip past the
+                    // window's own head and run off its end.
+                    y: opt.tableExtras.virtualRows > 0 ? 0 : ts.y,
+                    virtualLines: opt.tableExtras.virtualRows,
+                    virtualOffset: opt.tableExtras.virtualRowOffset,
                     hBarHitId: opt.tableHBarHitBase != 0
                         ? opt.tableHBarHitBase + blk.span.start : 0,
                     vBarHitId: opt.tableVBarHitBase != 0
