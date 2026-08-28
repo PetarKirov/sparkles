@@ -609,7 +609,10 @@ struct DsvCopy
             recIdx = 0; // the real header row
         else
         {
-            const dataRow = viewRow - 1; // below the (real or synthetic) header
+            // `DSN4`: view row 1 is the WINDOW's first row, not the
+            // projection's — a scrolled grid would otherwise copy the rows
+            // it was showing before it moved.
+            const dataRow = viewRow - 1 + info.windowStart;
             if (dataRow >= rowPerm.length)
                 return "";
             recIdx = first + rowPerm[dataRow];
@@ -1077,6 +1080,32 @@ unittest
         DsvWindow(start: 900, rows: 40));
     assert(past.info.materializedRows == 0);
     assert(past.doc.root.children[0].children.length == 1);
+}
+
+@("dsv_view.window.copyFollowsTheWindow")
+@safe
+unittest
+{
+    // `DSC5` × `DSN4`: the copy is what the view SHOWS. Once the grid is a
+    // window, view row 1 is the window's first row — a `source` copy that
+    // still mapped it through the head of the projection would hand back
+    // rows the reader scrolled past.
+    auto src = "id,name\n";
+    foreach (i; 0 .. 200)
+        src ~= text(i, ",name", i, "\n");
+
+    const win = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 50, rows: 10));
+    const copy = DsvCopy.of(src, win.info);
+    assert(copy.present);
+    assert(copy.rawCell(0, 2) == "name", "the header is the header");
+    assert(copy.rawCell(1, 2) == "name50", "view row 1 IS the window's first");
+    assert(copy.rawCell(2, 2) == "name51");
+
+    // The unwindowed view is unchanged: row 1 is the projection's first.
+    const all = adaptDsv(src, "csv", DsvFlags());
+    const copyAll = DsvCopy.of(src, all.info);
+    assert(copyAll.rawCell(1, 2) == "name0");
 }
 
 @("dsv_view.window.geometryDoesNotJitterAsItScrolls")
