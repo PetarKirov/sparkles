@@ -50,6 +50,32 @@ struct DsvInfo
     uint ragged;          /// records off the modal column count (`DSM3`)
     uint visibleRows;     /// data rows surviving the projection (`DSK5`)
     bool projected;       /// a non-pristine projection is showing (`DSB2`)
+    /// `DSN4`: the materialized slice of the projected view. `windowRows`
+    /// is 0 for a whole-view adaptation (every sink that is not a scrolling
+    /// grid — `--html`, the goldens, copy). When it is set, the built
+    /// document holds `windowRows` data rows starting at `windowStart` of
+    /// the projected order, and `visibleRows` remains the VIRTUAL total the
+    /// scrollbar and the status chrome report.
+    uint windowStart;
+    uint windowRows;      /// ditto — 0 = the whole projected view
+
+    /// The data rows the built document actually carries.
+    uint materializedRows() const @safe pure nothrow @nogc
+        => windowRows == 0 ? visibleRows
+            : (windowStart >= visibleRows ? 0
+                : (visibleRows - windowStart < windowRows
+                    ? visibleRows - windowStart : windowRows));
+}
+
+/// `DSN4`: the row window a scrolling grid materializes. `rows == 0` asks
+/// for the whole projected view — the shape every non-scrolling sink uses.
+struct DsvWindow
+{
+    uint start;
+    uint rows;
+
+    /// `true` when this asks for everything (the default).
+    bool whole() const @safe pure nothrow @nogc => rows == 0;
 }
 
 /// The presentation projection (`DSB1`): the engine's spec (which records,
@@ -138,7 +164,8 @@ string columnName(size_t index) @safe pure nothrow
 /// (flags > sniff > extension seed) and adapts the parsed document onto the
 /// md table model. `ext` is the extension without its dot ("" for stdin).
 DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
-    in DsvProjection proj = DsvProjection.init) @safe
+    in DsvProjection proj = DsvProjection.init,
+    in DsvWindow window = DsvWindow.init) @safe
 {
     DsvAdapted a;
 
@@ -187,12 +214,80 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
         ragged: doc.raggedCount,
         visibleRows: cast(uint) rowPerm.length,
         projected: !proj.pristine,
+        windowStart: window.whole ? 0 : window.start,
+        windowRows: window.rows,
     );
     if (doc.columnCount == 0 || visCols.length == 0)
         return a; // empty input / all columns hidden: the caller degrades
 
-    buildTable(a, doc, types[], rowPerm[], visCols, proj.spec.sortKeys);
+    buildTable(a, doc, types[], rowPerm[], visCols, proj.spec.sortKeys, window);
     return a;
+}
+
+/**
+`DSN3`: one width per column, measured over a bounded sample of the projected
+order rather than over every record.
+
+The sample, not the window, is what makes this stable: measuring the window
+would re-fit the columns on every scroll step (the grid would breathe as a
+long value scrolled in and out), and measuring all rows would put a
+whole-file scan back on the path `DSN4` exists to bound. A value wider than
+its sampled column wraps under the existing cap (`DSG4`) instead of widening
+it — the "no reflow as later rows appear" half of `DSN3`.
+
+Column 0 is the record-number gutter, whose width is the widest number the
+view can show — known exactly from the row count, so it never shifts.
+*/
+private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
+    in uint[] rowPerm, in uint[] visCols, in DsvInfo info) @safe
+{
+    // The table measures with `cellsOf` — the one width authority — so the
+    // floors must be measured with it too, or a pinned column would disagree
+    // with the content it is pinning.
+    import sparkles.ui.geometry : cellsOf;
+
+    auto widths = new size_t[](visCols.length + 1);
+    SmallBuffer!(char, 256) cellBuf;
+
+    size_t digits = 1;
+    for (uint n = info.visibleRows; n >= 10; n /= 10)
+        ++digits;
+    widths[0] = digits; // the "#" header is one cell, the numbers are wider
+
+    // The header names are always visible, so they always count.
+    const first = info.hasHeader ? 1 : 0;
+    if (info.hasHeader && doc.records.length)
+    {
+        const rec = doc.records[0];
+        foreach (vi, c; visCols)
+            if (c < rec.cellCount)
+                widths[vi + 1] = cellsOf(
+                    decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf));
+    }
+    else
+        foreach (vi, c; visCols)
+            widths[vi + 1] = cellsOf(columnName(c));
+
+    const sampled = rowPerm.length < sniffMaxRecords
+        ? rowPerm.length : sniffMaxRecords;
+    foreach (dataIdx; rowPerm[0 .. sampled])
+    {
+        const rec = doc.records[first + dataIdx];
+        foreach (vi, c; visCols)
+        {
+            if (c >= rec.cellCount)
+                continue;
+            const w = cellsOf(
+                decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf));
+            if (w > widths[vi + 1])
+                widths[vi + 1] = w;
+        }
+    }
+
+    foreach (ref w; widths)
+        if (w > dsvColumnCapCells)
+            w = dsvColumnCapCells;
+    return widths;
 }
 
 /// Synthesizes the decoded buffer + the `table` block tree (`DSG1` via the
@@ -203,7 +298,7 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
 /// indexes in view order; `visCols` the visible data columns in view order.
 private void buildTable(ref DsvAdapted a, in DsvDoc doc,
     in ColumnType[] types, in uint[] rowPerm, in uint[] visCols,
-    in SortKey[] sortKeys = null) @safe
+    in SortKey[] sortKeys = null, in DsvWindow window = DsvWindow.init) @safe
 {
     const cols = visCols.length;
     auto buf = appender!string;
@@ -261,9 +356,19 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
                 }
     }
 
+    // `DSN3`: a windowed grid must not re-fit its columns as it scrolls, so
+    // measure them once over a bounded sample of the projected order and pin
+    // the result as floors. Without a window nothing is pinned — every
+    // non-scrolling sink (`--html`, the goldens, copy) keeps fitting the
+    // table to exactly the content it renders.
+    const(size_t)[] floors;
+    if (!window.whole)
+        floors = sampledColumnWidths(doc, rowPerm, visCols, a.info);
+
     a.extras = MdTableExtras(
         headerCols: 1,
         columnMaxWidth: dsvColumnCapCells,
+        columnMinWidths: floors,
         columnAligns: cellAligns,
         pinHeader: true,
         // The record-number gutter stays put while the grid scrolls
@@ -316,8 +421,17 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
     // The projected data rows, padded to the grid width, gutter-numbered by
     // their 1-based SOURCE order (`DSG5` — a sorted/filtered view shows
     // provenance, never a renumbering).
+    // `DSN4`: only the window is materialized. The projection above still
+    // ran over every record — sorting and filtering are properties of the
+    // whole view, not of what happens to be on screen — so this slices the
+    // finished order rather than narrowing the work that produced it.
     const first = a.info.hasHeader ? 1 : 0;
-    foreach (dataIdx; rowPerm)
+    const from = window.whole ? 0 : (window.start < rowPerm.length
+        ? window.start : cast(uint) rowPerm.length);
+    const to = window.whole ? rowPerm.length
+        : (rowPerm.length - from < window.rows ? rowPerm.length
+            : from + window.rows);
+    foreach (dataIdx; rowPerm[from .. to])
     {
         const rec = doc.records[first + dataIdx];
         auto cells = new const(char)[][cols + 1];
@@ -915,6 +1029,73 @@ unittest
     // delimiter == quote is an unusable dialect: not present → raw view.
     const bad = adaptDsv("a,b\n", "csv", DsvFlags(delimiter: `"`));
     assert(!bad.info.present);
+}
+
+@("dsv_view.window.materializesOnlyTheSlice")
+@safe
+unittest
+{
+    import std.algorithm : canFind;
+
+    auto src = "n,name\n";
+    foreach (i; 0 .. 500)
+        src ~= text(i, ",row", i, "\n");
+
+    // The whole view is the default, and stays the shape every non-scrolling
+    // sink gets: one table row per data record (plus the header).
+    const all = adaptDsv(src, "csv", DsvFlags());
+    assert(all.info.visibleRows == 500);
+    assert(all.info.windowRows == 0 && all.info.materializedRows == 500);
+    assert(all.doc.root.children[0].children.length == 501);
+    assert(all.extras.columnMinWidths.length == 0, "unwindowed: nothing pinned");
+
+    // A window materializes its slice only — while `visibleRows` keeps
+    // reporting the virtual total the scrollbar and the chrome need.
+    const win = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 100, rows: 40));
+    assert(win.info.visibleRows == 500, "the view is still 500 rows long");
+    assert(win.info.materializedRows == 40);
+    assert(win.doc.root.children[0].children.length == 41); // header + 40
+    // Gutter numbers are 1-based SOURCE order (`DSG5`), so the window's
+    // first row proves WHICH rows were materialized.
+    assert(win.text.canFind("\n101,"), "the window starts at row 101");
+    assert(!win.text.canFind("\n100,"), "and not before it");
+
+    // A window running past the end clamps instead of over-reading.
+    const tail = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 480, rows: 40));
+    assert(tail.info.materializedRows == 20);
+    assert(tail.doc.root.children[0].children.length == 21);
+
+    // Past the end entirely: the header alone, no crash.
+    const past = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 900, rows: 40));
+    assert(past.info.materializedRows == 0);
+    assert(past.doc.root.children[0].children.length == 1);
+}
+
+@("dsv_view.window.geometryDoesNotJitterAsItScrolls")
+@safe
+unittest
+{
+    // `DSN3`: the column that holds a long value only in the tail must be
+    // just as wide in a window that cannot see it — otherwise the grid
+    // breathes as the reader scrolls, which is what pinning prevents.
+    auto src = "id,note\n";
+    foreach (i; 0 .. 400)
+        src ~= text(i, ",", i == 399 ? "a-very-long-trailing-value" : "x", "\n");
+
+    const head = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 0, rows: 20));
+    const tail = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 380, rows: 20));
+    assert(head.extras.columnMinWidths.length == 3); // gutter + 2 columns
+    assert(head.extras.columnMinWidths == tail.extras.columnMinWidths,
+        "the pinned widths are a property of the view, not of the window");
+
+    // The gutter is pinned to the widest record number the view can show,
+    // so it does not widen when the reader reaches row 100 or 400.
+    assert(head.extras.columnMinWidths[0] == 3);
 }
 
 @("dsv_view.dsvStatusNote.readout")
