@@ -253,6 +253,14 @@ struct MdTableExtras
     /// `TableProps.columnMaxWidths` filled for every column; over-cap
     /// content wraps (`DSG4`).
     size_t columnMaxWidth;
+    /// Per-column content-width floor in cells (`TableProps.columnMinWidths`);
+    /// a `0` entry or a column past the array leaves that column at its
+    /// natural width. The geometry-stability channel: a host that renders
+    /// only a WINDOW of a long table (hue's viewport-culled DSV grid,
+    /// `DSN4`) pins the widths it measured over the whole sample here, so
+    /// the columns do not re-fit — and the grid does not jitter — as the
+    /// window scrolls over rows of differing width (`DSN3`).
+    const(size_t)[] columnMinWidths;
     /// Per-column alignment overrides. An `inherit` entry (or a column past
     /// the array) keeps the document's own `ColAlign`; `Align.decimal`
     /// engages the core's decimal-pad solver (`DSG7`).
@@ -1621,6 +1629,17 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 auto caps = new size_t[](cols);
                 caps[] = opt.tableExtras.columnMaxWidth;
                 props.columnMaxWidths = caps;
+            }
+            if (opt.tableExtras.columnMinWidths.length)
+            {
+                // Pinned geometry (`DSN3`): the floors the host measured over
+                // its own sample, so a windowed table keeps one width per
+                // column no matter which rows are materialized.
+                auto floors = new size_t[](cols);
+                const given = opt.tableExtras.columnMinWidths;
+                foreach (i; 0 .. cols)
+                    floors[i] = i < given.length ? given[i] : 0;
+                props.columnMinWidths = floors;
             }
 
             // `TBL7`/`TBL8`: the overflow policy. The available box is
