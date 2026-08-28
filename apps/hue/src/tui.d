@@ -454,6 +454,32 @@ struct PreviewTui
         return true;
     }
 
+    /// `DSN4`: does this document's grid own the vertical axis? True only
+    /// for a windowed DSV view, where the document IS the window.
+    private bool gridOwnsVertical() const @safe pure nothrow @nogc
+        => vm.showPreview && dsvCopy.info.present
+            && dsvCopy.info.windowRows != 0;
+
+    /// Scrolls the grid by `delta` rows; false when this view has no grid,
+    /// so the caller falls back to the document scroll.
+    private bool scrollGridV(long delta) @system
+        => gridOwnsVertical()
+            && vm.scrollTableV(0, cast(int) clampToInt(delta));
+
+    /// Saturates a row delta into the table API's `int` without wrapping —
+    /// `long.max` (the "jump to the end" sentinel) must stay a big positive.
+    private static long clampToInt(long v) @safe pure nothrow @nogc
+        => v > int.max ? int.max : (v < int.min ? int.min : v);
+
+    /// Jumps the grid to an absolute row (clamped); same contract.
+    private bool scrollGridTo(long row) @system
+    {
+        if (!gridOwnsVertical())
+            return false;
+        const cur = vm.tableScrollAt.get(0, TableScroll(0, 0, 0));
+        return vm.setTableScroll(0, cur.x, row);
+    }
+
     /// `NAV3`: the safety clamp — `top` must address a real row. Filling the
     /// pane is `scrollVertical`'s job, not something to re-impose after every
     /// rebuild: that is what moved the first line on a resize (issue #299).
@@ -1461,14 +1487,30 @@ struct PreviewTui
 
             case Command.quit: return false;
 
-            case Command.viewDown:     vm.scrollVertical(1, rows); break;
-            case Command.viewUp:       vm.scrollVertical(-1, rows); break;
-            case Command.viewPageDown: vm.scrollVertical(rows, rows); break;
-            case Command.viewPageUp:   vm.scrollVertical(-rows, rows); break;
+            // `DSN4`: the DSV grid is a WINDOW onto a longer view, so the
+            // document under it is only a screenful and has nothing to
+            // scroll — the vertical keys drive the grid's own viewport, the
+            // same one the wheel and the bar already move.
+            case Command.viewDown:
+                if (!scrollGridV(1)) vm.scrollVertical(1, rows);
+                break;
+            case Command.viewUp:
+                if (!scrollGridV(-1)) vm.scrollVertical(-1, rows);
+                break;
+            case Command.viewPageDown:
+                if (!scrollGridV(rows)) vm.scrollVertical(rows, rows);
+                break;
+            case Command.viewPageUp:
+                if (!scrollGridV(-rows)) vm.scrollVertical(-rows, rows);
+                break;
             case Command.viewHome:
-            case Command.viewTop:      vm.scrollTo(0); break;
+            case Command.viewTop:
+                if (!scrollGridTo(0)) vm.scrollTo(0);
+                break;
             case Command.viewEnd:
-            case Command.viewBottom:   vm.scrollTo(maxTop); break;
+            case Command.viewBottom:
+                if (!scrollGridTo(long.max)) vm.scrollTo(maxTop);
+                break;
 
             case Command.themePrev:
                 themeIdx = themeIdx == 0 ? names.length - 1 : themeIdx - 1;

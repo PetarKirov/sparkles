@@ -186,6 +186,20 @@ int executeView(in HueCli root, in View view)
     pipeline.coverageArtifact = coverageArtifact;
     pipeline.autoCoverage = !root.overlay.noAutoCov;
 
+    // `DSN4`: an interactive grid materializes a screenful, not the file —
+    // the terminal's height is a safe upper bound for any pane inside it,
+    // and the workspace re-windows exactly once it knows its own geometry.
+    // The one-shot sinks (`--html`, the pager) keep 0: they render every row
+    // because that IS their output.
+    if (backend == Backend.gui || backend == Backend.tui)
+    {
+        import sparkles.base.term_caps : terminalSize;
+
+        const h = terminalSize(StdStream.stdout).height;
+        pipeline.dsvWindowRows = h > 0 ? h : 60;
+    }
+
+
     // `FPR10`: fork the format zygote for the interactive views while the
     // process is still single-threaded (the fork-safety window). A refusal
     // is quiet — the preview falls back to its worker-thread backend.

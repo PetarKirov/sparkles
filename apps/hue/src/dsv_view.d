@@ -369,6 +369,11 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
         headerCols: 1,
         columnMaxWidth: dsvColumnCapCells,
         columnMinWidths: floors,
+        // `DSN4`: the bar describes the whole projected view and where this
+        // window sits in it — the grid scrolls in view coordinates even
+        // though only the window was built.
+        virtualRows: window.whole ? 0 : a.info.visibleRows,
+        virtualRowOffset: window.whole ? 0 : a.info.windowStart,
         columnAligns: cellAligns,
         pinHeader: true,
         // The record-number gutter stays put while the grid scrolls
@@ -1096,6 +1101,31 @@ unittest
     // The gutter is pinned to the widest record number the view can show,
     // so it does not widen when the reader reaches row 100 or 400.
     assert(head.extras.columnMinWidths[0] == 3);
+}
+
+@("dsv_view.window.rendersFromItsFirstRow")
+@system
+unittest
+{
+    import std.algorithm : canFind;
+
+    // `DSN4`: the window IS the scroll. A host that moves the window and
+    // ALSO hands the table its scroll offset scrolls twice — the window's
+    // own head is skipped and its tail runs off the viewport, which is how
+    // the grid stopped answering hit tests after one wheel notch.
+    auto src = "id,name\n";
+    foreach (i; 0 .. 300)
+        src ~= text(i, ",name", i, "\n");
+
+    const win = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+        DsvWindow(start: 100, rows: 20));
+    // Rendered the way hue renders it: a viewport shorter than the window,
+    // with the host's scroll offset carried alongside — the shape that used
+    // to double-scroll.
+    const shown = dsvGridText(win, 12, 0, 100);
+    assert(shown.canFind("name100"),
+        "the window's first row must be at the top of the grid");
+    assert(!shown.canFind("name120"), "and its tail stays past the viewport");
 }
 
 @("dsv_view.dsvStatusNote.readout")

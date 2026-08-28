@@ -39,7 +39,8 @@ import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import coverage_discovery : findCoverageArtifact;
 import coverage_rebase : rebasedCoverage;
-import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, dsvStatusNote;
+import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvProjection,
+    dsvStatusNote, DsvWindow;
 import gui_preview : PreviewModel;
 
 /// What a document *is* — detected from the content, not selected by a mode
@@ -371,6 +372,11 @@ struct DocumentPipeline
     string dsvDelimiter; /// `--dsv-delimiter` ("" = sniff)
     string dsvQuote;     /// `--dsv-quote` ("" = sniff)
     string dsvHeader = "auto"; /// `--dsv-header` `auto|yes|no`
+    /// `DSN4`: how many grid rows a DSV load materializes (0 = the whole
+    /// file, which is what every non-scrolling sink wants). An interactive
+    /// host sets this to its pane height before loading, so the first paint
+    /// costs a screenful rather than the file.
+    uint dsvWindowRows;
     /// The engine knobs the config owns (`CFG15`), defaults = the engine's:
     /// context lines per hunk, the pairing similarity floor, and the Myers
     /// scale guard. Set by field assignment (after the positional tail, like
@@ -590,7 +596,9 @@ struct DocumentPipeline
     /// to the plain code view (`DSM3`/`DEG` doctrine), never errors.
     Document fromDsvSource(string path, string title, string dsvText, string ext)
     {
-        auto adapted = adaptDsv(dsvText, ext, DsvFlags(dsvDelimiter, dsvQuote, dsvHeader));
+        auto adapted = adaptDsv(dsvText, ext,
+            DsvFlags(dsvDelimiter, dsvQuote, dsvHeader), DsvProjection.init,
+            DsvWindow(rows: dsvWindowRows));
         if (!adapted.info.present || adapted.info.columns == 0)
         {
             auto fallback = fromSource(path, title, dsvText,
