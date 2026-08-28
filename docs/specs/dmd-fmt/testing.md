@@ -142,6 +142,10 @@ heading, and the line of the offending fence:
 markdown, preserving prose, directives, fence titles and group structure. The repo already uses
 this environment variable for the markdown golden suite; reusing it is deliberate.
 
+Blessing is **loud**: it names every expectation it rewrote, on stderr. A silent rewrite is how a
+stale binary enshrines its own bug in a committed golden — which happened once during this work,
+and was caught only because the file was already under version control.
+
 The update path never touches an input fence, never reorders or deletes a case, and never edits
 prose — so a blessed diff reads as "what changed in the output", and a prose statement that the new
 output contradicts stays in the diff for a reviewer to notice. That is a feature: **the rule
@@ -270,6 +274,23 @@ void f() {
 No theme component is needed — `::: code-group` is stock VitePress and already used across this
 docs tree. An index page carries the full 160-row table (ID, area, rule, verdict, option, default),
 which is the map users navigate before the per-area pages.
+
+### TST15 — Failure reports read like the code they are about
+
+A failing case prints three panes — **the expectation, what the formatter produced, then the diff
+between them** — and when `hue` is on `PATH` and the output takes colour, all three go through it.
+The formatter's own repository ships a syntax-highlighting viewer and a diff view; a formatting
+failure is exactly the thing they are good at, and reading one as an undifferentiated wall of text
+is a self-inflicted wound.
+
+One flag makes it work: `hue diff --diff-show-formatting`. A formatter's diff is usually
+whitespace-only, and hue folds such a hunk to a one-line badge — right for review, where nobody
+wants to read re-indentation, and wrong here, where the whitespace *is* the subject. A one-shot
+`--ansi` render has no keystroke to expand the fold with, so the flag exists.
+
+Everything degrades in one step: no `hue`, no colour, an older `hue` that rejects the flag, or any
+error invoking it falls back to plain text with a unified diff computed by the same `sparkles:diff`
+engine the edit emitter uses. A report that cannot be produced is worse than a plain one.
 
 ### TST14 — What lives outside the harness
 

@@ -296,6 +296,10 @@ struct DiffSettings
     @Doc("Diff rendered markdown documents instead of raw source.")
     bool preview = false;
 
+    @Doc("Show whitespace-only hunks in full instead of folding them to a badge.")
+    @Label("show formatting hunks")
+    bool showFormatting = false;
+
     @Doc("Context lines around each hunk.")
     @Range(0, 32, 1)
     int context = 3;

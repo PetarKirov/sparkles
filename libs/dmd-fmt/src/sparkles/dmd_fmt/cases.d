@@ -114,6 +114,7 @@ struct CaseResult
     bool ok;        /// Whether every `TST4` step passed.
     string error;   /// The first failure, `null` when `ok`.
     string actual;  /// What the formatter produced (set whenever it differs).
+    string expected; /// What the case said it should produce.
 }
 
 /**
@@ -215,6 +216,7 @@ CaseResult[] runCase(const Case c) @system
             r.ok = false;
             r.error = "output differs";
             r.actual = got;
+            r.expected = exp.text;
         }
         else
         {
@@ -284,7 +286,17 @@ CaseResult[] runCaseFile(string path) @system
         }
 
     if (toBless.length)
+    {
+        // Loud on purpose. A silent rewrite of a committed golden is how a
+        // stale binary quietly enshrines its own bug — say what moved, and
+        // let the reviewer read it in the diff.
+        import std.stdio : stderr;
+
         blessCaseFile(path, text, toBless);
+        stderr.writefln("blessed %s expectation(s) in %s:", blessed.length, path);
+        foreach (label; blessed)
+            stderr.writefln("  %s", label);
+    }
     return failures;
 }
 
@@ -421,6 +433,153 @@ private ptrdiff_t indexOfNeedle(const(char)[] s, const(char)[] needle)
     return -1;
 }
 
+
+// ---------------------------------------------------------------------------
+// Reporting
+
+/**
+Render a failure for a human: the expectation, what the formatter produced,
+and the diff between them.
+
+When `hue` is on `PATH` and the terminal takes colour, all three panes go
+through it — this repository's own viewer, so a formatting failure is read
+with the same syntax highlighting and the same diff view as the code it is
+about. `--diff-show-formatting` is what makes that useful here: a formatter's
+diff is usually whitespace-only, and hue folds such a hunk to a badge unless
+asked not to (there is no keystroke to expand it in a one-shot render).
+
+Everything degrades: no `hue`, no colour, or any failure invoking it falls
+back to plain text with a unified diff. A test report that cannot be produced
+is worse than a plain one.
+*/
+string renderFailure(const CaseResult r) @system
+{
+    string plain()
+    {
+        return "\n--- expected ---\n" ~ r.expected
+            ~ "\n--- actual ---\n" ~ r.actual
+            ~ "\n--- diff ---\n" ~ unifiedDiff(r.expected, r.actual);
+    }
+
+    if (!r.expected.length && !r.actual.length)
+        return "";
+    if (!hueUsable)
+        return plain();
+
+    import std.file : tempDir, write;
+    import std.path : buildPath;
+    import std.process : execute;
+
+    const dir = tempDir;
+    const expPath = buildPath(dir, "dmd-fmt-case-expected.d");
+    const actPath = buildPath(dir, "dmd-fmt-case-actual.d");
+    try
+    {
+        write(expPath, r.expected);
+        write(actPath, r.actual);
+        scope (exit)
+            removeQuietly(expPath, actPath);
+
+        auto pane = (string title, string[] argv) {
+            const res = execute(argv);
+            return res.status == 0
+                ? "\n" ~ title ~ "\n" ~ res.output
+                : "";
+        };
+        const expected = pane("--- expected ---", ["hue", "view", "--ansi", expPath]);
+        const actual = pane("--- actual ---", ["hue", "view", "--ansi", actPath]);
+        const diff = pane("--- diff ---",
+            ["hue", "diff", "--ansi", "--diff-show-formatting", expPath, actPath]);
+        // An older `hue` rejects the flag; its diff would fold the hunk away,
+        // so fall back to ours rather than print a badge that says nothing.
+        if (!expected.length || !actual.length || !diff.length)
+            return plain();
+        return expected ~ actual ~ diff;
+    }
+    catch (Exception)
+        return plain();
+}
+
+private void removeQuietly(string[] paths...) @safe nothrow
+{
+    import std.file : remove;
+
+    foreach (path; paths)
+        try
+            remove(path);
+        catch (Exception)
+        {
+        }
+}
+
+/// A plain unified diff, for the no-`hue` path — computed with the same
+/// Myers engine the formatter's edit emitter uses (`sparkles:diff`), so a
+/// pathological pair degrades to one coarse edit rather than hanging.
+private string unifiedDiff(string expected, string actual) @safe
+{
+    import sparkles.diff.myers : diffLines, splitDiffLines;
+
+    bool missingA, missingB;
+    auto oldLines = splitDiffLines(expected, missingA);
+    auto newLines = splitDiffLines(actual, missingB);
+    const d = diffLines(expected, oldLines, actual, newLines, 4096);
+
+    string lineAt(const(char)[] text, size_t start, size_t end)
+        => text[start .. end].stripRight("\r\n").idup;
+
+    auto out_ = appender!string;
+    size_t i, j;
+    while (i < oldLines.length || j < newLines.length)
+    {
+        const removed = i < oldLines.length && d.oldRemoved[][i];
+        const inserted = j < newLines.length && d.newInserted[][j];
+        if (removed)
+        {
+            out_ ~= "- " ~ lineAt(expected, oldLines[][i].start,
+                oldLines[][i].end) ~ "\n";
+            i++;
+        }
+        else if (inserted)
+        {
+            out_ ~= "+ " ~ lineAt(actual, newLines[][j].start,
+                newLines[][j].end) ~ "\n";
+            j++;
+        }
+        else if (i < oldLines.length)
+        {
+            out_ ~= "  " ~ lineAt(expected, oldLines[][i].start,
+                oldLines[][i].end) ~ "\n";
+            i++;
+            j++;
+        }
+        else
+            break;
+    }
+    return out_[];
+}
+
+/// Is `hue` worth invoking — on `PATH`, and the output takes colour? Computed
+/// once: a failing suite would otherwise stat the `PATH` per failure.
+private bool hueUsable() @safe
+{
+    import sparkles.base.term_caps : detectTermCaps;
+    import std.algorithm : splitter;
+    import std.file : exists;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    static bool computed, result;
+    if (computed)
+        return result;
+    computed = true;
+    if (!detectTermCaps().colors)
+        return result = false;
+    foreach (dir; environment.get("PATH", "").splitter(':'))
+        if (dir.length && buildPath(dir, "hue").exists)
+            return result = true;
+    return result = false;
+}
+
 // ---------------------------------------------------------------------------
 
 @("cases.parse.directive-and-group")
@@ -493,6 +652,29 @@ private ptrdiff_t indexOfNeedle(const(char)[] s, const(char)[] needle)
         assert(r.ok, r.error);
 }
 
+@("cases.report.unified-diff-aligns-context")
+@safe unittest
+{
+    // The plain path must align: a one-line change reads as one `-`/`+` pair
+    // with the rest as context, not as "delete everything, add everything".
+    const d = unifiedDiff("a\nb\nc\n", "a\nB\nc\n");
+    assert(d == "  a\n- b\n+ B\n  c\n", d);
+}
+
+@("cases.report.plain-render-has-all-three-panes")
+@system unittest
+{
+    CaseResult r;
+    r.expected = "int a;\n";
+    r.actual = "int  a;\n";
+    const report = renderFailure(r);
+    assert(report.canFind("--- expected ---"), report);
+    assert(report.canFind("--- actual ---"), report);
+    assert(report.canFind("--- diff ---"), report);
+    // Empty on both sides is not a diff worth printing.
+    assert(renderFailure(CaseResult.init) == "");
+}
+
 @("cases.bless.rewrites-only-the-expectation")
 @safe unittest
 {
@@ -562,8 +744,7 @@ private ptrdiff_t indexOfNeedle(const(char)[] s, const(char)[] needle)
             {
                 report ~= "\n" ~ entry.name ~ ":" ~ failure.line.to!string
                     ~ ": " ~ failure.label ~ " — " ~ failure.error;
-                if (failure.actual.length)
-                    report ~= "\n--- actual ---\n" ~ failure.actual;
+                report ~= renderFailure(failure);
             }
         }
     }

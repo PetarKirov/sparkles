@@ -92,6 +92,7 @@ hue diff old.d new.d --diff-layout split                # side-by-side 2-column 
 hue diff old.d new.d --diff-structural auto             # grammar-aware structural diff
 hue diff old.md new.md --diff-preview                   # diff rendered Markdown
 hue diff old.d new.d --diff-ignore-whitespace change    # ignore whitespace changes
+hue diff old.d new.d --diff-show-formatting             # expand whitespace-only hunks
 ```
 
 **Diff controls:**
@@ -101,6 +102,10 @@ hue diff old.d new.d --diff-ignore-whitespace change    # ignore whitespace chan
 - `--diff-commutative <mode>`: Suppresses non-breaking reorder noise in unordered containers (e.g. sorted D imports).
 - `--diff-preview`: Diffs rendered Markdown documents instead of raw markdown text.
 - `--diff-ignore-whitespace <exact|trailing|change|all>`: Whitespace sensitivity mode.
+- `--diff-show-formatting`: Show whitespace-only hunks in full instead of folding them to a
+  badge. The fold is right for review — a reviewer scanning a PR does not want to read
+  re-indentation — but wrong when the whitespace *is* the subject, as when diffing a
+  formatter's output, and a one-shot `--ansi` render has no keystroke to expand it with.
 
 ---
 
