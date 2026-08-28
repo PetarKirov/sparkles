@@ -104,6 +104,17 @@ struct TableViewportSpec
     bool hasHThumbFg;    /// ditto
     RgbColor vThumbFg;   /// ditto
     bool hasVThumbFg;    /// ditto
+    /// The vertical bar's $(B virtual) geometry, for a host that renders only
+    /// a window of a long table (hue's viewport-culled DSV grid, `DSN4`).
+    /// When `virtualLines` is non-zero the bar reports the whole view's
+    /// extent and the window's offset instead of the rows this build happens
+    /// to carry — so the thumb, the drag mapping, and every host clamp that
+    /// reads the bar back off the tree speak the view's coordinates rather
+    /// than the window's. Zero (the default) keeps the bar describing the
+    /// rows it was given.
+    size_t virtualLines;
+    size_t virtualOffset; /// ditto — the window's first line in that space
+
     /// Pin the header band (the `TableProps.headerRows` rows plus their
     /// heavy rule) below the top border while the body scrolls behind the
     /// vertical viewport — hue's `DSG2` (a data grid keeps its column names
@@ -331,7 +342,12 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
         && interiorLines > 0;
     const shownLines = vp.maxLines > 0 && interiorLines > vp.maxLines
         ? vp.maxLines : interiorLines;
-    const vOver = shownLines < interiorLines && props.border && tableW > 2;
+    // A windowed build (`virtualLines`) carries only what fits, so it never
+    // overflows on its own — the view it is a window ONTO is what overflows,
+    // and that is what the bar must describe.
+    const vVirtualOver = vp.virtualLines > cast(size_t) shownLines;
+    const vOver = (shownLines < interiorLines || vVirtualOver)
+        && props.border && tableW > 2;
     const framed = hOver || vOver;
 
     const interiorW = tableW - 2;
@@ -698,10 +714,15 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     {
         // Likewise the right edge: one leaf that owns the border column
         // (`SCV11`), not a bar stacked over a run of `│` cells.
+        // A windowed build describes the whole view, not its slice.
+        const barContent = vp.virtualLines > 0
+            ? cast(int) vp.virtualLines : contentLines;
+        const barOffset = vp.virtualLines > 0
+            ? cast(int) vp.virtualOffset : sy;
         return scrollbar(b, ScrollbarSpec(
-            content: contentLines,
+            content: barContent,
             viewport: shown,
-            offset: sy,
+            offset: barOffset,
             axis: ScrollAxis.vertical,
             glyphs: ScrollbarGlyphs('┃', props.glyphs.verticalLine),
             edge: RuleEdge.centerX,
@@ -1222,6 +1243,44 @@ version (unittest)
         TableWidgetStyle(), TableViewportSpec(maxLines: 3));
     assert(b4.finish(frozen.root).nodes.length
         == b5.finish(plain.root).nodes.length);
+}
+
+@("table.widgets.viewport.virtualBarDescribesTheWholeView")
+@safe unittest
+{
+    // A host that materializes a window (`DSN4`) hands the table only the
+    // rows it can show, so nothing overflows here — yet the bar must still
+    // appear, and must read as "40 rows in, of 500", because that is the
+    // view this build is a window onto.
+    auto rows = new string[][](6);
+    foreach (r; 0 .. 6)
+        rows[r] = ["r" ~ cast(char)('0' + r), "value"];
+    auto b = Builder();
+    const res = buildTableWidgets(b, plainCells(rows), TableProps(headerRows: 1),
+        TableWidgetStyle(),
+        TableViewportSpec(maxLines: 6, virtualLines: 500, virtualOffset: 40));
+    auto tree = b.finish(res.root);
+
+    bool sawBar;
+    foreach (ref const n; tree.nodes)
+        if (n.kind == WidgetKind.scrollbar && n.barEdge == RuleEdge.centerX)
+        {
+            sawBar = true;
+            assert(n.barContent == 500,
+                "the bar reports the view, not the window");
+            assert(n.barOffset == 40, "and where the window sits in it");
+        }
+    assert(sawBar, "a windowed table still needs its vertical bar");
+
+    // Without the virtual extents the same rows describe only themselves,
+    // so a build with room to spare grows no vertical bar at all.
+    auto b2 = Builder();
+    const plain = buildTableWidgets(b2, plainCells(rows),
+        TableProps(headerRows: 1), TableWidgetStyle(),
+        TableViewportSpec(maxLines: 20));
+    foreach (ref const n; b2.finish(plain.root).nodes)
+        assert(n.kind != WidgetKind.scrollbar
+            || n.barEdge != RuleEdge.centerX);
 }
 
 @("table.widgets.viewport.pinnedHeaderBand")
