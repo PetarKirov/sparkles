@@ -113,9 +113,10 @@ distinction is **which file a case lives in** — same syntax, same parser, same
 | `docs/libs/dmd-fmt/reference/decisions/<area>.md` | ✅ yes    | The presentable case for each decision: plausible code, a sentence a user wants. |
 | `libs/dmd-fmt/test/cases/<area>.md`               | ❌ no     | Everything hostile: pathological nesting, comment placement, degenerate input.   |
 
-The unpublished tree is kept out of the site with a `srcExclude` entry in
-`docs/.vitepress/docs-config.json`, exactly as the research grounding ledgers already are — and
-because that list is also what `ci --check-docs-sidebar` reads, the exclusion is one edit, not two. Every decision needs **≥1 case anywhere**; every user-visible
+The unpublished tree needs no exclusion list: VitePress builds `docs/` and nothing else, so a
+markdown file under `libs/` is never a page. That is the reason to put the hostile cases there
+rather than under `docs/` behind a `srcExclude` entry — one fewer list to keep in step, and the
+location itself says which tree a case belongs to. Every decision needs **≥1 case anywhere**; every user-visible
 decision needs **≥1 case in the published tree**.
 
 ---
