@@ -140,15 +140,50 @@ decoder — nothing cell-shaped could paint an image). Both are stated per-cell
 fidelity limits of the terminal arm, not of the GPU arm, which carries the full
 renderer.
 
-## `UGL-O9` — the TUI arm's pty wake is a fixed idle tick · open
+## `UGL-O9` — the TUI arm's pty wake is a fixed idle tick · closed
 
-`RunConfig.idleTimeoutMs` is startup-fixed, so the gallery sets a 50 ms tick
-unconditionally: every page pays the wake so that a shell's output can appear
-without a keypress. A host-level "the component asks for wakeups while it has
-background work" errand would confine the cost to the Terminal page; the
-event-horizon arm could equally park a fiber on the pty fd itself. Related:
-the gallery never skips frames, so an idle visible terminal still repaints —
-`decideRedraw` exists and is unit-tested, and folding it into a gallery-level
-skip is the follow-up. The `forkpty` under an open io_uring ring (both arms'
-event-horizon variants) also deserves a CLOEXEC audit: the child `execv`s
-immediately, but the ring fd should not survive into the shell.
+`RunConfig.idleTimeoutMs` was startup-fixed, so the gallery set a 50 ms tick
+unconditionally: every page paid the wake so that a shell's output could
+appear without a keypress. Both errands it was waiting on landed with
+`HST15`/`HST16`, and the gallery now uses them.
+
+**The pane rides the ring.** A spawned tab calls `startRingPump` (`TVW8`)
+right after its `open`/`openCore` — the embedder hookup the component's own
+DDoc names this application for — so bytes wake the loop instead of a tick
+finding them. Where any piece is missing (a blocking arm, the recorder) it
+declines and the sync `pump()` stays, which is why nothing branches on the
+answer.
+
+**The wake became an ask.** `syncTerminals` counts, over the walk that already
+pumps, the live panes the ring is _not_ driving (`TerminalView.ringPumped`,
+added for this) and asks `wakeIn(50 ms)` only for those. A catalog with no
+terminal asks for nothing and parks on input alone — asserted through the
+recorder, whose `RecordedFrame.wakeAsk` captures the ask.
+
+Measured on the terminal arm, `strace -c` over an idle run with no terminal
+open: **81 `io_uring_enter` in 4 s → 2**. With a live pane, 12 in 10 s and
+`sleep 2; echo BANANA` still arrives unprompted — the daemon carrying it, not
+a poll.
+
+What is left is only the second half of the old note, restated as its own
+item: the gallery never skips frames, so an idle _visible_ terminal still
+repaints. `decideRedraw` exists and is unit-tested; folding it into a
+gallery-level skip needs a shell-wide "nothing changed" answer the catalog
+does not have yet, and matters less now that an idle terminal arm is not
+woken at all.
+
+### The CLOEXEC audit it asked for — and the leak it found
+
+The note asked whether the ring fd survives into a shell. It does not: the
+kernel opens an io*uring fd `O_CLOEXEC`, and a spawned shell's `/proc/self/fd`
+shows none. **But the pty master does.** `forkpty` returns a plain master, so
+the \_next* terminal opened in the same process hands its shell a copy of the
+previous one's: the gallery's second tab listed `5 -> /dev/ptmx`.
+
+Two consequences, one of them functional. An unrelated shell could read and
+write another tab's terminal; and a hangup is delivered when the **last**
+master closes, so closing the first tab while a later one lived would not have
+hung its shell up — the tab would go and the process would stay. `apps/terminal`
+never saw it: one pty, no second fork. The master is now `FD_CLOEXEC` from the
+moment it exists, which the same audit confirms (`ptmx` gone from the child's
+table, terminals otherwise unchanged).

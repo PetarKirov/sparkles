@@ -134,11 +134,14 @@ int main(string[] args)
         // handling back after the dock has consumed the precise coordinate.
         pointerUnit: PointerUnit.pixels,
         // The Terminal page: Ctrl+letter never reaches the pty encoder
-        // without the terminal-grade keyboard, and a shell's output must
-        // appear without a keypress — the timeout is the TUI arm's only
-        // wake-without-input lever, fixed at startup by design.
+        // without the terminal-grade keyboard.
         keyRelease: true,
-        idleTimeoutMs: 50,
+        // No `idleTimeoutMs`. A shell's output must appear without a
+        // keypress, and this used to buy that with a startup-fixed 50 ms tick
+        // — which every page paid for the one that needed it. The component
+        // asks per frame instead (`HST16`'s `wakeIn`), and only for a pane the
+        // ring is not already driving (`TVW8`), so an idle catalog parks on
+        // input alone. `UGL-O9`.
         // Bare-motion reporting (DEC 1003): without it the terminal arm sees
         // no motion events, so hover-revealed affordances — the tab list's
         // close button — would be drawn as if hover worked and never light

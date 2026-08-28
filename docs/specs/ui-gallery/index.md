@@ -46,6 +46,7 @@ real consumer.
 | `UGL20` | No automated test forks a shell: spawning is main-enabled only, so recorded scripts assert on the request flags and the model, and the pty path is verified live.                                                                                                                                                                                                       | full   |
 | `UGL21` | The inspector is a shell panel, not a page: toggled with `\|` beside any page, it inspects the **showing** page at the width it is actually laid out at — the generic [inspector component](../ui/inspector.md) over the widget-tree adapter (collapsible rows, click-selection, a details pane) — scrolls independently, and yields below the width that can carry it. | full   |
 | `UGL22` | The body band's three panes tile through `sparkles.ui.components.dock` (`DCK1`/`DCK3`): both seams are draggable dividers with per-pane floors and surface-derived ceilings, the arranged widths are mirrored into the state the pure views read, and a hidden pane returns at its dragged width.                                                                       | full   |
+| `UGL23` | A terminal pane rides the ring (`TVW8`) and the timed wake is asked per frame (`HST16`) for the panes it does not carry, so a catalog with no terminal open parks on input alone.                                                                                                                                                                                       | full   |
 
 ## Shape
 

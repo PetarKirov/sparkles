@@ -13,6 +13,7 @@ person pressing the same keys would get.
 */
 module gallery;
 
+import core.time : Duration, msecs;
 import std.conv : text;
 
 import sparkles.base.term_control : PointerShape;
@@ -55,6 +56,17 @@ import term_store : TerminalStore;
 // The capture-release chords and the scrollback pass-through are the grab
 // policy's data (`terminalGrabPolicy` in `keymap`), routed through
 // `sparkles.ui.focus.checkGrab` — not a hand-written predicate here.
+
+/**
+How often a pane the ring is $(B not) driving is polled for output (`UGL-O9`).
+
+The interval a shell's output can lag by when the sync `pump()` carries it —
+20 Hz, which reads as immediate and is what the startup-fixed
+`RunConfig.idleTimeoutMs` used to cost $(B every) page. Asked per frame now
+(`HST16`), and only while such a pane exists, so it is the Terminal page's
+bill rather than the catalog's.
+*/
+enum Duration ptyPollInterval = 50.msecs;
 
 /// A chord's display label, for the status bar and the help overlay. GC
 /// strings are fine — the gallery is not a `@nogc` surface, and the label
@@ -746,6 +758,11 @@ struct Gallery
             }
         }
 
+        // How many live panes the sync path still owes a wake (`UGL-O9`): a
+        // ring-pumped tab wakes the loop itself, one on `pump()` only catches
+        // up when something else does. Counted over the same walk that pumps.
+        size_t polledPanes;
+
         for (size_t i = 0; i < s.terms.count;)
         {
             auto tv = store.byId(s.terms.tabs[i].id);
@@ -754,6 +771,8 @@ struct Gallery
                 i++;
                 continue;
             }
+            if (!tv.ringPumped && !s.terms.tabs[i].exited)
+                ++polledPanes;
             () @trusted {
                 tv.pump();
                 if (tv.takeTitleChanged())
@@ -817,6 +836,16 @@ struct Gallery
                 (() @trusted => flush_deferred_textures())();
             }
 
+        // The wake this frame actually needs (`HST16`), asked rather than
+        // fixed at startup: only a pane the ring is not driving wants one, so
+        // a catalog with no terminal — every other page — parks on input
+        // alone, and even the Terminal page stops ticking once its panes ride
+        // the ring. `wakeIn` is a per-frame ask like `requestFrame`, so
+        // nothing has to cancel it when the last tab closes.
+        static if (__traits(compiles, (ref H hh) { hh.wakeIn(ptyPollInterval); }))
+            if (polledPanes > 0)
+                h.wakeIn(ptyPollInterval);
+
         // Focus edges, to the active tab only — the pane either has the
         // keyboard or it does not; background tabs were never focused.
         const focusNow = terminalCaptures;
@@ -870,7 +899,18 @@ struct Gallery
             s.terms.close(s.terms.active);
             s.toastText = "terminal · could not open a pty";
             s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
+            return;
         }
+
+        // `TVW8`/`HST15`: hand this tab's pty to a daemon on the loop's own
+        // scope, where the host offers one and the backend can park a read —
+        // the embedder's half of the hookup, which the component's DDoc names
+        // this application for. Its per-frame `pump()` then degrades to a
+        // no-op, and bytes wake the loop instead of a tick finding them.
+        // Where any piece is missing (a blocking arm, the recorder) this
+        // declines and the sync path stays, which is why nothing branches on
+        // the answer here — `ringPumped` is asked per frame instead.
+        (() @trusted => tv.startRingPump(h))();
     }
 
     /// Down/up inside whichever half has the keyboard: the page list moves the
@@ -2069,6 +2109,37 @@ version (unittest)
     const was = g.s.page;
     drive(g, [charEvent('j')]);
     assert(g.s.page != was, "the shell keeps its own keys in the list");
+}
+
+@("ui_gallery.gallery.anIdleCatalogAsksForNoTimedWake")
+@safe unittest
+{
+    import core.time : Duration;
+    import registry : pages, terminalPageIndex;
+
+    // `UGL-O9`: the wake is the Terminal page's bill, not the catalog's. This
+    // used to be a startup-fixed `idleTimeoutMs` in `RunConfig` — every page
+    // woken twenty times a second so that one page's shell could speak — and
+    // the ask being per frame is what confines it. A frame that asks for
+    // nothing lets a terminal park on input alone.
+    Gallery g;
+    auto rec = drive(g, [keyEvent(Key.right), keyEvent(Key.right),
+        charEvent('j')]);
+    foreach (i, ref f; rec.frames)
+        assert(f.wakeAsk == Duration.max,
+            "a catalog with no terminal asked for a timed wake");
+
+    // Including on the Terminal page itself while it holds no pane — and
+    // including after `n`, which raises the spawn request but cannot fork a
+    // shell here (`UGL20`), so no pane appears to owe a poll.
+    Gallery t;
+    t.s.page = terminalPageIndex;
+    t.s.region = Region.content;
+    auto rt = drive(t, [charEvent('n')]);
+    assert(t.s.terms.count == 0, "no pty in a test");
+    foreach (ref f; rt.frames)
+        assert(f.wakeAsk == Duration.max,
+            "an empty Terminal page asked for a timed wake");
 }
 
 @("ui_gallery.gallery.aFocusedTerminalOwnsTheKeyboard")
