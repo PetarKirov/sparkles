@@ -65,6 +65,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The README badges read these from the deployed site. Regenerating them
+      # here rather than committing them keeps the number honest: it is
+      # computed from the same aggregate `ci --ci-stats --merges` prints, and a
+      # committed JSON would be stale from the merge after the one that wrote
+      # it. A failure here is not worth failing a docs deploy over -- the
+      # previously deployed badge simply stays up.
+      - name: Refresh the merge badges
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          nix run .#ci-minimal -- --ci-stats --merges \
+            --repo "$GITHUB_REPOSITORY" --limit 1000 \
+            --badge-dir docs/public/badges
+
       # Same headroom as the CI job's build — see the note there.
       - name: Build VitePress site
         env:

@@ -11,6 +11,8 @@
   </p>
   <p align="center">
     <a href="https://github.com/PetarKirov/sparkles/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PetarKirov/sparkles/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Merged pull requests" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles-docs.pages.dev%2Fbadges%2Fmerged-prs.json&logo=github"></a>
+    <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Share of merged pull requests with green CI" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles-docs.pages.dev%2Fbadges%2Fmerged-green.json"></a>
     <a href="https://code.dlang.org/packages/sparkles"><img alt="Dub version" src="https://img.shields.io/dub/v/sparkles.svg"></a>
     <a href="https://code.dlang.org/packages/sparkles"><img alt="Dub downloads" src="https://img.shields.io/dub/dt/sparkles.svg"></a>
     <a href="https://sparkles-docs.pages.dev/"><img alt="Docs" src="https://img.shields.io/badge/docs-sparkles--docs.pages.dev-blue"></a>
