@@ -1009,7 +1009,8 @@ private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Docume
                 docSet, pipeline, dirTarget, loc);
         case Backend.html:
             return runHtmlSink(doc, theme, registry, cache,
-                parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers, loc);
+                parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers, loc,
+                opt.diffShowFormatting);
         case Backend.tui:
             return runTuiSink(opt, doc, labels, theme, cache,
                 docSet, pipeline, loc);
@@ -1111,10 +1112,12 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
 /// Parses the `--background` value (`CLI8`) into a `BackgroundMode`; an unknown
 /// name warns and falls back to `full` (mirrors the `--theme` fallback).
 
-private DiffViewOptions htmlDiffOptions(DiffLayout layout) @safe pure nothrow @nogc
+private DiffViewOptions htmlDiffOptions(DiffLayout layout,
+    bool showFormatting = false) @safe pure nothrow @nogc
 {
     DiffViewOptions opt;
     opt.layout = layout;
+    opt.foldFormattingOnly = !showFormatting;
     return opt;
 }
 
@@ -1393,6 +1396,10 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             DiffViewOptions dopt;
             dopt.layout = parseDiffLayout(opt.diffLayout);
+            // One-shot renders have no keystroke to expand a folded hunk with,
+            // so a diff that is entirely whitespace — a formatter's output,
+            // say — would otherwise print nothing but the badge.
+            dopt.foldFormattingOnly = !opt.diffShowFormatting;
             auto tree = viewDiffDoc(doc.diffDoc, dopt,
                 doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg),
                 doc.diffSession, null, previewWidth());
@@ -1475,7 +1482,8 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
 private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache,
     DiffLayout diffLayout = DiffLayout.unified, string gutter = "all",
-    bool lineNumbers = true, const SourceLoc loc = SourceLoc.init) @system
+    bool lineNumbers = true, const SourceLoc loc = SourceLoc.init,
+    bool diffShowFormatting = false) @system
 {
     GutterSelection gutterSel;
     if (!gutterSel.parse(gutter))
@@ -1576,7 +1584,8 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             SmallBuffer!char htmlOut;
             writeWidgetHtmlPage(htmlOut,
-                viewDiffDoc(doc.diffDoc, htmlDiffOptions(diffLayout), doc.diffSides,
+                viewDiffDoc(doc.diffDoc,
+                    htmlDiffOptions(diffLayout, diffShowFormatting), doc.diffSides,
                     highlightedFenceRenderer(&cache, &theme, pageFg),
                     doc.diffSession),
                 defaultTwoslashPalette(), pageFg, pageBg, doc.title);

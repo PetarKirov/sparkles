@@ -97,6 +97,9 @@ struct DiffOptions
 
     @(Option("diff-layout", description: "Diff layout: unified (default) or split."))
     string diffLayout = "unified";
+
+    @(Option("diff-show-formatting", description: "Show whitespace-only hunks in full instead of folding them to a badge."))
+    bool diffShowFormatting;
 }
 
 /// Output rendering sink options (mutually exclusive choices for document rendering).
@@ -166,6 +169,7 @@ struct ViewRenderOptions
     string[] exclude;
     bool noLiveTypes = false;
     string diffLayout = "unified";
+    bool diffShowFormatting;
     GuiOptions gui;
     bool formatPreview = false;  /// `FMV8`: start in the format preview
     int formatWidth = 0;         /// ruler column (0 = discover)
@@ -877,6 +881,8 @@ private void diffFlagsInto(ref Sparse!HueConfig o, const bool[string] seen,
         o.diff.layout = parseDiffLayout(dopt.diffLayout);
     if (prefix ~ "diffPreview" in seen)
         o.diff.preview = dopt.diffPreview;
+    if (prefix ~ "diffShowFormatting" in seen)
+        o.diff.showFormatting = dopt.diffShowFormatting;
 }
 
 // ── The whole stack for one invocation ──────────────────────────────────────
@@ -979,6 +985,7 @@ ViewRenderOptions viewRenderOptionsOf(const HueConfig eff) @safe
     opt.exclude = eff.panes.tree.exclude.dup;
     opt.noLiveTypes = !eff.behaviour.liveTypes;
     opt.diffLayout = cliText(eff.diff.layout);
+    opt.diffShowFormatting = eff.diff.showFormatting;
     opt.gui = guiOptionsOf(eff);
     opt.scrollAnchor = cliText(eff.behaviour.scrollAnchor);
     opt.formatPreview = eff.format.preview;
