@@ -1,0 +1,123 @@
+# What the default branch's tip reports, and why it is not another full build.
+#
+# The repository merges by rebase, so every commit on `main` has a SHA no CI run
+# has ever seen. Three options, and the middle one is what shipped:
+#
+#   1. Re-run the matrix per merge. Honest, and it doubles the CI bill for a
+#      result that is already known ~76% of the time.
+#   2. Run something cheap. That is what used to happen — a single networked
+#      link sweep — and since it was the only job on `main`, its failures over
+#      third-party URLs *were* the repository's public face: a red cross above
+#      a list of six skipped jobs.
+#   3. Notice that a rebase which only changes parentage leaves the *tree*
+#      untouched, and that the tree is the whole of what a build sees.
+#
+# So: when the tree that landed equals the tree the pull request built, that
+# pull request's checks are a report about this exact content under a different
+# SHA, and `ci --mirror-checks` files them against the landed commit — names,
+# conclusions and links to the original jobs intact, provenance in each check's
+# summary. Nothing untested is claimed, and nothing is re-run.
+#
+# When the trees differ the base moved under the pull request, the merge
+# produced content nothing has built, and there is nothing honest to mirror.
+# Then, and only then, this calls the real `CI` workflow -- inline, so its jobs
+# report against this very commit. Measured over all
+# 333 merged pull requests (`ci --ci-stats --merges`): 75.7% mirrorable, 24.3%
+# rebuilt — about 2.7 full runs a week against ~11 merges.
+name: Main branch checks
+
+on:
+  push:
+    branches:
+      - main
+
+  # Rehearsal, and repair. A `push` workflow cannot be exercised by the pull
+  # request that changes it, so without this the first real run of the mirror is
+  # always the merge that changes it — the one moment a mistake is least
+  # convenient. `dry_run` defaults to true so pressing the button is safe:
+  # nothing is filed and nothing is rebuilt, it just reports the decision.
+  #
+  # `--mirror-checks` skips names the commit already carries, so a live re-run
+  # against a commit that was mirrored before adds nothing.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit to mirror onto (default: the branch tip)'
+        required: false
+        type: string
+      dry_run:
+        description: Report the decision without filing checks or rebuilding
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Filing check runs against the pushed commit. This is why the mirror must run
+  # as a workflow and not from a laptop: creating a check run is an
+  # app-authenticated call, and a personal access token cannot make it.
+  checks: write
+
+concurrency:
+  group: main-checks-${{ github.ref }}
+  # Each push describes a different commit; cancelling would leave the earlier
+  # one bare forever.
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror the pull request's checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mirrored: ${{ steps.mirror.outputs.mirrored }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # `.#ci-minimal`, not `.#ci`, and no `use-nix-cache`. This job is on the
+      # merge path, so its own cost matters: `.#ci` is 2.4 GiB (it execs `dub`
+      # and `ldc2`, so a whole toolchain sits in its runtime closure) against
+      # `.#ci-minimal`'s 121 MiB, which is the same binary with nothing on PATH.
+      # Restoring the multi-gigabyte `/nix` cache to fetch 121 MiB would cost
+      # more than it saves, so this reads from cachix and caches nothing.
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      # `--skip-check deploy` because `Deploy Docs` triggers on this same push
+      # and will file its own `deploy` check; mirroring the pull request's would
+      # leave the commit carrying two, one of them stale before it was written.
+      - name: Mirror, if the landed tree is the tree that was built
+        id: mirror
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha || github.sha }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          # shellcheck disable=SC2086 # DRY_RUN is one optional flag or empty
+          nix run .#ci-minimal -- --mirror-checks \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$SHA" \
+            --skip-check deploy \
+            $DRY_RUN
+
+  # The fallback the mirror is honest enough to need: the real matrix, called as
+  # a reusable workflow so its jobs run inside *this* run and their checks land
+  # on this commit.
+  #
+  # A `workflow_dispatch` would have been the obvious alternative and is wrong
+  # twice over — a workflow's `GITHUB_TOKEN` cannot reliably trigger one, and it
+  # would run against whatever the branch tip happened to be by then rather than
+  # against the commit being judged.
+  rebuild:
+    name: Build the commit for real
+    needs: mirror
+    # A dry run reports the decision and stops there; it must not spend a full
+    # matrix to demonstrate that it would have.
+    if: needs.mirror.outputs.mirrored != 'true' && !inputs.dry_run
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit

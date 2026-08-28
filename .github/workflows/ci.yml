@@ -1,44 +1,44 @@
 name: CI
 
 on:
-  # Allow this workflow to be triggered manually:
+  # The rebuild path. When a merge lands a tree no pull request built (the base
+  # moved under it), `main-checks.yml` calls this workflow as a reusable one, so
+  # the jobs below run inside that push's own run and their checks land on the
+  # pushed commit. Calling rather than dispatching is deliberate: a workflow's
+  # `GITHUB_TOKEN` cannot reliably trigger a `workflow_dispatch`, and a dispatch
+  # would race the branch tip rather than naming the commit it is judging.
+  workflow_call:
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        required: false
+
+  # Manual runs against any ref.
   workflow_dispatch:
 
-  # Allow this workflow to be run in merge queues:
+  # Merge queues. Enabling one is a repository setting, not a workflow change:
+  # the queue builds its own ref from the pull requests it batches and runs this
+  # workflow against it, which is the *only* run that ever sees the combined
+  # result. See the note below on why that matters here.
   merge_group:
 
   # Run this workflow for all PRs:
   pull_request:
 
-  # …and on `main` itself, where only `lint` runs — see the `if:` guards below.
-  #
-  # This is what populates the *base* cache scope. A `pull_request` run may
-  # only read caches written by its own `refs/pull/N/merge` ref, by the base
-  # branch, or by the default branch, and it may only *write* to its own ref.
-  # Without a run on `refs/heads/main` nothing ever lands in the shared scope,
-  # so every PR starts cold and then saves its own private copy of each cache
-  # — which is how 13 caches came to occupy 14.64 GB against a 10 GB quota,
-  # evicting each other by LRU.
-  #
-  # Seeding only lychee's cache is the deliberate trade: the ~1.8 GB `nix-v2-*`
-  # and `Linux-dub-*` entries stay per-PR, because warming those would mean
-  # running the whole matrix on every merge while CircleCI runs it too.
-  #
-  # That seeding is now a fallback rather than the plan. A cache written once
-  # per merge is, by construction, the least-recently-used entry in a repository
-  # whose pull requests write multi-gigabyte caches on every push — so it is
-  # always the first thing evicted, and raising the quota moves that threshold
-  # without changing the ordering. A pull request therefore no longer depends on
-  # it: `lychee-offline` covers the whole tree without the network, and the
-  # networked check runs over the diff. The full sweep is the `schedule` below.
-  push:
-    branches:
-      - main
-
-  # The full network link sweep. Rot appears with nobody committing, so it is
-  # found on a timer rather than by whichever pull request happens to be open.
-  schedule:
-    - cron: '17 4 * * *'
+# Every job below runs on every event above, and none of them carries an `if:`
+# guard. That is deliberate, and it is the property to preserve when editing:
+#
+#   * A merge-queue run that skipped the matrix would gate merges on nothing —
+#     testing the batched result is the entire purpose of a queue. The guards
+#     that used to sit here (`event_name != 'merge_group'`, and before that
+#     `== 'pull_request'`) would have made adopting one silently vacuous.
+#   * A *called* workflow reports the caller's event, so on `main-checks.yml`'s
+#     rebuild path `github.event_name` is `push`. A job gated to `pull_request`
+#     would make that rebuild report green having built nothing.
+#
+# The guards existed for the `push`-to-`main` and `schedule` triggers this
+# workflow no longer has: `main-checks.yml` owns the default branch and
+# `link-check.yml` owns the nightly sweep. Nothing reaching this file now wants
+# less than the full matrix, so gate on the trigger list, not on `if:`.
 
 # Least privilege by default: no job here writes to the repository. The cachix
 # push authenticates with its own token, not GITHUB_TOKEN.
@@ -47,18 +47,12 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
-  # Superseded PR pushes are worth cancelling; a `main` run is not. It is the
-  # only writer of the base-scope cache above, so cancelling it on the next
-  # merge would leave every PR cold again.
+  # Superseded PR pushes are worth cancelling; a dispatched rebuild of `main` is
+  # not — it is the only thing standing behind that commit's checks.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
-    # `main` and `schedule` runs exist for the link sweep and the cache it
-    # seeds. Everything but `lint` is therefore pull-request-only, rather than
-    # duplicating a full matrix that CircleCI already runs on `main` — and, for
-    # the nightly, one that nothing has changed since the last run.
-    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -194,7 +188,6 @@ jobs:
   # exercise the compiler far more than the host.
   extracted-tests:
     name: Extracted test modes (--better-c, --wasm)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -242,7 +235,6 @@ jobs:
   # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
   win32-example:
     name: Win32 OS-API example (windows-latest)
-    if: github.event_name == 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -287,7 +279,6 @@ jobs:
   # in its own `nix-build-android` job below.
   nix-build:
     name: Nix build & push (${{ matrix.runner }})
-    if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -339,7 +330,6 @@ jobs:
   # (nix/packages/android/sdk.nix) — no env flags needed here.
   nix-build-android:
     name: Nix build & push (Android APK)
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     # From a warm cache this is minutes; a cold cache rebuilds the cross
     # druntimes and the Maple font pipeline — give it real headroom.
@@ -431,19 +421,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           BASE_REF: ${{ github.base_ref }}
 
-      # The full network sweep: every link in the repository, on a schedule and
-      # on `main`, where minutes are free and the cache it writes lands in the
-      # base scope every other run can read.
-      - name: Check every link
-        if: github.event_name != 'pull_request'
-        run: prek run lychee --all-files --show-diff-on-failure --color always
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      # The full network sweep lives in `link-check.yml` now. Making a dead
+      # third-party URL a dependency of the `CI` fan-in meant somebody else's
+      # expired domain turned this repository red; it reports into a standing
+      # issue instead. `lychee-offline`, above, still covers every relative
+      # link in the tree — the half a change here can actually break.
 
+      # Half an hour of runner time, and a real gate: it runs on the rebuild
+      # path too, because a dispatched run of this workflow exists precisely to
+      # say whether a commit on the branch builds.
       - name: Verify markdown runnable examples
-        # Pull requests only: this compiles and runs every example, half an hour
-        # of runner time, and the non-PR runs exist for the link sweep.
-        if: github.event_name == 'pull_request'
         run: |
           nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 
@@ -462,7 +449,6 @@ jobs:
 
   docs:
     name: Build documentation site
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
