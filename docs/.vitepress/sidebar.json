@@ -254,6 +254,23 @@
         ]
       },
       {
+        "text": "dmd-fmt",
+        "link": "/libs/dmd-fmt/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Reference",
+            "collapsed": false,
+            "items": [
+              {
+                "text": "Layout decisions",
+                "link": "/libs/dmd-fmt/reference/decisions/layout"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "code-instrumentation",
         "link": "/libs/code-instrumentation/",
         "collapsed": true,
