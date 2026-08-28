@@ -341,8 +341,9 @@ private final class Printer
 
         foreach (i, item; items)
         {
-            const baseLevel = item.kind == ItemKind.child &&
-                isClauseOrBody(g.children[item.index]);
+            const baseLevel = (item.kind == ItemKind.child &&
+                isClauseOrBody(g.children[item.index]))
+                || inAttributePrefix(g, items, i);
             if (i != 0 && item.newlinesBefore > 0)
             {
                 if (baseLevel)
@@ -367,6 +368,73 @@ private final class Printer
         }
         closeCont();
         return sequence(parts);
+    }
+
+    /// Is everything before `upto` still the declaration's leading attribute
+    /// run — UDAs (`@name`, `@name(args)`) and attribute keywords? A break
+    /// there is the author separating attributes from what they modify, and D
+    /// puts both at the same column:
+    ///
+    ///     @("case.name")
+    ///     @safe unittest
+    ///
+    /// A break *after* the head has started is a genuine continuation and
+    /// still indents. Without this, every declaration carrying a UDA on its
+    /// own line had its head silently pushed one level right.
+    private bool inAttributePrefix(const Group g, const Item[] items,
+        size_t upto) const @safe
+    {
+        // `@` opens a UDA: `@name`, `@name(args)` and `@(args)` are all
+        // legal, so a `(` child belongs to the UDA whether or not a name
+        // came first.
+        bool udaOpen;
+        bool expectName;
+        foreach (item; items[0 .. upto])
+        {
+            if (item.kind == ItemKind.comment)
+                continue;
+            if (item.kind == ItemKind.child)
+            {
+                if (!udaOpen || spine.entries[g.children[item.index]
+                        .firstEntry].kind != TOK.leftParenthesis)
+                    return false;
+                udaOpen = expectName = false;
+                continue;
+            }
+            if (item.kind != ItemKind.token)
+                return false;
+            const kind = spine.entries[item.index].kind;
+            if (kind == TOK.at)
+            {
+                udaOpen = expectName = true;
+                continue;
+            }
+            if (expectName && kind == TOK.identifier)
+            {
+                expectName = false;
+                continue;
+            }
+            if (!isAttributeKeyword(kind))
+                return false;
+            udaOpen = expectName = false;
+        }
+        return true;
+    }
+
+    private static bool isAttributeKeyword(TOK kind) @safe pure nothrow @nogc
+    {
+        switch (kind)
+        {
+            case TOK.abstract_, TOK.align_, TOK.auto_, TOK.const_,
+                TOK.deprecated_, TOK.export_, TOK.extern_, TOK.final_,
+                TOK.gshared, TOK.immutable_, TOK.inout_, TOK.nothrow_,
+                TOK.override_, TOK.package_, TOK.private_, TOK.protected_,
+                TOK.public_, TOK.pure_, TOK.ref_, TOK.scope_, TOK.shared_,
+                TOK.static_, TOK.synchronized_:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private bool isClauseOrBody(const Group child) const @safe
@@ -420,6 +488,11 @@ private final class Printer
             parts ~= text("}");
             return sequence(parts);
         }
+        if (!items.length)
+            // An empty body the author spread over two lines keeps that
+            // shape — but `{` and `}` are then adjacent lines, not a block
+            // with a blank one between them.
+            return sequence(text("{"), hardline, text("}"));
         return sequence(text("{"),
             indented(hardline, buildStatements(g, items)),
             hardline, text("}"));
@@ -781,9 +854,14 @@ private final class Printer
             run[$ - 1].newlinesBefore > 0 && braceBodied(g, run[$ - 1]))
             tail = run.length - 1;
 
+        // The first author break opens a continuation — except while the
+        // statement is still in its leading attribute run, where a break is
+        // the author separating `@uda` from what it modifies and D puts both
+        // in one column. Those breaks stay at the statement's own level.
         size_t firstBreak = size_t.max;
         foreach (i, item; run[0 .. tail])
-            if (i != 0 && item.newlinesBefore > 0)
+            if (i != 0 && item.newlinesBefore > 0
+                && !inAttributePrefix(g, run, i))
             {
                 firstBreak = i;
                 break;
