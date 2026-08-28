@@ -1,0 +1,103 @@
+{
+    "code": "/// Doubles a number — the ddoc travels into the hover popup.\nint twice(int x) => x * 2;\n\nauto answer = twice(21);\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 4,
+            "docs": "Doubles a number — the ddoc travels into the hover popup.",
+            "length": 5,
+            "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 17
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 22,
+                        "open": 16
+                    }
+                ]
+            },
+            "start": 68,
+            "text": "int sample.twice(int x)",
+            "type": "hover"
+        },
+        {
+            "character": 14,
+            "length": 1,
+            "line": 1,
+            "start": 78,
+            "text": "(parameter) int x",
+            "type": "hover"
+        },
+        {
+            "character": 20,
+            "length": 1,
+            "line": 1,
+            "start": 84,
+            "text": "(parameter) int x",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 6,
+            "line": 3,
+            "start": 97,
+            "text": "(thread local global) int sample.answer",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 6,
+            "line": 3,
+            "start": 97,
+            "text": "(thread local global) int sample.answer",
+            "type": "query"
+        },
+        {
+            "character": 14,
+            "docs": "Doubles a number — the ddoc travels into the hover popup.",
+            "length": 5,
+            "line": 3,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 4
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 17
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 22,
+                        "open": 16
+                    }
+                ]
+            },
+            "start": 106,
+            "text": "int sample.twice(int x)",
+            "type": "hover"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}

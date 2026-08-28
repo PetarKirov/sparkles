@@ -1,0 +1,1110 @@
+{
+    "code": "/// The nth space-separated word of `text`.\nstring word(string text, size_t n) => text.split(' ')[n];\n\n/// Four annotations on one line. The labels peel off right to left — the\n/// rightmost first, the leftmost last — and a connector keeps every anchor\n/// attached to the token it describes until its own label is drawn.\nint[] loudest(int[] samples, int floor, int scale)\n{\n    auto loud = samples.filter!(x => x > floor).map!(x => x * scale).array;\n    return loud;\n}\n\n/// Two anchors far enough apart that both labels fit on one row: vertical\n/// space is the scarce resource on a crowded line, so a pair that provably\n/// does not overlap costs one row, not two.\nstring pick(size_t index)\n{\n    auto tail = word(\"the quick brown fox jumps over the lazy dog\", index);\n    return tail;\n}\n\n/// Three anchors of three different kinds on one line — two queries and a\n/// completion list — each connector drawn in the brand colour of the label it\n/// is still carrying, and the list keeping its guides beside every candidate.\nauto opacity = alpha;\n\n/// A diagnostic and a query on one line, at different columns: each connector\n/// carries its own label's brand colour, so the red one is the error's and the\n/// muted one is the query's.\nint broken = missing + alpha;\n\n/// D reports a CTFE failure as the error plus a `called from here:` chain.\n/// Each continuation is its own row, so a multi-line diagnostic stays inside\n/// the art instead of tearing it open.\nstring letters = \"abcdef\";\nubyte head(string s) => cast(ubyte) s[0];\nenum first = head(letters);\n\n/// Alpha channel opacity, 0 through 255.\nenum ubyte alpha = 255;\n/// The Latin alphabet, lowercase.\nenum string alphabet = \"abcdefghijklmnopqrstuvwxyz\";\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 0,
+            "length": 6,
+            "line": 1,
+            "start": 44,
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "docs": "The nth space-separated `word` of `text`.",
+            "length": 4,
+            "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 19
+                    },
+                    {
+                        "offset": 32
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 39,
+                        "open": 18
+                    }
+                ]
+            },
+            "start": 51,
+            "text": "string sample.word(string text, ulong n)",
+            "type": "hover"
+        },
+        {
+            "character": 12,
+            "length": 6,
+            "line": 1,
+            "start": 56,
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 19,
+            "length": 4,
+            "line": 1,
+            "start": 63,
+            "text": "(parameter) string text",
+            "type": "hover"
+        },
+        {
+            "character": 25,
+            "length": 6,
+            "line": 1,
+            "start": 69,
+            "text": "(alias) object.size_t = ulong",
+            "type": "hover"
+        },
+        {
+            "character": 32,
+            "length": 1,
+            "line": 1,
+            "start": 76,
+            "text": "(parameter) ulong n",
+            "type": "hover"
+        },
+        {
+            "character": 38,
+            "length": 4,
+            "line": 1,
+            "start": 82,
+            "text": "(parameter) string text",
+            "type": "hover"
+        },
+        {
+            "character": 43,
+            "length": 5,
+            "line": 1,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 9
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 40
+                    },
+                    {
+                        "offset": 54
+                    },
+                    {
+                        "group": 1,
+                        "offset": 26
+                    },
+                    {
+                        "group": 1,
+                        "offset": 34
+                    }
+                ],
+                "effects": {
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 63
+                        },
+                        {
+                            "length": 6,
+                            "offset": 68
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 62,
+                        "open": 39
+                    },
+                    {
+                        "close": 38,
+                        "open": 25,
+                        "stage": 1
+                    }
+                ]
+            },
+            "start": 87,
+            "text": "string[] std.array.split!(string, char)(string range, char sep) pure @safe",
+            "type": "hover"
+        },
+        {
+            "character": 54,
+            "length": 1,
+            "line": 1,
+            "start": 98,
+            "text": "(parameter) ulong n",
+            "type": "hover"
+        },
+        {
+            "character": 6,
+            "docs": "Four annotations on one line. The labels peel off right to left — the\nrightmost first, the leftmost last — and a connector keeps every anchor\nattached to the token it describes until its own label is drawn.",
+            "length": 7,
+            "line": 6,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 21
+                    },
+                    {
+                        "offset": 36
+                    },
+                    {
+                        "offset": 47
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 56,
+                        "open": 20
+                    }
+                ]
+            },
+            "start": 332,
+            "text": "int[] sample.loudest(int[] samples, int floor, int scale)",
+            "type": "hover"
+        },
+        {
+            "character": 20,
+            "length": 7,
+            "line": 6,
+            "start": 346,
+            "text": "(parameter) int[] samples",
+            "type": "hover"
+        },
+        {
+            "character": 33,
+            "length": 5,
+            "line": 6,
+            "start": 359,
+            "text": "(parameter) int floor",
+            "type": "hover"
+        },
+        {
+            "character": 44,
+            "length": 5,
+            "line": 6,
+            "start": 370,
+            "text": "(parameter) int scale",
+            "type": "hover"
+        },
+        {
+            "character": 9,
+            "length": 4,
+            "line": 8,
+            "start": 388,
+            "text": "(local variable) int[] loud",
+            "type": "hover"
+        },
+        {
+            "character": 9,
+            "length": 4,
+            "line": 8,
+            "start": 388,
+            "text": "(local variable) int[] loud",
+            "type": "query"
+        },
+        {
+            "character": 16,
+            "length": 7,
+            "line": 8,
+            "start": 395,
+            "text": "(parameter) int[] samples",
+            "type": "hover"
+        },
+        {
+            "character": 16,
+            "length": 7,
+            "line": 8,
+            "start": 395,
+            "text": "(parameter) int[] samples",
+            "type": "query"
+        },
+        {
+            "character": 24,
+            "docs": "`filter!(predicate)(range)` returns a new `range` containing only elements `x` in `range` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.math.operations : isClose;\nimport std.range;\n\nint[] arr = [ 1, 2, 3, 4, 5 ];\n\n// Filter below 3\nauto small = filter!(a => a < 3)(arr);\nassert(equal(small, [ 1, 2 ]));\n\n// Filter again, but with Uniform Function Call Syntax (UFCS)\nauto sum = arr.filter!(a => a < 3);\nassert(equal(sum, [ 1, 2 ]));\n\n// In combination with chain() to span multiple ranges\nint[] a = [ 3, -2, 400 ];\nint[] b = [ 100, -101, 102 ];\nauto r = chain(a, b).filter!(a => a > 0);\nassert(equal(r, [ 3, 400, 100, 102 ]));\n\n// Mixing convertible types is fair game, too\ndouble[] c = [ 2.5, 3.0 ];\nauto r1 = chain(c, a, b).filter!(a => cast(int) a != a);\nassert(isClose(r1, [ 2.5 ]));\n```\n",
+            "length": 6,
+            "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 54
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 84
+                    },
+                    {
+                        "group": 1,
+                        "offset": 29
+                    },
+                    {
+                        "group": 1,
+                        "offset": 47
+                    },
+                    {
+                        "group": 2,
+                        "offset": 77
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 96
+                        },
+                        {
+                            "length": 8,
+                            "offset": 101
+                        },
+                        {
+                            "length": 6,
+                            "offset": 109
+                        },
+                        {
+                            "length": 6,
+                            "offset": 115
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 95,
+                        "open": 83
+                    },
+                    {
+                        "close": 52,
+                        "open": 28,
+                        "stage": 1
+                    },
+                    {
+                        "close": 82,
+                        "open": 76,
+                        "stage": 1
+                    }
+                ]
+            },
+            "start": 403,
+            "tags": [
+                [
+                    "param",
+                    "predicate Function to apply to each element of `range`"
+                ],
+                [
+                    "returns",
+                    "An input `range` that contains the filtered elements. If `range` is at least a forward `range`, the return value of `filter`\nwill also be a forward `range`."
+                ],
+                [
+                    "see",
+                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n`filterBidirectional`"
+                ],
+                [
+                    "param",
+                    "range An input `range` of elements"
+                ],
+                [
+                    "returns",
+                    "A `range` containing only elements `x` in `range` for\nwhich `predicate(x)` returns `true`."
+                ]
+            ],
+            "text": "sample.loudest.FilterResult!(__lambda_L13_C33, int[]) sample.loudest.filter!(int[])(int[] range) pure nothrow @nogc @safe",
+            "type": "hover"
+        },
+        {
+            "character": 24,
+            "docs": "`filter!(predicate)(range)` returns a new `range` containing only elements `x` in `range` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.math.operations : isClose;\nimport std.range;\n\nint[] arr = [ 1, 2, 3, 4, 5 ];\n\n// Filter below 3\nauto small = filter!(a => a < 3)(arr);\nassert(equal(small, [ 1, 2 ]));\n\n// Filter again, but with Uniform Function Call Syntax (UFCS)\nauto sum = arr.filter!(a => a < 3);\nassert(equal(sum, [ 1, 2 ]));\n\n// In combination with chain() to span multiple ranges\nint[] a = [ 3, -2, 400 ];\nint[] b = [ 100, -101, 102 ];\nauto r = chain(a, b).filter!(a => a > 0);\nassert(equal(r, [ 3, 400, 100, 102 ]));\n\n// Mixing convertible types is fair game, too\ndouble[] c = [ 2.5, 3.0 ];\nauto r1 = chain(c, a, b).filter!(a => cast(int) a != a);\nassert(isClose(r1, [ 2.5 ]));\n```\n",
+            "length": 6,
+            "line": 8,
+            "start": 403,
+            "tags": [
+                [
+                    "param",
+                    "predicate Function to apply to each element of `range`"
+                ],
+                [
+                    "returns",
+                    "An input `range` that contains the filtered elements. If `range` is at least a forward `range`, the return value of `filter`\nwill also be a forward `range`."
+                ],
+                [
+                    "see",
+                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n`filterBidirectional`"
+                ],
+                [
+                    "param",
+                    "range An input `range` of elements"
+                ],
+                [
+                    "returns",
+                    "A `range` containing only elements `x` in `range` for\nwhich `predicate(x)` returns `true`."
+                ]
+            ],
+            "text": "sample.loudest.FilterResult!(__lambda_L13_C33, int[]) sample.loudest.filter!(int[])(int[] range) pure nothrow @nogc @safe",
+            "type": "query"
+        },
+        {
+            "character": 48,
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call `map!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.range : chain, only;\nauto squares =\n    chain(only(1, 2, 3, 4), only(5, 6)).map!(a => a * a);\nassert(equal(squares, only(1, 4, 9, 16, 25, 36)));\n```\n\nMultiple functions can be passed to `map`. In that case, the\nelement type of `map` is a tuple containing one element for each\nfunction.\n\n```d unittest\nauto sums = [2, 4, 6, 8];\nauto products = [1, 4, 9, 16];\n\nsize_t i = 0;\nforeach (result; [ 1, 2, 3, 4 ].map!(\"a + a\", \"a * a\"))\n{\n    assert(result[0] == sums[i]);\n    assert(result[1] == products[i]);\n    ++i;\n}\n```\n\nYou may alias `map` with some function(s) to a symbol and use\nit separately:\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.conv : to;\n\nalias stringize = map!(to!string);\nassert(equal(stringize([ 1, 2, 3, 4 ]), [ \"1\", \"2\", \"3\", \"4\" ]));\n```\n",
+            "length": 3,
+            "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 0
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 58,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 84
+                    },
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 104
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 133,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 159
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 159
+                    },
+                    {
+                        "group": 1,
+                        "offset": 58
+                    },
+                    {
+                        "group": 1,
+                        "offset": 76
+                    },
+                    {
+                        "group": 2,
+                        "offset": 26
+                    },
+                    {
+                        "group": 2,
+                        "offset": 44
+                    },
+                    {
+                        "group": 3,
+                        "offset": 133
+                    },
+                    {
+                        "group": 3,
+                        "offset": 151
+                    },
+                    {
+                        "group": 4,
+                        "offset": 104
+                    },
+                    {
+                        "group": 5,
+                        "offset": 188
+                    },
+                    {
+                        "group": 5,
+                        "offset": 206
+                    }
+                ],
+                "effects": {
+                    "isNogc": true,
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 215
+                        },
+                        {
+                            "length": 8,
+                            "offset": 220
+                        },
+                        {
+                            "length": 6,
+                            "offset": 228
+                        },
+                        {
+                            "length": 6,
+                            "offset": 234
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 214,
+                        "open": 158
+                    },
+                    {
+                        "close": 81,
+                        "open": 57,
+                        "stage": 1
+                    },
+                    {
+                        "close": 82,
+                        "open": 25,
+                        "stage": 1
+                    },
+                    {
+                        "close": 156,
+                        "open": 132,
+                        "stage": 1
+                    },
+                    {
+                        "close": 157,
+                        "open": 103,
+                        "stage": 1
+                    },
+                    {
+                        "close": 211,
+                        "open": 187,
+                        "stage": 1
+                    }
+                ]
+            },
+            "start": 427,
+            "tags": [
+                [
+                    "param",
+                    "fun one or more transformation functions"
+                ],
+                [
+                    "see",
+                    "[Map (higher-order function)](http://en.wikipedia.org/wiki/Map_(higher-order_function))"
+                ],
+                [
+                    "param",
+                    "r an input range"
+                ],
+                [
+                    "returns",
+                    "A range with each fun applied to all the elements. If there is more than one\nfun, the element type will be `Tuple` containing one element for each fun."
+                ]
+            ],
+            "text": "sample.loudest.MapResult!(__lambda_L13_C54, FilterResult!(__lambda_L13_C33, int[])) sample.loudest.map!(sample.loudest.FilterResult!(__lambda_L13_C33, int[]))(sample.loudest.FilterResult!(__lambda_L13_C33, int[]) r) pure nothrow @nogc @safe",
+            "type": "hover"
+        },
+        {
+            "character": 48,
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call `map!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.range : chain, only;\nauto squares =\n    chain(only(1, 2, 3, 4), only(5, 6)).map!(a => a * a);\nassert(equal(squares, only(1, 4, 9, 16, 25, 36)));\n```\n\nMultiple functions can be passed to `map`. In that case, the\nelement type of `map` is a tuple containing one element for each\nfunction.\n\n```d unittest\nauto sums = [2, 4, 6, 8];\nauto products = [1, 4, 9, 16];\n\nsize_t i = 0;\nforeach (result; [ 1, 2, 3, 4 ].map!(\"a + a\", \"a * a\"))\n{\n    assert(result[0] == sums[i]);\n    assert(result[1] == products[i]);\n    ++i;\n}\n```\n\nYou may alias `map` with some function(s) to a symbol and use\nit separately:\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.conv : to;\n\nalias stringize = map!(to!string);\nassert(equal(stringize([ 1, 2, 3, 4 ]), [ \"1\", \"2\", \"3\", \"4\" ]));\n```\n",
+            "length": 3,
+            "line": 8,
+            "start": 427,
+            "tags": [
+                [
+                    "param",
+                    "fun one or more transformation functions"
+                ],
+                [
+                    "see",
+                    "[Map (higher-order function)](http://en.wikipedia.org/wiki/Map_(higher-order_function))"
+                ],
+                [
+                    "param",
+                    "r an input range"
+                ],
+                [
+                    "returns",
+                    "A range with each fun applied to all the elements. If there is more than one\nfun, the element type will be `Tuple` containing one element for each fun."
+                ]
+            ],
+            "text": "sample.loudest.MapResult!(__lambda_L13_C54, FilterResult!(__lambda_L13_C33, int[])) sample.loudest.map!(sample.loudest.FilterResult!(__lambda_L13_C33, int[]))(sample.loudest.FilterResult!(__lambda_L13_C33, int[]) r) pure nothrow @nogc @safe",
+            "type": "query"
+        },
+        {
+            "character": 69,
+            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range `r`.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
+            "length": 5,
+            "line": 8,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 10,
+                        "offset": 6
+                    },
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 23
+                    },
+                    {
+                        "kind": "template",
+                        "length": 56,
+                        "offset": 49,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 81,
+                        "shortText": "…"
+                    },
+                    {
+                        "kind": "module",
+                        "length": 15,
+                        "offset": 108
+                    },
+                    {
+                        "kind": "template",
+                        "length": 23,
+                        "offset": 166,
+                        "shortText": "…"
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 108
+                    },
+                    {
+                        "group": 1,
+                        "offset": 81
+                    },
+                    {
+                        "group": 1,
+                        "offset": 99
+                    },
+                    {
+                        "group": 2,
+                        "offset": 49
+                    },
+                    {
+                        "group": 2,
+                        "offset": 67
+                    },
+                    {
+                        "group": 3,
+                        "offset": 23
+                    },
+                    {
+                        "group": 4,
+                        "offset": 166
+                    },
+                    {
+                        "group": 4,
+                        "offset": 184
+                    },
+                    {
+                        "group": 5,
+                        "offset": 134
+                    },
+                    {
+                        "group": 5,
+                        "offset": 152
+                    }
+                ],
+                "effects": {
+                    "isNothrow": true,
+                    "isPure": true,
+                    "spans": [
+                        {
+                            "length": 5,
+                            "offset": 194
+                        },
+                        {
+                            "length": 8,
+                            "offset": 199
+                        },
+                        {
+                            "length": 6,
+                            "offset": 207
+                        }
+                    ],
+                    "trust": "@safe"
+                },
+                "groups": [
+                    {
+                        "close": 193,
+                        "open": 107
+                    },
+                    {
+                        "close": 104,
+                        "open": 80,
+                        "stage": 1
+                    },
+                    {
+                        "close": 105,
+                        "open": 48,
+                        "stage": 1
+                    },
+                    {
+                        "close": 106,
+                        "open": 22,
+                        "stage": 1
+                    },
+                    {
+                        "close": 189,
+                        "open": 165,
+                        "stage": 1
+                    },
+                    {
+                        "close": 190,
+                        "open": 133,
+                        "stage": 1
+                    }
+                ]
+            },
+            "start": 448,
+            "tags": [
+                [
+                    "param",
+                    "r range (or aggregate with `opApply` function) whose elements are copied into the allocated `array`"
+                ],
+                [
+                    "returns",
+                    "allocated and initialized `array`"
+                ]
+            ],
+            "text": "int[] std.array.array!(sample.loudest.MapResult!(__lambda_L13_C54, FilterResult!(__lambda_L13_C33, int[])))(sample.loudest.MapResult!(__lambda_L13_C54, FilterResult!(__lambda_L13_C33, int[])) r) pure nothrow @safe",
+            "type": "hover"
+        },
+        {
+            "character": 11,
+            "length": 4,
+            "line": 9,
+            "start": 466,
+            "text": "(local variable) int[] loud",
+            "type": "hover"
+        },
+        {
+            "character": 0,
+            "length": 6,
+            "line": 15,
+            "start": 671,
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "docs": "Two anchors far enough apart that both labels fit on one row: vertical\nspace is the scarce resource on a crowded line, so a pair that provably\ndoes not overlap costs one row, not two.",
+            "length": 4,
+            "line": 15,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 19
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 30,
+                        "open": 18
+                    }
+                ]
+            },
+            "start": 678,
+            "text": "string sample.pick(ulong index)",
+            "type": "hover"
+        },
+        {
+            "character": 12,
+            "length": 6,
+            "line": 15,
+            "start": 683,
+            "text": "(alias) object.size_t = ulong",
+            "type": "hover"
+        },
+        {
+            "character": 19,
+            "length": 5,
+            "line": 15,
+            "start": 690,
+            "text": "(parameter) ulong index",
+            "type": "hover"
+        },
+        {
+            "character": 9,
+            "length": 4,
+            "line": 17,
+            "start": 708,
+            "text": "(local variable) string tail",
+            "type": "hover"
+        },
+        {
+            "character": 9,
+            "length": 4,
+            "line": 17,
+            "start": 708,
+            "text": "(local variable) string tail",
+            "type": "query"
+        },
+        {
+            "character": 16,
+            "docs": "The nth space-separated `word` of `text`.",
+            "length": 4,
+            "line": 17,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 7
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 19
+                    },
+                    {
+                        "offset": 32
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 39,
+                        "open": 18
+                    }
+                ]
+            },
+            "start": 715,
+            "text": "string sample.word(string text, ulong n)",
+            "type": "hover"
+        },
+        {
+            "character": 68,
+            "length": 5,
+            "line": 17,
+            "start": 767,
+            "text": "(parameter) ulong index",
+            "type": "hover"
+        },
+        {
+            "character": 68,
+            "length": 5,
+            "line": 17,
+            "start": 767,
+            "text": "(parameter) ulong index",
+            "type": "query"
+        },
+        {
+            "character": 11,
+            "length": 4,
+            "line": 18,
+            "start": 786,
+            "text": "(local variable) string tail",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "docs": "Three anchors of three different kinds on one line — two queries and a\ncompletion list — each connector drawn in the brand colour of the label it\nis still carrying, and the list keeping its guides beside every candidate.",
+            "length": 7,
+            "line": 24,
+            "start": 1037,
+            "text": "(thread local global) ubyte sample.opacity",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "docs": "Three anchors of three different kinds on one line — two queries and a\ncompletion list — each connector drawn in the brand colour of the label it\nis still carrying, and the list keeping its guides beside every candidate.",
+            "length": 7,
+            "line": 24,
+            "start": 1037,
+            "text": "(thread local global) ubyte sample.opacity",
+            "type": "query"
+        },
+        {
+            "character": 15,
+            "docs": "Alpha channel opacity, 0 through 255.",
+            "length": 5,
+            "line": 24,
+            "start": 1047,
+            "text": "(constant) ubyte sample.alpha = cast(ubyte)255u",
+            "type": "hover"
+        },
+        {
+            "character": 15,
+            "docs": "Alpha channel opacity, 0 through 255.",
+            "length": 5,
+            "line": 24,
+            "start": 1047,
+            "text": "(constant) ubyte sample.alpha = cast(ubyte)255u",
+            "type": "query"
+        },
+        {
+            "character": 20,
+            "completions": [
+                {
+                    "kind": "variable",
+                    "name": "alpha"
+                },
+                {
+                    "kind": "variable",
+                    "name": "alphabet"
+                }
+            ],
+            "completionsPrefix": "alpha",
+            "length": 0,
+            "line": 24,
+            "start": 1052,
+            "type": "completion"
+        },
+        {
+            "character": 4,
+            "docs": "A diagnostic and a query on one line, at different columns: each connector\ncarries its own label's brand colour, so the red one is the error's and the\nmuted one is the query's.",
+            "length": 6,
+            "line": 29,
+            "start": 1248,
+            "text": "(thread local global) int sample.broken",
+            "type": "hover"
+        },
+        {
+            "character": 4,
+            "docs": "A diagnostic and a query on one line, at different columns: each connector\ncarries its own label's brand colour, so the red one is the error's and the\nmuted one is the query's.",
+            "length": 6,
+            "line": 29,
+            "start": 1248,
+            "text": "(thread local global) int sample.broken",
+            "type": "query"
+        },
+        {
+            "character": 13,
+            "id": "err-0",
+            "length": 7,
+            "level": "error",
+            "line": 29,
+            "start": 1257,
+            "text": "undefined identifier `missing`",
+            "type": "error"
+        },
+        {
+            "character": 0,
+            "length": 6,
+            "line": 34,
+            "start": 1469,
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "docs": "D reports a CTFE failure as the error plus a `called from here:` chain.\nEach continuation is its own row, so a multi-line diagnostic stays inside\nthe art instead of tearing it open.",
+            "length": 7,
+            "line": 34,
+            "start": 1476,
+            "text": "(thread local global) string sample.letters",
+            "type": "hover"
+        },
+        {
+            "character": 6,
+            "length": 4,
+            "line": 35,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 26,
+                        "open": 17
+                    }
+                ]
+            },
+            "start": 1502,
+            "text": "ubyte sample.head(string s)",
+            "type": "hover"
+        },
+        {
+            "character": 11,
+            "length": 6,
+            "line": 35,
+            "start": 1507,
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 18,
+            "length": 1,
+            "line": 35,
+            "start": 1514,
+            "text": "(parameter) string s",
+            "type": "hover"
+        },
+        {
+            "character": 36,
+            "length": 1,
+            "line": 35,
+            "start": 1532,
+            "text": "(parameter) string s",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 5,
+            "line": 36,
+            "start": 1543,
+            "text": "(constant) ubyte sample.first = __error",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 5,
+            "line": 36,
+            "start": 1543,
+            "text": "(constant) ubyte sample.first = __error",
+            "type": "query"
+        },
+        {
+            "character": 13,
+            "length": 4,
+            "line": 36,
+            "signature": {
+                "abbrevs": [
+                    {
+                        "kind": "module",
+                        "length": 7,
+                        "offset": 6
+                    }
+                ],
+                "breaks": [
+                    {
+                        "offset": 18
+                    }
+                ],
+                "effects": {
+                    "trust": "@system"
+                },
+                "groups": [
+                    {
+                        "close": 26,
+                        "open": 17
+                    }
+                ]
+            },
+            "start": 1551,
+            "text": "ubyte sample.head(string s)",
+            "type": "hover"
+        },
+        {
+            "character": 18,
+            "docs": "D reports a CTFE failure as the error plus a `called from here:` chain.\nEach continuation is its own row, so a multi-line diagnostic stays inside\nthe art instead of tearing it open.",
+            "length": 7,
+            "line": 36,
+            "start": 1556,
+            "text": "(thread local global) string sample.letters",
+            "type": "hover"
+        },
+        {
+            "character": 18,
+            "docs": "D reports a CTFE failure as the error plus a `called from here:` chain.\nEach continuation is its own row, so a multi-line diagnostic stays inside\nthe art instead of tearing it open.",
+            "length": 7,
+            "line": 36,
+            "start": 1556,
+            "text": "(thread local global) string sample.letters",
+            "type": "query"
+        },
+        {
+            "character": 18,
+            "id": "err-1",
+            "length": 7,
+            "level": "error",
+            "line": 36,
+            "start": 1556,
+            "text": "static variable `letters` cannot be read at compile time\ncalled from here: `head(letters)`",
+            "type": "error"
+        },
+        {
+            "character": 11,
+            "docs": "Alpha channel opacity, 0 through 255.",
+            "length": 5,
+            "line": 39,
+            "start": 1620,
+            "text": "(constant) ubyte sample.alpha = cast(ubyte)255u",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "length": 6,
+            "line": 41,
+            "start": 1673,
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 12,
+            "docs": "The Latin `alphabet`, lowercase.",
+            "length": 8,
+            "line": 41,
+            "start": 1680,
+            "text": "(constant) string sample.alphabet = \"abcdefghijklmnopqrstuvwxyz\"",
+            "type": "hover"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}

@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>twoslash · 14-imports</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; background: #1a1b26; color: #cdd6f4;
+         font: 14px/1.5 system-ui, sans-serif;
+         display: flex; flex-direction: column; }
+  header { flex: none; display: flex; gap: 0.9em; align-items: baseline;
+           flex-wrap: wrap; padding: 0.7em 1em;
+           background: #181825; border-bottom: 1px solid #313244; }
+  header b { font-size: 1.05em; } header .kinds { color: #a6adc8; }
+  header .spacer { flex: 1; } header a { color: #89b4fa; text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  header .disabled { color: #45475a; }
+  main { flex: 1; min-height: 0; overflow: auto; background: #1a1b26; }
+  main pre.syn-root { margin: 0; padding: 0.6em 1ch; min-height: 100%;
+                      box-sizing: border-box; }
+  main pre.syn-root > code { display: block; counter-reset: lineno;
+                             padding-left: 3ch; }
+  .ln { position: relative; counter-increment: lineno; }
+  .ln::before { content: counter(lineno); position: absolute;
+                left: -3ch; width: 2ch; text-align: right;
+                color: #6c7086; -webkit-user-select: none; user-select: none; }
+  main .twoslash :is(.twoslash-meta-line, .twoslash-completion-list, .twoslash-tag-line) {
+    -webkit-user-select: text; user-select: text; }
+  body.sel-code :is(.twoslash-meta-line, .twoslash-completion-list, .twoslash-tag-line) {
+    -webkit-user-select: none; user-select: none; }
+  body.sel-anno main pre.syn-root > code { -webkit-user-select: none; user-select: none; }
+  body.sel-anno :is(.twoslash-meta-line, .twoslash-completion-list, .twoslash-tag-line) {
+    -webkit-user-select: none; user-select: none; }
+  body.sel-anno .sel-active, body.sel-anno .sel-active * {
+    -webkit-user-select: text; user-select: text; }
+</style></head><body>
+<header><a class="prev" href="13-aliasseq.html">← prev</a><b>14-imports</b><span class="kinds">hover×14 query×2</span><span class="spacer"></span><a href="index.html">all</a><a class="next" href="15-templates-ifti.html">next →</a></header>
+<main><style>
+.syn-root{color:#a9b1d6;background-color:#1a1b26}
+.syn-comment{color:#51597d;font-style:italic}
+.syn-comment-block{color:#5a638c}
+.syn-comment-documentation{color:#51597d}
+.syn-comment-line{color:#51597d;font-style:italic}
+.syn-constant{color:#bb9af7}
+.syn-constant-builtin{color:#ff9e64}
+.syn-constant-builtin-boolean{color:#ff9e64}
+.syn-constant-character{color:#bb9af7}
+.syn-constant-character-escape{color:#89ddff}
+.syn-constant-numeric{color:#ff9e64}
+.syn-constant-numeric-float{color:#ff9e64}
+.syn-constant-numeric-integer{color:#ff9e64}
+.syn-diff-delta{color:#6183bb}
+.syn-diff-minus{color:#914c54}
+.syn-diff-plus{color:#449dab}
+.syn-embedded{color:#c0caf5}
+.syn-error{color:#ff5370}
+.syn-function{color:#7aa2f7}
+.syn-function-builtin{color:#0db9d7}
+.syn-function-constructor{color:#7aa2f7}
+.syn-function-macro{color:#7aa2f7}
+.syn-function-method{color:#7aa2f7}
+.syn-keyword{color:#bb9af7}
+.syn-keyword-control{color:#bb9af7;font-style:italic}
+.syn-keyword-directive{color:#73daca}
+.syn-keyword-function{color:#bb9af7}
+.syn-keyword-operator{color:#89ddff}
+.syn-keyword-storage{color:#9d7cd8;font-style:italic}
+.syn-markup-bold{color:#c0caf5;font-weight:bold}
+.syn-markup-italic{color:#c0caf5;font-style:italic}
+.syn-markup-link-url{color:#73daca}
+.syn-markup-quote{font-style:italic}
+.syn-module{color:#0db9d7}
+.syn-operator{color:#bb9af7;font-weight:bold}
+.syn-punctuation{color:#89ddff}
+.syn-punctuation-bracket{color:#9abdf5}
+.syn-punctuation-delimiter{color:#89ddff}
+.syn-punctuation-special{color:#7dcfff}
+.syn-string{color:#9ece6a}
+.syn-string-escape{color:#9ece6a}
+.syn-string-regexp{color:#b4f9f8}
+.syn-string-special{color:#9ece6a}
+.syn-string-special-key{color:#7aa2f7}
+.syn-string-special-path{color:#9ece6a}
+.syn-string-special-symbol{color:#9ece6a}
+.syn-string-special-url{color:#73daca}
+.syn-tag{color:#ba3c97}
+.syn-tag-attribute{color:#bb9af7}
+.syn-type{color:#0db9d7}
+.syn-type-builtin{color:#0db9d7}
+.syn-variable{color:#c0caf5}
+.syn-variable-builtin{color:#f7768e}
+.syn-variable-member{color:#c0caf5}
+.syn-variable-parameter{color:#e0af68}
+/* Twoslash overlay stylesheet — ported from @shikijs/twoslash `style-rich.css`.
+  Styles only the `.twoslash-*` chrome; syntax token colors come from the
+  sparkles:syntax theme stylesheet (`.syn-*` / `.syn-root`). Interactivity is
+  100% CSS `:hover` — no JavaScript. Pair with a `.twoslash` container wrapping
+  the rendered <pre><code>. */
+
+:root {
+  --twoslash-border-color: #8888;
+  --twoslash-underline-color: #88888855;
+  --twoslash-highlighted-border: #c37d0d50;
+  --twoslash-highlighted-bg: #c37d0d20;
+  --twoslash-popup-bg: #f8f8f8;
+  --twoslash-popup-color: inherit;
+  --twoslash-popup-shadow: rgba(0, 0, 0, 0.08) 0px 1px 4px;
+  --twoslash-docs-color: #888;
+  --twoslash-docs-font: sans-serif;
+  --twoslash-code-font: inherit;
+  --twoslash-code-font-size: 1em;
+  --twoslash-matched-color: inherit;
+  --twoslash-unmatched-color: #888;
+  --twoslash-cursor-color: #8888;
+  --twoslash-error-color: #d45656;
+  --twoslash-error-bg: #d4565620;
+  --twoslash-warn-color: #c37d0d;
+  --twoslash-warn-bg: #c37d0d20;
+  --twoslash-tag-color: #3772cf;
+  --twoslash-tag-bg: #3772cf20;
+  --twoslash-tag-annotate-color: #1ba673;
+  --twoslash-tag-annotate-bg: #1ba67320;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --twoslash-popup-bg: #232323;
+    --twoslash-docs-color: #a0a0a0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .twoslash * {
+    transition: none !important;
+  }
+}
+
+/* ===== Hover / query popups ===== */
+.twoslash:hover .twoslash-hover {
+  border-color: var(--twoslash-underline-color);
+}
+
+.twoslash .twoslash-hover {
+  position: relative;
+  border-bottom: 1px dotted transparent;
+  transition-timing-function: ease;
+  transition: border-color 0.3s;
+}
+
+/* All popup surfaces — the hover popup container, the below-line query popup, and
+  the completion list — share ONE design language (surface + a `1ch` detach gap
+  from the token or caret they annotate), so consistency is structural, not
+  per-rule. Only the positioning model differs (see the individual rules below).
+  The query and completion are bare block elements (direct children of the code)
+  so their gap is exactly `margin-top`; the hover popup is absolutely positioned. */
+.twoslash .twoslash-popup-container,
+.twoslash .twoslash-query-line,
+.twoslash .twoslash-completion-list {
+  margin-top: 1ch;
+  background: var(--twoslash-popup-bg);
+  color: var(--twoslash-popup-color);
+  border: 1px solid var(--twoslash-border-color);
+  border-radius: 4px;
+  box-shadow: var(--twoslash-popup-shadow);
+}
+
+/* Annotation surfaces are decorations, not code: keep them out of a text
+  selection of the code (VSCode-like — the code copies cleanly). The hover
+  popup container sets this on itself below; these are the below-line blocks
+  (query/error `-meta-line`, completions, and `// @tag` lines). */
+.twoslash .twoslash-meta-line,
+.twoslash .twoslash-completion-list,
+.twoslash .twoslash-tag-line {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.twoslash .twoslash-popup-container {
+  position: absolute;
+  z-index: 10;
+  /* Hidden with `display` (not opacity) so a hidden popup takes no layout: it
+    neither widens the scroll area (stray horizontal scrollbar) nor injects
+    block-boundary newlines into a copied code selection. Revealed on hover
+    below. (Trades Shiki's opacity fade for a clean copy + no overflow.) */
+  display: none;
+  flex-direction: column;
+  transform: translateY(1.1em); /* drop below the inline token it annotates */
+  pointer-events: none;
+  user-select: none;
+  text-align: left;
+}
+
+.twoslash .twoslash-hover:hover .twoslash-popup-container {
+  display: inline-flex;
+  pointer-events: auto;
+}
+
+.twoslash .twoslash-popup-code {
+  padding: 6px 8px;
+  font-family: var(--twoslash-code-font);
+  font-size: var(--twoslash-code-font-size);
+  white-space: pre;
+}
+
+.twoslash .twoslash-popup-docs {
+  padding: 6px 8px;
+  color: var(--twoslash-docs-color);
+  font-family: var(--twoslash-docs-font);
+  font-size: 0.8em;
+  border-top: 1px solid var(--twoslash-border-color);
+}
+
+/* Rendered markdown inside the docs (paragraphs, lists, code fences, headings):
+  tame the browser's default block margins so a paragraph or list sits tight in
+  the small popup — collapse the outer edges, keep a modest inner rhythm.
+  (Shiki leans on the host page's prose styles; the overlay is self-contained.) */
+.twoslash .twoslash-popup-docs :first-child {
+  margin-top: 0;
+}
+.twoslash .twoslash-popup-docs :last-child {
+  margin-bottom: 0;
+}
+.twoslash .twoslash-popup-docs p,
+.twoslash .twoslash-popup-docs ul,
+.twoslash .twoslash-popup-docs ol,
+.twoslash .twoslash-popup-docs pre,
+.twoslash .twoslash-popup-docs blockquote {
+  margin: 0.5em 0;
+}
+/* Inline `code` in docs / tag values: a subtle surface so it reads as code,
+  not prose. (The code-fence `pre code` below resets this back to flat.) */
+.twoslash .twoslash-popup-docs code {
+  font-family: var(--twoslash-code-font);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background: var(--twoslash-docs-code-bg, rgba(127, 127, 127, 0.14));
+}
+.twoslash .twoslash-popup-docs pre {
+  padding: 4px 6px;
+  border-radius: 3px;
+  overflow-x: auto;
+  background: var(--twoslash-docs-code-bg, rgba(127, 127, 127, 0.1));
+}
+.twoslash .twoslash-popup-docs pre code {
+  padding: 0;
+  background: none;
+}
+/* Links in docs / tag values (`[text](url)`, `<url>`) look like links. */
+.twoslash .twoslash-popup-docs a {
+  color: var(--twoslash-docs-link-color, #4c8dff);
+  text-decoration: underline;
+}
+
+.twoslash .twoslash-popup-docs-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  font-family: var(--twoslash-docs-font);
+}
+
+.twoslash .twoslash-popup-docs-tags,
+.twoslash .twoslash-popup-docs-tag-name {
+  margin-right: 0.5em;
+}
+
+/* Each JSDoc tag name (@param, @returns, @see) as a small chip. */
+.twoslash .twoslash-popup-docs-tag-name {
+  display: inline-block;
+  font-family: var(--twoslash-code-font);
+  font-size: 0.92em;
+  padding: 0.05em 0.4em;
+  border-radius: 4px;
+  background: var(--twoslash-docs-tag-bg, rgba(127, 127, 127, 0.18));
+}
+
+/* Connector notch — shared by every popup (the completion list overrides `left`
+  inline to point at its caret rather than the fixed token-start position). */
+.twoslash .twoslash-popup-arrow {
+  position: absolute;
+  top: -4px;
+  left: 1em;
+  border-top: 1px solid var(--twoslash-border-color);
+  border-right: 1px solid var(--twoslash-border-color);
+  background: var(--twoslash-popup-bg);
+  transform: rotate(-45deg);
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+}
+
+/* ===== Query line ===== */
+.twoslash .twoslash-query-line {
+  position: relative; /* containing block for the arrow */
+  /* Below a hover popup's z-index (10) so an expanded hover on the line above
+    paints over this always-visible query popup, not behind it. */
+  z-index: 9;
+  display: flex; /* block-level flex, content-width — same as the completion */
+  flex-direction: column;
+  width: max-content;
+  padding: 0;
+  margin-bottom: 1.4em;
+}
+
+/* ===== Error line ===== */
+.twoslash .twoslash-error-line {
+  position: relative;
+  margin: 0.2em 0;
+  padding: 6px 12px;
+  /* `min-width: 100%` + padding + border overflows its line unless the padding
+    is counted inside the width — Shiki leans on a host `box-sizing` reset; the
+    overlay is self-contained, so set it here (else a stray horizontal scrollbar). */
+  box-sizing: border-box;
+  min-width: 100%;
+  width: max-content;
+  background-color: var(--twoslash-error-bg);
+  border-left: 3px solid var(--twoslash-error-color);
+  color: var(--twoslash-error-color);
+}
+
+.twoslash .twoslash-error-line.twoslash-error-level-warning {
+  background-color: var(--twoslash-warn-bg);
+  border-left: 3px solid var(--twoslash-warn-color);
+  color: var(--twoslash-warn-color);
+}
+
+/* ── Crowded lines ───────────────────────────────────────────────────────────
+  Several annotations anchored to one source line. A shared marker row under the
+  code, then the labels peeled off right to left, each connected back to its own
+  column by a vertical guide — the compiler-diagnostic shape (Rust, Elm, modern
+  GCC/Clang), which is the only thing that says which label belongs to which
+  token once there is more than one.
+
+  The cell backends repeat a glyph per row because a terminal has no other way
+  to draw a line. Here the guides are absolutely positioned at their exact
+  column and stretch to whatever height the card beside them turns out to be,
+  which is what lets a card keep the markup it always had — the art is chrome
+  around the `.twoslash-*` contract, not a replacement for it. */
+.twoslash .twoslash-crowded {
+  /* Decoration, not code: stays out of a selection of the code, like every
+    other annotation surface (the marker row's padding spaces especially). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.twoslash .twoslash-crowded-markers {
+  /* Preformatted, so the marker columns are exact with no arithmetic. */
+  white-space: pre;
+  color: var(--twoslash-underline-color);
+}
+
+.twoslash .twoslash-crowded-row {
+  position: relative;
+  /* A flow root, so the card's own margins (`margin-top: 1ch`, and the query
+    popup's `margin-bottom: 1.4em`) stay INSIDE the row instead of collapsing
+    through its edges. Without it the row box starts at the card's top and ends
+    at its bottom, so the guides — which span the row — stopped at every card
+    and the column read as a dashed line: measured breaks of 7.81px (1ch) and
+    18.19px (1.4em) between consecutive rows. It also puts the card's top edge
+    exactly 1ch below the row's, which is what the elbow's height assumes. */
+  display: flow-root;
+}
+
+/* A pending anchor's connector: a rule down the row at its own column, for
+  every anchor whose label has not been drawn yet. */
+.twoslash .twoslash-crowded-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--twoslash-underline-color);
+}
+
+/* The turn into a label. `1ch` is the gap the popup cards leave above
+  themselves (`margin-top: 1ch`), so the hook lands exactly on the card's top
+  edge rather than at a hand-tuned offset. */
+.twoslash .twoslash-crowded-elbow {
+  position: absolute;
+  top: 0;
+  height: 1ch;
+  width: 0.7ch;
+  border-left: 1px solid var(--twoslash-underline-color);
+  border-bottom: 1px solid var(--twoslash-underline-color);
+  border-bottom-left-radius: 4px;
+}
+
+/* Inside a connected row the notch is the last link of a chain: the marker
+  glyph under the span, the rule down to the label, and the notch the label
+  points back with all belong on the anchor's column. The stacked layout keeps
+  Shiki's fixed `1em` inset — there the popup is the only thing pointing, so it
+  points near the token start; here that inset put the notch 2.2 columns right
+  of its own connector. `margin-left` is half the notch, so the diamond
+  straddles the 1px rule instead of starting at it, and it overrides the
+  completion list's inline `left` (which names its caret) without touching it. */
+.twoslash .twoslash-crowded-row .twoslash-popup-arrow {
+  left: 0;
+  margin-left: -3px;
+}
+
+/* Inside a connected row an error message sits under its own anchor, so it is
+  no longer the full-width accent band it is on a line of its own. */
+.twoslash .twoslash-crowded-row .twoslash-error-line {
+  min-width: 0;
+  width: max-content;
+  margin-top: 1ch;
+}
+
+/* Inline error span: wavy underline (SVG data-URI, bottom-repeat). */
+.twoslash .twoslash-error {
+  padding-bottom: 2px;
+  background: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%206%203'%20height%3D'3'%20width%3D'6'%3E%3Cg%20fill%3D'%23c94824'%3E%3Cpolygon%20points%3D'5.5%2C0%202.5%2C3%201.1%2C3%204.1%2C0'%2F%3E%3Cpolygon%20points%3D'4%2C0%206%2C2%206%2C0.6%205.4%2C0'%2F%3E%3Cpolygon%20points%3D'0%2C2%201%2C3%202.4%2C3%200%2C0.6'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E")
+    repeat-x bottom left;
+}
+
+.twoslash .twoslash-error.twoslash-error-level-warning {
+  background: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%206%203'%20height%3D'3'%20width%3D'6'%3E%3Cg%20fill%3D'%23c37d0d'%3E%3Cpolygon%20points%3D'5.5%2C0%202.5%2C3%201.1%2C3%204.1%2C0'%2F%3E%3Cpolygon%20points%3D'4%2C0%206%2C2%206%2C0.6%205.4%2C0'%2F%3E%3Cpolygon%20points%3D'0%2C2%201%2C3%202.4%2C3%200%2C0.6'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E")
+    repeat-x bottom left;
+}
+
+/* ===== Completions ===== */
+/* Surface + top gap come from the shared popup rule above. Only the completion's
+  own layout lives here. `margin-bottom` only (not the `margin` shorthand) so the
+  shared `margin-top: 1ch` survives; `margin-left` is set inline per node. The
+  font-size is left to inherit the code size so that inline `margin-left:Nch`
+  offset tracks the monospace column grid exactly. */
+.twoslash .twoslash-completion-list {
+  position: relative; /* containing block for the arrow */
+  width: max-content;
+  margin-bottom: 3px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.twoslash .twoslash-completion-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.25em;
+  line-height: 1em;
+  list-style: none;
+}
+
+.twoslash .twoslash-completion-list .twoslash-completions-matched {
+  color: var(--twoslash-matched-color);
+}
+
+.twoslash .twoslash-completion-list .twoslash-completions-unmatched {
+  color: var(--twoslash-unmatched-color);
+}
+
+.twoslash .twoslash-completion-list .twoslash-completions-icon {
+  color: var(--twoslash-unmatched-color);
+  width: 1em;
+  flex: none;
+}
+
+.twoslash .twoslash-completion-list .twoslash-completions-icon svg {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+
+.twoslash .twoslash-completion-list .deprecated {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+/* ===== Highlights ===== */
+.twoslash .twoslash-highlighted {
+  padding: 1px 2px;
+  margin: -1px -3px;
+  border-radius: 4px;
+  background-color: var(--twoslash-highlighted-bg);
+  border: 1px solid var(--twoslash-highlighted-border);
+}
+
+/* ===== Custom tags ===== */
+.twoslash .twoslash-tag-line {
+  position: relative;
+  margin: 0.2em 0;
+  padding: 6px 10px;
+  box-sizing: border-box; /* keep `min-width: 100%` + padding inside the line */
+  min-width: 100%;
+  width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  background-color: var(--twoslash-tag-bg);
+  border-left: 3px solid var(--twoslash-tag-color);
+  color: var(--twoslash-tag-color);
+}
+
+.twoslash .twoslash-tag-line .twoslash-tag-icon {
+  width: 1.1em;
+  flex: none;
+  color: inherit;
+}
+
+.twoslash .twoslash-tag-line .twoslash-tag-icon svg {
+  width: 1.1em;
+  height: 1.1em;
+  display: block;
+}
+
+.twoslash .twoslash-tag-line.twoslash-tag-error-line {
+  background-color: var(--twoslash-error-bg);
+  border-left: 3px solid var(--twoslash-error-color);
+  color: var(--twoslash-error-color);
+}
+
+.twoslash .twoslash-tag-line.twoslash-tag-warn-line {
+  background-color: var(--twoslash-warn-bg);
+  border-left: 3px solid var(--twoslash-warn-color);
+  color: var(--twoslash-warn-color);
+}
+
+.twoslash .twoslash-tag-line.twoslash-tag-annotate-line {
+  background-color: var(--twoslash-tag-annotate-bg);
+  border-left: 3px solid var(--twoslash-tag-annotate-color);
+  color: var(--twoslash-tag-annotate-color);
+}
+</style>
+<pre class="syn-root twoslash"><code><span class="ln"><span class="syn-keyword">import</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">package</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">std</span></code></span><span class="syn-variable">std</span></span><span class="syn-punctuation-delimiter">.</span><span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">package</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">algorithm</span></code></span><span class="syn-variable">algorithm</span></span><span class="syn-punctuation-delimiter">.</span><span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">module</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">algorithm</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">iteration</span></code><div class="twoslash-popup-docs"><p>This is a submodule of <code>std.algorithm</code>.
+It contains generic <code>iteration</code> algorithms.</p><table><thead><tr><th>Function Name </th><th>Description </th></tr></thead><tbody><tr><td><code>cache</code> </td><td>Eagerly evaluates and caches another range&#39;s <code>front</code>. </td></tr><tr><td><code>lazyCache</code> </td><td>Lazily evaluates and caches another range&#39;s <code>front</code>, unlike <code>cache</code>. </td></tr><tr><td><code>cacheBidirectional</code> </td><td>As above, but also provides <code>back</code> and <code>popBack</code>. </td></tr><tr><td><code>chunkBy</code> </td><td><code>chunkBy!((a,b) =&gt; a[1] == b[1])([[1, 1], [1, 2], [2, 2], [2, 1]])</code> returns a range containing 3 subranges: the first with just <code>[1, 1]</code>; the second with the elements <code>[1, 2]</code> and <code>[2, 2]</code>; and the third with just <code>[2, 1]</code>. </td></tr><tr><td><code>cumulativeFold</code> </td><td><code>cumulativeFold!((a, b) =&gt; a + b)([1, 2, 3, 4])</code> returns a lazily-evaluated range containing the successive reduced values <code>1</code>, <code>3</code>, <code>6</code>, <code>10</code>. </td></tr><tr><td><code>each</code> </td><td><code>each!writeln([1, 2, 3])</code> eagerly prints the numbers <code>1</code>, <code>2</code> and <code>3</code> on their own lines. </td></tr><tr><td><code>filter</code> </td><td><code>filter!(a =&gt; a &gt; 0)([1, -1, 2, 0, -3])</code> iterates over elements <code>1</code> and <code>2</code>. </td></tr><tr><td><code>filterBidirectional</code> </td><td>Similar to <code>filter</code>, but also provides <code>back</code> and <code>popBack</code> at a small increase in cost. </td></tr><tr><td><code>fold</code> </td><td><code>fold!((a, b) =&gt; a + b)([1, 2, 3, 4])</code> returns <code>10</code>. </td></tr><tr><td><code>group</code> </td><td><code>group([5, 2, 2, 3, 3])</code> returns a range containing the tuples <code>tuple(5, 1)</code>, <code>tuple(2, 2)</code>, and <code>tuple(3, 2)</code>. </td></tr><tr><td><code>joiner</code> </td><td><code>joiner([&quot;hello&quot;, &quot;world!&quot;], &quot;; &quot;)</code> returns a range that iterates over the characters <code>&quot;hello; world!&quot;</code>. No new string is created - the existing inputs are iterated. </td></tr><tr><td><code>map</code> </td><td><code>map!(a =&gt; a * 2)([1, 2, 3])</code> lazily returns a range with the numbers <code>2</code>, <code>4</code>, <code>6</code>. </td></tr><tr><td><code>mean</code> </td><td>Colloquially known as the average, <code>mean([1, 2, 3])</code> returns <code>2</code>. </td></tr><tr><td><code>permutations</code> </td><td>Lazily computes all permutations using Heap&#39;s algorithm. </td></tr><tr><td><code>reduce</code> </td><td><code>reduce!((a, b) =&gt; a + b)([1, 2, 3, 4])</code> returns <code>10</code>. This is the old implementation of <code>fold</code>. </td></tr><tr><td><code>splitWhen</code> </td><td>Lazily splits a range by comparing adjacent elements. </td></tr><tr><td><code>splitter</code> </td><td>Lazily splits a range by a separator, element predicate or whitespace. </td></tr><tr><td><code>substitute</code> </td><td><code>[1, 2].substitute(1, 0.1)</code> returns <code>[0.1, 2]</code>. </td></tr><tr><td><code>sum</code> </td><td>Same as <code>fold</code>, but specialized for accurate summation. </td></tr><tr><td><code>uniq</code> </td><td>Iterates over the unique elements in a range, which is assumed sorted. </td></tr></tbody></table><h3>Source</h3><p><code>std/algorithm/</code>iteration<code>.d</code></p></div><div class="twoslash-popup-docs twoslash-popup-docs-tags"><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@copyright</span><span class="twoslash-popup-docs-tag-value">Andrei Alexandrescu 2008-.</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@license</span><span class="twoslash-popup-docs-tag-value"><a href="http://boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@authors</span><span class="twoslash-popup-docs-tag-value"><a href="http://erdani.com">Andrei Alexandrescu</a></span></span></div></span><span class="syn-variable">iteration</span></span> <span class="syn-punctuation-delimiter">:</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-keyword">alias</span> <span class="syn-type">template</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">sample</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">reduce</span> <span class="syn-operator">=</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">algorithm</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">iteration</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">reduce</span><span class="syn-punctuation-bracket">(</span><span class="syn-function">fun</span><span class="syn-punctuation-delimiter">.</span><span class="syn-operator">..</span><span class="syn-punctuation-bracket">)</span> <span class="syn-keyword-control">if</span> <span class="syn-punctuation-bracket">(</span><span class="syn-type">fun</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">length</span> <span class="syn-operator">&gt;=</span> <span class="syn-constant-numeric">1</span><span class="syn-punctuation-bracket">)</span></code><div class="twoslash-popup-docs"><p>Implements the homonym function (also known as <code>accumulate</code>, <code>compress</code>, <code>inject</code>, or <code>foldl</code>) present in various programming
+languages of functional flavor. There is also <code>fold</code> which does
+the same thing but with the opposite parameter order.</p><ul><li><p>Use <code>seed</code> to initialize an internal <code>accumulator</code>.</p></li><li><p>For each element <code>e</code> in <code>range</code>, evaluate <code>accumulator = fun(result, e)</code>.</p></li><li><p>Return <code>accumulator</code>.</p></li></ul><p>The one-argument version <code>reduce!(fun)(range)</code>
+works similarly, but it uses the first element of the range as the
+seed (the range must be non-empty, else this throws).</p><p>If range has only one element, the functions are never invoked and
+<code>result</code> and the seed is returned unchanged.</p></div><div class="twoslash-popup-docs twoslash-popup-docs-tags"><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@returns</span><span class="twoslash-popup-docs-tag-value">the accumulated result</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@param</span><span class="twoslash-popup-docs-tag-value">fun one or more functions of the form <code>Acc function(Acc, ElemT)</code></span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@see</span><span class="twoslash-popup-docs-tag-value"><p><a href="http://en.wikipedia.org/wiki/Fold_(higher-order_function)">Fold (higher-order function)</a></p><p><code>fold</code> is functionally equivalent to <code>reduce</code> with the argument
+order reversed, and without the need to use <code>tuple</code>
+for multiple seeds. This makes it easier to use in UFCS chains.</p><p><code>sum</code> is similar to <code>reduce!((a, b) =&gt; a + b)</code> that offers
+pairwise summing of floating point numbers.</p></span></span></div></span><span class="syn-variable">reduce</span></span><span class="syn-punctuation-delimiter">;</span></span>
+<span class="ln"><span class="syn-keyword">import</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">package</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">std</span></code></span><span class="syn-variable">std</span></span><span class="syn-punctuation-delimiter">.</span><span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">module</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">conv</span></code><div class="twoslash-popup-docs"><p>A one-stop shop for converting values from one type to another.</p><table><thead><tr><th>Category </th><th>Functions </th></tr></thead><tbody><tr><td>Generic </td><td><code>asOriginalType</code> <code>castFrom</code> <code>parse</code> <code>to</code> <code>toChars</code> <code>bitCast</code> </td></tr><tr><td>Strings </td><td><code>text</code> <code>wtext</code> <code>dtext</code> <code>writeText</code> <code>writeWText</code> <code>writeDText</code> <code>hexString</code> </td></tr><tr><td>Numeric </td><td><code>octal</code> <code>roundTo</code> <code>signed</code> <code>unsigned</code> </td></tr><tr><td>Exceptions </td><td><code>ConvException</code> <code>ConvOverflowException</code> </td></tr></tbody></table><h3>Source</h3><p><code>std/</code>conv<code>.d</code></p></div><div class="twoslash-popup-docs twoslash-popup-docs-tags"><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@copyright</span><span class="twoslash-popup-docs-tag-value">Copyright The D Language Foundation 2007-.</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@license</span><span class="twoslash-popup-docs-tag-value"><a href="http://boost.org/LICENSE_1_0.txt">Boost License 1.0</a>.</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@authors</span><span class="twoslash-popup-docs-tag-value"><a href="http://digitalmars.com">Walter Bright</a>,
+<a href="http://erdani.org">Andrei Alexandrescu</a>,
+Shin Fujishiro,
+Adam D. Ruppe,
+Kenji Hara</span></span></div></span><span class="syn-variable">conv</span></span> <span class="syn-punctuation-delimiter">:</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-keyword">alias</span> <span class="syn-type">template</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">sample</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">toText</span> <span class="syn-operator">=</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">conv</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">to</span><span class="syn-punctuation-bracket">(</span><span class="syn-variable">T</span><span class="syn-punctuation-bracket">)</span></code><div class="twoslash-popup-docs"><p>The <code>to</code> template converts a value from one type to another.
+The source type is deduced and the target type must be specified, for example the
+expression <code>to!int(42.0)</code> converts the number 42 from
+<code>double</code> to <code>int</code>. The conversion is &quot;safe&quot;, i.e.,
+it checks for overflow; <code>to!int(4.2e10)</code> would throw the
+<code>ConvOverflowException</code> exception. Overflow checks are only
+inserted when necessary, e.g., <code>to!double(42)</code> does not do
+any checking because any <code>int</code> fits in a <code>double</code>.</p><p>Conversions from string to numeric types differ from the C equivalents
+<code>atoi()</code> and <code>atol()</code> by checking for overflow and not allowing whitespace.</p><p>For conversion of strings to signed types, the grammar recognized is:</p><pre><code>*Integer*:
+    *Sign UnsignedInteger*
+    *UnsignedInteger*
+*Sign*:
+    **+**
+    **-**
+</code></pre><p>For conversion to unsigned types, the grammar recognized is:</p><pre><code>*UnsignedInteger*:
+    *DecimalDigit*
+    *DecimalDigit* *UnsignedInteger*
+</code></pre></div></span><span class="syn-variable">toText</span></span> <span class="syn-operator">=</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-keyword">alias</span> <span class="syn-type">template</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">sample</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">toText</span> <span class="syn-operator">=</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">conv</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">to</span><span class="syn-punctuation-bracket">(</span><span class="syn-variable">T</span><span class="syn-punctuation-bracket">)</span></code><div class="twoslash-popup-docs"><p>The <code>to</code> template converts a value from one type to another.
+The source type is deduced and the target type must be specified, for example the
+expression <code>to!int(42.0)</code> converts the number 42 from
+<code>double</code> to <code>int</code>. The conversion is &quot;safe&quot;, i.e.,
+it checks for overflow; <code>to!int(4.2e10)</code> would throw the
+<code>ConvOverflowException</code> exception. Overflow checks are only
+inserted when necessary, e.g., <code>to!double(42)</code> does not do
+any checking because any <code>int</code> fits in a <code>double</code>.</p><p>Conversions from string to numeric types differ from the C equivalents
+<code>atoi()</code> and <code>atol()</code> by checking for overflow and not allowing whitespace.</p><p>For conversion of strings to signed types, the grammar recognized is:</p><pre><code>*Integer*:
+    *Sign UnsignedInteger*
+    *UnsignedInteger*
+*Sign*:
+    **+**
+    **-**
+</code></pre><p>For conversion to unsigned types, the grammar recognized is:</p><pre><code>*UnsignedInteger*:
+    *DecimalDigit*
+    *DecimalDigit* *UnsignedInteger*
+</code></pre></div></span><span class="syn-variable">to</span></span><span class="syn-punctuation-delimiter">;</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="syn-keyword">enum</span> <span class="syn-variable">total</span> <span class="syn-operator">=</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-type-builtin">int</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">algorithm</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">iteration</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">reduce</span><span class="syn-operator">!</span><span class="syn-punctuation-bracket">(</span><span class="syn-punctuation-bracket">(</span><span class="syn-type">a</span><span class="syn-punctuation-delimiter">,</span> <span class="syn-type">b</span><span class="syn-punctuation-bracket">)</span> <span class="syn-operator">=&gt;</span> <span class="syn-variable">a</span> <span class="syn-operator">+</span> <span class="syn-variable">b</span><span class="syn-punctuation-bracket">)</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">reduce</span><span class="syn-operator">!</span><span class="syn-punctuation-bracket">(</span><span class="syn-type-builtin">int</span><span class="syn-punctuation-bracket">[</span><span class="syn-punctuation-bracket">]</span><span class="syn-punctuation-bracket">)</span><span class="syn-punctuation-bracket">(</span><span class="syn-type-builtin">int</span><span class="syn-punctuation-bracket">[</span><span class="syn-punctuation-bracket">]</span> <span class="syn-variable">r</span><span class="syn-punctuation-bracket">)</span> <span class="syn-keyword">pure</span> <span class="syn-variable-member"><span class="syn-operator">@</span><span class="syn-variable">safe</span></span></code><div class="twoslash-popup-docs"><p>Implements the homonym function (also known as <code>accumulate</code>, <code>compress</code>, <code>inject</code>, or <code>foldl</code>) present in various programming
+languages of functional flavor. There is also <code>fold</code> which does
+the same thing but with the opposite parameter order.</p><ul><li><p>Use <code>seed</code> to initialize an internal <code>accumulator</code>.</p></li><li><p>For each element <code>e</code> in <code>range</code>, evaluate <code>accumulator = fun(result, e)</code>.</p></li><li><p>Return <code>accumulator</code>.</p></li></ul><p>The one-argument version <code>reduce!(fun)(range)</code>
+works similarly, but it uses the first element of the range as the
+seed (the range must be non-empty, else this throws).</p><p>If range has only one element, the functions are never invoked and
+<code>result</code> and the seed is returned unchanged.</p><h3>Examples</h3><p>Many aggregate range operations turn out to be solved with <code>reduce</code>
+quickly and easily. The example below illustrates <code>reduce</code>&#39;s
+remarkable power and flexibility.</p><pre><code class="language-d">import std.algorithm.comparison : max, min;
+import std.math.operations : isClose;
+import std.range;
+
+int[] arr = [ 1, 2, 3, 4, 5 ];
+// Sum all elements
+auto sum = reduce!((a,b) =&gt; a + b)(0, arr);
+assert(sum == 15);
+
+// Sum again, using a string predicate with &quot;a&quot; and &quot;b&quot;
+sum = reduce!&quot;a + b&quot;(0, arr);
+assert(sum == 15);
+
+// Compute the maximum of all elements
+auto largest = reduce!(max)(arr);
+assert(largest == 5);
+
+// Max again, but with Uniform Function Call Syntax (UFCS)
+largest = arr.reduce!(max);
+assert(largest == 5);
+
+// Compute the number of odd elements
+auto odds = reduce!((a,b) =&gt; a + (b &amp; 1))(0, arr);
+assert(odds == 3);
+
+// Compute the sum of squares
+auto ssquares = reduce!((a,b) =&gt; a + b * b)(0, arr);
+assert(ssquares == 55);
+
+// Chain multiple ranges into seed
+int[] a = [ 3, 4 ];
+int[] b = [ 100 ];
+auto r = reduce!(&quot;a + b&quot;)(chain(a, b));
+assert(r == 107);
+
+// Mixing convertible types is fair game, too
+double[] c = [ 2.5, 3.0 ];
+auto r1 = reduce!(&quot;a + b&quot;)(chain(a, b, c));
+assert(isClose(r1, 112.5));
+
+// To minimize nesting of parentheses, Uniform Function Call Syntax can be used
+auto r2 = chain(a, b, c).reduce!(&quot;a + b&quot;);
+assert(isClose(r2, 112.5));
+</code></pre><p>Sometimes it is very useful to compute multiple aggregates in one pass.
+One advantage is that the computation is faster because the looping overhead
+is shared. That&#39;s why <code>reduce</code> accepts multiple functions.
+If two or more functions are passed, <code>reduce</code> returns a
+<code>Tuple</code> object with one member per passed-in function.
+The number of seeds must be correspondingly increased.</p><pre><code class="language-d">import std.algorithm.comparison : max, min;
+import std.math.operations : isClose;
+import std.math.algebraic : sqrt;
+import std.typecons : tuple, Tuple;
+
+double[] a = [ 3.0, 4, 7, 11, 3, 2, 5 ];
+// Compute minimum and maximum in one pass
+auto r = reduce!(min, max)(a);
+// The type of r is Tuple!(int, int)
+assert(isClose(r[0], 2));  // minimum
+assert(isClose(r[1], 11)); // maximum
+
+// Compute sum and sum of squares in one pass
+r = reduce!(&quot;a + b&quot;, &quot;a + b * b&quot;)(tuple(0.0, 0.0), a);
+assert(isClose(r[0], 35));  // sum
+assert(isClose(r[1], 233)); // sum of squares
+// Compute average and standard deviation from the above
+auto avg = r[0] / a.length;
+assert(avg == 5);
+auto stdev = sqrt(r[1] / a.length - avg * avg);
+assert(cast(int) stdev == 2);
+</code></pre></div><div class="twoslash-popup-docs twoslash-popup-docs-tags"><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@returns</span><span class="twoslash-popup-docs-tag-value">the accumulated result</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@param</span><span class="twoslash-popup-docs-tag-value">fun one or more functions of the form <code>Acc function(Acc, ElemT)</code></span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@see</span><span class="twoslash-popup-docs-tag-value"><p><a href="http://en.wikipedia.org/wiki/Fold_(higher-order_function)">Fold (higher-order function)</a></p><p><code>fold</code> is functionally equivalent to <code>reduce</code> with the argument
+order reversed, and without the need to use <code>tuple</code>
+for multiple seeds. This makes it easier to use in UFCS chains.</p><p><code>sum</code> is similar to <code>reduce!((a, b) =&gt; a + b)</code> that offers
+pairwise summing of floating point numbers.</p><p>No-seed version. The first element of <code>r</code> is used as the seed&#39;s value.</p><p>For each function <code>f</code> in <code>fun</code>, the corresponding
+seed type <code>S</code> is <code>Unqual!(typeof(f(e, e)))</code>, where <code>e</code> is an
+element of <code>r</code>: <code>ElementType!R</code> for ranges,
+and <code>ForeachType!R</code> otherwise.</p><p>Once S has been determined, then <code>S s = e;</code> and <code>s = f(s, e);</code>
+must both be legal.</p></span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@param</span><span class="twoslash-popup-docs-tag-value">r an iterable value as defined by <code>isIterable</code></span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@returns</span><span class="twoslash-popup-docs-tag-value">the final result of the accumulator applied to the iterable</span></span><span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@throws</span><span class="twoslash-popup-docs-tag-value"><code>Exception</code> if <code>r</code> is empty</span></span></div></span><span class="syn-function">reduce</span></span><span class="syn-operator">!</span><span class="syn-punctuation-bracket">(</span><span class="syn-punctuation-bracket">(</span><span class="syn-type">a</span><span class="syn-punctuation-delimiter">,</span> <span class="syn-type">b</span><span class="syn-punctuation-bracket">)</span> <span class="syn-operator">=&gt;</span> <span class="syn-variable">a</span> <span class="syn-operator">+</span> <span class="syn-variable">b</span><span class="syn-punctuation-bracket">)</span><span class="syn-punctuation-bracket">(</span><span class="syn-punctuation-bracket">[</span><span class="syn-constant-numeric">1</span><span class="syn-punctuation-delimiter">,</span> <span class="syn-constant-numeric">2</span><span class="syn-punctuation-delimiter">,</span> <span class="syn-constant-numeric">3</span><span class="syn-punctuation-delimiter">,</span> <span class="syn-constant-numeric">4</span><span class="syn-punctuation-bracket">]</span><span class="syn-punctuation-bracket">)</span><span class="syn-punctuation-delimiter">;</span></span>
+<div class="twoslash-meta-line twoslash-query-line" style="margin-left:5ch"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">constant</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">int</span> <span class="syn-type">sample</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">total</span> <span class="syn-operator">=</span> <span class="syn-constant-numeric">10</span></code></div><span class="ln"><span class="syn-keyword">enum</span> <span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">constant</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">string</span> <span class="syn-type">sample</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">label</span> <span class="syn-operator">=</span> &quot;<span class="syn-constant-numeric">10</span>&quot;</code></span><span class="syn-variable">label</span></span> <span class="syn-operator">=</span> <span class="syn-function">toText</span><span class="syn-operator">!</span><span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">alias</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">object</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">string</span> <span class="syn-operator">=</span> <span class="syn-type-builtin">string</span></code></span><span class="syn-type-builtin">string</span></span><span class="syn-punctuation-bracket">(</span><span class="twoslash-hover"><span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-punctuation-bracket">(</span><span class="syn-type">constant</span><span class="syn-punctuation-bracket">)</span> <span class="syn-variable">int</span> <span class="syn-type">sample</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">total</span> <span class="syn-operator">=</span> <span class="syn-constant-numeric">10</span></code></span><span class="syn-variable">total</span></span><span class="syn-punctuation-bracket">)</span><span class="syn-punctuation-delimiter">;</span></span>
+<div class="twoslash-meta-line twoslash-query-line" style="margin-left:13ch"><div class="twoslash-popup-arrow"></div><code class="twoslash-popup-code"><span class="syn-type-builtin">string</span> <span class="syn-variable">std</span><span class="syn-punctuation-delimiter">.</span><span class="syn-type">conv</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">toText</span><span class="syn-operator">!</span><span class="syn-type-builtin">string</span><span class="syn-punctuation-delimiter">.</span><span class="syn-variable">to</span><span class="syn-operator">!</span><span class="syn-type-builtin">int</span><span class="syn-punctuation-bracket">(</span><span class="syn-type-builtin">int</span> <span class="syn-variable">__param_0</span><span class="syn-punctuation-bracket">)</span> <span class="syn-keyword">pure</span> <span class="syn-keyword">nothrow</span> <span class="syn-variable-member"><span class="syn-operator">@</span><span class="syn-variable">safe</span></span></code></div></code></pre>
+</main>
+<script>
+const A = '.twoslash-meta-line,.twoslash-completion-list,.twoslash-tag-line';
+addEventListener('mousedown', e => {
+  document.querySelectorAll('.sel-active').forEach(el => el.classList.remove('sel-active'));
+  const a = e.target.closest(A);
+  if (a) a.classList.add('sel-active');
+  document.body.classList.toggle('sel-anno', !!a);
+  document.body.classList.toggle('sel-code', !a);
+});
+</script>
+</body></html>

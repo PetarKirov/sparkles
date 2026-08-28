@@ -1,7 +1,8 @@
 module sample;
 // ---cut---
-// NB: `total` is backticked below on purpose — DDoc auto-emphasis wraps the
-// parameter name again, so the popup shows a nested code span.
+// NB: `total` is backticked below on purpose. DDoc pairs backticks left to
+// right and auto-emphasizes the parameter name on top, so the row arrives as
+// three abutting code runs — the case `collapseCodeSpans` merges into one.
 /++
 Renders a progress meter.
 

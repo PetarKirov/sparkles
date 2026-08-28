@@ -133,11 +133,22 @@ Code delimiters and the constructs that must pass through untouched
 | DDC30 | A language string after the opening delimiter (` ``` cpp `) suppresses D highlighting; the block renders as ` ```cpp `.                                        | not started       | `OTHER_CODE` macro; `32-ddoc-fences`                                    |
 | DDC31 | Fence content is reproduced verbatim — blank lines, indentation and trailing spaces intact.                                                                    | full              | `ddoc.render.fenceContentIsVerbatim`                                    |
 | DDC32 | A code block indented to a list item's content column stays inside that item (`ddoc.dd:716-727`).                                                              | not started       | `33-ddoc-markdown`                                                      |
-| DDC33 | Inline code uses backticks with both delimiters on the **same line**; the span is escaped per the entity rules but macros still expand inside it.              | not started       | `DDOC_BACKQUOTED`; `32-ddoc-fences`                                     |
+| DDC33 | Inline code uses backticks with both delimiters on the **same line**; the span is escaped per the entity rules but macros still expand inside it.              | full              | `ddoc.render.nestedCodeSpansCollapseToOne`; nesting note below          |
 | DDC34 | An unpaired backtick on a line is a literal backtick, as is the `$(BACKTICK)` macro.                                                                           | not started       | `32-ddoc-fences`                                                        |
 | DDC35 | Embedded HTML is passed through unchanged (`ddoc.dd:526-545`).                                                                                                 | partial           | raw into CommonMark; sanitization note below                            |
 | DDC36 | `$(DDOC_COMMENT text)` is a comment in the source doc and does not nest.                                                                                       | partial           | defined as empty: the text drops                                        |
 | DDC37 | Stray, unbalanced parentheses in section text must not corrupt macro expansion (dmd runs `escapeStrayParenthesis` before highlighting).                        | partial           | `ddoc.render.strayParensDoNotCorruptTheRest`; one shape diverges, below |
+
+`DDC33` note: DDoc's inline-code macros **nest** — auto-emphasis of a
+declaration's own name fires inside a backquoted span, and `$(MREF …)` can
+appear in one. HTML nests happily (`<code><span>to</span>!int(…)</code>`);
+backticks do not. `std.conv.to` is the worst case in Phobos: its own summary
+writes `` `to!int(42.0)` `` on a declaration named `to`, which expanded to
+``` ``to`!int(42.0)` ``` — a double-backtick span followed by loose text, with
+the delimiters visible to the reader. The macros emit sentinels now and
+`collapseCodeSpans` turns each outermost pair into one backtick, dropping the
+rest. The shape that _looked_ harmless (`` `value` `` inside `` `value` ``,
+giving ` ``value`` `) is the same defect and is pinned with it.
 
 `DDC35` note: `ddoc.dd:1327-1335` flags embedded `<script>` as an XSS vector for
 published DDoc HTML. Here the raw HTML lands in a CommonMark string that a
@@ -194,6 +205,16 @@ because getting it backwards silently moves a `Returns:` chip into the body.
 (`object.html#.Object`), which is a dead link anywhere but that site — and a
 tooltip is anywhere but that site. `SYMBOL_LINK` renders the name as code and
 drops the target.
+
+`PRE` note (dlang.org, not a compiler builtin; the residue below is what `DOC5` exists to remove): `$(PRE …)` is `<pre>` — its
+line structure and indentation _are_ the content, and Phobos writes the
+`std.conv.to` grammars with it. Undefined, it fell through to
+`DDOC_UNDEFINED_MACRO` and the whole block dissolved into one line of prose. It
+renders as an unlabelled fence now. The inner `$(I …)`/`$(B …)` expand before
+`PRE` wraps them and a fence cannot carry emphasis, so their markers survive as
+text (`*Integer*:`) where dlang.org shows italics; pinned as a divergence rather
+than stripped, since undoing them would also eat a literal `*` in someone's
+grammar.
 
 `DDC57` note: only the underscore form survives inside `/** */`. `* * *` is
 eaten by the same rule `DDC51` documents — the line's first `*` is comment

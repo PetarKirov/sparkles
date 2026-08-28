@@ -230,6 +230,86 @@
   color: var(--twoslash-warn-color);
 }
 
+/* ── Crowded lines ───────────────────────────────────────────────────────────
+  Several annotations anchored to one source line. A shared marker row under the
+  code, then the labels peeled off right to left, each connected back to its own
+  column by a vertical guide — the compiler-diagnostic shape (Rust, Elm, modern
+  GCC/Clang), which is the only thing that says which label belongs to which
+  token once there is more than one.
+
+  The cell backends repeat a glyph per row because a terminal has no other way
+  to draw a line. Here the guides are absolutely positioned at their exact
+  column and stretch to whatever height the card beside them turns out to be,
+  which is what lets a card keep the markup it always had — the art is chrome
+  around the `.twoslash-*` contract, not a replacement for it. */
+.twoslash .twoslash-crowded {
+  /* Decoration, not code: stays out of a selection of the code, like every
+    other annotation surface (the marker row's padding spaces especially). */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.twoslash .twoslash-crowded-markers {
+  /* Preformatted, so the marker columns are exact with no arithmetic. */
+  white-space: pre;
+  color: var(--twoslash-underline-color);
+}
+
+.twoslash .twoslash-crowded-row {
+  position: relative;
+  /* A flow root, so the card's own margins (`margin-top: 1ch`, and the query
+    popup's `margin-bottom: 1.4em`) stay INSIDE the row instead of collapsing
+    through its edges. Without it the row box starts at the card's top and ends
+    at its bottom, so the guides — which span the row — stopped at every card
+    and the column read as a dashed line: measured breaks of 7.81px (1ch) and
+    18.19px (1.4em) between consecutive rows. It also puts the card's top edge
+    exactly 1ch below the row's, which is what the elbow's height assumes. */
+  display: flow-root;
+}
+
+/* A pending anchor's connector: a rule down the row at its own column, for
+  every anchor whose label has not been drawn yet. */
+.twoslash .twoslash-crowded-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--twoslash-underline-color);
+}
+
+/* The turn into a label. `1ch` is the gap the popup cards leave above
+  themselves (`margin-top: 1ch`), so the hook lands exactly on the card's top
+  edge rather than at a hand-tuned offset. */
+.twoslash .twoslash-crowded-elbow {
+  position: absolute;
+  top: 0;
+  height: 1ch;
+  width: 0.7ch;
+  border-left: 1px solid var(--twoslash-underline-color);
+  border-bottom: 1px solid var(--twoslash-underline-color);
+  border-bottom-left-radius: 4px;
+}
+
+/* Inside a connected row the notch is the last link of a chain: the marker
+  glyph under the span, the rule down to the label, and the notch the label
+  points back with all belong on the anchor's column. The stacked layout keeps
+  Shiki's fixed `1em` inset — there the popup is the only thing pointing, so it
+  points near the token start; here that inset put the notch 2.2 columns right
+  of its own connector. `margin-left` is half the notch, so the diamond
+  straddles the 1px rule instead of starting at it, and it overrides the
+  completion list's inline `left` (which names its caret) without touching it. */
+.twoslash .twoslash-crowded-row .twoslash-popup-arrow {
+  left: 0;
+  margin-left: -3px;
+}
+
+/* Inside a connected row an error message sits under its own anchor, so it is
+  no longer the full-width accent band it is on a line of its own. */
+.twoslash .twoslash-crowded-row .twoslash-error-line {
+  min-width: 0;
+  width: max-content;
+  margin-top: 1ch;
+}
+
 /* Inline error span: wavy underline (SVG data-URI, bottom-repeat). */
 .twoslash .twoslash-error {
   padding-bottom: 2px;

@@ -105,6 +105,8 @@ struct Window
     /// Opens the window and installs the requested policy.
     static Window open(in WindowRequest r) @system
     {
+        import std.string : toStringz;
+
         Window w;
         // BEFORE InitWindow — raylib honours this flag only at creation, and
         // warns (then ignores it) if set later.
@@ -122,7 +124,12 @@ struct Window
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
         SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
-        InitWindow(r.width, r.height, r.title.length ? r.title.ptr : "");
+        // `toStringz`, never `.ptr`: `title` is a slice, and a caller building
+        // one at runtime (`"hue — " ~ name`) hands over memory with no NUL in
+        // it. raylib then reads past the end until it finds one, and the
+        // window manager gets whatever followed — on Wayland that reaches
+        // libdecor's Pango, which rejects it as invalid UTF-8.
+        InitWindow(r.width, r.height, r.title.length ? r.title.toStringz : "");
         // Checked HERE, before any other raylib call. `InitWindow` reports
         // failure only through `IsWindowReady`, and every call below assumes a
         // live GLFW: on a host with no window server they warn ("The GLFW
