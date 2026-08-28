@@ -25,7 +25,8 @@ drain → input → render order, event-shaped.
 */
 module sparkles.terminal_view.component;
 
-import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+import core.sys.posix.fcntl : F_GETFD, F_GETFL, F_SETFD, F_SETFL, fcntl,
+    FD_CLOEXEC, O_NONBLOCK;
 import core.sys.posix.sys.ioctl : ioctl, TIOCSWINSZ, winsize;
 import core.sys.posix.sys.types : pid_t;
 import core.sys.posix.unistd : execv, getuid, read, _exit;
@@ -315,6 +316,31 @@ struct TerminalView
         {
             execv(shellZ, cast(char**) argv.ptr);
             _exit(127);
+        }
+
+        // Close-on-exec, before anything else can fork: `forkpty` returns a
+        // plain master, so the NEXT terminal opened in this process hands its
+        // shell a copy of THIS one's master. Audited live in the gallery,
+        // which is the first embedder to open more than one: the second tab's
+        // shell listed `5 -> /dev/ptmx` — the first tab's master, readable and
+        // writable by an unrelated shell, and (the functional half) an extra
+        // holder keeping that pty open. A hangup is delivered when the LAST
+        // master closes, so closing the first tab would not have hung its
+        // shell up while the second one lived; the tab would go and the
+        // process would stay. `apps/terminal` never saw it — one pty, no
+        // second fork. This flag is on the fd the parent keeps, so the child
+        // already forked is unaffected: its 0/1/2 are the slave.
+        if (fcntl(s.pty_fd, F_SETFD, fcntl(s.pty_fd, F_GETFD) | FD_CLOEXEC) < 0)
+        {
+            import core.sys.posix.unistd : close;
+
+            close(s.pty_fd);
+            s.pty_fd = -1;
+            hangUpAndReap();
+            s.childReaped = true;
+            ghostty_terminal_free(s.terminal);
+            s.terminal = null;
+            return false;
         }
 
         // Non-blocking master: read() must return EAGAIN, never stall a frame.

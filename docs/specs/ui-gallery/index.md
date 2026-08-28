@@ -128,8 +128,18 @@ and were invisible without it.
   at exactly the width of its own hint line. Pages size widths from state
   (`fixed`), as their heights always did.
 
+- **Every pty master leaked into the next tab's shell.** `forkpty` returns a
+  plain master, so opening a second terminal in one process handed its child a
+  copy of the first's — `5 -> /dev/ptmx` in the second shell's own
+  `/proc/self/fd`. An unrelated shell could read and write another tab's
+  terminal, and, because a hangup waits for the **last** master to close,
+  closing the first tab would not have hung up the shell inside it. Only a
+  multi-terminal embedder could expose this; `apps/terminal` opens one. The
+  master is `FD_CLOEXEC` now (`UGL-O9`'s audit).
+
 Each of the last three is now an assertion; the first is a unit test in the
-backend that owns the arithmetic.
+backend that owns the arithmetic. The pty leak is verified the way it was
+found — the spawned shell listing its own descriptors.
 
 ## Verification
 
