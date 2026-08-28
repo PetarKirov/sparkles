@@ -529,6 +529,50 @@ thousands of citations, with no network. A citation whose repository is not
 cloned is reported as **unchecked**, never as a failure, which is why this is
 not a hook and not a CI job. Run it before publishing a research catalog.
 
+### What the default branch reports
+
+`main` does not re-run CI. A merge here is a rebase, so the landed commit has a
+SHA no run has seen — but a rebase that only changes parentage leaves the
+**tree** untouched, and the tree is the whole of what a build sees. So
+`.github/workflows/main-checks.yml` compares the landed tree against the tree
+the pull request built, mirrors that pull request's checks onto the commit when
+they match, and calls `ci.yml` as a reusable workflow for a real build when they
+do not. Measure the split, or rehearse the decision, yourself:
+
+```bash
+nix run .#ci-minimal -- --ci-stats --merges --repo PetarKirov/sparkles --limit 400
+nix run .#ci-minimal -- --mirror-checks --repo PetarKirov/sparkles \
+    --sha "$(git rev-parse origin/main)" --dry-run
+```
+
+Three consequences worth knowing before you touch `ci.yml`:
+
+- **Use `.#ci-minimal` for anything that only talks to an API.** It is the same
+  binary as `.#ci` with nothing on PATH: **121 MiB against 2.4 GiB**. The
+  difference is not code — `ci` execs `dub`/`ldc2` to compile markdown examples,
+  so dmd, ldc, lld, llvm, gcc and nodejs all sit in its _runtime_ closure. A job
+  that files a check run should not substitute a compiler toolchain to do it,
+  least of all on the merge path. `--example-files`, `--test` and
+  `--test-extracted` genuinely need `.#ci`; `--mirror-checks`,
+  `--report-link-rot` and `--ci-stats` do not.
+
+- **Do not add an `if:` guard to a job in `ci.yml`.** Every job runs on every
+  trigger, and that is the property to preserve. A called workflow reports the
+  _caller's_ event, so on the rebuild path `github.event_name` is `push` — gate
+  on `pull_request` and the rebuild reports green having built nothing. A
+  merge-queue run is the same trap pointing the other way: it is the only run
+  that ever sees the batched result, so skipping the matrix there would gate
+  merges on nothing. The guards this file used to carry
+  (`== 'pull_request'`, later `!= 'merge_group'`) existed for the `push` and
+  `schedule` triggers `ci.yml` no longer has. Control what runs through the
+  trigger list, not through `if:`.
+- **The networked link sweep is not part of `CI`.** It lives in
+  `link-check.yml`, runs nightly, and reconciles one standing issue via
+  `ci --report-link-rot`. Third-party link rot is a maintenance signal, not a
+  verdict on the code, and it used to be the entire public face of the
+  repository. Pull requests still run `lychee-offline` over the whole tree and
+  the networked check over their own diff.
+
 ### Debugging tips
 
 - `dub test :base -- -v` and `dub test :core-cli -- -v` show full stack traces
