@@ -1018,6 +1018,51 @@ struct TerminalView
         }
     }
 
+    /**
+    ditto — whether a daemon carries this instance's pty right now.
+
+    What an $(B embedder) needs to size its own wake: a pane the ring drives
+    wakes the loop when bytes arrive, and one still on the sync `pump()` only
+    catches up when something else wakes it, so a host running both wants a
+    timed wake for exactly as long as it has panes of the second kind. The
+    answer changes over a run — `startRingPump` may decline, and the daemon
+    clears it on an unexpected error — so it is a question per frame, not a
+    fact per open.
+    */
+    bool ringPumped() const @safe pure nothrow @nogc => ringPump;
+
+    @("terminal_view.component.ringPumpNeedsAnOpenPtyAndAWillingHost")
+    @safe unittest
+    {
+        // Heap, not the stack: this value is far larger than the 512 KiB a
+        // non-main thread gets on macOS, and the test runner runs on one.
+        auto tv = new TerminalView;
+
+        // Never opened: nothing to read, so no daemon may be spawned — the
+        // guard that stops a fiber parking on a fd that does not exist. A
+        // host that would happily supply one changes nothing here.
+        static struct EagerHost
+        {
+            size_t asks;
+            bool spawnDaemon(scope void delegate() body_) { ++asks; return true; }
+            void wake() {}
+        }
+
+        EagerHost h;
+        tv.startRingPump(h);
+        assert(h.asks == 0, "an unopened view must not spawn a pump");
+        assert(!tv.ringPumped);
+
+        // And a host with no errand at all leaves the sync path in place
+        // rather than failing to compile at the call site — which is what
+        // lets one embedder serve the recorder and a live loop alike.
+        static struct PlainHost {}
+
+        PlainHost p;
+        tv.startRingPump(p);
+        assert(!tv.ringPumped);
+    }
+
     /// ditto — the daemon body.
     private static void pumpFiber(H)(TerminalView* tv, H* h)
     {
