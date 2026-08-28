@@ -59,11 +59,12 @@ library backing `sparkles:test-runner` — see the runner integration notes belo
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
-`explanation/`). Today `sparkles:base`, `sparkles:code-instrumentation`,
+`explanation/`). Today `sparkles:base`, `sparkles:code-instrumentation`, `sparkles:dmd-fmt`,
 `sparkles:fuzzy`, `sparkles:syntax`, `sparkles:test-runner`,
 `sparkles:twoslash`, `sparkles:ui`, and `sparkles:versions` are documented
 ([`docs/libs/base/`](../libs/base/index.md),
 [`docs/libs/code-instrumentation/`](../libs/code-instrumentation/index.md),
+[`docs/libs/dmd-fmt/`](../libs/dmd-fmt/index.md),
 [`docs/libs/fuzzy/`](../libs/fuzzy/index.md),
 [`docs/libs/syntax/`](../libs/syntax/index.md),
 [`docs/libs/test-runner/`](../libs/test-runner/index.md),
