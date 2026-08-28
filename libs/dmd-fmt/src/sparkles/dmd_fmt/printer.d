@@ -425,6 +425,13 @@ private final class Printer
             hardline, text("}"));
     }
 
+    /// Did the author break the line immediately after the opener? A `(`/`[`
+    /// container emits no break of its own before its first item, so without
+    /// this the break is silently swallowed and the first item — often a
+    /// `// dfmt off` marker or a leading comment — lands beside the bracket.
+    private static bool opensOnOwnLine(const Item[] items) @safe
+        => items.length > 0 && items[0].newlinesBefore > 0;
+
     private bool itemsSpanLines(const Item[] items) const @safe
     {
         foreach (item; items)
@@ -459,7 +466,7 @@ private final class Printer
         {
             const rest = collectItems(g, g.firstEntry + 1, g.lastEntry);
             return sequence([text(openText)]
-                ~ [indented(joinInline(g, rest, true))]);
+                ~ [indented(joinInline(g, rest, true, opensOnOwnLine(rest)))]);
         }
         const closeText = entryText(g.lastEntry).idup;
         const items = collectItems(g, g.firstEntry + 1,
@@ -475,7 +482,7 @@ private final class Printer
             if (!items.length)
                 return sequence(text(openText), text(closeText));
             return sequence(text(openText),
-                indented(joinInline(g, items, true)),
+                indented(joinInline(g, items, true, opensOnOwnLine(items))),
                 itemsSpanLines(items) || closerOnOwnLine(g)
                     ? sequence(closerOnOwnLine(g)
                         ? [hardline, text(closeText)] : [text(closeText)])
@@ -552,7 +559,8 @@ private final class Printer
             // one continuation level. Flattening is off the table — it
             // would also let a `//` comment swallow the rest of the line.
             return sequence(text(openText),
-                indented(joinInline(g, items, false, false, true)),
+                indented(joinInline(g, items, false, opensOnOwnLine(items),
+                    true)),
                 closerOnOwnLine(g) ? sequence(hardline, text(closeText))
                     : text(closeText));
         }
@@ -811,9 +819,17 @@ private final class Printer
         Doc[] parts;
         foreach (i, item; items)
         {
-            if (i != 0 || leadingBreak)
+            if (i == 0 && leadingBreak)
             {
-                if (item.newlinesBefore > 0 || (i == 0 && leadingBreak))
+                // The author broke the line right after the opener. Keep the
+                // break (v1's first policy bullet: a newline between tokens
+                // stays a newline) but not the blank lines — a blank at a
+                // container's edge is dropped, as it is after `{`.
+                parts ~= hardline;
+            }
+            else if (i != 0)
+            {
+                if (item.newlinesBefore > 0)
                 {
                     parts ~= hardline;
                     const blanks = item.newlinesBefore > 1
@@ -966,6 +982,39 @@ version (unittest)
 {
     enum src = "int a;\n// dfmt off\nint    weird   =    1;\n// dfmt on\nint b;\n";
     checkFormat(src, src);
+}
+
+@("printer.suppression.dfmt-off-marker-keeps-its-own-line")
+@system unittest
+{
+    // A `(`/`[` container emits no break of its own before its first item, so
+    // an author break after the opener used to be swallowed — which pulled a
+    // leading `// dfmt off` up beside the bracket and made the marker read as
+    // if it applied to the opener.
+    enum src = "enum t = [\n    // dfmt off\n    1,   2,\n"
+        ~ "    // dfmt on\n];\n";
+    checkFormat(src, src);
+}
+
+@("printer.brackets.author-break-after-opener-survives")
+@system unittest
+{
+    // The same defect, in its general form: v1's first policy bullet is that a
+    // newline between tokens stays a newline.
+    checkFormat("auto x = foo(\n    a + b);\n", "auto x = foo(\n    a + b);\n");
+    checkFormat("auto y = [\n    1, 2,\n    3, 4];\n",
+        "auto y = [\n    1, 2,\n    3, 4];\n");
+    checkFormat("auto z = foo(\n    // note\n    a);\n",
+        "auto z = foo(\n    // note\n    a);\n");
+    // A single-line list is still laid out by the engine, not pinned.
+    checkFormat("auto v = foo(a, b);\n", "auto v = foo(a, b);\n");
+}
+
+@("printer.brackets.blank-line-after-opener-is-dropped")
+@system unittest
+{
+    // Blank lines at a container's edge go, exactly as they do after `{`.
+    checkFormat("auto w = [\n\n    1, 2];\n", "auto w = [\n    1, 2];\n");
 }
 
 @("printer.suppression.asm-body-verbatim")
