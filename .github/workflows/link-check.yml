@@ -1,0 +1,103 @@
+# The full networked link sweep, over every link in the repository.
+#
+# This used to be a step inside the `lint` job of `ci.yml`, which made it a
+# dependency of the `CI` fan-in — so a dead third-party URL turned the default
+# branch red and that red cross became the first thing a visitor saw. The
+# links are worth checking and worth fixing; they are not a verdict on the
+# code, and 15k URLs on other people's servers will always contain a few that
+# are down, moved, or rate-limiting today.
+#
+# So the sweep lives here instead: on a timer, on demand, and reporting into
+# an issue rather than onto a commit. Rot appears with nobody committing, so a
+# timer is where it belongs regardless. Pull requests still check the links
+# they touch (`ci.yml`'s diff-scoped lychee), and `lychee-offline` still
+# covers every relative link in the tree on every pull request — the half that
+# can actually be broken by a change here.
+name: Link check
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The sweep files its findings as an issue rather than as a failing check.
+  issues: write
+
+concurrency:
+  group: link-check
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Check every link
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          nix-github-token: ${{ github.token }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: pre-commit
+          use-nix-cache: true
+          nix-cache-key: nix-v2-${{ runner.os }}-lint-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-v2-${{ runner.os }}-lint-
+            nix-v2-${{ runner.os }}-
+
+      - name: Restore lychee cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .lycheecache
+          enableCrossOsArchive: true
+          key: cache-lychee-v4-${{ github.run_id }}
+          restore-keys: |
+            cache-lychee-v4-
+
+      # `tee` rather than a plain redirect so the log still shows the failures
+      # in place; `pipefail` so the pipe does not swallow lychee's exit code.
+      - name: Check every link
+        id: sweep
+        shell: bash
+        run: |
+          set -o pipefail
+          prek run lychee --all-files --show-diff-on-failure --color never \
+            | tee lychee-report.txt
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Same key-per-run reasoning as the lint job: neither provider overwrites
+      # an existing key, so a fixed key freezes the cache at its first contents.
+      - name: Save lychee cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .lycheecache
+          enableCrossOsArchive: true
+          key: cache-lychee-v4-${{ github.run_id }}
+
+      # The issue upsert is a decision, not glue, so it lives in the D `ci`
+      # tool (AGENTS.md) rather than as two near-duplicate shell blocks. It uses
+      # `.#ci-minimal` (121 MiB) rather than `.#ci` (2.4 GiB): this job already
+      # has Nix for the `pre-commit` shell, but that shell carries no D
+      # toolchain, so `.#ci` would drag one in for four API calls. It runs
+      # whether the sweep passed or failed: a passing sweep is what closes a
+      # stale issue, and only the tool knows which of the two writes to make.
+      - name: Reconcile the standing link-rot issue
+        if: always() && steps.sweep.conclusion != 'skipped'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          nix run .#ci-minimal -- --report-link-rot \
+            --repo "$GITHUB_REPOSITORY" \
+            --report lychee-report.txt \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            ${{ steps.sweep.outcome == 'failure' && '--rotten' || '' }}
