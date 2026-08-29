@@ -488,14 +488,20 @@ string renderFailure(const CaseResult r, string artifacts = artifactDir)
         Pane("actual", r.actual, art.actualLabel),
         Pane("diff", unifiedDiff(r.expected, r.actual), null),
     ];
+
+    // Plan on the plain text first. hue shrink-wraps to the same content, so
+    // the boxes come out the same width either way — which means the layout
+    // decision holds, and planning first is what lets each pane be told the
+    // width it has to fill.
+    const plan = planLayout(panes[], width);
     Pane[3] styled;
-    if (art.written && huePanes(art, cast(int) width, styled))
+    if (art.written && huePanes(art, plan.inner, styled))
     {
         foreach (i, ref p; styled)
             p.footer = panes[i].footer;
         panes = styled;
     }
-    return composePanes(panes[], width);
+    return "\n" ~ render(panes[], plan);
 }
 
 /**
@@ -640,10 +646,20 @@ private struct Pane
     string footer;
 }
 
+/// What the panes will look like, decided before any of them is rendered for
+/// real: how many share a row, whether the paths go in the borders, and the
+/// content width each box will have.
+private struct Layout
+{
+    size_t columns;   /// 3, 2 or 1 panes per row.
+    bool footers;     /// Paths in the bottom borders, or on their own lines.
+    size_t[3] inner;  /// Each box's content width, in cells.
+}
+
 /**
-The three panes laid out for a terminal `width` columns wide: three columns
-when they fit, expectation-and-actual side by side with the diff beneath when
-only two do, and stacked when not even that.
+Choose the layout for a terminal `width` columns wide: three columns when the
+boxes fit, expectation-and-actual side by side with the diff beneath when only
+two do, and stacked when not even that.
 
 Two columns puts the diff *below* rather than dropping a pane, because the
 diff is the one that answers "what changed" — it earns full width when width
@@ -654,17 +670,46 @@ sits under, so drawing the paths in the borders can cost a whole column. When
 it would, the panes are drawn bare and the paths go on their own lines
 underneath: the same information, and one more column of code to read it
 against.
+
+The chosen boxes are then measured rather than predicted — `drawBox` decides a
+box's width from its content, its title *and* its footer, and re-deriving that
+rule here would be a second copy of it, free to drift.
 */
-private string composePanes(const Pane[] panes, size_t width) @system
+private Layout planLayout(const Pane[] panes, size_t width) @system
 {
     const framed = boxesFor(panes, footers: true);
     const bare = boxesFor(panes, footers: false);
     const framedCols = columnsFor(framed, width);
     const bareCols = columnsFor(bare, width);
 
-    if (framedCols >= bareCols)
-        return "\n" ~ assemble(framed, framedCols);
-    return "\n" ~ assemble(bare, bareCols) ~ pathLines(panes);
+    Layout plan;
+    plan.footers = framedCols >= bareCols;
+    plan.columns = plan.footers ? framedCols : bareCols;
+    const chosen = plan.footers ? framed : bare;
+    foreach (i, box; chosen)
+        plan.inner[i] = innerWidth(box);
+    return plan;
+}
+
+/// A box's content width: what a pane must fill for `--background=full` to
+/// reach the frame instead of stopping where the text happens to end.
+/// `drawBox` frames a row as `│ ` + content + ` │`, so four cells.
+private size_t innerWidth(string box) @safe
+{
+    const w = blockWidth(box);
+    return w > 4 ? w - 4 : 0;
+}
+
+/// Plan and render in one step — what the tests use, and what a caller with
+/// no hue in the picture needs.
+private string composePanes(const Pane[] panes, size_t width) @system
+    => render(panes, planLayout(panes, width));
+
+private string render(const Pane[] panes, in Layout plan) @system
+{
+    const boxes = boxesFor(panes, footers: plan.footers);
+    return assemble(boxes, plan.columns)
+        ~ (plan.footers ? "" : pathLines(panes));
 }
 
 private string[] boxesFor(const Pane[] panes, bool footers) @system
@@ -772,7 +817,8 @@ private enum paneBackground = "full";
 /// The files are the ones [writeArtifacts] already wrote — hue reads the same
 /// bytes the reader can open afterwards, so the panes and the artifacts cannot
 /// disagree.
-private bool huePanes(in Artifacts art, int width, out Pane[3] out_) @system
+private bool huePanes(in Artifacts art, in size_t[3] inner,
+    out Pane[3] out_) @system
 {
     import std.algorithm : count, max;
     import std.process : execute;
@@ -782,23 +828,23 @@ private bool huePanes(in Artifacts art, int width, out Pane[3] out_) @system
 
     try
     {
-        string run(string background, string[] argv)
+        string run(size_t paneWidth, string[] argv)
         {
-            const res = execute(["hue", "--background=" ~ background,
-                "--width=" ~ width.to!string] ~ argv);
+            const res = execute(["hue", "--background=" ~ paneBackground,
+                "--width=" ~ paneWidth.to!string] ~ argv);
             return res.status == 0 ? res.output.stripRight("\n") : null;
         }
 
-        const expected = run(paneBackground, ["view", "--ansi",
+        const expected = run(inner[0], ["view", "--ansi",
             "--no-line-numbers", art.expectedPath]);
-        const actual = run(paneBackground, ["view", "--ansi",
+        const actual = run(inner[1], ["view", "--ansi",
             "--no-line-numbers", art.actualPath]);
         // Enough context to reach both ends of the file. hue's default window
         // is three lines, and with the elision bands suppressed a truncated
         // pane would be indistinguishable from a complete one — the diff must
         // show the same region the other two panes do.
         const lines = max(expected.count('\n'), actual.count('\n')) + 2;
-        const diff = run(paneBackground, ["diff", "--ansi",
+        const diff = run(inner[2], ["diff", "--ansi",
             "--diff-show-formatting",
             "--no-diff-chrome", "--no-line-numbers",
             "--diff-context=" ~ lines.to!string,
