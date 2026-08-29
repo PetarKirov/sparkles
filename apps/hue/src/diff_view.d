@@ -283,10 +283,7 @@ WidgetTree viewDiffDoc(const ref DiffDoc doc, DiffViewOptions opt = DiffViewOpti
     if (files.length == 0)
         files ~= b.add(Widget(kind: WidgetKind.text, text: "(empty diff)",
             slot: Slot.muted));
-    auto root = b.container(WidgetKind.column, files, gap: 1);
-    if (opt.layout == DiffLayout.split)
-        root = grown(b, root);
-    return b.finish(root);
+    return b.finish(grown(b, b.container(WidgetKind.column, files, gap: 1)));
 }
 
 /// One file's view appended to `b` (the `viewMarkdownInto` shape).
@@ -369,9 +366,9 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
                 opt.fileKey ? diffGapKey(gapIndex) : 0);
     }
 
-    auto fileCol = b.container(WidgetKind.column, rows, gap: 1);
-    if (opt.layout == DiffLayout.split)
-        fileCol = grown(b, fileCol);
+    // Grown in both layouts now: split needed it for its two panes, unified
+    // needs it so a changed row's tint reaches the pane's edge (`DVL9`).
+    auto fileCol = grown(b, b.container(WidgetKind.column, rows, gap: 1));
     return keyed(b, fileCol, opt.fileKey);
 }
 
@@ -612,12 +609,14 @@ private GutterCell markerCell(RowKind kind) @safe
     {
         case context:
             return cellOf("  ", 2, Slot.inherit, alignEnd: false);
+        // `DVL9`: the marker names the tier but no longer paints it — the
+        // row does, across its whole width, and a marker painting too would
+        // wash its two cells twice and leave them brighter than the line
+        // they belong to.
         case removed:
-            return cellOf("- ", 2, Slot.diffRemoved, alignEnd: false,
-                paintBackground: true);
+            return cellOf("- ", 2, Slot.diffRemoved, alignEnd: false);
         case added:
-            return cellOf("+ ", 2, Slot.diffAdded, alignEnd: false,
-                paintBackground: true);
+            return cellOf("+ ", 2, Slot.diffAdded, alignEnd: false);
     }
 }
 
@@ -907,7 +906,10 @@ private uint splitHalf(ref Builder b, const ref DiffDoc doc,
     }
     const text = withGutterCells(b, chans, cells,
         b.add(Widget(kind: WidgetKind.rich, spans: spans)), 0);
-    return halfWidth(b, b.container(WidgetKind.column, [text]));
+    // `DVL9`: the half already spans its pane, so it is the container that
+    // carries the row tint — same rule as the unified row.
+    return halfWidth(b, b.container(WidgetKind.column, [text],
+        slot: rowTint(row.kind), paintBackground: row.kind != RowKind.context));
 }
 
 private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
@@ -930,7 +932,7 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
                 rows ~= threadBlock(b, t, chans, opt);
     }
 
-    return b.container(WidgetKind.column, rows);
+    return grown(b, b.container(WidgetKind.column, rows));
 }
 
 private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
@@ -967,10 +969,46 @@ private uint viewRow(ref Builder b, const ref DiffDoc doc, in Row row,
     const cells = unifiedCells(row, digits);
     const side = row.kind == RowKind.added ? opt.newTypes : opt.oldTypes;
     const line = row.kind == RowKind.added ? row.newLine : row.oldLine;
-    if (!side.live || line == 0)
-        return withGutterCells(b, chans, cells, code, 0);
-    return withGutterCells(b, chans, cells,
-        decorateCodeRow(b, code, side.payload, side._plan, line - 1), 0);
+    const composed = !side.live || line == 0
+        ? withGutterCells(b, chans, cells, code, 0)
+        : withGutterCells(b, chans, cells,
+            decorateCodeRow(b, code, side.payload, side._plan, line - 1), 0);
+    return tinted(b, composed, row.kind);
+}
+
+/**
+`DVL9`: a changed row's tint reaches the full width of the pane, not just the
+end of its text.
+
+The tint is what the eye scans for — added and removed have to be separable at
+a glance, before any of the text is read — and a ragged right edge makes that
+job depend on line length, which carries no meaning here. Every diff reader
+worth copying fills the row: `git --color-moved`, delta, GitHub, every review
+tool. The spans still carry the tint themselves, so the intra-line emphasis
+and the syntax foregrounds compose over it exactly as before; this only paints
+the run past the last character.
+
+A context row is left alone: it has no tint to extend, and growing it would
+add a widget per unchanged line for nothing.
+*/
+private uint tinted(ref Builder b, uint node, RowKind kind) @safe
+{
+    if (kind == RowKind.context)
+        return node;
+    return grown(b, b.container(WidgetKind.row, [node],
+        slot: rowTint(kind), paintBackground: true));
+}
+
+/// The slot a row's whole width paints in: the diff tints, or `inherit` for a
+/// context row, which has none.
+private Slot rowTint(RowKind kind) @safe pure nothrow @nogc
+{
+    final switch (kind) with (RowKind)
+    {
+        case context: return Slot.inherit;
+        case added:   return Slot.diffAdded;
+        case removed: return Slot.diffRemoved;
+    }
 }
 
 /// The 1-based `line`'s styled spans, or null when unavailable.
@@ -1009,14 +1047,19 @@ private TextSpan[] composedSpans(const(TextSpan)[] styled, const(char)[] rowText
             TextSpan piece = cast(TextSpan) sp;
             piece.text = sp.text[local .. end];
             piece.slot = inEmph ? emphSlot : base;
-            piece.paintBackground = tint && piece.slot != Slot.inherit;
+            // Only the emphasis paints. The row's base tint comes from the
+            // container ($(LREF tinted)), which is the full width of the pane
+            // rather than the width of this text — painting it here too would
+            // composite the tint over itself and leave the text a different
+            // shade from the run past its end.
+            piece.paintBackground = tint && inEmph && emphSlot != Slot.inherit;
             spans ~= piece;
             local = end;
         }
         pos += sp.text.length;
     }
     if (spans.length == 0)
-        spans ~= segment(rowText, base, tint);
+        spans ~= segment(rowText, base, false);
     return spans;
 }
 
@@ -1045,17 +1088,19 @@ private TextSpan[] contentSpans(const(char)[] rowText, const(Span)[] emph,
     size_t pos = 0;
     foreach (s; emph)
     {
+        // `base` still supplies the foreground; only `emphSlot` paints — see
+        // the note in $(LREF composedSpans).
         if (s.start > pos)
-            spans ~= segment(rowText[pos .. s.start], base, tint);
+            spans ~= segment(rowText[pos .. s.start], base, false);
         const end = s.end <= rowText.length ? s.end : rowText.length;
         if (end > s.start)
             spans ~= segment(rowText[s.start .. end], emphSlot, tint);
         pos = end;
     }
     if (pos < rowText.length)
-        spans ~= segment(rowText[pos .. $], base, tint);
+        spans ~= segment(rowText[pos .. $], base, false);
     if (spans.length == 0)
-        spans ~= segment(rowText, base, tint);
+        spans ~= segment(rowText, base, false);
     return spans;
 }
 
@@ -1095,8 +1140,10 @@ version (unittest)
     import sparkles.base.term_color : RgbColor;
 
     // DVM5: a styled line (two syntax spans) composed with one emphasis
-    // span — syntax foregrounds survive, the diff tint layers as slots,
-    // and the split happens exactly at the emphasis boundaries.
+    // span — syntax foregrounds survive, the slots still name the diff
+    // tiers, and the split happens exactly at the emphasis boundaries.
+    // `DVL9`: a base segment no longer PAINTS its tint — the row does, for
+    // its whole width — so the assertion here is that it does not.
     auto doc = diffText("int x = a;\n", "int x = b;\n", "t.d", "t.d");
     DiffViewOptions opt;
     // Hand-built styled lines: "int " keyword-colored, rest plain.
@@ -1124,9 +1171,14 @@ version (unittest)
                 if (sp.text == "int " && sp.hasFg && sp.fg == kw
                     && (sp.slot == Slot.diffRemoved || sp.slot == Slot.diffAdded))
                 {
-                    assert(sp.paintBackground, "diff tint layered under syntax fg");
+                    assert(!sp.paintBackground,
+                        "the row paints the base tint, not the span — painting"
+                        ~ " both composes the wash twice over the text and"
+                        ~ " leaves it a different shade from the run past it");
                     sawStyledBase = true;
                 }
+                if (sp.slot == Slot.diffEmphRemoved || sp.slot == Slot.diffEmphAdded)
+                    assert(sp.paintBackground, "emphasis still paints itself");
             }
     assert(sawStyledEmph && sawStyledBase);
 }
@@ -1155,10 +1207,15 @@ version (unittest)
     assert(header.spans[0].slot == Slot.diffHunk);
     assert(header.spans[0].text == "@@ -1,3 +1,3 @@");
 
-    // A row is `row[ strip, code ]` now: the numbers and the change marker are
-    // their own widgets beside the code rather than spans inside it, so the
-    // decorations that sit on the code need no offset to find their column.
-    const removed = tree.nodes[hunkCol.children[2]];
+    // A changed row is `row[ row[ strip, code ] ]`: the outer row is the tint
+    // (`DVL9`) — it grows to the pane so the wash reaches the edge — and the
+    // inner one is the layout, numbers and marker beside the code rather than
+    // spans inside it, so decorations on the code need no offset to find
+    // their column.
+    const tintRow = tree.nodes[hunkCol.children[2]];
+    assert(tintRow.kind == WidgetKind.row && tintRow.children.length == 1);
+    assert(tintRow.slot == Slot.diffRemoved && tintRow.paintBackground);
+    const removed = tree.nodes[tintRow.children[0]];
     assert(removed.kind == WidgetKind.row && removed.children.length == 2);
     const strip = tree.nodes[removed.children[0]];
     assert(strip.kind == WidgetKind.row);
@@ -1167,7 +1224,9 @@ version (unittest)
     const marker = tree.nodes[strip.children[2]];
     assert(marker.text == "- ");
     assert(marker.slot == Slot.diffRemoved);
-    assert(marker.paintBackground, "the marker's band runs into the code");
+    // `DVL9`: the row's own tint already runs under the marker, so the marker
+    // painting as well would wash those two cells twice.
+    assert(!marker.paintBackground);
     // And the code carries only the code.
     const code = tree.nodes[removed.children[1]];
     assert(code.kind == WidgetKind.rich);
