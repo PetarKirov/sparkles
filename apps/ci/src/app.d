@@ -1349,8 +1349,8 @@ private void flushStdout()
 }
 
 /// Executes every example concurrently, returning results in input order.
-/// Each build runs in its own `DUB_HOME` (see `executeExample`), so the parallel
-/// `dub run`s never race on a shared dependency artifact.
+/// Each build runs in its own `DUB_HOME` and `TMPDIR` (see `executeExample`), so
+/// the parallel `dub run`s never race on a shared dependency artifact.
 ///
 /// While the pool works, the main thread polls per-example status slots and
 /// repaints a live progress frame (built N/M + the currently-building examples)
@@ -2087,8 +2087,17 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
     // shared `libsparkles_*.a`. `--temp-build` only isolates the leaf
     // single-file build, not this path dependency; a per-example home isolates
     // it. Registry deps still resolve normally (dub locks its own fetches).
+    //
+    // `--temp-build`'s own store follows `TMPDIR`, not `DUB_HOME` — without a
+    // per-example `TMPDIR` all concurrent builds share `/tmp/.dub/build`, and
+    // two of them building the same dependency artifact (anything newly in the
+    // base closure, e.g. `libsparkles_reflection.a`) race on its final rename.
     auto dubHome = buildPath(exampleDir, "dub-home");
-    auto cmd = ["/usr/bin/env", "DUB_HOME=" ~ dubHome]
+    auto exampleTmp = buildPath(exampleDir, "tmp");
+    mkdirRecurse(exampleTmp);
+    auto cmd = ["/usr/bin/env",
+        "DUB_HOME=" ~ dubHome,
+        "TMPDIR=" ~ exampleTmp]
         ~ dubSingleFileCommand("run", tmpFile, repoRoot);
     auto result = executeLogged(cmd, "run " ~ example.name, exampleTimeout());
 
