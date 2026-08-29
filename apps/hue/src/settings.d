@@ -158,6 +158,11 @@ struct Appearance
     @Label("group themes")
     bool groupThemes = true;
 
+    @Doc("Columns a one-shot (--ansi/--html) render lays out in; 0 asks the terminal.")
+    @Label("render width")
+    @Range(0, 400, 1)
+    int width = 0;
+
     Fonts fonts;
     Window window;
 }
@@ -299,6 +304,10 @@ struct DiffSettings
     @Doc("Show whitespace-only hunks in full instead of folding them to a badge.")
     @Label("show formatting hunks")
     bool showFormatting = false;
+
+    @Doc("Render the file header, hunk headers and elided-context bands.")
+    @Label("chrome")
+    bool chrome = true;
 
     @Doc("Context lines around each hunk.")
     @Range(0, 32, 1)

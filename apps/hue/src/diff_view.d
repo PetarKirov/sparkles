@@ -73,6 +73,12 @@ struct DiffViewOptions
     /// `DVG2`: the file's new-side text, when the host has it — the source the
     /// expanded lines are read from.
     const(char)[] sideText;
+    /// Render the diff's chrome: the file header, the `@@` hunk headers, and
+    /// the collapsed `⋯ N unchanged lines` bands. Off leaves only the rows
+    /// themselves — for an embedder that has already said which file and
+    /// which region it is showing, and whose own frame would otherwise repeat
+    /// it. An *expanded* context region is content, not chrome, and stays.
+    bool chrome = true;
     /// `DVN2`: fold hunks classified formatting-only into a one-line dimmed
     /// badge. Demote, never hide — the badge says how many rows it stands for
     /// and the reviewer can always expand.
@@ -289,7 +295,8 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
 {
     auto rows = new uint[](0);
 
-    rows ~= fileHeader(b, doc, file, opt);
+    if (opt.chrome)
+        rows ~= fileHeader(b, doc, file, opt);
 
     // `DVS5`: a file whose sources could not be read reports why, in band,
     // and the rest of the session renders regardless.
@@ -332,7 +339,7 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         // (or the start of the file). The context window hid it; say how much
         // it hid, and show it when asked.
         const prevEnd = gi == 0 ? 1u : hunks[gi - 1].newStart + hunks[gi - 1].newCount;
-        if (hunk.newStart > prevEnd)
+        if (hunk.newStart > prevEnd && showsGap(opt, gapIndex))
             rows ~= keyed(b, contextGap(b, prevEnd, hunk.newStart - prevEnd,
                 chans, digits, opt, gapIndex), opt.fileKey ? diffGapKey(gapIndex) : 0);
         ++gapIndex;
@@ -356,7 +363,7 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
         const last = hunks[$ - 1];
         const after = last.newStart + last.newCount;
         const total = cast(uint) countLines(opt.sideText);
-        if (total >= after)
+        if (total >= after && showsGap(opt, gapIndex))
             rows ~= keyed(b, contextGap(b, after, total - after + 1,
                 chans, digits, opt, gapIndex),
                 opt.fileKey ? diffGapKey(gapIndex) : 0);
@@ -733,6 +740,19 @@ sides — so there is nothing to recompute.
 Without a side text the band still renders but cannot expand: a patch does not
 carry the lines it elided, and pretending otherwise would mean inventing them.
 */
+/// Does this gap render at all? With `chrome` on, always — the band is how
+/// the reader learns something was elided. With it off the *collapsed* band
+/// is chrome and goes, but an expanded region is the file's own lines and
+/// stays.
+private bool showsGap(in DiffViewOptions opt, size_t gapIndex) @safe
+{
+    if (opt.chrome)
+        return true;
+    const expandedHere = gapIndex < opt.expandedGaps.length
+        && opt.expandedGaps[gapIndex];
+    return (opt.expandContext || expandedHere) && opt.sideText.length != 0;
+}
+
 private uint contextGap(ref Builder b, uint firstLine, uint count,
     const(GutterChannel)[] chans, int digits, DiffViewOptions opt,
     size_t gapIndex) @safe
@@ -817,7 +837,8 @@ private uint viewHunkSplit(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     const(GutterChannel)[] chans, int digits, DiffViewOptions opt) @safe
 {
     auto rows = new uint[](0);
-    rows ~= hunkHeader(b, hunk);
+    if (opt.chrome)
+        rows ~= hunkHeader(b, hunk);
 
     const hunkRows = doc.hunkRows(hunk);
     foreach (pair; alignSplitRows(hunkRows))
@@ -895,7 +916,8 @@ private uint viewHunk(ref Builder b, const ref DiffDoc doc, in Hunk hunk,
     auto rows = new uint[](0);
     rows.reserve(hunk.rowsCount + 1);
 
-    rows ~= hunkHeader(b, hunk);
+    if (opt.chrome)
+        rows ~= hunkHeader(b, hunk);
 
     foreach (ref row; doc.hunkRows(hunk))
     {
@@ -1273,6 +1295,55 @@ version (unittest)
     // Each file container carries its key, so a host finds its row without
     // knowing the tree's shape.
     assert(first.key == diffFileKey(0) && second.key == diffFileKey(1));
+}
+
+@("diff_view.chrome.offLeavesOnlyTheRows")
+@safe unittest
+{
+    import sparkles.diff : parsePatch;
+
+    // Two hunks far apart, so there is an elided region between them and a
+    // band to suppress.
+    enum patch = "--- a/x.d\n+++ b/x.d\n"
+        ~ "@@ -1,2 +1,2 @@\n a\n-b\n+c\n"
+        ~ "@@ -20,2 +20,2 @@\n d\n-e\n+f\n";
+    const doc = parsePatch(patch).value;
+
+    string[] textsOf(DiffViewOptions opt)
+    {
+        auto tree = viewDiffDoc(doc, opt);
+        string[] out_;
+        foreach (ref n; tree.nodes)
+        {
+            if (n.text.length)
+                out_ ~= n.text.idup;
+            foreach (sp; n.spans)
+                out_ ~= sp.text.idup;
+        }
+        return out_;
+    }
+
+    bool has(in string[] texts, string needle)
+    {
+        import std.algorithm : any, canFind;
+
+        return texts.any!(t => t.canFind(needle));
+    }
+
+    const withChrome = textsOf(DiffViewOptions.init);
+    assert(has(withChrome, "x.d"), "the file header names the file");
+    assert(has(withChrome, "@@ -1,2"), "and each hunk announces its range");
+    assert(has(withChrome, "unchanged lines"), "and the gap says what it hid");
+
+    DiffViewOptions bare;
+    bare.chrome = false;
+    const without = textsOf(bare);
+    assert(!has(without, "x.d"));
+    assert(!has(without, "@@ -"));
+    assert(!has(without, "unchanged lines"));
+    // The rows themselves are untouched — chrome is what goes, not content.
+    assert(has(without, "b") && has(without, "c")
+        && has(without, "e") && has(without, "f"));
 }
 
 @("diff_view.viewDiffDoc.collapsedFileAndPerFileError")

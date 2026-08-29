@@ -278,19 +278,36 @@ which is the map users navigate before the per-area pages.
 ### TST15 — Failure reports read like the code they are about
 
 A failing case prints three panes — **the expectation, what the formatter produced, then the diff
-between them** — and when `hue` is on `PATH` and the output takes colour, all three go through it.
-The formatter's own repository ships a syntax-highlighting viewer and a diff view; a formatting
-failure is exactly the thing they are good at, and reading one as an undifferentiated wall of text
-is a self-inflicted wound.
+between them** — each in its own titled box (`sparkles:ui`'s `drawBox`), laid out in three columns
+when the terminal is wide enough, expectation-and-actual side by side with the diff beneath when
+only two fit, and stacked when not even that. Two columns puts the *diff* below rather than
+dropping a pane: it is the one that answers "what changed", so it earns the full width when width
+is short. Columns matter more here than in most reports — the panes are near-identical D sources
+differing by a few columns of indentation, and a difference you have to scroll between is a
+difference you will not see.
 
-One flag makes it work: `hue diff --diff-show-formatting`. A formatter's diff is usually
-whitespace-only, and hue folds such a hunk to a one-line badge — right for review, where nobody
-wants to read re-indentation, and wrong here, where the whitespace *is* the subject. A one-shot
-`--ansi` render has no keystroke to expand the fold with, so the flag exists.
+When `hue` is on `PATH` and the output takes colour, all three panes go through it. The formatter's
+own repository ships a syntax-highlighting viewer and a diff view; a formatting failure is exactly
+the thing they are good at, and reading one as an undifferentiated wall of text is a self-inflicted
+wound.
 
-Everything degrades in one step: no `hue`, no colour, an older `hue` that rejects the flag, or any
-error invoking it falls back to plain text with a unified diff computed by the same `sparkles:diff`
-engine the edit emitter uses. A report that cannot be produced is worse than a plain one.
+Five hue flags make it usable as a *pane* rather than as a page:
+
+| Flag | Why |
+| --- | --- |
+| `--diff-show-formatting` | A formatter's diff is nearly always whitespace-only, and hue folds such a hunk to a one-line badge — right for review, where nobody wants to read re-indentation, and wrong here, where the whitespace *is* the subject. A one-shot render has no keystroke to expand the fold with. |
+| `--no-diff-chrome` | The file header, the `@@` bands and the `⋯ N unchanged lines` trailers name a file and a region the box's own title already names, in a report where both sides are two temporary files. |
+| `--no-line-numbers` | Same: the gutter numbers lines of a scratch file. |
+| `--width` | A pipe has no size to ask for, so hue would otherwise lay out at its 80-column fallback no matter how wide the pane it is going into is. |
+| `--diff-context=<lines>` | Passed the file's own line count, so the diff pane spans exactly what the other two panes span. hue's default window is three lines, and with the bands suppressed a truncated pane is indistinguishable from a complete one — the reason this flag is not optional here. |
+
+`--background=no-background` rounds it out — the pane sits inside the report's own frame, and a
+theme's page background painted behind it would fight the terminal's.
+
+Everything degrades in one step: no `hue`, no colour, an older `hue` that rejects one of the flags,
+or any error invoking it falls back to plain text with a unified diff computed by the same
+`sparkles:diff` engine the edit emitter uses. The box-and-column layout is unchanged either way —
+only the pane bodies lose their colour. A report that cannot be produced is worse than a plain one.
 
 ### TST14 — What lives outside the harness
 

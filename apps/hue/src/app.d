@@ -1010,7 +1010,7 @@ private int renderDocument(Backend backend, in ViewRenderOptions opt, ref Docume
         case Backend.html:
             return runHtmlSink(doc, theme, registry, cache,
                 parseDiffLayout(opt.diffLayout), opt.gutter, opt.lineNumbers, loc,
-                opt.diffShowFormatting);
+                opt.diffShowFormatting, opt.diffChrome);
         case Backend.tui:
             return runTuiSink(opt, doc, labels, theme, cache,
                 docSet, pipeline, loc);
@@ -1113,11 +1113,12 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
 /// name warns and falls back to `full` (mirrors the `--theme` fallback).
 
 private DiffViewOptions htmlDiffOptions(DiffLayout layout,
-    bool showFormatting = false) @safe pure nothrow @nogc
+    bool showFormatting = false, bool chrome = true) @safe pure nothrow @nogc
 {
     DiffViewOptions opt;
     opt.layout = layout;
     opt.foldFormattingOnly = !showFormatting;
+    opt.chrome = chrome;
     return opt;
 }
 
@@ -1281,7 +1282,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
             MdViewOptions mopt = {
                 theme: MdViewTheme.derive(theme, pageFg, pageBg),
-                maxWidth: previewWidth(),
+                maxWidth: previewWidth(opt.width),
                 fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
                 diffBlocks: doc.preview.decorations,
                 codeOverflow: parseOverflow(opt.codeOverflow, "--code-overflow"),
@@ -1301,7 +1302,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             MdLinkTable linkTable;
             mopt.linkTable = &linkTable;
             auto tree = viewMarkdown(doc.preview.doc, mopt);
-            auto frames = layout(tree, Constraints(maxW: previewWidth()));
+            auto frames = layout(tree, Constraints(maxW: previewWidth(opt.width)));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
             paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
@@ -1400,10 +1401,12 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             // so a diff that is entirely whitespace — a formatter's output,
             // say — would otherwise print nothing but the badge.
             dopt.foldFormattingOnly = !opt.diffShowFormatting;
+            dopt.chrome = opt.diffChrome;
+            dopt.lineNumbers = opt.lineNumbers;
             auto tree = viewDiffDoc(doc.diffDoc, dopt,
                 doc.diffSides, highlightedFenceRenderer(&cache, &theme, pageFg),
-                doc.diffSession, null, previewWidth());
-            auto frames = layout(tree, Constraints(maxW: previewWidth()));
+                doc.diffSession, null, previewWidth(opt.width));
+            auto frames = layout(tree, Constraints(maxW: previewWidth(opt.width)));
             const r = frames[tree.root].rect;
             auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
             paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
@@ -1483,7 +1486,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache,
     DiffLayout diffLayout = DiffLayout.unified, string gutter = "all",
     bool lineNumbers = true, const SourceLoc loc = SourceLoc.init,
-    bool diffShowFormatting = false) @system
+    bool diffShowFormatting = false, bool diffChrome = true) @system
 {
     GutterSelection gutterSel;
     if (!gutterSel.parse(gutter))
@@ -1585,7 +1588,8 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             SmallBuffer!char htmlOut;
             writeWidgetHtmlPage(htmlOut,
                 viewDiffDoc(doc.diffDoc,
-                    htmlDiffOptions(diffLayout, diffShowFormatting), doc.diffSides,
+                    htmlDiffOptions(diffLayout, diffShowFormatting, diffChrome),
+                    doc.diffSides,
                     highlightedFenceRenderer(&cache, &theme, pageFg),
                     doc.diffSession),
                 defaultTwoslashPalette(), pageFg, pageBg, doc.title);
@@ -2006,10 +2010,16 @@ private string readStdinText() @system
     return cast(string) raw;
 }
 
-private int previewWidth() @system
+/// Columns a one-shot render lays out in. `override_` is `--width`: a pipe has
+/// no size to ask for, so a caller that composes hue's output into its own
+/// frame — a test report placing panes side by side, say — must be able to say
+/// how wide each pane is rather than get the 80-column fallback.
+private int previewWidth(int override_ = 0) @system
 {
     import sparkles.base.term_caps : terminalSize, StdStream;
 
+    if (override_ > 0)
+        return override_;
     const w = terminalSize(StdStream.stdout).width;
     if (w <= 0)
         return 80;
