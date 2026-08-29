@@ -243,16 +243,6 @@ void draw()
 
 ---
 
-## What this page does not cover yet
-
-The layout tier is one of two. Token-changing rules — trailing-comma insertion, import sorting,
-brace style, literal-form selection — are the **rewrite tier**, specified in
-[`D9`](../../../../specs/dmd-fmt/index.md) and not yet implemented; their pages appear here as they
-land, in this same executed form. Transformations that need resolved types are
-[codemods](../../../../specs/dmd-fmt/codemods.md), a separate tool.
-
----
-
 ## Declarations
 
 ### A UDA on its own line stays at its declaration's column {#p22}
@@ -310,3 +300,84 @@ void spread()
 ```
 
 :::
+
+---
+
+## Statements
+
+### A braceless body is indented, and nested ones step once each {#p38}
+
+<!-- fmt id=P38 -->
+
+A clause whose body you wrote on the next line without braces gets one level of indentation —
+and a clause inside that body gets another. The steps follow the nesting you wrote, so a body two
+clauses deep reads as two clauses deep.
+
+This is the one place where the "one continuation level" rule does _not_ apply, and the distinction
+is worth stating: a wrapped **expression** steps right once no matter how many lines it takes,
+because every line is the same expression continuing. A nested **clause** steps right each time,
+because each line is a different statement.
+
+::: code-group
+
+```d [Before]
+bool anyMatch(int[] values)
+{
+    foreach (value; values)
+        if (value == 3)
+            return true;
+    return false;
+}
+```
+
+```d [After]
+bool anyMatch(int[] values)
+{
+    foreach (value; values)
+        if (value == 3)
+            return true;
+    return false;
+}
+```
+
+:::
+
+### A comment on its own line sits with what it annotates {#p41}
+
+<!-- fmt id=P41 -->
+
+A comment that starts its own line is a sibling of the statement below it, not a wrapped
+continuation of the line above — so it takes that statement's indentation, and the statement does
+not move to make room for it.
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    if (ready)
+        // Why this call, and not the obvious one.
+        prepare();
+}
+```
+
+```d [After]
+void f()
+{
+    if (ready)
+        // Why this call, and not the obvious one.
+        prepare();
+}
+```
+
+:::
+
+---
+
+## What this page does not cover yet
+
+The layout tier is one of two. Token-changing rules — trailing-comma insertion, import sorting,
+brace style, literal-form selection — are the **rewrite tier**, specified in
+[`D9`](../../../../specs/dmd-fmt/index.md) and not yet implemented; their pages appear here as they
+land, in this same executed form. Transformations that need resolved types are
+[codemods](../../../../specs/dmd-fmt/codemods.md), a separate tool.

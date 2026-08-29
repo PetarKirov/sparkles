@@ -854,29 +854,103 @@ private final class Printer
             run[$ - 1].newlinesBefore > 0 && braceBodied(g, run[$ - 1]))
             tail = run.length - 1;
 
-        // The first author break opens a continuation — except while the
-        // statement is still in its leading attribute run, where a break is
-        // the author separating `@uda` from what it modifies and D puts both
-        // in one column. Those breaks stay at the statement's own level.
-        size_t firstBreak = size_t.max;
-        foreach (i, item; run[0 .. tail])
-            if (i != 0 && item.newlinesBefore > 0
-                && !inAttributePrefix(g, run, i))
-            {
-                firstBreak = i;
-                break;
-            }
-
-        Doc[] parts;
-        if (firstBreak == size_t.max)
-            parts = joinInline(g, run[0 .. tail], false);
-        else
-            parts = joinInline(g, run[0 .. firstBreak], false)
-                ~ [indented(joinInline(g, run[firstBreak .. tail], false,
-                    /*leadingBreak*/ true))];
+        Doc[] parts = buildStatementRun(g, run[0 .. tail], true);
         if (tail < run.length)
             parts ~= [hardline, buildItem(g, run[$ - 1])];
         return parts;
+    }
+
+    /**
+    One statement's items under the author's breaks.
+
+    The first break opens a continuation level. A break that follows a
+    $(B clause header) — `if (…)`, `foreach (…)`, a bare `else` — opens
+    another, because what comes after it is that clause's body rather than
+    the rest of the same expression:
+
+    ---
+    foreach (i; 0 .. n)
+        if (i == 3)
+            return true;
+    ---
+
+    Every other break stays at the level the first one opened, however many
+    times it happens, which is v1's one-continuation-level policy — a wrapped
+    expression or a member chain steps right once, not once per line.
+    */
+    private Doc[] buildStatementRun(const Group g, const Item[] run,
+        bool atStatementStart) @safe
+    {
+        // A break inside the statement's leading attribute run is the author
+        // separating `@uda` from what it modifies; those stay at the
+        // statement's own level, and only the outermost run has one.
+        size_t brk = size_t.max;
+        foreach (i, item; run)
+            if (i != 0 && item.newlinesBefore > 0
+                && !(atStatementStart && inAttributePrefix(g, run, i)))
+            {
+                brk = i;
+                break;
+            }
+        if (brk == size_t.max)
+            return joinInline(g, run, false);
+
+        const head = run[0 .. brk];
+        auto parts = joinInline(g, head, false);
+        if (endsClauseHeader(g, head))
+            return parts ~ [indented([hardline]
+                ~ buildStatementRun(g, run[brk .. $], false))];
+        // An own-line comment annotates what follows it; the two are siblings
+        // at one level, not a wrap and its continuation. Without this, a
+        // comment between a clause header and its body pushes the body right.
+        if (startsOwnLineComment(head[$ - 1]))
+            return parts ~ [hardline]
+                ~ buildStatementRun(g, run[brk .. $], false);
+        return parts ~ [indented(joinInline(g, run[brk .. $], false,
+            /*leadingBreak*/ true))];
+    }
+
+    /// A comment that began its own line — as opposed to one trailing code,
+    /// where the break after it really is a wrap.
+    private static bool startsOwnLineComment(const Item item) @safe pure nothrow @nogc
+        => item.kind == ItemKind.comment && item.newlinesBefore > 0;
+
+    /// Does `head` end with a clause header — `if (…)`, `foreach (…)`, or a
+    /// bare `else`/`do`/`try`? A call ends with a parenthesis too, so the
+    /// keyword before it is what distinguishes `if (c)` from `foo(c)`.
+    private bool endsClauseHeader(const Group g, const Item[] head) const @safe
+    {
+        if (!head.length)
+            return false;
+        const last = head[$ - 1];
+        if (last.kind == ItemKind.token)
+        {
+            const k = spine.entries[last.index].kind;
+            return k == TOK.else_ || k == TOK.do_ || k == TOK.try_;
+        }
+        if (last.kind != ItemKind.child || head.length < 2)
+            return false;
+        if (spine.entries[g.children[last.index].firstEntry].kind
+                != TOK.leftParenthesis)
+            return false;
+        const before = head[$ - 2];
+        return before.kind == ItemKind.token
+            && isClauseKeyword(spine.entries[before.index].kind);
+    }
+
+    /// The keywords whose body may be a bare statement rather than a braced
+    /// block, and whose header therefore nests what follows it.
+    private static bool isClauseKeyword(TOK kind) @safe pure nothrow @nogc
+    {
+        switch (kind)
+        {
+            case TOK.catch_, TOK.debug_, TOK.for_, TOK.foreach_,
+                TOK.foreach_reverse_, TOK.if_, TOK.scope_, TOK.switch_,
+                TOK.synchronized_, TOK.version_, TOK.while_, TOK.with_:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private bool braceBodied(const Group g, const Item item) const @safe
