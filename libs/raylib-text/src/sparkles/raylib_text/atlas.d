@@ -1,49 +1,56 @@
-/// The base codepoint set seeded into a face's atlas at load. Extracted from
-/// `apps/terminal` (PR #63): ASCII + Latin-1, Latin Extended + combining
-/// diacritics, Greek/Cyrillic, General Punctuation → Misc Symbols & Arrows, and
-/// the common Nerd-Font private-use ranges. Anything beyond this (icons in the
-/// higher PUA planes, CJK, emoji) is loaded on demand by `FontSet` as the text
-/// actually references it, so the atlas stays bounded to what a session touches.
+/// The codepoint set seeded into a face's atlas at load. Kept small so the
+/// first frame of `hue --gui` (and every other `FontSet` consumer) is not
+/// dominated by `LoadFontEx`: the previous seed rasterized ~8,480 glyphs
+/// (the whole of U+2000–U+2BFF plus several Nerd-Font PUA planes) into every
+/// face before the window could paint.
+///
+/// The seed is what a first frame actually draws — ASCII/Latin-1, general
+/// punctuation, arrows, box-drawing / block elements / geometric shapes
+/// (chrome, scrollbars, `drawBox`), and the short Powerline range. Everything
+/// else (Greek, Cyrillic, the rest of the Nerd PUA, CJK, emoji) is requested
+/// by `FontSet.requestGlyph` as cells reference it and lands on the next
+/// `flushPending`, which already existed for higher-plane icons.
 module sparkles.raylib_text.atlas;
 
-/// Build the base codepoint set (see the module header). CTFE-evaluated once
+/// Build the startup atlas seed (see the module header). CTFE-evaluated once
 /// into $(LREF baseCodepoints).
 int[] buildCodepoints() @safe pure nothrow
 {
     int[] cps;
     for (int i = 32; i <= 0xFF; i++) cps ~= i;
-    // Latin Extended-A/B, IPA, spacing modifiers, combining diacritics.
-    for (int i = 0x100; i <= 0x36F; i++) cps ~= i;
-    // Greek and Coptic, Cyrillic, and Cyrillic Supplement.
-    for (int i = 0x370; i <= 0x52F; i++) cps ~= i;
-    // General Punctuation up to Misc Symbols and Arrows.
-    for (int i = 0x2000; i <= 0x2BFF; i++) cps ~= i;
+    // General punctuation (quotes, dashes, ellipsis, bullets).
+    for (int i = 0x2000; i <= 0x206F; i++) cps ~= i;
+    // Arrows.
+    for (int i = 0x2190; i <= 0x21FF; i++) cps ~= i;
+    // Box drawing, block elements — header rules, scroll thumbs, `drawBox`.
+    for (int i = 0x2500; i <= 0x259F; i++) cps ~= i;
+    // Geometric shapes (▶ ▼ used as disclosure marks).
+    for (int i = 0x25A0; i <= 0x25FF; i++) cps ~= i;
+    // Powerline / vim-airline Nerd glyphs (status-bar chevrons).
     for (int i = 0xE0A0; i <= 0xE0D4; i++) cps ~= i;
-    for (int i = 0xE200; i <= 0xE2A9; i++) cps ~= i;
-    for (int i = 0xE300; i <= 0xE3E3; i++) cps ~= i;
-    for (int i = 0xE5FA; i <= 0xE6B1; i++) cps ~= i;
-    for (int i = 0xE700; i <= 0xE7C5; i++) cps ~= i;
-    for (int i = 0xF000; i <= 0xF2E0; i++) cps ~= i;
-    for (int i = 0xF300; i <= 0xF372; i++) cps ~= i;
-    for (int i = 0xF400; i <= 0xF533; i++) cps ~= i;
-    for (int i = 0xF500; i <= 0xFD46; i++) cps ~= i;
     return cps;
 }
 
-/// The base codepoint set, built once at compile time.
+/// The startup atlas seed, built once at compile time.
 static immutable int[] baseCodepoints = buildCodepoints();
 
 @("raylib_text.atlas.baseCodepoints")
 @safe pure nothrow
 unittest
 {
+    import std.algorithm.searching : canFind;
+
     assert(baseCodepoints.length > 0);
     assert(baseCodepoints[0] == 32); // starts at space
-    // Note: the list is not globally sorted — the last two Nerd-Font ranges
-    // overlap/reorder (0xF400-0xF533 then 0xF500-0xFD46) — but LoadFontEx tolerates
-    // any order and duplicate codepoints. Just check coverage.
-    import std.algorithm.searching : canFind;
-    assert(baseCodepoints.canFind(0x394)); // Δ  (Greek — the dae11f43 fix)
-    assert(baseCodepoints.canFind(0x416)); // Ж  (Cyrillic)
+    assert(baseCodepoints.canFind(0x2588)); // █  (scrollbar thumb + white texel)
+    assert(baseCodepoints.canFind(0x2500)); // ─
+    assert(baseCodepoints.canFind(0x2502)); // │
     assert(baseCodepoints.canFind(0xE0A0)); // a Powerline Nerd glyph
+    // Greek / the wide Nerd PUA planes are on-demand, not in the seed —
+    // seeding them was ~8k glyphs × every face at `tryLoad`.
+    assert(!baseCodepoints.canFind(0x394));
+    assert(!baseCodepoints.canFind(0xF000));
+    // A regression guard: the old seed was 8480 codepoints and dominated
+    // GUI startup. Stay well under a thousand.
+    assert(baseCodepoints.length < 1000);
 }
