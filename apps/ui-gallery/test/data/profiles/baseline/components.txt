@@ -17,7 +17,7 @@
    Split             | engine prescribes for distribution, since there is no margin and no     |
    Dock              | space-between.                                                          |
    Terminal          |                                                                         |
-                     | +---------------------------------------------------------------------+ |
+   Overlays          | +---------------------------------------------------------------------+ |
                      | | tabStrip — one active, the rest idle                                | |
                      | |  config.js  config.ts  π.md                                         | |
                      | |                                                                     | |

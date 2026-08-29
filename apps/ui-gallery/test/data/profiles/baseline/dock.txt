@@ -17,7 +17,7 @@
    Split             | |                   │                                                 | #
  ▸ Dock              | |                   │                                                 | |
    Terminal          | |                   │                                                 | |
-                     | |                   │                                                 | |
+   Overlays          | |                   │                                                 | |
                      | |                   │                                                 | |
                      | |                   │                                                 | |
                      | |                                                                     | |

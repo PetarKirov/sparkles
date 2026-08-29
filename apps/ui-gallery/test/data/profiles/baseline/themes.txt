@@ -17,7 +17,7 @@
    Split             | |   github-light                                                      | #
    Dock              | |   github-dark-dimmed                                                | #
    Terminal          | | ▸ tokyo-night                                                       | #
-                     | |   solarized-dark                                                    | #
+   Overlays          | |   solarized-dark                                                    | #
                      | |   solarized-light                                                   | #
                      | |   catppuccin-mocha                                                  | |
                      | |   catppuccin-macchiato                                              | |

@@ -17,7 +17,7 @@
  ▸ Split             |                                                                         #
    Dock              | +---------------------------------------------------------------------+ #
    Terminal          | | the machine                                                         | #
-                     | | size             24                                                 | #
+   Overlays          | | size             24                                                 | #
                      | | dragging         no                                                 | #
                      | | bounds           10 … 60                                            | #
                      | | pointer shape    default_                                           | #

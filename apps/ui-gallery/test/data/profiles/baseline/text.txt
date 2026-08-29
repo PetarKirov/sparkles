@@ -17,7 +17,7 @@
    Split             | | A widget names a semantic slot,                                     | #
    Dock              | | never a concrete colour, and the                                    | |
    Terminal          | | palette resolves it while the                                       | |
-                     | | display list is built.                                              | |
+   Overlays          | | display list is built.                                              | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |

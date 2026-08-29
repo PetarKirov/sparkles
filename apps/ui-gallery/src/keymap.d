@@ -104,6 +104,9 @@ enum GalleryCommand : ubyte
 
     // The Terminal page.
     termNew, termClose, termPrev, termNext, termKeepExited, termFocus,
+
+    // The Overlays page.
+    overlayToggle, overlayNext, overlayPrev, overlayCommit, overlayDismiss,
 }
 
 /**
@@ -117,6 +120,11 @@ enum GalleryScope : ubyte
     always,
     /// the `?` overlay: modal — it swallows what it does not answer
     @terminalScope @hidesLaterScopes help,
+    /// An open anchored surface. Modal for the same reason `help` is, and
+    /// resolved before every page: while a menu or a card is up, `Escape`
+    /// closes IT rather than quitting, and the arrows drive it rather than
+    /// the page underneath. `INP13`'s close request, as row order.
+    @terminalScope overlayOpen,
     pageLayout,
     pageTracks,
     pageGrid,
@@ -130,6 +138,7 @@ enum GalleryScope : ubyte
     pageSplit,
     pageDock,
     pageTerminal,
+    pageOverlays,
     shell, /// both regions, after the showing page declined
 }
 
@@ -144,6 +153,7 @@ struct GalleryContext
     GalleryScope pageScope = GalleryScope.always;
     bool contentRegion; /// the keyboard is in the content region
     bool helpShown;     /// the `?` overlay is up (modal, `FOC4`)
+    bool overlayShown;  /// an anchored surface is open (modal, `INP13`)
 
 @safe pure nothrow @nogc const:
 
@@ -153,6 +163,8 @@ struct GalleryContext
             return true;
         if (s == GalleryScope.help)
             return helpShown;
+        if (s == GalleryScope.overlayOpen)
+            return !helpShown && overlayShown;
         if (s == GalleryScope.shell)
             return !helpShown;
         return !helpShown && contentRegion && s == pageScope;
@@ -385,6 +397,25 @@ immutable Binding[] galleryBindings = [
     bind(GalleryScope.pageTerminal, chord(Key.enter), GalleryCommand.termFocus,
         "focus the shell"),
 
+    // ── the Overlays page ────────────────────────────────────────────────
+    // Only the key that OPENS something lives here. The keys that drive or
+    // dismiss an open surface are in the modal scope below, because they are
+    // lifelines and a page must never claim one.
+    bind(GalleryScope.pageOverlays, chord('o'), GalleryCommand.overlayToggle,
+        "open/close the dropdown"),
+
+    // ── an open anchored surface (modal) ─────────────────────────────────
+    bind(GalleryScope.overlayOpen, chord(Key.escape),
+        GalleryCommand.overlayDismiss, "close"),
+    bind(GalleryScope.overlayOpen, chord('q'),
+        GalleryCommand.overlayDismiss, "close"),
+    bind(GalleryScope.overlayOpen, chord(Key.down),
+        GalleryCommand.overlayNext, "next item"),
+    bind(GalleryScope.overlayOpen, chord(Key.up),
+        GalleryCommand.overlayPrev, "prev item"),
+    bind(GalleryScope.overlayOpen, chord(Key.enter),
+        GalleryCommand.overlayCommit, "commit"),
+
     // ── the shell ────────────────────────────────────────────────────────
     bind(GalleryScope.shell, chord(Key.escape), GalleryCommand.quit, "quit"),
     bind(GalleryScope.shell, chord(Key.back), GalleryCommand.quit, "quit"),
@@ -578,7 +609,13 @@ unittest
         [chord(Key.tab), chord(Key.escape), chord('q'), chord('?')];
     foreach (ref b; galleryBindings)
     {
-        if (b.scope_ == GalleryScope.help || b.scope_ == GalleryScope.shell)
+        // The exemption is for MODAL scopes and the shell, and it is not an
+        // escape hatch: a modal scope is reachable only while a dismissible
+        // surface is up, and its `Escape` is what LEAVES that surface. A page
+        // scope claiming the same chord could strand a reader inside itself,
+        // which is the failure this pins; a modal one is the opposite.
+        if (b.scope_ == GalleryScope.help || b.scope_ == GalleryScope.shell
+            || b.scope_ == GalleryScope.overlayOpen)
             continue;
         foreach (ref life; lifelines)
             assert(!sameKey(b.path[0], life),

@@ -17,7 +17,7 @@
    Split             | |                +-----------+                                        | |
    Dock              | |                                                                     | |
    Terminal          | | dotted         +...........+                                        | |
-                     | |                : content   :                                        | |
+   Overlays          | |                : content   :                                        | |
                      | |                +...........+                                        | |
                      | |                                                                     | |
                      | | dashed         +-----------+                                        | |

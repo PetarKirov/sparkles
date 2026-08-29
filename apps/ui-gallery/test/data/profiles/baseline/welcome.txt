@@ -17,7 +17,7 @@
    Split             | +---------------------------------------------------------------------+ #
    Dock              | | input capabilities                                                  | #
    Terminal          | | hover               yes                                             | #
-                     | | sub-cell pointer    no                                              | #
+   Overlays          | | sub-cell pointer    no                                              | #
                      | | key release         no                                              | #
                      | | multi-pointer       no                                              | #
                      | +---------------------------------------------------------------------+ #

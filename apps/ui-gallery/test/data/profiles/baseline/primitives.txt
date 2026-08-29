@@ -17,7 +17,7 @@
    Split             | | line · wavy      a squiggled run                                    | #
    Dock              | | scrollbar        ||                                                 | #
    Terminal          | |                  ||                                                 | |
-                     | |                  ##                                                 | |
+   Overlays          | |                  ##                                                 | |
                      | |                  ##                                                 | |
                      | |                  ||                                                 | |
                      | |                  ||                                                 | |

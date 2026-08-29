@@ -214,6 +214,12 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
         Constraints(sz.width, sz.height));
     snap.overlays = placeOverlays(snap.tree, snap.frames, arena,
         Rect(0, 0, sz.width, sz.height));
+    // The solve handed back, for a component that routes against it. The pair
+    // is deliberately symmetric — `overlays` declares what it wants, this says
+    // what it got — because a component cannot re-derive the geometry: it has
+    // no frames until the host has laid out, and by then the frame is here.
+    static if (__traits(compiles, app.overlaysSolved(snap.overlays)))
+        app.overlaysSolved(snap.overlays);
     buildDisplayListInto(snap.tree, snap.frames, snap.overlays, frame.palette,
         frame.pageFg, frame.pageBg, h.ops());
 }

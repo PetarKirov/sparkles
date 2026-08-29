@@ -17,7 +17,7 @@
    Split             | | textInverse        Aa 0123    #1a1b26       —                       | |
    Dock              | | code               Aa 0123    #a9b1d6       —                       | |
    Terminal          | | docs               Aa 0123    #a0a0a0       —                       | |
-                     | | matched            Aa 0123    #a9b1d6       —                       | |
+   Overlays          | | matched            Aa 0123    #a9b1d6       —                       | |
                      | | unmatched          Aa 0123    #888888       —                       | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |

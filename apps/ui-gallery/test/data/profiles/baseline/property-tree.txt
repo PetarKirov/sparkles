@@ -17,7 +17,7 @@
    Split             | | ├─ ▸ fill                                                      #    | #
    Dock              | | ├─ ▸ metrics                                                   #    | #
    Terminal          | | ├─ ▸ dashes               [3]                                  #    | #
-                     | | ├─ id ⊘                   42                                   #    | #
+   Overlays          | | ├─ id ⊘                   42                                   #    | #
                      | | ├─ tint                   3368601                              #    | |
                      | | ├─ handle ⊘               Handle(0x12648430)                   #    | |
                      | | ├─ ▸ extra                {3 keys}                             #    | |

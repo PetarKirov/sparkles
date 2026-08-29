@@ -17,7 +17,7 @@
    Split             | +---------------------------------------------------------------------+ |
    Dock              | | PressState — arm, then activate on the same target                  | |
    Terminal          | | armed          —                                                    | |
-                     | | activated      —                                                    | |
+   Overlays          | | activated      —                                                    | |
                      | | Press one tile and release over another: nothing fires.             | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |

@@ -17,7 +17,7 @@
    Split             | +---------------------------------------------------------------------+ #
    Dock              | | the same data, everything open                                      | |
    Terminal          | | ├─ ▾ src/                                                           | |
-                     | | │  ├─ ▾ sparkles/                                                   | |
+   Overlays          | | │  ├─ ▾ sparkles/                                                   | |
                      | | │  │  ├─ ◆ widget.d                                                 | |
                      | | │  │  ├─ ◆ layout.d                                                 | |
                      | | │  │  └─ ◆ theme.d                                                  | |
