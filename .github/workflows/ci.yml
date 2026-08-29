@@ -538,7 +538,10 @@ jobs:
     name: Build documentation site
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The build itself runs ~11m; under runner contention the nix teardown
+    # stretched past a 15m cap and cancelled after every real step had
+    # succeeded. 30m matches the test job's headroom.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
