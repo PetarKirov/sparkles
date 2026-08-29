@@ -211,3 +211,70 @@ Grid renderGrid(in RenderRequest req)
     const text = gridText(g);
     assert(text == "日本語ab\n", "the row is neither padded nor truncated");
 }
+
+@("ui_gallery.render.anOpenOverlayReachesTheFrame")
+@safe unittest
+{
+    // `POP8`: an anchored surface, asserted headlessly through the recorder
+    // with no backend at all — which is the whole reason the arena is a value
+    // the frame pass threads rather than something a backend owns.
+    import sparkles.input : charEvent;
+    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.style : BoxSide;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+
+    import gallery : Gallery;
+    import registry : pageIndexOf;
+    import state : Region;
+
+    Gallery app;
+    app.s.page = pageIndexOf("Overlays");
+    app.s.region = Region.content;
+
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui_app.record : RecordingHost;
+
+    auto rec = runAppRecorded(app, RunConfig.init, [charEvent('o')],
+        (ref RecordingHost h) { h.size = Size(110, 60); h.frameSeconds = 0; });
+
+    assert(rec.frames.length >= 2, "one frame before the key, one after");
+    const before = rec.frames[0].ops;
+    const after = rec.frames[$ - 1].ops;
+
+    static bool paints(in typeof(before) ops, string needle)
+    {
+        foreach (op; ops)
+            if (op.kind == OpKind.textRun && op.text == needle)
+                return true;
+        return false;
+    }
+
+    // The host must be probing for exactly the signature the component
+    // declares — a typo here is silent, because the introspection simply
+    // finds nothing and the component renders with no overlays.
+    import sparkles.ui.overlay.arena : OverlayArena;
+    import sparkles.ui.widget : WidgetTree;
+    static assert(__traits(compiles, {
+        OverlayArena a = app.overlays(WidgetTree.init);
+    }));
+    static assert(__traits(compiles, app.overlaysSolved(OverlayArena.init)));
+    assert(app.s.overlays.open, "the key opened the dropdown");
+    assert(app.s.overlayGeometry.paintable,
+        "and the solve placed it — a refused solve paints nothing");
+
+    assert(!paints(before, "gruvbox"), "nothing is open before the key");
+    assert(paints(after, "gruvbox"),
+        "the dropdown's rows reach the frame once it opens");
+
+    // `PLC10` end to end: the caret is on the edge the SOLVE resolved, not on
+    // a hard-coded top. The view only declares that it wants one — where it
+    // goes depends on where the overlay was actually placed, which is the
+    // datum four backends used to guess at independently.
+    const g = app.s.overlayGeometry;
+    assert(g.arrowVisible, "the dropdown asked for a caret and got a cell");
+    assert(g.arrowCell >= 1 && g.arrowCell <= g.rect.width - 2,
+        "strictly inside the edge — never on a corner glyph");
+    assert(g.side == BoxSide.bottom,
+        "it hangs below its trigger, so its caret is on its own TOP edge");
+}

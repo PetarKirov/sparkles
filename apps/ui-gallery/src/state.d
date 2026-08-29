@@ -14,7 +14,7 @@ page grows.
 module state;
 
 import sparkles.input : InputCapabilities;
-import sparkles.ui.geometry : Size;
+import sparkles.ui.geometry : Point, Size;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.components.dock : DockContainer;
 import sparkles.ui.components.tree_view : TreeViewState;
@@ -22,6 +22,8 @@ import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
     HoverState, PressState, ScrollAxis, ScrollbarState, Selection, SplitState,
     Timeline;
 import sparkles.ui.components.grid_backdrop : GridPreset;
+import sparkles.ui.overlay.place : OverlayGeometry;
+import sparkles.ui.style : BoxSide;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Visibility;
@@ -93,6 +95,12 @@ action bar. Ids start at 1, so the `+ 0` slot can never name a tab.
 */
 enum size_t hitTerminal = 10100;
 
+/// The Overlays page's four triggers, and its menu/card rows.
+enum size_t hitOverlayTrigger = 11000; /// `+0` menu area, `+1` dropdown, `+2..` chips
+enum size_t hitOverlayItem = 11100;    /// a row inside an open overlay
+enum size_t hitOverlayClose = 11200;   /// a persistent card's close affordance
+enum size_t hitOverlayLink = 11300;    /// a link inside prose or inside a card
+
 /// Element keys (`Widget.key`) for state that must survive a rebuild.
 enum size_t keyContentScroll = 101; ///
 enum size_t keyNavScroll = 102;     ///
@@ -154,6 +162,95 @@ struct TreeDemo
 }
 
 /// The state-machine page's live tiles.
+/// Which anchored surface the Overlays page has open, if any.
+enum OverlayKind : ubyte
+{
+    none,        /// nothing open
+    contextMenu, /// right-click, anchored to the cell the press landed on
+    dropdown,    /// a list under its trigger, keyboard-drivable
+    hovercard,   /// a persistent card with links, and a close affordance
+}
+
+/**
+Why an overlay closed (`DSM2`).
+
+A closed enum rather than a string, so a close is a $(B value) a test can assert
+rather than an effect it has to observe — which is the whole of `DSM2`. Until
+the toolkit's reason-tagged evaluator lands this is the page's own vocabulary,
+deliberately named after the causes the spec enumerates so the swap is a
+rename.
+*/
+enum CloseReason : ubyte
+{
+    none,              /// nothing has closed yet
+    closeRequest,      /// Escape, or the Android back key (`INP13`)
+    pressOutside,      /// a press landed outside every open surface
+    triggerReactivate, /// the thing that opened it was activated again
+    activate,          /// an item inside it was chosen
+    closeAffordance,   /// the card's own `×`
+    cascade,           /// its parent closed (`DSM6`)
+    reopened,          /// superseded by a different surface
+}
+
+/// `r` as the word the page prints. A literal, so it carries no lifetime out
+/// of the state it came from.
+string reasonName(CloseReason r) @safe pure nothrow @nogc
+{
+    final switch (r)
+    {
+        case CloseReason.none: return "—";
+        case CloseReason.closeRequest: return "closeRequest";
+        case CloseReason.pressOutside: return "pressOutside";
+        case CloseReason.triggerReactivate: return "triggerReactivate";
+        case CloseReason.activate: return "activate";
+        case CloseReason.closeAffordance: return "closeAffordance";
+        case CloseReason.cascade: return "cascade";
+        case CloseReason.reopened: return "reopened";
+    }
+}
+
+/**
+The Overlays page's demo state.
+
+Deliberately not a handle. The arena is rebuilt from this every frame (`LYR1`),
+so what persists across frames is the *intent* — what is open, where it was
+anchored, which row is selected — and never an index into last frame's list.
+*/
+struct OverlayDemo
+{
+    OverlayKind kind;      /// what is open
+    Point at;              /// the cell a context menu was anchored to
+    size_t trigger;        /// the hit id that opened it
+    size_t selected;       /// the highlighted row, for keyboard traversal
+    /// The hovercard chain: 0 = none, 1 = the first card, 2 = a card opened
+    /// from a link inside the first. Depth, not identity — a truncation is a
+    /// subtraction (`DSM6`).
+    int cardDepth;
+    /// Which article each open card shows. Index 0 is the first card's.
+    size_t[2] article;
+    /// Why the last surface closed, so the page can print it (`DSM2`).
+    CloseReason lastReason;
+    /// The side the solve last resolved, carried back in as `PLC13`'s
+    /// stability input so a marginal fit cannot oscillate between frames.
+    BoxSide lastSide;
+    bool haveLastSide;
+
+@safe pure nothrow @nogc:
+
+    /// Whether anything is open.
+    bool open() const scope => kind != OverlayKind.none;
+
+    /// Closes everything, recording why.
+    void close(CloseReason reason) scope
+    {
+        kind = OverlayKind.none;
+        cardDepth = 0;
+        selected = 0;
+        haveLastSide = false;
+        lastReason = reason;
+    }
+}
+
 struct MachinesDemo
 {
     Selection!int selection;    ///
@@ -321,6 +418,14 @@ struct GalleryState
     /// two documents. Its own, so dragging a tab here cannot disturb the
     /// shell's own panes.
     DockContainer dock;
+    /// The Overlays page's demo state — which surfaces are open, where, and
+    /// what the last one closed for. The arena itself is rebuilt every frame
+    /// from this (`LYR1`), so nothing here is a handle.
+    OverlayDemo overlays;
+    /// Last frame's solved geometry for the front overlay, so the page can
+    /// print the decision record. One frame stale by construction — which is
+    /// also true of every hit rect the router uses (`PLC13`, `DSM9`).
+    OverlayGeometry overlayGeometry;
     size_t themeListTop;     /// first visible row of the theme browser
     size_t componentsTab;    /// the Components page's active tab
     size_t componentsAction = size_t.max; /// …and its last activated segment

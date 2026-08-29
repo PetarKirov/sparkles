@@ -14,7 +14,7 @@ import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
 import sparkles.ui.overlay.arena : hoistedBy, OverlayArena;
-import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
+import sparkles.ui.style : BoxSide, Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
@@ -93,7 +93,9 @@ if (isDisplayListSink!Sink)
         if (!rec.contributesPaint || rec.node >= tree.nodes.length)
             continue;
         emit(tree, rec.node, frames, pal, pageFg, pageBg, unclipped(), ops,
-            hoisted.hoisted);
+            hoisted.hoisted, ArrowOverride(active: true,
+                visible: rec.resolved.arrowVisible,
+                side: rec.resolved.side, cell: rec.resolved.arrowCell));
     }
 }
 
@@ -116,9 +118,21 @@ enum bool isDisplayListSink(Sink) = __traits(compiles, (ref Sink s) {
     s.popClip();
 });
 
+/// The caret the placement solve resolved, applied to an overlay's own node as
+/// it is emitted. A view declares `Decoration.arrow` — that it $(I wants) one —
+/// and the solve decides which edge and which cell; this is where the two meet
+/// (`PLC10`). Applied at the subtree root only, never to a descendant.
+private struct ArrowOverride
+{
+    bool active;   /// there is a solved caret to apply
+    bool visible;  /// …and it has a legal cell; else the caret is suppressed
+    BoxSide side;
+    int cell;
+}
+
 private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
     in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref Sink ops,
-    scope const(bool)[] hoisted = null)
+    scope const(bool)[] hoisted = null, ArrowOverride arrow = ArrowOverride.init)
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
@@ -149,6 +163,18 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     }
     Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
     applyOverrides(vis, node);
+
+    // The caret's edge and cell come from the solve, never from the view: a
+    // view declares that it WANTS one, and where it goes depends on which side
+    // the overlay was actually placed on (`PLC10`). `arrowVisible` false means
+    // there is no legal cell, so the caret is suppressed rather than clamped
+    // onto a corner glyph (`PLC11`).
+    if (arrow.active)
+    {
+        vis.arrow = vis.arrow && arrow.visible;
+        vis.arrowSide = arrow.side;
+        vis.arrowOffset = arrow.cell;
+    }
 
     // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
     // the decoration independently (a box can have a border but no fill — the

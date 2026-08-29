@@ -23,6 +23,8 @@ import sparkles.terminal_view.cell_paint : paintCells;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.components.chrome : headerBar, scrollView;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
+import sparkles.ui.overlay.arena : OverlayArena;
+import sparkles.ui.overlay.place : OverlayGeometry;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
     wantedPointerShape;
@@ -169,6 +171,42 @@ struct Gallery
             pageFg: rgbOr(t.defaultFg, 0xcc, 0xcc, 0xcc),
             pageBg: rgbOr(t.defaultBg, 0x00, 0x00, 0x00),
         );
+    }
+
+    /**
+    The overlays this frame wants, and — through the symmetric hook below —
+    what the solve made of them.
+
+    The shell asks the showing page rather than owning a list: an overlay
+    belongs to whatever opened it, and the catalog's job is to show the
+    toolkit, not to accumulate a shell-level overlay manager no page asked for.
+    */
+    OverlayArena overlays(in WidgetTree tree) @safe
+        => pages[s.page].overlays is null
+            ? OverlayArena.init
+            : pages[s.page].overlays(s, tree);
+
+    /**
+    The solved arena, handed back by the host.
+
+    Two things need it. The container router tests it before any positional
+    query, which is what lets an overlay that escapes its pane still take the
+    click (`LYR5`). And the page prints the decision record — one frame stale,
+    which is exactly as stale as every hit rect the router uses (`DSM9`).
+    */
+    void overlaysSolved(OverlayArena a) @safe
+    {
+        dock.overlays = a;
+        if (a.length)
+        {
+            s.overlayGeometry = a[0].resolved;
+            // `PLC13`: carry the accepted side forward as an explicit input,
+            // so a marginal fit cannot oscillate between frames.
+            s.overlays.lastSide = a[0].resolved.side;
+            s.overlays.haveLastSide = a[0].resolved.paintable;
+        }
+        else
+            s.overlayGeometry = OverlayGeometry.init;
     }
 
     /// One frame.
@@ -552,6 +590,9 @@ struct Gallery
             case GalleryCommand.termNew: case GalleryCommand.termClose:
             case GalleryCommand.termPrev: case GalleryCommand.termNext:
             case GalleryCommand.termKeepExited: case GalleryCommand.termFocus:
+            case GalleryCommand.overlayToggle: case GalleryCommand.overlayNext:
+            case GalleryCommand.overlayPrev: case GalleryCommand.overlayCommit:
+            case GalleryCommand.overlayDismiss:
                 return;
         }
     }
@@ -585,7 +626,8 @@ struct Gallery
     private GalleryContext keyContext() const @safe
         => GalleryContext(pageScope: pages[s.page].scope_,
             contentRegion: s.region == Region.content,
-            helpShown: s.helpOpen);
+            helpShown: s.helpOpen,
+            overlayShown: s.overlays.open);
 
     /// Whether the keyboard belongs to the shell inside the pane.
     private bool terminalCaptures() const @safe
