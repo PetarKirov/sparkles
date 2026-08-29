@@ -775,6 +775,8 @@ Sparse!HueConfig cliOverlay(in CommandNode!HueCli root)
         o.appearance.theme = root.value.theme;
     if ("background" in rs)
         o.appearance.background = parseBackgroundMode(root.value.background);
+    if ("width" in rs)
+        o.appearance.width = root.value.width;
     if ("gui.font" in rs)
         o.appearance.fonts.family = root.value.gui.font;
     if ("gui.fontSize" in rs)

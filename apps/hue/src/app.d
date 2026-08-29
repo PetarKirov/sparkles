@@ -1304,7 +1304,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             auto tree = viewMarkdown(doc.preview.doc, mopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth(opt.width)));
             const r = frames[tree.root].rect;
-            auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+            auto grid = CellGrid(gridWidth(r.width, opt.width), r.height,
+                pageFg, pageBg);
             paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
                 pageFg, pageBg));
             grid.writeAnsi(output, depth,
@@ -1372,7 +1373,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 // not fit a long line — it CLIPS it, losing the tail silently.
                 auto frames = layout(tree, Constraints());
                 const r = frames[tree.root].rect;
-                auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+                auto grid = CellGrid(gridWidth(r.width, opt.width), r.height,
+                pageFg, pageBg);
                 paint(grid, buildDisplayList(tree, frames,
                     defaultTwoslashPalette(), pageFg, pageBg));
                 grid.writeAnsi(output, depth,
@@ -1408,7 +1410,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 doc.diffSession, null, previewWidth(opt.width));
             auto frames = layout(tree, Constraints(maxW: previewWidth(opt.width)));
             const r = frames[tree.root].rect;
-            auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+            auto grid = CellGrid(gridWidth(r.width, opt.width), r.height,
+                pageFg, pageBg);
             paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
                 pageFg, pageBg));
             grid.writeAnsi(output, depth,
@@ -2014,6 +2017,19 @@ private string readStdinText() @system
 /// no size to ask for, so a caller that composes hue's output into its own
 /// frame — a test report placing panes side by side, say — must be able to say
 /// how wide each pane is rather than get the 80-column fallback.
+/**
+The grid a one-shot sink paints into.
+
+Never narrower than the content — that would clip, silently losing the tail
+of a long line. Never narrower than an explicit `--width` either: that is the
+pane width the caller declared, and `--background=full` has to fill it, or an
+embedder framing the output sees the fill stop short of its own border. With
+no `--width` the grid shrink-wraps as before, so a plain `hue view | cat`
+gains no trailing spaces.
+*/
+private int gridWidth(int contentWidth, int requested) @safe pure nothrow @nogc
+    => requested > contentWidth ? requested : contentWidth;
+
 private int previewWidth(int override_ = 0) @system
 {
     import sparkles.base.term_caps : terminalSize, StdStream;
