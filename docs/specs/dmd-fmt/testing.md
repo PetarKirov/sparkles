@@ -280,7 +280,7 @@ which is the map users navigate before the per-area pages.
 A failing case prints three panes — **the expectation, what the formatter produced, then the diff
 between them** — each in its own titled box (`sparkles:ui`'s `drawBox`), laid out in three columns
 when the terminal is wide enough, expectation-and-actual side by side with the diff beneath when
-only two fit, and stacked when not even that. Two columns puts the *diff* below rather than
+only two fit, and stacked when not even that. Two columns puts the _diff_ below rather than
 dropping a pane: it is the one that answers "what changed", so it earns the full width when width
 is short. Columns matter more here than in most reports — the panes are near-identical D sources
 differing by a few columns of indentation, and a difference you have to scroll between is a
@@ -307,18 +307,28 @@ own repository ships a syntax-highlighting viewer and a diff view; a formatting 
 the thing they are good at, and reading one as an undifferentiated wall of text is a self-inflicted
 wound.
 
-Five hue flags make it usable as a *pane* rather than as a page:
+Five hue flags make it usable as a _pane_ rather than as a page:
 
-| Flag | Why |
-| --- | --- |
-| `--diff-show-formatting` | A formatter's diff is nearly always whitespace-only, and hue folds such a hunk to a one-line badge — right for review, where nobody wants to read re-indentation, and wrong here, where the whitespace *is* the subject. A one-shot render has no keystroke to expand the fold with. |
-| `--no-diff-chrome` | The file header, the `@@` bands and the `⋯ N unchanged lines` trailers name a file and a region the box's own title already names, in a report where both sides are two temporary files. |
-| `--no-line-numbers` | Same: the gutter numbers lines of a scratch file. |
-| `--width` | A pipe has no size to ask for, so hue would otherwise lay out at its 80-column fallback no matter how wide the pane it is going into is. |
-| `--diff-context=<lines>` | Passed the file's own line count, so the diff pane spans exactly what the other two panes span. hue's default window is three lines, and with the bands suppressed a truncated pane is indistinguishable from a complete one — the reason this flag is not optional here. |
+| Flag                     | Why                                                                                                                                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--diff-show-formatting` | A formatter's diff is nearly always whitespace-only, and hue folds such a hunk to a one-line badge — right for review, where nobody wants to read re-indentation, and wrong here, where the whitespace _is_ the subject. A one-shot render has no keystroke to expand the fold with. |
+| `--no-diff-chrome`       | The file header, the `@@` bands and the `⋯ N unchanged lines` trailers name a file and a region the box's own title already names, in a report where both sides are two temporary files.                                                                                             |
+| `--no-line-numbers`      | Same: the gutter numbers lines of a scratch file.                                                                                                                                                                                                                                    |
+| `--width`                | A pipe has no size to ask for, so hue would otherwise lay out at its 80-column fallback no matter how wide the pane it is going into is.                                                                                                                                             |
+| `--diff-context=<lines>` | Passed the file's own line count, so the diff pane spans exactly what the other two panes span. hue's default window is three lines, and with the bands suppressed a truncated pane is indistinguishable from a complete one — the reason this flag is not optional here.            |
 
-`--background=no-background` rounds it out — the pane sits inside the report's own frame, and a
-theme's page background painted behind it would fight the terminal's.
+All three panes render at `--background=full` — every cell painted, the theme's page colour behind
+the rest. That became the right answer once the panes were _framed_: a box gives the block an edge,
+so a filled interior reads as an editor pane, where unframed the same fill had nothing to stop it
+and no shape to be.
+
+Mind that flag. A diff's row tints and its delta-style intra-line emphasis _are_ backgrounds — four
+of them: added row, removed row, added emphasis, removed emphasis. They are span backgrounds, so
+they survive `full` and `spans` alike (the tint counts are identical either way), but
+`no-background` means `BgEmit.none`, foreground only, and erases them outright. That is how the
+diff pane first shipped monochrome, distinguishable from the code panes only by its `-`/`+`
+markers. `spans` is the third option: it paints what a span asked for and nothing else, which
+suits a diff but leaves a code pane with the page colour on its indentation and nowhere else.
 
 Everything degrades in one step: no `hue`, no colour, an older `hue` that rejects one of the flags,
 or any error invoking it falls back to plain text with a unified diff computed by the same
