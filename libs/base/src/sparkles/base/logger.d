@@ -319,13 +319,15 @@ LogDelta takeLogDelta() @safe nothrow @nogc
 /// `Δt 33.6s | Δtᵢ 30.0s` — the same padded durations the log prefix uses.
 void writeLogDelta(Writer)(ref Writer w, in LogDelta d)
 {
-    import sparkles.base.text.writers : writeDurationPadded;
     import std.range.primitives : put;
 
+    import sparkles.base.text.width : Align;
+    import sparkles.base.text.writers : writeDurationPadded;
+
     put(w, "Δt ");
-    writeDurationPadded(w, d.sinceStart, 5);
+    writeDurationPadded(w, d.sinceStart, 5, Align.right);
     put(w, " | Δtᵢ ");
-    writeDurationPadded(w, d.sincePrev, 5);
+    writeDurationPadded(w, d.sincePrev, 5, Align.right);
 }
 
 /**
@@ -737,13 +739,14 @@ void writeLogPrefix(bool colored = false, Writer)(
     import sparkles.base.smallbuffer : SmallBuffer;
     import sparkles.base.styled_template : writeStyled;
     import sparkles.base.term_color : ColorDepth;
+    import sparkles.base.text.width : Align;
     import sparkles.base.text.writers : writeDurationPadded;
 
     enum depth = colored ? ColorDepth.trueColor : ColorDepth.none;
     SmallBuffer!(char, 16) startBuf;
-    writeDurationPadded(startBuf, sinceStart, 5);
+    writeDurationPadded(startBuf, sinceStart, 5, Align.right);
     SmallBuffer!(char, 16) prevBuf;
-    writeDurationPadded(prevBuf, sincePrev, 5);
+    writeDurationPadded(prevBuf, sincePrev, 5, Align.right);
     auto loc = baseNameSlice(file);
 
     writeStyled(w, depth, i"{gray [ $(timeStr)} | Δt {yellow $(startBuf[])} | Δtᵢ {yellow $(prevBuf[])} | ");
