@@ -163,6 +163,11 @@ struct Appearance
     @Range(0, 400, 1)
     int width = 0;
 
+    @Doc("Minimum rows a one-shot (--ansi/--html) render fills; 0 uses the content's height.")
+    @Label("render height")
+    @Range(0, 400, 1)
+    int height = 0;
+
     Fonts fonts;
     Window window;
 }

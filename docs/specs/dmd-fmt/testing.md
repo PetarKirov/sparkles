@@ -288,6 +288,14 @@ second-most after a ragged frame. Equal widths also make expectation and actual 
 character-for-character, so a change of _length_ shows as one box's text running past where the
 other's stopped.
 
+**Equal height too**, for the pair that shares a row: the taller of expectation and actual sets it
+and the shorter is padded, so both boxes close on the same line. The pair is read as one picture,
+and two bottom borders at different heights leave the eye resolving which one it just crossed. The
+padding comes from `hue --height`, so those rows are painted like the rest — padding the box
+ourselves would leave a blank strip inside a filled pane. The diff box is excluded: it is under
+them, not beside them, and stretching it to match would only add empty rows to the pane that
+already says the most.
+
 **Two columns, never three.** Expectation and actual go side by side, because they are the pair
 being compared; the diff goes underneath at the same width. The diff is a different kind of thing —
 it is _about_ the pair rather than a member of it — and reading it wants the eye moving down a

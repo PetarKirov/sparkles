@@ -1304,8 +1304,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             auto tree = viewMarkdown(doc.preview.doc, mopt);
             auto frames = layout(tree, Constraints(maxW: previewWidth(opt.width)));
             const r = frames[tree.root].rect;
-            auto grid = CellGrid(gridWidth(r.width, opt.width), r.height,
-                pageFg, pageBg);
+            auto grid = CellGrid(gridWidth(r.width, opt.width),
+                gridHeight(r.height, opt.height), pageFg, pageBg);
             paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
                 pageFg, pageBg));
             grid.writeAnsi(output, depth,
@@ -1373,8 +1373,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 // not fit a long line — it CLIPS it, losing the tail silently.
                 auto frames = layout(tree, Constraints());
                 const r = frames[tree.root].rect;
-                auto grid = CellGrid(gridWidth(r.width, opt.width), r.height,
-                pageFg, pageBg);
+                auto grid = CellGrid(gridWidth(r.width, opt.width),
+                gridHeight(r.height, opt.height), pageFg, pageBg);
                 paint(grid, buildDisplayList(tree, frames,
                     defaultTwoslashPalette(), pageFg, pageBg));
                 grid.writeAnsi(output, depth,
@@ -1410,8 +1410,8 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                 doc.diffSession, null, previewWidth(opt.width));
             auto frames = layout(tree, Constraints(maxW: previewWidth(opt.width)));
             const r = frames[tree.root].rect;
-            auto grid = CellGrid(gridWidth(r.width, opt.width), r.height,
-                pageFg, pageBg);
+            auto grid = CellGrid(gridWidth(r.width, opt.width),
+                gridHeight(r.height, opt.height), pageFg, pageBg);
             paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
                 pageFg, pageBg));
             grid.writeAnsi(output, depth,
@@ -2029,6 +2029,12 @@ gains no trailing spaces.
 */
 private int gridWidth(int contentWidth, int requested) @safe pure nothrow @nogc
     => requested > contentWidth ? requested : contentWidth;
+
+/// ditto, down the page. `--height` exists for the same reason `--width`
+/// does: an embedder placing two renders side by side needs them the same
+/// size, and padding them itself would leave the added rows unpainted.
+private int gridHeight(int contentHeight, int requested) @safe pure nothrow @nogc
+    => requested > contentHeight ? requested : contentHeight;
 
 private int previewWidth(int override_ = 0) @system
 {

@@ -105,14 +105,14 @@ hue diff old.d new.d --no-diff-chrome --width 40        # bare rows, at a fixed 
 - `--diff-ignore-whitespace <exact|trailing|change|all>`: Whitespace sensitivity mode.
 - `--diff-show-formatting`: Show whitespace-only hunks in full instead of folding them to a
   badge. The fold is right for review — a reviewer scanning a PR does not want to read
-  re-indentation — but wrong when the whitespace *is* the subject, as when diffing a
+  re-indentation — but wrong when the whitespace _is_ the subject, as when diffing a
   formatter's output, and a one-shot `--ansi` render has no keystroke to expand it with.
 - `--diff-context <n>`: Unchanged lines kept around each hunk (default 3). Pair it with
   `--no-diff-chrome`, whose suppressed bands would otherwise be the only sign that anything was
   elided.
 - `--no-diff-chrome`: Drop the file header, the `@@` hunk bands and the `⋯ N unchanged lines`
   trailers, leaving only the rows. For an embedder whose own frame already says which file and
-  which region it is showing — pair it with `--no-line-numbers`. An *expanded* context region is
+  which region it is showing — pair it with `--no-line-numbers`. An _expanded_ context region is
   content, not chrome, and stays.
 
 Two options apply to any one-shot render, not just diffs:
@@ -120,6 +120,9 @@ Two options apply to any one-shot render, not just diffs:
 - `--width <n>`: Lay out in this many columns instead of asking the terminal. A pipe has no size
   to report, so without this a redirected render falls back to 80 columns however wide the pane
   receiving it is.
+- `--height <n>`: Fill at least this many rows, padding shorter content. The padding is painted
+  like the rest of the render, which is what an embedder placing two renders side by side needs —
+  padding them itself would leave the added rows blank inside an otherwise filled pane.
 - `--background <no-background|spans|full>`: How the theme's background paints. `no-background`
   leaves the terminal's own background showing, which is what a pane composed into someone else's
   frame wants.
