@@ -253,14 +253,17 @@ struct MdTableExtras
     /// `TableProps.columnMaxWidths` filled for every column; over-cap
     /// content wraps (`DSG4`).
     size_t columnMaxWidth;
-    /// Per-column content-width floor in cells (`TableProps.columnMinWidths`);
-    /// a `0` entry or a column past the array leaves that column at its
-    /// natural width. The geometry-stability channel: a host that renders
-    /// only a WINDOW of a long table (hue's viewport-culled DSV grid,
-    /// `DSN4`) pins the widths it measured over the whole sample here, so
-    /// the columns do not re-fit — and the grid does not jitter — as the
-    /// window scrolls over rows of differing width (`DSN3`).
-    const(size_t)[] columnMinWidths;
+    /// EXACT per-column content widths in cells — the same array feeds
+    /// `TableProps.columnMinWidths` and `columnMaxWidths`, so the column
+    /// can neither shrink to its content nor grow past it. The
+    /// geometry-stability channel: a host that renders only a WINDOW of a
+    /// long table (hue's viewport-culled DSV grid, `DSN4`) pins the widths
+    /// it measured over its sample here, so the grid keeps ONE geometry as
+    /// the window scrolls over rows of differing width (`DSN3`). A floor
+    /// alone would not do it — a row wider than the sample still widens a
+    /// column, which is the table visibly resizing under the reader. A `0`
+    /// entry or a column past the array is left to fit its content.
+    const(size_t)[] columnWidths;
     /// `TableViewportSpec.virtualLines`/`virtualOffset` (`DSN4`): the extent
     /// of the view this table is a WINDOW onto, and where the window sits in
     /// it. 0 = the table carries its own rows and its bar describes them.
@@ -1635,16 +1638,25 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 caps[] = opt.tableExtras.columnMaxWidth;
                 props.columnMaxWidths = caps;
             }
-            if (opt.tableExtras.columnMinWidths.length)
+            if (opt.tableExtras.columnWidths.length)
             {
-                // Pinned geometry (`DSN3`): the floors the host measured over
-                // its own sample, so a windowed table keeps one width per
-                // column no matter which rows are materialized.
-                auto floors = new size_t[](cols);
-                const given = opt.tableExtras.columnMinWidths;
+                // Pinned geometry (`DSN3`): both bounds from one array, so a
+                // windowed table keeps exactly one width per column however
+                // wide the rows it happens to be showing are.
+                auto pinned = new size_t[](cols);
+                auto capped = new size_t[](cols);
+                const given = opt.tableExtras.columnWidths;
                 foreach (i; 0 .. cols)
-                    floors[i] = i < given.length ? given[i] : 0;
-                props.columnMinWidths = floors;
+                {
+                    pinned[i] = i < given.length ? given[i] : 0;
+                    // A pinned column keeps its own cap; an unpinned one
+                    // keeps whatever the uniform cap said.
+                    capped[i] = pinned[i] != 0 ? pinned[i]
+                        : (props.columnMaxWidths.length > i
+                            ? props.columnMaxWidths[i] : 0);
+                }
+                props.columnMinWidths = pinned;
+                props.columnMaxWidths = capped;
             }
 
             // `TBL7`/`TBL8`: the overflow policy. The available box is

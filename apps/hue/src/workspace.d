@@ -1056,8 +1056,15 @@ struct WorkspaceTui
         ev[0] = HighlightEvent.sourceSpan(0, adapted.text.length);
         const fmt = viewer.tableFmt;
         const path = viewer.vm.docPath;
-        viewer.setDocument(viewer.vm.title, adapted.text, ev, pm,
-            startPreview: true);
+        // `DSN4`: a SCROLL re-materializes the window — same document, same
+        // view, different rows — so it must not take the document-swap path,
+        // which drops the scrollbar's drag machine mid-drag. A projection
+        // edit (sort, filter, columns) IS a new view and keeps that path.
+        if (firstRow != uint.max)
+            viewer.vm.remateralizeWindow(adapted.text, ev, pm);
+        else
+            viewer.setDocument(viewer.vm.title, adapted.text, ev, pm,
+                startPreview: true);
         viewer.vm.docPath = path;
         const chrome = dsvBrowser.chromeNote;
         viewer.docNote = dsvStatusNote(adapted.info)

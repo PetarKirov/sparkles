@@ -647,6 +647,40 @@ struct ViewerModel
     }
 
     /**
+    `DSN4`: re-materializes a WINDOWED document's content — new rows for the
+    same document, at the same place in the same view.
+
+    A scroll is not a document swap and must not read as one. `setDocument`
+    and `swapContent` both drop everything keyed by an element identity,
+    including the scrollbar's drag machine — which is fatal here, because
+    the drag is what asked for the new rows: the first delta wiped the
+    machine that was tracking the pointer, and the bar lost capture after
+    one step. The projection, the viewport, the drag and the selection all
+    describe the VIEW, and the view did not change; only the slice of it
+    that is built did.
+    */
+    void remateralizeWindow(const(char)[] source_,
+        const(HighlightEvent)[] events_, PreviewModel preview_)
+    {
+        source = source_;
+        events = events_;
+        preview = preview_;
+        srcTotal = lineCount(source);
+        lineStarts = buildLineStarts(source);
+        // Offsets into the outgoing buffer name cells that are no longer
+        // built, so the copy-flash anchors go; the search rects recompute
+        // from `derive`. Everything else — `barSv`, `tableScrollAt`, the
+        // folds, the view mode — belongs to the view and stays.
+        matches = null;
+        matchRects = null;
+        curMatch = 0;
+        copiedFenceSrc = size_t.max;
+        copiedTableSrc = size_t.max;
+        rows = null;
+        rebuild();
+    }
+
+    /**
     Ensures the retained parse matches the current document. Lazy: the parse
     runs on first use (a fold rebuild, the inspector opening), not in
     `setDocument` — many documents never need a tree. A failed parse is
@@ -2861,6 +2895,57 @@ terminal gets the destinations it needs to make the text clickable.
     vm.tableOverflow = OverflowPolicy(WrapOverflow());
     vm.rebuild();
     assert(!vm.setTableScroll(0, 5, 0));
+}
+
+@("viewer_model.remateralizeWindow.keepsTheDragThatAskedForIt")
+@system unittest
+{
+    import sparkles.syntax : MdDoc, MdInline, MdInlineKind;
+
+    // `DSN4`: the scrollbar drag is what asks a windowed grid for new rows,
+    // so re-materializing must not clear the machine tracking the pointer.
+    // Through `setDocument` it did: the first delta wiped `barSv`, and the
+    // bar lost capture after one step.
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 30;
+    vm.applyTheme(0);
+
+    string src;
+    foreach (_; 0 .. 25)
+        src ~= "a";
+    foreach (_; 0 .. 25)
+        src ~= "b";
+    static MdBlock tcell(size_t s, size_t e)
+        => MdBlock(kind: MdBlockKind.tableCell, span: Span(s, e),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(s, e))]);
+    auto trow = MdBlock(kind: MdBlockKind.tableRow, span: Span(0, 50),
+        children: [tcell(0, 25), tcell(25, 50)]);
+    auto md = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.table, span: Span(0, 50),
+            children: [trow, trow]),
+    ]), src);
+    auto preview = PreviewModel(present: true, doc: md);
+    vm.setDocument("grid.csv", "", src, null, preview,
+        TwoslashReturn.init, "markdown");
+
+    // A drag in progress: the bar's machine is live and names its owner.
+    cast(void) vm.activateBar(7);
+    assert(vm.barSvActive == 7, "precondition: a bar drag is being tracked");
+    // And a viewport the grid is scrolled to.
+    assert(vm.setTableScroll(0, 3, 0));
+
+    // Re-materializing the window keeps both: the view did not change, only
+    // the slice of it that is built.
+    vm.remateralizeWindow(src, null, preview);
+    assert(vm.barSvActive == 7, "the drag survives a re-materialization");
+    assert(vm.tableScrollAt[0].x == 3, "and so does the viewport");
+
+    // A real document swap still resets them — that IS a new view.
+    vm.setDocument("other.csv", "", src, null, preview,
+        TwoslashReturn.init, "markdown");
+    assert(vm.barSvActive == size_t.max);
 }
 
 @("viewer_model.diffCursorPatch.stagesTheHunkInViewOrNothing")

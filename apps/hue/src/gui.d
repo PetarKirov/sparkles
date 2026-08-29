@@ -865,10 +865,15 @@ int runGui(GuiArgs guiArgs) @system
         const fmt = cm.tableFmt;
         const path = vm.docPath;
         const chrome = dsvBrowser.chromeNote;
-        vm.setDocument(vm.title,
-            dsvStatusNote(adapted.info)
-                ~ (chrome.length ? " · " ~ chrome : ""),
-            adapted.text, ev, pm, TwoslashReturn.init);
+        // `DSN4`: see the workspace — a scroll re-materializes, it does not
+        // swap the document (which would drop the bar's drag machine).
+        if (firstRow != uint.max)
+            vm.remateralizeWindow(adapted.text, ev, pm);
+        else
+            vm.setDocument(vm.title,
+                dsvStatusNote(adapted.info)
+                    ~ (chrome.length ? " · " ~ chrome : ""),
+                adapted.text, ev, pm, TwoslashReturn.init);
         vm.docPath = path;
         dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
         cm.tableFmt = fmt;
@@ -3256,6 +3261,14 @@ int runGui(GuiArgs guiArgs) @system
                         else if (dy != 0 && fb != size_t.max)
                             nested = vm.scrollFenceV(fb, dy);
                         if (nested)
+                            return;
+                        // `DSN4`: a grid owning the vertical axis owns every
+                        // notch in the pane — `tableAtRow` answers by source
+                        // identity, and a cell border carries none, so a
+                        // notch over a rule row would otherwise find no
+                        // table and fall through to a scroll the windowed
+                        // document cannot perform.
+                        if (dy != 0 && gridOwnsVertical() && scrollGridV(dy))
                             return;
                         // A table under the pointer scrolls to its edge
                         // before the document (the COD6 rule, for TBL7/8).
