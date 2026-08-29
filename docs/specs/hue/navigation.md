@@ -23,7 +23,7 @@ document, or opening another — and remembers where you were. Two axes:
 
 - **Intra-document** — the target is in the file already open: a markdown anchor
   (`#slug`), or a same-file go-to-definition. Resolves to a **scroll** (reusing
-  [`gui.md` `NAV2`/goto](./gui.md)), auto-expanding enclosing
+  [`viewer.md` `NAV2`/goto](./viewer.md)), auto-expanding enclosing
   [folds](./folding.md) (`FLD6`).
 - **Inter-document** — the target is another local file: a relative markdown link,
   an import/module path, a relative path (e.g. Nix `./default.nix`), a doc-comment
@@ -39,7 +39,7 @@ the raw and preview views.
 | ID   | Requirement                                                                                                                                                                                                                                                                                                                                         | Status      | Traces to                                           |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
 | LNK1 | hue must detect **navigable references** (via `REF` providers) and let the user **activate** one to jump — intra-document (scroll) or inter-document (open another local file).                                                                                                                                                                     | not started | proposed navigation layer                           |
-| LNK2 | An **intra-document** jump must scroll the current view to the target span (reusing [`NAV2`/goto](./gui.md)) and auto-expand any enclosing [folds](./folding.md) (`FLD6`).                                                                                                                                                                          | not started | `NAV2`; `FLD6`                                      |
+| LNK2 | An **intra-document** jump must scroll the current view to the target span (reusing [`NAV2`/goto](./viewer.md)) and auto-expand any enclosing [folds](./folding.md) (`FLD6`).                                                                                                                                                                       | not started | `NAV2`; `FLD6`                                      |
 | LNK3 | An **inter-document** jump must **open the target file** in the viewer (read → highlight → layout), optionally scrolling to a target anchor / line / byte span within it.                                                                                                                                                                           | not started | pipeline re-entry (`app.main`)                      |
 | LNK4 | A **navigation history stack** (back/forward) must record jumps so the user can return; bound to keys and to mouse back/forward buttons.                                                                                                                                                                                                            | not started | proposed nav stack                                  |
 | LNK5 | **Activation:** a navigable span must respond to a mouse click (GUI/TUI SGR mouse) and to a key on the span under the cursor — Enter to follow, `gd` go-to-definition, `gf` go-to-file.                                                                                                                                                             | not started | `gui.d`/`previewer.d` input; [`TIN`](./tui.md)      |
@@ -83,7 +83,7 @@ Each provider finds navigable spans of one kind and resolves their targets.
 
 | Piece                                                        | Role in navigation                                      |
 | ------------------------------------------------------------ | ------------------------------------------------------- |
-| [gui.md](./gui.md) `NAV2`/`FND`                              | the scroll/goto primitive an intra-document jump reuses |
+| [viewer.md](./viewer.md) `NAV2`/`FND`                        | the scroll/goto primitive an intra-document jump reuses |
 | [folding.md](./folding.md) `FLD6`                            | auto-expand folds around a jump target                  |
 | [twoslash.md](./twoslash.md) `DMD*` (`findDefinition`)       | the semantic source for `REF6` go-to-definition         |
 | [tree-view.md](./tree-view.md) `TVU3` (file outline)         | symbol navigation companion (jump-to-symbol)            |

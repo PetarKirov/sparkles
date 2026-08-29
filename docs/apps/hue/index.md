@@ -260,7 +260,7 @@ Hover over dotted-underline tokens to inspect type popups:
 
 - [Hue Architecture & Feature Spec](../../specs/hue/)
 - [Diff View & Structural Diffing Spec](../../specs/hue/diff-view.md)
-- [GUI & Markdown Preview Spec](../../specs/hue/gui.md)
+- [Viewer Spec](../../specs/hue/viewer.md) · [GUI backend](../../specs/hue/gui.md)
 - [Configuration Layering Spec](../../specs/hue/config.md)
 - [Twoslash Overlay Spec](../../specs/hue/twoslash.md)
 - [Open Issues & Known Limitations](../../specs/hue/open-issues.md)

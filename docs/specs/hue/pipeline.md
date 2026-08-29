@@ -65,7 +65,17 @@ concerns compose (ordered, dependency-aware) rather than accrete as ad-hoc passe
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- | ---------------------------------------------------- |
 | CMP1 | Compiling must be **pluggable per target** — ANSI, HTML, GUI (raylib), TUI (cells) — each a compiler consuming the transformed model; adding a backend adds a compiler, not touching parse/transform.                    | partial                | `renderAnsi`/`renderHtml`; GUI/TUI painters (`ENG3`) |
 | CMP2 | Per-construct **render rules** must be overridable/extensible by plugins (the markdown-it renderer-rules / unified handlers pattern) — e.g. how a callout, a media block, or a twoslash popup renders in a given target. | researched/not-started | proposed render-rule registry                        |
-| CMP3 | Every compiler must satisfy the **totality law** — an unknown construct degrades to a plain rendering, never a crash ([`gui.md` `RND5`](./gui.md)).                                                                      | full (`74d8f6a3`)      | `RND5`/`ENG4` (existing renderers)                   |
+| CMP3 | Every compiler must satisfy the **totality law** — an unknown construct degrades to a plain rendering, never a crash ([`viewer.md` `RND5`](./viewer.md)).                                                                | full (`74d8f6a3`)      | `RND5`/`ENG4` (existing renderers)                   |
+
+## Semantic refinement (`SEM`)
+
+Moved from `gui.md`: semantic-token refinement is a **pipeline** stage, not a
+GUI one — `tui.md` already called it "backend-agnostic", and
+[`dmd-lsp`](../dmd-lsp/feature-requirements.md) cites it from the producer side.
+
+| ID   | Requirement                                                                                                                                                                                                 | Status                 | Traces to                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------ |
+| SEM1 | The tree-sitter base highlighting may be refined with semantic kinds (member vs local, `@safe` call, …) from `sparkles:dmd-lsp`'s `identifierTypes` — the semantic-tokens overlay the syntax spec reserves. | researched/not-started | issue #121 M6; issue #120 §5 (bonus) |
 
 ## Milestones
 

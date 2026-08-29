@@ -72,7 +72,7 @@ have a close button) and consuming the shared component.
 | [ui-architecture.md](./ui-architecture.md) `WGT`/`STM`/`LAY` | the widget/state/layout levels this component instantiates  |
 | [tree-view.md](./tree-view.md)                               | sibling `sparkles:ui` widget (same pattern)                 |
 | [navigation.md](./navigation.md) `LNK3`                      | opening files feeds the open-files tabs (`TBU1`)            |
-| [gui.md](./gui.md) `COD`; `sparkles:syntax` `MdDoc`          | code-block rendering + the code-group parse (`TBU2`)        |
+| [viewer.md](./viewer.md) `COD`; `sparkles:syntax` `MdDoc`    | code-block rendering + the code-group parse (`TBU2`)        |
 | [media.md](./media.md) `MDB1`                                | the "block reserving rows in the preview" analog for `TBU2` |
 
 → [UI architecture](./ui-architecture.md) · [Tree / DAG view](./tree-view.md) · [Navigation](./navigation.md) · [Overview](./index.md)
