@@ -495,7 +495,7 @@ string renderFailure(const CaseResult r, string artifacts = artifactDir)
     // width it has to fill.
     const plan = planLayout(panes[], width);
     Pane[3] styled;
-    if (art.written && huePanes(art, plan.inner, styled))
+    if (art.written && huePanes(art, plan, styled))
     {
         foreach (i, ref p; styled)
             p.footer = panes[i].footer;
@@ -654,6 +654,7 @@ private struct Layout
     size_t columns;   /// 2 panes on the first row, or 1 (everything stacked).
     bool footers;     /// Paths in the bottom borders, or on their own lines.
     size_t boxWidth;  /// Total width of every box, frame included.
+    size_t pairRows;  /// Content rows in each of the two side-by-side boxes.
 
     /// What a pane has to fill for `--background=full` to reach the frame
     /// instead of stopping where the text happens to end. `drawBox` frames a
@@ -703,11 +704,40 @@ private Layout planLayout(const Pane[] panes, size_t width) @system
         Layout plan;
         plan.footers = footers;
         plan.boxWidth = uniformWidth(boxesFor(panes, footers, 0));
+        plan.pairRows = pairHeight(panes);
         plan.columns = 2 * plan.boxWidth + paneGap <= width ? 2 : 1;
         if (best.boxWidth == 0 || plan.columns > best.columns)
             best = plan;
     }
     return best;
+}
+
+/**
+Content rows in each of the two boxes that share a row.
+
+Equal *height*, for the same reason as equal width: the pair is read as one
+picture, and a short expectation next to a long actual leaves the eye
+resolving which of two bottom borders it just crossed. The taller one sets it;
+the shorter is padded (by hue, so the padding is painted like the rest, or
+with blank lines on the plain path).
+
+The diff box is excluded — it is under them, not beside them, and stretching
+it to match would only add empty rows to the pane that already says the most.
+*/
+private size_t pairHeight(const Pane[] panes) @safe
+{
+    import std.algorithm : max;
+    import std.string : lineSplitter;
+
+    size_t rows;
+    foreach (p; panes[0 .. panes.length < 2 ? panes.length : 2])
+    {
+        size_t n;
+        foreach (_; p.body_.lineSplitter)
+            ++n;
+        rows = max(rows, n);
+    }
+    return rows;
 }
 
 /// The width every box is drawn at: the widest one's, so none is padded to a
@@ -729,9 +759,34 @@ private string composePanes(const Pane[] panes, size_t width) @system
 
 private string render(const Pane[] panes, in Layout plan) @system
 {
-    const boxes = boxesFor(panes, plan.footers, plan.boxWidth);
+    auto padded = panes.dup;
+    if (plan.columns >= 2)
+        foreach (i; 0 .. padded.length < 2 ? padded.length : 2)
+            padded[i].body_ = padTo(padded[i].body_, plan.pairRows);
+    const boxes = boxesFor(padded, plan.footers, plan.boxWidth);
     return assemble(boxes, plan.columns)
         ~ (plan.footers ? "" : pathLines(panes));
+}
+
+/// `body_` with blank lines appended until it has `rows` of them. The
+/// hue-rendered panes come back already padded (`--height`), so this is the
+/// plain path's half of the same rule.
+private string padTo(string body_, size_t rows) @safe
+{
+    import std.string : lineSplitter;
+
+    size_t have;
+    foreach (_; body_.lineSplitter)
+        ++have;
+    if (have >= rows)
+        return body_;
+    auto out_ = appender!string;
+    out_ ~= body_;
+    if (body_.length && body_[$ - 1] != '\n')
+        out_ ~= '\n';
+    foreach (_; have .. rows)
+        out_ ~= '\n';
+    return out_[];
 }
 
 /// The panes as boxes, every one `minWidth` wide (0 = each its own natural
@@ -824,7 +879,8 @@ private enum paneBackground = "full";
 /// The files are the ones [writeArtifacts] already wrote — hue reads the same
 /// bytes the reader can open afterwards, so the panes and the artifacts cannot
 /// disagree.
-private bool huePanes(in Artifacts art, size_t inner, out Pane[3] out_) @system
+private bool huePanes(in Artifacts art, in Layout plan, out Pane[3] out_)
+    @system
 {
     import std.algorithm : count, max;
     import std.process : execute;
@@ -834,23 +890,30 @@ private bool huePanes(in Artifacts art, size_t inner, out Pane[3] out_) @system
 
     try
     {
-        string run(size_t paneWidth, string[] argv)
+        string run(size_t rows, string[] argv)
         {
-            const res = execute(["hue", "--background=" ~ paneBackground,
-                "--width=" ~ paneWidth.to!string] ~ argv);
+            auto cmd = ["hue", "--background=" ~ paneBackground,
+                "--width=" ~ plan.inner.to!string];
+            // `--height` only for the pair that shares a row: hue pads to it,
+            // so the added rows are painted like the rest instead of the
+            // blank strip padding the box ourselves would leave.
+            if (rows)
+                cmd ~= "--height=" ~ rows.to!string;
+            const res = execute(cmd ~ argv);
             return res.status == 0 ? res.output.stripRight("\n") : null;
         }
 
-        const expected = run(inner, ["view", "--ansi",
+        const pairRows = plan.columns >= 2 ? plan.pairRows : 0;
+        const expected = run(pairRows, ["view", "--ansi",
             "--no-line-numbers", art.expectedPath]);
-        const actual = run(inner, ["view", "--ansi",
+        const actual = run(pairRows, ["view", "--ansi",
             "--no-line-numbers", art.actualPath]);
         // Enough context to reach both ends of the file. hue's default window
         // is three lines, and with the elision bands suppressed a truncated
         // pane would be indistinguishable from a complete one — the diff must
         // show the same region the other two panes do.
         const lines = max(expected.count('\n'), actual.count('\n')) + 2;
-        const diff = run(inner, ["diff", "--ansi",
+        const diff = run(0, ["diff", "--ansi",
             "--diff-show-formatting",
             "--no-diff-chrome", "--no-line-numbers",
             "--diff-context=" ~ lines.to!string,
@@ -1092,6 +1155,33 @@ private bool hueUsable() @safe
     foreach (report; [wide, narrow])
         foreach (p; panes)
             assert(report.canFind(p.title), report);
+}
+
+@("cases.report.paired-boxes-are-the-same-height")
+@system unittest
+{
+    import std.algorithm : count;
+    import std.string : lineSplitter;
+
+    // Actual is four lines, expected one.
+    const panes = [
+        Pane("expected", "int a;\n", null),
+        Pane("actual", "int  a;\nint b;\nint c;\nint d;\n", null),
+        Pane("diff", "- int a;\n+ int  a;\n", null),
+    ];
+
+    const report = composePanes(panes, 200);
+    // Two side by side and one below: three top borders, three bottom ones,
+    // and the pair's bottoms share a line, so five lines carry a corner.
+    size_t tops, bottoms;
+    foreach (line; report.lineSplitter)
+    {
+        tops += line.canFind("╭") ? 1 : 0;
+        bottoms += line.canFind("╰") ? 1 : 0;
+    }
+    assert(tops == 2, report);       // pair on one line, diff on its own
+    assert(bottoms == 2, report);    // the pair closes together
+    assert(report.canFind("╰") && report.count("╰") == 3, report);
 }
 
 @("cases.artifacts.both-sides-land-on-disk")

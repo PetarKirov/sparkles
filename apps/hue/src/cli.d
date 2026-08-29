@@ -159,6 +159,7 @@ struct ViewRenderOptions
     string theme;
     string background = "full";
     int width;
+    int height;
     bool groupThemes = true;
     int treeWidth = 32;
     int tabWidth = 4;
@@ -556,6 +557,9 @@ struct HueCli
     @(Option("width", description: "Columns a one-shot (--ansi/--html) render lays out in (default: the terminal's, capped at 120)."))
     int width;
 
+    @(Option("height", description: "Minimum rows a one-shot (--ansi/--html) render fills; shorter content is padded (default: the content's own height)."))
+    int height;
+
     @Flatten("Overlay Options")
     OverlayOptions overlay;
 
@@ -777,6 +781,8 @@ Sparse!HueConfig cliOverlay(in CommandNode!HueCli root)
         o.appearance.background = parseBackgroundMode(root.value.background);
     if ("width" in rs)
         o.appearance.width = root.value.width;
+    if ("height" in rs)
+        o.appearance.height = root.value.height;
     if ("gui.font" in rs)
         o.appearance.fonts.family = root.value.gui.font;
     if ("gui.fontSize" in rs)
@@ -987,6 +993,7 @@ ViewRenderOptions viewRenderOptionsOf(const HueConfig eff) @safe
     opt.background = cliText(eff.appearance.background);
     opt.groupThemes = eff.appearance.groupThemes;
     opt.width = eff.appearance.width;
+    opt.height = eff.appearance.height;
     opt.treeWidth = eff.panes.tree.width;
     opt.tabWidth = eff.panes.viewer.tabWidth;
     opt.listWhitespace = eff.panes.viewer.listWhitespace;
