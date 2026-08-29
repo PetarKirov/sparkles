@@ -19,6 +19,7 @@ import std.path : dirName;
 import format_preview : formatPreviewPump, formatPreviewRulerDragging,
     formatPreviewStart;
 
+import sparkles.source_view.search : SearchPolicy;
 import sparkles.base.logger : warning;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.unique : makeUnique;
@@ -530,6 +531,10 @@ struct WorkspaceTui
         tree.lanternDelay = delay;
         viewer.lanternPlacement = l.placement;
         viewer.vm.hScrollStep = cfg.resolved.scroll.hScrollStep;
+        // One policy value, handed to whichever canvas is painting (`UIA13`).
+        viewer.vm.searchPolicy = SearchPolicy(
+            smartCase: cfg.resolved.search.smartCase,
+            unicodeCaseFold: cfg.resolved.search.unicodeCaseFold);
         if (!picker.empty)
             picker.get.stepBudget = cfg.resolved.picker.stepBudgetMs.msecs;
         if (pickerDoc !is null)
@@ -3735,4 +3740,72 @@ unittest
     assert(w.viewer.selection.active);
     assert(w.viewer.selection.lo == 2, "selection starts at line 3 (row 2)");
     assert(w.viewer.selection.hi == 4, "selection ends at line 5 (row 4)");
+}
+
+@("workspace.searchAgreesAcrossBackends")
+@system
+unittest
+{
+    // `UIA13`: a divergence between the GUI and the TUI is a defect, not a
+    // variation. This test is what makes that enforceable rather than
+    // aspirational.
+    //
+    // The regression it pins shipped. The window matched with
+    // `std.string.indexOf` (case-SENSITIVE); the terminal ran a private ASCII
+    // fold over laid-out rows (case-INSENSITIVE). The same query answered
+    // differently depending on which canvas was painting, and no test could
+    // have caught it because neither spec said they should agree.
+    //
+    // It drives the terminal through `handle` — the real host entry point a
+    // keystroke takes — rather than calling the matcher, because sharing a
+    // function is necessary and NOT sufficient: two hosts can feed one matcher
+    // different inputs, which is exactly how this pane came to search rendered
+    // rows while the window searched source. The window's side runs through
+    // `ViewerModel.search`, its documented entry point, since `gui.d` links
+    // raylib and is excluded from `dub test :hue`.
+    import sparkles.source_view.search : SearchPolicy;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+    import viewer_model : ViewerModel;
+
+    static immutable src = "Foo\nfoo\nFOO bar\n";
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-search-parity");
+    scope (exit) rmdirRecurse(root);
+    const path = buildPath(root, "case.txt");
+    write(path, src);
+    w.openDoc(path);
+    w.viewer.vm.searchPolicy = SearchPolicy.init;
+
+    ViewerModel window;
+    window.setDocument(w.viewer.vm.title, null, src, null,
+        PreviewModel.init, TwoslashReturn.init);
+    window.searchPolicy = SearchPolicy.init;
+
+    void bothSee(string q, size_t want)
+    {
+        // The terminal: `/` then the query, one keystroke at a time, through
+        // the host's own dispatch.
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: '/'))));
+        foreach (char c; q)
+            w.handle(Event(KeyEvent(key: Key.char_, ch: c)));
+
+        // The window: its documented entry point.
+        window.search(q);
+
+        assert(w.viewer.vm.matches.length == want,
+            "the terminal found the wrong number of matches for: " ~ q);
+        assert(w.viewer.vm.matches == window.matches,
+            "the terminal and the window disagreed on: " ~ q);
+
+        w.handle(Event(KeyEvent(key: Key.escape)));
+    }
+
+    // Smart case. Before the unification the window found 1 here, the
+    // terminal 3.
+    bothSee("foo", 3);
+    bothSee("Foo", 1);
+    bothSee("bar", 1);
+    bothSee("zzz", 0);
 }

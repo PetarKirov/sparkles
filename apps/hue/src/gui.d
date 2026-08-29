@@ -13,7 +13,7 @@
 // deliberate COPY of apps/terminal's text-rendering core, authored in the shape
 // the shared sparkles:raylib-text library will own (issue #121 M5) so the
 // extraction is a move, not a redesign. The pure text-layout logic lives in the
-// raylib-free `gui_text` module (unit-tested by `dub test :hue`).
+// raylib-free `sparkles.source_view.search` module.
 module gui;
 
 version (HueGui):
@@ -49,7 +49,7 @@ import sparkles.input.capability : InputCapabilities, mousePointer,
     touchPointer;
 
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
-import gui_text : Match;
+import sparkles.source_view.search : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
 import diff_session : DiffSession;

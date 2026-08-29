@@ -353,6 +353,31 @@ struct LanternSettings
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Search — shared by the in-document search and the picker's content search.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+Matching behaviour, owned by neither consumer.
+
+hue searches in two places — inside the open document (`FND`) and, once the
+grep source lands, across the corpus (`PKS2`) — and after `UIA13` both run the
+same matcher. A setting named after either one would imply the other's
+behaviour is configured elsewhere, which is the category error that let the two
+in-document implementations disagree in the first place.
+*/
+@ConfigSection
+struct SearchSettings
+{
+    @Doc("Smart case: a query containing an uppercase cased character matches case-sensitively; otherwise case folds.")
+    @Label("smart case")
+    bool smartCase = true;
+
+    @Doc("Fold case beyond ASCII. Off by default: a full Unicode fold can change a run's length, and match highlighting is expressed in source byte offsets.")
+    @Label("unicode case fold")
+    bool unicodeCaseFold = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CFG19 — picker.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -560,6 +585,7 @@ struct HueConfig
     DiffSettings diff;
     LanternSettings lantern;
     PickerSettings picker;
+    SearchSettings search;
     FormatSettings format;
     TimingSettings timing;
     ScrollSettings scroll;
