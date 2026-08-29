@@ -991,33 +991,43 @@ struct PreviewTui
         import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
         import sparkles.source_view.markdown : highlightedFenceRenderer,
             MdViewTheme;
-        import sparkles.twoslash.render_widgets : clampOrigin,
-            effectivePopupWidth, HoverViewOptions, signatureSpans;
+        import sparkles.twoslash.render_widgets : HoverViewOptions,
+            placeHoverPopup, popupBound, signatureSpans;
         import sparkles.ui.geometry : Rect;
+        import sparkles.ui.overlay.anchor : AnchorRect;
+        import sparkles.ui.state : clippedSelectionRects;
         import sparkles.ui.widget : TextSpan;
 
         const n = tw.nodes[hoverNodes[hoverSel]];
-        auto rs = selectionRects(mdTree, mdFrames, n.start, n.start + n.length);
-        if (!rs.length)
+        // Through the CLIP-AWARE producer (`ANC3`). The unclipped one answers a
+        // full, usable-looking rect for a token that has scrolled out of the
+        // body — and `clampOrigin`'s floor at zero used to drag the popup back
+        // into view, which hid the mistake. The solve will not.
+        const hit = clippedSelectionRects(mdTree, mdFrames, n.start,
+            n.start + n.length);
+        if (!hit.ok)
             return;
+        auto rs = hit.rects;
         // With a grammar cache the signature renders as resolved-color spans
         // inside the widget model (the same mapping the GUI uses).
         TextSpan[] sig = cache !is null
             ? signatureSpans(*cache, tw.effectiveLanguage,
                 (() @trusted => &vm.current)(), pageFg,
                 withoutQuickinfoPrefix(n.text)) : null;
-        // The room actually left at the anchor, capped by the theme's ceiling.
-        // Without this the popup grows to whatever the signature measures and
-        // walks off the pane.
+        // The body region the document occupies, in GRID cells — the boundary
+        // the popup must stay inside, supplied as data (`PLC3`). Row 0 is the
+        // header bar and the last two rows are chrome, so neither is room.
         const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
-        const avail = width - rs[0].x - 1;
+        const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const boundary = Rect(originX, 1, width, bodyRows());
+        const bound = popupBound(pal, boundary);
         // Through the *registry* overload: the ddoc is markdown, and without
         // it the popup shows `### Examples` and fence markers as literal text
         // while the document one pane over renders them properly. The theme
         // and fence highlighter are the same ones the preview uses, so a
         // documented unittest arrives with its `unittest` fence label.
         auto opts = HoverViewOptions(
-            maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig,
+            maxWidth: bound.width, sigSpans: sig,
             expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1,
             mdTheme: MdViewTheme.derive(vm.current, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(cache,
@@ -1032,16 +1042,24 @@ struct PreviewTui
         auto frames = layout(tree);
         auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-        // Keep it inside the pane on both axes: shift left rather than shrink
-        // when it would overhang the right edge (a narrower popup would only
-        // move the problem into the text), and clip so it can never spill
-        // across the divider into the explorer — `paintGrid` clips in
-        // canvas-local cells, so the rect is expressed relative to the origin.
-        const box = frames[tree.root].rect;
-        const ox = clampOrigin(rs[0].x, box.width, width);
-        const oy = cast(int)(rs[0].y - top + 2);
-        paintGrid(g, pageBg, ops, originX + ox, oy,
-            Rect(-ox, -oy, width, height));
+        // The token's own cell, in GRID coordinates — the same transform the
+        // document itself is painted through at `originX - hx, 1 - top`. The
+        // popup used to skip `hx`, so a sideways-scrolled document anchored its
+        // popup a scroll-offset away from the token it described.
+        const anchor = AnchorRect(
+            primary: Rect(originX - hx + rs[0].x, cast(int)(1 - top + rs[0].y),
+                rs[0].width, 1),
+            live: true);
+        const placed = placeHoverPopup(pal, anchor,
+            frames[tree.root].rect.size, boundary);
+        if (!placed.paintable)
+            return;
+        // `paintGrid` clips in canvas-local cells. The solve guarantees the
+        // rect is inside `boundary` unless it reports `overflowing`, so this is
+        // the honest ceiling rather than the defensive one it replaces.
+        paintGrid(g, pageBg, ops, placed.rect.x, placed.rect.y,
+            Rect(boundary.x - placed.rect.x, boundary.y - placed.rect.y,
+                boundary.width, boundary.height));
     }
 
     // Paint a one-row chrome bar (the shared WGT17 headerBar view) at grid row

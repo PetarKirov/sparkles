@@ -519,8 +519,9 @@ and for the same reason: an empty result has two causes a caller must not
 conflate. The range may name nothing in this tree, or it may name text that
 scrolled entirely out of a clipping ancestor — and an anchor resolved through
 the unclipped producer happily positions an overlay against a rect that is not
-on screen, which is the bug `clampOrigin`'s clamp-to-zero has been masking at
-hue's two TUI sites.
+on screen. `clampOrigin`'s clamp-to-zero used to mask that at hue's TUI popup
+sites by dragging the result back into view; the placement solve that replaced
+it does not, so the honest producer is the one an anchor must use.
 */
 struct RangeLookup
 {
@@ -624,9 +625,9 @@ in (frames.length == tree.nodes.length,
 @safe unittest
 {
     // `ANC3`, the range half. An anchor resolved through the unclipped
-    // producer positions an overlay against a row that is not on screen; hue's
-    // two TUI sites do exactly that today and `clampOrigin`'s clamp-to-zero
-    // hides it by dragging the result back into view.
+    // producer positions an overlay against a row that is not on screen —
+    // which hue's TUI popup did, with `clampOrigin`'s clamp-to-zero hiding it
+    // by dragging the result back into view.
     import sparkles.ui.geometry : Point, SizeSpec;
     import sparkles.ui.layout : layout;
     import sparkles.ui.widget : Builder, Widget, WidgetKind;
