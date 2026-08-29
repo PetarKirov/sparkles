@@ -371,10 +371,15 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         // emph/non-emph distinction as alpha, not a second hue). The hunk
         // header reads as chrome-adjacent info text; the split-layout filler
         // is a faint neutral wash.
+        // `0x43`, not `0x24`: a row tint is painted ONCE, by the row, so its
+        // alpha has to carry the whole wash. It used to land on a cell that
+        // had already been tinted, and two 0x24 passes compose to ~0x43 — so
+        // this is the colour a diff has always had, now reached in one paint
+        // instead of depending on how many surfaces happened to stack.
         p.bg[diffAdded] = Color.fromRgb(0x1b, 0xa6, 0x73);
-        p.bgAlpha[diffAdded] = 0x24;
+        p.bgAlpha[diffAdded] = 0x43;
         p.bg[diffRemoved] = Color.fromRgb(0xd4, 0x56, 0x56);
-        p.bgAlpha[diffRemoved] = 0x24;
+        p.bgAlpha[diffRemoved] = 0x43;
         p.bg[diffEmphAdded] = Color.fromRgb(0x1b, 0xa6, 0x73);
         p.bgAlpha[diffEmphAdded] = 0x58;
         p.bg[diffEmphRemoved] = Color.fromRgb(0xd4, 0x56, 0x56);
