@@ -30,10 +30,14 @@ struct BoxSpec
 
 /**
 The arm set + weight for a box-drawing codepoint, covering the light/heavy solid
-frame, rounded corners, and the light-vertical/heavy-horizontal header-rule
-glyphs `core-cli`'s table renderer emits. Dashed, doubled (`═ ║ ╔`), and diagonal
-(`╱ ╲`) forms are intentionally left uncovered (`valid == false`) — they fall back
-to the font glyph.
+frame, rounded corners, and BOTH mixed-weight header-rule families the table
+renderer emits: heavy-horizontal/light-vertical (`┝ ┯ ┿ ┍`, a header row) and its
+mirror, heavy-vertical/light-horizontal (`┠ ┰ ╂ ┎`, a frozen/stub column).
+
+Dashed, doubled (`═ ║ ╔`), and diagonal (`╱ ╲`) forms are intentionally left
+uncovered (`valid == false`) — they fall back to the font glyph. So are the
+per-ARM mixed forms (`┞ ╃ ╈` — one arm of an axis heavy, the other light):
+`BoxSpec` weights a whole axis, and no renderer here emits them.
 */
 BoxSpec boxSpec(uint cp) @safe pure nothrow @nogc
 {
@@ -71,12 +75,29 @@ BoxSpec boxSpec(uint cp) @safe pure nothrow @nogc
     case 0x2533: return s(armDown | armLeft | armRight, true, true);           // ┳
     case 0x253B: return s(armUp | armLeft | armRight, true, true);             // ┻
     case 0x254B: return s(armUp | armDown | armLeft | armRight, true, true);   // ╋
-    // Header-rule glyphs: heavy horizontal, light vertical.
+    // Header-ROW rule: heavy horizontal, light vertical (`┝━━┿━━┥`).
     case 0x251D: return s(armUp | armDown | armRight, true, false);            // ┝
     case 0x2525: return s(armUp | armDown | armLeft, true, false);             // ┥
     case 0x252F: return s(armDown | armLeft | armRight, true, false);         // ┯
     case 0x2537: return s(armUp | armLeft | armRight, true, false);           // ┷
     case 0x253F: return s(armUp | armDown | armLeft | armRight, true, false); // ┿
+    case 0x250D: return s(armDown | armRight, true, false);                   // ┍
+    case 0x2511: return s(armDown | armLeft, true, false);                    // ┑
+    case 0x2515: return s(armUp | armRight, true, false);                     // ┕
+    case 0x2519: return s(armUp | armLeft, true, false);                      // ┙
+    // Header/stub COLUMN rule: the mirror — heavy vertical, light horizontal
+    // (`┰ ┃ ╂ ┸`). A frozen column's boundary is drawn from this family, and
+    // without it the whole set fell through to the font: the rule rendered as
+    // a stack of disconnected stubs while the row rule beside it connected.
+    case 0x2520: return s(armUp | armDown | armRight, false, true);            // ┠
+    case 0x2528: return s(armUp | armDown | armLeft, false, true);             // ┨
+    case 0x2530: return s(armDown | armLeft | armRight, false, true);         // ┰
+    case 0x2538: return s(armUp | armLeft | armRight, false, true);           // ┸
+    case 0x2542: return s(armUp | armDown | armLeft | armRight, false, true); // ╂
+    case 0x250E: return s(armDown | armRight, false, true);                   // ┎
+    case 0x2512: return s(armDown | armLeft, false, true);                    // ┒
+    case 0x2516: return s(armUp | armRight, false, true);                     // ┖
+    case 0x251A: return s(armUp | armLeft, false, true);                      // ┚
     // Heavy half-lines used as title decorations (`╼ title ╾`).
     case 0x257C: return s(armLeft | armRight, true, false);                    // ╼
     case 0x257E: return s(armLeft | armRight, true, false);                    // ╾
@@ -156,4 +177,41 @@ unittest
     assert(boxSpec('┃').heavyV && !boxSpec('┃').heavyH);
     // Uncovered forms fall back to the glyph.
     assert(!boxSpec('═').valid && !boxSpec('╱').valid && !boxSpec('A').valid);
+}
+
+@("raylib_text.box.coversEveryTableGlyph")
+@safe pure nothrow @nogc
+unittest
+{
+    // The regression this exists for: the heavy-VERTICAL family (a frozen or
+    // stub column's boundary) was missing while its heavy-horizontal mirror
+    // was covered, so a table drew one rule procedurally and the other from
+    // the font — the column rule came out as disconnected stubs beside a
+    // clean row rule. Every glyph `sparkles.ui`'s TableGlyphs can emit is
+    // listed here; an emphasis set that grows a glyph this does not cover
+    // fails here rather than in someone's screenshot.
+    static immutable dchar[] emitted = [
+        // The light frame.
+        '╭', '╮', '╰', '╯', '─', '│', '┬', '┴', '├', '┤', '┼',
+        '┌', '┐', '└', '┘',
+        // Header ROW: heavy horizontal, light vertical.
+        '━', '┯', '┷', '┝', '┥', '┿', '┍', '┑', '┕', '┙',
+        // Header/stub COLUMN: heavy vertical, light horizontal.
+        '┃', '┰', '┸', '┠', '┨', '╂', '┎', '┒', '┖', '┚',
+        // Where the two cross: heavy both.
+        '┳', '┻', '┣', '┫', '╋', '┏', '┓', '┗', '┛',
+        // Title decorations.
+        '╼', '╾',
+    ];
+    foreach (g; emitted)
+    {
+        const spec = boxSpec(g);
+        assert(spec.valid, "a table glyph with no procedural arms");
+        assert(spec.arms != 0, "a covered glyph must draw something");
+    }
+
+    // And the two families really are mirrors, not copies.
+    assert(boxSpec('┿').heavyH && !boxSpec('┿').heavyV);
+    assert(boxSpec('╂').heavyV && !boxSpec('╂').heavyH);
+    assert(boxSpec('╋').heavyH && boxSpec('╋').heavyV);
 }
