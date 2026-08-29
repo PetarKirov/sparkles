@@ -422,19 +422,20 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
 }
 
 /**
-Char-precise selection geometry: the 1-row cell rects covering source bytes
-`[lo, hi)` in a laid-out tree — the paint side of the identity channel, one
-rect per covered span segment per wrapped row (same placement rules as
-$(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
+The one walk behind $(LREF selectionRects) and $(LREF clippedSelectionRects):
+finds every 1-row cell rect covering source bytes `[lo, hi)` and hands each to
+`sink.row(rect, clip)` together with the clip its node inherited.
+
+The byte→column arithmetic exists exactly once. The two public producers differ
+only in what they do with `clip` — which is the whole of `ANC3`'s distinction,
+and not a reason for two copies of a span scan (`PRN8`).
 */
-Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
-    size_t lo, size_t hi)
+private void emitSelection(Sink)(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi, ref Sink sink)
 {
     import sparkles.ui.geometry : cellsOf;
 
-    Rect[] result;
-
-    void checkRow(scope const TextSpan[] spans, int x, int y)
+    void checkRow(scope const TextSpan[] spans, int x, int y, in Rect clip)
     {
         foreach (ref const s; spans)
         {
@@ -452,34 +453,117 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
                     const c0 = cast(int) cellsOf(s.text[0 .. bStart]);
                     const c1 = cast(int) cellsOf(s.text[0 .. bEnd]);
                     if (c1 > c0)
-                        result ~= Rect(x + c0, y, c1 - c0, 1);
+                        sink.row(Rect(x + c0, y, c1 - c0, 1), clip);
                 }
             }
             x += w;
         }
     }
 
-    void walk(uint idx)
+    void walk(uint idx, in Rect clip)
     {
         const node = tree.nodes[idx];
         if (node.visibility != Visibility.visible)
             return;
-        const inner = frames[idx].rect.deflate(node.padding);
+        const rect = frames[idx].rect;
+        const inner = rect.deflate(node.padding);
         if (node.kind == WidgetKind.rich)
         {
             if (frames[idx].spanLines.length)
                 foreach (li, line; frames[idx].spanLines)
                     checkRow(line, inner.x + (li ? node.hangIndent : 0),
-                        inner.y + cast(int) li);
+                        inner.y + cast(int) li, clip);
             else
-                checkRow(node.spans, inner.x, inner.y);
+                checkRow(node.spans, inner.x, inner.y, clip);
         }
+        const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
-            walk(ci);
+            walk(ci, childClip);
     }
 
-    walk(tree.root);
-    return result;
+    walk(tree.root, unclipped());
+}
+
+/**
+Char-precise selection geometry: the 1-row cell rects covering source bytes
+`[lo, hi)` in a laid-out tree — the paint side of the identity channel, one
+rect per covered span segment per wrapped row (same placement rules as
+$(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
+
+Deliberately $(B not) clip-aware: a tint is culled by the display list's own
+scissor anyway, so narrowing here would buy nothing and would change what a
+selection paints. A caller that needs to know whether the range is actually on
+screen — an $(I anchor), which must not be positioned against a rect scrolled
+out of its viewport — wants $(LREF clippedSelectionRects) instead (`ANC3`).
+*/
+Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi)
+{
+    static struct All
+    {
+        Rect[] result;
+        void row(in Rect r, in Rect) { result ~= r; }
+    }
+
+    All sink;
+    emitSelection(tree, frames, lo, hi, sink);
+    return sink.result;
+}
+
+/**
+The answer to "where is the source range `[lo, hi)`, and is any of it visible?"
+(`ANC3`).
+
+$(LREF selectionRects)' clip-aware sibling, in $(LREF KeyLookup)'s vocabulary
+and for the same reason: an empty result has two causes a caller must not
+conflate. The range may name nothing in this tree, or it may name text that
+scrolled entirely out of a clipping ancestor — and an anchor resolved through
+the unclipped producer happily positions an overlay against a rect that is not
+on screen, which is the bug `clampOrigin`'s clamp-to-zero has been masking at
+hue's two TUI sites.
+*/
+struct RangeLookup
+{
+    /// The clip-intersected rects, in paint order. Empty when the range named
+    /// nothing $(I and) when everything it named is clipped away; `clipped`
+    /// tells those apart.
+    Rect[] rects;
+    /// How many rects the range covered before the clip was applied.
+    size_t count;
+    /// The range covered something and every part of it is clipped away — a
+    /// $(B hide) verdict, not a close one (`DSM8`).
+    bool clipped;
+
+@safe pure nothrow @nogc const:
+
+    /// The range resolved and some of it is on screen: `rects` is usable.
+    bool ok() => rects.length != 0;
+    /// The range named nothing in this tree.
+    bool missing() => count == 0;
+}
+
+/// ditto
+RangeLookup clippedSelectionRects(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi)
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    static struct Clipped
+    {
+        RangeLookup found;
+        void row(in Rect r, in Rect clip)
+        {
+            ++found.count;
+            const visible = r.intersection(clip);
+            if (!visible.empty)
+                found.rects ~= visible;
+        }
+    }
+
+    Clipped sink;
+    emitSelection(tree, frames, lo, hi, sink);
+    sink.found.clipped = sink.found.count != 0 && sink.found.rects.length == 0;
+    return sink.found;
 }
 
 @("ui.state.selectionRects.charPrecise")
@@ -503,6 +587,70 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
     assert(rects.length == 2);
     assert(rects[0] == Rect(2, 0, 3, 1)); // "pha"
     assert(rects[1] == Rect(0, 1, 2, 1)); // "be"
+}
+
+@("ui.state.clippedSelectionRects.agreesWithTheUnclippedOneWhenNothingClips")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap;
+
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("alpha beta", srcStart: 50, srcEnd: 60),
+    ]);
+    para.width.max = 5;
+    const t = b.add(para);
+    auto tree = b.finish(b.container(WidgetKind.column, [t]));
+    auto frames = layout(tree);
+
+    // With no clipping ancestor the two producers must not disagree — the
+    // clipped one is a narrowing, not a second definition of the geometry.
+    const hit = clippedSelectionRects(tree, frames, 52, 58);
+    assert(hit.rects == selectionRects(tree, frames, 52, 58));
+    assert(hit.ok && !hit.clipped && hit.count == 2);
+
+    const nothing = clippedSelectionRects(tree, frames, 900, 910);
+    assert(nothing.missing && !nothing.clipped && !nothing.ok,
+        "a range naming nothing is missing, never clipped");
+}
+
+@("ui.state.clippedSelectionRects.scrolledOutIsNotGone")
+@safe unittest
+{
+    // `ANC3`, the range half. An anchor resolved through the unclipped
+    // producer positions an overlay against a row that is not on screen; hue's
+    // two TUI sites do exactly that today and `clampOrigin`'s clamp-to-zero
+    // hides it by dragging the result back into view.
+    import sparkles.ui.geometry : Point, SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    uint[] rows;
+    foreach (i; 0 .. 4)
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan("word", srcStart: i * 10, srcEnd: i * 10 + 4),
+        ]));
+    const inner = b.add(Widget(kind: WidgetKind.column, children: rows));
+    // A two-row viewport scrolled down by three: only the last row is visible.
+    const vp = b.add(Widget(kind: WidgetKind.column, children: [inner],
+        height: SizeSpec.fixed(2), clipY: true, childOffset: Point(0, 3)));
+    auto tree = b.finish(vp);
+    auto frames = layout(tree);
+
+    const shown = clippedSelectionRects(tree, frames, 30, 34);
+    assert(shown.ok && !shown.clipped, "the visible row resolves normally");
+
+    const scrolledOut = clippedSelectionRects(tree, frames, 0, 4);
+    assert(scrolledOut.count == 1 && scrolledOut.clipped);
+    assert(!scrolledOut.ok && !scrolledOut.missing,
+        "found, but nothing of it is on screen — not the same as absent");
+
+    // The unclipped producer cannot tell the two apart: it answers a full,
+    // usable-looking rect for the row that is scrolled away. That is the gap.
+    assert(selectionRects(tree, frames, 0, 4).length == 1);
 }
 
 /// A keyed node's identity + laid-out geometry (see $(LREF keyedRects)).
