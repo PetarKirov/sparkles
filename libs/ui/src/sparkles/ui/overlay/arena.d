@@ -311,6 +311,22 @@ struct OverlayArena
         return cut;
     }
 
+    /**
+    The frontmost overlay whose resolved rect contains `p`, or the null handle.
+
+    Front-to-back is $(B reverse) index order, because index order is paint
+    order: the last thing painted is the first thing hit. Only records that
+    contribute hit entries answer, so a surface fading out is transparent to
+    the pointer while still on screen (`LYR10`).
+    */
+    OverlayId hitAt(in Point p) const scope
+    {
+        foreach_reverse (ref const rec; records[])
+            if (rec.contributesHits && rec.resolved.rect.contains(p))
+                return rec.id;
+        return OverlayId.init;
+    }
+
     /// The index at which dismissing `h` truncates: `h` itself, or `length`
     /// when the handle is stale (dismissing nothing removes nothing).
     size_t cascadeFrom(OverlayId h) const => indexOf(h);
@@ -619,4 +635,29 @@ in (frames.length == tree.nodes.length,
     const solved = placeOverlays(tree, frames, a, Rect(0, 0, 40, 12));
     assert(solved[0].resolved.fit == Fit.refused);
     assert(!solved[0].contributesPaint && !solved[0].contributesHits);
+}
+
+@("ui.overlay.arena.hitAtIsFrontToBack")
+@safe pure nothrow @nogc unittest
+{
+    // Index order is paint order, so the FIRST thing hit is the LAST thing
+    // painted. A forward scan here would hand a click to whatever is furthest
+    // back — the exact inversion, and silent, because both find something.
+    OverlayArena a;
+    auto back = OverlayRecord(node: 1, life: Timeline(phase: Timeline.Phase.hold));
+    back.resolved.rect = Rect(0, 0, 20, 10);
+    const backId = a.push(back);
+
+    auto front = OverlayRecord(node: 2, life: Timeline(phase: Timeline.Phase.hold));
+    front.resolved.rect = Rect(4, 2, 6, 4);
+    const frontId = a.push(front);
+
+    assert(a.hitAt(Point(5, 3)) == frontId, "the overlap goes to the front one");
+    assert(a.hitAt(Point(1, 1)) == backId, "outside it, to the one behind");
+    assert(!a.hitAt(Point(99, 99)).valid);
+
+    // A surface fading out is transparent to the pointer while still painted.
+    a[1].life = Timeline(phase: Timeline.Phase.fadeOut);
+    assert(a[1].contributesPaint && !a[1].contributesHits);
+    assert(a.hitAt(Point(5, 3)) == backId, "the click falls through it");
 }
