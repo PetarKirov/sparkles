@@ -72,7 +72,7 @@ package string render(Args...)(
         : plainText(header, args, footer);
 }
 
-/// A duration rendered with `sparkles.base.text.writers` (`1.5µs`, `12.3ms`, …).
+/// A duration rendered with `sparkles.base.text.writers` (`1.5ms`, `12ms`, …).
 string formatDuration(Duration duration) @safe
 {
     import sparkles.base.smallbuffer : SmallBuffer;
@@ -90,7 +90,7 @@ unittest
     import core.time : msecs, usecs;
 
     assert(formatDuration(1500.usecs) == "1.5ms");
-    assert(formatDuration(12.msecs) == "12.0ms");
+    assert(formatDuration(12.msecs) == "12ms");
 }
 
 /// A `file:line` reference; an editor-aware OSC 8 hyperlink when `colored`.
@@ -283,7 +283,7 @@ unittest
     assert(formatResultLine(result, false, false, 6) == " ✓ sparkles.base.text.grapheme case");
     // Verbose is never truncated.
     assert(formatResultLine(result, false, true, 10) ==
-        " ✓ sparkles.base.text.grapheme case (0.0ns)");
+        " ✓ sparkles.base.text.grapheme case (0ns)");
 }
 
 /// The line reported for an `@ctfe` test: it already passed during
@@ -576,17 +576,17 @@ unittest
     import core.time : msecs;
 
     assert(formatSummary(RunTotals(passed: 3, failed: 0), 12.msecs, false) ==
-        "Summary: 3 passed, 0 failed in 12.0ms");
+        "Summary: 3 passed, 0 failed in 12ms");
     assert(formatSummary(
             RunTotals(passed: 3, failed: 1, ctfePassed: 2, benchSkipped: 1), 12.msecs, false) ==
-        "Summary: 3 passed, 1 failed, 2 compile-time, 1 benchmarks (run with --bench) in 12.0ms");
+        "Summary: 3 passed, 1 failed, 2 compile-time, 1 benchmarks (run with --bench) in 12ms");
     assert(formatSummary(RunTotals(passed: 3, failed: 0, skipped: 2), 12.msecs, false) ==
-        "Summary: 3 passed, 0 failed, 2 skipped in 12.0ms");
+        "Summary: 3 passed, 0 failed, 2 skipped in 12ms");
     assert(formatSummary(
             RunTotals(passed: 1, failed: 0, benchSkipped: 2, workloadSkipped: 1),
             12.msecs, false) ==
         "Summary: 1 passed, 0 failed, 2 benchmarks (run with --bench), "
-        ~ "1 workloads (run with --bench) in 12.0ms");
+        ~ "1 workloads (run with --bench) in 12ms");
 }
 
 /// A recap of every failed test, printed after the summary so a long parallel

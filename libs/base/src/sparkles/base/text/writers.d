@@ -1474,22 +1474,23 @@ private void writeScaledBytes(Writer)(
 }
 
 /**
-Writes a duration to `precision` decimal places (default `1`).
+Writes a duration in a short auto-scaled form, or in an explicit `core.time`
+unit to `precision` decimal places.
 
 With `units == "auto"` (the default) the largest fitting unit is chosen — `ns`,
-`µs`, `ms` below one second, then `s`, `m`, `h`, `d` — each rendered to
-`precision` decimals; so the default `writeDuration(w, d)` gives `500.0ns`,
-`1.5µs`, `5.5s`, `3.0d`, and `writeDuration(w, d, 0)` gives `500ns`, `2µs`,
-`5s`. A negative duration is prefixed with `-`.
+`µs`, `ms` below one second, then `s`, `m`, `h`, `d` — and the decimal count is
+picked so a typical value fits five columns: integer `ns`/`µs`; one decimal
+on `ms` below 10 (`9.5ms`) and on one-letter units below 100 (`1.5s`,
+`99.9d`); integer otherwise (`42ms`, `221ms`, `100d`). Half-up rounding that
+crosses a unit (`999.5µs` → `1.0ms`) or a precision threshold (`9.95ms` →
+`10ms`) is applied before writing. Auto ignores `precision`. A negative
+duration is prefixed with `-`.
 
 Any other `units` is a `core.time` unit name — `"nsecs"`, `"hnsecs"`,
 `"usecs"`, `"msecs"`, `"seconds"`, `"minutes"`, `"hours"`, `"days"`, `"weeks"`
 — and the whole duration is rendered in that single unit, e.g.
-`writeDuration!"seconds"(w, d, 3)` → `5.500s`.
-
-`units` is compile-time (it selects the scale and suffix); `precision` is a
-runtime value (it only feeds $(LREF writeFixedPoint)'s decimal count) and must
-be `<= 19` so `10^^precision` fits in a `ulong`.
+`writeDuration!"seconds"(w, d, 3)` → `5.500s`. `precision` must be `<= 19`
+so `10^^precision` fits in a `ulong`.
 
 @nogc-compatible. (Uses `total!"nsecs"`, which only overflows past ~292 years —
 far beyond any duration this is meant to format.)
@@ -1508,25 +1509,38 @@ in (precision <= 19, "precision must be <= 19 (10^^precision must fit in a ulong
     }
 
     static if (units == "auto")
-    {
-        if (ns < 1_000)
-            writeDurationIn!"nsecs"(w, ns, precision);
-        else if (ns < 1_000_000)
-            writeDurationIn!"usecs"(w, ns, precision);
-        else if (ns < 1_000_000_000)
-            writeDurationIn!"msecs"(w, ns, precision);
-        else if (ns < 60_000_000_000L)
-            writeDurationIn!"seconds"(w, ns, precision);
-        else if (ns < 3_600_000_000_000L)
-            writeDurationIn!"minutes"(w, ns, precision);
-        else if (ns < 86_400_000_000_000L)
-            writeDurationIn!"hours"(w, ns, precision);
-        else
-            writeDurationIn!"days"(w, ns, precision);
-    }
+        writeDurationAuto(w, ns);
     else
         writeDurationIn!units(w, ns, precision);
 }
+
+/// Auto-scaled compact form used by $(LREF writeDuration) and
+/// $(LREF writeDurationPadded). `ns` is non-negative.
+private void writeDurationAuto(Writer)(ref Writer w, long ns)
+{
+    if (durationRounded!"nsecs"(ns) < 1000)
+        writeDurationIn!"nsecs"(w, ns, 0);
+    else if (durationRounded!"usecs"(ns) < 1000)
+        writeDurationIn!"usecs"(w, ns, 0);
+    else if (durationRounded!"msecs"(ns) < 1000)
+        writeDurationIn!"msecs"(w, ns, durationTenths!"msecs"(ns) < 100 ? 1 : 0);
+    else if (ns < 60_000_000_000L)
+        writeDurationIn!"seconds"(w, ns, durationTenths!"seconds"(ns) < 1000 ? 1 : 0);
+    else if (ns < 3_600_000_000_000L)
+        writeDurationIn!"minutes"(w, ns, durationTenths!"minutes"(ns) < 1000 ? 1 : 0);
+    else if (ns < 86_400_000_000_000L)
+        writeDurationIn!"hours"(w, ns, durationTenths!"hours"(ns) < 1000 ? 1 : 0);
+    else
+        writeDurationIn!"days"(w, ns, durationTenths!"days"(ns) < 1000 ? 1 : 0);
+}
+
+/// Half-up `ns / nsecsPerUnit` as an integer count of `unit`.
+private ulong durationRounded(string unit)(long ns) =>
+    (cast(ulong) ns + nsecsPerUnit!unit / 2) / nsecsPerUnit!unit;
+
+/// Half-up `ns` in tenths of `unit`.
+private ulong durationTenths(string unit)(long ns) =>
+    (cast(ulong) ns + nsecsPerUnit!unit / 20) / (nsecsPerUnit!unit / 10);
 
 /// Renders `ns` nanoseconds in a single `unit` to `precision` decimal places
 /// via $(LREF writeFixedPoint), followed by the unit's abbreviation.
@@ -1587,7 +1601,9 @@ private template durationUnitAbbrev(string unit)
 }
 
 /// Writes a duration via $(LREF writeDuration), then right-pads with spaces to
-/// at least `width` characters. @nogc-compatible.
+/// exactly `width` Unicode scalar values (UTF-8 lead bytes; `µ` is one
+/// column). Does not truncate when the compact form is already wider
+/// (`10000d`). @nogc-compatible.
 void writeDurationPadded(Writer)(
     ref Writer w, in Duration duration, size_t width)
 {
@@ -1598,9 +1614,20 @@ void writeDurationPadded(Writer)(
     writeDuration(buf, duration);
     const text = buf[];
     put(w, text);
-    if (text.length < width)
-        foreach (_; 0 .. width - text.length)
+    const n = utf8ScalarCount(text);
+    if (n < width)
+        foreach (_; 0 .. width - n)
             put(w, ' ');
+}
+
+/// Scalars in well-formed UTF-8: count bytes that are not continuations.
+private size_t utf8ScalarCount(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    size_t n = 0;
+    foreach (c; s)
+        if ((cast(ubyte) c & 0xC0) != 0x80)
+            n++;
+    return n;
 }
 
 /**
@@ -1724,22 +1751,34 @@ unittest
         assert(buf[] == expected);
     }
 
-    // Default precision is 1, applied uniformly across every tier.
-    check(dur!"nsecs"(0), "0.0ns");
-    check(dur!"nsecs"(500), "500.0ns");
-    check(dur!"nsecs"(1_500), "1.5µs");   // crosses into µs, one decimal
-    check(dur!"usecs"(750), "750.0µs");
+    check(dur!"nsecs"(0), "0ns");
+    check(dur!"nsecs"(500), "500ns");
+    check(dur!"nsecs"(1_500), "2µs");      // integer µs, 1.5 rounds half-up
+    check(dur!"usecs"(42), "42µs");
+    check(dur!"usecs"(750), "750µs");
     check(dur!"usecs"(1_500), "1.5ms");
-    check(dur!"msecs"(42), "42.0ms");
-    check(dur!"msecs"(999), "999.0ms");
+    check(dur!"nsecs"(9_500_000), "9.5ms");
+    check(dur!"msecs"(10), "10ms");        // decimal drops from 10ms
+    check(dur!"msecs"(42), "42ms");
+    check(dur!"msecs"(221), "221ms");
+    check(dur!"msecs"(999), "999ms");
     check(dur!"msecs"(1_000), "1.0s");
     check(dur!"msecs"(5_500), "5.5s");
     check(dur!"msecs"(60_000), "1.0m");
     check(dur!"msecs"(90_000), "1.5m");
     check(dur!"hours"(1), "1.0h");
     check(dur!"hours"(24), "1.0d");
-    check(dur!"nsecs"(-500), "-500.0ns");  // negative is prefixed with '-'
+    check(dur!"seconds"(8_631_360), "99.9d");
+    check(dur!"days"(100), "100d");        // integer from 100 of a 1-letter unit
+    check(dur!"nsecs"(-500), "-500ns");    // negative is prefixed with '-'
     check(dur!"msecs"(-1_500), "-1.5s");
+
+    // Rounding carry: tenths/integer that would overrun the field bump
+    // precision or unit instead.
+    check(dur!"nsecs"(9_950_000), "10ms");     // 9.95ms → 10ms, not 10.0ms
+    check(dur!"nsecs"(999_500), "1.0ms");      // 999.5µs → 1.0ms, not 1000µs
+    check(dur!"nsecs"(999_500_000), "1.0s");   // 999.5ms → 1.0s, not 1000ms
+    check(dur!"seconds"(8_635_680), "100d");   // 99.95d tenths-round → 100d
 }
 
 @("writeDuration.explicitUnitAndPrecision")
@@ -1768,14 +1807,10 @@ unittest
     writeDuration!"usecs"(buf, dur!"nsecs"(2_500), 0);     // 2.5µs rounds to 3
     assert(buf[] == "3µs");
 
-    // Precision flows through "auto" to sub-second tiers too.
+    // Auto ignores `precision`; pass an explicit unit to set decimals.
     buf.clear();
-    writeDuration(buf, dur!"nsecs"(500), 2);
+    writeDuration!"nsecs"(buf, dur!"nsecs"(500), 2);
     assert(buf[] == "500.00ns");
-
-    buf.clear();
-    writeDuration(buf, dur!"nsecs"(1_500), 0);             // auto, integer → rounds
-    assert(buf[] == "2µs");
 }
 
 @("writeDurationPadded.padsToWidth")
@@ -1788,6 +1823,39 @@ unittest
     SmallBuffer!(char, 32) buf;
     writeDurationPadded(buf, dur!"msecs"(1_500), 6);
     assert(buf[] == "1.5s  ");            // "1.5s" then padded to 6 chars
+}
+
+@("writeDurationPadded.width5.codePoints")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : dur;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    void check(Duration d, string expected)
+    {
+        buf.clear();
+        writeDurationPadded(buf, d, 5);
+        assert(buf[] == expected);
+        assert(utf8ScalarCount(buf[]) == 5);
+    }
+
+    check(dur!"nsecs"(500), "500ns");
+    check(dur!"usecs"(42), "42µs ");      // µ is one column, one pad byte
+    check(dur!"nsecs"(9_500_000), "9.5ms");
+    check(dur!"msecs"(42), "42ms ");
+    check(dur!"msecs"(221), "221ms");
+    check(dur!"msecs"(1_500), "1.5s ");
+    check(dur!"days"(100), "100d ");
+    check(dur!"nsecs"(9_950_000), "10ms ");
+    check(dur!"nsecs"(999_500), "1.0ms");
+    check(dur!"nsecs"(999_500_000), "1.0s ");
+
+    // Does not truncate when the compact form is already wider.
+    buf.clear();
+    writeDurationPadded(buf, dur!"days"(10_000), 5);
+    assert(buf[] == "10000d");
 }
 
 @("writeRelativeTime.phrases")
