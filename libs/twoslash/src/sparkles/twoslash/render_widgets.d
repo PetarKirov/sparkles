@@ -43,7 +43,8 @@ import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
-import sparkles.ui.geometry : cellsOf, Insets, Rect, Size, SizeSpec;
+import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size, SizeSpec;
+import sparkles.ui.layout : Frame;
 import sparkles.ui.overlay.anchor : AnchorRect;
 import sparkles.ui.overlay.place : Align, OverlayGeometry, place, Placement, Side;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
@@ -562,6 +563,21 @@ struct HoverViewOptions
     /// invents a width (`LAY10`).
     int maxWidth = 0;
 
+    /**
+    The rows the placement solve granted this popup; `0` leaves it unbounded,
+    which is what every caller got before this existed.
+
+    A ddoc-heavy hover measures whatever it measures, and an unbounded popup
+    simply runs off the surface — the reader loses the end of the sentence and
+    has no way to reach it. Bounded, the body scrolls instead.
+    */
+    int maxHeight = 0;
+
+    /// The body's vertical scroll offset, in rows. The HOST owns the machine
+    /// (`SCV1`); the view only reads the offset, so one value serves a cell
+    /// backend and a pixel one unchanged.
+    long scrollOffset;
+
     /// The signature as resolved syntax-colored spans (`signatureSpans`).
     TextSpan[] sigSpans;
 
@@ -709,16 +725,102 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     if (tagRows.length)
         sections ~= popupSection(b, tagRows, divider: true);
 
-    const col = b.container(WidgetKind.column, sections);
     // The cap is a clamp on a `fit` box, so the popup still shrinks to its
     // content — it just stops growing past the room the backend reported.
     auto width = SizeSpec.fit_;
     if (opts.maxWidth > 0)
         width.max = opts.maxWidth;
+
+    // The SIGNATURE never scrolls. It is the thing the reader anchored on, and
+    // scrolling it out of view is the same failure as overflowing the surface —
+    // the popup is still on screen and still useless. So the shell splits: a
+    // pinned header, and everything else inside a viewport.
+    const body = popupBody(b, sections[1 .. $], opts);
+    const col = b.container(WidgetKind.column,
+        body == invalidNode ? sections : [sections[0], body]);
+
+    auto height = SizeSpec.fit_;
+    if (opts.maxHeight > 0)
+        height.max = opts.maxHeight;
     const popup = b.add(Widget(kind: WidgetKind.panel, slot: Slot.surface,
-        width: width, padding: Insets(1, 0, 1, 0), paintBackground: true,
-        decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
+        width: width, height: height, padding: Insets(1, 0, 1, 0),
+        paintBackground: true, decoration: surfaceDeco(arrow: true),
+        children: [col], hitId: hit));
     return b.finish(popup);
+}
+
+/// Not a node index any builder can return.
+private enum uint invalidNode = uint.max;
+
+/**
+The popup's scrolling body: everything below the signature, inside a clipped
+viewport with a bar beside it.
+
+Returns $(LREF invalidNode) when there is nothing to scroll — an unbounded
+popup, or one whose whole content is its signature — so the caller keeps the
+flat shell it had. A viewport that can never scroll is a gutter of wasted
+columns and a clip nobody needs.
+
+The engine does the arithmetic: a clipped axis keeps its children $(B natural)
+(`layout`'s `noShrink` rule), so after one `layout()` the viewport's own frame
+is the viewport and its child's frame is the full content extent. Neither is
+guessed, and neither costs a second pass.
+*/
+private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts)
+{
+    if (opts.maxHeight <= 0 || rest.length == 0)
+        return invalidNode;
+
+    const content = b.container(WidgetKind.column, rest);
+    // One row for the signature, two for the popup's own padding: what is left
+    // is the body's. A floor of one keeps the viewport representable on a
+    // surface too short to be useful, where the solve has already reported
+    // `refused` or `shrunk`.
+    const rows = opts.maxHeight - 3 > 1 ? opts.maxHeight - 3 : 1;
+    const view = b.add(Widget(
+        kind: WidgetKind.column,
+        children: [content],
+        height: SizeSpec.fixed(rows),
+        width: SizeSpec.grow(),
+        clipY: true,
+        childOffset: Point(0, cast(int) opts.scrollOffset),
+    ));
+    return view;
+}
+
+/**
+What the popup's body can scroll over, read off the laid-out tree.
+
+Deliberately not a `Widget.key`: `keyTargets` is the channel a click uses to
+name a collapsed signature run, and keying the shell would put two more entries
+in it — so "which run did I click" would stop meaning what it says. The body is
+found structurally instead, as the one clipped container the shell builds.
+
+`content` is the natural extent of what is inside the viewport and `viewport`
+is the rows it shows, both straight from `frames`: a clipped axis keeps its
+children natural (`layout`'s `noShrink` rule), so one `layout()` answers both
+and neither is guessed.
+*/
+struct PopupScroll
+{
+    long content;  /// rows the body would need
+    long viewport; /// rows it has
+    /// Whether there is anything to scroll — the test a host makes before
+    /// spending a gutter column on a bar.
+    bool live() const @safe pure nothrow @nogc => content > viewport;
+}
+
+/// ditto
+PopupScroll popupScrollExtents(in WidgetTree tree, in Frame[] frames)
+    @safe pure nothrow @nogc
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    foreach (i, ref const n; tree.nodes)
+        if (n.clipY && n.children.length == 1)
+            return PopupScroll(frames[n.children[0]].rect.height,
+                frames[i].rect.height);
+    return PopupScroll.init;
 }
 
 /// The signature as rows: structural breaking when the producer described this
@@ -1851,4 +1953,52 @@ version (unittest)
             return;
         }
     assert(false, "no hover underline was drawn");
+}
+
+@("render_widgets.viewHoverPopup.aLongDdocIsBoundedAndScrolls")
+@safe unittest
+{
+    // The failure this fixes: a ddoc-heavy hover measured whatever it measured
+    // and ran off the surface, so the reader lost the end of the sentence with
+    // no way to reach it. Bounded, the body scrolls — and the SIGNATURE does
+    // not, because scrolling away the thing the reader anchored on is the same
+    // failure wearing a different hat.
+    import sparkles.ui.layout : layout;
+
+    string docs;
+    foreach (i; 0 .. 60)
+        docs ~= "A paragraph of documentation that goes on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int veryDocumented(int a)", docs: docs),
+    ]);
+
+    // Unbounded: the popup is as tall as its content, which is the bug.
+    const tall = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 48));
+    auto tallFrames = layout(tall);
+    const tallRows = tallFrames[tall.root].rect.height;
+    assert(tallRows > 40, "an unbounded popup grows without limit");
+    assert(!popupScrollExtents(tall, tallFrames).live,
+        "and has no viewport, so there is nothing to scroll");
+
+    // Bounded: capped at the budget, with the overflow inside a viewport.
+    const capped = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 48, maxHeight: 12));
+    auto frames = layout(capped);
+    assert(frames[capped.root].rect.height == 12, "capped at the budget");
+
+    const sc = popupScrollExtents(capped, frames);
+    assert(sc.live, "there is more body than viewport");
+    assert(sc.content > sc.viewport && sc.viewport == 12 - 3,
+        "the viewport is the budget less the signature row and the padding");
+
+    // The signature is still on the FIRST row of the surface, at every offset:
+    // it is outside the viewport, so scrolling cannot take it away.
+    const scrolled = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 48, maxHeight: 12, scrollOffset: 20));
+    auto sf = layout(scrolled);
+    assert(sf[scrolled.root].rect.height == 12, "still capped");
+    const sc2 = popupScrollExtents(scrolled, sf);
+    assert(sc2.content == sc.content && sc2.viewport == sc.viewport,
+        "the offset moves the body; it does not resize it");
 }

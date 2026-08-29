@@ -265,6 +265,38 @@ struct HoverPopup
     size_t popupNode = size_t.max;
     Timeline fade;
     int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
+    /// The body's scroll offset in rows, and what it may scroll over. A
+    /// ddoc-heavy hover used to run off the surface with no way to reach the
+    /// rest of it; bounded, the body scrolls instead. Reset with `popupNode`,
+    /// because a different symbol is a different document.
+    long popupScroll;
+    /// ditto — last frame's measurement, so a wheel notch can clamp without
+    /// re-laying-out the popup to find out how far it may go.
+    long popupContentRows;
+    /// ditto
+    long popupViewportRows;
+
+@safe pure nothrow @nogc:
+
+    /// The furthest the body may scroll: never past its last row.
+    long maxScroll() const scope
+    {
+        const over = popupContentRows - popupViewportRows;
+        return over > 0 ? over : 0;
+    }
+
+    /// Scrolls by `rows`, clamped. Returns `true` iff the offset moved — the
+    /// caller's cue to repaint, and its cue that the notch was CONSUMED rather
+    /// than falling through to the document underneath.
+    bool scrollBy(long rows) scope
+    {
+        const want = popupScroll + rows;
+        const clamped = want < 0 ? 0 : (want > maxScroll ? maxScroll : want);
+        if (clamped == popupScroll)
+            return false;
+        popupScroll = clamped;
+        return true;
+    }
 }
 
 /// The live-resize relayout debounce (M15 GROUP-W of the GuiState hoist):
@@ -603,4 +635,33 @@ unittest
     assert(HoverPopup.init.forceHover == -1);
     assert(ResizeDebounce.init.prevWidthCols == -1);
     static assert(ResizeDebounce.settleFrames == 4);
+}
+
+@("gui_state.HoverPopup.scrollClampsAndReportsWhetherItConsumedTheNotch")
+@safe pure nothrow @nogc unittest
+{
+    // The return value is not a courtesy: it is "the notch was consumed". A
+    // popup that swallowed a notch it could not use would freeze the document
+    // underneath at its own edges; one that never swallowed any would scroll
+    // the token it describes out from under itself.
+    HoverPopup p;
+    p.popupContentRows = 40;
+    p.popupViewportRows = 9;
+    assert(p.maxScroll == 31);
+
+    assert(p.scrollBy(5) && p.popupScroll == 5);
+    assert(p.scrollBy(-2) && p.popupScroll == 3);
+
+    assert(p.scrollBy(-99) && p.popupScroll == 0, "clamped at the top");
+    assert(!p.scrollBy(-1), "and a notch off the top is NOT consumed");
+
+    assert(p.scrollBy(999) && p.popupScroll == 31, "clamped at the last row");
+    assert(!p.scrollBy(1), "nor one off the bottom");
+
+    // A popup with nothing to scroll consumes nothing at all, so the wheel
+    // keeps working over a one-line tooltip.
+    HoverPopup small;
+    small.popupContentRows = 3;
+    small.popupViewportRows = 9;
+    assert(small.maxScroll == 0 && !small.scrollBy(1));
 }

@@ -1698,10 +1698,21 @@ int runGui(GuiArgs guiArgs) @system
                             && off < cast(long)(n.start + n.length))
                             overNode = ni + 1;
             }
-            if (overNode == 0 && pop.hotNode != 0 && pop.havePopup
+            const overPopup = pop.hotNode != 0 && pop.havePopup
                 && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
-                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
+                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height;
+            if (overNode == 0 && overPopup)
                 overNode = pop.hotNode; // still over the open popup → keep it open
+            // A notch over the popup scrolls the POPUP. Without this it falls
+            // through to the document, which scrolls the token the popup
+            // describes out from under it — the popup stays put and the thing
+            // it is about walks away (`LYR5`'s wheel arm, hand-routed here
+            // until the popup joins the arena).
+            if (overPopup && inp.fin.wheelCells != 0)
+            {
+                cast(void) pop.scrollBy(inp.fin.wheelCells);
+                inp.fin.wheelCells = 0;
+            }
             bool forced = false;
             if (pop.forceHover >= 0)
             {
@@ -1771,6 +1782,9 @@ int runGui(GuiArgs guiArgs) @system
                     if (pop.popupNode != pop.hotNode)
                     {
                         pop.expandedRegions = null;
+                        // A different symbol is a different document: its
+                        // scroll offset is not this one's.
+                        pop.popupScroll = 0;
                         pop.popupNode = pop.hotNode;
                     }
                     pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
@@ -1779,7 +1793,8 @@ int runGui(GuiArgs guiArgs) @system
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         vm.pageFg, vm.pageBg,
-                        pop.expandedRegions, pop.popupKeys);
+                        pop.expandedRegions, pop.popupScroll, pop.popupKeys,
+                        pop.popupContentRows, pop.popupViewportRows);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
                     pop.havePopup = pop.hotPopup.width > 0;
@@ -4105,10 +4120,11 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     in Rect boundary, float originX, float originY, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg,
-    ExpandedRegions expanded, out KeyTarget[] keys) @system
+    ExpandedRegions expanded, long scrollOffset, out KeyTarget[] keys,
+    out long contentRows, out long viewportRows) @system
 {
     import sparkles.twoslash.render_widgets : HoverViewOptions,
-        placeHoverPopup, popupBound, signatureSpans;
+        placeHoverPopup, popupBound, popupScrollExtents, signatureSpans;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
@@ -4121,8 +4137,10 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     import sparkles.source_view.markdown : highlightedFenceRenderer,
         MdViewTheme;
 
+    const bound = popupBound(pal, boundary);
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
-        HoverViewOptions(maxWidth: popupBound(pal, boundary).width,
+        HoverViewOptions(maxWidth: bound.width, maxHeight: bound.height,
+            scrollOffset: scrollOffset,
             sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
             mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(&cache,
@@ -4150,6 +4168,13 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     // Where each collapsible run landed, in cells relative to the popup — the
     // caller turns a click into the region under it.
     keys = keyTargets(tree, frames);
+
+    // What the body may scroll over, measured off the frames just laid out —
+    // so a wheel notch next frame clamps against a real extent rather than
+    // re-laying-out the popup to ask.
+    const sc = popupScrollExtents(tree, frames);
+    contentRows = sc.content;
+    viewportRows = sc.viewport;
 
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
