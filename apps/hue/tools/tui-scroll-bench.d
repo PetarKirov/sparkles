@@ -78,6 +78,12 @@ struct Args
     @(Option("observe", description: "Instead of timing keys, watch the output "
         ~ "rate for this many ms (0 = off)"))
     int observe;
+
+    @(Option("sequence", description: "Comma-separated keys to send in order, "
+        ~ "one measured frame each (overrides --keys/--count). Use it for "
+        ~ "gestures a repeated key cannot express — a scrollbar drag is a "
+        ~ "press, then motions at DIFFERENT rows, then a release."))
+    string sequence;
 }
 
 /// The `tui-ab` key vocabulary: names for the escape sequences a test drives.
@@ -203,12 +209,21 @@ int main(string[] argv)
         return 0;
     }
 
-    const key = keyBytes(args.keys);
+    // A gesture is a sequence of DIFFERENT events; a repeated key is the
+    // degenerate case of one.
+    string[] steps;
+    if (args.sequence.length)
+        foreach (name; args.sequence.split(","))
+            steps ~= keyBytes(name);
+    else
+        foreach (_; 0 .. args.count)
+            steps ~= keyBytes(args.keys);
+
     auto latencies = appender!(Duration[]);
     auto sizes = appender!(size_t[]);
 
     ubyte[] lastBytes;
-    foreach (i; 0 .. args.count)
+    foreach (i, key; steps)
     {
         const start = MonoTime.currTime;
         pipes.stdin.rawWrite(key);
@@ -216,7 +231,7 @@ int main(string[] argv)
         // The last frame is kept so a caller can confirm the keystroke moved
         // the view at all — a fast "frame" that changed nothing is not a fast
         // scroll, it is a dropped key.
-        const wantLast = args.dump.length && i + 1 == args.count;
+        const wantLast = args.dump.length && i + 1 == steps.length;
         if (wantLast)
             lastBytes.length = 0;
         const bytes = drain(fd, args.settle.msecs,
@@ -237,7 +252,8 @@ int main(string[] argv)
     bytes.sort();
 
     double pick(double[] xs, double q) => xs[cast(size_t)(q * (xs.length - 1))];
-    writefln("keystroke: %s   n=%s   %sx%s", args.keys, args.count,
+    writefln("keystroke: %s   n=%s   %sx%s",
+        args.sequence.length ? "sequence" : args.keys, steps.length,
         args.cols, args.rows);
     writefln("latency ms   median %.1f   p95 %.1f   max %.1f   mean %.1f",
         pick(ms, 0.5), pick(ms, 0.95), ms[$ - 1],

@@ -368,7 +368,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
     a.extras = MdTableExtras(
         headerCols: 1,
         columnMaxWidth: dsvColumnCapCells,
-        columnMinWidths: floors,
+        columnWidths: floors,
         // `DSN4`: the bar describes the whole projected view and where this
         // window sits in it — the grid scrolls in view coordinates even
         // though only the window was built.
@@ -1055,7 +1055,7 @@ unittest
     assert(all.info.visibleRows == 500);
     assert(all.info.windowRows == 0 && all.info.materializedRows == 500);
     assert(all.doc.root.children[0].children.length == 501);
-    assert(all.extras.columnMinWidths.length == 0, "unwindowed: nothing pinned");
+    assert(all.extras.columnWidths.length == 0, "unwindowed: nothing pinned");
 
     // A window materializes its slice only — while `visibleRows` keeps
     // reporting the virtual total the scrollbar and the chrome need.
@@ -1080,6 +1080,38 @@ unittest
         DsvWindow(start: 900, rows: 40));
     assert(past.info.materializedRows == 0);
     assert(past.doc.root.children[0].children.length == 1);
+}
+
+@("dsv_view.window.renderedGeometryIsIdenticalAcrossWindows")
+@system
+unittest
+{
+    import std.algorithm : canFind, map, maxElement;
+    import std.string : splitLines;
+
+    // `DSN3`: the reader must not see the table resize under them as they
+    // scroll. A floor alone does not deliver that — a row wider than the
+    // sample still widens its column — so the widths are pinned on BOTH
+    // sides and the rendered frame must come out the same width everywhere
+    // in the view, including over a row far wider than anything sampled.
+    auto src = "id,note\n";
+    foreach (i; 0 .. 400)
+        src ~= text(i, ",",
+            i == 350 ? "a-value-far-wider-than-any-in-the-sample" : "x", "\n");
+
+    size_t widthOf(uint start)
+    {
+        const a = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
+            DsvWindow(start: start, rows: 12));
+        return dsvGridText(a, 14).splitLines
+            .map!(l => l.length).maxElement;
+    }
+
+    const head = widthOf(0);
+    const overWide = widthOf(345); // the wide row is inside this window
+    const tail = widthOf(380);
+    assert(head == overWide && head == tail,
+        "the grid keeps one geometry however wide the rows in view are");
 }
 
 @("dsv_view.window.copyFollowsTheWindow")
@@ -1123,13 +1155,13 @@ unittest
         DsvWindow(start: 0, rows: 20));
     const tail = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init,
         DsvWindow(start: 380, rows: 20));
-    assert(head.extras.columnMinWidths.length == 3); // gutter + 2 columns
-    assert(head.extras.columnMinWidths == tail.extras.columnMinWidths,
+    assert(head.extras.columnWidths.length == 3); // gutter + 2 columns
+    assert(head.extras.columnWidths == tail.extras.columnWidths,
         "the pinned widths are a property of the view, not of the window");
 
     // The gutter is pinned to the widest record number the view can show,
     // so it does not widen when the reader reaches row 100 or 400.
-    assert(head.extras.columnMinWidths[0] == 3);
+    assert(head.extras.columnWidths[0] == 3);
 }
 
 @("dsv_view.window.rendersFromItsFirstRow")

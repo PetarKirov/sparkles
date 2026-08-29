@@ -447,6 +447,14 @@ struct PreviewTui
         const fbV = vm.fenceBodyAtRow(top + (w.pos.y - 1));
         if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
             return true;
+        // `DSN4`: a grid that owns the vertical axis owns every notch inside
+        // the pane. `tableAtRow` answers by SOURCE identity, and a cell's
+        // top/bottom border carries none — so a notch delivered over a rule
+        // row used to find no table and fall through to a document scroll
+        // that a windowed grid cannot perform. The pointer was over the
+        // grid; the grid scrolls.
+        if (gridOwnsVertical() && scrollGridV(w.dy))
+            return true;
         const tbV = vm.tableAtRow(top + (w.pos.y - 1));
         if (tbV != size_t.max && vm.scrollTableV(tbV, w.dy))
             return true;
