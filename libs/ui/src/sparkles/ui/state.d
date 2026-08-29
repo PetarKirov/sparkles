@@ -38,7 +38,8 @@ import sparkles.input : cellPointer, InputCapabilities, mousePointer,
     PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
-import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
+import sparkles.ui.widget : HitBehavior, TextSpan, Visibility, WidgetKind,
+    WidgetTree;
 
 @safe:
 
@@ -48,6 +49,9 @@ struct HoverTarget
 {
     Rect rect;
     size_t hitId;
+    /// Whether this entry hides the ones painted before it (`MDL1`). A trailing
+    /// field, so every positional construction still compiles.
+    HitBehavior behavior;
 }
 
 /**
@@ -71,11 +75,14 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         if (node.visibility != Visibility.visible)
             return;
         const rect = frames[idx].rect;
-        if (node.hitId != 0)
+        // A blocking node earns an entry even without an id: a scrim is not
+        // hit-testable in its own right, it exists to stop the walk. Its entry
+        // reports `hitId == 0`, which is already "never hot".
+        if (node.hitId != 0 || node.hit != HitBehavior.normal)
         {
             const visible = rect.intersection(clip);
             if (!visible.empty)
-                targets ~= HoverTarget(visible, node.hitId);
+                targets ~= HoverTarget(visible, node.hitId, node.hit);
         }
         const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
@@ -99,6 +106,9 @@ struct KeyTarget
 {
     Rect rect;
     size_t key;
+    /// ditto — `MDL1`'s cut must reach this list too. A modal surface that
+    /// blocks hover but not clicks is worse than one that blocks neither.
+    HitBehavior behavior;
 }
 
 /// ditto
@@ -112,11 +122,11 @@ KeyTarget[] keyTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         if (node.visibility != Visibility.visible)
             return;
         const rect = frames[idx].rect;
-        if (node.key != 0)
+        if (node.key != 0 || node.hit != HitBehavior.normal)
         {
             const visible = rect.intersection(clip);
             if (!visible.empty)
-                targets ~= KeyTarget(visible, node.key);
+                targets ~= KeyTarget(visible, node.key, node.hit);
         }
         // Clipped exactly as the display list scissors, so an element scrolled
         // out of a viewport can no more be clicked than painted.
@@ -129,12 +139,44 @@ KeyTarget[] keyTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
     return targets;
 }
 
+/**
+Where a hit walk over `targets` must $(B start) for a point at `p` (`MDL1`).
+
+Pointer modality is a filter over the derived list rather than a mode somebody
+sets: the answer is "the highest blocking entry containing the point", and
+everything painted before it is unreachable. Because index order is paint order,
+that is an index, and both walks below simply begin there.
+
+Spelled once and generic over the two target types on purpose. `hoverTargets`
+and `keyTargets` are independent walks, so a cut applied to one of them leaves a
+modal surface that blocks hover and not clicks — which is not a weaker modality
+but an incoherent one.
+
+`wheel` exempts `blockPointerExceptWheel`, the surface that dims a page without
+freezing its scroll.
+*/
+size_t blockingFloor(T)(scope const T[] targets, in Point p, bool wheel = false)
+    pure nothrow @nogc
+{
+    size_t floor;
+    foreach (i, ref const t; targets)
+    {
+        if (t.behavior == HitBehavior.normal || !t.rect.contains(p))
+            continue;
+        if (wheel && t.behavior == HitBehavior.blockPointerExceptWheel)
+            continue;
+        floor = i;  // the blocker itself stays reachable; what is under it does not
+    }
+    return floor;
+}
+
 /// The topmost keyed element at `p`, or 0 for none. Later targets win: a child
-/// paints over its parent, so it should also take the click.
+/// paints over its parent, so it should also take the click. A blocking entry
+/// hides everything painted before it (`MDL1`).
 size_t keyAt(in KeyTarget[] targets, Point p) pure nothrow @nogc
 {
     size_t hit;
-    foreach (t; targets)
+    foreach (t; targets[blockingFloor(targets, p) .. $])
         if (t.rect.contains(p))
             hit = t.key;
     return hit;
@@ -161,7 +203,7 @@ struct HoverState
         const size_t previous = hot;
         size_t found;
         if (ev.action != PointerAction.leave)
-            foreach (t; targets)
+            foreach (t; targets[blockingFloor(targets, ev.pos) .. $])
                 if (t.hitId != 0 && t.rect.contains(ev.pos))
                     found = t.hitId; // later target wins → topmost
         hot = found;
@@ -228,6 +270,58 @@ unittest
     // The unkeyed container contributes nothing, even though it is hit-testable.
     foreach (t; targets)
         assert(t.key != 0);
+}
+
+@("ui.state.blockingFloor.cutsBothListsIdentically")
+@safe unittest
+{
+    // `MDL1`. The requirement is explicit that a change to `HoverState.update`
+    // alone is not sufficient, and this is why: the two lists are separate
+    // walks, so a modal surface cut into one of them blocks hover and not
+    // clicks — an incoherent modality rather than a weaker one.
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const under = b.add(Widget(kind: WidgetKind.text, text: "page-under",
+        hitId: 7, key: 101));
+    // A scrim: no id and no key of its own, painted after the page. It exists
+    // only to stop the walk, which is why the entry cannot be gated on an id.
+    const scrim = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(4),
+        height: SizeSpec.fixed(1), hit: HitBehavior.blockPointer));
+    auto tree = b.finish(b.container(WidgetKind.stack, [under, scrim]));
+    auto frames = layout(tree);
+
+    const hovers = hoverTargets(tree, frames);
+    const keys = keyTargets(tree, frames);
+    assert(hovers.length == 2 && keys.length == 2,
+        "the scrim earns an entry despite carrying neither id nor key");
+
+    HoverState h;
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(1, 0)), hovers);
+    assert(!h.isHot(7), "the page under a scrim is not hoverable");
+    assert(keyAt(keys, Point(1, 0)) == 0, "nor clickable");
+
+    // Off the scrim, the page is reachable again — modality is a filter over
+    // this frame's list, not a mode anyone has to remember to clear.
+    HoverState h2;
+    h2.update(PointerEvent(action: PointerAction.move, pos: Point(6, 0)), hovers);
+    assert(h2.isHot(7));
+    assert(keyAt(keys, Point(6, 0)) == 101);
+
+    // The wheel exemption: same geometry, one flag, and the scroll underneath
+    // keeps working.
+    auto b2 = Builder();
+    const u2 = b2.add(Widget(kind: WidgetKind.text, text: "page-under",
+        hitId: 7));
+    const s2 = b2.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(4),
+        height: SizeSpec.fixed(1), hit: HitBehavior.blockPointerExceptWheel));
+    auto t2 = b2.finish(b2.container(WidgetKind.stack, [u2, s2]));
+    auto f2 = layout(t2);
+    const hv2 = hoverTargets(t2, f2);
+    assert(blockingFloor(hv2, Point(1, 0)) == 1, "blocked for the pointer");
+    assert(blockingFloor(hv2, Point(1, 0), true) == 0, "not for the wheel");
 }
 
 @("ui.state.hoverTargets.pipelineRoundTrip")
