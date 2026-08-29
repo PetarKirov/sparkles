@@ -100,6 +100,12 @@ struct DiffOptions
 
     @(Option("diff-show-formatting", description: "Show whitespace-only hunks in full instead of folding them to a badge."))
     bool diffShowFormatting;
+
+    @(Option("diff-context", description: "Unchanged lines kept around each hunk (default 3)."))
+    int diffContext = 3;
+
+    @(Option("diff-chrome", description: "Render the file header, hunk headers and elided-context bands (default on; --no-diff-chrome leaves only the rows)."))
+    bool diffChrome = true;
 }
 
 /// Output rendering sink options (mutually exclusive choices for document rendering).
@@ -152,6 +158,7 @@ struct ViewRenderOptions
 {
     string theme;
     string background = "full";
+    int width;
     bool groupThemes = true;
     int treeWidth = 32;
     int tabWidth = 4;
@@ -170,6 +177,7 @@ struct ViewRenderOptions
     bool noLiveTypes = false;
     string diffLayout = "unified";
     bool diffShowFormatting;
+    bool diffChrome = true;
     GuiOptions gui;
     bool formatPreview = false;  /// `FMV8`: start in the format preview
     int formatWidth = 0;         /// ruler column (0 = discover)
@@ -545,6 +553,9 @@ struct HueCli
     @(Option("background", description: "Terminal background mode: no-background, spans, or full."))
     string background = "full";
 
+    @(Option("width", description: "Columns a one-shot (--ansi/--html) render lays out in (default: the terminal's, capped at 120)."))
+    int width;
+
     @Flatten("Overlay Options")
     OverlayOptions overlay;
 
@@ -883,6 +894,10 @@ private void diffFlagsInto(ref Sparse!HueConfig o, const bool[string] seen,
         o.diff.preview = dopt.diffPreview;
     if (prefix ~ "diffShowFormatting" in seen)
         o.diff.showFormatting = dopt.diffShowFormatting;
+    if (prefix ~ "diffChrome" in seen)
+        o.diff.chrome = dopt.diffChrome;
+    if (prefix ~ "diffContext" in seen)
+        o.diff.context = dopt.diffContext;
 }
 
 // ── The whole stack for one invocation ──────────────────────────────────────
@@ -969,6 +984,7 @@ ViewRenderOptions viewRenderOptionsOf(const HueConfig eff) @safe
     opt.theme = eff.appearance.theme;
     opt.background = cliText(eff.appearance.background);
     opt.groupThemes = eff.appearance.groupThemes;
+    opt.width = eff.appearance.width;
     opt.treeWidth = eff.panes.tree.width;
     opt.tabWidth = eff.panes.viewer.tabWidth;
     opt.listWhitespace = eff.panes.viewer.listWhitespace;
@@ -986,6 +1002,7 @@ ViewRenderOptions viewRenderOptionsOf(const HueConfig eff) @safe
     opt.noLiveTypes = !eff.behaviour.liveTypes;
     opt.diffLayout = cliText(eff.diff.layout);
     opt.diffShowFormatting = eff.diff.showFormatting;
+    opt.diffChrome = eff.diff.chrome;
     opt.gui = guiOptionsOf(eff);
     opt.scrollAnchor = cliText(eff.behaviour.scrollAnchor);
     opt.formatPreview = eff.format.preview;

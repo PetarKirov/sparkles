@@ -439,14 +439,20 @@ private ptrdiff_t indexOfNeedle(const(char)[] s, const(char)[] needle)
 
 /**
 Render a failure for a human: the expectation, what the formatter produced,
-and the diff between them.
+and the diff between them — each in its own titled box, and side by side when
+the terminal is wide enough to hold them.
 
 When `hue` is on `PATH` and the terminal takes colour, all three panes go
 through it — this repository's own viewer, so a formatting failure is read
 with the same syntax highlighting and the same diff view as the code it is
-about. `--diff-show-formatting` is what makes that useful here: a formatter's
-diff is usually whitespace-only, and hue folds such a hunk to a badge unless
-asked not to (there is no keystroke to expand it in a one-shot render).
+about. Three flags make it usable as a *pane* rather than a page:
+`--diff-show-formatting` (a formatter's diff is nearly always whitespace-only,
+and hue folds such a hunk to a badge unless asked not to — with no keystroke
+to expand it in a one-shot render), `--no-diff-chrome` and `--no-line-numbers`
+(the file header, the `@@` bands and the gutter say what the box's own title
+already says), and `--width` (a pipe has no size to ask for, so hue would
+otherwise lay out at its 80-column fallback regardless of the pane it is
+going into).
 
 Everything degrades: no `hue`, no colour, or any failure invoking it falls
 back to plain text with a unified diff. A test report that cannot be produced
@@ -454,25 +460,98 @@ is worse than a plain one.
 */
 string renderFailure(const CaseResult r) @system
 {
-    string plain()
-    {
-        return "\n--- expected ---\n" ~ r.expected
-            ~ "\n--- actual ---\n" ~ r.actual
-            ~ "\n--- diff ---\n" ~ unifiedDiff(r.expected, r.actual);
-    }
-
     if (!r.expected.length && !r.actual.length)
         return "";
-    if (!hueUsable)
-        return plain();
 
+    const width = reportWidth();
+    Pane[3] panes = [
+        Pane("expected", r.expected),
+        Pane("actual", r.actual),
+        Pane("diff", unifiedDiff(r.expected, r.actual)),
+    ];
+    Pane[3] styled;
+    if (huePanes(r, cast(int) width, styled))
+        panes = styled;
+    return composePanes(panes[], width);
+}
+
+/// One report pane: what it is, and the block of text that shows it.
+private struct Pane
+{
+    string title;
+    string body_;
+}
+
+/**
+The three panes laid out for a terminal `width` columns wide: three columns
+when they fit, expectation-and-actual side by side with the diff beneath when
+only two do, and stacked when not even that.
+
+Two columns puts the diff *below* rather than dropping a pane, because the
+diff is the one that answers "what changed" — it earns full width when width
+is short.
+*/
+private string composePanes(const Pane[] panes, size_t width) @system
+{
+    import sparkles.ui.components.box : drawBox;
+    import sparkles.ui.components.layout : hjoin;
+    import std.algorithm : map, sum;
+    import std.array : array, join;
+
+    enum gap = 2;
+    auto boxes = panes.map!(p => drawBox(p.body_, p.title)).array;
+    auto widths = boxes.map!blockWidth.array;
+
+    bool fits(size_t[] ws)
+    {
+        return ws.sum + gap * (ws.length - 1) <= width;
+    }
+
+    if (boxes.length == 3 && fits(widths))
+        return "\n" ~ hjoin(boxes, gap);
+    if (boxes.length == 3 && fits(widths[0 .. 2]))
+        return "\n" ~ hjoin(boxes[0 .. 2], gap) ~ "\n" ~ boxes[2];
+    return "\n" ~ boxes.join("\n");
+}
+
+/// The widest visible line of a rendered block — the column count it occupies
+/// once ANSI styling is discounted.
+private size_t blockWidth(string block) @safe
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    import std.algorithm : max;
+    import std.string : lineSplitter;
+
+    size_t w;
+    foreach (line; block.lineSplitter)
+        w = max(w, visibleWidth(line));
+    return w;
+}
+
+/// Columns to lay the report out in: the terminal's, or a readable default
+/// when there is none (a redirected run still produces a sensible report).
+private size_t reportWidth() @system
+{
+    import sparkles.base.term_caps : StdStream, terminalSize;
+
+    const w = terminalSize(StdStream.stdout).width;
+    return w > 0 ? cast(size_t) w : 100;
+}
+
+/// Fill `out_` with hue-rendered pane bodies, or return false and leave the
+/// caller's plain ones alone. False covers every reason at once: no `hue`, no
+/// colour, an older `hue` that rejects one of the flags, a write that failed.
+private bool huePanes(const CaseResult r, int width, out Pane[3] out_) @system
+{
     import std.file : tempDir, write;
     import std.path : buildPath;
     import std.process : execute;
 
-    const dir = tempDir;
-    const expPath = buildPath(dir, "dmd-fmt-case-expected.d");
-    const actPath = buildPath(dir, "dmd-fmt-case-actual.d");
+    if (!hueUsable)
+        return false;
+
+    const expPath = buildPath(tempDir, "dmd-fmt-case-expected.d");
+    const actPath = buildPath(tempDir, "dmd-fmt-case-actual.d");
     try
     {
         write(expPath, r.expected);
@@ -480,24 +559,38 @@ string renderFailure(const CaseResult r) @system
         scope (exit)
             removeQuietly(expPath, actPath);
 
-        auto pane = (string title, string[] argv) {
-            const res = execute(argv);
-            return res.status == 0
-                ? "\n" ~ title ~ "\n" ~ res.output
-                : "";
-        };
-        const expected = pane("--- expected ---", ["hue", "view", "--ansi", expPath]);
-        const actual = pane("--- actual ---", ["hue", "view", "--ansi", actPath]);
-        const diff = pane("--- diff ---",
-            ["hue", "diff", "--ansi", "--diff-show-formatting", expPath, actPath]);
-        // An older `hue` rejects the flag; its diff would fold the hunk away,
-        // so fall back to ours rather than print a badge that says nothing.
+        const common = ["hue", "--background=no-background",
+            "--width=" ~ width.to!string];
+        string run(string[] argv)
+        {
+            const res = execute(common ~ argv);
+            return res.status == 0 ? res.output.stripRight("\n") : null;
+        }
+
+        const expected = run(["view", "--ansi", "--no-line-numbers", expPath]);
+        const actual = run(["view", "--ansi", "--no-line-numbers", actPath]);
+        // Enough context to reach both ends of the file. hue's default window
+        // is three lines, and with the elision bands suppressed a truncated
+        // pane would be indistinguishable from a complete one — the diff must
+        // show the same region the other two panes do.
+        import std.algorithm : count, max;
+
+        const lines = max(r.expected.count('\n'), r.actual.count('\n')) + 1;
+        const diff = run(["diff", "--ansi", "--diff-show-formatting",
+            "--no-diff-chrome", "--no-line-numbers",
+            "--diff-context=" ~ lines.to!string, expPath, actPath]);
         if (!expected.length || !actual.length || !diff.length)
-            return plain();
-        return expected ~ actual ~ diff;
+            return false;
+
+        out_ = [
+            Pane("expected", expected),
+            Pane("actual", actual),
+            Pane("diff", diff),
+        ];
+        return true;
     }
     catch (Exception)
-        return plain();
+        return false;
 }
 
 private void removeQuietly(string[] paths...) @safe nothrow
@@ -668,11 +761,39 @@ private bool hueUsable() @safe
     r.expected = "int a;\n";
     r.actual = "int  a;\n";
     const report = renderFailure(r);
-    assert(report.canFind("--- expected ---"), report);
-    assert(report.canFind("--- actual ---"), report);
-    assert(report.canFind("--- diff ---"), report);
+    // The pane names live in the box borders, not in band above them.
+    assert(report.canFind("expected"), report);
+    assert(report.canFind("actual"), report);
+    assert(report.canFind("diff"), report);
+    assert(report.canFind("int  a;"), report);
     // Empty on both sides is not a diff worth printing.
     assert(renderFailure(CaseResult.init) == "");
+}
+
+@("cases.report.columns-follow-the-terminal-width")
+@system unittest
+{
+    import std.string : lineSplitter;
+
+    const panes = [
+        Pane("expected", "int a;\n"),
+        Pane("actual", "int  a;\n"),
+        Pane("diff", "- int a;\n+ int  a;\n"),
+    ];
+
+    size_t rows(string s) { size_t n; foreach (_; s.lineSplitter) ++n; return n; }
+
+    // Every box here is 3 rows tall (border, one or two content rows, border),
+    // so the row count IS the column count: side-by-side panes share rows.
+    const wide = composePanes(panes, 200);
+    const medium = composePanes(panes, 40);
+    const narrow = composePanes(panes, 10);
+    assert(rows(wide) < rows(medium), wide);
+    assert(rows(medium) < rows(narrow), medium);
+    // A pane is never dropped, however little room there is.
+    foreach (report; [wide, medium, narrow])
+        foreach (p; panes)
+            assert(report.canFind(p.title), report);
 }
 
 @("cases.bless.rewrites-only-the-expectation")
