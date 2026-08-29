@@ -128,6 +128,11 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
         session.window = Window.open(WindowRequest(
             title: req.title, width: 800, height: 600,
             targetFps: req.targetFps));
+    {
+        import sparkles.base.logger : trace;
+
+        trace(i"Window.open");
+    }
 
     //    `InitWindow` reports failure only through `IsWindowReady`. Without
     //    this check a headless or locked session (GLFW "Failed to initialize
