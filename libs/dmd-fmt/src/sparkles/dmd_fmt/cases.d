@@ -467,6 +467,10 @@ with the bands suppressed, an elided region would be invisible), and `--width`
 (a pipe has no size to ask for, so hue would otherwise lay out at its
 80-column fallback regardless of the pane it is going into).
 
+All three panes render at [paneBackground]. Mind that mode: a diff's row tints
+and its intra-line emphasis are *backgrounds*, so `no-background`
+(`BgEmit.none`, foreground only) erases the very signal the diff pane carries.
+
 Everything degrades: no `hue`, no colour, or any failure invoking it falls
 back to plain text with a unified diff. A test report that cannot be produced
 is worse than a plain one — and the artifacts are written either way.
@@ -520,9 +524,10 @@ void clearArtifacts() @system
 private struct Artifacts
 {
     bool written;
-    string expectedPath, actualPath;      /// Absolute — what `hue` is handed.
-    string expectedLabel, actualLabel;    /// Relative to `getcwd` — what the
-                                          /// footer shows and a person types.
+    /// Absolute — what `hue` is handed.
+    string expectedPath, actualPath;
+    /// Relative to `getcwd` — what the footer shows and a person types.
+    string expectedLabel, actualLabel;
 }
 
 /// `<repo>/.result/dmd-fmt-cases`, or empty when the root cannot be found.
@@ -739,6 +744,28 @@ private size_t reportWidth() @system
     return w > 0 ? cast(size_t) w : 100;
 }
 
+/**
+How a pane's background paints (hue's `--background`).
+
+`full` — every cell, the theme's page colour behind the rest — because the
+panes are now *framed*. A box gives the block an edge, so a filled interior
+reads as an editor pane rather than as colour spilled across the terminal;
+unframed, the same fill had nothing to stop it and no shape to be.
+
+The other two modes stay one word away, and the choice is not free:
+
+$(LIST
+    * `spans` paints only what a span asked for. The diff's four tints
+        (added/removed row, added/removed emphasis) survive any of the three
+        — they are span backgrounds — but on a code pane `spans` paints the
+        page colour onto each line's indentation and nothing else, which
+        reads as stray blocks.
+    * `no-background` is `BgEmit.none`: foreground only. It erases the diff's
+        tints outright, which is how the diff pane first shipped monochrome.
+)
+*/
+private enum paneBackground = "full";
+
 /// Fill `out_` with hue-rendered pane bodies, or return false and leave the
 /// caller's plain ones alone. False covers every reason at once: no `hue`, no
 /// colour, an older `hue` that rejects one of the flags, a process that failed.
@@ -755,24 +782,24 @@ private bool huePanes(in Artifacts art, int width, out Pane[3] out_) @system
 
     try
     {
-        const common = ["hue", "--background=no-background",
-            "--width=" ~ width.to!string];
-        string run(string[] argv)
+        string run(string background, string[] argv)
         {
-            const res = execute(common ~ argv);
+            const res = execute(["hue", "--background=" ~ background,
+                "--width=" ~ width.to!string] ~ argv);
             return res.status == 0 ? res.output.stripRight("\n") : null;
         }
 
-        const expected = run(["view", "--ansi", "--no-line-numbers",
-            art.expectedPath]);
-        const actual = run(["view", "--ansi", "--no-line-numbers",
-            art.actualPath]);
+        const expected = run(paneBackground, ["view", "--ansi",
+            "--no-line-numbers", art.expectedPath]);
+        const actual = run(paneBackground, ["view", "--ansi",
+            "--no-line-numbers", art.actualPath]);
         // Enough context to reach both ends of the file. hue's default window
         // is three lines, and with the elision bands suppressed a truncated
         // pane would be indistinguishable from a complete one — the diff must
         // show the same region the other two panes do.
         const lines = max(expected.count('\n'), actual.count('\n')) + 2;
-        const diff = run(["diff", "--ansi", "--diff-show-formatting",
+        const diff = run(paneBackground, ["diff", "--ansi",
+            "--diff-show-formatting",
             "--no-diff-chrome", "--no-line-numbers",
             "--diff-context=" ~ lines.to!string,
             art.expectedPath, art.actualPath]);
