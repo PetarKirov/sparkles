@@ -160,8 +160,17 @@ int reportCliError(in CliError e)
     return e.exitCode;
 }
 
+/**
+Parse `argv`, install the process logger when `Cli` has a `logLevel` field,
+optionally run `beforeRun`, then dispatch to the leaf `run()`.
+
+`beforeRun` is for work that must happen after parse+logger and before the
+subcommand (hue's config load). A non-zero return is the process exit code
+and skips `run()`.
+*/
 int runCli(Cli)(
     string[] argv,
+    scope int delegate(ref ParsedCommand!Cli) beforeRun = null,
 )
 {
     auto parsed = parseCli!Cli(argv);
@@ -169,6 +178,16 @@ int runCli(Cli)(
         return reportCliError(parsed.error);
 
     auto value = parsed.value;
+    import sparkles.base.logger : LogLevel, initLogger;
+
+    static if (is(typeof(value.logLevel) : LogLevel))
+        initLogger(value.logLevel);
+    if (beforeRun !is null)
+    {
+        const rc = beforeRun(value);
+        if (rc != 0)
+            return rc;
+    }
     return runParsedCli(value);
 }
 
@@ -1826,6 +1845,45 @@ unittest
 
     FailCliError fc;
     assert(runParsedCli(fc) == 5);
+}
+
+@("args.runCli.initsLoggerWhenLogLevelPresent")
+@system
+unittest
+{
+    import sparkles.base.logger : LogLevel, coreGlobalLogLevel, initLogger,
+        sharedCoreLog;
+
+    @(Command("logged"))
+    static struct Logged
+    {
+        @(Option("log-level"))
+        LogLevel logLevel = LogLevel.warning;
+        int run() => 7;
+    }
+
+    @(Command("silent"))
+    static struct Silent
+    {
+        int run() => 3;
+    }
+
+    auto oldLog = sharedCoreLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedCoreLog = oldLog;
+        coreGlobalLogLevel = oldLevel;
+    }
+
+    sharedCoreLog = null;
+    assert(runCli!Logged(["logged", "--log-level", "error"]) == 7);
+    assert(sharedCoreLog !is null);
+    assert(coreGlobalLogLevel == LogLevel.error);
+
+    auto afterLogged = sharedCoreLog;
+    assert(runCli!Silent(["silent"]) == 3);
+    assert(sharedCoreLog is afterLogged, "no logLevel field: do not re-init");
 }
 
 @("args.parseCli.shortOptionBundleSplitsOnlyWhenAllCharsAreKnownFlags")

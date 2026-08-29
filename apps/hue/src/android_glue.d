@@ -122,8 +122,8 @@ string androidDataDir() @safe nothrow @nogc => internalDataPath;
 // ── logcat sink ──────────────────────────────────────────────────────────────
 
 /// Replace the process loggers with the logcat sink, tag "hue". Call after
-/// `initLogger` (which it overrides): in a NativeActivity, stderr — where the
-/// default DeltaTimeLogger writes — goes nowhere.
+/// `runCli`'s `initLogger` (this overrides that sink): in a NativeActivity,
+/// stderr — where the default DeltaTimeLogger writes — goes nowhere.
 void installLogcatSink(LogLevel level) @safe
 {
     import std.logger : globalLogLevel, sharedLog;

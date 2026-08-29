@@ -39,7 +39,7 @@ import sparkles.core_cli.args;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark, builtinThemes;
 
-import sparkles.base.logger : initLogger, LogLevel, warning;
+import sparkles.base.logger : trace, traceSpan, warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
@@ -143,8 +143,6 @@ int executeView(in HueCli root, in View view)
 {
     import sparkles.docs.source_set : collectSources, SourceEntry, SourceSet;
 
-    initLogger(root.logLevel);
-
     if (root.overlay.listOverlays)
     {
         printOverlayKinds();
@@ -208,6 +206,7 @@ int executeView(in HueCli root, in View view)
         {
             import format_dmd : startFormatForkServer;
 
+            auto forkSpan = traceSpan!"formatFork"();
             cast(void) startFormatForkServer();
         }
 
@@ -300,14 +299,13 @@ int executeView(in HueCli root, in View view)
         }
     }
 
+    trace(i"document");
     return renderDocument(backend, opt, doc, labels, theme, registry, cache,
         haveSet ? &docSet : null, &pipeline, dirTarget, loc);
 }
 
 int executeDiff(in HueCli root, in Diff diff)
 {
-    initLogger(root.logLevel);
-
     ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
     const theme = resolveNamedTheme(eff.appearance.theme, labels);
@@ -370,8 +368,6 @@ int executeDiff(in HueCli root, in Diff diff)
 
 int executePr(in HueCli root, in Pr pr)
 {
-    initLogger(root.logLevel);
-
     ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
     const theme = resolveTheme(builtinThemes.get(eff.appearance.theme, {
@@ -589,7 +585,6 @@ private TwoslashReturn twoslashPayloadFor(in SourceEntry e,
 
 int executeGallery(in HueCli root, in Gallery gallery)
 {
-    initLogger(root.logLevel);
     import sparkles.docs.fragment : FragmentOptions, plainFragment, twoslashFragment;
     import sparkles.docs.options : ChromePalette, GalleryOptions, themeChrome;
     import sparkles.docs.page_shell : writeGallery;
@@ -722,7 +717,6 @@ the site is worse than a plain page.
 */
 int executeSite(in HueCli root, in Site cmd)
 {
-    initLogger(root.logLevel);
     import site : discoverSite;
     import sparkles.docs.assets : stylesheetAssetPath, StylesheetContent,
         themeStylesheet, writeStylesheetAsset;
@@ -910,7 +904,6 @@ int executeSite(in HueCli root, in Site cmd)
 
 int executeTheme(in HueCli root, in ThemeCmd cmd)
 {
-    initLogger(root.logLevel);
     import std.stdio : writeln;
 
     if (cmd.list || cmd.name.length == 0)
@@ -935,14 +928,12 @@ int executeTheme(in HueCli root, in ThemeCmd cmd)
 
 int executeOverlay(in HueCli root, in OverlayCmd cmd)
 {
-    initLogger(root.logLevel);
     printOverlayKinds();
     return 0;
 }
 
 int executeConfig(in HueCli root, in ConfigCmd cmd)
 {
-    initLogger(root.logLevel);
     import std.array : appender;
     import std.stdio : writeln;
 
@@ -1218,42 +1209,45 @@ ref const(HueConfig) effectiveConfig() @safe nothrow @nogc => gConfig.effective;
 
 int main(string[] args)
 {
-    initLogger(LogLevel.warning);
-
     version (Android)
     {
-        import android_glue : extractAssetsIfNeeded, installLogcatSink, loadDebugEnv;
-        import core.stdc.stdlib : exit;
+        import android_glue : loadDebugEnv;
 
-        installLogcatSink(LogLevel.warning);
         loadDebugEnv();
-        if (!extractAssetsIfNeeded())
-            warning(i"hue: asset bundle missing — plain text, built-in document only");
     }
 
-    auto parsed = parseCli!HueCli(args);
-    if (!parsed)
-        return reportCliError(parsed.error);
+    return runCli!HueCli(args, (ref parsed) {
+        version (Android)
+        {
+            import android_glue : extractAssetsIfNeeded, installLogcatSink;
 
-    // Resolve defaults → user file → project file → env → CLI before any
-    // subcommand runs; load failures degrade to located warnings (CFG8).
-    gConfig = loadConfigFor(parsed.value);
-    gStore = ConfigStore.from(gConfig);
-    foreach (w; gConfig.warnings)
-        warning(i"$(w)");
+            installLogcatSink(parsed.logLevel);
+            if (!extractAssetsIfNeeded())
+                warning(i"hue: asset bundle missing — plain text, built-in document only");
+        }
 
-    // CFG6: publish the merged binding table before any backend starts, so
-    // resolution, the guide and `bindingsAt` all read the user's keys.
-    if (gConfig.effective.keys.length)
-    {
-        import keymap : hueBindings, installBindings;
-        import keymap_config : applyKeysOverlay;
+        trace(i"parseCli");
 
-        installBindings(applyKeysOverlay(hueBindings, gConfig.effective.keys,
-            (string w) @safe { warning(i"$(w)"); }));
-    }
+        // Resolve defaults → user file → project file → env → CLI before any
+        // subcommand runs; load failures degrade to located warnings (CFG8).
+        gConfig = loadConfigFor(parsed);
+        gStore = ConfigStore.from(gConfig);
+        foreach (w; gConfig.warnings)
+            warning(i"$(w)");
 
-    return runParsedCli(parsed.value);
+        // CFG6: publish the merged binding table before any backend starts, so
+        // resolution, the guide and `bindingsAt` all read the user's keys.
+        if (gConfig.effective.keys.length)
+        {
+            import keymap : hueBindings, installBindings;
+            import keymap_config : applyKeysOverlay;
+
+            installBindings(applyKeysOverlay(hueBindings, gConfig.effective.keys,
+                (string w) @safe { warning(i"$(w)"); }));
+        }
+        trace(i"config");
+        return 0;
+    });
 }
 
 // ── The four sinks — each a `final switch` over the document's kind ─────────
