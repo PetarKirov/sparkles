@@ -115,6 +115,8 @@ struct CaseResult
     string error;   /// The first failure, `null` when `ok`.
     string actual;  /// What the formatter produced (set whenever it differs).
     string expected; /// What the case said it should produce.
+    string file;    /// The markdown page the case came from, when run through
+                    /// [runCaseFile] — names the artifacts a failure writes.
 }
 
 /**
@@ -282,6 +284,7 @@ CaseResult[] runCaseFile(string path) @system
                 blessed ~= r.label;
                 continue;
             }
+            r.file = path;
             failures ~= r;
         }
 
@@ -442,44 +445,194 @@ Render a failure for a human: the expectation, what the formatter produced,
 and the diff between them — each in its own titled box, and side by side when
 the terminal is wide enough to hold them.
 
+Both sides are also **written to disk**, under `.result/dmd-fmt-cases/` at the
+repository root, and each box's footer names its file relative to the working
+directory. A report is a snapshot; the artifacts are the thing itself, and a
+whitespace defect is often easier to settle with `diff`, `cmp`, `xxd` or an
+editor than by reading two columns of near-identical D. The files outlive the
+run on purpose — [clearArtifacts] is what removes them, so a passing sweep
+starts clean and whatever is left afterwards belongs to a failure that just
+happened.
+
 When `hue` is on `PATH` and the terminal takes colour, all three panes go
 through it — this repository's own viewer, so a formatting failure is read
 with the same syntax highlighting and the same diff view as the code it is
-about. Three flags make it usable as a *pane* rather than a page:
+about. Five flags make it usable as a *pane* rather than a page:
 `--diff-show-formatting` (a formatter's diff is nearly always whitespace-only,
 and hue folds such a hunk to a badge unless asked not to — with no keystroke
 to expand it in a one-shot render), `--no-diff-chrome` and `--no-line-numbers`
 (the file header, the `@@` bands and the gutter say what the box's own title
-already says), and `--width` (a pipe has no size to ask for, so hue would
-otherwise lay out at its 80-column fallback regardless of the pane it is
-going into).
+and footer already say), `--diff-context` (passed the file's own line count:
+with the bands suppressed, an elided region would be invisible), and `--width`
+(a pipe has no size to ask for, so hue would otherwise lay out at its
+80-column fallback regardless of the pane it is going into).
 
 Everything degrades: no `hue`, no colour, or any failure invoking it falls
 back to plain text with a unified diff. A test report that cannot be produced
-is worse than a plain one.
+is worse than a plain one — and the artifacts are written either way.
 */
-string renderFailure(const CaseResult r) @system
+string renderFailure(const CaseResult r, string artifacts = artifactDir)
+    @system
 {
     if (!r.expected.length && !r.actual.length)
         return "";
 
     const width = reportWidth();
+    Artifacts art = writeArtifacts(r, artifacts);
     Pane[3] panes = [
-        Pane("expected", r.expected),
-        Pane("actual", r.actual),
-        Pane("diff", unifiedDiff(r.expected, r.actual)),
+        Pane("expected", r.expected, art.expectedLabel),
+        Pane("actual", r.actual, art.actualLabel),
+        Pane("diff", unifiedDiff(r.expected, r.actual), null),
     ];
     Pane[3] styled;
-    if (huePanes(r, cast(int) width, styled))
+    if (art.written && huePanes(art, cast(int) width, styled))
+    {
+        foreach (i, ref p; styled)
+            p.footer = panes[i].footer;
         panes = styled;
+    }
     return composePanes(panes[], width);
 }
 
-/// One report pane: what it is, and the block of text that shows it.
+/**
+Delete the artifact directory.
+
+Called once at the top of a sweep, so that what is in `.result/dmd-fmt-cases/`
+afterwards is exactly what this run produced. Without it a case that has since
+been fixed leaves its old expected/actual pair sitting next to a live one, and
+the two are indistinguishable — a stale artifact is worse than none, because
+it looks current.
+*/
+void clearArtifacts() @system
+{
+    import std.file : exists, rmdirRecurse;
+
+    const dir = artifactDir;
+    try
+        if (dir.length && dir.exists)
+            rmdirRecurse(dir);
+    catch (Exception)
+    {
+    }
+}
+
+/// Where a failure's two sides landed, and how to name them to a reader.
+private struct Artifacts
+{
+    bool written;
+    string expectedPath, actualPath;      /// Absolute — what `hue` is handed.
+    string expectedLabel, actualLabel;    /// Relative to `getcwd` — what the
+                                          /// footer shows and a person types.
+}
+
+/// `<repo>/.result/dmd-fmt-cases`, or empty when the root cannot be found.
+private string artifactDir() @safe
+{
+    import std.file : exists;
+    import std.path : buildPath, dirName;
+
+    // The source tree's own location: five directories up from
+    // `libs/dmd-fmt/src/sparkles/dmd_fmt/cases.d`. Checked rather than
+    // trusted, since a binary can outlive the checkout it was built from.
+    enum compiled = __FILE_FULL_PATH__
+        .dirName.dirName.dirName.dirName.dirName;
+    const root = buildPath(compiled, "dub.sdl").exists ? compiled : cwdOrEmpty;
+    return root.length ? buildPath(root, ".result", "dmd-fmt-cases") : null;
+}
+
+private string cwdOrEmpty() @trusted nothrow
+{
+    import std.file : getcwd;
+
+    try
+        return getcwd();
+    catch (Exception)
+        return null;
+}
+
+/// Write both sides next to each other under [artifactDir], named after the
+/// case that produced them, and report where they went. A failure to write is
+/// not a test failure: the report still renders, only without the footers.
+private Artifacts writeArtifacts(const CaseResult r, string dir = artifactDir)
+    @system
+{
+    import std.file : mkdirRecurse, write;
+    import std.path : baseName, buildPath, relativePath, stripExtension;
+
+    Artifacts art;
+    if (!dir.length)
+        return art;
+
+    const stem = (r.file.length ? r.file.baseName.stripExtension : "case")
+        ~ "-" ~ r.line.to!string ~ "-" ~ slug(r.label);
+    try
+    {
+        mkdirRecurse(dir);
+        art.expectedPath = buildPath(dir, stem ~ ".expected.d");
+        art.actualPath = buildPath(dir, stem ~ ".actual.d");
+        write(art.expectedPath, r.expected);
+        write(art.actualPath, r.actual);
+        art.written = true;
+        art.expectedLabel = shortestPath(art.expectedPath);
+        art.actualLabel = shortestPath(art.actualPath);
+    }
+    catch (Exception)
+        art.written = false;
+    return art;
+}
+
+/// The path as a reader would type it: relative to the working directory when
+/// that is shorter (the common case — a sweep is run from the repo root), and
+/// absolute when it is not (a run from elsewhere, where `../../..` helps
+/// nobody).
+private string shortestPath(string path) @safe
+{
+    import std.path : relativePath;
+
+    const here = cwdOrEmpty;
+    if (!here.length)
+        return path;
+    try
+    {
+        const rel = relativePath(path, here);
+        return rel.length && rel.length < path.length ? rel : path;
+    }
+    catch (Exception)
+        return path;
+}
+
+/// A case label (`P22 [After]`, `P32 [indent_size=2]`) as one filename-safe
+/// token, so two failures in one page cannot overwrite each other.
+private string slug(string label) @safe
+{
+    import std.ascii : isAlphaNum;
+
+    auto out_ = appender!string;
+    bool lastDash;
+    foreach (char c; label)
+    {
+        if (c.isAlphaNum)
+        {
+            out_ ~= c;
+            lastDash = false;
+        }
+        else if (!lastDash)
+        {
+            out_ ~= '-';
+            lastDash = true;
+        }
+    }
+    const s = out_[].stripRight("-");
+    return s.length ? s : "case";
+}
+
+/// One report pane: what it is, the block of text that shows it, and the file
+/// it was written to (empty when the artifact could not be written).
 private struct Pane
 {
     string title;
     string body_;
+    string footer;
 }
 
 /**
@@ -490,28 +643,76 @@ only two do, and stacked when not even that.
 Two columns puts the diff *below* rather than dropping a pane, because the
 diff is the one that answers "what changed" — it earns full width when width
 is short.
+
+A footer is as wide as the path it names, which is usually wider than the D it
+sits under, so drawing the paths in the borders can cost a whole column. When
+it would, the panes are drawn bare and the paths go on their own lines
+underneath: the same information, and one more column of code to read it
+against.
 */
 private string composePanes(const Pane[] panes, size_t width) @system
 {
-    import sparkles.ui.components.box : drawBox;
-    import sparkles.ui.components.layout : hjoin;
+    const framed = boxesFor(panes, footers: true);
+    const bare = boxesFor(panes, footers: false);
+    const framedCols = columnsFor(framed, width);
+    const bareCols = columnsFor(bare, width);
+
+    if (framedCols >= bareCols)
+        return "\n" ~ assemble(framed, framedCols);
+    return "\n" ~ assemble(bare, bareCols) ~ pathLines(panes);
+}
+
+private string[] boxesFor(const Pane[] panes, bool footers) @system
+{
+    import sparkles.ui.components.box : BoxProps, drawBox;
+    import std.algorithm : map;
+    import std.array : array;
+
+    return panes
+        .map!(p => drawBox(p.body_, p.title,
+            BoxProps(footer: footers ? p.footer : null)))
+        .array;
+}
+
+/// How many of the three panes fit on one row at `width`: 3, 2 or 1.
+private size_t columnsFor(const string[] boxes, size_t width) @safe
+{
     import std.algorithm : map, sum;
-    import std.array : array, join;
+    import std.array : array;
 
-    enum gap = 2;
-    auto boxes = panes.map!(p => drawBox(p.body_, p.title)).array;
+    if (boxes.length < 3)
+        return boxes.length;
     auto widths = boxes.map!blockWidth.array;
+    bool fits(size_t[] ws) => ws.sum + paneGap * (ws.length - 1) <= width;
 
-    bool fits(size_t[] ws)
-    {
-        return ws.sum + gap * (ws.length - 1) <= width;
-    }
+    if (fits(widths))
+        return 3;
+    return fits(widths[0 .. 2]) ? 2 : 1;
+}
 
-    if (boxes.length == 3 && fits(widths))
-        return "\n" ~ hjoin(boxes, gap);
-    if (boxes.length == 3 && fits(widths[0 .. 2]))
-        return "\n" ~ hjoin(boxes[0 .. 2], gap) ~ "\n" ~ boxes[2];
-    return "\n" ~ boxes.join("\n");
+private enum size_t paneGap = 2;
+
+private string assemble(const string[] boxes, size_t columns) @safe
+{
+    import sparkles.ui.components.layout : hjoin;
+    import std.array : join;
+
+    if (columns >= 3)
+        return hjoin(boxes, paneGap);
+    if (columns == 2)
+        return hjoin(boxes[0 .. 2], paneGap) ~ "\n" ~ boxes[2 .. $].join("\n");
+    return boxes.join("\n");
+}
+
+/// The artifact paths as their own lines, for the layout that could not
+/// afford them in the borders.
+private string pathLines(const Pane[] panes) @safe
+{
+    string out_;
+    foreach (p; panes)
+        if (p.footer.length)
+            out_ ~= "\n" ~ p.title ~ ": " ~ p.footer;
+    return out_;
 }
 
 /// The widest visible line of a rendered block — the column count it occupies
@@ -540,25 +741,20 @@ private size_t reportWidth() @system
 
 /// Fill `out_` with hue-rendered pane bodies, or return false and leave the
 /// caller's plain ones alone. False covers every reason at once: no `hue`, no
-/// colour, an older `hue` that rejects one of the flags, a write that failed.
-private bool huePanes(const CaseResult r, int width, out Pane[3] out_) @system
+/// colour, an older `hue` that rejects one of the flags, a process that failed.
+/// The files are the ones [writeArtifacts] already wrote — hue reads the same
+/// bytes the reader can open afterwards, so the panes and the artifacts cannot
+/// disagree.
+private bool huePanes(in Artifacts art, int width, out Pane[3] out_) @system
 {
-    import std.file : tempDir, write;
-    import std.path : buildPath;
+    import std.algorithm : count, max;
     import std.process : execute;
 
     if (!hueUsable)
         return false;
 
-    const expPath = buildPath(tempDir, "dmd-fmt-case-expected.d");
-    const actPath = buildPath(tempDir, "dmd-fmt-case-actual.d");
     try
     {
-        write(expPath, r.expected);
-        write(actPath, r.actual);
-        scope (exit)
-            removeQuietly(expPath, actPath);
-
         const common = ["hue", "--background=no-background",
             "--width=" ~ width.to!string];
         string run(string[] argv)
@@ -567,18 +763,19 @@ private bool huePanes(const CaseResult r, int width, out Pane[3] out_) @system
             return res.status == 0 ? res.output.stripRight("\n") : null;
         }
 
-        const expected = run(["view", "--ansi", "--no-line-numbers", expPath]);
-        const actual = run(["view", "--ansi", "--no-line-numbers", actPath]);
+        const expected = run(["view", "--ansi", "--no-line-numbers",
+            art.expectedPath]);
+        const actual = run(["view", "--ansi", "--no-line-numbers",
+            art.actualPath]);
         // Enough context to reach both ends of the file. hue's default window
         // is three lines, and with the elision bands suppressed a truncated
         // pane would be indistinguishable from a complete one — the diff must
         // show the same region the other two panes do.
-        import std.algorithm : count, max;
-
-        const lines = max(r.expected.count('\n'), r.actual.count('\n')) + 1;
+        const lines = max(expected.count('\n'), actual.count('\n')) + 2;
         const diff = run(["diff", "--ansi", "--diff-show-formatting",
             "--no-diff-chrome", "--no-line-numbers",
-            "--diff-context=" ~ lines.to!string, expPath, actPath]);
+            "--diff-context=" ~ lines.to!string,
+            art.expectedPath, art.actualPath]);
         if (!expected.length || !actual.length || !diff.length)
             return false;
 
@@ -591,18 +788,6 @@ private bool huePanes(const CaseResult r, int width, out Pane[3] out_) @system
     }
     catch (Exception)
         return false;
-}
-
-private void removeQuietly(string[] paths...) @safe nothrow
-{
-    import std.file : remove;
-
-    foreach (path; paths)
-        try
-            remove(path);
-        catch (Exception)
-        {
-        }
 }
 
 /// A plain unified diff, for the no-`hue` path — computed with the same
@@ -757,17 +942,27 @@ private bool hueUsable() @safe
 @("cases.report.plain-render-has-all-three-panes")
 @system unittest
 {
+    import std.file : exists, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+
+    // Its own directory: a passing test must not leave anything in the one a
+    // real sweep clears, nor race that sweep for it.
+    const dir = buildPath(tempDir, "sparkles-dmd-fmt-report-test");
+    scope (exit)
+        if (dir.exists)
+            rmdirRecurse(dir);
+
     CaseResult r;
     r.expected = "int a;\n";
     r.actual = "int  a;\n";
-    const report = renderFailure(r);
+    const report = renderFailure(r, dir);
     // The pane names live in the box borders, not in band above them.
     assert(report.canFind("expected"), report);
     assert(report.canFind("actual"), report);
     assert(report.canFind("diff"), report);
     assert(report.canFind("int  a;"), report);
-    // Empty on both sides is not a diff worth printing.
-    assert(renderFailure(CaseResult.init) == "");
+    // Empty on both sides is not a diff worth printing — and writes nothing.
+    assert(renderFailure(CaseResult.init, dir) == "");
 }
 
 @("cases.report.columns-follow-the-terminal-width")
@@ -794,6 +989,72 @@ private bool hueUsable() @safe
     foreach (report; [wide, medium, narrow])
         foreach (p; panes)
             assert(report.canFind(p.title), report);
+}
+
+@("cases.artifacts.both-sides-land-on-disk")
+@system unittest
+{
+    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir;
+    import std.path : baseName, buildPath;
+
+    const dir = buildPath(tempDir, "sparkles-dmd-fmt-artifact-test");
+    scope (exit)
+        if (dir.exists)
+            rmdirRecurse(dir);
+
+    CaseResult r;
+    r.file = "/somewhere/declarations.md";
+    r.line = 9;
+    r.label = "P22 [After]";
+    r.expected = "int a;\n";
+    r.actual = "int  a;\n";
+
+    const art = writeArtifacts(r, dir);
+    assert(art.written);
+    // Named after the case, so two failures in one page cannot collide.
+    assert(art.expectedPath.baseName == "declarations-9-P22-After.expected.d",
+        art.expectedPath);
+    assert(art.actualPath.baseName == "declarations-9-P22-After.actual.d",
+        art.actualPath);
+    // The bytes on disk are the case's, verbatim — this is what a person
+    // opens in an editor or feeds to `diff`.
+    assert(art.expectedPath.readText == r.expected);
+    assert(art.actualPath.readText == r.actual);
+    assert(art.expectedLabel.length && art.actualLabel.length);
+
+    // An unwritable directory is not a test failure: the report degrades to
+    // no footers rather than throwing over a diagnostic.
+    const nowhere = writeArtifacts(r, "/proc/nonexistent/dir");
+    assert(!nowhere.written);
+}
+
+@("cases.artifacts.footers-yield-to-a-column")
+@system unittest
+{
+    import std.algorithm : canFind;
+    import std.string : lineSplitter;
+
+    const long_ = ".result/dmd-fmt-cases/declarations-9-P22-After.expected.d";
+    const panes = [
+        Pane("expected", "int a;\n", long_),
+        Pane("actual", "int  a;\n", long_[0 .. $ - 10] ~ ".actual.d"),
+        Pane("diff", "- int a;\n+ int  a;\n", null),
+    ];
+
+    // Wide enough for three footered boxes: the path is drawn in the border.
+    const wide = composePanes(panes, 300);
+    assert(wide.canFind("╭──╼ expected ╾"), wide);
+    foreach (line; wide.lineSplitter)
+        if (line.canFind(long_))
+            assert(line.canFind("╰"), "the path sits in the bottom border");
+
+    // Too narrow for that, but wide enough for three bare ones: the paths
+    // move out of the borders rather than costing a column.
+    const tight = composePanes(panes, 70);
+    assert(tight.canFind("\nexpected: " ~ long_), tight);
+    foreach (line; tight.lineSplitter)
+        if (line.canFind(long_))
+            assert(!line.canFind("╰"), "the border no longer carries it");
 }
 
 @("cases.bless.rewrites-only-the-expectation")
@@ -836,6 +1097,10 @@ private bool hueUsable() @safe
         "libs/dmd-fmt/test/cases",
         "docs/libs/dmd-fmt/reference/decisions",
     ];
+
+    // One sweep, one clean directory: whatever survives belongs to a failure
+    // this run produced.
+    clearArtifacts();
 
     size_t files, checks;
     string report;

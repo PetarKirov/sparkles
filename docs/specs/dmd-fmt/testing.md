@@ -286,6 +286,22 @@ is short. Columns matter more here than in most reports — the panes are near-i
 differing by a few columns of indentation, and a difference you have to scroll between is a
 difference you will not see.
 
+Both sides are also **written to disk**, under `.result/dmd-fmt-cases/` at the repository root
+(`.result/` is already git-ignored), named after the case that produced them —
+`declarations-9-P22-After.expected.d` and `.actual.d`. Each box's footer names its file relative
+to the working directory. A report is a snapshot; the artifacts are the thing itself, and a
+whitespace defect is often faster to settle with `diff`, `cmp`, `xxd` or an editor than by reading
+two columns of near-identical D.
+
+The directory is cleared once at the top of a sweep, not per case: what survives a run is exactly
+what that run produced. A stale artifact is worse than no artifact, because it looks current — the
+same failure mode as the stale golden that motivated loud blessing in `TST5`.
+
+A footer is as wide as the path it names, which is usually wider than the D above it, so drawing
+the paths in the borders can cost a whole column. When it would, the panes are drawn bare and the
+paths go on their own lines underneath — the same information, and one more column of code to read
+it against. The layout picks whichever gives more columns.
+
 When `hue` is on `PATH` and the output takes colour, all three panes go through it. The formatter's
 own repository ships a syntax-highlighting viewer and a diff view; a formatting failure is exactly
 the thing they are good at, and reading one as an undifferentiated wall of text is a self-inflicted
