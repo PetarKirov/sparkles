@@ -305,6 +305,29 @@ struct PreviewTui
     // Which collapsed runs of the focused popup's signature are open. Per
     // popup: moving to another node asks a fresh question.
     private ExpandedRegions hoverExpanded;
+    /// The hover popup's body offset in rows, and last frame's measurement of
+    /// what it may scroll over. A ddoc-heavy hover used to run off the pane
+    /// with no way to reach the rest of it.
+    private long hoverScroll;
+    /// ditto
+    private long hoverContentRows;
+    /// ditto
+    private long hoverViewportRows;
+
+    /// Scrolls the open popup's body by `rows`, clamped; `true` iff it moved —
+    /// which is also "the notch was consumed", so it does not also scroll the
+    /// document the popup is describing.
+    private bool scrollHoverPopup(long rows) @safe pure nothrow @nogc
+    {
+        const over = hoverContentRows - hoverViewportRows;
+        const maxOff = over > 0 ? over : 0;
+        const want = hoverScroll + rows;
+        const clamped = want < 0 ? 0 : (want > maxOff ? maxOff : want);
+        if (clamped == hoverScroll)
+            return false;
+        hoverScroll = clamped;
+        return true;
+    }
 
     // ── the model's vocabulary, forwarded (IXB5) ─────────────────────────────
     // The old field names keep working for the methods below and every host
@@ -493,6 +516,12 @@ struct PreviewTui
         }
         if (w.mods.shift)
             return true; // a shifted notch never scrolls vertically
+        // An open popup takes the notch before the document does. Otherwise it
+        // falls through and scrolls the token the popup describes out from
+        // under it: the popup stays put and the thing it is about walks away.
+        // (`LYR5`'s wheel arm, hand-routed until the popup joins the arena.)
+        if (hoverSel >= 0 && scrollHoverPopup(w.dy))
+            return true;
         // A vertical notch over a TALL fence or table scrolls it until its
         // edge; only then does it reach the document (the COD6/TBL8 rule).
         const fbV = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
@@ -673,6 +702,7 @@ struct PreviewTui
         dsvCopy = DsvCopy.init;
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
+        hoverScroll = 0;
         sel = Selection!long.cleared;
         inp.mode = Mode.normal;
         inp.query.clear();
@@ -702,6 +732,7 @@ struct PreviewTui
     {
         tw = tw_;
         hoverSel = -1;
+        hoverScroll = 0;
         showPreview = tw.code.length != 0 || model.present;
         relayout(); // clamps the scroll to the document view's row count
     }
@@ -992,7 +1023,7 @@ struct PreviewTui
         import sparkles.source_view.markdown : highlightedFenceRenderer,
             MdViewTheme;
         import sparkles.twoslash.render_widgets : HoverViewOptions,
-            placeHoverPopup, popupBound, signatureSpans;
+            placeHoverPopup, popupBound, popupScrollExtents, signatureSpans;
         import sparkles.ui.geometry : Rect;
         import sparkles.ui.overlay.anchor : AnchorRect;
         import sparkles.ui.state : clippedSelectionRects;
@@ -1027,7 +1058,8 @@ struct PreviewTui
         // and fence highlighter are the same ones the preview uses, so a
         // documented unittest arrives with its `unittest` fence label.
         auto opts = HoverViewOptions(
-            maxWidth: bound.width, sigSpans: sig,
+            maxWidth: bound.width, maxHeight: bound.height,
+            scrollOffset: hoverScroll, sigSpans: sig,
             expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1,
             mdTheme: MdViewTheme.derive(vm.current, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(cache,
@@ -1041,6 +1073,11 @@ struct PreviewTui
             return;
         auto frames = layout(tree);
         auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
+        // What the body may scroll over, measured off the frames just laid
+        // out — so a wheel notch clamps against a real extent next frame.
+        const sc = popupScrollExtents(tree, frames);
+        hoverContentRows = sc.content;
+        hoverViewportRows = sc.viewport;
 
         // The token's own cell, in GRID coordinates — the same transform the
         // document itself is painted through at `originX - hx, 1 - top`. The
@@ -1538,6 +1575,7 @@ struct PreviewTui
         if (e.key == Key.escape && hoverSel >= 0 && !lantern.active)
         {
             hoverSel = -1;
+            hoverScroll = 0;
             return true;
         }
 
@@ -1649,6 +1687,7 @@ struct PreviewTui
                 if (hoverNodes.length)
                 {
                     hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
+                    hoverScroll = 0;
                     hoverExpanded = null;
                 }
                 break;
@@ -1924,11 +1963,13 @@ struct PreviewTui
                             hoverSel = hoverSel == cast(int) i
                                 ? -1 : cast(int) i;
                             hoverExpanded = null;
+                            hoverScroll = 0;
                             return true;
                         }
                 if (hoverSel >= 0)
                 {
-                    hoverSel = -1; // a click elsewhere dismisses the popup
+                    hoverSel = -1;
+                    hoverScroll = 0; // a click elsewhere dismisses the popup
                     return true;
                 }
             }
