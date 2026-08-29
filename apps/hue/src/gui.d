@@ -84,7 +84,7 @@ import sparkles.syntax : HighlightEvent, LabelId, LabelSet, StyleSpec, TextAttr,
     ResolvedTheme, RgbColor, toRgb;
 import sparkles.ui.theme : Theme;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.base.logger : warning;
+import sparkles.base.logger : trace, traceSpan, warning;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
 import sparkles.base.unique : makeUnique;
@@ -402,6 +402,7 @@ int runGui(GuiArgs guiArgs) @system
     // shot was taken, and how long we will wait for the former.
     int settledAt = -1;
     int shotAt = -1;
+    bool helpersStarted; // live-types / diff oracles, after the first swap
     enum shotSettleCap = 240; // ~4 s at 60 FPS
     // `--font-size` arrives in points; convert to pixels (96-DPI, 1pt = 1/72in)
     // exactly like apps/terminal so both raylib apps size a font identically —
@@ -2092,6 +2093,8 @@ int runGui(GuiArgs guiArgs) @system
 
         window.resetClip(); // never let a scissor survive the frame
         }
+        if (!painted)
+            trace(i"first-paint");
         painted = true;
     }
 
@@ -2109,6 +2112,17 @@ int runGui(GuiArgs guiArgs) @system
         fonts.flushPending();
 
         ++frame;
+        if (capture.quitAfterFrame > 0 && frame >= capture.quitAfterFrame)
+            return false;
+        // After the first swap (and after a quit-after-frame exit): the
+        // helper processes must not share the first-frame path with fonts.
+        if (!helpersStarted)
+        {
+            helpersStarted = true;
+            if (docPath.length)
+                startLive(docPath, vm.tw.code.length != 0);
+            startDiffTypes();
+        }
         if (!shotPath.length)
             return true;
 
@@ -3845,6 +3859,8 @@ int runGui(GuiArgs guiArgs) @system
     // is something to measure.
     void setupPhase(H)(ref H h)
     {
+        auto setupSpan = traceSpan!"setup"();
+        trace(i"window+fonts");
         // A window and a face set exist on the windowed arm alone, and `run`
         // type-checks the callbacks against every arm it could dispatch to —
         // so the terminal instantiation must compile even though hue's `main`
@@ -3913,10 +3929,9 @@ int runGui(GuiArgs guiArgs) @system
         if (docPath.length)
             pn.tree.reveal(docPath);
 
-        // The document hue opened with (a payload target needs no oracle).
-        if (docPath.length)
-            startLive(docPath, vm.tw.code.length != 0);
-        startDiffTypes();
+        // Live types and the diff-side oracles spawn a helper. Kick them
+        // off after the first swap (`frameTail`) so they do not sit on
+        // time-to-first-frame.
 
         // Debug/CI: the tree-sitter panel, open before the first frame — the
         // pane arrangement (its scrollbar beside the document's) is only
