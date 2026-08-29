@@ -206,7 +206,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             break;
         case box:
             break; // background (if any) already emitted
-        case row, column, stack, panel, popup:
+        case row, column, stack, panel:
             // A clipping container brackets its children in scissor ops. The
             // pushed rect is the *effective* clip — this node's padded content
             // box on each clipped axis, already intersected with the ancestor
@@ -236,7 +236,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     const sig = b.add(Widget(kind: WidgetKind.text, text: "title: string", slot: Slot.code));
     const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.", slot: Slot.docs));
     const col = b.container(WidgetKind.column, [sig, docs]);
-    const popup = b.container(WidgetKind.popup, [col],
+    const popup = b.container(WidgetKind.panel, [col],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(popup);
 
@@ -300,7 +300,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     auto b = Builder();
     const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.", slot: Slot.docs,
         textStyle: TextStyle(fontRole: FontRole.docs, fontScale: 80, italic: true)));
-    const popup = b.container(WidgetKind.popup, [docs],
+    const popup = b.container(WidgetKind.panel, [docs],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true,
         decoration: Decoration(borderWidth: Insets.all(1), borderStyle: BorderStyle.solid,
             borderRadius: 4, shadow: true));
@@ -458,7 +458,7 @@ unittest
 
     auto b = Builder();
     const t = b.add(Widget(kind: WidgetKind.text, text: "hi", slot: Slot.code));
-    const box = b.container(WidgetKind.popup, [t], slot: Slot.surface,
+    const box = b.container(WidgetKind.panel, [t], slot: Slot.surface,
         padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(box);
 

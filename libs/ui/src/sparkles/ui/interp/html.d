@@ -204,7 +204,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "\"></div>");
             break;
 
-        case row, column, stack, panel, popup:
+        case row, column, stack, panel:
             put(w, "<div style=\"");
             boxStyle(w, node, vis);
             // Flow direction for the flex containers, with the container's
@@ -525,7 +525,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     auto b = Builder();
     const docs = b.add(Widget(kind: WidgetKind.text, text: "Wraps <T>.", slot: Slot.docs,
         textStyle: TextStyle(fontRole: FontRole.docs, fontScale: 80)));
-    const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
+    const popup = b.add(Widget(kind: WidgetKind.panel, slot: Slot.surface,
         padding: Insets.all(1), paintBackground: true, children: [docs],
         decoration: Decoration(borderWidth: Insets.all(1), borderStyle: BorderStyle.solid,
             borderRadius: 4, shadow: true, arrow: true, arrowOffset: 1)));

@@ -569,7 +569,7 @@ static assert(isCanvas!GridCanvas);
     auto b = Builder();
     const sigNode = b.add(Widget(kind: WidgetKind.text, text: "const x: number",
         slot: Slot.code));
-    const popup = b.container(WidgetKind.popup, [sigNode],
+    const popup = b.container(WidgetKind.panel, [sigNode],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(popup);
 

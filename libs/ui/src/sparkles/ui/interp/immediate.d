@@ -154,7 +154,7 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
 
     auto b = Builder();
     const t = b.add(Widget(kind: WidgetKind.text, text: "hi", slot: Slot.code));
-    const popup = b.container(WidgetKind.popup, [t],
+    const popup = b.container(WidgetKind.panel, [t],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(popup);
 

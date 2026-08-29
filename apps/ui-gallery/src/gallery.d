@@ -1456,7 +1456,7 @@ struct Gallery
             "a focused terminal's scrollback");
 
         const popup = b.add(Widget(
-            kind: WidgetKind.popup,
+            kind: WidgetKind.panel,
             children: [b.add(Widget(kind: WidgetKind.column, children: lines))],
             slot: Slot.surface,
             padding: Insets.symmetric(1, 2),

@@ -351,7 +351,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
                 break;
             case glyph, line, scrollbar, box:
                 break;
-            case row, column, stack, panel, popup:
+            case row, column, stack, panel:
                 foreach (ci; node.children)
                     walk(ci);
                 break;
