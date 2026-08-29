@@ -39,10 +39,12 @@ module sparkles.ui.overlay.arena;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.overlay.anchor : Anchor;
-import sparkles.ui.overlay.place : OverlayGeometry, Placement;
-import sparkles.ui.state : Timeline;
-import sparkles.ui.widget : HitBehavior;
+import sparkles.ui.layout : Frame, OutOfFlow, translateSubtree;
+import sparkles.ui.overlay.anchor : Anchor, AnchorKind, AnchorSource,
+    resolveAnchor;
+import sparkles.ui.overlay.place : Fit, OverlayGeometry, place, Placement, Side;
+import sparkles.ui.state : clippedSelectionRects, rectOfKey, Timeline;
+import sparkles.ui.widget : HitBehavior, WidgetTree;
 
 @safe:
 
@@ -312,36 +314,6 @@ struct OverlayArena
     size_t cascadeFrom(OverlayId h) const => indexOf(h);
 }
 
-/**
-Which widget nodes this frame's arena hoists out of flow (`LYR7`),
-index-parallel to `tree.nodes`.
-
-An overlay must be excluded from its host's natural-size measurement and
-placement, or an open dropdown resizes or displaces the box it hangs off. The
-exclusion is by $(B membership) — the same rule as visibility — so a node is out
-of flow exactly while a record names it, and the layout walk needs no notion of
-what an overlay is.
-*/
-struct OutOfFlow
-{
-    /// One flag per node index; a shorter slice means "the rest are in flow".
-    const(bool)[] hoisted;
-
-    /// Whether node `i` is hoisted this frame.
-    bool opIndex(uint i) const @safe pure nothrow @nogc
-        => i < hoisted.length && hoisted[i];
-
-    /// Whether anything is hoisted at all — the fast path for the overwhelming
-    /// majority of frames, which have no overlays.
-    bool any() const @safe pure nothrow @nogc
-    {
-        foreach (h; hoisted)
-            if (h)
-                return true;
-        return false;
-    }
-}
-
 /// The hoist set `a` implies over a tree of `nodeCount` nodes.
 OutOfFlow hoistedBy(in OverlayArena a, size_t nodeCount) pure nothrow
 {
@@ -519,4 +491,130 @@ OutOfFlow hoistedBy(in OverlayArena a, size_t nodeCount) pure nothrow
     assert(!flags[0] && !flags[4] && !flags[9]);
     assert(!flags[99], "out of range is in flow, not an error");
     assert(flags.any);
+}
+
+/**
+The overlay pass (`PLC12`): resolve each record's anchor, solve its placement,
+and move its subtree there — once per frame, inside the existing frame pass,
+with $(B no observer machinery).
+
+That last clause is the whole saving. Floating UI needs a three-method
+measurement `Platform` and 264 lines of `autoUpdate` observers because it cannot
+see the layout; here `layout()` $(I is) the measurement and the clip chain is
+already threaded to every node, so the entire apparatus collapses to "recompute
+between `layout` and the display list".
+
+Call it after `layout(tree, hoistedBy(arena, tree.nodes.length))` and before
+building the display list. `frames` is updated in place for the hoisted
+subtrees; the returned arena carries each record's `resolved` geometry.
+
+An anchor that no longer resolves yields `Fit.refused`, which withdraws the
+record from paint and hits without removing it — deciding whether it should
+$(I close) is dismissal's business, and dismissal is a separate stage.
+*/
+OverlayArena placeOverlays(in WidgetTree tree, scope Frame[] frames,
+    OverlayArena arena, in Rect boundary)
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    OverlayArena solved = arena;
+    foreach (i; 0 .. solved.length)
+    {
+        auto rec = &solved[i];
+        if (rec.node >= tree.nodes.length)
+        {
+            rec.resolved = OverlayGeometry(fit: Fit.refused);
+            continue;
+        }
+
+        // The producers a record's anchor kind needs, and only those: a rect
+        // or spot anchor answers for itself, so neither walk runs for one.
+        AnchorSource src;
+        final switch (rec.anchor.kind)
+        {
+            case AnchorKind.key:
+                src.keyed = rectOfKey(tree, frames, rec.anchor.key);
+                break;
+            case AnchorKind.textRange:
+                src.range = clippedSelectionRects(tree, frames,
+                    rec.anchor.srcLo, rec.anchor.srcHi);
+                break;
+            case AnchorKind.spot:
+                src.boundary = boundary;
+                break;
+            case AnchorKind.rect:
+            case AnchorKind.point:
+                break;
+        }
+
+        const a = resolveAnchor(rec.anchor, src);
+        if (!a.live)
+        {
+            // Gone, or ambiguous. Either way there is nothing to place against.
+            rec.resolved = OverlayGeometry(fit: Fit.refused);
+            continue;
+        }
+
+        const at = frames[rec.node].rect;
+        rec.resolved = place(rec.placement, a, at.size, boundary);
+        if (rec.resolved.paintable)
+            translateSubtree(tree, rec.node,
+                rec.resolved.rect.origin - at.origin, frames);
+    }
+    return solved;
+}
+
+@("ui.overlay.arena.placeOverlaysMovesTheSubtreeNotJustItsRoot")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // A host with a hoisted overlay carrying a child of its own. Moving only
+    // the record's own node would leave the content behind at the origin —
+    // painted, but somewhere else entirely.
+    auto b = Builder();
+    const label = b.add(Widget(kind: WidgetKind.text, text: "menu", key: 5));
+    const item = b.add(Widget(kind: WidgetKind.text, text: "Open"));
+    const card = b.add(Widget(kind: WidgetKind.panel, children: [item]));
+    auto tree = b.finish(b.container(WidgetKind.column, [label, card]));
+
+    OverlayArena a;
+    a.push(OverlayRecord(node: card, anchor: Anchor.ofKey(5),
+        life: Timeline(phase: Timeline.Phase.hold)));
+
+    auto frames = layout(tree, hoistedBy(a, tree.nodes.length));
+    const before = frames[item].rect.origin;
+    const solved = placeOverlays(tree, frames, a, Rect(0, 0, 40, 12));
+
+    const g = solved[0].resolved;
+    assert(g.paintable && g.side == Side.bottom);
+    assert(g.rect.y == 1, "it hangs below the one-row label it is keyed to");
+    assert(frames[card].rect.origin == g.rect.origin);
+    assert(frames[item].rect.origin == before + (g.rect.origin - Point(0, 0)),
+        "the child moved with its parent");
+    assert(frames[item].rect.y == g.rect.y, "and landed inside it");
+}
+
+@("ui.overlay.arena.aDeadAnchorIsRefusedRatherThanPlacedAtZero")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // The key names nothing in this tree. Placing against a default rect would
+    // put the overlay at the origin, looking deliberate; refusing says so.
+    auto b = Builder();
+    const card = b.add(Widget(kind: WidgetKind.panel,
+        children: [b.add(Widget(kind: WidgetKind.text, text: "x"))]));
+    auto tree = b.finish(b.container(WidgetKind.column, [card]));
+
+    OverlayArena a;
+    a.push(OverlayRecord(node: card, anchor: Anchor.ofKey(404),
+        life: Timeline(phase: Timeline.Phase.hold)));
+
+    auto frames = layout(tree, hoistedBy(a, tree.nodes.length));
+    const solved = placeOverlays(tree, frames, a, Rect(0, 0, 40, 12));
+    assert(solved[0].resolved.fit == Fit.refused);
+    assert(!solved[0].contributesPaint && !solved[0].contributesHits);
 }
