@@ -605,3 +605,73 @@ private string completionKind(scope const(char)[] code) @safe pure nothrow @nogc
         default: return "text";
     }
 }
+
+@("api.completionsAt.isScopeWalkNotMemberEnumeration")
+@system unittest
+{
+    // The measurement that scopes an aggregate-member explorer, kept as a test
+    // so the finding cannot rot.
+    //
+    // `completionsAt` answers "what may I type here", which is the ENCLOSING
+    // SCOPE — and that is the right answer for a completion list. It is the
+    // wrong one for "what does this type contain", and the difference is not a
+    // filter: at a bare type name the walk climbs `uplevel` and fans out over
+    // imports, so the answer is dominated by `object.d`. Only a DOT expression
+    // sets `SearchOpt.localsOnly` and stops the climb.
+    //
+    // So a member explorer needs its own walk. Passing `localsOnly` into
+    // `findExpansions` is not the fix either: that would silently change
+    // completions, whose whole job is the climb.
+    import sparkles.dmd_lsp.testing : withAnalysis;
+
+    withAnalysis(q{
+        module s;
+        struct Point
+        {
+            int x;
+            int y;
+            int dot(Point o) { return 0; }
+            static Point zero() { return Point(); }
+        }
+        void use()
+        {
+            Point p;
+            auto n = p.x;
+        }
+    }, (AnalyzedModule m) {
+        // At the bare type name, the answer is the module's scope plus
+        // druntime — over a hundred entries, none of them `Point`'s.
+        const atType = m.completionsAt(12, 13);
+        assert(atType.length > 50,
+            "a bare type name enumerates the enclosing scope, not the type");
+        bool sawObjectD;
+        foreach (it; atType)
+            if (it.name == "Exception" || it.name == "ClassInfo")
+                sawObjectD = true;
+        assert(sawObjectD, "…including druntime, which is the pollution");
+
+        // At a dot expression the same function IS type-scoped: `Point`'s own
+        // members, plus D's built-in properties, and nothing else.
+        const afterDot = m.completionsAt(13, 24);
+        assert(afterDot.length < 20, "type-scoped, so a short list");
+        bool sawField, sawMethod, sawBuiltin, sawStranger;
+        foreach (it; afterDot)
+        {
+            if (it.name == "x")
+                sawField = true;
+            else if (it.name == "dot")
+                sawMethod = true;
+            else if (it.name == "sizeof" || it.name == "init")
+                sawBuiltin = true;
+            else if (it.name == "Exception" || it.name == "ClassInfo")
+                sawStranger = true;
+        }
+        assert(sawField && sawMethod, "the type's own members are reachable");
+        assert(sawBuiltin, "with D's built-in properties mixed in");
+        assert(!sawStranger, "and the enclosing scope is absent");
+
+        // `tipAt` resolves at both positions, so the hover site itself is not
+        // the obstacle — only the enumeration's scoping is.
+        assert(m.tipAt(12, 13).found && m.tipAt(13, 24).found);
+    });
+}
