@@ -105,6 +105,68 @@ BoxSpec boxSpec(uint cp) @safe pure nothrow @nogc
     }
 }
 
+/// The stroke thicknesses a cell's arms are drawn at, in pixels.
+struct ArmWeights
+{
+    int light;
+    int heavy;
+}
+
+/**
+The light and heavy arm thicknesses for a `cellW × cellH` cell.
+
+Both scale with the cell, and that is the whole point: a heavy arm derived
+as "twice the light one" is not heavy at a large font, because the light
+stroke has already bottomed out at a single pixel. The cell's WIDTH is the
+reference — for a monospace face it tracks the font size linearly, while the
+height carries the line spacing — so a rule keeps its weight relative to the
+glyphs beside it instead of turning into a hairline as the font grows.
+
+A heavy arm is always at least one pixel more than a light one, so the two
+weights never collapse into each other at small sizes.
+*/
+ArmWeights armWeights(int cellW, int cellH) @safe pure nothrow @nogc
+{
+    const int ref_ = cellW > 0 ? cellW : cellH;
+    int light = ref_ / 12;
+    if (light < 1)
+        light = 1;
+    int heavy = ref_ / 4;
+    if (heavy < light + 1)
+        heavy = light + 1;
+    // A rule may not swallow its own cell.
+    const int cap = (cellH > 0 ? cellH : ref_) / 2;
+    if (cap > 0 && heavy > cap)
+        heavy = cap;
+    return ArmWeights(light, heavy);
+}
+
+@("raylib_text.box.armWeights")
+@safe pure nothrow @nogc
+unittest
+{
+    // The regression: heavy used to be `light * 2` off a light stroke that
+    // had already clamped to one pixel, so heavy was 2px at EVERY font size
+    // — hairline once the cells got big. Heavy must now grow with the cell.
+    const small = armWeights(8, 16);
+    const mid = armWeights(12, 26);
+    const large = armWeights(21, 48);
+    const huge = armWeights(32, 72);
+
+    assert(small.heavy > small.light, "the weights never collapse");
+    assert(mid.heavy > mid.light);
+    assert(large.heavy > large.light);
+    assert(large.heavy > mid.heavy, "and heavy tracks the cell");
+    assert(huge.heavy > large.heavy);
+    // The user-visible cases. A 12px cell (the default font) used to draw
+    // a 2px heavy rule and still does — there is nowhere else to go at that
+    // size — but every larger cell now gets a rule that reads as heavy.
+    assert(mid.heavy >= 3);
+    assert(large.heavy >= 5);
+    // Nothing swallows its cell.
+    assert(huge.heavy <= 72 / 2);
+}
+
 /**
 Draw the box-drawing glyph `cp` filling the cell at `(fx, fy)` sized
 `cellW × cellH`: each arm is a rectangle from the cell centre to the cell edge, so
@@ -121,13 +183,9 @@ bool drawBox(ref LoadedFont white, uint cp, float fx, float fy,
         return false;
 
     const int x = cast(int) fx, y = cast(int) fy;
-    const int minDim = cellW < cellH ? cellW : cellH;
-    int tLight = minDim / 14;
-    if (tLight < 1)
-        tLight = 1;
-    const int tHeavy = tLight < 1 ? 2 : tLight * 2;
-    const int tV = spec.heavyV ? tHeavy : tLight; // vertical-arm width
-    const int tH = spec.heavyH ? tHeavy : tLight; // horizontal-arm height
+    const w = armWeights(cellW, cellH);
+    const int tV = spec.heavyV ? w.heavy : w.light; // vertical-arm width
+    const int tH = spec.heavyH ? w.heavy : w.light; // horizontal-arm height
     const int cx = x + cellW / 2, cy = y + cellH / 2;
     const int vx = cx - tV / 2; // left edge of a vertical arm
     const int hy = cy - tH / 2; // top edge of a horizontal arm
