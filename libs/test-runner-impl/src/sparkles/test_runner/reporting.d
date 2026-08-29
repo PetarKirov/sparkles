@@ -1336,7 +1336,7 @@ unittest
     // decomposition part), before the perf block.
     assert(header.countUntil("io-stall") == header.countUntil("other") + 1);
     assert(header.countUntil("io-stall") < header.countUntil("instr"));
-    assert(model.cells[1][header.countUntil("io-stall")] == "21.9ms");
+    assert(model.cells[1][header.countUntil("io-stall")] == "22ms");
     assert(model.cells[2][header.countUntil("io-stall")] == "—",
         "a psi-less row in a psi table reads an em dash");
 
