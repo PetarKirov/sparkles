@@ -859,6 +859,10 @@
             "link": "/specs/hue/feature-requirements"
           },
           {
+            "text": "Viewer (tier-scoped)",
+            "link": "/specs/hue/viewer"
+          },
+          {
             "text": "GUI (--gui)",
             "link": "/specs/hue/gui"
           },

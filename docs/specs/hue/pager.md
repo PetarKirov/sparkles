@@ -66,7 +66,7 @@ the escapes show up as content, and the content shows up unstyled.
 
 hue is unusually well placed here. `ansi_model.d` and the off-screen ghostty VT
 already decode SGR into hue's presentation cells — that is how ` ```ansi ` fences
-render in the markdown preview ([`MDP12`](./gui.md)). A **pre-formatted content
+render in the markdown preview ([`MDP12`](./viewer.md)). A **pre-formatted content
 kind** is therefore that decoder pointed at the whole input instead of at one
 fence, plus a small overstrike pass. That is a genuinely small feature that
 unlocks two of bat's headline integrations, which is exactly the trade this
@@ -113,11 +113,11 @@ stays there.
 | ID   | Requirement                                                                                                                                                                                                                                                                     | Status      | Traces to                                            |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
 | PIN1 | hue must recognize a **pre-formatted** content kind — input that is already styled — and render it by decoding rather than highlighting it, in every sink. It is a `ContentKind` beside code / markdown / twoslash / diff, produced by the pipeline like any other.             | not started | `document.ContentKind.preformatted`; `MOD9` doctrine |
-| PIN2 | SGR-styled input must be decoded through the existing `ansi_model.d` path (the off-screen ghostty VT that ` ```ansi ` fences already use), not a second parser.                                                                                                                 | not started | `ansi_model.d`; [`MDP12`](./gui.md)                  |
+| PIN2 | SGR-styled input must be decoded through the existing `ansi_model.d` path (the off-screen ghostty VT that ` ```ansi ` fences already use), not a second parser.                                                                                                                 | not started | `ansi_model.d`; [`MDP12`](./viewer.md)               |
 | PIN3 | `man`-style backspace overstrike (`x\bx` = bold, `_\bx` = underline) must be decoded to the equivalent styling, so `$MANPAGER` works without `col -bx`.                                                                                                                         | not started | proposed `overstrike.d` (pure, `@nogc`)              |
 | PIN4 | Detection must be automatic for non-tty stdin that contains SGR or overstrike sequences, and forceable with `--preformatted`; `--language`/`-l` must still win, so `-l man` or `-l diff` overrides the sniff.                                                                   | not started | `looksPreformatted`; `LNG2` cascade                  |
 | PIN5 | A pre-formatted document must be exempt from ANSI stripping and sanitizing ([`TXT2`/`TXT3`](./feature-requirements.md)) — hue is interpreting those bytes on purpose — while every **other** content kind stays subject to them.                                                | not started | `TXT2`; `ContentKind` gating                         |
-| PIN6 | Selection and copy over a pre-formatted document must yield the **decoded text** by default, with the escape-preserving variant reachable through the existing `--ansi-copy=raw\|strip` toggle ([`CLI10`](./feature-requirements.md)), which already names exactly this choice. | not started | `CliParams.ansiCopy`; [`SEL7`](./gui.md)             |
+| PIN6 | Selection and copy over a pre-formatted document must yield the **decoded text** by default, with the escape-preserving variant reachable through the existing `--ansi-copy=raw\|strip` toggle ([`CLI10`](./feature-requirements.md)), which already names exactly this choice. | not started | `CliParams.ansiCopy`; [`SEL7`](./viewer.md)          |
 
 ## Streaming & follow (`STR`)
 

@@ -124,7 +124,7 @@ Order, highest priority first:
    always takes priority over the system accent".
 2. **Environment override** — `SPARKLES_APPEARANCE=dark|light|...`, mirroring
    `ADW_DEBUG_COLOR_SCHEME`. Needed so
-   [golden captures](../../specs/hue/gui.md) stay deterministic, exactly as
+   [golden captures](../../specs/hue/viewer.md) stay deterministic, exactly as
    `HUE_GUI_*` already does for [`CFG2`](../../specs/hue/config.md).
 3. **Platform source** — portal / registry / `NSAppearance` / `AConfiguration`.
 4. **Terminal source** — mode 2031, then OSC 11.

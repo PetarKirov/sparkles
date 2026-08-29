@@ -11,7 +11,7 @@ model, displayed per backend (GUI texture · terminal graphics protocol · HTML
 > Forward-looking — every row is `not started`. Today an image inline renders as a
 > **placeholder glyph** ([`gui.md` `MDP`](./gui.md) `󰥶`), no diagram/math fence is
 > special-cased, and only ` ```ansi ` fences get non-code treatment
-> ([`MDP12`](./gui.md)). Status legend and IDs: see the [overview](./index.md).
+> ([`MDP12`](./viewer.md)). Status legend and IDs: see the [overview](./index.md).
 
 ## Design & rationale
 
@@ -22,7 +22,7 @@ are **placed and shown** is one shared mechanism:
   file is decoded (`IMG`); a **diagram** fence is rendered by an external engine to
   SVG/PNG (`DGM`); a **math** expression is typeset (`MTH`).
 - The **media block** (`MDB`) places the result: it reserves N cell-rows in the
-  wrapped `PreviewLine[]` ([`RND2`](./gui.md)) sized to the media's aspect at the
+  wrapped `PreviewLine[]` ([`RND2`](./viewer.md)) sized to the media's aspect at the
   available width, and each backend paints it — a raylib **texture** (GUI), a
   **terminal graphics protocol** (TUI), or native **`<img>`/`<svg>`** (HTML).
 
@@ -38,7 +38,7 @@ rendering — which shells out to external engines — is **opt-in** for securit
 | MDB3 | **TUI** — media must display via a **terminal graphics protocol** (kitty graphics / sixel / iTerm2 inline images), detected at startup ([`tui.md` `TCP1`](./tui.md)); unsupported → a placeholder box + alt text. | not started | proposed graphics-protocol emitter; memory `terminal-image-protocol-detection` |
 | MDB4 | **HTML** — media must emit native markup: `<img>` for raster, inline/linked `<svg>` for diagrams, KaTeX/MathJax (or pre-rendered) for math.                                                                       | not started | `app.d` HTML branch                                                            |
 | MDB5 | Every media block must carry **alt text / a caption** and **degrade to it** (plus the source path/fence) when the media can't be decoded, rendered, or displayed — never a crash, never a blank (totality).       | not started | degradation (`RND5`)                                                           |
-| MDB6 | Media must **reflow** on width/resize — recompute the block's cell-rows and re-scale — like the rest of the layout ([`WRP4`](./gui.md)).                                                                          | not started | `relayout` on width change                                                     |
+| MDB6 | Media must **reflow** on width/resize — recompute the block's cell-rows and re-scale — like the rest of the layout ([`WRP4`](./viewer.md)).                                                                       | not started | `relayout` on width change                                                     |
 
 ## Raster images (`IMG`)
 
@@ -82,8 +82,8 @@ rendering — which shells out to external engines — is **opt-in** for securit
 
 | Piece                                                                     | Role                                                            |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [gui.md](./gui.md) `MDP` (image `󰥶` placeholder), `FNT7`/`DEF8`           | today's placeholder; the color-emoji rasterizer gap is adjacent |
-| [gui.md](./gui.md) `MDP12` (` ```ansi ` fence decode)                     | precedent for special-casing a fence — diagrams/math extend it  |
+| [viewer.md](./viewer.md) `MDP` (image `󰥶` placeholder), `FNT7`/`DEF8`     | today's placeholder; the color-emoji rasterizer gap is adjacent |
+| [viewer.md](./viewer.md) `MDP12` (` ```ansi ` fence decode)               | precedent for special-casing a fence — diagrams/math extend it  |
 | [tui.md](./tui.md) `TCP1` (caps)                                          | detects the terminal graphics protocol (`MDB3`)                 |
 | `apps/terminal` image support; memory `terminal-image-protocol-detection` | protocol grounding for `MDB3`                                   |
 | `sparkles:syntax` `MdDoc` (image inlines, fence blocks)                   | media source detection                                          |

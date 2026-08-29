@@ -141,9 +141,9 @@ not.
 
 ## Who traces here
 
-| Spec                                      | Requirements                     |
-| ----------------------------------------- | -------------------------------- |
-| [hue `--gui`](../hue/gui.md) line numbers | `NUM1`, `NUM2`, `NUM3`           |
-| [hue folding](../hue/folding.md)          | `FLD5` (the gutter fold marker)  |
-| [hue overlays](../hue/overlays.md)        | `OVL7`, `COV2`                   |
-| [hue diff view](../hue/diff-view.md)      | `DVM5` (old/new/marker channels) |
+| Spec                                 | Requirements                     |
+| ------------------------------------ | -------------------------------- |
+| [hue](../hue/viewer.md) line numbers | `NUM1`, `NUM2`, `NUM3`           |
+| [hue folding](../hue/folding.md)     | `FLD5` (the gutter fold marker)  |
+| [hue overlays](../hue/overlays.md)   | `OVL7`, `COV2`                   |
+| [hue diff view](../hue/diff-view.md) | `DVM5` (old/new/marker channels) |
