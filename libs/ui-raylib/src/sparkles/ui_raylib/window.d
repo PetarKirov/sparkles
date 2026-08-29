@@ -122,10 +122,12 @@ struct Window
         //
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
+        import sparkles.base.logger : traceCall;
+
         SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
         // Unbounded on purpose: a `hue --diff` of two paths builds a title in
         // the hundreds of bytes, so any cap here would silently lose one.
-        InitWindow(r.width, r.height, r.title.toTempStringz.ptr);
+        traceCall!InitWindow(r.width, r.height, r.title.toTempStringz.ptr);
         // Checked HERE, before any other raylib call. `InitWindow` reports
         // failure only through `IsWindowReady`, and every call below assumes a
         // live GLFW: on a host with no window server they warn ("The GLFW
