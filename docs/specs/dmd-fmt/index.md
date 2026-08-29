@@ -303,14 +303,21 @@ a comparison the harness runs whenever a `dfmt` binary is present. The IR
 already carries N-way choice, so promotion is an interpreter swap.
 
 Known limitations of what has **shipped**, as distinct from what is in scope
-(D9 revises three of these from "deliberate" to "scheduled"): one continuation
-level where authors nest several; no opinionated spacing between tokens —
+(D9 revises three of these from "deliberate" to "scheduled"): no opinionated
+spacing between tokens —
 adjacency is preserved, so `a+b` vs `a + b` is still the author's choice
 (scheduled, gated on the precedence oracle); no brace-style option (scheduled,
 Allman default); no comment reflow (scheduled as opt-in DDoc reflow); no
 alignment engine — existing alignment is preserved, never created, which D9
 notes is in tension with DStyle's one-space field rule and is resolved by
 option, not by default.
+
+**Retired:** "one continuation level where authors nest several". A break after
+a clause header (`if (…)`, `foreach (…)`, a bare `else`) now opens a level and
+recurses, so nested braceless bodies step once per clause; every other break
+keeps the single-level rule, because each of its lines is the same expression
+continuing. The distinction is a token-class one — the keyword before a `(`
+separates `if (c)` from `foo(c)` — so it needed no oracle.
 
 ## Risks: retired and open
 
