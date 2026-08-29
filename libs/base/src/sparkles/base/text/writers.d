@@ -11,6 +11,7 @@ import std.traits : isSomeChar, isSomeString;
 
 import sparkles.base.term_style : Style;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
+import sparkles.base.text.width : Align;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
@@ -1600,24 +1601,23 @@ private template durationUnitAbbrev(string unit)
     else static assert(false, "unsupported duration unit: " ~ unit);
 }
 
-/// Writes a duration via $(LREF writeDuration), then right-pads with spaces to
+/// Writes a duration via $(LREF writeDuration), then pads with spaces to
 /// exactly `width` Unicode scalar values (UTF-8 lead bytes; `µ` is one
-/// column). Does not truncate when the compact form is already wider
-/// (`10000d`). @nogc-compatible.
+/// column). `align_` is $(REF Align, sparkles,base,text,width): `left`
+/// (default) puts the pad after the text, `right` before it — the logger
+/// prefix uses `right` so a 5-column `Δt` reads ` 1.5s`, ` 42µs`, `9.5ms`.
+/// Does not truncate when the compact form is already wider (`10000d`).
+/// @nogc-compatible.
 void writeDurationPadded(Writer)(
-    ref Writer w, in Duration duration, size_t width)
+    ref Writer w, in Duration duration, size_t width,
+    Align align_ = Align.left)
 {
     import sparkles.base.smallbuffer : SmallBuffer;
-    import std.range.primitives : put;
+    import sparkles.base.text.width : alignField;
 
     SmallBuffer!(char, 16) buf;
     writeDuration(buf, duration);
-    const text = buf[];
-    put(w, text);
-    const n = utf8ScalarCount(text);
-    if (n < width)
-        foreach (_; 0 .. width - n)
-            put(w, ' ');
+    alignField(w, buf[], width, align_);
 }
 
 /// Scalars in well-formed UTF-8: count bytes that are not continuations.
@@ -1822,7 +1822,10 @@ unittest
 
     SmallBuffer!(char, 32) buf;
     writeDurationPadded(buf, dur!"msecs"(1_500), 6);
-    assert(buf[] == "1.5s  ");            // "1.5s" then padded to 6 chars
+    assert(buf[] == "1.5s  ");            // default Align.left: pad after
+    buf.clear();
+    writeDurationPadded(buf, dur!"msecs"(1_500), 6, Align.right);
+    assert(buf[] == "  1.5s");            // Align.right: pad before
 }
 
 @("writeDurationPadded.width5.codePoints")
@@ -1833,10 +1836,10 @@ unittest
     import sparkles.base.smallbuffer : SmallBuffer;
 
     SmallBuffer!(char, 32) buf;
-    void check(Duration d, string expected)
+    void check(Duration d, string expected, Align align_ = Align.left)
     {
         buf.clear();
-        writeDurationPadded(buf, d, 5);
+        writeDurationPadded(buf, d, 5, align_);
         assert(buf[] == expected);
         assert(utf8ScalarCount(buf[]) == 5);
     }
@@ -1852,9 +1855,17 @@ unittest
     check(dur!"nsecs"(999_500), "1.0ms");
     check(dur!"nsecs"(999_500_000), "1.0s ");
 
+    // Logger prefix: Align.right so the unit column lines up.
+    check(dur!"msecs"(1_500), " 1.5s", Align.right);
+    check(dur!"usecs"(42), " 42µs", Align.right);
+    check(dur!"nsecs"(9_500_000), "9.5ms", Align.right);
+    check(dur!"msecs"(42), " 42ms", Align.right);
+    check(dur!"msecs"(1_000), " 1.0s", Align.right);
+    check(dur!"seconds"(8_631_360), "99.9d", Align.right);
+
     // Does not truncate when the compact form is already wider.
     buf.clear();
-    writeDurationPadded(buf, dur!"days"(10_000), 5);
+    writeDurationPadded(buf, dur!"days"(10_000), 5, Align.right);
     assert(buf[] == "10000d");
 }
 
