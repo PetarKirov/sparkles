@@ -85,24 +85,6 @@ private CellStyle cellStyle(RgbColor fg, bool hasBg, RgbColor bg, ubyte attrs)
         underline: (attrs & Attr.underline) ? UnderlineStyle.single : UnderlineStyle.none);
 }
 
-private char lowerAscii(char c) @safe pure nothrow @nogc
-    => (c >= 'A' && c <= 'Z') ? cast(char)(c + 32) : c;
-
-// Case-insensitive substring test (ASCII fold; allocation-free).
-private bool containsIC(scope const(char)[] hay, scope const(char)[] needle) @safe pure nothrow @nogc
-{
-    if (needle.length == 0 || needle.length > hay.length)
-        return needle.length == 0;
-    foreach (i; 0 .. hay.length - needle.length + 1)
-    {
-        size_t j;
-        while (j < needle.length && lowerAscii(hay[i + j]) == lowerAscii(needle[j]))
-            ++j;
-        if (j == needle.length)
-            return true;
-    }
-    return false;
-}
 
 /// The scrolling viewer state: the document (markdown model or raw source), the
 /// theme list, and the current scroll / theme / view-mode. The active view's
@@ -560,31 +542,30 @@ struct PreviewTui
         clipReady = true;
     }
 
-    // Does visual line `i` contain the query (case-insensitive)? Every view
-    // searches the row's *content* — `DocRow.sourceText`, the spans carrying
-    // source identity — and not its chrome. Searching the rendered row instead
-    // means a code view matches its own line numbers and coverage counts, and
-    // a blame channel would put commit hashes, authors and dates in the
-    // haystack. Scoping a search back onto particular channels is a later
-    // change; excluding them is the honest default.
-    private bool lineMatches(size_t i) @safe
-        => qlen != 0 && containsIC(mdRows[i].sourceText, query);
-
-    // The nearest matching line from `from` in the given direction (wrapping);
-    // scrolls it to the top when found.
+    // The nearest match from visual row `from` in the given direction
+    // (wrapping); scrolls it to the top when found.
+    //
+    // The match SET comes from `vm.matches` — `sparkles.source_view.search`,
+    // the one matcher both backends use (`UIA13`). This pane used to run its
+    // own ASCII case-insensitive scan over `DocRow.sourceText`, which is how
+    // the terminal and the window came to disagree about whether `Foo` matches
+    // `foo`. Rows are reached through `vm.visualOfMatch`, so wrapping and folds
+    // are the view model's problem here exactly as they are in the window.
     private void jumpMatch(long from, bool forward) @safe
     {
         const n = lineCount;
-        if (n == 0 || qlen == 0)
+        if (n == 0 || vm.matches.length == 0)
             return;
         foreach (step; 0 .. n)
         {
             const i = forward ? (from + step) % n : ((from - step) % n + n) % n;
-            if (lineMatches(cast(size_t) i))
-            {
-                vm.scrollTo(i);
-                return;
-            }
+            foreach (idx, ref const m; vm.matches)
+                if (vm.visualOfMatch(m) == i)
+                {
+                    vm.curMatch = idx;
+                    vm.scrollTo(i);
+                    return;
+                }
         }
     }
 
@@ -1972,11 +1953,13 @@ struct PreviewTui
             case Key.char_:
                 if (qlen < qbuf.length)
                     qbuf[qlen++] = cast(char) e.ch;
+                vm.search(query); // the one matcher (`UIA13`)
                 jumpMatch(top, true);
                 break;
             case Key.backspace:
                 if (qlen)
                     --qlen;
+                vm.search(query);
                 jumpMatch(top, true);
                 break;
             case Key.enter:
@@ -2311,11 +2294,13 @@ unittest
             sawBody = true;
     assert(sawBody, "fence body not painted");
 
-    // Search runs over the aggregated row text; a match scrolls to its row
-    // (shrink the viewport so the document overflows and the jump sticks).
+    // Search runs the SHARED matcher and jumps to a match's row (shrink the
+    // viewport so the document overflows and the jump sticks). `vm.search` is
+    // the step that used to be a private per-row scan in this module.
     t.qbuf[0 .. 5] = "y = 2";
     t.qlen = 5;
     t.height = 5;
+    t.vm.search(t.query);
     t.jumpMatch(0, true);
     assert(t.top > 0, "search did not jump to the fence's second line");
     t.top = 0;

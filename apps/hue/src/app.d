@@ -1357,7 +1357,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
                 if (loc.line > 0)
                 {
-                    import gui_text : buildLineStarts;
+                    import sparkles.source_view.search : buildLineStarts;
                     import sparkles.source_view.code : TintedRange;
                     import sparkles.ui.style : Slot;
 
@@ -1447,7 +1447,7 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
 {
     import sparkles.ui.widget : Builder, WidgetTree;
     import document : coverageChannel;
-    import gui_text : buildLineStarts, lineCount;
+    import sparkles.source_view.search : buildLineStarts, lineCount;
     import sparkles.code_instrumentation : maxCountWidth;
     import sparkles.ui.components.gutter : GutterChannel, gutterWidth,
         withGutterColumns, withinBudget;
@@ -1539,7 +1539,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
                     copt.tintedRanges = coverageTintedRanges(doc.coverage);
                 if (loc.line > 0)
                 {
-                    import gui_text : buildLineStarts;
+                    import sparkles.source_view.search : buildLineStarts;
                     import sparkles.source_view.code : TintedRange;
                     import sparkles.ui.style : Slot;
 

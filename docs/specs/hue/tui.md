@@ -47,25 +47,25 @@ How each GUI requirement area applies to the TUI. **full** = ports directly ·
 **future** = backend-agnostic, deferred with the GUI's. All GUI areas are in
 [gui.md](./gui.md); IDs below are bare references into it.
 
-| GUI area                     | Applies                      | Terminal note                                                                                                                |
-| ---------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `RND` render model           | full                         | the same widget trees, painted into cells (`paintGrid`); the terminal is natively monospace (`RND6` free)                    |
-| `VIW` views & toggle         | full                         | raw + markdown preview, Tab toggles                                                                                          |
-| `WRP` wrapping               | full                         | same soft/hard wrap; reflow on `SIGWINCH` (`TSF2`)                                                                           |
-| `NUM` line numbers           | full                         | file gutter + per-code-block gutter, in cells                                                                                |
-| `NAV` navigation & scroll    | full                         | wheel (SGR mouse), `j`/`k`, PageUp/Down, Home/End, goto-line                                                                 |
-| `SCB` scrollbar              | best-effort → `TSB`          | cell-column bar, block-glyph thumb, mouse drag / track-click; no smooth width easing                                         |
-| `THG` live theme cycling     | full _(partial now)_         | ←/→ cycle — the shipped previewer already does this (`PRV2`)                                                                 |
-| `FND` search & goto          | full                         | incremental search; matches via reverse-video / tint                                                                         |
-| `MDP` markdown constructs    | best-effort → `MDP-T` (here) | all decorations; Nerd-glyph dependence like `FNT8`; box-drawing is native; ` ```ansi ` fences pass through the real terminal |
-| `COD` code blocks            | full (best-effort)           | code gutter + highlighted body + border via native box glyphs; copy region + OSC 52 (`TCL`)                                  |
-| `SEL` selection & clipboard  | best-effort → `TSL`          | app-level drag-select → source offsets; clipboard via OSC 52; suppresses the terminal's native selection                     |
-| `FNT` font                   | n/a                          | the terminal owns the font/cell; bold/italic/underline → SGR attributes (the `FNT5` analog)                                  |
-| `WIN` window & lifecycle     | n/a                          | no window; the alt-screen is the surface; resize arrives as `SIGWINCH`                                                       |
-| `FSC` fullscreen             | n/a                          | the terminal emulator's concern, not hue's                                                                                   |
-| `BOX` procedural box-drawing | n/a _(solved)_               | box glyphs render natively without gaps — the GPU arms-to-edges workaround isn't needed                                      |
-| `DBG` debug/CI hooks         | best-effort                  | a headless frame-dump analog for golden capture (the previewer already assembles a frame buffer)                             |
-| `SEM` semantic refinement    | future                       | backend-agnostic, deferred with the GUI's `SEM1`                                                                             |
+| GUI area                     | Applies                      | Terminal note                                                                                                                                                                                                 |
+| ---------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RND` render model           | full                         | the same widget trees, painted into cells (`paintGrid`); the terminal is natively monospace (`RND6` free)                                                                                                     |
+| `VIW` views & toggle         | full                         | raw + markdown preview, Tab toggles                                                                                                                                                                           |
+| `WRP` wrapping               | full                         | same soft/hard wrap; reflow on `SIGWINCH` (`TSF2`)                                                                                                                                                            |
+| `NUM` line numbers           | full                         | file gutter + per-code-block gutter, in cells                                                                                                                                                                 |
+| `NAV` navigation & scroll    | full                         | wheel (SGR mouse), `j`/`k`, PageUp/Down, Home/End, goto-line                                                                                                                                                  |
+| `SCB` scrollbar              | best-effort → `TSB`          | cell-column bar, block-glyph thumb, mouse drag / track-click; no smooth width easing                                                                                                                          |
+| `THG` live theme cycling     | full _(partial now)_         | ←/→ cycle — the shipped previewer already does this (`PRV2`)                                                                                                                                                  |
+| `FND` search & goto          | full                         | incremental search and `n`/`N` jumps, on the shared matcher. **Match tinting is not implemented** — this pane resolves match positions but paints none, so search is jump-only. `FND2`'s highlight is the gap |
+| `MDP` markdown constructs    | best-effort → `MDP-T` (here) | all decorations; Nerd-glyph dependence like `FNT8`; box-drawing is native; ` ```ansi ` fences pass through the real terminal                                                                                  |
+| `COD` code blocks            | full (best-effort)           | code gutter + highlighted body + border via native box glyphs; copy region + OSC 52 (`TCL`)                                                                                                                   |
+| `SEL` selection & clipboard  | best-effort → `TSL`          | app-level drag-select → source offsets; clipboard via OSC 52; suppresses the terminal's native selection                                                                                                      |
+| `FNT` font                   | n/a                          | the terminal owns the font/cell; bold/italic/underline → SGR attributes (the `FNT5` analog)                                                                                                                   |
+| `WIN` window & lifecycle     | n/a                          | no window; the alt-screen is the surface; resize arrives as `SIGWINCH`                                                                                                                                        |
+| `FSC` fullscreen             | n/a                          | the terminal emulator's concern, not hue's                                                                                                                                                                    |
+| `BOX` procedural box-drawing | n/a _(solved)_               | box glyphs render natively without gaps — the GPU arms-to-edges workaround isn't needed                                                                                                                       |
+| `DBG` debug/CI hooks         | best-effort                  | a headless frame-dump analog for golden capture (the previewer already assembles a frame buffer)                                                                                                              |
+| `SEM` semantic refinement    | future                       | backend-agnostic, deferred with the GUI's `SEM1`                                                                                                                                                              |
 
 ## Terminal input (`TIN`)
 
@@ -162,7 +162,7 @@ lands somewhere useful.
 | `TSL5`   | `COD3`, `TBL6`                | **Divergence `D1`**: anchored the fence button to the header band; the border cutout wins         |
 | `TSL6`   | `SEL10`                       | The "request ticks only while capture is live" clause is terminal substrate and stays             |
 | `TSL7`   | `TBL7`, `TBL8`                | Both already said "in both hosts"                                                                 |
-| `TSL8`   | `SEL4`                        | **Divergence `D2`**: `holdMs: 1600` versus `COD3`'s ~1.2 s. Unresolved                            |
+| `TSL8`   | `SEL4`                        | **Divergence `D2`**: `holdMs: 1600` versus `COD3`'s ~1.2 s. **1.2 s wins**                        |
 | `TCP3`   | `FNT8`                        | Same doctrine, two statuses — `FNT8` partial, `TCP3` not started                                  |
 | `TKB3`   | `THG1`                        | **Divergence `D5`**: silently narrowed `THG1` to pane scope. `THG1` now says so                   |
 | `MDP-T1` | `MDP1`–`MDP11`                | A citation list                                                                                   |

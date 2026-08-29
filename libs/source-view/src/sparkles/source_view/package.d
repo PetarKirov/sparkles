@@ -9,3 +9,4 @@ module sparkles.source_view;
 
 public import sparkles.source_view.code;
 public import sparkles.source_view.markdown;
+public import sparkles.source_view.search;

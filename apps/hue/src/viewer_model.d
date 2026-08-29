@@ -52,7 +52,7 @@ import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
 import document : coverageChannel, coverageChannelId, coverageTintedRanges, DiffEmphasis,
     DiffSides, Document, hueFenceRenderer;
 import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
-import gui_text : buildLineStarts, findMatches, lineCount, Match;
+import sparkles.source_view.search : buildLineStarts, findMatches, lineCount, Match, SearchPolicy;
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
 /// (a GPU/grid surface has no "terminal default" to defer to).
@@ -369,6 +369,10 @@ struct ViewerModel
     /// `NAV6`: set while a resize has legitimately parked `top` past the
     /// last full screen, so the per-frame clamp leaves it alone.
     private bool anchorOvershoot;
+    /// How `search` matches. Resolved from `SearchSettings` by the host, so the
+    /// window and the terminal cannot hold different policies (`UIA13`).
+    SearchPolicy searchPolicy;
+
     Match[] matches;
     size_t curMatch;
     Rect[][] matchRects;            /// per-match rects via the identity channel
@@ -1325,7 +1329,14 @@ struct ViewerModel
     /// Recomputes the match set (and its on-screen rects) for `query`.
     void search(scope const(char)[] query)
     {
-        matches = findMatches(source, query, lineStarts);
+        // Search needs a line index, and a caller that assigned `source`
+        // directly (rather than through `setDocument`) has none. Building it
+        // here removes a precondition the matcher would otherwise impose on
+        // every caller — and one the terminal never had to satisfy while it
+        // ran its own per-row scan.
+        if (lineStarts.length == 0 && source.length != 0)
+            lineStarts = buildLineStarts(source);
+        matches = findMatches(source, query, lineStarts, searchPolicy.caseFor(query));
         curMatch = 0;
         rebuildMatchRects();
     }

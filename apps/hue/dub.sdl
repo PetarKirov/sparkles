@@ -63,7 +63,7 @@ dependency "sparkles:wired" path="../.."
 dependency "sparkles:ui" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
-// the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
+// the preview support modules (gui_ansi.d libghostty bridge,
 // gui_preview.d model+layout) are compiled in, so a stock `dub build :hue` and
 // the installed binary have `--gui` and the markdown preview out of the box.
 // Pulls raylib (a system dependency) + libghostty-vt.
@@ -128,7 +128,7 @@ configuration "android" {
 
 // Raylib-/ghostty-free terminal-only build (BLD2) — the minimal-closure variant
 // for headless installs. It still ships the markdown preview: the preview model
-// (gui_preview.d), its metrics (gui_text.d), and the neutral types
+// (gui_preview.d), its metrics (`sparkles:source-view`), and the neutral types
 // (ansi_model.d) are all raylib- and ghostty-free. Only the raylib window
 // (gui.d) and the off-screen-VT ansi-fence decoder (gui_ansi.d, which pulls
 // sparkles:ghostty) are excluded — `--gui` errors cleanly, and ` ```ansi `
@@ -161,7 +161,7 @@ buildType "bench" {
 configuration "unittest" {
     targetType "library"
     // gui.d (raylib) is excluded so `dub test :hue` links no GL/window; the
-    // preview support modules gui_text.d / gui_ansi.d / gui_preview.d ARE
+    // preview support modules gui_ansi.d / gui_preview.d ARE
     // compiled and unit-tested here. gui_ansi.d drives an off-screen VT, so the
     // test build links libghostty-vt (headless, no window).
     excludedSourceFiles "src/app.d" "src/gui.d" "test/fixtures/*"
