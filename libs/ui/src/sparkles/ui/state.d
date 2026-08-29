@@ -534,7 +534,11 @@ struct RangeLookup
     /// $(B hide) verdict, not a close one (`DSM8`).
     bool clipped;
 
-@safe pure nothrow @nogc const:
+// `scope` because `rects` is a slice: under `-preview=in` a caller's
+// `in RangeLookup` is `scope const`, and a non-`scope` member function on it is
+// rejected in `@safe` code. `KeyLookup` needs no such thing — it is all value
+// types — which is why the two structs' labels differ.
+@safe pure nothrow @nogc const scope:
 
     /// The range resolved and some of it is on screen: `rects` is usable.
     bool ok() => rects.length != 0;
