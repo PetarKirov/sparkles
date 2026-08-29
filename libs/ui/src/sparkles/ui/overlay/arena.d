@@ -188,8 +188,10 @@ struct OverlayArena
     in (i < records.length)
         => records[i];
 
-    /// ditto
-    ref const(OverlayRecord) opIndex(size_t i) const return
+    /// ditto — `scope`-callable, so a reader can take the arena as `in` and
+    /// still index it (the buffer holds a pointer once it outgrows its inline
+    /// storage, which is what makes the qualifier necessary).
+    ref const(OverlayRecord) opIndex(size_t i) const return scope
     in (i < records.length)
         => records[i];
 
