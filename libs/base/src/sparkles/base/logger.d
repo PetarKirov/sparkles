@@ -152,6 +152,21 @@ Gets or sets the process-wide Sparkles log-level filter.
 }
 
 /**
+Whether a Sparkles log call at `level` would write.
+
+Callers (and the IES wrappers) use this to skip formatting when the
+process is above that floor. `false` when no core logger is installed.
+*/
+bool coreLogEnabled(LogLevel level) @safe nothrow @nogc
+{
+    auto logger = sharedCoreLog;
+    if (logger is null)
+        return false;
+    const loggerLevel = () @trusted { return (cast() logger).coreLogLevel; }();
+    return isCoreLoggingEnabled(level, loggerLevel, coreGlobalLogLevel);
+}
+
+/**
 Gets or sets the process-wide fatal-log handler.
 */
 @property CoreFatalHandler coreFatalHandler() @safe nothrow @nogc
@@ -331,6 +346,10 @@ void writeLogDelta(Writer)(ref Writer w, in LogDelta d)
 
 /**
 Installs a [DeltaTimeLogger] as both the Phobos and Sparkles global logger.
+
+A second call on an already-installed `DeltaTimeLogger` only applies `level`
+— the `Δt` origin is not rewound. Any other installed `CoreLogger` is left
+in place and only has its level updated (Android's logcat sink).
 */
 void initLogger(LogLevel level) @safe
 {
@@ -338,6 +357,16 @@ void initLogger(LogLevel level) @safe
 
     globalLogLevel = level;
     coreGlobalLogLevel = level;
+
+    if (auto existing = sharedCoreLog)
+    {
+        () @trusted {
+            auto l = cast() existing;
+            l.coreLogLevel = level;
+            l.logLevel = level;
+        }();
+        return;
+    }
 
     auto logger = new shared DeltaTimeLogger(level);
     sharedLog = logger;
@@ -377,6 +406,9 @@ void log(Args...)(
 {
     import sparkles.base.smallbuffer : SmallBuffer;
     import sparkles.base.styled_template : writeStyled;
+
+    if (level != LogLevel.fatal && !coreLogEnabled(level))
+        return;
 
     SmallBuffer!(char, 4 * 1024) message;
     writeStyled(message, header, args, footer);
@@ -563,6 +595,125 @@ void fatal(Args...)(
 ) @safe nothrow @nogc
 {
     log!Args(LogLevel.fatal, loc, header, args, footer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRACE spans and call wrapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+RAII TRACE span whose name is a compile-time string.
+
+`traceSpan!"InitWindow" span;` (or `auto span = traceSpan!"InitWindow"();`)
+starts the clock; the destructor logs `<< InitWindow <duration>` at TRACE.
+When TRACE is off the destructor is a branch and return — no format, no I/O.
+Nested spans are nested objects; each reports its own elapsed time.
+*/
+struct TraceSpan(string name)
+{
+    @disable this();
+    @disable this(this);
+
+    private bool enabled;
+    private long startTicks;
+    private int line;
+    private string file;
+    private string funcName;
+    private string prettyFuncName;
+    private string moduleName;
+
+    /// Built by $(LREF traceSpan); the line defaults on that factory are
+    /// the caller's.
+    this(
+        int line,
+        string file,
+        string funcName,
+        string prettyFuncName,
+        string moduleName,
+    ) @safe nothrow @nogc
+    {
+        this.line = line;
+        this.file = file;
+        this.funcName = funcName;
+        this.prettyFuncName = prettyFuncName;
+        this.moduleName = moduleName;
+        enabled = coreLogEnabled(LogLevel.trace);
+        if (enabled)
+            startTicks = MonoTime.currTime.ticks;
+    }
+
+    ~this() @safe nothrow @nogc
+    {
+        if (!enabled)
+            return;
+        logSpanClose!name(
+            startTicks, line, file, funcName, prettyFuncName, moduleName);
+    }
+}
+
+/// Constructs a $(LREF TraceSpan) named `name` (a compile-time string).
+auto traceSpan(string name)(
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+    => TraceSpan!name(line, file, funcName, prettyFuncName, moduleName);
+
+/**
+Calls `fun(args)`, logging `>> name` / `<< name <duration>` at TRACE.
+
+When TRACE is off this is a direct call after one level check. The return
+value is not pretty-printed (it may be a large aggregate).
+*/
+auto traceCall(alias fun, Args...)(
+    auto ref Args args,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+)
+{
+    enum name = __traits(identifier, fun);
+    if (!coreLogEnabled(LogLevel.trace))
+        return fun(args);
+
+    const loc = SourceLocation(line, file, funcName, prettyFuncName, moduleName);
+    trace(loc, i">> $(name)");
+    const t0 = MonoTime.currTime.ticks;
+    static if (is(typeof(fun(args)) == void))
+    {
+        fun(args);
+        logSpanClose!name(
+            t0, line, file, funcName, prettyFuncName, moduleName);
+    }
+    else
+    {
+        auto result = fun(args);
+        logSpanClose!name(
+            t0, line, file, funcName, prettyFuncName, moduleName);
+        return result;
+    }
+}
+
+private void logSpanClose(string name)(
+    long startTicks,
+    int line,
+    string file,
+    string funcName,
+    string prettyFuncName,
+    string moduleName,
+) @safe nothrow @nogc
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeDuration;
+
+    SmallBuffer!(char, 24) durBuf;
+    writeDuration(durBuf, durationFromTicks(MonoTime.currTime.ticks - startTicks));
+    const loc = SourceLocation(line, file, funcName, prettyFuncName, moduleName);
+    trace(loc, i"<< $(name) $(durBuf[])");
 }
 
 private:
@@ -1027,4 +1178,135 @@ unittest
     writeLogDelta(buf, b);
     assert(buf[].canFind("Δt "));
     assert(buf[].canFind("Δtᵢ "));
+}
+
+@("logger.coreLogEnabled.earlyOutAndFatalStillRuns")
+@safe
+unittest
+{
+    lockLoggerGlobalTests();
+    auto oldLogger = sharedCoreLog;
+    auto oldLevel = coreGlobalLogLevel;
+    auto oldFatalHandler = coreFatalHandler;
+    scope (exit)
+    {
+        sharedCoreLog = oldLogger;
+        coreGlobalLogLevel = oldLevel;
+        coreFatalHandler = oldFatalHandler;
+        unlockLoggerGlobalTests();
+    }
+
+    auto logger = new RecordingCoreLogger(LogLevel.warning);
+    auto sharedLogger = () @trusted { return cast(shared) logger; }();
+    sharedCoreLog = sharedLogger;
+    coreGlobalLogLevel = LogLevel.warning;
+    coreFatalHandler = &countingFatalHandler;
+    fatalHandlerCallCount = 0;
+
+    assert(!coreLogEnabled(LogLevel.trace));
+    assert(coreLogEnabled(LogLevel.warning));
+    trace(i"filtered");
+    assert(logger.writeCount == 0);
+
+    warning(i"visible");
+    assert(logger.writeCount == 1);
+
+    fatal(i"always");
+    assert(fatalHandlerCallCount == 1);
+}
+
+@("logger.initLogger.reuseKeepsOrigin")
+@safe
+unittest
+{
+    import std.logger : sharedLog;
+
+    lockLoggerGlobalTests();
+    auto oldSharedLog = sharedLog;
+    auto oldCoreLog = sharedCoreLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedLog = oldSharedLog;
+        sharedCoreLog = oldCoreLog;
+        coreGlobalLogLevel = oldLevel;
+        unlockLoggerGlobalTests();
+    }
+
+    sharedCoreLog = null;
+    initLogger(LogLevel.info);
+    auto first = sharedCoreLog;
+    assert(first !is null);
+    const a = takeLogDelta();
+
+    initLogger(LogLevel.trace);
+    assert(sharedCoreLog is first, "second initLogger must not replace the instance");
+    assert(coreGlobalLogLevel == LogLevel.trace);
+    const reusedLevel = () @trusted { return (cast() first).coreLogLevel; }();
+    assert(reusedLevel == LogLevel.trace);
+    const b = takeLogDelta();
+    assert(b.sinceStart >= a.sinceStart);
+}
+
+@("logger.traceCall.disabledIsDirectCall")
+@safe
+unittest
+{
+    lockLoggerGlobalTests();
+    auto oldLogger = sharedCoreLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedCoreLog = oldLogger;
+        coreGlobalLogLevel = oldLevel;
+        unlockLoggerGlobalTests();
+    }
+
+    static int add(int a, int b) @safe pure nothrow @nogc => a + b;
+
+    auto logger = new RecordingCoreLogger(LogLevel.warning);
+    auto sharedLogger = () @trusted { return cast(shared) logger; }();
+    sharedCoreLog = sharedLogger;
+    coreGlobalLogLevel = LogLevel.warning;
+
+    assert(traceCall!add(2, 3) == 5);
+    assert(logger.writeCount == 0);
+
+    logger.coreLogLevel = LogLevel.trace;
+    coreGlobalLogLevel = LogLevel.trace;
+    assert(traceCall!add(2, 3) == 5);
+    assert(logger.writeCount == 2, "enter + leave");
+}
+
+@("logger.traceSpan.nestedOwnDuration")
+@safe
+unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    lockLoggerGlobalTests();
+    auto oldLogger = sharedCoreLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedCoreLog = oldLogger;
+        coreGlobalLogLevel = oldLevel;
+        unlockLoggerGlobalTests();
+    }
+
+    auto logger = new RecordingCoreLogger(LogLevel.trace);
+    auto sharedLogger = () @trusted { return cast(shared) logger; }();
+    sharedCoreLog = sharedLogger;
+    coreGlobalLogLevel = LogLevel.trace;
+
+    {
+        auto outer = traceSpan!"outer"();
+        {
+            auto inner = traceSpan!"inner"();
+            Thread.sleep(2.msecs);
+        }
+        Thread.sleep(2.msecs);
+    }
+    assert(logger.writeCount == 2, "one close line per span");
 }
