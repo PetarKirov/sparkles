@@ -99,9 +99,28 @@ Every case carries zero or more decision IDs in its `<!-- fmt id=… -->` direct
 2. **Every configuration key has at least one `variants=<key>` case**, covering every value the
    key accepts — so the docs cannot document an option without showing what it does.
 
-Decisions scored `Have`, `N/A`, `Reject` or `Oracle` are exempt, and the exemption list is data:
-the gate reads the inventory's verdict column, so re-scoring a decision automatically demands a
-fixture. Decisions blocked on the precedence oracle are tracked, not silently skipped.
+Decisions scored `Have`, `N/A`, `Reject`, `Codemod` or `Oracle` are exempt, and the exemption list
+is data: the gate reads the inventory's verdict column, so re-scoring a decision automatically
+demands a fixture.
+
+**Coverage that does not exist yet is a ledger, not a silence.** 127 decisions oblige a case and
+most are not implemented, so `libs/dmd-fmt/test/cases/uncovered.txt` lists the ones still waiting
+for one — and the gate reads it in _both_ directions: a decision that is neither covered nor
+listed fails, and a listed decision that has _gained_ a case fails too, naming the line to delete.
+The count only moves down, and it moves down in a diff. A third check catches the typo in the
+other direction: a case whose `id=` names neither an inventory row nor a decision the record
+defines (`M4`, `D5`) is dangling.
+
+**Where the gate runs, and why not in `ci`.** An earlier draft of this spec promised
+`ci --check-fmt-decisions`. It lives in `libs/dmd-fmt` instead, as
+`checkDecisionCoverage` plus the unittest that asserts on it, because the check needs the case
+parser and giving `apps/ci` a dependency on `sparkles:dmd-fmt` would drag the DMD frontend into
+the CI helper's build closure — paid on every CI run, for a check `dub test :dmd-fmt` (and so
+`ci --test`) already performs.
+
+**Deferred:** gate 2 above, the per-value variant coverage. It needs a machine-readable list of
+each key's admissible values, which `FormatConfig` does not carry yet; until it does, a `variants=`
+case is checked for naming a real key and nothing more.
 
 ### TST3 — Two locations, one format
 
@@ -225,9 +244,9 @@ D9 rule from being aspirational.
 Because the published page _is_ the fixture, there is nothing to generate and nothing to keep in
 sync. What remains is two gates, both `ci` subcommands in the shape of `--check-docs-sidebar`:
 
-- `dub run :ci -- --check-fmt-decisions` — every decision scored Adopt/Adapt/Opt-in in the
-  inventory has a case, and every published case's `id=` names a real decision (TST2). Coverage in
-  both directions.
+- **The coverage gate** — every decision scored Adopt/Adapt/Opt-in has a case or a ledger entry,
+  and every case's `id=` names a real decision (TST2). Coverage in both directions, and it runs
+  inside `dub test :dmd-fmt` rather than as a `ci` subcommand, for the reason TST2 records.
 - **The runner itself is the staleness gate.** `dub test :dmd-fmt` executes the published pages;
   a documented example that stops being true fails the build. rustfmt's `Configurations.md`
   guarantee, obtained without rustfmt's markdown-scraping test, because the page is the fixture

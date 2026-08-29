@@ -60,7 +60,7 @@ module sparkles.dmd_fmt.cases;
 import std.algorithm : canFind, startsWith;
 import std.array : appender, split;
 import std.conv : to;
-import std.string : strip, stripRight;
+import std.string : splitLines, strip, stripRight;
 
 import sparkles.dmd_fmt.config : FormatConfig;
 import sparkles.dmd_fmt.printer : formatText;
@@ -436,6 +436,174 @@ private ptrdiff_t indexOfNeedle(const(char)[] s, const(char)[] needle)
     return -1;
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Decision coverage (`TST2`)
+
+/// The two trees a case may live in, relative to the repository root: the
+/// unpublished hostile cases, and the published decision pages (`TST3`).
+immutable string[] caseRoots = [
+    "libs/dmd-fmt/test/cases",
+    "docs/libs/dmd-fmt/reference/decisions",
+];
+
+/// Where the ledger of decisions that have no case yet lives.
+enum uncoveredLedger = "libs/dmd-fmt/test/cases/uncovered.txt";
+
+/// One row of the decision inventory: the id, and the verdict scored for D.
+struct Decision
+{
+    string id;
+    string verdict;
+
+    /// Does this verdict oblige a case? `Adopt`, `Adapt` and `Opt-in` are the
+    /// decisions D means to make; `Have` is already decided elsewhere, and
+    /// `N/A`, `Reject`, `Codemod` and `Oracle` are decisions not to.
+    bool requiresCase() const @safe pure nothrow @nogc
+        => verdict == "Adopt" || verdict == "Adapt" || verdict == "Opt-in";
+}
+
+/**
+Parse the inventory's decision rows: `| P19 | … | source | **Adopt** |`.
+
+Deliberately shallow — it reads the first cell and the bolded last cell, and
+ignores everything in between, so prose edits to a row never break the gate.
+*/
+Decision[] parseInventory(const(char)[] markdown) @safe pure
+{
+    import std.string : splitLines;
+
+    Decision[] rows;
+    foreach (line; markdown.splitLines)
+    {
+        const t = line.strip;
+        if (t.length < 4 || t[0] != '|' || t[1] != ' ' || t[2] != 'P')
+            continue;
+        auto cells = t.split('|');
+        if (cells.length < 3)
+            continue;
+        const id = cells[1].strip;
+        if (id.length < 2 || !isDigits(id[1 .. $]))
+            continue;
+        auto verdict = cells[$ - 2].strip;
+        if (verdict.length > 4 && verdict[0 .. 2] == "**"
+                && verdict[$ - 2 .. $] == "**")
+            verdict = verdict[2 .. $ - 2];
+        rows ~= Decision(id.idup, verdict.idup);
+    }
+    return rows;
+}
+
+/// What `checkDecisionCoverage` found.
+struct CoverageReport
+{
+    /// Decisions that oblige a case, have none, and are not in the ledger.
+    string[] missing;
+    /// Ledger entries that now have a case — the ratchet's one direction.
+    string[] stale;
+    /// Ids a case names that neither the inventory nor the spec defines.
+    string[] dangling;
+    size_t required;  /// Decisions obliging a case.
+    size_t covered;   /// …of which have one.
+
+    bool ok() const @safe pure nothrow @nogc
+        => missing.length == 0 && stale.length == 0 && dangling.length == 0;
+}
+
+/**
+`TST2`: every decision the inventory scores Adopt/Adapt/Opt-in has a case, and
+every case names a decision that exists.
+
+Coverage that does not exist yet is not a lie to be papered over — it is a
+ledger. `uncovered.txt` lists the decisions still waiting for one, and the gate
+fails in **both** directions: a decision that leaves the ledger without gaining
+a case, and a ledger entry that has gained one and should be deleted. The count
+in that file only goes down, and a reviewer can see it go down.
+
+Ids the spec defines rather than the inventory (`M4`'s magic trailing comma,
+`D5`'s escape hatch) are accepted when the decision record mentions them, which
+also catches a typo'd id in a case directive.
+*/
+CoverageReport checkDecisionCoverage(string repoRoot) @system
+{
+    import std.algorithm : canFind, sort;
+    import std.file : dirEntries, exists, readText, SpanMode;
+    import std.path : buildPath;
+
+    CoverageReport r;
+    const inventory = parseInventory(
+        readText(buildPath(repoRoot, "docs/research/code-formatting/prettier-decisions.md")));
+    const specText = readText(buildPath(repoRoot, "docs/specs/dmd-fmt/index.md"));
+
+    bool[string] known, needed;
+    foreach (d; inventory)
+    {
+        known[d.id] = true;
+        if (d.requiresCase)
+            needed[d.id] = true;
+    }
+    r.required = needed.length;
+
+    bool[string] cited;
+    foreach (root; caseRoots)
+    {
+        const dir = buildPath(repoRoot, root);
+        if (!dir.exists)
+            continue;
+        foreach (entry; dirEntries(dir, "*.md", SpanMode.depth))
+            foreach (c; parseCases(readText(entry.name)))
+                foreach (id; c.ids)
+                    cited[id] = true;
+    }
+
+    foreach (id; cited.byKey)
+    {
+        if (id in known)
+        {
+            if (id in needed)
+                r.covered++;
+            continue;
+        }
+        // A spec-native id (`M4`, `D5`) counts when the decision record
+        // actually mentions it; anything else is a typo.
+        if (!specText.canFind(id))
+            r.dangling ~= id;
+    }
+
+    bool[string] ledger;
+    const ledgerPath = buildPath(repoRoot, uncoveredLedger);
+    if (ledgerPath.exists)
+        foreach (line; readText(ledgerPath).splitLines)
+        {
+            const t = line.strip;
+            if (!t.length || t[0] == '#')
+                continue;
+            const id = t.split(' ')[0].strip;
+            ledger[id.idup] = true;
+            if (id in cited)
+                r.stale ~= id.idup;
+        }
+
+    foreach (id; needed.byKey)
+        if (!(id in cited) && !(id in ledger))
+            r.missing ~= id;
+
+    r.missing.sort();
+    r.stale.sort();
+    r.dangling.sort();
+    return r;
+}
+
+private bool isDigits(const(char)[] s) @safe pure nothrow @nogc
+{
+    if (!s.length)
+        return false;
+    foreach (c; s)
+        if (c < '0' || c > '9')
+            return false;
+    return true;
+}
 
 // ---------------------------------------------------------------------------
 // Reporting
@@ -1272,6 +1440,47 @@ private bool hueUsable() @safe
     assert(after.canFind("Prose stays."));
     assert(after.canFind("```d [Before]\nint  a;\n```"));
     assert(after.canFind("```d [After]\nint a;\n```"));
+}
+
+@("cases.inventory.reads-id-and-verdict")
+@safe unittest
+{
+    enum md = "| #   | Decision | Source | Verdict |\n"
+        ~ "| --- | -------- | ------ | ------- |\n"
+        ~ "| P19 | Blank lines collapse | [seq][seq] | **Have** |\n"
+        ~ "| P90 | Fluid assignment | [asg][asg] | **Adopt** |\n"
+        ~ "| P155 | An IES rewrite | this survey | **Codemod** |\n"
+        ~ "not a row, and | this | is not one either |\n";
+    const rows = parseInventory(md);
+    assert(rows.length == 3, "prose containing pipes is not a row");
+    assert(rows[0] == Decision("P19", "Have"));
+    assert(rows[1] == Decision("P90", "Adopt"));
+    assert(!rows[0].requiresCase, "an already-made decision owes no case");
+    assert(rows[1].requiresCase);
+    assert(!rows[2].requiresCase, "a codemod is not the formatter's to make");
+}
+
+@("cases.coverage.every-decision-has-a-case-or-a-ledger-entry")
+@system unittest
+{
+    import std.path : dirName;
+
+    enum thisDir = __FILE_FULL_PATH__.dirName;
+    enum repoRoot = thisDir.dirName.dirName.dirName.dirName.dirName;
+
+    const r = checkDecisionCoverage(repoRoot);
+    string report;
+    foreach (id; r.missing)
+        report ~= "\n  " ~ id ~ " — scored for D, has no case, and is not in "
+            ~ uncoveredLedger;
+    foreach (id; r.stale)
+        report ~= "\n  " ~ id ~ " — now has a case; delete its line from "
+            ~ uncoveredLedger;
+    foreach (id; r.dangling)
+        report ~= "\n  " ~ id ~ " — named by a case, but neither the"
+            ~ " inventory nor the decision record defines it";
+    assert(r.ok, "decision coverage:" ~ report);
+    assert(r.required > 0, "the inventory parsed to nothing — wrong path?");
 }
 
 @("cases.corpus.every-case-file-passes")
