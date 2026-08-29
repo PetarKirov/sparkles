@@ -192,6 +192,9 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
 
     RaylibEvents events;
     events.capabilities = host.capabilities;
+    // First swap uses the primary face only; extras (bold/italic/fallbacks)
+    // load after that swap so they do not sit on time-to-first-frame.
+    bool swappedOnce;
 
     // One frame: sample input, present, swap unless declined (`HST6`).
     void oneFrame()
@@ -235,6 +238,11 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
             return;
         }
 
+        // After the first swap — a quit on frame 1 (`HUE_GUI_QUIT_AFTER_FRAME`)
+        // returns above and never pays this. Fake-bold covers frame 0.
+        if (swappedOnce)
+            cast(void) session.fonts.completeLoad();
+
         session.window.beginFrame();
         session.window.resetClip();
         session.window.clear(RgbColor(0, 0, 0));
@@ -242,6 +250,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         paint(canvas, host.ops()[]);
         draw(host); // `HST13`: the application's own renderer, inside the bracket
         session.window.endFrame();
+        swappedOnce = true;
     }
 
     // The event-horizon arm (its SPEC §15.3, the GUI shape): the Ticker owns
