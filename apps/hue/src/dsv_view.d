@@ -109,6 +109,12 @@ struct DsvAdapted
     MdTableExtras extras;
 }
 
+/// `DSS1`'s rank chrome is reserved, not measured: a header cell keeps this
+/// many cells for its sort badge whether or not it is currently sorted, so
+/// engaging a sort cannot widen the column under the reader. Two cells is
+/// the badge's own width — `" ▲"` for one key, `"1▲"` for a ranked one.
+enum size_t dsvSortBadgeCells = 2;
+
 /// The provisional per-column content-width cap (`DSG4`).
 enum size_t dsvColumnCapCells = 64;
 
@@ -239,7 +245,7 @@ Column 0 is the record-number gutter, whose width is the widest number the
 view can show — known exactly from the row count, so it never shifts.
 */
 private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
-    in uint[] rowPerm, in uint[] visCols, in DsvInfo info) @safe
+    in uint[] visCols, in DsvInfo info) @safe
 {
     // The table measures with `cellsOf` — the one width authority — so the
     // floors must be measured with it too, or a pinned column would disagree
@@ -268,11 +274,18 @@ private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
         foreach (vi, c; visCols)
             widths[vi + 1] = cellsOf(columnName(c));
 
-    const sampled = rowPerm.length < sniffMaxRecords
-        ? rowPerm.length : sniffMaxRecords;
-    foreach (dataIdx; rowPerm[0 .. sampled])
+    // The sample is taken in SOURCE order, deliberately — not through the
+    // projection. Sampling the projected order would make the widths a
+    // function of the sort and the filter, so every sort flip and every
+    // keystroke in the filter bar would re-fit the columns under the
+    // reader. The geometry belongs to the FILE.
+    const dataRecords = doc.records.length > first
+        ? doc.records.length - first : 0;
+    const sampled = dataRecords < sniffMaxRecords
+        ? dataRecords : sniffMaxRecords;
+    foreach (i; 0 .. sampled)
     {
-        const rec = doc.records[first + dataIdx];
+        const rec = doc.records[first + i];
         foreach (vi, c; visCols)
         {
             if (c >= rec.cellCount)
@@ -283,6 +296,12 @@ private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
                 widths[vi + 1] = w;
         }
     }
+
+    // `DSS1`: every DATA column keeps room for a sort badge whether or not
+    // it is sorted right now, so engaging a sort cannot widen it. The
+    // record-number gutter never sorts and reserves nothing.
+    foreach (vi; 0 .. visCols.length)
+        widths[vi + 1] += dsvSortBadgeCells;
 
     foreach (ref w; widths)
         if (w > dsvColumnCapCells)
@@ -339,7 +358,11 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
     }
     table.aligns = aligns;
 
-    // `DSS1`'s rank chrome: ` ▲`/` ▼` for a single key, ` 1▲ `-style with
+    // The badge's width is RESERVED by `sampledColumnWidths`, so it
+    // appearing and disappearing never moves a column.
+    import sparkles.ui.geometry : cellsOf;
+
+    // `DSS1`'s rank chrome: ` ▲`/` ▼` for a single key, `1▲`-style with
     // the rank when several sort. View-column indexed (gutter at 0).
     const(char)[][] badges;
     if (sortKeys.length)
@@ -349,9 +372,15 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
             foreach (ki, k; sortKeys)
                 if (k.column == c)
                 {
+                    // Both forms fit `dsvSortBadgeCells`; a rank that would
+                    // not (ten keys deep) drops to the bare direction rather
+                    // than overflowing the space reserved for it.
+                    const arrow = k.descending ? "▼" : "▲";
+                    const ranked = text(ki + 1, arrow);
                     badges[vi + 1] = sortKeys.length == 1
                         ? (k.descending ? " ▼" : " ▲")
-                        : text(" ", ki + 1, k.descending ? "▼" : "▲");
+                        : (cellsOf(ranked) <= dsvSortBadgeCells
+                            ? ranked : " " ~ arrow);
                     break;
                 }
     }
@@ -363,7 +392,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
     // table to exactly the content it renders.
     const(size_t)[] floors;
     if (!window.whole)
-        floors = sampledColumnWidths(doc, rowPerm, visCols, a.info);
+        floors = sampledColumnWidths(doc, visCols, a.info);
 
     a.extras = MdTableExtras(
         headerCols: 1,
@@ -764,15 +793,18 @@ string serializeGridCopy(const DsvCopy copy, in TableRegion reg, size_t rows,
     assert(a.extras.headerBadges[2] == " ▼"); // qty, single key
     assert(a.extras.headerBadges[1] == ""); // name unbadged
 
+    // A ranked badge drops the separating space so it fits the two cells
+    // every header reserves for it (`dsvSortBadgeCells`) — the reservation
+    // is what keeps a sort from widening the column.
     DsvProjection multi = { spec: ProjectionSpec([SortKey(1), SortKey(0)]) };
     a = adaptDsv(src, "csv", DsvFlags(), multi);
-    assert(a.extras.headerBadges[2] == " 1▲");
-    assert(a.extras.headerBadges[1] == " 2▲");
+    assert(a.extras.headerBadges[2] == "1▲");
+    assert(a.extras.headerBadges[1] == "2▲");
     // The badge renders in the grid but lives in no source buffer: the
     // header cell's model span is untouched.
     import std.algorithm.searching : canFind;
 
-    assert(dsvGridText(a).canFind("qty 1▲"));
+    assert(dsvGridText(a).canFind("1▲"));
 }
 
 @("dsv_view.copy.hiddenColumnsExcluded")
@@ -1112,6 +1144,96 @@ unittest
     const tail = widthOf(380);
     assert(head == overWide && head == tail,
         "the grid keeps one geometry however wide the rows in view are");
+}
+
+@("dsv_view.window.reservedBadgeStaysLegible")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // The reservation is not only about width. A windowed grid pins each
+    // column to one width, so a badge with no room reserved for it is not
+    // merely tight — the pin CLIPS it, and the reader sorts a column and
+    // sees no arrow at all. `dsvSortBadgeCells` is what keeps the chrome
+    // legible without letting it move the column.
+    auto src = "n,a-rather-wide-header-name\n";
+    foreach (i; 0 .. 20)
+        src ~= text(i, ",x\n");
+
+    DsvProjection sorted;
+    sorted.spec.sortKeys = [SortKey(column: 1, descending: false)];
+    const win = adaptDsv(src, "csv", DsvFlags(), sorted,
+        DsvWindow(start: 0, rows: 8));
+    assert(dsvGridText(win, 10).canFind("▲"),
+        "a sorted column must show its direction inside its pinned width");
+}
+
+@("dsv_view.window.sortAndFilterKeepTheGeometry")
+@system
+unittest
+{
+    import std.algorithm : map, maxElement;
+    import std.string : splitLines;
+
+    // The grid must not resize when the reader sorts or filters it. Two
+    // separate ways it used to: the sort BADGE is extra header content, and
+    // the pinned widths were sampled from the PROJECTED order — so changing
+    // that order changed which rows the sample saw, and with them the
+    // widths.
+    auto src = "id,note\n";
+    foreach (i; 0 .. 300)
+        src ~= text(i, ",", i % 7 == 0 ? "a-much-longer-value-here" : "x", "\n");
+
+    size_t[2] geometryOf(in DsvProjection proj)
+    {
+        const a = adaptDsv(src, "csv", DsvFlags(), proj,
+            DsvWindow(start: 0, rows: 12));
+        const lines = dsvGridText(a, 14).splitLines;
+        return [lines.map!(l => l.length).maxElement, lines.length];
+    }
+
+    const plain = geometryOf(DsvProjection.init);
+
+    // Sorting: the badge appears in a header cell.
+    DsvProjection sorted;
+    sorted.spec.sortKeys = [SortKey(column: 1, descending: false)];
+    assert(geometryOf(sorted) == plain,
+        "a sort badge must not resize the grid");
+
+    // And descending, which is a different glyph.
+    DsvProjection desc;
+    desc.spec.sortKeys = [SortKey(column: 1, descending: true)];
+    assert(geometryOf(desc) == plain);
+
+    // The badge's own case needs a column whose HEADER is the widest thing
+    // in it — otherwise the data decides the width and the badge fits in
+    // the slack by luck. `dsvSortBadgeCells` is what makes this hold.
+    auto narrow = "n,a-rather-wide-header-name\n";
+    foreach (i; 0 .. 60)
+        narrow ~= text(i, ",x\n");
+
+    size_t[2] narrowGeometry(in DsvProjection proj)
+    {
+        const a = adaptDsv(narrow, "csv", DsvFlags(), proj,
+            DsvWindow(start: 0, rows: 10));
+        const lines = dsvGridText(a, 12).splitLines;
+        return [lines.map!(l => l.length).maxElement, lines.length];
+    }
+
+    const narrowPlain = narrowGeometry(DsvProjection.init);
+    DsvProjection narrowSorted;
+    narrowSorted.spec.sortKeys = [SortKey(column: 1, descending: false)];
+    assert(narrowGeometry(narrowSorted) == narrowPlain,
+        "a header-dominated column keeps its width when sorted");
+
+    // Filtering: a different row set, so a different sample.
+    auto mask = new bool[](300);
+    foreach (i; 0 .. 300)
+        mask[i] = i % 7 != 0; // drops every long value
+    DsvProjection filtered;
+    filtered.rowMask = mask;
+    assert(geometryOf(filtered) == plain,
+        "a filter must not resize the grid either");
 }
 
 @("dsv_view.window.copyFollowsTheWindow")
