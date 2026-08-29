@@ -17,9 +17,10 @@ module sparkles.ui.interp.cells;
 
 import std.range.primitives : put;
 
-import sparkles.ui.canvas : isCanvas, LineStyle;
+import sparkles.ui.canvas : arrowCellOf, arrowFits, arrowGlyphOf, isCanvas,
+    LineStyle;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
-import sparkles.ui.style : BorderStyle;
+import sparkles.ui.style : BorderStyle, BoxSide;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
 import sparkles.ui.style : Visual;
 
@@ -365,8 +366,16 @@ struct CellGrid
                 setc(x1, y0, rounded ? '╮' : '┐');
                 setc(x0, y1, rounded ? '╰' : '└');
                 setc(x1, y1, rounded ? '╯' : '┘');
-                if (v.arrow)
-                    setc(x0 + 1 + v.arrowOffset, y0, '┴');
+                // The caret goes where the solve put it, on the edge the solve
+                // resolved — and only when there is a legal cell for it. This
+                // backend used to add `1` of its own on top of the offset, put
+                // it on the top edge whatever the placement said, and clamp
+                // nothing (`PLC10`).
+                if (v.arrow && arrowFits(r, v.arrowSide, v.arrowOffset))
+                {
+                    const a = arrowCellOf(r, v.arrowSide, v.arrowOffset);
+                    setc(a.x, a.y, arrowGlyphOf(v.arrowSide));
+                }
             }
         }
     }

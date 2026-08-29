@@ -20,7 +20,7 @@ module sparkles.ui.interp.html;
 
 import sparkles.ui.geometry : Insets;
 import sparkles.ui.style :
-    BorderStyle, FontRole, Palette, resolveVisual, Slot, Visual;
+    BorderStyle, BoxSide, FontRole, Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.base.term_color : RgbColor;
@@ -253,7 +253,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "\">");
             // A popup arrow renders as a rotated bordered square, as in the CSS.
             if (vis.arrow)
-                emitArrow(w, vis, node.decoration.arrowOffset);
+                emitArrow(w, vis, vis.arrowSide, node.decoration.arrowOffset);
             // A scroll offset translates the children inside the clipped box
             // (`lh` = one text row, the cell-grid row analog).
             const scrolled = node.childOffset.x != 0 || node.childOffset.y != 0;
@@ -274,13 +274,41 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
     }
 }
 
-/// The `.twoslash-popup-arrow` analog: a small square with top+right borders,
-/// rotated -45°, in the surface color, poking up out of the box's top edge.
-private void emitArrow(Writer)(ref Writer w, in Visual vis, int arrowOffset)
+/**
+The `.twoslash-popup-arrow` analog: a small square with top+right borders, in
+the surface colour, rotated so that corner pokes out of the resolved edge.
+
+One shape, four rotations — the square's top-right corner points up-right
+unrotated, so `-45°` aims it up, `45°` right, `135°` down and `-135°` left. Four
+border pairs would have been four chances to get one wrong.
+
+The offset is the cell the placement solve resolved, used verbatim: this
+emitter used to add `1` of its own, which is half of why the four backends
+disagreed (`PLC10`). There is no `arrowFits` guard here because this target has
+no laid-out rect to test against — the box is sized by CSS flow — so the clamp
+the solve already applied is the only one, which is the declared HTML
+degradation rather than an omission.
+*/
+private void emitArrow(Writer)(ref Writer w, in Visual vis, BoxSide side,
+    int arrowOffset)
 {
-    put(w, "<div style=\"position:absolute;top:-4px;left:");
-    num(w, arrowOffset + 1);
-    put(w, "ch;width:6px;height:6px;transform:rotate(-45deg);background:");
+    put(w, "<div style=\"position:absolute;");
+    final switch (side)
+    {
+        case BoxSide.top:    put(w, "top:-4px;left:");   num(w, arrowOffset); put(w, "ch"); break;
+        case BoxSide.bottom: put(w, "bottom:-4px;left:"); num(w, arrowOffset); put(w, "ch"); break;
+        case BoxSide.left:   put(w, "left:-4px;top:");   num(w, arrowOffset); put(w, "lh"); break;
+        case BoxSide.right:  put(w, "right:-4px;top:");  num(w, arrowOffset); put(w, "lh"); break;
+    }
+    put(w, ";width:6px;height:6px;transform:rotate(");
+    final switch (side)
+    {
+        case BoxSide.top:    put(w, "-45"); break;
+        case BoxSide.right:  put(w, "45"); break;
+        case BoxSide.bottom: put(w, "135"); break;
+        case BoxSide.left:   put(w, "-135"); break;
+    }
+    put(w, "deg);background:");
     rgba(w, vis.bg, vis.bgAlpha);
     if (vis.border.any)
     {

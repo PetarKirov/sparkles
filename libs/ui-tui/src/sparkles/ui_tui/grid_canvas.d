@@ -24,7 +24,8 @@ import sparkles.tui.cell : CellStyle, Grid;
 
 import sparkles.base.text.width : codepointWidth;
 
-import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, OpKind,
+import sparkles.ui.canvas : arrowCellOf, arrowFits, arrowGlyphOf, DrawOp,
+    fillRectOp, isCanvas, LineStyle, OpKind,
     ruleSpan, RuleEdge, Scrollbar, scrollbarCell, scrollbarCellCount,
     textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -33,7 +34,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 // disagree, with `--render` showing dashes the live terminal did not.
 import sparkles.ui.interp.cells : accentGlyph, blend, dashedHorizontal,
     dashedVertical;
-import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.ui.style : BorderStyle, BoxSide, Visual;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
@@ -402,7 +403,8 @@ struct GridCanvas
 
     /// A full box border → box-drawing glyphs on the rect perimeter (which the
     /// popup's 1-cell padding leaves blank). Rounded corners approximate a
-    /// `borderRadius`; a popup `arrow` becomes a `┴` notch on the top edge.
+    /// `borderRadius`; an `arrow` becomes a notch on the edge the placement
+    /// solve resolved, through the toolkit's one definition of where that goes.
     private void drawBoxBorder(in Rect r, in Visual v) scope
     {
         if (r.width < 2 || r.height < 2)
@@ -443,8 +445,13 @@ struct GridCanvas
         setc(x1, y0, rounded ? '╮' : '┐');
         setc(x0, y1, rounded ? '╰' : '└');
         setc(x1, y1, rounded ? '╯' : '┘');
-        if (v.arrow)
-            setc(x0 + 1 + v.arrowOffset, y0, '┴');
+        // The caret goes where the solve put it, on the edge the solve
+        // resolved, and only when a legal cell exists (`PLC10`).
+        if (v.arrow && arrowFits(r, v.arrowSide, v.arrowOffset))
+        {
+            const a = arrowCellOf(r, v.arrowSide, v.arrowOffset);
+            setc(a.x, a.y, arrowGlyphOf(v.arrowSide));
+        }
     }
 
     /// Writes `text` at `at` in `v.fg`, advancing by each glyph's display width
@@ -663,13 +670,18 @@ static assert(isCanvas!GridCanvas);
     Grid g;
     g.resize(6, 4);
     auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
+    const chrome = typeof(Visual.border)(width: Insets.all(1),
+        style: BorderStyle.solid, color: RgbColor(0x88, 0x88, 0x88));
     canvas.fillRect(Rect(0, 0, 4, 3),
         Visual(bg: RgbColor(0xf8, 0xf8, 0xf8), hasBg: true, borderRadius: 4, arrow: true,
-            arrowOffset: 1, border: typeof(Visual.border)(width: Insets.all(1),
-                style: BorderStyle.solid, color: RgbColor(0x88, 0x88, 0x88))));
+            arrowOffset: 1, border: chrome));
     assert(g[0, 0].grapheme == "╭" && g[3, 0].grapheme == "╮");
     assert(g[0, 2].grapheme == "╰" && g[3, 2].grapheme == "╯");
-    assert(g[2, 0].grapheme == "┴"); // arrow notch at x0 + 1 + arrowOffset(1)
+    // The caret is at `x0 + arrowOffset`, not `x0 + 1 + arrowOffset`: the
+    // offset the placement solve emits is already measured from the box origin
+    // with the border inset included, so a backend adding one of its own is how
+    // this canvas came to disagree with the raylib one by a cell (`PLC10`).
+    assert(g[1, 0].grapheme == "┴");
 
     // A bottom-only dotted border → a dotted cell underline (no glyphs disturbed).
     Grid u;
@@ -680,6 +692,50 @@ static assert(isCanvas!GridCanvas);
             style: BorderStyle.dotted, color: RgbColor(0x22, 0x22, 0x22))));
     foreach (x; 0 .. 3)
         assert(u[cast(ushort) x, 0].style.underline == UnderlineStyle.dotted);
+}
+
+@("tui_canvas.arrowFollowsTheResolvedSide")
+@safe unittest
+{
+    import sparkles.ui.style : BorderStyle;
+    import sparkles.ui.geometry : Insets;
+
+    // Every side, because until now only `top` existed — the backends hard-coded
+    // it and no test could have caught the other three being wrong.
+    const chrome = typeof(Visual.border)(width: Insets.all(1),
+        style: BorderStyle.solid, color: RgbColor(0x88, 0x88, 0x88));
+
+    // `grapheme` is a UTF-8 string, so the expectation is one too — indexing
+    // it would compare the first BYTE of a three-byte box-drawing glyph.
+    static struct Case { BoxSide side; int offset; ushort x, y; string glyph; }
+    static immutable Case[] cases = [
+        Case(BoxSide.top,    1, 1, 0, "\u2534"),
+        Case(BoxSide.bottom, 2, 2, 3, "\u252c"),
+        Case(BoxSide.left,   1, 0, 1, "\u2524"),
+        Case(BoxSide.right,  2, 4, 2, "\u251c"),
+    ];
+
+    foreach (ref const c; cases)
+    {
+        Grid g;
+        g.resize(6, 5);
+        auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
+        canvas.fillRect(Rect(0, 0, 5, 4),
+            Visual(bg: RgbColor(0xf8, 0xf8, 0xf8), hasBg: true, arrow: true,
+                arrowSide: c.side, arrowOffset: c.offset, border: chrome));
+        assert(g[c.x, c.y].grapheme == c.glyph,
+            "the caret must land on the edge the solve resolved");
+    }
+
+    // No legal cell ⇒ no caret, rather than one jammed onto a corner glyph.
+    Grid tiny;
+    tiny.resize(4, 4);
+    auto tc = GridCanvas(&tiny, RgbColor(0, 0, 0));
+    tc.fillRect(Rect(0, 0, 2, 3),
+        Visual(bg: RgbColor(0xf8, 0xf8, 0xf8), hasBg: true, arrow: true,
+            arrowOffset: 1, border: chrome));
+    assert(tiny[0, 0].grapheme == "┌" && tiny[1, 0].grapheme == "┐",
+        "a two-cell edge has no interior, so both corners survive");
 }
 
 @("tui_canvas.translucentHighlightBlends")
