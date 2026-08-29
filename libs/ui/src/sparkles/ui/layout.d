@@ -299,7 +299,7 @@ if (isTextMeasure!TM)
                     first = false;
                 }
                 break;
-            case column, stack, panel, popup:
+            case column, stack, panel:
                 foreach (ci; node.children)
                     if (!isCollapsed(ci) && natW[ci] > content)
                         content = natW[ci];
@@ -418,7 +418,7 @@ if (isTextMeasure!TM)
                     first = false;
                 }
                 break;
-            case stack, panel, popup:
+            case stack, panel:
                 foreach (ci; node.children)
                     if (!isCollapsed(ci) && natH[ci] > content)
                         content = natH[ci];
@@ -519,7 +519,7 @@ if (isTextMeasure!TM)
                 }
                 break;
             }
-            case stack, panel, popup:
+            case stack, panel:
                 foreach (ci; node.children)
                 {
                     if (isCollapsed(ci))
@@ -750,7 +750,7 @@ string dumpTree(in WidgetTree tree, in Frame[] frames)
 
     auto b = Builder();
     const t = b.add(Widget(kind: WidgetKind.text, text: "hello")); // 5×1
-    const panel = b.container(WidgetKind.popup, [t],
+    const panel = b.container(WidgetKind.panel, [t],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(panel);
 

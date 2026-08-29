@@ -715,7 +715,7 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     auto width = SizeSpec.fit_;
     if (opts.maxWidth > 0)
         width.max = opts.maxWidth;
-    const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
+    const popup = b.add(Widget(kind: WidgetKind.panel, slot: Slot.surface,
         width: width, padding: Insets(1, 0, 1, 0), paintBackground: true,
         decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
     return b.finish(popup);
