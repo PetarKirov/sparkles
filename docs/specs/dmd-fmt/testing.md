@@ -278,13 +278,21 @@ which is the map users navigate before the per-area pages.
 ### TST15 — Failure reports read like the code they are about
 
 A failing case prints three panes — **the expectation, what the formatter produced, then the diff
-between them** — each in its own titled box (`sparkles:ui`'s `drawBox`), laid out in three columns
-when the terminal is wide enough, expectation-and-actual side by side with the diff beneath when
-only two fit, and stacked when not even that. Two columns puts the _diff_ below rather than
-dropping a pane: it is the one that answers "what changed", so it earns the full width when width
-is short. Columns matter more here than in most reports — the panes are near-identical D sources
-differing by a few columns of indentation, and a difference you have to scroll between is a
-difference you will not see.
+between them** — each in its own titled box (`sparkles:ui`'s `drawBox`).
+
+**Every box is the same width**, the widest any of the three needs, whether that comes from a line
+of code, a title or a footer path. Three panes at three widths is three left edges and three right
+edges for the eye to track, and the whole point of the report is comparing two near-identical
+texts: two columns of indentation has to be the most obvious difference on screen, not the
+second-most after a ragged frame. Equal widths also make expectation and actual line up
+character-for-character, so a change of _length_ shows as one box's text running past where the
+other's stopped.
+
+**Two columns, never three.** Expectation and actual go side by side, because they are the pair
+being compared; the diff goes underneath at the same width. The diff is a different kind of thing —
+it is _about_ the pair rather than a member of it — and reading it wants the eye moving down a
+column of `-`/`+` markers, not across a third pane whose rows do not correspond to the two beside
+it. Below `2 × boxWidth + gap` there is no room for even that, and all three stack.
 
 Both sides are also **written to disk**, under `.result/dmd-fmt-cases/` at the repository root
 (`.result/` is already git-ignored), named after the case that produced them —
@@ -298,9 +306,10 @@ what that run produced. A stale artifact is worse than no artifact, because it l
 same failure mode as the stale golden that motivated loud blessing in `TST5`.
 
 A footer is as wide as the path it names, which is usually wider than the D above it, so drawing
-the paths in the borders can cost a whole column. When it would, the panes are drawn bare and the
-paths go on their own lines underneath — the same information, and one more column of code to read
-it against. The layout picks whichever gives more columns.
+the paths in the borders can widen every box past what the terminal holds. When it would, the panes
+are drawn bare and the paths go on their own lines underneath — the same information, and the
+columns kept. The layout picks whichever leaves more panes side by side, preferring footers when
+the outcome is equal.
 
 When `hue` is on `PATH` and the output takes colour, all three panes go through it. The formatter's
 own repository ships a syntax-highlighting viewer and a diff view; a formatting failure is exactly

@@ -647,57 +647,79 @@ private struct Pane
 }
 
 /// What the panes will look like, decided before any of them is rendered for
-/// real: how many share a row, whether the paths go in the borders, and the
-/// content width each box will have.
+/// real: whether the two code panes share a row, whether the paths go in the
+/// borders, and the width every box is drawn at.
 private struct Layout
 {
-    size_t columns;   /// 3, 2 or 1 panes per row.
+    size_t columns;   /// 2 panes on the first row, or 1 (everything stacked).
     bool footers;     /// Paths in the bottom borders, or on their own lines.
-    size_t[3] inner;  /// Each box's content width, in cells.
+    size_t boxWidth;  /// Total width of every box, frame included.
+
+    /// What a pane has to fill for `--background=full` to reach the frame
+    /// instead of stopping where the text happens to end. `drawBox` frames a
+    /// row as `│ ` + content + ` │`, so four cells.
+    size_t inner() const @safe pure nothrow @nogc
+        => boxWidth > 4 ? boxWidth - 4 : 0;
 }
 
 /**
-Choose the layout for a terminal `width` columns wide: three columns when the
-boxes fit, expectation-and-actual side by side with the diff beneath when only
-two do, and stacked when not even that.
+Choose the layout for a terminal `width` columns wide.
 
-Two columns puts the diff *below* rather than dropping a pane, because the
-diff is the one that answers "what changed" — it earns full width when width
-is short.
+**Every box is the same width** — the widest any of the three needs, whether
+that comes from a line of code, a title or a footer path. Three panes at three
+widths is three left edges and three right edges for the eye to track, and the
+whole point of the report is comparing two near-identical texts: a difference
+of two columns of indentation has to be the most obvious thing on screen, not
+the second-most after a ragged frame. Equal widths also mean expectation and
+actual line up character-for-character, so a change of *length* shows as one
+box's text running past where the other's stopped.
+
+**Two columns, never three.** Expectation and actual go side by side, because
+they are the pair being compared; the diff goes underneath at the same width.
+The diff is a different kind of thing — it is *about* the pair rather than a
+member of it — and reading it wants the eye moving down a column of `-`/`+`
+markers, not across a third pane whose rows do not correspond to the two
+beside it.
+
+Below `2 × boxWidth + gap` there is no room for even that, and all three
+stack.
 
 A footer is as wide as the path it names, which is usually wider than the D it
-sits under, so drawing the paths in the borders can cost a whole column. When
-it would, the panes are drawn bare and the paths go on their own lines
-underneath: the same information, and one more column of code to read it
-against.
+sits under, so drawing the paths in the borders can widen every box past what
+the terminal holds. When it would, the panes are drawn bare and the paths go
+on their own lines underneath: the same information, and the columns kept.
 
-The chosen boxes are then measured rather than predicted — `drawBox` decides a
-box's width from its content, its title *and* its footer, and re-deriving that
-rule here would be a second copy of it, free to drift.
+The boxes are measured rather than predicted — `drawBox` decides a width from
+content, title *and* footer, and re-deriving that rule here would be a second
+copy of it, free to drift.
 */
 private Layout planLayout(const Pane[] panes, size_t width) @system
 {
-    const framed = boxesFor(panes, footers: true);
-    const bare = boxesFor(panes, footers: false);
-    const framedCols = columnsFor(framed, width);
-    const bareCols = columnsFor(bare, width);
-
-    Layout plan;
-    plan.footers = framedCols >= bareCols;
-    plan.columns = plan.footers ? framedCols : bareCols;
-    const chosen = plan.footers ? framed : bare;
-    foreach (i, box; chosen)
-        plan.inner[i] = innerWidth(box);
-    return plan;
+    Layout best;
+    // Footers first, so an equal outcome keeps them: the paths are worth more
+    // in the borders, next to the pane they name, than in a list underneath.
+    foreach (footers; [true, false])
+    {
+        Layout plan;
+        plan.footers = footers;
+        plan.boxWidth = uniformWidth(boxesFor(panes, footers, 0));
+        plan.columns = 2 * plan.boxWidth + paneGap <= width ? 2 : 1;
+        if (best.boxWidth == 0 || plan.columns > best.columns)
+            best = plan;
+    }
+    return best;
 }
 
-/// A box's content width: what a pane must fill for `--background=full` to
-/// reach the frame instead of stopping where the text happens to end.
-/// `drawBox` frames a row as `│ ` + content + ` │`, so four cells.
-private size_t innerWidth(string box) @safe
+/// The width every box is drawn at: the widest one's, so none is padded to a
+/// size that hides how long its lines actually are.
+private size_t uniformWidth(const string[] boxes) @safe
 {
-    const w = blockWidth(box);
-    return w > 4 ? w - 4 : 0;
+    import std.algorithm : max;
+
+    size_t w;
+    foreach (box; boxes)
+        w = max(w, blockWidth(box));
+    return w;
 }
 
 /// Plan and render in one step — what the tests use, and what a caller with
@@ -707,12 +729,15 @@ private string composePanes(const Pane[] panes, size_t width) @system
 
 private string render(const Pane[] panes, in Layout plan) @system
 {
-    const boxes = boxesFor(panes, footers: plan.footers);
+    const boxes = boxesFor(panes, plan.footers, plan.boxWidth);
     return assemble(boxes, plan.columns)
         ~ (plan.footers ? "" : pathLines(panes));
 }
 
-private string[] boxesFor(const Pane[] panes, bool footers) @system
+/// The panes as boxes, every one `minWidth` wide (0 = each its own natural
+/// width, which is how [planLayout] discovers what that common width is).
+private string[] boxesFor(const Pane[] panes, bool footers, size_t minWidth)
+    @system
 {
     import sparkles.ui.components.box : BoxProps, drawBox;
     import std.algorithm : map;
@@ -720,24 +745,8 @@ private string[] boxesFor(const Pane[] panes, bool footers) @system
 
     return panes
         .map!(p => drawBox(p.body_, p.title,
-            BoxProps(footer: footers ? p.footer : null)))
+            BoxProps(footer: footers ? p.footer : null, minWidth: minWidth)))
         .array;
-}
-
-/// How many of the three panes fit on one row at `width`: 3, 2 or 1.
-private size_t columnsFor(const string[] boxes, size_t width) @safe
-{
-    import std.algorithm : map, sum;
-    import std.array : array;
-
-    if (boxes.length < 3)
-        return boxes.length;
-    auto widths = boxes.map!blockWidth.array;
-    bool fits(size_t[] ws) => ws.sum + paneGap * (ws.length - 1) <= width;
-
-    if (fits(widths))
-        return 3;
-    return fits(widths[0 .. 2]) ? 2 : 1;
 }
 
 private enum size_t paneGap = 2;
@@ -747,9 +756,7 @@ private string assemble(const string[] boxes, size_t columns) @safe
     import sparkles.ui.components.layout : hjoin;
     import std.array : join;
 
-    if (columns >= 3)
-        return hjoin(boxes, paneGap);
-    if (columns == 2)
+    if (columns >= 2 && boxes.length >= 2)
         return hjoin(boxes[0 .. 2], paneGap) ~ "\n" ~ boxes[2 .. $].join("\n");
     return boxes.join("\n");
 }
@@ -817,8 +824,7 @@ private enum paneBackground = "full";
 /// The files are the ones [writeArtifacts] already wrote — hue reads the same
 /// bytes the reader can open afterwards, so the panes and the artifacts cannot
 /// disagree.
-private bool huePanes(in Artifacts art, in size_t[3] inner,
-    out Pane[3] out_) @system
+private bool huePanes(in Artifacts art, size_t inner, out Pane[3] out_) @system
 {
     import std.algorithm : count, max;
     import std.process : execute;
@@ -835,16 +841,16 @@ private bool huePanes(in Artifacts art, in size_t[3] inner,
             return res.status == 0 ? res.output.stripRight("\n") : null;
         }
 
-        const expected = run(inner[0], ["view", "--ansi",
+        const expected = run(inner, ["view", "--ansi",
             "--no-line-numbers", art.expectedPath]);
-        const actual = run(inner[1], ["view", "--ansi",
+        const actual = run(inner, ["view", "--ansi",
             "--no-line-numbers", art.actualPath]);
         // Enough context to reach both ends of the file. hue's default window
         // is three lines, and with the elision bands suppressed a truncated
         // pane would be indistinguishable from a complete one — the diff must
         // show the same region the other two panes do.
         const lines = max(expected.count('\n'), actual.count('\n')) + 2;
-        const diff = run(inner[2], ["diff", "--ansi",
+        const diff = run(inner, ["diff", "--ansi",
             "--diff-show-formatting",
             "--no-diff-chrome", "--no-line-numbers",
             "--diff-context=" ~ lines.to!string,
@@ -1038,28 +1044,52 @@ private bool hueUsable() @safe
     assert(renderFailure(CaseResult.init, dir) == "");
 }
 
-@("cases.report.columns-follow-the-terminal-width")
+@("cases.report.two-columns-of-equal-width")
 @system unittest
 {
     import std.string : lineSplitter;
 
+    // Three panes of deliberately different natural widths.
     const panes = [
-        Pane("expected", "int a;\n"),
-        Pane("actual", "int  a;\n"),
-        Pane("diff", "- int a;\n+ int  a;\n"),
+        Pane("expected", "int a;\n", null),
+        Pane("actual", "int  a;    // a much longer line\n", null),
+        Pane("diff", "- int a;\n+ int  a;    // a much longer line\n", null),
     ];
 
-    size_t rows(string s) { size_t n; foreach (_; s.lineSplitter) ++n; return n; }
+    size_t[] widths(string s)
+    {
+        import sparkles.base.text.grapheme : visibleWidth;
 
-    // Every box here is 3 rows tall (border, one or two content rows, border),
-    // so the row count IS the column count: side-by-side panes share rows.
+        size_t[] out_;
+        foreach (line; s.lineSplitter)
+            if (line.length)
+                out_ ~= visibleWidth(line);
+        return out_;
+    }
+
+    // Wide: expected and actual share a row, the diff sits under them. Every
+    // box is the same width, so a two-box row is exactly twice a one-box row
+    // plus the gap — which is the check that they really are equal.
     const wide = composePanes(panes, 200);
-    const medium = composePanes(panes, 40);
-    const narrow = composePanes(panes, 10);
-    assert(rows(wide) < rows(medium), wide);
-    assert(rows(medium) < rows(narrow), medium);
-    // A pane is never dropped, however little room there is.
-    foreach (report; [wide, medium, narrow])
+    auto ws = widths(wide);
+    size_t pair, single;
+    foreach (w; ws)
+    {
+        if (w > pair)
+            pair = w;
+        if (single == 0 || (w < single && w > 0))
+            single = w;
+    }
+    assert(pair == 2 * single + paneGap,
+        pair.to!string ~ " vs " ~ single.to!string);
+
+    // Narrow: no room for two, so all three stack — and stay equal.
+    const narrow = composePanes(panes, 20);
+    foreach (w; widths(narrow))
+        assert(w == widths(narrow)[0], narrow);
+
+    // A pane is never dropped, whatever the width.
+    foreach (report; [wide, narrow])
         foreach (p; panes)
             assert(report.canFind(p.title), report);
 }
