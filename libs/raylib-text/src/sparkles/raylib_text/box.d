@@ -128,14 +128,17 @@ weights never collapse into each other at small sizes.
 ArmWeights armWeights(int cellW, int cellH) @safe pure nothrow @nogc
 {
     const int ref_ = cellW > 0 ? cellW : cellH;
-    int light = ref_ / 12;
+    // Rounded, not truncated: at the cell sizes a monospace face actually
+    // produces, integer division throws away most of the range — a 14px and
+    // a 19px cell would otherwise draw the same hairline.
+    int light = (ref_ + 3) / 7;
     if (light < 1)
         light = 1;
-    int heavy = ref_ / 4;
+    int heavy = (ref_ + 1) / 3;
     if (heavy < light + 1)
         heavy = light + 1;
     // A rule may not swallow its own cell.
-    const int cap = (cellH > 0 ? cellH : ref_) / 2;
+    const int cap = ref_ / 2;
     if (cap > 0 && heavy > cap)
         heavy = cap;
     return ArmWeights(light, heavy);
@@ -158,11 +161,12 @@ unittest
     assert(large.heavy > large.light);
     assert(large.heavy > mid.heavy, "and heavy tracks the cell");
     assert(huge.heavy > large.heavy);
-    // The user-visible cases. A 12px cell (the default font) used to draw
-    // a 2px heavy rule and still does — there is nowhere else to go at that
-    // size — but every larger cell now gets a rule that reads as heavy.
-    assert(mid.heavy >= 3);
-    assert(large.heavy >= 5);
+    // The user-visible cases: both weights read as their weight class at a
+    // real font size, rather than the whole grid collapsing to hairlines.
+    assert(mid.light >= 2 && mid.heavy >= 4);
+    assert(large.light >= 3 && large.heavy >= 6);
+    // A rule never takes more than half its cell.
+    assert(large.heavy <= 21 / 2 && huge.heavy <= 32 / 2);
     // Nothing swallows its cell.
     assert(huge.heavy <= 72 / 2);
 }
