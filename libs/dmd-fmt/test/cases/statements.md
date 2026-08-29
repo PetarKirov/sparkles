@@ -1,0 +1,218 @@
+# Statements — hostile cases
+
+Clause nesting, and the boundary between a nested clause and a wrapped expression. Unpublished
+(`TST3`).
+
+## Braceless bodies nest one level per clause
+
+<!-- fmt id=P38 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    version (X)
+        foreach (i; 0 .. n)
+            if (c)
+                g();
+
+    foreach (i; 0 .. n)
+        if (c)
+            return;
+
+    while (c)
+        with (obj)
+            use();
+}
+```
+
+```d [After]
+void f()
+{
+    version (X)
+        foreach (i; 0 .. n)
+            if (c)
+                g();
+
+    foreach (i; 0 .. n)
+        if (c)
+            return;
+
+    while (c)
+        with (obj)
+            use();
+}
+```
+
+:::
+
+## A wrapped expression steps once, however many lines it takes
+
+<!-- fmt id=P84 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    auto x = aaa +
+        bbb +
+        ccc +
+        ddd;
+    auto y = foo(a)
+        .bar(b)
+        .baz(c);
+}
+```
+
+```d [After]
+void f()
+{
+    auto x = aaa +
+        bbb +
+        ccc +
+        ddd;
+    auto y = foo(a)
+        .bar(b)
+        .baz(c);
+}
+```
+
+:::
+
+## A clause header followed by a wrapped body: both steps happen
+
+<!-- fmt id=P38 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    if (c)
+        x = a +
+            b;
+    foreach (e; es)
+        sink(e,
+            other);
+}
+```
+
+```d [After]
+void f()
+{
+    if (c)
+        x = a +
+            b;
+    foreach (e; es)
+        sink(e,
+            other);
+}
+```
+
+:::
+
+## `else`, `do` and `try` are clause headers with no parentheses
+
+<!-- fmt id=P39 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    if (a)
+        x();
+    else
+        y();
+
+    if (a)
+        x();
+    else if (b)
+        y();
+    else
+        z();
+}
+```
+
+```d [After]
+void f()
+{
+    if (a)
+        x();
+    else
+        y();
+
+    if (a)
+        x();
+    else if (b)
+        y();
+    else
+        z();
+}
+```
+
+:::
+
+## A call is not a clause, even though it also ends in `)`
+
+<!-- fmt id=P84 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    foo(a)
+        .bar();
+    check(value)
+        ;
+}
+```
+
+```d [After]
+void f()
+{
+    foo(a)
+        .bar();
+    check(value)
+        ;
+}
+```
+
+:::
+
+## Own-line comments are siblings; a trailing comment is a wrap
+
+<!-- fmt id=P41 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    if (ready)
+        // why
+        // and why again
+        prepare();
+
+    auto x = a + // note
+        b;
+}
+```
+
+```d [After]
+void f()
+{
+    if (ready)
+        // why
+        // and why again
+        prepare();
+
+    auto x = a + // note
+        b;
+}
+```
+
+:::
