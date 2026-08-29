@@ -106,6 +106,7 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, Visual,
 import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
+import sparkles.ui.overlay.anchor : AnchorRect;
 import sparkles.ui.canvas : DrawOp, LineStyle, match, OpKind, RuleEdge,
     Scrollbar;
 import sparkles.ui.cmd_buffer : CmdBufferT;
@@ -1754,10 +1755,17 @@ int runGui(GuiArgs guiArgs) @system
                     const ua = cast(ubyte)(pop.fade.alphaPercent(fadeCfg) * 255 / 100);
                     for (int i = 0; i + 2 <= hw; i += 4)
                         chrome.fillPixels(hx + i, uy, 2, 1, uv.fg, ua);
-                    // Room from the anchor to the document pane's right edge,
-                    // in cells — the popup is capped to it and, failing that,
-                    // slid left inside it.
-                    const availCells = (screenW - cast(int) rightPad - hx) / cellW;
+                    // The document pane, in its own cell space: origin at the
+                    // pane's left edge and first document row, so the popup is
+                    // bounded by the PANE and cannot slide across the explorer
+                    // divider — which clamping at pixel zero used to allow.
+                    const paneX0 = treePx();
+                    const paneCols = (screenW - cast(int) rightPad - paneX0) / cellW;
+                    const boundary = Rect(0, 0, paneCols, docRows);
+                    const anchor = AnchorRect(
+                        primary: Rect((hx - paneX0) / cellW,
+                            cast(int)(r.y - vm.top), r.width, 1),
+                        live: true);
                     // A different token is a different question: drop what the
                     // last popup had opened.
                     if (pop.popupNode != pop.hotNode)
@@ -1766,10 +1774,11 @@ int runGui(GuiArgs guiArgs) @system
                         pop.popupNode = pop.hotNode;
                     }
                     pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
-                        cast(float) hx, cast(float)(hy + cellH),
+                        anchor, boundary,
+                        cast(float) paneX0, cast(float) docY0,
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        vm.pageFg, vm.pageBg, availCells,
+                        vm.pageFg, vm.pageBg,
                         pop.expandedRegions, pop.popupKeys);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
@@ -4086,14 +4095,20 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
 /// painted through `RaylibCanvas`. The type signature renders as resolved
 /// syntax-colored spans (`signatureSpans`) inside the widget model itself, so
 /// nothing overpaints the toolkit's output.
+/// The popup is placed in CELLS, like every other backend, and converted to
+/// pixels exactly once — at canvas construction. It used to clamp in pixel
+/// space against an anchor-relative edge, which is why it and the two TUI sites
+/// disagreed about the boundary as well as about the arithmetic (`PLC4`).
+/// `anchor` and `boundary` are cells relative to `originX`/`originY`.
 private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf,
-    in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
+    in TwoslashReturn tw, size_t nodeIndex, in AnchorRect anchor,
+    in Rect boundary, float originX, float originY, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
-    RgbColor pageFg, RgbColor pageBg, int availCells,
+    RgbColor pageFg, RgbColor pageBg,
     ExpandedRegions expanded, out KeyTarget[] keys) @system
 {
-    import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
-        HoverViewOptions, signatureSpans;
+    import sparkles.twoslash.render_widgets : HoverViewOptions,
+        placeHoverPopup, popupBound, signatureSpans;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
@@ -4107,7 +4122,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
         MdViewTheme;
 
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
-        HoverViewOptions(maxWidth: effectivePopupWidth(pal, availCells),
+        HoverViewOptions(maxWidth: popupBound(pal, boundary).width,
             sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
             mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(&cache,
@@ -4116,20 +4131,20 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
     // the zero rect tells the caller there is no popup to keep the pointer in.
     if (!tree.nodes.length)
-        return PixelRect(x, y, 0, 0);
+        return PixelRect(originX, originY, 0, 0);
     auto frames = layout(tree);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-    // A popup anchored near the right edge slides left rather than being
-    // squeezed into a two-word column. `availCells` was measured from the
-    // anchor, so the window edge is `x + availCells` cells out.
     const box = frames[tree.root].rect;
-    const px = availCells > 0
-        ? cast(float) clampOrigin(cast(int) x, box.width * cellW,
-            cast(int) x + availCells * cellW)
-        : x;
+    const placed = placeHoverPopup(pal, anchor, box.size, boundary);
+    if (!placed.paintable)
+        return PixelRect(originX, originY, 0, 0);
 
-    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, y);
+    // The one cell → pixel conversion in the whole path.
+    const px = originX + placed.rect.x * cellW;
+    const py = originY + placed.rect.y * cellH;
+
+    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, py);
     paint(canvas, ops);
 
     // Where each collapsible run landed, in cells relative to the popup — the
@@ -4139,7 +4154,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
     // the moment it moves onto it.
-    return PixelRect(px, y, cast(float)(box.width * cellW),
+    return PixelRect(px, py, cast(float)(box.width * cellW),
         cast(float)(box.height * cellH));
 }
 

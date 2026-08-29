@@ -26,8 +26,8 @@ import sparkles.base.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
-    HoverViewOptions, signatureSpans, viewHoverPopup, viewTwoslashDocument;
+import sparkles.twoslash.render_widgets : HoverViewOptions, placeHoverPopup,
+    popupBound, signatureSpans, viewHoverPopup, viewTwoslashDocument;
 
 import sparkles.syntax : HighlightEvent, LabelSet,
     ResolvedTheme, RgbColor, toRgb;
@@ -38,6 +38,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.overlay.anchor : AnchorRect;
 import sparkles.ui.state : selectionRects;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot;
@@ -236,10 +237,11 @@ private struct TwoslashTui
         {
             const r = targetRects[selIdx];
             const ni = selectable[selIdx];
-            // The room left at the anchor, capped by the theme's ceiling, and
-            // the same shift-don't-shrink rule the other backends use (`SIG1`).
-            const anchor = padCols + r.x;
-            const avail = grid.cols - anchor;
+            // The surface this popup must stay inside, minus the status row it
+            // must not cover — a viewport inset supplied as data rather than
+            // subtracted nowhere (`PLC14`).
+            const boundary = Rect(0, 0, grid.cols, grid.rows - 1);
+            const bound = popupBound(pal, boundary);
             import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
             import sparkles.ui.widget : TextSpan;
 
@@ -253,7 +255,7 @@ private struct TwoslashTui
                 MdViewTheme;
 
             auto opts = HoverViewOptions(
-                maxWidth: effectivePopupWidth(pal, avail),
+                maxWidth: bound.width,
                 sigSpans: sig, nodeKey: ni + 1,
                 mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
                 fenceRenderer: cache !is null
@@ -263,9 +265,16 @@ private struct TwoslashTui
                 ? viewHoverPopup(tw, ni, cache.registry, opts)
                 : viewHoverPopup(tw, ni, opts);
             auto frames = layout(tree);
-            paintTree(grid, tree,
-                clampOrigin(anchor, frames[tree.root].rect.width, grid.cols),
-                r.y - scrollRow + 1);
+            // The anchor is the token's own cell row; the `+1` that used to sit
+            // in the paint call was "the row below it", which is what
+            // `Side.bottom` means and no longer needs saying twice.
+            const anchor = AnchorRect(
+                primary: Rect(padCols + r.x, r.y - scrollRow, r.width, 1),
+                live: true);
+            const placed = placeHoverPopup(pal, anchor,
+                frames[tree.root].rect.size, boundary);
+            if (placed.paintable)
+                paintTree(grid, tree, placed.rect.x, placed.rect.y);
         }
 
         drawStatus(grid);

@@ -43,7 +43,9 @@ import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
-import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
+import sparkles.ui.geometry : cellsOf, Insets, Rect, Size, SizeSpec;
+import sparkles.ui.overlay.anchor : AnchorRect;
+import sparkles.ui.overlay.place : Align, OverlayGeometry, place, Placement, Side;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -441,54 +443,107 @@ Builds a floating hover/query popup for node `nodeIndex` of `tw`: a `popup` pane
 hovered token) — the tree is laid out at the origin.
 */
 /**
-The width to hand $(LREF HoverViewOptions): the theme's ceiling, narrowed to the
-room actually left at the anchor, with a floor.
+The size $(B bound) to build a hover popup within — the theme's ceilings,
+narrowed to the boundary the popup must live inside, floored at the theme's
+minimums.
 
-Both backends need the same decision, and it is a decision — not a measurement
-— so it lives beside the view rather than being re-derived per backend.
-`available` is the cells between the anchor and the far edge; a non-positive
-value means the caller could not work it out and gets the ceiling.
+A bound, not a size: the popup's real extent comes from `layout()` working
+inside this, so a view still never invents a width (`LAY10`). It is derived from
+the $(B boundary) alone, deliberately — the room left at the anchor is the
+solve's business, and the three hosts each computing their own `available`
+(`grid.cols - anchor`, `width - rect.x - 1`, an anchor-relative pixel edge) is
+half of the divergence `PLC4` retires.
 */
-int effectivePopupWidth(in Palette pal, int available) @safe pure nothrow @nogc
+Size popupBound(in Palette pal, in Rect boundary) @safe pure nothrow @nogc
 {
-    if (available <= 0)
-        return pal.popupMaxWidth;
-    const room = available < pal.popupMinWidth ? pal.popupMinWidth : available;
-    return room < pal.popupMaxWidth ? room : pal.popupMaxWidth;
+    static int fit(int ceiling, int room, int floor)
+    {
+        const capped = room < ceiling ? room : ceiling;
+        return capped < floor ? floor : capped;
+    }
+
+    return Size(
+        fit(pal.popupMaxWidth, boundary.width, pal.popupMinWidth),
+        fit(pal.popupMaxHeight, boundary.height, pal.popupMinHeight));
 }
 
 /**
-Where to start drawing a popup of `width` anchored at `anchor`, so it stays
-inside `extent`.
+Where a twoslash hover popup goes — the placement policy, spelled $(B once).
 
-It $(I shifts) rather than shrinks: a popup narrowed to fit under a token near
-the right edge would wrap its signature into a column two words wide, which
-reads worse than the same popup slid left. Clamped at 0 so a popup wider than
-the pane still starts on screen.
+This is what replaced `clampOrigin`, and the replacement is the point. That
+function was one axis, one direction, against one scalar extent, clamped to `0`,
+called from three sites that disagreed about the boundary (the whole grid, the
+pane width, an anchor-relative pixel edge), about the vertical offset and about
+whether to clip at all. Three applications were each guessing at a behavior the
+toolkit did not define — `PRN8` violated in the most expensive way.
+
+The clamp is to `boundary`, never to zero (`PLC4`). Zero is only correct when
+the boundary starts at the surface origin, which a pane in a split does not.
+
+$(B On `PLC9`.) The side is chosen here from the $(I measured) content rather
+than from a bound. That is honest for today's popup, whose height is whatever
+its content measures — there is no height budget to hand `layout()` yet, so a
+decide-then-measure pass would have nothing to decide. It becomes load-bearing
+when the popup body scrolls, and the two-pass shape is already expressible:
+solve once against $(LREF popupBound), lay out inside the result, then solve
+again with `lastGoodSide` pinned so the second pass cannot re-collide.
 */
-int clampOrigin(int anchor, int width, int extent) @safe pure nothrow @nogc
+OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
+    in Size content, in Rect boundary) @safe pure nothrow @nogc
 {
-    const over = anchor + width - extent;
-    const shifted = over > 0 ? anchor - over : anchor;
-    return shifted < 0 ? 0 : shifted;
+    auto req = Placement.init;
+    req.minSize = Size(pal.popupMinWidth, pal.popupMinHeight);
+    req.maxSize = popupBound(pal, boundary);
+    // A hover popup hangs directly below the token it describes, with no gap:
+    // `TRG12` makes zero cells the default precisely so the pointer can travel
+    // into the popup without crossing a corridor that belongs to nobody.
+    req.side = Side.bottom;
+    req.alignment = Align.start;
+    return place(req, anchor, content, boundary);
 }
 
-@("render_widgets.effectivePopupWidth.ceilingRoomAndFloor")
+@("render_widgets.popupBound.ceilingRoomAndFloor")
 @safe pure nothrow @nogc unittest
 {
     const pal = Palette.init;
-    assert(effectivePopupWidth(pal, 0) == pal.popupMaxWidth, "unknown room ⇒ ceiling");
-    assert(effectivePopupWidth(pal, 500) == pal.popupMaxWidth, "the ceiling holds");
-    assert(effectivePopupWidth(pal, 40) == 40, "room narrower than the ceiling wins");
-    assert(effectivePopupWidth(pal, 3) == pal.popupMinWidth, "never below the floor");
+    const wide = popupBound(pal, Rect(0, 0, 500, 400));
+    assert(wide.width == pal.popupMaxWidth, "the ceiling holds");
+    assert(wide.height == pal.popupMaxHeight);
+
+    const narrow = popupBound(pal, Rect(0, 0, 40, 10));
+    assert(narrow.width == 40, "room narrower than the ceiling wins");
+    assert(narrow.height == 10);
+
+    const tiny = popupBound(pal, Rect(0, 0, 3, 1));
+    assert(tiny.width == pal.popupMinWidth, "never below the floor");
+    assert(tiny.height == pal.popupMinHeight);
 }
 
-@("render_widgets.clampOrigin.shiftsRatherThanOverhangs")
+@("render_widgets.placeHoverPopup.clampsToThePaneNotToColumnZero")
 @safe pure nothrow @nogc unittest
 {
-    assert(clampOrigin(10, 20, 100) == 10, "it fits — leave it at the anchor");
-    assert(clampOrigin(90, 20, 100) == 80, "overhang shifts left, exactly flush");
-    assert(clampOrigin(5, 200, 100) == 0, "wider than the pane still starts on screen");
+    // The regression `clampOrigin` could not express. In a split, the viewer
+    // pane does not start at column 0 — and `clampOrigin(anchor, w, extent)`
+    // clamped to `0`, so a popup wider than the room jumped across the divider
+    // and painted over the explorer. Three call sites, three boundaries, one
+    // shared bug.
+    const pal = Palette.init;
+    const pane = Rect(30, 0, 50, 24);          // the viewer, right of a divider
+    const anchor = AnchorRect(primary: Rect(74, 4, 4, 1), live: true);
+
+    const g = placeHoverPopup(pal, anchor, Size(60, 6), pane);
+    assert(g.rect.x >= pane.x, "it stays inside the pane");
+    assert(g.rect.x != 0, "column 0 is in the EXPLORER, not the viewer");
+    assert(g.rect.y == 5, "directly below the token — no invented gap (TRG12)");
+
+    // The old rule, reproduced, so the difference is visible rather than
+    // described. `clampOrigin` took the far edge as a bare scalar and floored
+    // at `0`: it has no way to express a boundary whose LEFT edge is 30, so it
+    // slides the popup to column 20 — inside the explorer, across the divider.
+    const over = 74 + 60 - 80;
+    const oldRule = 74 - over < 0 ? 0 : 74 - over;
+    assert(oldRule == 20 && oldRule < pane.x, "the old rule left the pane");
+    assert(g.rect.x == pane.x, "the solve stops at the boundary it was given");
 }
 
 /**
