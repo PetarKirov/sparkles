@@ -321,13 +321,12 @@ void writeLogDelta(Writer)(ref Writer w, in LogDelta d)
 {
     import std.range.primitives : put;
 
-    import sparkles.base.text.width : Align;
-    import sparkles.base.text.writers : writeDurationPadded;
+    import sparkles.base.text.writers : DurationPad, writeDurationPadded;
 
     put(w, "Δt ");
-    writeDurationPadded(w, d.sinceStart, 5, Align.right);
+    writeDurationPadded(w, d.sinceStart, 5, DurationPad.before);
     put(w, " | Δtᵢ ");
-    writeDurationPadded(w, d.sincePrev, 5, Align.right);
+    writeDurationPadded(w, d.sincePrev, 5, DurationPad.before);
 }
 
 /**
@@ -739,14 +738,13 @@ void writeLogPrefix(bool colored = false, Writer)(
     import sparkles.base.smallbuffer : SmallBuffer;
     import sparkles.base.styled_template : writeStyled;
     import sparkles.base.term_color : ColorDepth;
-    import sparkles.base.text.width : Align;
-    import sparkles.base.text.writers : writeDurationPadded;
+    import sparkles.base.text.writers : DurationPad, writeDurationPadded;
 
     enum depth = colored ? ColorDepth.trueColor : ColorDepth.none;
     SmallBuffer!(char, 16) startBuf;
-    writeDurationPadded(startBuf, sinceStart, 5, Align.right);
+    writeDurationPadded(startBuf, sinceStart, 5, DurationPad.before);
     SmallBuffer!(char, 16) prevBuf;
-    writeDurationPadded(prevBuf, sincePrev, 5, Align.right);
+    writeDurationPadded(prevBuf, sincePrev, 5, DurationPad.before);
     auto loc = baseNameSlice(file);
 
     writeStyled(w, depth, i"{gray [ $(timeStr)} | Δt {yellow $(startBuf[])} | Δtᵢ {yellow $(prevBuf[])} | ");
