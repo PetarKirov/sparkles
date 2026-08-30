@@ -282,9 +282,21 @@ private struct Builder
             spine.entries[frame.group.firstEntry].kind == TOK.leftCurly)
             parent.boundary = cast(uint) i + 1;
 
-        // The body closing closes its declaration with it.
-        if (frame.group.kind == GroupKind.body_ &&
-            parent.group.kind == GroupKind.decl)
+        // The body closing closes its declaration with it — and a brace
+        // block sitting directly in a decl frame IS that declaration's body,
+        // marker or no marker. Only a function carries an `fbody` loc, so a
+        // non-eponymous `template T(F) { … }` never becomes a `body_`; with
+        // nothing to close its decl frame it stayed open and adopted the
+        // whole rest of the module (`libs/wired/.../policy.d`, where it
+        // re-indented every later declaration and fused a `{` with the DDoc
+        // comment below it — caught by the M1 DDoc-attachment check).
+        // Every other brace a decl can hold sits inside a clause frame (a
+        // block contract) or a bracket frame (a lambda default argument),
+        // never directly in the decl.
+        if (parent.group.kind == GroupKind.decl &&
+            (frame.group.kind == GroupKind.body_ ||
+                (frame.group.kind == GroupKind.brackets &&
+                    spine.entries[frame.group.firstEntry].kind == TOK.leftCurly)))
             parent.closeAfterEntry = i;
     }
 
