@@ -18,9 +18,9 @@ unary-vs-binary token disambiguation. Concretely:
 $(LIST
     * $(B Line structure is the author's): a newline between tokens stays a
         newline, same-line stays same-line — except for the orphans D10
-        exempts, where the break carries nothing to preserve (a line holding
-        only `;` or `,`, and a `)`/`]`/expression-`}` under contents that
-        never broke). Indentation is recomputed
+        exempts, where the break carries nothing to preserve: a `;` or `,`
+        that starts a line moves up (taking the break with it), and a
+        `)`/`]`/expression-`}` under contents that never broke rejoins them. Indentation is recomputed
         structurally — brace nesting, `case`/`default` bodies one level
         deeper, wrapped statements one continuation level (dfmt's
         single-indent style).
@@ -536,18 +536,15 @@ private final class Printer
         return false;
     }
 
-    /// Is `items[at]` a `;` or `,` sitting alone on its line? "Alone" is the
-    /// whole point: `, b` is leading-comma style, a real if rare choice, and
-    /// the author's-breaks rule keeps it.
-    private bool isOrphanedSeparator(const Item[] items, size_t at) const @safe
+    /// Is this item a `;` or `,`? Both terminate what precedes them, so a
+    /// break before one is never information: D writes the comma at the end
+    /// of the element, not at the start of the next.
+    private bool isSeparator(const Item item) const @safe
     {
-        const item = items[at];
         if (item.kind != ItemKind.token)
             return false;
         const kind = spine.entries[item.index].kind;
-        if (kind != TOK.semicolon && kind != TOK.comma)
-            return false;
-        return at + 1 == items.length || items[at + 1].newlinesBefore > 0;
+        return kind == TOK.semicolon || kind == TOK.comma;
     }
 
     /**
@@ -962,7 +959,7 @@ private final class Printer
         foreach (i, item; run)
             if (i != 0 && item.newlinesBefore > 0
                 && !(atStatementStart && inAttributePrefix(g, run, i))
-                && !isOrphanedSeparator(run, i))
+                && !isSeparator(run[i]))
             {
                 brk = i;
                 break;
@@ -1044,18 +1041,27 @@ private final class Printer
         bool preserveAlignment = false) @safe
     {
         Doc[] parts;
+        // A separator that took the line's break with it when it moved up:
+        // the next item starts the line the separator used to.
+        bool breakMovedHere;
         foreach (i, item; items)
         {
-            // A line holding nothing but `;` or `,` is never a layout anyone
-            // chose — it is what a deleted argument or a bad merge leaves
-            // behind. The break before it carries no information, so the
-            // author's-breaks rule has nothing to preserve: the token rejoins
-            // what it terminates. Leading-comma style is untouched, because
-            // there the comma is not alone on its line.
-            if (i != 0 && item.newlinesBefore > 0
-                && isOrphanedSeparator(items, i))
+            if (breakMovedHere)
+            {
+                breakMovedHere = false;
+                parts ~= hardline;
+                parts ~= buildItem(g, item);
+                continue;
+            }
+            // A `;` or `,` that starts a line belongs to what precedes it, not
+            // to what follows: it terminates the element above. So it moves up
+            // — and the break moves with it, keeping the author's one-per-line
+            // structure while putting the comma where D writes it.
+            if (i != 0 && item.newlinesBefore > 0 && isSeparator(item))
             {
                 parts ~= buildItem(g, item);
+                breakMovedHere = i + 1 < items.length
+                    && items[i + 1].newlinesBefore == 0;
                 continue;
             }
             if (i == 0 && leadingBreak)

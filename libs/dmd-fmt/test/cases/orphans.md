@@ -35,7 +35,7 @@ void f()
 
 :::
 
-## Leading-comma style survives — the comma is not alone
+## A comma leading its line moves up, and takes the break with it
 
 <!-- fmt id=D10 -->
 
@@ -50,9 +50,9 @@ auto xs = [
 
 ```d [After]
 auto xs = [
-    1
-    , 2
-    , 3];
+    1,
+    2,
+    3];
 ```
 
 :::
