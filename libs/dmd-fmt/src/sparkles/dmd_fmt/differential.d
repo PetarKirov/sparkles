@@ -120,6 +120,50 @@ version (unittest)
     assert(mean > 0.85, "v1 churn exceeded the tripwire");
 }
 
+@("differential.sweep.whole-repository")
+@system unittest
+{
+    import core.exception : AssertError;
+    import std.algorithm : endsWith;
+    import std.file : read;
+    import std.path : dirName;
+
+    import sparkles.build_primitives.dir_walk : walkGitRepository;
+
+    // The corpus above is three source trees, chosen for the churn ratchet.
+    // This is every `.d` file in the repository, and it exists because
+    // sampling missed things: a printer defect that DROPPED a braced block,
+    // a `template` declaration whose group frame swallowed the rest of its
+    // module, and two non-idempotent shapes all survived the sampled corpus
+    // and were found only by formatting the whole tree. A safety gate that
+    // covers a tenth of the code is a safety gate for a tenth of the code.
+    //
+    // No similarity assertion here: churn is the corpus test's job, and a
+    // file this sweep would drag in (a research example, a benchmark
+    // engine) is not calibrated for it. What every file must satisfy is the
+    // part that is not a matter of taste — the formatted text verifies, and
+    // formatting it again changes nothing.
+    // Gitignore-aware, which is load-bearing rather than tidy: a plain
+    // `dirEntries` walk descends into `.direnv/`, where a nixpkgs checkout
+    // supplies 30k unrelated files and a DIRECTORY named `registries.d`.
+    enum thisDir = __FILE_FULL_PATH__.dirName;
+    enum repoRoot = thisDir.dirName.dirName.dirName.dirName.dirName;
+
+    size_t files;
+    foreach (path; walkGitRepository(repoRoot))
+    {
+        if (!path.endsWith(".d"))
+            continue;
+        const source = () @trusted { return cast(string) read(path); }();
+        if (const err = triad(path, source))
+            throw new AssertError(err);
+        files++;
+    }
+    // The tree had 1,021 at pinning time; the floor only catches a broken
+    // path resolution, not a deleted module.
+    assert(files > 500, "whole-tree sweep found too few files — path broke?");
+}
+
 @("differential.triad.expressionsem-20kloc")
 @system unittest
 {
