@@ -560,8 +560,14 @@ Reads a replay script from `path` (`DBG4`). An unreadable file or a bad line
 yields no events and a note on stderr: a debug hook must not take the viewer
 down, and a silently empty replay is better diagnosed loudly than by a golden
 that quietly photographs the wrong frame.
+
+Public because BOTH arms need it. `GuiCapture` is the window's parse of the
+`HUE_GUI_*` family, but a replay is not a window concern — a terminal session
+is the easier one to script and to watch, and a feed that only one host could
+consume would make `HST20`'s "on every arm" true of the host and false of its
+first consumer.
 */
-private Event[] replayScript(string path) @safe
+Event[] replayScript(string path) @safe
 {
     import std.conv : text;
     import std.file : exists, readText;

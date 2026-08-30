@@ -16,6 +16,9 @@ version (Posix):
 import core.time : Duration;
 import core.time : msecs;
 import std.path : dirName;
+import std.process : environment;
+
+import gui_state : replayScript;
 import format_preview : formatPreviewPump, formatPreviewRulerDragging,
     formatPreviewStart;
 
@@ -1867,6 +1870,10 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             backend: Backend.tui,
             autoBackend: false,
         };
+        // `DBG4`: the same replay the window takes. Only the script — the
+        // pointer hook beside it is in device pixels, which a cell surface has
+        // no way to mean.
+        cfg.prelude = replayScript(environment.get("HUE_REPLAY", ""));
         // The sink was already decided — `main` reaches this only for the
         // terminal — so the policy states it rather than re-probing.
         BackendPolicy policy = {
