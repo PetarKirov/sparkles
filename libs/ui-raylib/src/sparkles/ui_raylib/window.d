@@ -26,6 +26,7 @@ import raylib;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
+import sparkles.base.text.cstring : CString, tryToCString;
 import sparkles.ui_raylib.events : toRaylibCursor;
 
 /**
@@ -122,7 +123,22 @@ struct Window
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
         SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
-        InitWindow(r.width, r.height, r.title.length ? r.title.ptr : "");
+        // NUL-terminate here rather than trusting the caller's slice. raylib
+        // hands the pointer straight to the platform, which reads until it
+        // finds a NUL: a title built by concatenation (hue's `"hue — " ~ name`)
+        // ends at its length with no terminator, so GLFW's macOS path fed the
+        // trailing garbage to `[NSString stringWithUTF8String:]`, got `nil`
+        // back for the invalid UTF-8, and `-[NSWindow setTitle:nil]` raised
+        // `NSInternalInconsistencyException` before the window ever appeared.
+        // Only a string literal happened to work.
+        //
+        // A title is a caller's free text, so overflow is a condition rather
+        // than a bug: `tryToCString` leaves an over-long one empty, which costs
+        // the title and nothing else. Either way `ptr` is never `null`, so the
+        // empty case needs no branch of its own.
+        CString!512 titleZ;
+        cast(void) tryToCString(titleZ, [r.title]);
+        InitWindow(r.width, r.height, titleZ.ptr);
         // Checked HERE, before any other raylib call. `InitWindow` reports
         // failure only through `IsWindowReady`, and every call below assumes a
         // live GLFW: on a host with no window server they warn ("The GLFW
