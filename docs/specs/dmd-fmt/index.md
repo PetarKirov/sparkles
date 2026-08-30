@@ -240,6 +240,24 @@ Note what stays untouched. `q{ … }` and every other multi-token literal is one
 spine entry, emitted byte-for-byte — interior spacing included. What rejoins is
 the `;` after the closing brace, not anything inside it.
 
+### D11 — Horizontal adjacency is the author's
+
+Runs of horizontal whitespace collapse to one space, and **zero stays zero**.
+The formatter has no opinion on `a+b` versus `a + b`, and none on `{ x }`
+versus `{x}` — a policy that reads as timidity until you notice what it
+protects.
+
+D writes idioms in the gaps. `{{ … }}` gives a `static foreach` body its own
+scope, and the two braces touch; padding them to `{ { … } }` turns a
+recognized shape into something that reads like a typo. The same argument
+covers author-aligned table literals, which D9 already preserves, and it is
+why the alignment question (`P158`) is an option rather than a default.
+
+The rule is not "preserve whitespace" — runs do collapse, and indentation is
+recomputed outright. It is narrower and more useful than that: **the formatter
+never inserts a space the author did not write**, and never removes the last
+one they did.
+
 ## Spike results
 
 | Spike                                | Result         | Where                                      |

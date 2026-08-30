@@ -459,6 +459,49 @@ S defaults = {
 
 ---
 
+## D idioms
+
+### `static foreach`'s double braces stay touching {#d11}
+
+<!-- fmt id=D11 -->
+
+`{{ … }}` gives each iteration of a `static foreach` its own scope, and the two braces touch. The
+formatter leaves them touching, because it never inserts a space you did not write — the same rule
+that leaves `a+b` alone, and that keeps a hand-aligned table literal aligned.
+
+Runs of spaces still collapse to one, and indentation is still recomputed. What is preserved is the
+_absence_ of a space, which in D is often the shape of an idiom rather than an oversight.
+
+::: code-group
+
+```d [Before]
+void describe(Args...)(Args args)
+{
+static foreach (arg; args)
+{{
+alias T = typeof(arg);
+enum name = __traits(identifier, T);
+record(name);
+}}
+}
+```
+
+```d [After]
+void describe(Args...)(Args args)
+{
+    static foreach (arg; args)
+    {{
+        alias T = typeof(arg);
+        enum name = __traits(identifier, T);
+        record(name);
+    }}
+}
+```
+
+:::
+
+---
+
 ## What this page does not cover yet
 
 The layout tier is one of two. Token-changing rules — trailing-comma insertion, import sorting,

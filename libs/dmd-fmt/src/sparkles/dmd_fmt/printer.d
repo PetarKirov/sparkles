@@ -503,12 +503,20 @@ private final class Printer
             : (itemsSpanLines(items) || closerOnOwnLine(g));
         if (!multiline)
         {
+            // Pad only where the author did. `{{ … }}` — a `static foreach`
+            // body giving each iteration its own scope — is written with the
+            // braces touching, and v1 has no opinion on horizontal adjacency;
+            // padding it to `{ { … } }` broke a recognized idiom into
+            // something that reads like a mistake.
             Doc[] parts = [text("{")];
-            foreach (piece; joinInline(g, items, false))
-                parts ~= piece;
             if (items.length)
-                parts = [text("{"), text(" ")]
-                    ~ joinInline(g, items, false) ~ [text(" ")];
+            {
+                if (items[0].spaceBefore)
+                    parts ~= text(" ");
+                parts ~= joinInline(g, items, false);
+                if (gapBeforeCloser(g))
+                    parts ~= text(" ");
+            }
             parts ~= text("}");
             return sequence(parts);
         }
@@ -606,6 +614,12 @@ private final class Printer
                 return true;
         return false;
     }
+
+    /// Is there whitespace between the last content entry and the closer?
+    /// The inline shape preserves it or its absence, like any other gap.
+    private bool gapBeforeCloser(const Group g) const @safe
+        => g.lastEntry > g.firstEntry
+            && spine.entries[g.lastEntry - 1].cls == SpineClass.whitespace;
 
     private bool closerOnOwnLine(const Group g) const @safe
     {
