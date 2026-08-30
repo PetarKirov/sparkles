@@ -364,11 +364,23 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
 
     // `DSS1`'s rank chrome: ` ▲`/` ▼` for a single key, `1▲`-style with
     // the rank when several sort. View-column indexed (gutter at 0).
+    // A windowed grid HOLDS the badge's cells rather than collapsing them
+    // (`visibility: hidden`, not `display: none`): an unsorted header pads
+    // over them, so a right- or centre-aligned name — every numeric column
+    // is one, `DSG3` — cannot sit flush against the edge while unsorted and
+    // then jump aside the moment an arrow appears.
+    const holdBadgeCells = !window.whole;
     const(char)[][] badges;
-    if (sortKeys.length)
+    if (sortKeys.length || holdBadgeCells)
     {
         badges = new const(char)[][](cols + 1);
+        static immutable string badgePad = "  ";
+        static assert(badgePad.length == dsvSortBadgeCells,
+            "the placeholder must hold exactly the reserved cells");
         foreach (vi, c; visCols)
+        {
+            if (holdBadgeCells)
+                badges[vi + 1] = badgePad;
             foreach (ki, k; sortKeys)
                 if (k.column == c)
                 {
@@ -383,6 +395,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
                             ? ranked : " " ~ arrow);
                     break;
                 }
+        }
     }
 
     // `DSN3`: a windowed grid must not re-fit its columns as it scrolls, so
@@ -1144,6 +1157,40 @@ unittest
     const tail = widthOf(380);
     assert(head == overWide && head == tail,
         "the grid keeps one geometry however wide the rows in view are");
+}
+
+@("dsv_view.window.badgeSpaceIsHeldNotCollapsed")
+@system unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+    import std.string : splitLines;
+
+    // The reserved space must behave like `visibility: hidden`, not
+    // `display: none`: an unsorted header PADS over the badge's cells
+    // instead of spreading into them. Otherwise a right-aligned header —
+    // every numeric column is one (`DSG3`) — sits flush right while
+    // unsorted and jumps two cells left the moment an arrow appears.
+    auto src = "qty,name\n";
+    foreach (i; 0 .. 40)
+        src ~= text(i, ",row", i, "\n");
+
+    ptrdiff_t headerAt(in DsvProjection proj)
+    {
+        const a = adaptDsv(src, "csv", DsvFlags(), proj,
+            DsvWindow(start: 0, rows: 10));
+        foreach (line; dsvGridText(a, 12).splitLines)
+            if (line.canFind("qty"))
+                return line.countUntil("qty");
+        return -1;
+    }
+
+    const unsorted = headerAt(DsvProjection.init);
+    assert(unsorted >= 0, "precondition: the header renders");
+
+    DsvProjection sorted;
+    sorted.spec.sortKeys = [SortKey(column: 0, descending: false)];
+    assert(headerAt(sorted) == unsorted,
+        "the column name must not move when its arrow appears");
 }
 
 @("dsv_view.window.reservedBadgeStaysLegible")
