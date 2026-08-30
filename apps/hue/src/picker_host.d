@@ -16,7 +16,7 @@ import core.time : Duration, msecs;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.event_horizon.raw_pool : RawPoolResult;
 import sparkles.fuzzy : CandidateSnapshot, DefaultFuzzyCaps, FuzzyLimits,
-    MatchConfig, MatcherWorkspace, parseQuery, positions, TextRange;
+    Location, MatchConfig, MatcherWorkspace, parseQuery, positions, TextRange;
 import sparkles.input.events : Event, Key, KeyEvent, match, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import sparkles.ui.focus : ScopeFocus;
@@ -245,6 +245,15 @@ struct PickerHost
             focus.focused);
     }
 
+    /// The `:line[:col]` suffix the prompt currently carries (`PKQ4`), or
+    /// an absent `Location`. Parsed on acceptance only — never per
+    /// keystroke, where the search path already parses the query.
+    private Location promptLocation() @system
+    {
+        auto parsed = parseQuery(state.prompt.text);
+        return parsed.hasError ? Location.init : parsed.value.location;
+    }
+
     /// The resolution context the picker's keys live in: the modal flag plus
     /// the focused pane (`FOC4` — modality is context gating).
     KeyContext keyContext() const @safe pure nothrow @nogc
@@ -272,9 +281,24 @@ struct PickerHost
             return PickerAction.closed;
         case Command.pickerAccept:
             const index = state.selectedCorpusIndex;
-            const target = finder.resolve(index);
+            auto target = finder.resolve(index);
             if (!target.valid)
                 return PickerAction.consumed; // nothing to accept yet
+            // `PKQ4`: the query language has always parsed a trailing
+            // `:line[:col]`, and nothing consumed it — pasting
+            // `src/app.d:120` from a compiler diagnostic narrowed the list
+            // and then opened at the top of the file. A position the row
+            // already carries wins, since a grep hit knows better than the
+            // prompt where it is.
+            if (target.line == 0)
+            {
+                const loc = promptLocation();
+                if (loc.present)
+                {
+                    target.line = loc.startLine;
+                    target.column = loc.hasColumn ? loc.startColumn : 0;
+                }
+            }
             acceptedTarget = target;
             close();
             return PickerAction.accepted;
@@ -725,4 +749,51 @@ unittest
     assert(host.handleOverlay(Event(PointerEvent(pos: Point(0, 0),
         action: PointerAction.drag, button: PointerButton.left)), geometry)
         == PickerAction.consumed, "the release ended the grab");
+}
+
+@("picker.host.locationSuffixReachesTheAcceptedTarget")
+@system
+unittest
+{
+    // `PKQ4` — the whole point of parsing a trailing `:line[:col]`. The
+    // query language had parsed it since the parser landed, and NOTHING
+    // consumed it: pasting `src/app.d:120` from a compiler diagnostic
+    // narrowed the list correctly and then opened at the top of the file,
+    // which looks like the feature working right up until you look at where
+    // the cursor is.
+    import std.file : rmdirRecurse;
+    import std.path : buildPath;
+
+    const root = pickerFixture("hue-picker-loc");
+    scope (exit) rmdirRecurse(root);
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.open(root);
+    drain(*host);
+
+    foreach (ch; "lib:12:5")
+        host.handleKey(KeyEvent(Key.char_, ch));
+    drain(*host);
+    assert(host.state.rowCount == 1,
+        "the location suffix must not be matched as part of the path");
+
+    assert(host.handleKey(KeyEvent(Key.enter)) == PickerAction.accepted);
+    assert(host.acceptedTarget.path == buildPath(root, "src/lib.d"));
+    assert(host.acceptedTarget.line == 12, "the line suffix was dropped");
+    assert(host.acceptedTarget.column == 5, "the column suffix was dropped");
+
+    // A bare path still names no position, so the viewer keeps its scroll.
+    auto owner2 = makeUnique!PickerHost();
+    auto plain = &owner2.get();
+    scope (exit) plain.shutdown();
+    plain.open(root);
+    drain(*plain);
+    foreach (ch; "lib")
+        plain.handleKey(KeyEvent(Key.char_, ch));
+    drain(*plain);
+    assert(plain.handleKey(KeyEvent(Key.enter)) == PickerAction.accepted);
+    assert(plain.acceptedTarget.line == 0,
+        "a query with no suffix must not invent a position");
 }
