@@ -43,6 +43,7 @@ import sparkles.ui.layout : Frame, OutOfFlow, translateSubtree;
 import sparkles.ui.overlay.anchor : Anchor, AnchorKind, AnchorSource,
     resolveAnchor;
 import sparkles.ui.overlay.place : Fit, OverlayGeometry, place, Placement, Side;
+import sparkles.ui.overlay.policy : DismissPolicy, DismissReason, OpenCause;
 import sparkles.ui.state : clippedSelectionRects, rectOfKey, Timeline;
 import sparkles.ui.widget : HitBehavior, WidgetTree;
 
@@ -131,6 +132,16 @@ struct OverlayRecord
     OverlayGeometry resolved;
     /// Whether this overlay hides what is behind it from the hit walks.
     HitBehavior hit;
+    /// Why it opened (`TRG5`). Readable by the PLACEMENT stage as well as the
+    /// timing one: a menu opened by a right press anchors to the cursor and the
+    /// same menu opened from the keyboard anchors to its trigger, and a cause
+    /// only the timing layer can see forces the second into its own code path.
+    OpenCause cause;
+    /// Why it is closing, or `none` (`DSM2`). Stored, so a dismissal is a value
+    /// the recording canvas asserts rather than an effect it has to observe.
+    DismissReason closing;
+    /// What may close it, and whether the dismissing event also passes through.
+    DismissPolicy dismiss;
     /// The fade/hold clock, composed rather than reinvented (`STM6`).
     Timeline life;
     /// The frame this record first appeared in — `DSM9`'s one-frame exemption
@@ -660,4 +671,40 @@ in (frames.length == tree.nodes.length,
     a[1].life = Timeline(phase: Timeline.Phase.fadeOut);
     assert(a[1].contributesPaint && !a[1].contributesHits);
     assert(a.hitAt(Point(5, 3)) == backId, "the click falls through it");
+}
+
+@("ui.overlay.arena.aCloseIsAValueNotAnEffect")
+@safe pure nothrow @nogc unittest
+{
+    // `DSM2`: the reason lives ON the record, so a recording test asserts what
+    // closed a surface rather than observing that it went. Paired with the
+    // truncation, that makes a whole cascade checkable — the parent records why
+    // IT closed, and the children record that they went with it.
+    import sparkles.ui.overlay.policy : DismissCause, DismissFacts,
+        DismissPolicy, menuDismiss, wouldDismiss;
+
+    OverlayArena a;
+    const root = a.push(OverlayRecord(node: 1,
+        dismiss: DismissPolicy(on: menuDismiss),
+        life: Timeline(phase: Timeline.Phase.hold)));
+    const sub = a.push(OverlayRecord(parent: root, node: 2,
+        dismiss: DismissPolicy(on: menuDismiss),
+        life: Timeline(phase: Timeline.Phase.hold)));
+
+    // An outside press closes the root, and the evaluator names why.
+    const why = wouldDismiss(a[0].dismiss, DismissCause.pressOutside,
+        DismissFacts.init);
+    assert(why == DismissReason.pressOutside);
+
+    a[0].closing = why;
+    a[1].closing = DismissReason.parentClosed;
+    assert(a.isWithin(root, sub), "the chain is a query over list order");
+    assert(a.truncatedAt(a.cascadeFrom(root)).empty);
+
+    // And the one-frame exemption is a fact ABOUT the record, so the arena
+    // carries what the evaluator needs rather than the host remembering it.
+    a[0].openedFrame = 7;
+    const fresh = DismissFacts(openedThisFrame: a[0].openedFrame == 7);
+    assert(wouldDismiss(a[0].dismiss, DismissCause.pressOutside, fresh)
+        == DismissReason.none);
 }
