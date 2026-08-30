@@ -116,6 +116,14 @@ struct KeyContext
     /// The DSV columns palette is open (`DSB3`): modal like the settings
     /// pane — while set, only `always` and the `dsvPalette` scope resolve.
     bool dsvPaletteActive;
+    /// The picker's active source is **grep** (`PKC9`). Gates the rows that
+    /// only make sense there — `<S-Tab>` cycles the search mode instead of
+    /// reversing pane focus (`PKL5`).
+    ///
+    /// Unlike `dsvPaletteActive`, which gates whole SCOPES through
+    /// `reachable`, this one gates individual rows, so it needs a
+    /// `CtxFlag` bit — which is the bit the enum had run out of.
+    bool grepActive;
 
 @safe pure nothrow @nogc const:
 
@@ -123,9 +131,9 @@ struct KeyContext
     bool editing() => mode != InputMode.normal;
 
     /// The context's facts as $(LREF CtxFlag) bits.
-    ubyte bits()
+    ushort bits()
     {
-        ubyte b;
+        ushort b;
         if (hasMatches)     b |= CtxFlag.hasMatches;
         if (hasDocSet)      b |= CtxFlag.hasDocSet;
         if (hasDiffSession) b |= CtxFlag.hasDiffSession;
@@ -134,6 +142,7 @@ struct KeyContext
         if (hasDsvGrid)     b |= CtxFlag.hasDsvGrid;
         if (pickerActive)   b |= CtxFlag.pickerActive;
         if (settingsActive) b |= CtxFlag.settingsActive;
+        if (grepActive)     b |= CtxFlag.grepActive;
         return b;
     }
 
@@ -381,7 +390,7 @@ enum Scope_ : ubyte
 
 /// Which $(LREF KeyContext) facts a binding may require or forbid, as bits so a
 /// row states its gate inline instead of the caller filtering afterwards.
-enum CtxFlag : ubyte
+enum CtxFlag : ushort
 {
     hasMatches     = 1 << 0,
     hasDocSet      = 1 << 1,
@@ -390,9 +399,12 @@ enum CtxFlag : ubyte
     formatPreviewActive = 1 << 4,
     hasDsvGrid     = 1 << 5,
     pickerActive   = 1 << 6,
-    /// NOTE: the ubyte's last bit — the next flag widens `CtxFlag`, `bits()`
-    /// and the framework `Binding.require`/`forbid` to `ushort`.
     settingsActive = 1 << 7,
+    /// The grep source owns the picker (`PKC9`): `<S-Tab>` cycles the search
+    /// mode here, where it reverses pane focus everywhere else (`PKL5`).
+    /// This is the flag the widening to `ushort` was reserved for — eight
+    /// more remain before the next one is needed.
+    grepActive     = 1 << 8,
 }
 
 /// The framework's row builders, with hue's command type pinned so the table
@@ -1462,4 +1474,28 @@ unittest
     assert(nk(Key.home, view, shift).cmd == Command.viewScrollHome);
     assert(nk(Key.end, view).cmd == Command.viewEnd);
     assert(nk(Key.end, view, shift).cmd == Command.viewScrollEnd);
+}
+
+@("keymap.contextBitsSurviveTheNinthFlag")
+@safe pure nothrow @nogc
+unittest
+{
+    // `CtxFlag` filled a `ubyte` exactly, and the enum said so: the next flag
+    // widens the enum, `bits()` and the framework's `require`/`forbid`. This
+    // asserts the widening actually took, because the failure mode is silent
+    // — a 9th bit truncated to zero makes a gated row look UNGATED, so it
+    // would fire everywhere rather than nowhere, and every existing test
+    // would still pass.
+    static assert(CtxFlag.grepActive == 1 << 8);
+    static assert(CtxFlag.max > ubyte.max, "the enum still fits a ubyte");
+    static assert(is(typeof(KeyContext.init.bits()) == ushort));
+
+    const grep = KeyContext(pickerActive: true, grepActive: true);
+    assert((grep.bits() & CtxFlag.grepActive) != 0,
+        "the 9th bit did not survive `bits()`");
+    assert((grep.bits() & CtxFlag.pickerActive) != 0,
+        "widening dropped a low bit");
+
+    const plain = KeyContext(pickerActive: true);
+    assert((plain.bits() & CtxFlag.grepActive) == 0);
 }
