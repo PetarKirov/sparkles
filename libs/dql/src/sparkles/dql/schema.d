@@ -28,6 +28,8 @@ module sparkles.dql.schema;
 import std.conv : to;
 import std.traits : isStaticArray, ReturnType, getUDAs, hasUDA;
 
+import sparkles.dql.convention : descriptionOf, enumValueMatches,
+    enumValueName, fieldSegmentName, variantAliasesOf, variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
 import sparkles.metadata : Aliases, Description, Name;
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
@@ -63,95 +65,6 @@ struct DqlSchema(T)
     static immutable DqlPathDoc[] paths = collectSchema!T().paths;
     /// One entry per `SumType` alternative reached by the walk.
     static immutable DqlCategoryDoc[] categories = collectSchema!T().categories;
-}
-
-// ── mechanical naming ────────────────────────────────────────────────────────
-
-private string stripEventSuffix(string raw) @safe pure
-    => raw.length > 5 && raw[$ - 5 .. $] == "Event" ? raw[0 .. $ - 5] : raw;
-
-private string lowerFirst(string value) @safe pure
-{
-    if (!value.length || value[0] < 'A' || value[0] > 'Z')
-        return value;
-    auto result = value.dup;
-    result[0] = cast(char)(result[0] + ('a' - 'A'));
-    return result;
-}
-
-/// The query segment of a `SumType` alternative: the type name minus an
-/// `Event` suffix, first letter lowered. A `@Name` UDA on the variant type
-/// overrides the mechanical spelling.
-package(sparkles.dql) template variantNameOf(V)
-{
-    static if (hasUDA!(V, Name))
-        enum string variantNameOf = getUDAs!(V, Name)[0].name;
-    else
-        enum string variantNameOf = lowerFirst(stripEventSuffix(V.stringof));
-}
-
-/// Additional accepted category tokens for a variant: `@Aliases`.
-package(sparkles.dql) template variantAliasesOf(V)
-{
-    static if (hasUDA!(V, Aliases))
-        enum string[] variantAliasesOf = getUDAs!(V, Aliases)[0].names;
-    else
-        enum string[] variantAliasesOf = [];
-}
-
-/// The query segment of a declared field: `@Name` on the field, else its
-/// declared identifier.
-package(sparkles.dql) template fieldSegmentName(T, size_t i)
-{
-    static if (hasUDA!(T.tupleof[i], Name))
-        enum string fieldSegmentName = getUDAs!(T.tupleof[i], Name)[0].name;
-    else
-        enum string fieldSegmentName = fieldIdentifier!(T, i);
-}
-
-/// The canonical query spelling of an enum member: `@Name`, else the
-/// declared identifier.
-package(sparkles.dql) template enumValueName(E, string member)
-{
-    static if (hasUDA!(__traits(getMember, E, member), Name))
-        enum string enumValueName
-            = getUDAs!(__traits(getMember, E, member), Name)[0].name;
-    else
-        enum string enumValueName = member;
-}
-
-/// `true` when `name` addresses `value` under its declared identifier, its
-/// `@Name`, or one of its `@Aliases`.
-package(sparkles.dql) bool enumValueMatches(E)(E value, scope const(char)[] name)
-    @safe pure nothrow @nogc
-if (is(E == enum))
-{
-    static foreach (member; __traits(allMembers, E))
-    {{
-        alias M = __traits(getMember, E, member);
-        if (value == M)
-        {
-            if (name == member)
-                return true;
-            static if (hasUDA!(M, Name))
-                if (name == getUDAs!(M, Name)[0].name)
-                    return true;
-            static if (hasUDA!(M, Aliases))
-                static foreach (aliasName; getUDAs!(M, Aliases)[0].names)
-                    if (name == aliasName)
-                        return true;
-            return false;
-        }
-    }}
-    return false;
-}
-
-private string descriptionOf(alias symbol)() @safe pure
-{
-    static if (hasUDA!(symbol, Description))
-        return getUDAs!(symbol, Description)[0].text;
-    else
-        return "";
 }
 
 // ── the schema walk: a visitType consumer ────────────────────────────────────

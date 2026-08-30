@@ -24,8 +24,9 @@ import std.sumtype : match;
 import std.traits : ReturnType, TemplateArgsOf, Unqual, getUDAs, hasUDA,
     isStaticArray;
 
-import sparkles.dql.schema : DqlResolution, DqlSchema, fieldSegmentName,
+import sparkles.dql.convention : consume, consumeIndex, fieldSegmentName,
     variantAliasesOf, variantNameOf;
+import sparkles.dql.schema : DqlResolution, DqlSchema;
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
 import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike,
     propertyGetters, valueLikeGetter;
@@ -33,50 +34,6 @@ import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike,
 /// The maximum pointer hops before a chain is treated as absent — cyclic
 /// pointer structures terminate, never hang.
 private enum size_t maxHops = 64;
-
-/// Matches `segment` at the front of `path`; returns the length consumed
-/// (segment plus one separator) or 0 when it does not address this segment.
-private size_t consume(scope const(char)[] path,
-    scope const(char)[] segment) @safe pure nothrow @nogc
-{
-    if (path.length < segment.length || path[0 .. segment.length] != segment)
-        return 0;
-    if (path.length == segment.length)
-        return segment.length;
-    if (path[segment.length] != '.' && path[segment.length] != '[')
-        return 0;
-    // A '.' is consumed here; a '[' stays for the index reader.
-    return segment.length + (path[segment.length] == '.' ? 1u : 0u);
-}
-
-/// Matches a `[digits]` index at the front of `path`; returns the length
-/// consumed (including the closing bracket and any separator) or 0. The
-/// index arithmetic is overflow-checked.
-private size_t consumeIndex(scope const(char)[] path, out size_t index)
-    @safe pure nothrow @nogc
-{
-    if (path.length < 3 || path[0] != '[')
-        return 0;
-    size_t i = 1;
-    bool any;
-    while (i < path.length && path[i] >= '0' && path[i] <= '9')
-    {
-        const digit = cast(size_t)(path[i] - '0');
-        if (index > (size_t.max - digit) / 10)
-            return 0;
-        index = index * 10 + digit;
-        any = true;
-        i++;
-    }
-    if (!any || i >= path.length || path[i] != ']')
-        return 0;
-    i++;
-    if (i == path.length)
-        return i;
-    if (path[i] != '.')
-        return 0;
-    return i + 1;
-}
 
 private auto propertyValue(T, alias getter)(ref const T value)
 {
