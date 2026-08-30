@@ -20,6 +20,7 @@ $(UL
 */
 module sparkles.dql.resolve;
 
+import std.meta : staticIndexOf;
 import std.sumtype : match;
 import std.traits : ReturnType, TemplateArgsOf, Unqual, getUDAs, hasUDA,
     isStaticArray;
@@ -248,7 +249,7 @@ DqlResolution resolveDqlPath(Schema, Sink)(ref const Schema.Subject subject,
         subject, path, sink, 0);
 }
 
-private bool categoryIn(T, string suffix)(ref const T value,
+private bool categoryIn(T, string suffix, Seen...)(ref const T value,
     scope const(char)[] category) @safe pure nothrow @nogc
 {
     alias K = typeKindOf!T;
@@ -264,20 +265,27 @@ private bool categoryIn(T, string suffix)(ref const T value,
             // walk reaches, nested sums included — matching recurses into
             // the active alternative so those categories can come true.
             if (!result)
-                result = categoryIn!(V, suffix)(active, category);
+                result = categoryIn!(V, suffix, Seen, T)(active, category);
         });
         return result;
     }
     else static if (K == TypeKind.aggregate)
     {
+        // Every field the schema walk descends can carry a nested sum —
+        // aggregates included, not just direct sum fields. `Seen` keeps the
+        // template recursion total on self-referential types, exactly like
+        // the schema collector's list.
         static foreach (i; 0 .. fieldCount!T)
-        {
+        {{
+            alias F = fieldType!(T, i);
             static if (includeField!(T, i)
-                && typeKindOf!(fieldType!(T, i)) == TypeKind.sumType)
-                if (categoryIn!(fieldType!(T, i), suffix)(
+                && (typeKindOf!F == TypeKind.sumType
+                    || typeKindOf!F == TypeKind.aggregate)
+                && staticIndexOf!(F, Seen) < 0)
+                if (categoryIn!(F, suffix, Seen, T)(
                         value.tupleof[i], category))
                     return true;
-        }
+        }}
         return false;
     }
     else
@@ -413,6 +421,19 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
     Subject pad = PadEvent(9);
     assert(resolveDqlCategory!Schema(pad, "pad"));
     assert(!resolveDqlCategory!Schema(pad, "red"));
+
+    // A sum buried one aggregate deeper is reached the same way the schema
+    // walk reaches it.
+    struct Nest { SumType!(RedEvent, BlueEvent) colour; }
+    struct OuterEvent { Nest nest; }
+    alias Deep = SumType!(OuterEvent, PadEvent);
+    alias DeepSchema = DqlSchema!Deep;
+    assert(isDqlCategory!DeepSchema("red"));
+
+    Deep deep = OuterEvent(Nest(SumType!(RedEvent, BlueEvent)(RedEvent(1))));
+    assert(resolveDqlCategory!DeepSchema(deep, "outer"));
+    assert(resolveDqlCategory!DeepSchema(deep, "red"));
+    assert(!resolveDqlCategory!DeepSchema(deep, "blue"));
 }
 
 @("dql.resolve: getters answer to their query name and const capability")
