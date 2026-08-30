@@ -38,6 +38,13 @@ configuration "unittest" {
     lflags "--export-dynamic" platform="linux-ldc"
 }
 
+// Optimised unittest build for `dub test :dql -b bench -- --bench` — dub's
+// stock unittest build type reports debug-build numbers.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}
+
 buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
 }

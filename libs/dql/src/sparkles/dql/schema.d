@@ -110,7 +110,7 @@ private string leafExample(T)(string path) @safe pure
 }
 
 /// The two tables one walk of a subject type produces.
-private struct CollectedSchema
+package(sparkles.dql) struct CollectedSchema
 {
     DqlPathDoc[] paths;
     DqlCategoryDoc[] categories;
@@ -260,7 +260,8 @@ private void collectTypeBody(T, string suffix, Seen...)(ref CollectedSchema o,
     // opaque / associative: no address.
 }
 
-private CollectedSchema collectSchema(T, string suffix = "Event")() @safe
+package(sparkles.dql) CollectedSchema collectSchema(T,
+    string suffix = "Event")() @safe
 {
     import sparkles.reflection.member : firstDuplicate;
 
