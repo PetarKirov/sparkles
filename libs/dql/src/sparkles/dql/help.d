@@ -21,6 +21,113 @@ struct DqlPathDoc
     string[] aliases;
 }
 
+/// Tutorial example strings derived from a doc set, so the help never
+/// advertises a path its own schema does not carry.
+package(sparkles.dql) struct TutorialExamples
+{
+    string equality;   /// an enum-flavored `path == token` example
+    string relational; /// a numeric `path > n` example
+    string textPath;   /// a text-typed path for the matcher functions
+    string boolean;    /// a `path == true` example
+}
+
+private bool isBareIdentifierExample(string example) @safe pure nothrow @nogc
+{
+    // `path == token` where the token is a bare identifier (an enum member
+    // spelling) — not a number, quote, `true`/`false`, or `null`.
+    foreach (i; 0 .. example.length)
+        if (i + 4 <= example.length && example[i .. i + 4] == " == ")
+        {
+            const rhs = example[i + 4 .. $];
+            if (!rhs.length)
+                return false;
+            const c = rhs[0];
+            const alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                || c == '_';
+            return alpha && rhs != "true" && rhs != "false" && rhs != "null"
+                && rhs != "text";
+        }
+    return false;
+}
+
+private bool endsWith(string text, string suffix) @safe pure nothrow @nogc
+    => text.length >= suffix.length && text[$ - suffix.length .. $] == suffix;
+
+/// Scans a doc set for one representative example per tutorial line.
+package(sparkles.dql) TutorialExamples pickExamples(
+    scope const(DqlPathDoc)[] paths) @safe pure
+{
+    TutorialExamples t;
+    foreach (ref const doc; paths)
+    {
+        if (!t.equality.length && isBareIdentifierExample(doc.example))
+            t.equality = doc.example;
+        if (!t.relational.length && doc.example.endsWith(" == 0"))
+            t.relational = doc.path ~ " > 0";
+        if (!t.textPath.length && doc.example.endsWith(" == `text`"))
+            t.textPath = doc.path;
+        if (!t.boolean.length && doc.example.endsWith(" == true"))
+            t.boolean = doc.example;
+    }
+    return t;
+}
+
+/// The first category that owns at least one multi-segment path — the one
+/// worth showcasing — else the first category, else `""`.
+private string richCategory(scope const(DqlPathDoc)[] paths,
+    scope const(string)[] categories) @safe pure
+{
+    foreach (category; categories)
+        foreach (ref const doc; paths)
+            if (doc.path.length > category.length
+                && doc.path[0 .. category.length] == category
+                && doc.path[category.length] == '.')
+                return category;
+    return categories.length ? categories[0] : "";
+}
+
+/// The recipe filter strings a doc set supports — every one parses against
+/// the schema the docs came from, and each is satisfiable (the compound
+/// pairs a field predicate with the category that owns its path).
+package(sparkles.dql) string[] deriveRecipes(scope const(DqlPathDoc)[] paths,
+    scope const(string)[] categories) @safe pure
+{
+    const t = pickExamples(paths);
+    const showcase = richCategory(paths, categories);
+    string[] recipes;
+    if (showcase.length)
+    {
+        recipes ~= showcase;
+        recipes ~= "!" ~ showcase;
+    }
+    foreach (category; categories)
+        if (category != showcase)
+        {
+            recipes ~= showcase.length
+                ? showcase ~ " || " ~ category : category;
+            break;
+        }
+    if (t.equality.length)
+        recipes ~= t.equality;
+    if (t.relational.length)
+    {
+        // Pair the relational example with the category owning its path,
+        // so the compound recipe can actually come true.
+        string owner;
+        foreach (category; categories)
+            if (t.relational.length > category.length
+                && t.relational[0 .. category.length] == category
+                && t.relational[category.length] == '.')
+            {
+                owner = category;
+                break;
+            }
+        recipes ~= owner.length
+            ? owner ~ " && " ~ t.relational : t.relational;
+    }
+    return recipes;
+}
+
 /// Formats a complete DQL reference guide, schema paths table, and tutorial to the given writer.
 void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
     scope const(string)[] categories, string toolName = "wsi-input-echo", bool colored = true)
@@ -85,20 +192,27 @@ void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
         writeStyled(w, depth, i"\n");
     }
 
-    // 3. Operators & Syntax Tutorial
+    // 3. Operators & Syntax Tutorial — examples come from the doc set, so
+    // the help never shows a path this schema does not carry.
+    const t = pickExamples(paths);
     writeStyled(w, depth, i"{bold.green OPERATOR SYNTAX & TUTORIAL}\n");
     writeStyled(w, depth, i"  DQL uses standard D expression syntax with zero runtime allocations:\n\n");
 
     writeStyled(w, depth, i"  {bold Equality & Comparison}\n");
-    writeStyled(w, depth, i"    {cyan path == value}           Exact value or enum equality (e.g. {yellow pointer.phase == pressed})\n");
-    writeStyled(w, depth, i"    {cyan path != value}           Inequality check (e.g. {yellow pointer.phase != moved})\n");
-    writeStyled(w, depth, i"    {cyan path > n, < n, >=, <=}   Relational numeric comparison (e.g. {yellow pointer.logicalPosition.x > 400})\n");
-    writeStyled(w, depth, i"    {cyan path == null, != null}   Nullability check for optional/pointer/array fields\n\n");
+    writeExampleLine(w, depth, "path == value", "Exact value or enum equality", t.equality);
+    writeExampleLine(w, depth, "path != value", "Inequality check", t.boolean);
+    writeExampleLine(w, depth, "path > n, < n, >=, <=", "Relational comparison (bool orders as false < true)", t.relational);
+    writeExampleLine(w, depth, "path == null, != null", "Presence check: absent variants and out-of-range indices", "");
+    writeStyled(w, depth, i"\n");
 
     writeStyled(w, depth, i"  {bold Pattern Matching Functions}\n");
-    writeStyled(w, depth, i"    {cyan regexMatch(path, `re`)}   Regular expression matching (e.g. {yellow regexMatch(text.text, `^[0-9]+$`)}}\n");
-    writeStyled(w, depth, i"    {cyan globMatch(path, `pat`)}   Glob wildcard matching (e.g. {yellow globMatch(text.text, `*test*`)}}\n");
-    writeStyled(w, depth, i"    {cyan fuzzyMatch(path, `q`)}    Typo-tolerant fuzzy ranking search (e.g. {yellow fuzzyMatch(text.text, `hello`)}}\n\n");
+    writeExampleLine(w, depth, "regexMatch(path, `re`)", "Regular expression matching",
+        t.textPath.length ? "regexMatch(" ~ t.textPath ~ ", `^[a-z]+$`)" : "");
+    writeExampleLine(w, depth, "globMatch(path, `pat`)", "Glob wildcard matching",
+        t.textPath.length ? "globMatch(" ~ t.textPath ~ ", `*test*`)" : "");
+    writeExampleLine(w, depth, "fuzzyMatch(path, `q`)", "Typo-tolerant fuzzy ranking search",
+        t.textPath.length ? "fuzzyMatch(" ~ t.textPath ~ ", `hello`)" : "");
+    writeStyled(w, depth, i"\n");
 
     writeStyled(w, depth, i"  {bold Logical Combinators}\n");
     writeStyled(w, depth, i"    {cyan &&}                        Logical AND (both predicates must match)\n");
@@ -106,6 +220,28 @@ void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
     writeStyled(w, depth, i"    {cyan !}  or {cyan -}                 Logical NOT (negates the following predicate)\n");
     writeStyled(w, depth, i"    {cyan (...)}                    Group sub-expressions with parentheses for precedence\n\n");
 
+    // 4. Recipes — derived from the same doc set.
+    const recipes = deriveRecipes(paths, categories);
+    if (recipes.length)
+    {
+        writeStyled(w, depth, i"{bold.green COMMON FILTER RECIPES}\n");
+        foreach (recipe; recipes)
+            writeStyled(w, depth, i"  $(toolName) {yellow -F \"$(recipe)\"}\n");
+        writeStyled(w, depth, i"\n");
+    }
+}
+
+/// One aligned tutorial line, with its example only when the doc set
+/// offers one.
+private void writeExampleLine(Writer)(ref Writer w, ColorDepth depth,
+    string syntax, string explanation, string example)
+{
+    UniqueBuffer!(char, 64) sBuf;
+    alignField(sBuf, syntax, 25, Align.left);
+    if (example.length)
+        writeStyled(w, depth, i"    {cyan $(sBuf[])} $(explanation) (e.g. {yellow $(example)})\n");
+    else
+        writeStyled(w, depth, i"    {cyan $(sBuf[])} $(explanation)\n");
 }
 
 /// Formats help directly from a reflected schema.
@@ -154,4 +290,50 @@ unittest
     assert(outText.canFind("pointer.phase"));
     assert(outText.canFind("key.action"));
     assert(outText.canFind("OPERATOR SYNTAX & TUTORIAL"));
+}
+
+@("dql.help: schema-driven tutorial and recipes parse against their schema")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.dql.engine : DqlEngine;
+    import sparkles.dql.parser : parseDql;
+    import sparkles.dql.schema : DqlSchema;
+
+    enum ModeKind { fast, slow }
+
+    struct ModeEvent
+    {
+        ModeKind kind;
+        bool live;
+        int count;
+        char[4] tag;
+    }
+
+    struct PadEvent { int p; }
+
+    alias Schema = DqlSchema!(SumType!(ModeEvent, PadEvent));
+    DqlEngine engine;
+
+    string[] categories;
+    foreach (ref const category; Schema.categories)
+        categories ~= category.name;
+
+    // Every derived recipe and tutorial example is a valid query against
+    // the very schema it was derived from — the property the hardcoded
+    // examples silently lost.
+    foreach (recipe; deriveRecipes(Schema.paths, categories))
+        assert(parseDql!Schema(engine, recipe).hasValue, recipe);
+
+    const t = pickExamples(Schema.paths);
+    assert(t.equality.length && t.relational.length && t.boolean.length
+        && t.textPath.length);
+    foreach (query; [t.equality, t.relational, t.boolean,
+        "regexMatch(" ~ t.textPath ~ ", `^a`)"])
+        assert(parseDql!Schema(engine, query).hasValue, query);
+
+    auto app = appender!string();
+    writeDqlHelp!Schema(app, "test-tool", false);
+    assert(app.data.canFind(t.equality));
+    assert(app.data.canFind("COMMON FILTER RECIPES"));
 }
