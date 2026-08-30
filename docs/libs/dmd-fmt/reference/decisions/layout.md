@@ -374,6 +374,79 @@ void f()
 
 ---
 
+## Orphans
+
+### A stray `;`, `,` or closer rejoins what it belongs to {#d10}
+
+<!-- fmt id=D10 -->
+
+Your line breaks are yours — with three exceptions, for the shapes where the break cannot have
+been a choice. A line holding nothing but `;` or `,` is what deleting an argument or a bad merge
+leaves behind, so the token rejoins what it terminates. A closing `)`, `]` or struct-initializer
+`}` under contents that never broke is orphaned the same way, and rejoins them.
+
+When the contents _do_ break, the closer on its own line is the exploded shape and stays exactly
+where you put it — that is the next case. A statement block's `}` always keeps its line.
+
+::: code-group
+
+```d [Before]
+void save(Config config)
+{
+    write(config.path
+        )
+        ;
+    auto flags = [readable, writable
+    ];
+}
+```
+
+```d [After]
+void save(Config config)
+{
+    write(config.path);
+    auto flags = [readable, writable];
+}
+```
+
+:::
+
+### …but a closer under contents that broke keeps its line {#d10-exploded}
+
+<!-- fmt id=D10 -->
+
+The same `]` in the exploded shape is not an orphan: the contents broke, so the closer at the
+construct's own column is the point of the layout. This is the pair to read together — one rule,
+and the thing that decides which side of it you are on is whether the contents broke.
+
+::: code-group
+
+```d [Before]
+auto flags = [
+readable,
+writable,
+];
+S defaults = {
+retries: 3,
+timeout: 30,
+};
+```
+
+```d [After]
+auto flags = [
+    readable,
+    writable,
+];
+S defaults = {
+    retries: 3,
+    timeout: 30,
+};
+```
+
+:::
+
+---
+
 ## What this page does not cover yet
 
 The layout tier is one of two. Token-changing rules — trailing-comma insertion, import sorting,
