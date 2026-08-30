@@ -79,6 +79,8 @@ void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
             alignField(tBuf, p.typeName, maxType, Align.left);
             alignField(dBuf, p.description, 30, Align.left);
             writeStyled(w, depth, i"  {cyan $(pBuf[])}  {blue $(tBuf[])}  $(dBuf[])  {yellow $(p.example)}\n");
+            foreach (aliasPath; p.aliases)
+                writeStyled(w, depth, i"  {dim aka} {cyan $(aliasPath)}\n");
         }
         writeStyled(w, depth, i"\n");
     }

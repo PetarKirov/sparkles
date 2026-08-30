@@ -107,6 +107,24 @@ package(sparkles.dql) template queryValueLikeGetter(T)
         alias queryValueLikeGetter = void;
 }
 
+/// Alternative accepted spellings of a field's segment: `@Aliases`.
+package(sparkles.dql) template fieldAliasesOf(T, size_t i)
+{
+    static if (hasUDA!(T.tupleof[i], Aliases))
+        enum string[] fieldAliasesOf = getUDAs!(T.tupleof[i], Aliases)[0].names;
+    else
+        enum string[] fieldAliasesOf = [];
+}
+
+/// ditto, for a `@property` getter.
+package(sparkles.dql) template getterAliasesOf(alias getter)
+{
+    static if (hasUDA!(getter, Aliases))
+        enum string[] getterAliasesOf = getUDAs!(getter, Aliases)[0].names;
+    else
+        enum string[] getterAliasesOf = [];
+}
+
 /// The canonical query spelling of an enum member: `@Name`, else the
 /// declared identifier.
 package(sparkles.dql) template enumValueName(E, string member)

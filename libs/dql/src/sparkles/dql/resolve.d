@@ -24,9 +24,9 @@ import std.sumtype : match;
 import std.traits : ReturnType, TemplateArgsOf, Unqual, getUDAs, hasUDA,
     isStaticArray;
 
-import sparkles.dql.convention : consume, consumeIndex, fieldSegmentName,
-    getterName, includeField, queryGetters, queryValueLikeGetter,
-    variantAliasesOf, variantNameOf;
+import sparkles.dql.convention : consume, consumeIndex, fieldAliasesOf,
+    fieldSegmentName, getterAliasesOf, getterName, includeField, queryGetters,
+    queryValueLikeGetter, variantAliasesOf, variantNameOf;
 import sparkles.dql.schema : DqlResolution, DqlSchema;
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
 import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike;
@@ -149,6 +149,14 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
                 if (!matched)
                 {
                     size_t consumed = consume(path, fieldSegmentName!(T, i));
+                    // Leaf fields answer their `@Aliases` spellings too —
+                    // the same, and only the, spellings the schema lists.
+                    static if (typeKindOf!F != TypeKind.sumType
+                        && (isScalarKind(typeKindOf!F)
+                            || !is(queryValueLikeGetter!F == void)))
+                        static foreach (aliasName; fieldAliasesOf!(T, i))
+                            if (!consumed)
+                                consumed = consume(path, aliasName);
                     if (consumed)
                     {
                         matched = true;
@@ -165,9 +173,12 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
             {{
                 if (!matched)
                 {
-                    // The canonical spelling only — the same one the schema
-                    // published (`@Name` overrides the identifier).
-                    const consumed = consume(path, getterName!getter);
+                    // The canonical spelling — `@Name` overrides the
+                    // identifier — or one of the getter's `@Aliases`.
+                    size_t consumed = consume(path, getterName!getter);
+                    static foreach (aliasName; getterAliasesOf!getter)
+                        if (!consumed)
+                            consumed = consume(path, aliasName);
                     if (consumed)
                     {
                         matched = true;
@@ -316,6 +327,53 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
         == DqlResolution.unknown);
     assert(resolveDqlPath!Schema(event, "missing", take)
         == DqlResolution.unknown);
+}
+
+@("dql.resolve: leaf fields and getters answer their aliases")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.metadata : Aliases, Name;
+    import sparkles.dql.engine : DqlEngine;
+    import sparkles.dql.eval : evalDql;
+    import sparkles.dql.parser : parseDql;
+    import sparkles.dql.schema : isDqlPath;
+
+    struct WheelEvent
+    {
+        @Aliases("dy") int deltaY;
+        private int raw_;
+
+        @Name("speed") @Aliases("velocity")
+        @property int rawSpeed() const pure nothrow @nogc => raw_;
+    }
+
+    struct PadEvent { int p; }
+
+    alias Subject = SumType!(WheelEvent, PadEvent);
+    alias Schema = DqlSchema!Subject;
+
+    // The schema lists the alias spellings on their leaf's entry…
+    assert(isDqlPath!Schema("wheel.deltaY"));
+    assert(isDqlPath!Schema("wheel.dy"));
+    assert(isDqlPath!Schema("wheel.speed"));
+    assert(isDqlPath!Schema("wheel.velocity"));
+    assert(!isDqlPath!Schema("wheel.rawSpeed")); // @Name replaced it
+
+    // …and both walks accept them end to end.
+    WheelEvent inner;
+    inner.deltaY = 3;
+    inner.raw_ = 7;
+    Subject event = inner;
+
+    DqlEngine engine;
+    foreach (query; ["wheel.deltaY == 3", "wheel.dy == 3",
+        "wheel.speed == 7", "wheel.velocity == 7"])
+    {
+        auto parsed = parseDql!Schema(engine, query);
+        assert(parsed.hasValue, parsed.error.message);
+        assert(evalDql!Schema(engine, parsed.value, event), query);
+    }
 }
 
 @("dql.resolve: categories match in nested active alternatives")
