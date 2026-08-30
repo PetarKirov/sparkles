@@ -33,15 +33,16 @@ import std.conv : to;
 import std.traits : isStaticArray, ReturnType, getUDAs, hasUDA;
 
 import sparkles.dql.convention : descriptionOf, enumValueMatches,
-    enumValueName, fieldSegmentName, variantAliasesOf, variantNameOf;
+    enumValueName, fieldSegmentName, includeField, variantAliasesOf,
+    variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
 import sparkles.metadata : Aliases, Description, Name;
 import std.meta : staticIndexOf;
 import std.traits : TemplateArgsOf;
 
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
-import sparkles.reflection.member : fieldCount, fieldType, isPublic,
-    isTextSliceLike, propertyGetters, valueLikeGetter;
+import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike,
+    propertyGetters, valueLikeGetter;
 
 /// Runtime outcome of resolving one statically known path.
 enum DqlResolution : ubyte
@@ -161,7 +162,7 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
             {{
                 // Hidden storage is not addressable; computed values enter
                 // through the getter loop below.
-                static if (isPublic!(T.tupleof[i]))
+                static if (includeField!(T, i))
                 {
                     alias F = fieldType!(T, i);
                     static if (typeKindOf!F == TypeKind.sumType)

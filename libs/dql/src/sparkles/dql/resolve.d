@@ -25,7 +25,7 @@ import std.traits : ReturnType, TemplateArgsOf, Unqual, getUDAs, hasUDA,
     isStaticArray;
 
 import sparkles.dql.convention : consume, consumeIndex, fieldSegmentName,
-    variantAliasesOf, variantNameOf;
+    includeField, variantAliasesOf, variantNameOf;
 import sparkles.dql.schema : DqlResolution, DqlSchema;
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
 import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike,
@@ -119,6 +119,10 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
         DqlResolution result = DqlResolution.unknown;
         bool matched;
         static foreach (i; 0 .. fieldCount!T)
+        {
+        // The schema's inclusion gate, mirrored: hidden storage does not
+        // resolve even when the path spells its identifier correctly.
+        static if (includeField!(T, i))
         {{
             alias F = fieldType!(T, i);
             static if (typeKindOf!F == TypeKind.sumType)
@@ -151,6 +155,7 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
                 }
             }
         }}
+        }
         static if (is(valueLikeGetter!T == void))
         {
             static foreach (getter; propertyGetters!T)
@@ -300,6 +305,39 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
     assert(resolveDqlPath!Schema(event, "a.wrong", take)
         == DqlResolution.unknown);
     assert(resolveDqlPath!Schema(event, "missing", take)
+        == DqlResolution.unknown);
+}
+
+@("dql.resolve: hidden storage neither appears in the schema nor resolves")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.dql.schema : isDqlPath;
+
+    struct GuardedEvent
+    {
+        int open;
+        private int secret_ = 42;
+    }
+
+    struct PadEvent { int p; }
+
+    alias Schema = DqlSchema!(SumType!(GuardedEvent, PadEvent));
+    SumType!(GuardedEvent, PadEvent) event = GuardedEvent(7);
+
+    struct Take
+    {
+        void opCall(V)(in V) @safe pure nothrow @nogc {}
+    }
+
+    Take take;
+    assert(isDqlPath!Schema("guarded.open"));
+    assert(!isDqlPath!Schema("guarded.secret_"));
+    assert(resolveDqlPath!Schema(event, "guarded.open", take)
+        == DqlResolution.value);
+    // The resolver applies the same inclusion gate as the schema: spelling
+    // the hidden field's identifier does not reach its storage.
+    assert(resolveDqlPath!Schema(event, "guarded.secret_", take)
         == DqlResolution.unknown);
 }
 

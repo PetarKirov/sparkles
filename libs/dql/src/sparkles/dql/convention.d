@@ -45,6 +45,16 @@ package(sparkles.dql) template variantAliasesOf(V)
         enum string[] variantAliasesOf = [];
 }
 
+/// Whether field `i` of `T` is addressable at all: declared `public` (or
+/// `export`). Hidden storage neither appears in a schema nor resolves —
+/// both walks ask this one template, so the answers cannot drift.
+package(sparkles.dql) template includeField(T, size_t i)
+{
+    import sparkles.reflection.member : isPublic;
+
+    enum bool includeField = isPublic!(T.tupleof[i]);
+}
+
 /// The query segment of a declared field: `@Name` on the field, else its
 /// declared identifier.
 package(sparkles.dql) template fieldSegmentName(T, size_t i)
