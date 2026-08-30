@@ -966,10 +966,13 @@ private final class Printer
             run[$ - 1].newlinesBefore > 0 && braceBodied(g, run[$ - 1]))
             tail = run.length - 1;
 
-        Doc[] parts = buildStatementRun(g, run[0 .. tail], true);
+        // The braced body rides along as a trailer rather than being appended
+        // here: it belongs at the column of the clause header that opens it,
+        // and when the headers nest that is not the statement's own level.
+        Doc[] trailer;
         if (tail < run.length)
-            parts ~= [hardline, buildItem(g, run[$ - 1])];
-        return parts;
+            trailer = [hardline, buildItem(g, run[$ - 1])];
+        return buildStatementRun(g, run[0 .. tail], true, trailer);
     }
 
     /**
@@ -991,7 +994,7 @@ private final class Printer
     expression or a member chain steps right once, not once per line.
     */
     private Doc[] buildStatementRun(const Group g, const Item[] run,
-        bool atStatementStart) @safe
+        bool atStatementStart, Doc[] trailer = null) @safe
     {
         // A break inside the statement's leading attribute run is the author
         // separating `@uda` from what it modifies; those stay at the
@@ -1006,13 +1009,13 @@ private final class Printer
                 break;
             }
         if (brk == size_t.max)
-            return joinInline(g, run, false);
+            return joinInline(g, run, false) ~ trailer;
 
         const head = run[0 .. brk];
         auto parts = joinInline(g, head, false);
         if (endsClauseHeader(g, head))
             return parts ~ [indented([hardline]
-                ~ buildStatementRun(g, run[brk .. $], false))];
+                ~ buildStatementRun(g, run[brk .. $], false, trailer))];
         // An own-line comment annotates what follows it; the two are siblings
         // at one level, not a wrap and its continuation. Without this, a
         // comment between a clause header and its body pushes the body right.
@@ -1020,7 +1023,7 @@ private final class Printer
             return parts ~ [hardline]
                 ~ buildStatementRun(g, run[brk .. $], false);
         return parts ~ [indented(joinInline(g, run[brk .. $], false,
-            /*leadingBreak*/ true))];
+            /*leadingBreak*/ true))] ~ trailer;
     }
 
     /// A comment that began its own line — as opposed to one trailing code,

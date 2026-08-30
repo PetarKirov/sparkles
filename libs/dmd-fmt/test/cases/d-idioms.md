@@ -71,3 +71,55 @@ void f(Args...)(Args args)
 ```
 
 :::
+
+## A braced body sits at the column of the header that opens it
+
+<!-- fmt id=D10 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    with (A)
+    with (B)
+    {
+        g();
+    }
+
+    if (a)
+    if (b)
+    {
+        h();
+    }
+
+    if (c)
+    {
+        plain();
+    }
+}
+```
+
+```d [After]
+void f()
+{
+    with (A)
+        with (B)
+        {
+            g();
+        }
+
+    if (a)
+        if (b)
+        {
+            h();
+        }
+
+    if (c)
+    {
+        plain();
+    }
+}
+```
+
+:::
