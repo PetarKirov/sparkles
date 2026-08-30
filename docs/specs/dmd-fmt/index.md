@@ -258,6 +258,58 @@ recomputed outright. It is narrower and more useful than that: **the formatter
 never inserts a space the author did not write**, and never removes the last
 one they did.
 
+### D12 — Header chains, and the one-line idioms D is built on
+
+D's grammar makes `switch (x) with (E) { … }` a `switch` whose body is a
+`with` whose body is the block. A formatter that mechanically indents "clause
+header ⇒ body one level deeper" therefore produces
+
+```d
+switch (x)
+    with (E)
+    {
+        case a:
+    }
+```
+
+— wrong three times over: the braces read as the `with`'s rather than the
+`switch`'s, the labels gain a phantom level, and the idiom's entire point (a
+one-line header so `case` labels drop the enum prefix) is gone.
+
+**What real D does.** A survey of ~2,000 files from `dlang/dmd`,
+`dlang/phobos`, `ldc`, `arsd`, `mir`, `dlang-community/*`, `vibe.d` and others
+— ~460 `with` statements — found the joined header is not a stylistic
+flourish but the norm:
+
+| Shape                                              | Sightings |
+| -------------------------------------------------- | --------: |
+| `switch (e) with (E)` / `final switch …`, one line |        60 |
+| `with (E) switch (e)` — the reverse order          |        45 |
+| `with (a) with (b)`, one line                      |        39 |
+| `foreach (…) with (x)` / `if (…) with (x)`         |        11 |
+| the same headers split across lines                |     **3** |
+
+The reverse order is more common than the forward one inside dmd, druntime and
+mir, so any rule for one must be written for both. Nesting depth ≥ 3 on one
+line was never observed.
+
+**The decisions.** The author's-breaks policy already keeps a one-line header
+on one line, which is what those 155 sites need; v1 adds nothing for them and
+must not. What needed deciding is the rare split form, and the three observed
+instances agree with each other: **sibling headers sit at equal indent with a
+single brace below**, never staircased.
+
+So: **sibling `with`s over one block share a level** and the brace sits with
+them. Every other chain staircases, one level per header, because there the
+inner header really is the outer one's body — `if (c)` over a
+`while (…) { … }` is a nesting and must read as one.
+
+The narrow scope is deliberate, and was arrived at by measurement rather than
+taste: the first cut flattened every chain ending in a block, and formatting
+`libs/source-view/.../markdown.d` went _up_ by 26 lines because real code
+nests `if` over `while` and wants the indent. The evidence only ever covered
+`with` over `with`, so that is all the rule covers.
+
 ## Spike results
 
 | Spike                                | Result         | Where                                      |
