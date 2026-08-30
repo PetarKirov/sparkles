@@ -47,6 +47,12 @@ alias WindowSchema = DqlSchema!WindowEvent;
     // The payload hop is transparent; the strict spelling does not exist.
     assert(!isDqlPath!WindowSchema("payload.keyboard.action"));
 
+    // A Vector's private backing array is not addressable: each component
+    // has exactly one address (`…logicalPosition.x`), not a second one
+    // through the union storage.
+    assert(!isDqlPath!WindowSchema("pointer.logicalPosition.data[0]"));
+    assert(!isDqlPath!WindowSchema("popupConfigured.size.data[0]"));
+
     foreach (name; ["keyboard", "textCommitted", "composition", "pointer",
         "scroll", "touch", "frameReady", "closeRequested"])
         assert(isDqlCategory!WindowSchema(name), name);
