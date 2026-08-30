@@ -33,8 +33,9 @@ import std.conv : to;
 import std.traits : isStaticArray, ReturnType, getUDAs, hasUDA;
 
 import sparkles.dql.convention : descriptionOf, enumValueMatches,
-    enumValueName, fieldSegmentName, getterName, includeField, queryGetters,
-    queryValueLikeGetter, variantAliasesOf, variantNameOf;
+    enumValueName, fieldAliasesOf, fieldSegmentName, getterAliasesOf,
+    getterName, includeField, queryGetters, queryValueLikeGetter,
+    variantAliasesOf, variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
 import sparkles.metadata : Aliases, Description, Name;
 import std.meta : staticIndexOf;
@@ -195,16 +196,33 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
                         // to this aggregate's address space.
                         collectType!(F, Seen, T)(o, prefix);
                     else
+                    {
                         collectType!(F, Seen, T)(o,
                             joinSegment(prefix, fieldSegmentName!(T, i)));
+                        // `@Aliases` on a leaf field: alternative spellings
+                        // of its (single) emitted path. Aliases on composite
+                        // fields are not supported — a composite's subtree
+                        // would need every combination spelled out.
+                        static if (fieldAliasesOf!(T, i).length
+                            && (isScalarKind(typeKindOf!F)
+                                || !is(queryValueLikeGetter!F == void)))
+                            static foreach (aliasName; fieldAliasesOf!(T, i))
+                                o.paths[$ - 1].aliases
+                                    ~= joinSegment(prefix, aliasName);
+                    }
                 }
             }}
             static foreach (getter; queryGetters!T)
             {{
                 alias R = ReturnType!getter;
                 static if (isScalarKind(typeKindOf!R))
+                {
                     emitLeaf!R(o, joinSegment(prefix, getterName!getter),
                         descriptionOf!getter);
+                    static foreach (aliasName; getterAliasesOf!getter)
+                        o.paths[$ - 1].aliases
+                            ~= joinSegment(prefix, aliasName);
+                }
             }}
             // An aggregate with no addressable members (an empty variant
             // such as `closeRequested`) is still present at its own address.
@@ -246,7 +264,10 @@ private CollectedSchema collectSchema(T)() @safe
     // the subject vocabulary and fails the build with the token named.
     string[] pathNames;
     foreach (ref const doc; o.paths)
+    {
         pathNames ~= doc.path;
+        pathNames ~= doc.aliases;
+    }
     if (const dup = firstDuplicate(pathNames))
         assert(false,
             "DqlSchema!" ~ T.stringof ~ ": duplicate path `" ~ dup ~ "`");
@@ -266,12 +287,18 @@ private CollectedSchema collectSchema(T)() @safe
 
 // ── membership checks (used by the schema-aware parser) ──────────────────────
 
-/// Whether `path` is a canonical path in `Schema`.
+/// Whether `path` is a canonical path — or a declared alias of one — in
+/// `Schema`.
 bool isDqlPath(Schema)(scope const(char)[] path) @safe pure nothrow @nogc
 {
     foreach (ref const item; Schema.paths)
+    {
         if (item.path == path)
             return true;
+        foreach (aliasPath; item.aliases)
+            if (aliasPath == path)
+                return true;
+    }
     return false;
 }
 
