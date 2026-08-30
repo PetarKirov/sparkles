@@ -67,6 +67,46 @@ package(sparkles.dql) template fieldSegmentName(T, size_t i)
         enum string fieldSegmentName = fieldIdentifier!(T, i);
 }
 
+/// The query segment of a `@property` getter: `@Name` on the getter, else
+/// its declared identifier — the one spelling both walks answer to.
+package(sparkles.dql) template getterName(alias getter)
+{
+    static if (hasUDA!(getter, Name))
+        enum string getterName = getUDAs!(getter, Name)[0].name;
+    else
+        enum string getterName = __traits(identifier, getter);
+}
+
+/// The getters both walks expose: `T`'s public zero-argument `@property`
+/// getters that are readable on a `const` view. A resolver walks
+/// `ref const` subjects, so a mutating getter is absent from the schema
+/// $(B and) the resolver — a query against it fails closed at parse time
+/// instead of failing the eval instantiation.
+package(sparkles.dql) template queryGetters(T)
+{
+    import std.meta : Filter;
+    import sparkles.reflection.member : isConstReadable, propertyGetters;
+
+    private enum bool constReadable(alias getter)
+        = isConstReadable!(T, getter);
+    alias queryGetters = Filter!(constReadable, propertyGetters!T);
+}
+
+/// The value-like wrapper rule under the same capability gate: a fieldless
+/// single-property value reads as its value only when that property is
+/// `const`-readable; otherwise the type is an ordinary opaque aggregate in
+/// both walks.
+package(sparkles.dql) template queryValueLikeGetter(T)
+{
+    import sparkles.reflection.member : isConstReadable, valueLikeGetter;
+
+    static if (!is(valueLikeGetter!T == void)
+        && isConstReadable!(T, valueLikeGetter!T))
+        alias queryValueLikeGetter = valueLikeGetter!T;
+    else
+        alias queryValueLikeGetter = void;
+}
+
 /// The canonical query spelling of an enum member: `@Name`, else the
 /// declared identifier.
 package(sparkles.dql) template enumValueName(E, string member)
