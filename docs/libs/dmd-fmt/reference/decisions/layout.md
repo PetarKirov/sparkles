@@ -257,9 +257,9 @@ started is a genuine continuation and still indents one level.
 
 ```d [Before]
 @("module.symbol.case")
-@safe unittest
+    @safe unittest
 {
-    assert(1 + 1 == 2);
+        assert(1 + 1 == 2);
 }
 ```
 
@@ -286,9 +286,9 @@ insert a blank line into a body that has no statements.
 ```d [Before]
 void inline() {}
 
-void spread()
+    void spread()
 {
-}
+        }
 ```
 
 ```d [After]
@@ -324,8 +324,8 @@ because each line is a different statement.
 bool anyMatch(int[] values)
 {
     foreach (value; values)
-        if (value == 3)
-            return true;
+    if (value == 3)
+    return true;
     return false;
 }
 ```
@@ -356,8 +356,8 @@ not move to make room for it.
 void f()
 {
     if (ready)
-        // Why this call, and not the obvious one.
-        prepare();
+// Why this call, and not the obvious one.
+    prepare();
 }
 ```
 

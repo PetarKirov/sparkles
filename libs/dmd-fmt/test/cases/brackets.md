@@ -12,13 +12,13 @@ engine deserves. The presentable case for each decision lives in
 
 ```d [Before]
 auto x = foo(
-    a + b);
+a + b);
 auto y = [
-    1, 2,
+        1, 2,
     3, 4];
 auto z = foo(
-    // note
-    a);
+            // note
+  a);
 ```
 
 ```d [After]
@@ -66,10 +66,10 @@ auto v = foo(
 
 ```d [Before]
 auto grid = [
-    [
-        1, 2],
-    [3,
-        4],
+[
+    1, 2],
+        [3,
+  4],
 ];
 ```
 
@@ -114,8 +114,8 @@ auto v = foo(
 
 ```d [Before]
 auto broken = foo(
-    a,
-    b
+a,
+        b
 ```
 
 ```d [After]
