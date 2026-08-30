@@ -32,6 +32,8 @@ import sparkles.ui.overlay.anchor : Anchor;
 import sparkles.ui.overlay.arena : OverlayArena, OverlayBand, OverlayRecord;
 import sparkles.ui.overlay.place : Adjust, Align, dropdownCollision, Fit,
     hintCollision, OverlayGeometry, Placement, Side;
+import sparkles.ui.overlay.policy : DismissCause, DismissFacts, DismissOn,
+    DismissPolicy, DismissReason, menuDismiss, wouldDismiss;
 import sparkles.ui.state : Timeline;
 import sparkles.ui.style : BorderStyle, BoxSide, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Builder, HitBehavior, Widget, WidgetKind, WidgetTree;
@@ -44,6 +46,40 @@ import state : CloseReason, GalleryState, hitOverlayClose, hitOverlayItem,
     hitOverlayLink, hitOverlayTrigger, OverlayDemo, OverlayKind, reasonName;
 
 @safe:
+
+/// What each surface permits to close it. A menu keeps its place while the
+/// page scrolls; a hovercard is persistent and goes only when asked.
+private DismissPolicy dismissPolicyFor(OverlayKind k) @safe pure nothrow @nogc
+{
+    final switch (k)
+    {
+        case OverlayKind.none:
+            return DismissPolicy(on: DismissOn.nothing);
+        case OverlayKind.contextMenu:
+        case OverlayKind.dropdown:
+            return DismissPolicy(on: menuDismiss);
+        case OverlayKind.hovercard:
+            // Persistent: it stays until the reader closes it, so hover-exit
+            // and scroll are deliberately absent from the word.
+            return DismissPolicy(on: cast(DismissOn)(DismissOn.closeRequest
+                | DismissOn.pressOutside | DismissOn.cascade));
+    }
+}
+
+/// The toolkit's reason as the page's own vocabulary. The page keeps a local
+/// enum only so the readout can name causes the toolkit does not yet offer;
+/// where the two overlap, the toolkit's is the answer.
+private CloseReason reasonFrom(DismissReason r) @safe pure nothrow @nogc
+{
+    switch (r)
+    {
+        case DismissReason.closeRequest: return CloseReason.closeRequest;
+        case DismissReason.pressOutside: return CloseReason.pressOutside;
+        case DismissReason.triggerReactivate: return CloseReason.triggerReactivate;
+        case DismissReason.cascade: return CloseReason.cascade;
+        default: return CloseReason.pressOutside;
+    }
+}
 
 /// The `Widget.key`s the page hangs its overlays off. A key names the node an
 /// arena record emits, so the page never threads node indices out of its view
@@ -466,6 +502,8 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
         {
             s.overlays.close(CloseReason.reopened);
             s.overlays.kind = OverlayKind.contextMenu;
+            s.overlays.openedThisFrame = true;
+        s.overlays.openedThisFrame = true;
             s.overlays.at = p.pos;
             s.overlays.trigger = hit;
             return true;
@@ -503,13 +541,20 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
         return true;
     }
 
-    // An outside press dismisses. This is the page's own rule until the
-    // reason-tagged evaluator lands; what it must already get right is that
-    // the press is CONSUMED by the dismissal rather than also reaching what
-    // it hit (`DSM5` — a per-overlay choice, and this one says no).
+    // An outside press goes through the toolkit's evaluator rather than a
+    // page-local `if`, so the page demonstrates the requirement instead of
+    // paraphrasing it. The facts matter here: a press delivered in the frame
+    // an overlay opened in is routed against the frame BEFORE it existed
+    // (`DSM9`), so without the exemption a right-click would open a menu and
+    // the same press would close it.
     if (s.overlays.open)
     {
-        s.overlays.close(CloseReason.pressOutside);
+        const why = wouldDismiss(dismissPolicyFor(s.overlays.kind),
+            DismissCause.pressOutside,
+            DismissFacts(openedThisFrame: s.overlays.openedThisFrame));
+        if (why == DismissReason.none)
+            return false;
+        s.overlays.close(reasonFrom(why));
         return true;
     }
     return false;
@@ -562,6 +607,7 @@ private void toggleDropdown(ref GalleryState s)
     {
         s.overlays.close(CloseReason.reopened);
         s.overlays.kind = OverlayKind.dropdown;
+        s.overlays.openedThisFrame = true;
         s.overlays.trigger = hitOverlayTrigger + 1;
         s.overlays.selected = s.overlays.article[1] % themes.length;
     }
@@ -573,6 +619,7 @@ private void openCard(ref GalleryState s, size_t which)
     {
         s.overlays.close(CloseReason.reopened);
         s.overlays.kind = OverlayKind.hovercard;
+        s.overlays.openedThisFrame = true;
         s.overlays.cardDepth = 1;
         s.overlays.article[0] = 0;
         s.overlays.trigger = hitOverlayLink;

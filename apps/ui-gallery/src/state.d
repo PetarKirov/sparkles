@@ -230,6 +230,11 @@ struct OverlayDemo
     size_t[2] article;
     /// Why the last surface closed, so the page can print it (`DSM2`).
     CloseReason lastReason;
+    /// Whether the open surface appeared in the frame the current event is
+    /// routed against (`DSM9`). Events route against the LAST PAINTED frame,
+    /// so the press that opened a menu is delivered against the frame before
+    /// the menu existed — without this it would open and close on one press.
+    bool openedThisFrame;
     /// The side the solve last resolved, carried back in as `PLC13`'s
     /// stability input so a marginal fit cannot oscillate between frames.
     BoxSide lastSide;
@@ -244,6 +249,7 @@ struct OverlayDemo
     void close(CloseReason reason) scope
     {
         kind = OverlayKind.none;
+        openedThisFrame = false;
         cardDepth = 0;
         selected = 0;
         haveLastSide = false;

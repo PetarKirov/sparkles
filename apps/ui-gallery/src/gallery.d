@@ -197,6 +197,11 @@ struct Gallery
     void overlaysSolved(OverlayArena a) @safe
     {
         dock.overlays = a;
+        // The frame that paints an overlay is the frame its hit rect becomes
+        // real in, so the one-frame exemption ends here rather than on a timer
+        // (`DSM9`).
+        if (a.length)
+            s.overlays.openedThisFrame = false;
         if (a.length)
         {
             s.overlayGeometry = a[0].resolved;
