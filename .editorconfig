@@ -85,6 +85,12 @@ charset = unset
 [docs/research/monorepo-tooling/make/index.md]
 indent_style = unset
 
+# These virtualization deep-dives quote upstream Go and TypeScript verbatim, and
+# both ecosystems indent with literal tabs — reindenting the excerpts would make
+# them stop matching the sources they are pinned to.
+[docs/research/ui-virtualization/{gio-list,vscode-listview}.md]
+indent_style = unset
+
 # Grounding snapshots preserve upstream/manual indentation rather than project style.
 [docs/research/application-packaging/grounding/*]
 indent_size = unset
