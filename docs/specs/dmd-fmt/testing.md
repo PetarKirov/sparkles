@@ -229,6 +229,21 @@ Already delivered by M8 and retained: the repo's own library trees, the pinned f
 stability triad runs over all of them. TST6's perturbation and TST7's robustness inputs are driven
 from the same corpus.
 
+**And over the whole repository, not a sample.** The M8 corpus is three source trees, chosen so the
+churn ratchet measures a stable population. That is the right sample for a _ratchet_ and the wrong
+one for a _safety gate_: a printer defect that dropped a braced block, a `template` declaration
+whose group frame swallowed the rest of its module, and two non-idempotent shapes all lived through
+the sampled corpus and surfaced only when every `.d` file in the tree was formatted. So
+`differential.sweep.whole-repository` walks the repository — gitignore-aware, via
+`sparkles:build-primitives`, because a plain directory walk descends into `.direnv/` and finds
+30,000 nixpkgs files and a _directory_ named `registries.d` — and asserts the part that is not a
+matter of taste: the output verifies, and formatting it again changes nothing. No similarity
+assertion, which stays the corpus test's job; a benchmark engine or a research example is not
+calibrated for it.
+
+It costs about thirteen seconds on 1,021 files. A safety gate that covers a tenth of the code is a
+safety gate for a tenth of the code.
+
 ### TST9 — The dfmt differential, as disappearing snapshots
 
 M8's similarity index (mean 0.927, tripwire floor 0.85) is a number, and a number is hard to review.

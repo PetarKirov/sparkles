@@ -60,6 +60,12 @@ configuration "unittest" {
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
 
+    // Tests only, so the library's closure is unchanged: the whole-repository
+    // sweep (differential.d) needs a gitignore-aware walk. A raw `dirEntries`
+    // descends into `.direnv/`, where a checkout of nixpkgs supplies both
+    // 30k irrelevant files and a DIRECTORY named `registries.d`.
+    dependency "sparkles:build-primitives" path="../.."
+
     // Same link setup as libs/dmd-lsp's unittest configuration (the frontend
     // archive is large; no -checkaction=context for the same reason — it
     // leaks into the dmd:frontend compilation and fails to link).
