@@ -2675,7 +2675,10 @@ int runGui(GuiArgs guiArgs) @system
             {
                 inp.mode = Mode.normal;
                 inp.query.clear(); // cancelling clears the query (and search highlights)
-                vm.matches = null;
+                // `clearSearch` drops the RECTS too. Nulling `matches` alone
+                // left `matchRects` populated, and the overlay below paints
+                // from the rects — so Esc cleared the count and kept the tint.
+                vm.clearSearch();
             }
         }
         else
@@ -3083,7 +3086,7 @@ int runGui(GuiArgs guiArgs) @system
                 case Command.startSearch:
                     inp.mode = Mode.search;
                     inp.query.clear();
-                    vm.matches = null;
+                    vm.clearSearch();
                     break;
                 case Command.startGoto:
                     inp.mode = Mode.gotoLine;
