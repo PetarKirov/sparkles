@@ -4,6 +4,8 @@ module picker_sources;
 import std.path : baseName, buildPath;
 
 import sparkles.build_primitives.glob_walk : globWalkGitRepository;
+
+import picker_grep : DocHandle;
 import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
     CorpusId, PathFlavor, RankContext;
 
@@ -29,11 +31,18 @@ struct PickerTarget
     uint line;
     /// 1-based byte column; `0` = unspecified.
     uint column;
+    /// The document this names, when the source has one (`PKC3`). A files
+    /// row leaves it null and is addressed by `path`; a grep row over a
+    /// memory-only document has no path and is addressed ONLY by this.
+    DocHandle handle;
 
     /// Whether this names anything at all. A finder returns
     /// `PickerTarget.init` for an index it cannot resolve, and a host must
-    /// not act on it — the old seam signalled that with a null string.
-    bool valid() const @safe pure nothrow @nogc => path.length != 0;
+    /// not act on it — the old seam signalled that with a null string,
+    /// which is why the check is not `path is null` any more: a document
+    /// that never touched the filesystem is still a valid target.
+    bool valid() const @safe pure nothrow @nogc
+        => path.length != 0 || handle.valid;
 }
 
 /**
