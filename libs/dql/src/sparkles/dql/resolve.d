@@ -25,11 +25,11 @@ import std.traits : ReturnType, TemplateArgsOf, Unqual, getUDAs, hasUDA,
     isStaticArray;
 
 import sparkles.dql.convention : consume, consumeIndex, fieldSegmentName,
-    includeField, variantAliasesOf, variantNameOf;
+    getterName, includeField, queryGetters, queryValueLikeGetter,
+    variantAliasesOf, variantNameOf;
 import sparkles.dql.schema : DqlResolution, DqlSchema;
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
-import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike,
-    propertyGetters, valueLikeGetter;
+import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike;
 
 /// The maximum pointer hops before a chain is treated as absent — cyclic
 /// pointer structures terminate, never hang.
@@ -77,14 +77,17 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
                 {
                     matched = true;
                     bool isActive;
-                    value.match!(
-                        (const ref V active) {
+                    // One generic handler, so a single-alternative SumType
+                    // matches exhaustively (a separate catch-all lambda
+                    // would never match and fail the instantiation).
+                    value.match!((ref const active) {
+                        static if (is(Unqual!(typeof(active)) == V))
+                        {
                             isActive = true;
                             result = resolveValue(active,
                                 path[consumed .. $], sink, hops);
-                        },
-                        (_) {},
-                    );
+                        }
+                    });
                     if (!isActive)
                         result = DqlResolution.absent;
                 }
@@ -94,11 +97,11 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
     }
     else static if (K == TypeKind.aggregate)
     {
-        static if (!is(valueLikeGetter!T == void))
+        static if (!is(queryValueLikeGetter!T == void))
         {
             if (!path.length)
             {
-                sink(propertyValue!(T, valueLikeGetter!T)(value));
+                sink(propertyValue!(T, queryValueLikeGetter!T)(value));
                 return DqlResolution.value;
             }
         }
@@ -156,14 +159,15 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
             }
         }}
         }
-        static if (is(valueLikeGetter!T == void))
+        static if (is(queryValueLikeGetter!T == void))
         {
-            static foreach (getter; propertyGetters!T)
+            static foreach (getter; queryGetters!T)
             {{
                 if (!matched)
                 {
-                    const consumed = consume(path,
-                        __traits(identifier, getter));
+                    // The canonical spelling only — the same one the schema
+                    // published (`@Name` overrides the identifier).
+                    const consumed = consume(path, getterName!getter);
                     if (consumed)
                     {
                         matched = true;
@@ -306,6 +310,92 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
         == DqlResolution.unknown);
     assert(resolveDqlPath!Schema(event, "missing", take)
         == DqlResolution.unknown);
+}
+
+@("dql.resolve: getters answer to their query name and const capability")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.metadata : Name;
+    import sparkles.dql.schema : isDqlPath;
+
+    struct KeyedEvent
+    {
+        int code;
+        private char[8] text_;
+        private ubyte length_;
+
+        @Name("text")
+        @property const(char)[] rawText() const return pure nothrow @nogc
+            => text_[0 .. length_];
+
+        // Not const-readable: absent from schema AND resolver.
+        @property int hot() pure nothrow @nogc => code++;
+    }
+
+    struct PadEvent { int p; }
+
+    alias Schema = DqlSchema!(SumType!(KeyedEvent, PadEvent));
+
+    // The schema publishes the @Name spelling; the mutating getter and the
+    // raw identifier of a renamed getter do not exist as paths.
+    assert(isDqlPath!Schema("keyed.text"));
+    assert(!isDqlPath!Schema("keyed.rawText"));
+    assert(!isDqlPath!Schema("keyed.hot"));
+
+    KeyedEvent inner;
+    inner.text_[0 .. 5] = "hello";
+    inner.length_ = 5;
+    inner.code = 3;
+    SumType!(KeyedEvent, PadEvent) event = inner;
+
+    struct Match
+    {
+        bool* hit;
+        void opCall(V)(in V) {}
+        void opCall(scope const(char)[] v) { *hit = v == "hello"; }
+    }
+
+    bool hit;
+    Match sink;
+    sink.hit = &hit;
+
+    // The resolver answers the same canonical spelling — and only it.
+    assert(resolveDqlPath!Schema(event, "keyed.text", sink)
+        == DqlResolution.value);
+    assert(hit);
+    assert(resolveDqlPath!Schema(event, "keyed.rawText", sink)
+        == DqlResolution.unknown);
+    assert(resolveDqlPath!Schema(event, "keyed.hot", sink)
+        == DqlResolution.unknown);
+}
+
+@("dql.resolve: a single-alternative sum resolves")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.dql.schema : isDqlPath;
+
+    struct OnlyEvent { int n; }
+
+    alias Schema = DqlSchema!(SumType!OnlyEvent);
+    SumType!OnlyEvent event = OnlyEvent(5);
+
+    struct Take
+    {
+        int* output;
+        void opCall(V)(in V) {}
+        void opCall(in int v) { *output = v; }
+    }
+
+    int found;
+    Take take;
+    take.output = &found;
+
+    assert(isDqlPath!Schema("only.n"));
+    assert(resolveDqlPath!Schema(event, "only.n", take)
+        == DqlResolution.value);
+    assert(found == 5);
 }
 
 @("dql.resolve: hidden storage neither appears in the schema nor resolves")

@@ -33,16 +33,15 @@ import std.conv : to;
 import std.traits : isStaticArray, ReturnType, getUDAs, hasUDA;
 
 import sparkles.dql.convention : descriptionOf, enumValueMatches,
-    enumValueName, fieldSegmentName, includeField, variantAliasesOf,
-    variantNameOf;
+    enumValueName, fieldSegmentName, getterName, includeField, queryGetters,
+    queryValueLikeGetter, variantAliasesOf, variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
 import sparkles.metadata : Aliases, Description, Name;
 import std.meta : staticIndexOf;
 import std.traits : TemplateArgsOf;
 
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
-import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike,
-    propertyGetters, valueLikeGetter;
+import sparkles.reflection.member : fieldCount, fieldType, isTextSliceLike;
 
 /// Runtime outcome of resolving one statically known path.
 enum DqlResolution : ubyte
@@ -145,10 +144,10 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
     }
     else static if (K == TypeKind.aggregate)
     {
-        static if (!is(valueLikeGetter!T == void))
+        static if (!is(queryValueLikeGetter!T == void))
         {
             // A fieldless single-property value reads as its value.
-            emitLeaf!(ReturnType!(valueLikeGetter!T))(o, prefix, "");
+            emitLeaf!(ReturnType!(queryValueLikeGetter!T))(o, prefix, "");
         }
         else static if (isTextSliceLike!T)
         {
@@ -174,20 +173,12 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
                             joinSegment(prefix, fieldSegmentName!(T, i)));
                 }
             }}
-            static foreach (getter; propertyGetters!T)
+            static foreach (getter; queryGetters!T)
             {{
                 alias R = ReturnType!getter;
                 static if (isScalarKind(typeKindOf!R))
-                {
-                    static if (hasUDA!(getter, Name))
-                        enum string getterSegment
-                            = getUDAs!(getter, Name)[0].name;
-                    else
-                        enum string getterSegment
-                            = __traits(identifier, getter);
-                    emitLeaf!R(o, joinSegment(prefix, getterSegment),
+                    emitLeaf!R(o, joinSegment(prefix, getterName!getter),
                         descriptionOf!getter);
-                }
             }}
             // An aggregate with no addressable members (an empty variant
             // such as `closeRequested`) is still present at its own address.
