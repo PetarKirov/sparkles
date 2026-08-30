@@ -759,6 +759,26 @@ $(UL
     $(LI `enum EnumRender enumRender` — how enum values are rendered)
 )
 */
+/// The value of a compile-time `bool` member of `Policy`, or `false` when
+/// the member is absent $(B or) not compile-time readable (e.g. an instance
+/// field that merely shares the name) — a DbI probe never hard-errors.
+private template policyFlag(Policy, string name)
+{
+    static if (__traits(compiles, { enum bool b = __traits(getMember, Policy, name); }))
+        enum bool policyFlag = __traits(getMember, Policy, name);
+    else
+        enum bool policyFlag = false;
+}
+
+/// ditto, for the `enumRender` hook; absent means `EnumRender.underlying`.
+private template policyEnumRender(Policy)
+{
+    static if (__traits(compiles, { enum EnumRender r = __traits(getMember, Policy, "enumRender"); }))
+        enum EnumRender policyEnumRender = __traits(getMember, Policy, "enumRender");
+    else
+        enum EnumRender policyEnumRender = EnumRender.underlying;
+}
+
 private void writeValueBody(Policy, Writer, T)(ref Writer w,
     auto ref const T value, in Policy policy)
 {
@@ -771,20 +791,15 @@ private void writeValueBody(Policy, Writer, T)(ref Writer w,
     }
     else static if (typeKindOf!T == TypeKind.enumeration)
     {
-        static if (__traits(hasMember, Policy, "enumRender"))
-        {
-            final switch (Policy.enumRender) with (EnumRender)
-            {
-                case EnumRender.memberName:
-                    writeEnumMemberName(w, value);
-                    break;
-                case EnumRender.underlying:
-                    writeInteger(w, cast(OriginalType!T) value);
-                    break;
-            }
-        }
+        static if (policyEnumRender!Policy == EnumRender.memberName)
+            writeEnumMemberName(w, value);
         else
-            writeInteger(w, cast(OriginalType!T) value);
+            // The underlying value, through this same dispatch: an integral
+            // base keeps the pinned writeInteger rendering, while text,
+            // floating, and character bases render as their own kinds
+            // (a string-based enum writes its value, not a number).
+            writeValueBody!(Policy, Writer, OriginalType!T)(w,
+                cast(OriginalType!T) value, policy);
     }
     else static if (typeKindOf!T == TypeKind.boolean)
     {
@@ -792,8 +807,7 @@ private void writeValueBody(Policy, Writer, T)(ref Writer w,
     }
     else static if (typeKindOf!T == TypeKind.character)
     {
-        static if (__traits(hasMember, Policy, "escapeChars")
-            && Policy.escapeChars)
+        static if (policyFlag!(Policy, "escapeChars"))
             writeEscapedCharLiteral(w, value);
         else
         {
@@ -805,8 +819,7 @@ private void writeValueBody(Policy, Writer, T)(ref Writer w,
     }
     else static if (typeKindOf!T == TypeKind.text)
     {
-        static if (__traits(hasMember, Policy, "escapeStrings")
-            && Policy.escapeStrings)
+        static if (policyFlag!(Policy, "escapeStrings"))
             writeEscapedString(w, value);
         else
             put(w, value);
@@ -953,17 +966,66 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum Dir { north, south }
 
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeValue(buf, Dir.south);
     assert(buf[] == "1");
 
     buf.clear();
     writeValue(buf, Dir.north);
     assert(buf[] == "0");
+}
+
+/// Non-integral bases render as their own kind: a string-based enum writes
+/// its value (the pre-unification ladder's text branch caught it via the
+/// implicit conversion), a floating base goes through `writeFloat`.
+@("writeValue.enum.stringBase")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    enum Tag : string { alpha = "a-value", beta = "b-value" }
+
+    SharedBuffer!(char, 16) buf;
+    writeValue(buf, Tag.beta);
+    assert(buf[] == "b-value");
+}
+
+/// ditto
+@("writeValue.enum.floatingBase")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    enum Ratio : double { half = 0.5, one = 1.0 }
+
+    SharedBuffer!(char, 16) buf;
+    writeValue(buf, Ratio.half);
+    assert(buf[] == "0.5");
+}
+
+/// A hook whose member of a probe's name is a runtime field (not a
+/// compile-time flag) degrades to the default instead of hard-erroring.
+@("writeStyledValue.policy.instanceFieldHookDegrades")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    static struct FieldHook
+    {
+        bool escapeStrings;
+        bool escapeChars;
+    }
+
+    SharedBuffer!(char, 16) buf;
+    writeStyledValue(buf, "hi", FieldHook(true, true), false);
+    assert(buf[] == "hi");
 }
 
 @("writeValue.nogcOutputRangeType")
