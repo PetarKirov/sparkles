@@ -246,6 +246,11 @@ private bool categoryIn(T)(ref const T value,
             result = category == variantNameOf!V;
             static foreach (aliasName; variantAliasesOf!V)
                 result |= category == aliasName;
+            // The schema collects categories from every alternative the
+            // walk reaches, nested sums included — matching recurses into
+            // the active alternative so those categories can come true.
+            if (!result)
+                result = categoryIn(active, category);
         });
         return result;
     }
@@ -253,7 +258,8 @@ private bool categoryIn(T)(ref const T value,
     {
         static foreach (i; 0 .. fieldCount!T)
         {
-            static if (typeKindOf!(fieldType!(T, i)) == TypeKind.sumType)
+            static if (includeField!(T, i)
+                && typeKindOf!(fieldType!(T, i)) == TypeKind.sumType)
                 if (categoryIn(value.tupleof[i], category))
                     return true;
         }
@@ -310,6 +316,40 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
         == DqlResolution.unknown);
     assert(resolveDqlPath!Schema(event, "missing", take)
         == DqlResolution.unknown);
+}
+
+@("dql.resolve: categories match in nested active alternatives")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.dql.schema : isDqlCategory;
+
+    struct RedEvent { int r; }
+    struct BlueEvent { int b; }
+    struct PadEvent { int p; }
+
+    struct HostEvent
+    {
+        SumType!(RedEvent, BlueEvent) colour;
+    }
+
+    alias Subject = SumType!(HostEvent, PadEvent);
+    alias Schema = DqlSchema!Subject;
+
+    // The schema collects the nested alternatives as categories…
+    assert(isDqlCategory!Schema("red"));
+    assert(isDqlCategory!Schema("blue"));
+
+    // …and matching them answers for the ACTIVE nested alternative.
+    Subject red = HostEvent(SumType!(RedEvent, BlueEvent)(RedEvent(1)));
+    assert(resolveDqlCategory!Schema(red, "host"));
+    assert(resolveDqlCategory!Schema(red, "red"));
+    assert(!resolveDqlCategory!Schema(red, "blue"));
+    assert(!resolveDqlCategory!Schema(red, "pad"));
+
+    Subject pad = PadEvent(9);
+    assert(resolveDqlCategory!Schema(pad, "pad"));
+    assert(!resolveDqlCategory!Schema(pad, "red"));
 }
 
 @("dql.resolve: getters answer to their query name and const capability")
