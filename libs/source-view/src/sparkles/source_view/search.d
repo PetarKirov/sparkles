@@ -126,7 +126,16 @@ private char foldAscii(char c) pure nothrow @nogc
     => (c >= 'A' && c <= 'Z') ? cast(char)(c + 32) : c;
 
 /// Does `hay` begin with `needle` under `mode`?
-private bool startsWithFolded(scope const(char)[] hay, scope const(char)[] needle,
+/**
+Whether `hay` begins with `needle` under `mode`'s case rule.
+
+Public because the picker's grep source scans with it (`PKC1`). Grep owns
+its own scan — it produces byte columns and bounded windows, and runs
+`@nogc` on a worker — but it must not own its own idea of what MATCHES.
+Two literal predicates is how the in-document searches came to disagree in
+the first place; this is the one place that decision is made.
+*/
+bool startsWithFolded(scope const(char)[] hay, scope const(char)[] needle,
     AnalysisCase mode) pure nothrow @nogc
 {
     if (needle.length > hay.length)
