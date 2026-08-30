@@ -102,6 +102,13 @@ introduced in v1. The hatch is one instance of the single suppression
 mechanism planned for M6 (ranges, verbatim regions, inactive arms — Roslyn's
 `SuppressOperation` insight).
 
+**The markers delimit the region; they are not inside it.** Both are laid out
+as the ordinary comments they are, at the structural indent, while everything
+between them is emitted byte-for-byte with its own indentation and alignment.
+A `// dfmt on` left at the depth the suppressed block happened to use is a
+comment about the code around it, and reads as one only where that code is —
+so it moves, and only it moves.
+
 ### D6 — Engine commitments for M2
 
 Restating the proposal's M2 as fixed decisions: Lindig's strict greedy form;
