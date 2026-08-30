@@ -213,10 +213,11 @@ carries no information to preserve:
   becomes `[1, 2, 3]`. When the contents _do_ break, the closer on its own line
   is the exploded shape and the point of it, so it stays.
 - **A closing `}` of an expression brace**, on the same terms — a struct
-  initializer is a list like any other. A statement block's `}` always earns
-  its line, and the token before the brace is what separates the two: `=`,
-  `,`, `(`, `[`, `return` and `=>` introduce a value; anything else opens a
-  block.
+  initializer is a list like any other. A statement block's `}` is never an
+  orphan — a block spread over more than one line gets its closer on a line of
+  its own, `{ g(); }` on one line stays there — and the token before the brace
+  is what separates the two: `=`, `,`, `(`, `[`, `return` and `=>` introduce a
+  value; anything else opens a block.
 
 Nothing here adds or removes a token, so this is tier 1, not D9's rewrite
 tier. The v1 policy preserves breaks because it cannot tell which are

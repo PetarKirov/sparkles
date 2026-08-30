@@ -121,7 +121,10 @@ S s = {
 
 :::
 
-## A statement block's `}` always earns its line
+## A statement block's `}` earns its line even when left beside a statement
+
+The mirror of the case above: same visual shape — a closer sharing a line with content — and the
+opposite outcome, because a block is not a value.
 
 <!-- fmt id=D10 -->
 
@@ -130,16 +133,16 @@ S s = {
 ```d [Before]
 void f()
 {
-g();
+    g(); }
+
+void nested()
+{
+    if (ready)
+    {
+        prepare(); }
 }
 
-void g()
-{
-    if (c)
-    {
-h();
-    }
-}
+void alreadyOneLine() { done(); }
 ```
 
 ```d [After]
@@ -148,13 +151,15 @@ void f()
     g();
 }
 
-void g()
+void nested()
 {
-    if (c)
+    if (ready)
     {
-        h();
+        prepare();
     }
 }
+
+void alreadyOneLine() { done(); }
 ```
 
 :::
