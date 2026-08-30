@@ -1436,6 +1436,30 @@ struct ViewerModel
         return rows.length ? cast(long) rows.length - 1 : 0;
     }
 
+    /**
+    Go to 0-based source `line`, unfolding whatever hides it (`FLD6`).
+
+    The two halves of a jump — reveal, then scroll — were written out at
+    every call site, and a caller that forgot the reveal scrolled to a row
+    folded out of existence. Naming the pair makes that unforgettable, and
+    gives the picker's grep source somewhere to land a hit (`PKC3`).
+
+    Placement is the top of the viewport, which is what `:N` already does:
+    a grep hit and a typed goto arriving at different scroll positions
+    would be a difference with no reason behind it.
+
+    `column` is accepted and currently unused for placement — a byte column
+    only moves the view once the pane scrolls horizontally, which it does
+    per-fence rather than per-document today. It is taken now so the seam
+    does not change shape when that lands.
+    */
+    void gotoSrcLine(size_t line, uint column = 0)
+    {
+        if (line < lineStarts.length)
+            revealOffset(lineStarts[line]); // `FLD6`: a fold must not hide it
+        scrollTo(visualOfSrc(line));
+    }
+
     /// The visual row a match falls on (the row whose source range covers
     /// its byte offset), else its source line's first row.
     long visualOfMatch(in Match m) const @safe pure nothrow @nogc
@@ -3528,4 +3552,41 @@ GutterCell[] lineNumberCells(in DocRow[] rows, int width,
     assert(!vm.setGutterChannels("numbers,blame"));
     assert(vm.reservedChannels().length == 1);
     assert(vm.reservedChannels()[0].id == lineNumberChannelId);
+}
+
+@("viewer_model.gotoSrcLine.revealsAndScrolls")
+@system
+unittest
+{
+    // The pair a caller must not split. Landing on a line that a fold hides
+    // is the failure this exists to prevent: `scrollTo` alone would put the
+    // viewport at a row the fold removed, so the reveal has to happen first
+    // and the two cannot be separate call-site steps.
+    import sparkles.syntax : HighlightEvent, LabelSet;
+
+    static immutable src = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+    auto events = [HighlightEvent.sourceSpan(0, src.length)];
+
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 40;
+    vm.viewRows = 3;
+    vm.applyTheme(0);
+    vm.setDocument("t.txt", null, src, events,
+        PreviewModel.init, TwoslashReturn.init);
+
+    vm.gotoSrcLine(0);
+    assert(vm.top == 0);
+
+    vm.gotoSrcLine(5);
+    assert(vm.top == vm.visualOfSrc(5),
+        "the jump must land where the line's first visual row is");
+    assert(vm.top > 0, "line 5 of 8 must have scrolled something");
+
+    // Past the end clamps rather than throwing — a pasted `file.d:9999`
+    // from a stale diagnostic must not take the pane down.
+    vm.gotoSrcLine(9_999);
+    assert(vm.top >= 0);
 }

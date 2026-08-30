@@ -2658,12 +2658,7 @@ int runGui(GuiArgs guiArgs) @system
                     try
                     {
                         if (parsed >= 0)
-                        {
-                            const line = cast(size_t) parsed;
-                            if (line < vm.lineStarts.length)
-                                vm.revealOffset(vm.lineStarts[line]); // FLD6
-                            vm.scrollTo(vm.visualOfSrc(line));
-                        }
+                            vm.gotoSrcLine(cast(size_t) parsed);
                     }
                     catch (Exception)
                     {
