@@ -131,7 +131,10 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     // ── the ranked rows: icon · dimmed directory · filename · match marks ─
     uint[] body;
     body ~= promptRow;
-    foreach (i, ranked; state.rows)
+    // The PAINTED window, not the whole ranking (`pickerTopK` is deeper
+    // than the viewport). `highlights` is window-relative; `selection` is
+    // ranking-relative, so the comparison adds the scroll offset back.
+    foreach (i, ranked; state.visible)
     {
         TextSpan[] spans;
         if (ranked.corpusIndex < snapshot.candidates.length)
@@ -149,7 +152,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         // cursorline the same way when focus leaves the list: bright while
         // the list owns the keyboard, a tint while the prompt types, at
         // rest while the preview reads.
-        const selected = i == state.selection;
+        const selected = state.firstRow + i == state.selection;
         const rowSlot = !selected ? Slot.inherit
             : listFocused ? Slot.selection
                 : inputFocused ? Slot.highlight : Slot.inherit;

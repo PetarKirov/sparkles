@@ -95,15 +95,62 @@ if (Capacity > 0 && PromptCapacity > 0)
     bool showScoreDebug;
     FuzzyError error;
 
+    /**
+    How many rows the list paints at once.
+
+    Separate from `Capacity`, which is how many ranked results are KEPT.
+    They were the same number while every source was a file picker, where a
+    handful of top hits answer the question. A grep query does not work that
+    way — the interesting hit is routinely the twentieth — so the ranking is
+    kept deeper than the viewport and the list scrolls through it, rather
+    than the ranking being truncated to what happens to fit.
+    */
+    size_t viewRows = 16;
+    private size_t firstRow_;
+
+    /// The whole kept ranking, deeper than the viewport.
     const(RankedResult)[] rows() const return scope @trusted pure nothrow @nogc
         => rows_[0 .. rowCount_];
     size_t rowCount() const @safe pure nothrow @nogc => rowCount_;
+
+    /// Index of the first painted row — the list's scroll offset.
+    size_t firstRow() const @safe pure nothrow @nogc => firstRow_;
+
+    /// The painted window: what the view iterates. Its indices are
+    /// window-relative, so a caller adds `firstRow` to compare against
+    /// `selection`.
+    const(RankedResult)[] visible() const return scope @trusted pure nothrow @nogc
+    {
+        const win = viewRows == 0 ? 1 : viewRows;
+        const stop = firstRow_ + win < rowCount_ ? firstRow_ + win : rowCount_;
+        return firstRow_ < stop ? rows_[firstRow_ .. stop] : null;
+    }
+
+    /// Keep the selection inside the painted window, and the window inside
+    /// the ranking. Called wherever either can move.
+    private void clampScroll() @safe pure nothrow @nogc
+    {
+        if (rowCount_ == 0)
+        {
+            firstRow_ = 0;
+            return;
+        }
+        const win = viewRows == 0 ? 1 : viewRows;
+        if (selection < firstRow_)
+            firstRow_ = selection;
+        else if (selection >= firstRow_ + win)
+            firstRow_ = selection - win + 1;
+        const maxFirst = rowCount_ > win ? rowCount_ - win : 0;
+        if (firstRow_ > maxFirst)
+            firstRow_ = maxFirst;
+    }
 
     void open() @safe pure nothrow @nogc
     {
         prompt.start();
         rowCount_ = 0;
         selection = 0;
+        firstRow_ = 0;
         scroll = ScrollState.init;
         matchedTotal = 0;
         corpusTotal = 0;
@@ -130,6 +177,7 @@ if (Capacity > 0 && PromptCapacity > 0)
         selection = wanted < 0 ? 0
             : wanted >= cast(long) rowCount_ ? rowCount_ - 1
             : cast(size_t) wanted;
+        clampScroll();
     }
 
     void toggleScoreDebug() @safe pure nothrow @nogc
@@ -179,6 +227,7 @@ public:
         }
         else if (selection >= rowCount_)
             selection = rowCount_ - 1;
+        clampScroll();
     }
 }
 
@@ -603,4 +652,52 @@ unittest
     assert(state.generation == generation.value);
     assert(state.rowCount == 2);
     assert(!scheduler.hasInFlight);
+}
+
+@("picker.state.listScrollsThroughADeeperRanking")
+@safe pure nothrow @nogc
+unittest
+{
+    // The kept ranking is deeper than the painted window, so moving past the
+    // last painted row scrolls instead of stopping. Before the split these
+    // were one number and the ranking was simply truncated to what fit —
+    // which a file picker never noticed, because typing narrows faster than
+    // scrolling, and which grep would have noticed immediately (`PKC17`: a
+    // literal needle cannot be narrowed further, so scrolling is the only
+    // move left).
+    PickerState!64 state;
+    state.viewRows = 4;
+    state.open();
+
+    RankedResult[20] all;
+    foreach (i; 0 .. all.length)
+    {
+        all[i].corpusIndex = i;
+        all[i].id = CandidateId(cast(uint) i);
+    }
+    state.publish(all[], 1, false);
+    assert(state.rowCount == 20, "all 20 kept, not just the painted 4");
+    assert(state.visible.length == 4, "only 4 painted");
+    assert(state.firstRow == 0);
+
+    // Down inside the window does not scroll.
+    state.moveSelection(3);
+    assert(state.selection == 3 && state.firstRow == 0);
+
+    // Past its bottom edge scrolls by exactly one, keeping the selection
+    // on the last painted row.
+    state.moveSelection(1);
+    assert(state.selection == 4 && state.firstRow == 1,
+        "the window must follow the selection down");
+    assert(state.visible[$ - 1].corpusIndex == 4);
+
+    // To the end: the window stops with the last row painted, never past it.
+    state.moveSelection(100);
+    assert(state.selection == 19);
+    assert(state.firstRow == 16, "window pinned to the ranking's tail");
+    assert(state.visible.length == 4);
+
+    // And back up.
+    state.moveSelection(-100);
+    assert(state.selection == 0 && state.firstRow == 0);
 }

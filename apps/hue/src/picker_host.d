@@ -41,10 +41,20 @@ enum PickerAction : ubyte
     preview,  /// forward `previewEvent` to the preview document pane
 }
 
-/// Ranked rows the hosts show and select through. Deliberately small: the
-/// terminal workspace has ~20 usable rows, and typing refines faster than
-/// scrolling a long page (the `P1` layouts revisit this).
-enum size_t pickerRows = 16;
+/// Rows the list PAINTS at once. Bounded by the terminal workspace's ~20
+/// usable rows (the `P1` layouts revisit this).
+enum size_t pickerVisibleRows = 16;
+
+/// Ranked results the picker KEEPS — deeper than the viewport, so the list
+/// scrolls through the ranking instead of the ranking being truncated to
+/// whatever fits.
+///
+/// These were one number while every source was a file picker, where typing
+/// refines faster than scrolling and a handful of top hits answer the
+/// question. Grep does not behave that way: the wanted hit is routinely
+/// past the first screen, and a query that cannot be narrowed further
+/// (`PKC17`'s literal needle) leaves scrolling as the only move.
+enum size_t pickerTopK = 128;
 
 /**
 A host's picker, owned off the collected heap.
@@ -71,8 +81,8 @@ struct PickerHost
 {
     @disable this(this);
 
-    PickerState!pickerRows state;
-    PickerScheduler!(DefaultFuzzyCaps, pickerRows) scheduler;
+    PickerState!pickerTopK state;
+    PickerScheduler!(DefaultFuzzyCaps, pickerTopK) scheduler;
     FilesFinder finder;
     /// Set by `handleKey` when it returns `PickerAction.accepted`.
     /// Where the accepted row goes (`PKC3`): a path when the source is
@@ -110,8 +120,12 @@ struct PickerHost
     // stored on results), and the resolved selected path the hosts feed
     // their preview document pane with.
     private MatcherWorkspace!DefaultFuzzyCaps positionsWorkspace;
-    private TextRange[maxRowRanges][pickerRows] rowRanges;
-    private size_t[pickerRows] rowRangeCounts;
+    // Indexed by PAINTED row, not by ranked row: highlights are only worth
+    // deriving for what the reader can see, and with the kept top-K deeper
+    // than the viewport, deriving all of them would run the positions tier
+    // over rows nobody is looking at.
+    private TextRange[maxRowRanges][pickerVisibleRows] rowRanges;
+    private size_t[pickerVisibleRows] rowRangeCounts;
     private size_t selectedIndex_ = size_t.max;
     private string selectedPath_;
 
@@ -143,6 +157,7 @@ struct PickerHost
         }
         scheduler.cancel(); // running generations retire against the old corpus
         finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
+        state.viewRows = pickerVisibleRows; // paint 16, keep `pickerTopK`
         state.open();
         focus = ScopeFocus!Scope_(Scope_.pickerInput);
         selectedIndex_ = size_t.max;
@@ -219,12 +234,13 @@ struct PickerHost
     {
         import std.path : baseName;
 
-        RowHighlight[pickerRows] highlights;
-        foreach (i; 0 .. state.rowCount)
+        RowHighlight[pickerVisibleRows] highlights;
+        const shown = state.visible.length;
+        foreach (i; 0 .. shown)
             highlights[i] = RowHighlight(rowRanges[i][0 .. rowRangeCounts[i]]);
         const path = selectedPath();
         return pickerView(state, snapshot,
-            highlights[0 .. state.rowCount],
+            highlights[0 .. shown],
             path.length ? baseName(path) : null, geometry, preset,
             focus.focused);
     }
@@ -273,10 +289,10 @@ struct PickerHost
             state.moveSelection(1);
             return PickerAction.consumed;
         case Command.pickerPageUp:
-            state.moveSelection(-cast(long) pickerRows / 2);
+            state.moveSelection(-cast(long) pickerVisibleRows / 2);
             return PickerAction.consumed;
         case Command.pickerPageDown:
-            state.moveSelection(pickerRows / 2);
+            state.moveSelection(pickerVisibleRows / 2);
             return PickerAction.consumed;
         case Command.pickerTop:
             state.moveSelection(-cast(long) state.rowCount);
@@ -425,9 +441,9 @@ private:
         if (parsed.hasError)
             return;
         auto snap = finder.snapshot();
-        foreach (i; 0 .. state.rowCount)
+        foreach (i, ref const shownRow; state.visible)
         {
-            const index = state.rows[i].corpusIndex;
+            const index = shownRow.corpusIndex;
             if (index >= snap.candidates.length)
                 continue;
             TextRange[64] buffer = void;
