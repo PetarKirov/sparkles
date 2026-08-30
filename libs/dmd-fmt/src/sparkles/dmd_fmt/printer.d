@@ -712,9 +712,17 @@ private final class Printer
         }
 
         Doc[] inner;
-        if (trailingComma)
+        // The magic trailing comma (M4) asks for the exploded shape — but
+        // only where there is no author shape to ask about. A list already
+        // broken across lines has one, and the comma then says *stay*
+        // broken, not *re-break one element per line*: re-flowing it is how
+        // a hand-packed table (`libs/base/.../unicode_tables.d`, ten values
+        // to the row) turns into one value per line, ten times the lines and
+        // none of the meaning. Explosion is the answer only to a list the
+        // author wrote flat.
+        if (trailingComma && !itemsSpanLines(items))
         {
-            // The magic trailing comma (M4): canonical one-per-line.
+            // Canonical one-per-line.
             foreach (i, elem; elements)
             {
                 if (i != 0)
@@ -1244,13 +1252,21 @@ version (unittest)
     checkFormat("int a;\n\n\n\n\nint b;\n", "int a;\n\nint b;\n", one);
 }
 
-@("printer.magic-trailing-comma.pins-one-per-line")
+@("printer.magic-trailing-comma.explodes-a-flat-list")
 @system unittest
 {
-    checkFormat("auto a = [\n    1, 2,\n];\n",
-        "auto a = [\n    1,\n    2,\n];\n");
+    checkFormat("auto a = [1, 2,];\n", "auto a = [\n    1,\n    2,\n];\n");
     // Without the comma, a fitting list stays as written.
     checkFormat("auto b = f(x, y);\n", "auto b = f(x, y);\n");
+}
+
+@("printer.magic-trailing-comma.keeps-an-authored-shape")
+@system unittest
+{
+    // Already broken: the comma says stay broken, not re-break one per line.
+    // A packed table keeps its rows.
+    enum src = "auto a = [\n    1, 2,\n    3, 4,\n];\n";
+    checkFormat(src, src);
 }
 
 @("printer.width.list-explodes-past-soft-max")

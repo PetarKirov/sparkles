@@ -165,9 +165,9 @@ void f()
 
 <!-- fmt id=M4 width=60 -->
 
-If you leave a trailing comma after the last element, the list stays exploded — one element per
-line — even when it would fit on one. It is the one-bit instruction you give the formatter about a
-list you intend to keep editing.
+If you leave a trailing comma after the last element of a list you wrote on one line, the list is
+exploded — one element per line — even though it would fit. It is the one-bit instruction you give
+the formatter about a list you intend to keep editing.
 
 The comma is **read, never written**: v1 will not add one for you (that is the default-on rewrite
 scheduled by [`D9`](../../../../specs/dmd-fmt/index.md)), so removing it returns the list to
@@ -192,6 +192,35 @@ void f()
         height,
     );
 }
+```
+
+:::
+
+### On a list you already broke, the comma means _stay_ broken {#m4-authored}
+
+<!-- fmt id=M4 -->
+
+One element per line is what a flat list becomes, not what every list becomes. Where you have
+already broken the list yourself, that shape _is_ the answer to the question the trailing comma
+asks, so the formatter keeps it: a table packed several values to the row stays packed, and the
+comma still pins it against being folded back onto one line.
+
+::: code-group
+
+```d [Before]
+immutable kernel = [
+    1, 2, 1,
+        2, 4, 2,
+  1, 2, 1,
+];
+```
+
+```d [After]
+immutable kernel = [
+    1, 2, 1,
+    2, 4, 2,
+    1, 2, 1,
+];
 ```
 
 :::

@@ -125,3 +125,88 @@ auto broken = foo(
 ```
 
 :::
+
+## The trailing comma explodes a flat list and preserves a broken one
+
+`M4` in both directions at once, plus the shapes that sit between them: a table packed several
+values to a row, a list broken at every element, and one broken irregularly. All three already
+have a shape, so all three keep it — only the flat list is exploded.
+
+<!-- fmt id=M4 -->
+
+::: code-group
+
+```d [Before]
+immutable flat = [1, 2, 3,];
+immutable packed = [
+      1, 2, 1,
+    2, 4, 2,
+        1, 2, 1,
+];
+immutable perLine = [
+alpha,
+        beta,
+  gamma,
+];
+immutable ragged = [
+    a, b,
+            c,
+    d, e, f,
+];
+```
+
+```d [After]
+immutable flat = [
+    1,
+    2,
+    3,
+];
+immutable packed = [
+    1, 2, 1,
+    2, 4, 2,
+    1, 2, 1,
+];
+immutable perLine = [
+    alpha,
+    beta,
+    gamma,
+];
+immutable ragged = [
+    a, b,
+    c,
+    d, e, f,
+];
+```
+
+:::
+
+## A broken call argument list keeps its rows too
+
+The same rule where the list is a call rather than a literal — and where the trailing comma is
+absent, so nothing pins the shape but the author's own breaks.
+
+<!-- fmt id=M4 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    configure(width, height,
+    visible, resizable,);
+    measure(width, height,
+        visible);
+}
+```
+
+```d [After]
+void f()
+{
+    configure(width, height,
+        visible, resizable,);
+    measure(width, height,
+        visible);
+}
+```
+
+:::
