@@ -3822,4 +3822,19 @@ unittest
     bothSee("Foo", 1);
     bothSee("bar", 1);
     bothSee("zzz", 0);
+
+    // One matcher is necessary and not sufficient: the hosts must also reach
+    // it with the SAME query. The terminal used to append `cast(char) e.ch`,
+    // so a non-ASCII keystroke truncated a code point into a stray byte —
+    // `é` (U+00E9) became the lone byte 0xE9, which is not valid UTF-8 and
+    // which the window's `typeChar` gate would never have admitted. Both now
+    // run the same gate, so the terminal cannot build a query the window
+    // could not.
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: '/'))));
+    foreach (dchar c; "féo")
+        w.handle(Event(KeyEvent(key: Key.char_, ch: c)));
+    const typed = w.viewer.inputQuery.idup;
+    assert(typed == "fo",
+        "the terminal admitted a non-ASCII keystroke into the query: " ~ typed);
+    w.handle(Event(KeyEvent(key: Key.escape)));
 }
