@@ -293,3 +293,192 @@ unittest
 
     assert(!PickerTarget.init.valid, "but nothing at all is not");
 }
+
+// ── binary detection (`PKC6`) ───────────────────────────────────────────────
+
+/// How many leading bytes the content sniff looks at. The scanner has these
+/// in hand from the read it was going to do anyway — the sniff must never
+/// cost a second one.
+enum size_t sniffBytes = 8192;
+
+/// What the classifier decided about a document's bytes.
+enum ContentVerdict : ubyte
+{
+    /// Searchable: no NUL, and the head is well-formed UTF-8.
+    text,
+    /// Skip it. Reporting a "match" inside a PNG is noise at best, and the
+    /// stored window (`PKC11`) would be unprintable.
+    binary,
+}
+
+/**
+Classify a document's leading bytes (`PKC6`).
+
+Two rules, in the order every grep in the survey applies them:
+
+$(UL
+$(LI a $(B NUL byte) means binary. This is the classic `grep`/Google Code
+Search test, and it also catches UTF-16 and UTF-32 text, which hue cannot
+render anyway;)
+$(LI $(B invalid UTF-8) means binary. hue's corpus is UTF-8 or bytes, and
+full encoding conversion is explicitly out of scope.)
+)
+
+$(B A truncated final sequence is not invalid.) `head` is a window, and a
+window boundary lands mid-character routinely — a file whose 8192nd byte
+falls inside a `é` is ordinary UTF-8, not a binary. Treating truncation as
+corruption would reject text files by their length, which is the kind of
+bug that shows up as "grep silently skips exactly the large files".
+
+Pure and allocation-free: `std.utf` would throw, and this runs per file on
+a worker with no exception path.
+*/
+ContentVerdict classifyContent(scope const(char)[] head) @safe pure nothrow @nogc
+{
+    size_t i;
+    while (i < head.length)
+    {
+        const b = cast(ubyte) head[i];
+        if (b == 0)
+            return ContentVerdict.binary; // NUL: the classic test
+        if (b < 0x80)
+        {
+            ++i;
+            continue;
+        }
+
+        // Sequence length and the first continuation byte's legal range,
+        // spelled out rather than derived: the narrow ranges are what reject
+        // overlong forms (`0xC0`/`0xC1`, `0xE0 0x80`), UTF-16 surrogates
+        // (`0xED 0xA0`) and code points above U+10FFFF (`0xF4 0x90`).
+        size_t len;
+        ubyte lo = 0x80, hi = 0xBF;
+        if (b >= 0xC2 && b <= 0xDF)
+            len = 2;
+        else if (b == 0xE0) { len = 3; lo = 0xA0; }
+        else if (b == 0xED) { len = 3; hi = 0x9F; }
+        else if ((b >= 0xE1 && b <= 0xEC) || b == 0xEE || b == 0xEF)
+            len = 3;
+        else if (b == 0xF0) { len = 4; lo = 0x90; }
+        else if (b >= 0xF1 && b <= 0xF3)
+            len = 4;
+        else if (b == 0xF4) { len = 4; hi = 0x8F; }
+        else
+            return ContentVerdict.binary; // continuation as lead, or 0xC0/0xC1/0xF5+
+
+        // The window ended mid-character. That is a boundary, not corruption.
+        if (i + len > head.length)
+            return ContentVerdict.text;
+
+        const c1 = cast(ubyte) head[i + 1];
+        if (c1 < lo || c1 > hi)
+            return ContentVerdict.binary;
+        foreach (k; 2 .. len)
+        {
+            const c = cast(ubyte) head[i + k];
+            if (c < 0x80 || c > 0xBF)
+                return ContentVerdict.binary;
+        }
+        i += len;
+    }
+    return ContentVerdict.text;
+}
+
+/**
+The whole admission test for a document (`PKC6`).
+
+The path filter runs first because it is free and it is what makes grep and
+the explorer agree about what exists: `isRenderable` is the same predicate
+the document set uses, so a file the tree refuses to show is a file grep
+refuses to search.
+
+`head` is whatever the caller already read. Passing an empty slice runs the
+path filter alone, which is the right answer before any I/O has happened.
+*/
+bool searchable(scope const(char)[] path, scope const(char)[] head)
+    @safe pure nothrow
+{
+    import sparkles.docs.source_set : isRenderable;
+
+    if (path.length && !isRenderable(path, twoslash: false))
+        return false;
+    return classifyContent(head) == ContentVerdict.text;
+}
+
+@("picker_grep.classify.nulAndInvalidUtf8AreBinary")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(classifyContent("") == ContentVerdict.text, "an empty file is text");
+    assert(classifyContent("void main() {}\n") == ContentVerdict.text);
+    assert(classifyContent("héllo — ünïcode ✓\n") == ContentVerdict.text);
+
+    // The classic test, and the one that also catches UTF-16/UTF-32 text.
+    assert(classifyContent("PNG\x00\x1a\n") == ContentVerdict.binary);
+    assert(classifyContent("\x00") == ContentVerdict.binary);
+
+    // Malformed lead bytes.
+    assert(classifyContent("\xFF\xFE") == ContentVerdict.binary);
+    assert(classifyContent("\x80abc") == ContentVerdict.binary,
+        "a continuation byte cannot lead");
+
+    // Overlong forms, surrogates and out-of-range code points are what the
+    // narrow first-continuation ranges exist to reject. A validator that
+    // only checks `0x80..0xBF` accepts all three.
+    assert(classifyContent("\xC0\xAF") == ContentVerdict.binary, "overlong /");
+    assert(classifyContent("\xE0\x80\xAF") == ContentVerdict.binary, "overlong");
+    assert(classifyContent("\xED\xA0\x80") == ContentVerdict.binary, "surrogate");
+    assert(classifyContent("\xF4\x90\x80\x80") == ContentVerdict.binary,
+        "beyond U+10FFFF");
+    assert(classifyContent("\xF5\x80\x80\x80") == ContentVerdict.binary);
+}
+
+@("picker_grep.classify.aTruncatedSequenceIsABoundaryNotCorruption")
+@safe pure nothrow @nogc
+unittest
+{
+    // `head` is a WINDOW. A window boundary lands mid-character routinely,
+    // and treating that as corruption would reject text files for being
+    // long — which surfaces as "grep silently skips exactly the big files",
+    // a symptom nobody attributes to the binary detector.
+    static immutable full = "abé"; // 'é' is two bytes: C3 A9
+
+    assert(classifyContent(full) == ContentVerdict.text);
+    assert(classifyContent(full[0 .. $ - 1]) == ContentVerdict.text,
+        "a 2-byte sequence cut after its lead is a boundary");
+
+    static immutable four = "ab\U0001F600"; // 4-byte emoji
+    assert(classifyContent(four) == ContentVerdict.text);
+    foreach (cut; 1 .. 4)
+        assert(classifyContent(four[0 .. $ - cut]) == ContentVerdict.text,
+            "a 4-byte sequence cut anywhere is still a boundary");
+
+    // But a truncation is only forgiven at the END. The same bytes followed
+    // by more content are genuinely malformed.
+    assert(classifyContent("ab\xC3" ~ "cd") == ContentVerdict.binary,
+        "an unfinished sequence mid-buffer is corruption, not a boundary");
+}
+
+@("picker_grep.classify.pathFilterRunsBeforeTheBytes")
+@safe pure nothrow
+unittest
+{
+    // `isRenderable` is the predicate the document set already uses, so a
+    // file the tree refuses to show is a file grep refuses to search — the
+    // two panes cannot disagree about what the project contains.
+    assert(searchable("src/app.d", "void main() {}\n"));
+    assert(searchable("README.md", "# hi\n"));
+    assert(!searchable("assets/logo.png", "\x89PNG\r\n"),
+        "the extension alone is enough — no read needed");
+    assert(!searchable("build/libfoo.so", "text that happens to be printable"),
+        "a deny-listed extension is refused even when the bytes look fine");
+
+    // Bytes still decide when the path is inconclusive: a `.txt` full of
+    // NULs is not searchable however innocent its name.
+    assert(!searchable("notes.txt", "a\x00b"));
+
+    // No path, or no bytes yet: each half must be usable alone, because the
+    // scanner applies the path filter BEFORE it has read anything.
+    assert(searchable("src/app.d", ""), "path-only, pre-read");
+    assert(searchable("", "plain bytes"), "bytes-only, e.g. a memory document");
+}
