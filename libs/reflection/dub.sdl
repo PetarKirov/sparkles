@@ -1,5 +1,5 @@
 name "reflection"
-description "Dependency-free structural reflection: type classification, DbI type/value visitors, and CTFE field tables"
+description "Dependency-free structural reflection: type classification and member/field/property primitives"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"

@@ -21,61 +21,31 @@ integrals, strings before arrays, `SumType` before aggregates. The scalar
 kinds (`isScalarKind`) are exactly the leaves a value writer or query sink
 can consume directly.
 
-## Walk a type
+## Discover members
 
 ```d
-import sparkles.reflection.visit : visitType;
+import sparkles.reflection.member : fieldCount, fieldIdentifier,
+    propertyGetters, valueLikeGetter;
 
-struct Collector
-{
-    string[] scalars;
-
-    void leaf(T)() { scalars ~= T.stringof; }
-    void enterField(T, size_t i)() { /* before field i's type */ }
-}
-
-Collector c;
-visitType!MyStruct(c);
+static assert(fieldCount!MyStruct == 2);
+static assert(fieldIdentifier!(MyStruct, 0) == "alpha");
 ```
 
-Every hook is optional. A visitor that defines nothing still walks — the
-`void`-visitor baseline — and hooks are probed with the exact instantiation
-they will be called with.
+The field primitives are indexed into `T.tupleof` — the same spine a
+runtime walk reads — so a field's compile-time symbol, type, and identifier
+always agree with the value a consumer hands out. `propertyGetters!T` lists
+the public zero-argument `@property` getters (one per member name, setters
+and private overloads excluded), and `valueLikeGetter!T` states the
+value-like wrapper rule: a fieldless type whose single public `@property`
+returns a scalar _is_ that value.
 
-## Walk a value
+## Build your own walk
 
-```d
-import sparkles.reflection.visit : visitValue;
-
-struct Counter
-{
-    long scalars;
-    void scalar(T)(ref T) { scalars++; }
-}
-
-MyStruct value;
-Counter counter;
-assert(visitValue(value, counter));
-```
-
-`visitValue` hands fields, elements, and active `SumType` alternatives to the
-visitor by reference, reports null pointers and null associative arrays
-through an optional `absent` hook, and returns `false` when a hook requested
-`ValueControl.stop`.
-
-## Reduce fields to a table
-
-```d
-import sparkles.reflection.member : fieldTable, fieldIdentifier;
-
-template fieldName(size_t i)
-{
-    enum string fieldName = fieldIdentifier!(MyStruct, i);
-}
-
-alias names = fieldTable!(MyStruct, fieldName);
-```
-
-`fieldTable` is the one-pass CTFE spine serialization policies and schema
-generators reduce into: one entry per declared field, nested context pointers
-excluded, built once so per-index reads do not re-materialize the table.
+The kernel deliberately ships no visitor: each consumer's traversal has its
+own shape (the property tree prunes by disclosure at runtime; a query
+schema enumerates every `SumType` alternative at compile time; a writer
+never recurses at all). A direct `static if` ladder over `typeKindOf`,
+recursing through `fieldCount`/`fieldType` and `propertyGetters`, stays
+close to the consumer's policy and instantiates nothing it does not use —
+`sparkles.dql.schema` and `sparkles.dql.resolve` are the reference pair,
+two mirrored ladders over one conventions module.
