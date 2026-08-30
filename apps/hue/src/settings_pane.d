@@ -234,12 +234,20 @@ struct SettingsPaneT(T)
         tv.tick(caps, cast(float) elapsed.total!"hnsecs" / 10_000_000.0f);
     }
 
-    /// The pointer shape the bar machine wants — ns-resize while hovering
-    /// or grabbing the bar, default elsewhere. The hosts' one-per-frame
-    /// shape input while the modal owns the pointer, exactly as every other
-    /// bar in the app reports through its host (`DCK9`).
-    PointerShape pointerShape() const @safe pure nothrow @nogc
-        => tv.scroll.shape();
+    /**
+    This pane's claim on the frame's one pointer shape (`DCK15`) — its bar
+    machine's, `ns-resize` over or grabbing the bar, default elsewhere.
+
+    Being closed is $(B not) a special case: an inactive pane claims
+    `default_`, which composes away. That is the point. The modal used to be a
+    branch in each host — `settingsPane.active ? settingsPane.pointerShape() :
+    …` — which is `MDL1`'s warning about caching stack-derived blocking as a
+    flag, in its smallest form: two hosts each testing the same `active` bit to
+    decide whether the pane's answer counts. A claim that is simply quiet while
+    closed needs neither test.
+    */
+    PointerShape shapeClaim() const @safe pure nothrow @nogc
+        => active ? tv.scroll.shape() : PointerShape.default_;
 
     // ── keys ────────────────────────────────────────────────────────────────
 
@@ -1115,13 +1123,13 @@ version (unittest)
     assert(p.tv.scroll.vAnim.percent >= pctBefore,
         "the hover-expand easing ticks");
 
-    // Over the bar the machine wants ns-resize — the hosts report it as
-    // the frame's pointer shape, like every other bar in the app.
-    assert(p.pointerShape() == PointerShape.nsResize);
+    // Over the bar the machine wants ns-resize — the pane claims it, and the
+    // frame's one composition takes the claim, like every other bar.
+    assert(p.shapeClaim() == PointerShape.nsResize);
     PointerEvent away = hover;
     away.pos = Point(area.x + 2, area.y + 2);
     cast(void) p.handleOverlay(Event(away), g);
-    assert(p.pointerShape() == PointerShape.default_,
+    assert(p.shapeClaim() == PointerShape.default_,
         "off the bar the shape returns to default");
 
     // A press on a row selects it; pressing the selected row activates.
