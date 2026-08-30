@@ -10,6 +10,10 @@ change — the golden-frame screenshots are the oracle.
 module gui_state;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+// The line-input bar moved to its own module so the terminal can drive the
+// same one (`UIA13`); re-exported here because every GUI call site names it
+// through `gui_state`.
+public import input_line : InputState, Mode;
 import sparkles.input.frame : InputFrame;
 import sparkles.input.gesture : PointF;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
@@ -223,97 +227,6 @@ struct Panes
     }
 }
 
-/// The input-routing state (M15 GROUP-I of the GuiState hoist): which
-/// line-input surface owns the keyboard ('/' search, ':' goto) and its
-/// typed query, pointer-capture ownership (STM11), and the per-frame
-/// `FrameInput` fold carry (IXB7 — the button level lives across frames).
-struct InputState
-{
-    Mode mode = Mode.normal;
-    SmallBuffer!(char, 256) query;
-    CaptureState capture;
-    InputFrame fin;
-
-    /**
-    Feeds one typed code point into the query under the mode's acceptance
-    rules — printable ASCII only, goto-line takes digits only, and the query
-    caps at 255. Returns `true` when the character was $(B accepted) (the
-    search mode's cue to re-run the query) — deliberately not "appended":
-    at the cap an accepted character still re-runs the search with the
-    unchanged query, exactly as the inline version did.
-    */
-    bool typeChar(dchar c) @safe pure nothrow
-    {
-        if (c < 32 || c >= 127)
-            return false;
-        if (mode == Mode.gotoLine && (c < '0' || c > '9'))
-            return false;
-        if (query.length < 255)
-            query ~= cast(char) c;
-        return true;
-    }
-
-    /// Deletes the last typed character: `true` when something was deleted —
-    /// the same re-search cue.
-    bool backspace() @safe pure nothrow @nogc
-    {
-        if (query.length == 0)
-            return false;
-        query.popBack();
-        return true;
-    }
-}
-
-@("gui_state.InputState.typeCharAcceptanceRules")
-@safe pure nothrow
-unittest
-{
-    InputState inp;
-    inp.mode = Mode.search;
-    assert(inp.typeChar('a'));
-    assert(inp.typeChar('3'));
-    assert(!inp.typeChar('\x1b'), "control characters never type");
-    assert(!inp.typeChar('é'), "the query is ASCII");
-    assert(inp.query[] == "a3");
-
-    inp.mode = Mode.gotoLine;
-    assert(!inp.typeChar('a'), "goto-line takes digits only");
-    assert(inp.typeChar('7'));
-    InputState flt;
-    flt.mode = Mode.dsvFilter;
-    assert(flt.typeChar('q'), "the filter bar takes printable ASCII");
-    assert(flt.typeChar('>'), "operators type through");
-    assert(!flt.typeChar('\x1b'), "control characters still never type");
-    assert(flt.query[] == "q>");
-    assert(inp.query[] == "a37");
-}
-
-@("gui_state.InputState.typeCharCapStillReSearches")
-@safe pure nothrow
-unittest
-{
-    // At the cap the character is accepted (the caller re-searches) but not
-    // appended — the inline behavior, preserved on purpose.
-    InputState inp;
-    inp.mode = Mode.search;
-    foreach (i; 0 .. 255)
-        cast(void) inp.typeChar('x');
-    assert(inp.query.length == 255);
-    assert(inp.typeChar('y'), "accepted at the cap");
-    assert(inp.query.length == 255, "but not appended");
-}
-
-@("gui_state.InputState.backspaceDeletesOrDeclines")
-@safe pure nothrow
-unittest
-{
-    InputState inp;
-    assert(!inp.backspace(), "nothing to delete");
-    cast(void) inp.typeChar('q');
-    assert(inp.backspace());
-    assert(inp.query.length == 0);
-}
-
 /// The copy modes (M15 GROUP-C of the GuiState hoist), toggleable at
 /// runtime and seeded from the CLI: 'y' flips ANSI strip-vs-raw (SEL7),
 /// 't' flips the table serialization (TBL2); a toggle flashes the new
@@ -407,14 +320,6 @@ unittest
         assert(!quiet.step(100, 100));
 }
 
-/// The interactive input mode (M4): normal keys, or typing a search / goto line.
-enum Mode
-{
-    normal,
-    search,
-    gotoLine,
-    dsvFilter, // the DSV grid's filter bar (`DSF1`)
-}
 
 
 /// A pixel-space rectangle — the popup's own geometry. Local rather than the

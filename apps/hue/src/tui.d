@@ -21,6 +21,7 @@ import sparkles.source_view.markdown : FenceScroll, TableScroll;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
 import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
+import input_line : InputState, Mode;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
@@ -174,11 +175,13 @@ struct PreviewTui
         return r.srcStart != size_t.max ? cast(long) r.srcStart : -1;
     }
 
-    // Incremental search (`/`): `searching` is input mode; `qbuf[0 .. qlen]` is
-    // the query, reused by `n`/`N` (one line editor pending — IXB6).
-    private bool searching;
-    private char[256] qbuf;
-    private size_t qlen;
+    // The line-input bar (`/` search, the DSV filter prompt): the SAME
+    // `InputState` the window drives, not a second one. The hand-rolled
+    // `char[256]` this replaced wrote `cast(char) e.ch`, so a non-ASCII
+    // keystroke truncated a code point into a stray byte and handed the
+    // shared matcher a query the window could never have produced (`UIA13`:
+    // one matcher is necessary, one input is what makes it sufficient).
+    private InputState inp;
 
     // Selection (mouse drag) → OSC 52 copy: the shared STM3 machine over
     // visual line indices; `selBg` tints the selected lines. `clip` holds a
@@ -307,10 +310,19 @@ struct PreviewTui
     private enum size_t tableHBarHitBase = ViewerModel.tableHBarHitBase;
     private enum size_t tableVBarHitBase = ViewerModel.tableVBarHitBase;
 
-    private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
+    private const(char)[] query() const return @safe pure nothrow @nogc => inp.query[];
+
+    /// What the line-input bar currently holds — the query as the shared
+    /// matcher will see it. Public so a parity test can assert that both
+    /// hosts reach `findMatches` with the same bytes, not merely the same
+    /// function.
+    const(char)[] inputQuery() const return @safe pure nothrow @nogc => inp.query[];
+    private bool searching() const @safe pure nothrow @nogc => inp.mode == Mode.search;
+    /// The filter prompt (`DSF1`) — the search prompt's twin, same bar.
+    private bool filtering() const @safe pure nothrow @nogc => inp.mode == Mode.dsvFilter;
 
     /// The pane is consuming typed text (the workspace must not steal keys).
-    bool inputActive() const @safe pure nothrow @nogc => searching || filtering;
+    bool inputActive() const @safe pure nothrow @nogc => inp.mode != Mode.normal;
 
     /// Selects the theme by index (the workspace initializes the pane; the
     /// first `relayout` resolves it).
@@ -589,8 +601,6 @@ struct PreviewTui
     void delegate(string) @system onDsvFilterApply;
     /// ditto
     void delegate() @system onDsvReset;
-    /// The filter prompt's input mode (`DSF1`) — the search prompt's twin.
-    private bool filtering;
 
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
@@ -607,8 +617,8 @@ struct PreviewTui
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
         sel = Selection!long.cleared;
-        searching = false;
-        qlen = 0;
+        inp.mode = Mode.normal;
+        inp.query.clear();
         vm.inlineFoldMarker = true;
         vm.widthCols = width < 9 ? 8 : width - 1;
         vm.viewRows = bodyRows();
@@ -1533,8 +1543,15 @@ struct PreviewTui
 
             // Opening the bar starts from nothing — query AND matches, so a
             // fresh `/` never shows the previous search's tint (`FND5`).
-            case Command.startSearch: searching = true; qlen = 0; vm.clearSearch(); break;
-            case Command.dsvFilter: filtering = true; qlen = 0; break;
+            case Command.startSearch:
+                inp.mode = Mode.search;
+                inp.query.clear();
+                vm.clearSearch();
+                break;
+            case Command.dsvFilter:
+                inp.mode = Mode.dsvFilter;
+                inp.query.clear();
+                break;
             case Command.dsvReset:
                 if (onDsvReset !is null)
                     onDsvReset();
@@ -1666,7 +1683,7 @@ struct PreviewTui
             // The terminal viewer searches line-by-line rather than
             // materialising a match list, so a live query IS the
             // condition `n`/`N` are gated on.
-            hasMatches: qlen > 0,
+            hasMatches: inp.query.length > 0,
             hasDiffSession: vm.showPreview && !vm.diffSession.empty,
             showPreview: vm.showPreview,
             formatPreviewActive: formatPreviewActive(vm),
@@ -1925,22 +1942,20 @@ struct PreviewTui
             switch (e.key)
             {
                 case Key.char_:
-                    if (qlen < qbuf.length)
-                        qbuf[qlen++] = cast(char) e.ch;
+                    cast(void) inp.typeChar(e.ch);
                     break;
                 case Key.backspace:
-                    if (qlen)
-                        --qlen;
+                    cast(void) inp.backspace();
                     break;
                 case Key.enter:
-                    filtering = false;
+                    inp.mode = Mode.normal;
                     if (onDsvFilterApply !is null)
                         onDsvFilterApply(query.idup);
-                    qlen = 0;
+                    inp.query.clear();
                     break;
                 case Key.escape:
-                    filtering = false;
-                    qlen = 0;
+                    inp.mode = Mode.normal;
+                    inp.query.clear();
                     break;
                 default: break;
             }
@@ -1953,24 +1968,27 @@ struct PreviewTui
         switch (e.key)
         {
             case Key.char_:
-                if (qlen < qbuf.length)
-                    qbuf[qlen++] = cast(char) e.ch;
+                // `typeChar` decides what a keystroke is worth (printable
+                // ASCII, capped) — the same gate the window applies, so both
+                // reach the matcher with the same query.
+                if (!inp.typeChar(e.ch))
+                    break;
                 vm.search(query); // the one matcher (`UIA13`)
                 jumpMatch(top, true);
                 break;
             case Key.backspace:
-                if (qlen)
-                    --qlen;
+                if (!inp.backspace())
+                    break;
                 vm.search(query);
                 jumpMatch(top, true);
                 break;
             case Key.enter:
-                searching = false;
+                inp.mode = Mode.normal;
                 jumpMatch(top + 1, true); // move off the current match
                 break;
             case Key.escape:
-                searching = false;
-                qlen = 0;
+                inp.mode = Mode.normal;
+                inp.query.clear();
                 // Cancelling drops the matches, not just the query (`FND5`).
                 // Clearing `qlen` alone left `vm.matches` populated, so `n`
                 // kept cycling a search the reviewer had already abandoned —
@@ -2304,14 +2322,14 @@ unittest
     // Search runs the SHARED matcher and jumps to a match's row (shrink the
     // viewport so the document overflows and the jump sticks). `vm.search` is
     // the step that used to be a private per-row scan in this module.
-    t.qbuf[0 .. 5] = "y = 2";
-    t.qlen = 5;
+    foreach (char c; "y = 2")
+        cast(void) t.inp.typeChar(c);
     t.height = 5;
     t.vm.search(t.query);
     t.jumpMatch(0, true);
     assert(t.top > 0, "search did not jump to the fence's second line");
     t.top = 0;
-    t.qlen = 0;
+    t.inp.query.clear();
     t.height = 12;
 
     // A click on the top-border copy cutout (` ⧉ ` before the corner)
