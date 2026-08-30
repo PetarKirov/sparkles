@@ -40,6 +40,7 @@ build/
 
 # Single-file dub bench executable (compiled next to its .d script)
 libs/wired/bench/wired_compile_time_bench
+libs/dql/bench/dql_compile_time_bench
 
 # DUB
 .dub
