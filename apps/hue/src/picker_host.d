@@ -26,7 +26,7 @@ import sparkles.ui.widget : WidgetTree;
 
 import keymap : Command, commandFor, KeyContext, Scope_;
 import picker : PickerScheduler, PickerState;
-import picker_sources : collectFilesFinder, FilesFinder;
+import picker_sources : collectFilesFinder, FilesFinder, PickerTarget;
 import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
     pickerView, RowHighlight;
 
@@ -37,7 +37,7 @@ enum PickerAction : ubyte
 {
     consumed, /// state changed (or the event was swallowed); still open
     closed,   /// the picker dismissed itself
-    accepted, /// a row was accepted — `acceptedPath` names the file
+    accepted, /// a row was accepted — `acceptedTarget` names where to go
     preview,  /// forward `previewEvent` to the preview document pane
 }
 
@@ -75,7 +75,13 @@ struct PickerHost
     PickerScheduler!(DefaultFuzzyCaps, pickerRows) scheduler;
     FilesFinder finder;
     /// Set by `handleKey` when it returns `PickerAction.accepted`.
-    string acceptedPath;
+    /// Where the accepted row goes (`PKC3`): a path when the source is
+    /// file-backed, plus a line/column when the source has a position to
+    /// name. `acceptedPath` remains as the file-only view of it.
+    PickerTarget acceptedTarget;
+    /// ditto — the path half, for hosts that only open files.
+    string acceptedPath() const @safe pure nothrow @nogc
+        => acceptedTarget.path;
     /// Which picker pane owns the keyboard (`FOC2`/`PKL7`) — the value
     /// `KeyContext.pickerFocus` carries into resolution, and the view reads
     /// for its chrome. Reset to the prompt on every open.
@@ -198,7 +204,7 @@ struct PickerHost
         if (index != selectedIndex_)
         {
             selectedIndex_ = index;
-            selectedPath_ = finder.resolve(index);
+            selectedPath_ = finder.resolve(index).path;
         }
         return selectedPath_;
     }
@@ -250,10 +256,10 @@ struct PickerHost
             return PickerAction.closed;
         case Command.pickerAccept:
             const index = state.selectedCorpusIndex;
-            const path = finder.resolve(index);
-            if (path is null)
+            const target = finder.resolve(index);
+            if (!target.valid)
                 return PickerAction.consumed; // nothing to accept yet
-            acceptedPath = path;
+            acceptedTarget = target;
             close();
             return PickerAction.accepted;
         case Command.pickerErase:

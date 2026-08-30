@@ -8,6 +8,35 @@ import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
     CorpusId, PathFlavor, RankContext;
 
 /**
+Where accepting a row goes.
+
+A path is not enough, and it is not always available. The grep source
+addresses a **line and column inside a document** (`PKC3`), and a session's
+documents need not exist on disk at all — `hue pr` builds them from a forge
+payload and git-history browsing will build them from object content
+(`SRC6`). So the target is a location, and `path` is the part of it that a
+file-backed source happens to be able to fill in.
+
+`line`/`column` are 1-based, matching every compiler diagnostic and
+`PKQ4`'s `path:line:col` syntax; `0` means unspecified, so a files source
+returns a target that names no position and the viewer keeps its scroll.
+*/
+struct PickerTarget
+{
+    /// Absolute path, or `null` when the target is not file-backed.
+    string path;
+    /// 1-based source line; `0` = unspecified.
+    uint line;
+    /// 1-based byte column; `0` = unspecified.
+    uint column;
+
+    /// Whether this names anything at all. A finder returns
+    /// `PickerTarget.init` for an index it cannot resolve, and a host must
+    /// not act on it — the old seam signalled that with a null string.
+    bool valid() const @safe pure nothrow @nogc => path.length != 0;
+}
+
+/**
 DbI contract for a picker finder.
 
 A finder owns every path borrowed by its snapshot. `snapshot` stays immutable
@@ -17,7 +46,7 @@ allocate because it runs only after accepting a row, never on a keystroke.
 enum bool isFinder(Finder) = is(typeof({
     Finder finder = Finder.init;
     CandidateSnapshot snapshot = finder.snapshot();
-    string path = finder.resolve(size_t.init);
+    PickerTarget target = finder.resolve(size_t.init);
 }));
 
 /// Immutable snapshot accessor shared by all conforming finder values.
@@ -45,12 +74,14 @@ struct FilesFinder
         return result;
     }
 
-    /// Resolve a corpus row to an absolute path after the user accepts it.
-    string resolve(size_t index) const @safe pure
+    /// Resolve a corpus row after the user accepts it. A file has no
+    /// position of its own, so the target names none and the viewer keeps
+    /// whatever scroll the document already had.
+    PickerTarget resolve(size_t index) const @safe pure
     {
         if (index >= paths.length)
-            return null;
-        return buildPath(root, paths[index]);
+            return PickerTarget.init;
+        return PickerTarget(path: buildPath(root, paths[index]));
     }
 
     size_t length() const @safe pure nothrow @nogc => candidates.length;
@@ -165,4 +196,20 @@ unittest
     assert(snapshot.candidates.length == finder.length);
     foreach (candidate; snapshot.candidates)
         assert(candidate.path != "drop.tmp" && candidate.path != "build/out.d");
+}
+
+@("picker_sources.PickerTarget.filesResolveNamesNoPosition")
+@safe pure nothrow @nogc
+unittest
+{
+    // A file has no position of its own. `line`/`column` stay 0 so a host
+    // can tell "open this document" from "open it AT a place" — the
+    // distinction the grep source exists to make (`PKC3`), and one a bare
+    // path could not carry.
+    assert(PickerTarget.init.line == 0 && PickerTarget.init.column == 0);
+    assert(!PickerTarget.init.valid, "an unresolvable row names nothing");
+    assert(PickerTarget(path: "/a/b.d").valid);
+    assert(PickerTarget(path: "/a/b.d").line == 0,
+        "a files row must not claim a line it does not know");
+    assert(PickerTarget(path: "/a/b.d", line: 12, column: 3).line == 12);
 }
