@@ -450,3 +450,49 @@ Grid renderGrid(in RenderRequest req)
             ++rows;
     assert(rows == 3, "and every row of it survived, unclipped");
 }
+
+@("ui_gallery.render.dismissalRunsThroughTheToolkitEvaluator")
+@safe unittest
+{
+    // `DSM1`/`DSM2` with a real consumer: the page states a policy word, the
+    // router offers a cause, and the toolkit answers with a reason the page
+    // records. Nothing here paraphrases the requirement in an `if`.
+    import registry : pageIndexOf;
+    import state : CloseReason, Region;
+
+    Gallery app;
+    app.s.page = pageIndexOf("Overlays");
+    app.s.region = Region.content;
+
+    // `DSM9` first, because it is the one that bites: the press that OPENS a
+    // menu is delivered against the frame before the menu existed, so an
+    // evaluator without the one-frame exemption would close it on the same
+    // press and the menu would never appear at all.
+    auto opened = runAppRecorded(app, RunConfig.init, pointerScript("R34,12"),
+        (ref RecordingHost h) { h.size = Size(100, 40); h.frameSeconds = 0; });
+    assert(app.s.overlays.open, "opened, and not closed by its own press");
+    assert(app.s.overlayGeometry.paintable);
+
+    // A later press outside it closes it, and the reason travelled from the
+    // toolkit rather than being invented at the call site.
+    Gallery two;
+    two.s.page = pageIndexOf("Overlays");
+    two.s.region = Region.content;
+    auto closed = runAppRecorded(two, RunConfig.init,
+        pointerScript("R34,12 p70,30"),
+        (ref RecordingHost h) { h.size = Size(100, 40); h.frameSeconds = 0; });
+    assert(!two.s.overlays.open, "the outside press dismissed it");
+    assert(two.s.overlays.lastReason == CloseReason.pressOutside,
+        "and named why");
+
+    import sparkles.ui.canvas : OpKind;
+    static bool paints(in typeof(closed.frames[0].ops) ops, string needle)
+    {
+        foreach (op; ops)
+            if (op.kind == OpKind.textRun && op.text == needle)
+                return true;
+        return false;
+    }
+    assert(paints(opened.frames[$ - 1].ops, "Rename"), "on screen while open");
+    assert(!paints(closed.frames[$ - 1].ops, "Rename"), "and gone once closed");
+}
