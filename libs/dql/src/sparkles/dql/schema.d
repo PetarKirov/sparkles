@@ -1,10 +1,14 @@
 /**
 Compile-time DQL schema generation over the shared reflection kernel.
 
-`DqlSchema!T` walks `T` with `sparkles.reflection.visit` and reduces the walk
-to plain documentation tables — canonical paths and coarse categories — that
-the parser validates against and the help renderer prints. There is no
-per-domain policy type: naming is mechanical, and the only overrides are the
+`DqlSchema!T` reduces `T` to plain documentation tables — canonical paths
+and coarse categories — that the parser validates against and the help
+renderer prints. The collection is one direct recursion over the kernel's
+member primitives, a `static if` ladder over `typeKindOf` whose cases
+mirror `sparkles.dql.resolve.resolveValue` case for case: the path prefix
+is an ordinary argument, so a segment can neither leak out of its subtree
+nor go missing from one. There is no per-domain policy type: naming is
+mechanical (`sparkles.dql.convention`), and the only overrides are the
 neutral metadata attributes (`@Name`, `@Aliases`, `@Description`) any
 consumer of the metadata package already speaks.
 
@@ -14,7 +18,7 @@ $(UL
         attach to the parent path, so an event's `PointerEvent` variant is
         addressed as `pointer.action`, not `payload.pointer.action`)
     $(LI an alternative's segment is its type name minus an `Event` suffix,
-        first letter lowered; `@Name` on the variant type overrides)
+        recased to camelCase; `@Name` on the variant type overrides)
     $(LI a fieldless value type whose single `@property` is the value
         (`ScaleFactor`), or that slices to UTF-8 text (`InlineBuffer!(char, N)`),
         is a leaf at its own address)
@@ -32,10 +36,12 @@ import sparkles.dql.convention : descriptionOf, enumValueMatches,
     enumValueName, fieldSegmentName, variantAliasesOf, variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
 import sparkles.metadata : Aliases, Description, Name;
+import std.meta : staticIndexOf;
+import std.traits : TemplateArgsOf;
+
 import sparkles.reflection.kind : TypeKind, isScalarKind, typeKindOf;
-import sparkles.reflection.member : fieldIdentifier, fieldType,
-    isTextSliceLike, valueLikeGetter;
-import sparkles.reflection.visit : VisitControl, visitType;
+import sparkles.reflection.member : fieldCount, fieldType, isPublic,
+    isTextSliceLike, propertyGetters, valueLikeGetter;
 
 /// Runtime outcome of resolving one statically known path.
 enum DqlResolution : ubyte
@@ -55,19 +61,22 @@ struct DqlCategoryDoc
 
 /**
 The reflected DQL schema of `T`: canonical paths and categories, generated
-once per type from the reflection kernel's walk of `T`.
+once per type from one walk of `T` — `paths` and `categories` alias one
+table, so the CTFE collection runs a single time per subject.
 */
 struct DqlSchema(T)
 {
     alias Subject = T;
 
+    private static immutable CollectedSchema table = collectSchema!T();
+
     /// Every canonically addressable path, in walk order.
-    static immutable DqlPathDoc[] paths = collectSchema!T().paths;
+    static immutable DqlPathDoc[] paths = table.paths;
     /// One entry per `SumType` alternative reached by the walk.
-    static immutable DqlCategoryDoc[] categories = collectSchema!T().categories;
+    static immutable DqlCategoryDoc[] categories = table.categories;
 }
 
-// ── the schema walk: a visitType consumer ────────────────────────────────────
+// ── the schema walk: direct recursion over the member primitives ─────────────
 
 private template firstMemberName(E)
 {
@@ -88,160 +97,130 @@ private string leafExample(T)(string path) @safe pure
         return path ~ " == 0";
 }
 
-/**
-Reduces a `visitType` walk of the subject to schema tables. Segments stack
-per descent; `SumType` alternatives push a variant segment plus a mark that
-`leaveType` pops, which is what makes transparent addressing and category
-collection the same walk.
-*/
-private struct SchemaCollector
+/// The two tables one walk of a subject type produces.
+private struct CollectedSchema
 {
-    string[] segments;
-    size_t[] marks;
-    size_t[] pathMarks;
     DqlPathDoc[] paths;
     DqlCategoryDoc[] categories;
+}
 
-    private string joined() @safe pure
+private string joinSegment(string prefix, string segment) @safe pure
+    => prefix.length ? prefix ~ "." ~ segment : segment;
+
+private void emitLeaf(T)(ref CollectedSchema o, string path,
+    string description) @safe pure
+{
+    o.paths ~= DqlPathDoc(path, T.stringof, description, leafExample!T(path));
+}
+
+/// One recursion step. `Seen` holds the aggregate/sum types on the current
+/// descent branch — the only kinds that can close a cycle — so a
+/// self-referential chain terminates while sibling fields of one type both
+/// enumerate.
+private void collectType(T, Seen...)(ref CollectedSchema o, string prefix)
+{
+    static if (staticIndexOf!(T, Seen) < 0)
+        collectTypeBody!(T, Seen)(o, prefix);
+}
+
+/**
+The `static if` ladder from a type's `typeKindOf` to its addresses — the
+compile-time mirror of `resolveValue`'s ladder in `sparkles.dql.resolve`.
+The prefix is a plain argument: each case passes exactly the prefix its
+subtree owns, so a nested transparent sum cannot disturb the segments of
+the fields declared after it, and a skipped subtree leaks nothing.
+*/
+private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
+{
+    enum K = typeKindOf!T;
+    static if (K == TypeKind.sumType)
     {
-        string result;
-        foreach (segment; segments)
-        {
-            if (result.length && segment[0] != '[')
-                result ~= ".";
-            result ~= segment;
-        }
-        return result;
+        static foreach (V; TemplateArgsOf!T)
+        {{
+            o.categories ~= DqlCategoryDoc(variantNameOf!V,
+                variantAliasesOf!V, descriptionOf!V);
+            collectType!(V, Seen, T)(o, joinSegment(prefix, variantNameOf!V));
+        }}
     }
-
-    private void emitLeaf(T)() @safe pure
+    else static if (K == TypeKind.aggregate)
     {
-        emitLeafWith!T("");
-    }
-
-    private void emitLeafWith(T)(string description) @safe pure
-    {
-        paths ~= DqlPathDoc(joined(), T.stringof, description,
-            leafExample!T(joined()));
-    }
-
-    VisitControl enterType(T)()
-    {
-        pathMarks ~= paths.length;
-
         static if (!is(valueLikeGetter!T == void))
         {
             // A fieldless single-property value reads as its value.
-            emitLeafWith!(ReturnType!(valueLikeGetter!T))("");
-            return VisitControl.skip;
+            emitLeaf!(ReturnType!(valueLikeGetter!T))(o, prefix, "");
         }
         else static if (isTextSliceLike!T)
         {
             // A text buffer reads as the text it slices to.
-            emitLeafWith!(const(char)[])("");
-            return VisitControl.skip;
+            emitLeaf!(const(char)[])(o, prefix, "");
         }
         else
-            return VisitControl.descend;
-    }
-
-    void leaf(T)() { emitLeaf!T(); }
-
-    // Hidden storage is not addressable; computed values enter through the
-    // property hook below.
-    static bool includeField(T, size_t i)() @safe pure nothrow @nogc
-    {
-        const protection = __traits(getProtection, T.tupleof[i]);
-        return protection == "public" || protection == "export";
-    }
-
-    void enterField(T, size_t i)()
-    {
-        static if (typeKindOf!(fieldType!(T, i)) == TypeKind.sumType)
         {
-            // Transparent sum: the alternatives' segments attach here.
-        }
-        else
-            segments ~= fieldSegmentName!(T, i);
-    }
-
-    void leaveField(T, size_t i)()
-    {
-        static if (typeKindOf!(fieldType!(T, i)) != TypeKind.sumType)
-            segments = segments[0 .. $ - 1];
-    }
-
-    void property(alias getter)()
-    {
-        alias R = ReturnType!getter;
-        static if (isScalarKind(typeKindOf!R))
-        {
-            static if (hasUDA!(getter, Name))
-                segments ~= getUDAs!(getter, Name)[0].name;
-            else
-                segments ~= __traits(identifier, getter);
-            emitLeafWith!R(descriptionOf!getter);
-            segments = segments[0 .. $ - 1];
-        }
-    }
-
-    void sumAlternative(V, size_t ai)()
-    {
-        categories ~= DqlCategoryDoc(variantNameOf!V, variantAliasesOf!V,
-            descriptionOf!V);
-        segments ~= variantNameOf!V;
-        marks ~= segments.length;
-    }
-
-    void leaveType(T)()
-    {
-        // Defensive against an unbalanced leave (should not happen once
-        // enterType instantiates for every type).
-        if (!pathMarks.length)
-            return;
-        const pathMark = pathMarks[$ - 1];
-        pathMarks = pathMarks[0 .. $ - 1];
-
-        static if (typeKindOf!T == TypeKind.aggregate)
-        {
+            const before = o.paths.length;
+            static foreach (i; 0 .. fieldCount!T)
+            {{
+                // Hidden storage is not addressable; computed values enter
+                // through the getter loop below.
+                static if (isPublic!(T.tupleof[i]))
+                {
+                    alias F = fieldType!(T, i);
+                    static if (typeKindOf!F == TypeKind.sumType)
+                        // Transparent sum: the alternatives' segments attach
+                        // to this aggregate's address space.
+                        collectType!(F, Seen, T)(o, prefix);
+                    else
+                        collectType!(F, Seen, T)(o,
+                            joinSegment(prefix, fieldSegmentName!(T, i)));
+                }
+            }}
+            static foreach (getter; propertyGetters!T)
+            {{
+                alias R = ReturnType!getter;
+                static if (isScalarKind(typeKindOf!R))
+                {
+                    static if (hasUDA!(getter, Name))
+                        enum string getterSegment
+                            = getUDAs!(getter, Name)[0].name;
+                    else
+                        enum string getterSegment
+                            = __traits(identifier, getter);
+                    emitLeaf!R(o, joinSegment(prefix, getterSegment),
+                        descriptionOf!getter);
+                }
+            }}
             // An aggregate with no addressable members (an empty variant
             // such as `closeRequested`) is still present at its own address.
-            if (paths.length == pathMark && segments.length)
-                emitLeafWith!T("");
-        }
-
-        // A nested leaveType carries the alternative's segment plus its own
-        // field segment (or more); only the alternative's own completion —
-        // the stack back at the mark — removes the variant segment.
-        if (marks.length && segments.length <= marks[$ - 1])
-        {
-            segments = segments[0 .. marks[$ - 1] - 1];
-            marks = marks[0 .. $ - 1];
+            if (o.paths.length == before && prefix.length)
+                emitLeaf!T(o, prefix, "");
         }
     }
-
-    VisitControl sequenceElement(A, E)()
+    else static if (K == TypeKind.sequence)
     {
-        static if (isStaticArray!A)
+        static if (isStaticArray!T)
         {
-            static foreach (idx; 0 .. A.length)
-            {{
-                segments ~= "[" ~ idx.to!string ~ "]";
-                visitType!(E, SchemaCollector)(this);
-                segments = segments[0 .. $ - 1];
-            }}
+            // Static arrays enumerate their indices.
+            static foreach (idx; 0 .. T.length)
+                collectType!(typeof(T.init[0]), Seen, T)(o,
+                    prefix ~ "[" ~ idx.to!string ~ "]");
         }
-        // Static indices were enumerated above; dynamic elements have no
-        // finite address. Either way the element type itself is not a leaf.
-        return VisitControl.skip;
+        // Dynamic elements have no finite address.
     }
+    else static if (K == TypeKind.pointer)
+    {
+        collectType!(typeof(*T.init), Seen, T)(o, prefix);
+    }
+    else static if (isScalarKind(K))
+    {
+        emitLeaf!T(o, prefix, "");
+    }
+    // opaque / associative: no address.
 }
 
-private SchemaCollector collectSchema(T)() @safe
+private CollectedSchema collectSchema(T)() @safe
 {
-    SchemaCollector collector;
-    visitType!(T, SchemaCollector)(collector);
-    return collector;
+    CollectedSchema o;
+    collectType!T(o, "");
+    return o;
 }
 
 // ── membership checks (used by the schema-aware parser) ──────────────────────
@@ -297,6 +276,62 @@ bool isDqlCategory(Schema)(scope const(char)[] name) @safe pure nothrow @nogc
     assert(isDqlCategory!Schema("move"));
     assert(isDqlCategory!Schema("stop"));
     assert(!isDqlCategory!Schema("payload"));
+}
+
+@("dql.schema: a nested transparent sum keeps the enclosing prefix")
+@safe unittest
+{
+    import std.sumtype : SumType;
+
+    struct RedEvent { int r; }
+    struct BlueEvent { int b; }
+    struct PadEvent { int p; }
+
+    // Fields declared AFTER the nested sum field must keep the enclosing
+    // variant's prefix — the shape the mark-stack collector got wrong.
+    struct HostEvent
+    {
+        SumType!(RedEvent, BlueEvent) colour;
+        int after;
+        bool tail;
+    }
+
+    alias Schema = DqlSchema!(SumType!(HostEvent, PadEvent));
+
+    assert(isDqlPath!Schema("host.red.r"));
+    assert(isDqlPath!Schema("host.blue.b"));
+    assert(isDqlPath!Schema("host.after"));
+    assert(isDqlPath!Schema("host.tail"));
+    assert(isDqlPath!Schema("pad.p"));
+    assert(!isDqlPath!Schema("after"));
+    assert(!isDqlPath!Schema("tail"));
+}
+
+@("dql.schema: a value-like alternative leaks no prefix onto its siblings")
+@safe unittest
+{
+    import std.sumtype : SumType;
+
+    struct Tag
+    {
+        private int value_ = 1;
+        @property int value() const pure nothrow @nogc => value_;
+    }
+
+    struct StopEvent { bool forced; }
+    struct GoEvent { int speed; }
+
+    // The value-like first alternative is a leaf at its own address; the
+    // later alternatives' paths carry no trace of it — the shape where the
+    // skipped-subtree walk left its variant segment unpopped.
+    alias Schema = DqlSchema!(SumType!(Tag, StopEvent, GoEvent));
+
+    assert(Schema.paths.length == 3);
+    assert(isDqlPath!Schema("tag"));
+    assert(isDqlPath!Schema("stop.forced"));
+    assert(isDqlPath!Schema("go.speed"));
+    assert(!isDqlPath!Schema("tag.stop.forced"));
+    assert(!isDqlPath!Schema("tag.go.speed"));
 }
 
 @("dql.schema: nested sums, static arrays, and value-like leaves")
