@@ -994,8 +994,13 @@ private final class Printer
     /// the continuation scope.
     private Doc[] buildStatement(const Group g, const Item[] run) @safe
     {
+        // `run.length > 1`: a statement that is *only* a braced block — an
+        // anonymous scope under a `case` label — has no header to leave the
+        // brace behind, and splitting it off would emit the trailer's leading
+        // hardline on top of the one the caller already placed, growing the
+        // gap by a line on every pass.
         size_t tail = run.length;
-        if (run.length && run[$ - 1].kind == ItemKind.child &&
+        if (run.length > 1 && run[$ - 1].kind == ItemKind.child &&
             run[$ - 1].newlinesBefore > 0 && braceBodied(g, run[$ - 1]))
             tail = run.length - 1;
 
@@ -1065,7 +1070,7 @@ private final class Printer
         // comment between a clause header and its body pushes the body right.
         if (startsOwnLineComment(head[$ - 1]))
             return parts ~ [hardline]
-                ~ buildStatementRun(g, run[brk .. $], false);
+                ~ buildStatementRun(g, run[brk .. $], false, trailer);
         return parts ~ [indented(joinInline(g, run[brk .. $], false,
             /*leadingBreak*/ true))] ~ trailer;
     }

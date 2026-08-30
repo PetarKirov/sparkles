@@ -305,3 +305,50 @@ void f()
 ```
 
 :::
+
+## A comment before a nested clause does not swallow the block below it
+
+`P41` and `P38` meeting: the comment makes the header and its body siblings, and the braced body
+still has to arrive. It went missing once — the sibling path returned without the block it was
+carrying — and the tier-3 verifier caught it on `apps/hue/src/git_status.d`, which is the
+difference between a formatter and a shredder.
+
+<!-- fmt id=P41 -->
+
+::: code-group
+
+```d [Before]
+void f()
+{
+    if (a)
+x();
+    else
+// note
+        for (int i; i < n; i++)
+if (b)
+        {
+y();
+                break;
+        }
+    z();
+}
+```
+
+```d [After]
+void f()
+{
+    if (a)
+        x();
+    else
+        // note
+        for (int i; i < n; i++)
+            if (b)
+            {
+                y();
+                break;
+            }
+    z();
+}
+```
+
+:::
