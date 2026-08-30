@@ -88,6 +88,27 @@ already uses everywhere.
 **The prose above each group is the rule statement.** It is what a user reads and what a reviewer
 checks the behaviour against; there is no separate test name to drift from it.
 
+### TST16 — The input must be misformatted
+
+**A case's Before block must differ from its After block.** A fixture whose input is already its
+own output demonstrates nothing: the reader sees two identical blocks and has to take the prose's
+word for what the rule does — which is the drift an executed page exists to prevent, reintroduced
+in the one place that was supposed to close it. Break the input on purpose: wrong indentation,
+joined lines, doubled spaces, a blank run where none belongs.
+
+Published cases carry a second obligation: misformat them the way a **person** would. A reader
+learns more from an input that looks like a plausible mistake — an attribute indented as though it
+were a continuation, a nested body under-indented — than from randomised noise, and the rule reads
+as something that helps rather than something that tidies.
+
+The exception is a case whose _subject_ is that nothing changes: a verbatim region, a suppression
+range, an already-canonical form the formatter must not touch. Those declare `fixedpoint` in the
+directive. That is a claim about the rule, not an excuse for the fixture, and the runner enforces
+the distinction — an unmarked no-op case fails, naming both remedies.
+
+The check is cheap and it caught nineteen existing cases the day it was written, four of them on
+the published page.
+
 ### TST2 — Decision tags and the coverage gate
 
 Every case carries zero or more decision IDs in its `<!-- fmt id=… -->` directive, drawn from the

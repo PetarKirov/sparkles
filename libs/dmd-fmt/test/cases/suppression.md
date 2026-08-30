@@ -10,11 +10,12 @@ The M3 do-no-harm valve, pushed into the corners. Unpublished (`TST3`).
 
 ```d [Before]
 enum t = [
-    // dfmt off
+        // dfmt off
     [1,   0,  0],
     [0, 1,    0],
-    // dfmt on
+        // dfmt on
 ];
+auto after   =   1;
 ```
 
 ```d [After]
@@ -22,8 +23,9 @@ enum t = [
     // dfmt off
     [1,   0,  0],
     [0, 1,    0],
-    // dfmt on
+        // dfmt on
 ];
+auto after = 1;
 ```
 
 :::

@@ -40,9 +40,20 @@ titled `[key=value]` is a $(B variant): those keys are merged over the case's
 own, so one group documents an option by showing each of its values as a tab.
 
 $(B Directive keys.) `id=P19` (a decision id, or several, comma-separated) ·
-`width=60` · plus any [FormatConfig] key spelled as its `.editorconfig` name
-(`indent_size`, `indent_style`, `tab_width`, `max_blank_lines`,
-`insert_final_newline`).
+`width=60` · `fixedpoint` (see below) · plus any [FormatConfig] key spelled as
+its `.editorconfig` name (`indent_size`, `indent_style`, `tab_width`,
+`max_blank_lines`, `insert_final_newline`).
+
+$(B The input must be misformatted) (`TST16`). A case whose Before block is
+already its own After demonstrates nothing: a reader sees two identical blocks
+and has to take the prose's word for what the rule does, which is exactly the
+drift an executed page exists to prevent. Break the input on purpose — wrong
+indentation, joined lines, doubled spaces — so the pair shows the rule working.
+
+The exception is a case whose $(I subject) is that nothing changes: a verbatim
+region, a suppression range, an already-canonical form the formatter must not
+touch. Those say `fixedpoint` in the directive, which is a claim about the rule
+rather than an excuse for the fixture.
 
 $(B Running one case) applies the four-step `TST4` pipeline: format and compare,
 [verifyFormat], [checkConvergence], and idempotence on the expectation itself —
@@ -212,6 +223,21 @@ CaseResult[] runCase(const Case c) @system
         auto r = CaseResult(c.label ~ " [" ~ exp.title ~ "]", c.line, true);
         const cfg = configFor(c, exp.title);
         const got = formatText(c.input, cfg);
+
+        // `TST16`: a case whose input is already its own output demonstrates
+        // nothing — a reader sees two identical blocks and learns what the
+        // rule does from the prose alone, which is the drift the executed page
+        // exists to prevent. Misformat the input, or say `fixedpoint` and mean
+        // it.
+        if (c.input == exp.text && !("fixedpoint" in c.meta))
+        {
+            r.ok = false;
+            r.error = "the input is already formatted — misformat it so the"
+                ~ " Before/After pair shows the rule, or mark the case"
+                ~ " `fixedpoint` if not changing it IS the rule";
+            results ~= r;
+            continue;
+        }
 
         if (got != exp.text)
         {
@@ -1233,10 +1259,30 @@ private bool hueUsable() @safe
 {
     // Step 4: an expectation the formatter would not itself produce fails even
     // when the input formats to it — impossible for a real formatter, and the
-    // check that catches the day it stops being impossible.
-    enum md = "<!-- fmt id=P19 -->\n\n::: code-group\n\n"
+    // check that catches the day it stops being impossible. `fixedpoint`
+    // because not changing the input is this case's whole subject.
+    enum md = "<!-- fmt id=P19 fixedpoint -->\n\n::: code-group\n\n"
         ~ "```d [Before]\nint a;\n```\n\n```d [After]\nint a;\n```\n\n:::\n";
     foreach (r; runCase(parseCases(md)[0]))
+        assert(r.ok, r.error);
+}
+
+@("cases.run.an-already-formatted-input-is-a-failure")
+@system unittest
+{
+    // `TST16`: a Before that is already its own After shows the reader
+    // nothing. The opt-out is a claim about the rule, so it has to be written
+    // down — the version without it fails.
+    enum inert = "<!-- fmt id=P19 -->\n\n::: code-group\n\n"
+        ~ "```d [Before]\nint a;\n```\n\n```d [After]\nint a;\n```\n\n:::\n";
+    const results = runCase(parseCases(inert)[0]);
+    assert(results.length == 1 && !results[0].ok);
+    assert(results[0].error.canFind("already formatted"), results[0].error);
+
+    // A case that really does change something is unaffected.
+    enum live = "<!-- fmt id=P19 -->\n\n::: code-group\n\n"
+        ~ "```d [Before]\nint  a;\n```\n\n```d [After]\nint a;\n```\n\n:::\n";
+    foreach (r; runCase(parseCases(live)[0]))
         assert(r.ok, r.error);
 }
 

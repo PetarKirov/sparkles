@@ -10,24 +10,24 @@ The leading attribute run and the declaration head it modifies. Unpublished (`TS
 
 ```d [Before]
 @("n")
-@safe
-@nogc
+    @safe
+        @nogc
 void named()
 {
-    return;
+        return;
 }
 
 @(SomeAttr)
-struct WithExprUda
+        struct WithExprUda
 {
-    int a;
+  int a;
 }
 
-@safe @nogc
-@("both on one line, then a break")
+@safe   @nogc
+    @("both on one line, then a break")
 void mixed()
 {
-    return;
+   return;
 }
 ```
 
@@ -64,16 +64,16 @@ void mixed()
 
 ```d [Before]
 static
-private
+    private
 void keywordPrefix()
 {
-    return;
+        return;
 }
 
 void afterHead()
-    @safe
+@safe
 {
-    return;
+  return;
 }
 ```
 
@@ -104,9 +104,9 @@ void afterHead()
 void f()
 {
     auto x = aaa +
-        bbb;
+bbb;
     auto y = foo(a)
-        .bar(b);
+            .bar(b);
 }
 ```
 
@@ -130,19 +130,19 @@ void f()
 
 ```d [Before]
 void a() {}
-void b()
+    void b()
 {
-}
+        }
 struct C
 {
-}
+  }
 void d()
 {
-    // only a comment
+// only a comment
 }
 unittest
 {
-}
+    }
 ```
 
 ```d [After]
@@ -172,12 +172,12 @@ unittest
 
 ```d [Before]
 @safe
-auto tr(T)(T a)
-if (isX!T)
-in (a > 0)
-out (r; r > 0)
+    auto tr(T)(T a)
+        if (isX!T)
+        in (a > 0)
+            out (r; r > 0)
 {
-    return a;
+        return a;
 }
 ```
 

@@ -12,18 +12,18 @@ Clause nesting, and the boundary between a nested clause and a wrapped expressio
 ```d [Before]
 void f()
 {
-    version (X)
-        foreach (i; 0 .. n)
-            if (c)
-                g();
+version (X)
+foreach (i; 0 .. n)
+if (c)
+g();
 
-    foreach (i; 0 .. n)
-        if (c)
+        foreach (i; 0 .. n)
+    if (c)
             return;
 
-    while (c)
-        with (obj)
-            use();
+  while (c)
+      with (obj)
+   use();
 }
 ```
 
@@ -57,12 +57,12 @@ void f()
 void f()
 {
     auto x = aaa +
-        bbb +
-        ccc +
-        ddd;
+bbb +
+            ccc +
+  ddd;
     auto y = foo(a)
-        .bar(b)
-        .baz(c);
+.bar(b)
+                .baz(c);
 }
 ```
 
@@ -91,11 +91,11 @@ void f()
 void f()
 {
     if (c)
-        x = a +
-            b;
+x = a +
+b;
     foreach (e; es)
-        sink(e,
-            other);
+            sink(e,
+    other);
 }
 ```
 
@@ -123,16 +123,16 @@ void f()
 void f()
 {
     if (a)
-        x();
+x();
     else
-        y();
+            y();
 
     if (a)
-        x();
+  x();
     else if (b)
-        y();
+            y();
     else
-        z();
+z();
 }
 ```
 
@@ -165,9 +165,9 @@ void f()
 void f()
 {
     foo(a)
-        .bar();
+.bar();
     check(value)
-        ;
+            ;
 }
 ```
 
@@ -193,12 +193,12 @@ void f()
 void f()
 {
     if (ready)
-        // why
+// why
         // and why again
-        prepare();
+prepare();
 
     auto x = a + // note
-        b;
+b;
 }
 ```
 
