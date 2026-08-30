@@ -154,11 +154,19 @@ private StructuralFacts collectFactsImpl(const(char)[] source) @system
     import dmd.frontend : parseModule;
     import dmd.globals : global;
 
-    const errorsBefore = global.errors;
+    // Parse speculatively: gagging is DMD's own idiom for "I want the AST, not
+    // the diagnostics", and it is load-bearing here for a second reason —
+    // `endGagging` unwinds `global.errors` as well as suppressing output. That
+    // counter is process-global and the frontend aborts once it passes
+    // `errorLimit`, so without this, formatting the twenty-first unparseable
+    // file in one process killed the process (an LSP session, a `--check`
+    // sweep, or this library's own test suite).
+    const gaggedBefore = global.startGagging();
     auto parsed = parseModule("dmd_fmt_oracle.d", source);
+    const gaggedErrors = global.endGagging(gaggedBefore);
 
     StructuralFacts facts;
-    facts.parsed = parsed.module_ !is null && global.errors == errorsBefore;
+    facts.parsed = parsed.module_ !is null && !gaggedErrors;
     if (parsed.module_ is null)
         return facts;
 
@@ -285,6 +293,20 @@ private extern (C++) final class FactsVisitor : SemanticTimeTransitiveVisitor
     assert(facts.constraintMarkers[0] > ifAt + 3);
     const bodyAt = cast(uint) src.countUntil("{");
     assert(facts.bodyMarkers[0] == bodyAt);
+}
+
+@("oracle.parse.unparseable-input-does-not-exhaust-the-error-limit")
+@system unittest
+{
+    // `global.errors` is process-global and the frontend aborts once it passes
+    // `errorLimit` (20 by default), so an ungagged speculative parse made the
+    // twenty-first unparseable file in a session fatal. Thirty is comfortably
+    // past that.
+    foreach (_; 0 .. 30)
+    {
+        const facts = collectFacts("auto broken = foo(\n a,\n b\n");
+        assert(!facts.parsed, "precondition: this input does not parse");
+    }
 }
 
 @("oracle.collectFacts.broken-input-degrades")
