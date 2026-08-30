@@ -72,7 +72,7 @@ import sparkles.base.text.readers : readInteger;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.input.events : Event, EndOfInput, FocusEvent, isNoEvent, Key,
-    KeyAction,
+    KeyAction, keyWireName,
     KeyEvent, Mods, NoEvent, PointerAction, PointerButton, PointerEvent, Point,
     ResizeEvent, Size, WheelEvent;
 
@@ -350,33 +350,30 @@ SmallBuffer!(char, 64) eventLine(in Event e) pure nothrow @nogc
 // Token vocabulary — one table per enum, both directions from one place.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Written as paired functions over a single `static foreach` rather than two
-// literal tables: a name that parses but does not write (or the reverse) breaks
-// the round-trip property silently, and the only way to be sure is to have one
-// source for both directions.
-private static immutable string[30] keyNames = [
-    "none", "char", "up", "down", "left", "right",
-    "home", "end", "pageup", "pagedown", "insert", "delete",
-    "enter", "tab", "backspace", "escape",
-    "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-    "back", "menu",
-];
+// The key vocabulary is NOT redeclared here. `Key` carries its own wire names
+// as UDAs and $(REF keyWireName, sparkles,input,events) reads them, so this
+// module names keys through that one table rather than a parallel copy — which
+// is not a stylistic preference: the copy existed for a while, a `Key` member
+// was added upstream, and the round-trip test below went out of bounds on the
+// next rebase. A second table for one enum is `PRN8`, and this is what it costs.
 
 private string keyName(Key k) pure nothrow @nogc
-    => keyNames[cast(size_t) k];
+    => keyWireName(k);
 
 private bool keyFromName(scope const(char)[] s, out Key k) pure nothrow @nogc
 {
-    foreach (i, n; keyNames)
-        if (s == n)
-        {
-            // `char` and `none` are not named keys on a line: `char` has its
-            // own verb (it needs a code point) and `none` is not an event.
-            if (i == cast(size_t) Key.char_ || i == cast(size_t) Key.none)
-                return false;
-            k = cast(Key) i;
-            return true;
-        }
+    static foreach (m; __traits(allMembers, Key))
+    {{
+        enum candidate = __traits(getMember, Key, m);
+        // `char` has its own verb (it needs a code point) and `none` is not an
+        // event, so neither is a name a line may use.
+        static if (candidate != Key.char_ && candidate != Key.none)
+            if (s == keyWireName(candidate))
+            {
+                k = candidate;
+                return true;
+            }
+    }}
     return false;
 }
 
