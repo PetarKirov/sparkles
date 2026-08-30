@@ -107,7 +107,12 @@ if (isNumeric!T && N > 0)
 
     union
     {
-        T[N] data = 0;
+        // Private on purpose: the named components are the public storage
+        // view, and structural-reflection consumers (the property tree, DQL
+        // schemas) must see exactly one address per component — a public
+        // `data` would put every component at two addresses. Index access
+        // goes through `opIndex`/`opSlice` below.
+        private T[N] data = 0;
         struct
         {
             static foreach (field; fieldNames)
@@ -188,6 +193,23 @@ if (isNumeric!T && N > 0)
             result += cast(CommonType!(T, U)) data[i] * rhs.data[i];
         return result;
     }
+
+    /// Component access by index (`v[0]`), read and write.
+    ref inout(T) opIndex(size_t i) inout return @safe pure nothrow @nogc
+    in (i < N, "Vector index out of range")
+        => data[i];
+
+    /// The components as a slice of this vector's own storage (`v[]`).
+    inout(T)[] opIndex() inout return @safe pure nothrow @nogc
+        => data[];
+
+    /// ditto (`v[1 .. 3]`)
+    inout(T)[] opSlice(size_t i, size_t j) inout return @safe pure nothrow @nogc
+    in (i <= j && j <= N, "Vector slice out of range")
+        => data[i .. j];
+
+    /// Supports `$` in index and slice expressions.
+    enum size_t opDollar = N;
 
     /// Swizzle read access (`v.xzy`, `v.xyyzzx`, etc.).
     @property Vector!(T, swizzle.length) opDispatch(string swizzle)() const
@@ -283,6 +305,19 @@ unittest
 }
 
 /// Component-wise arithmetic and in-place updates.
+@("Vector.indexAccess")
+@safe pure nothrow @nogc
+unittest
+{
+    auto v = Vec3f(1, 2, 3);
+    assert(v[0] == 1 && v[2] == 3);
+    assert(v[$ - 1] == 3);
+    v[1] = 20;
+    assert(v.y == 20);
+    assert(v[] == [1f, 20f, 3f]);
+    assert(v[1 .. $] == [20f, 3f]);
+}
+
 @("Vector.arithmetic")
 @safe pure nothrow @nogc
 unittest
