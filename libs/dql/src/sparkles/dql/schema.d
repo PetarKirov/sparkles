@@ -65,11 +65,16 @@ The reflected DQL schema of `T`: canonical paths and categories, generated
 once per type from one walk of `T` — `paths` and `categories` alias one
 table, so the CTFE collection runs a single time per subject.
 */
-struct DqlSchema(T)
+struct DqlSchema(T, string strippedSuffix_ = "Event")
 {
     alias Subject = T;
 
-    private static immutable CollectedSchema table = collectSchema!T();
+    /// The type-name suffix mechanical variant naming strips — declared by
+    /// the schema instantiation, threaded through both walks.
+    enum string strippedSuffix = strippedSuffix_;
+
+    private static immutable CollectedSchema table
+        = collectSchema!(T, strippedSuffix)();
 
     /// Every canonically addressable path, in walk order.
     static immutable DqlPathDoc[] paths = table.paths;
@@ -144,10 +149,11 @@ private void emitLeaf(T)(ref CollectedSchema o, string path,
 /// descent branch — the only kinds that can close a cycle — so a
 /// self-referential chain terminates while sibling fields of one type both
 /// enumerate.
-private void collectType(T, Seen...)(ref CollectedSchema o, string prefix)
+private void collectType(T, string suffix, Seen...)(ref CollectedSchema o,
+    string prefix)
 {
     static if (staticIndexOf!(T, Seen) < 0)
-        collectTypeBody!(T, Seen)(o, prefix);
+        collectTypeBody!(T, suffix, Seen)(o, prefix);
 }
 
 /**
@@ -157,16 +163,18 @@ The prefix is a plain argument: each case passes exactly the prefix its
 subtree owns, so a nested transparent sum cannot disturb the segments of
 the fields declared after it, and a skipped subtree leaks nothing.
 */
-private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
+private void collectTypeBody(T, string suffix, Seen...)(ref CollectedSchema o,
+    string prefix)
 {
     enum K = typeKindOf!T;
     static if (K == TypeKind.sumType)
     {
         static foreach (V; TemplateArgsOf!T)
         {{
-            o.addCategory(DqlCategoryDoc(variantNameOf!V,
+            o.addCategory(DqlCategoryDoc(variantNameOf!(V, suffix),
                 variantAliasesOf!V, descriptionOf!V), V.mangleof);
-            collectType!(V, Seen, T)(o, joinSegment(prefix, variantNameOf!V));
+            collectType!(V, suffix, Seen, T)(o,
+                joinSegment(prefix, variantNameOf!(V, suffix)));
         }}
     }
     else static if (K == TypeKind.aggregate)
@@ -194,10 +202,10 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
                     static if (typeKindOf!F == TypeKind.sumType)
                         // Transparent sum: the alternatives' segments attach
                         // to this aggregate's address space.
-                        collectType!(F, Seen, T)(o, prefix);
+                        collectType!(F, suffix, Seen, T)(o, prefix);
                     else
                     {
-                        collectType!(F, Seen, T)(o,
+                        collectType!(F, suffix, Seen, T)(o,
                             joinSegment(prefix, fieldSegmentName!(T, i)));
                         // `@Aliases` on a leaf field: alternative spellings
                         // of its (single) emitted path. Aliases on composite
@@ -236,14 +244,14 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
         {
             // Static arrays enumerate their indices.
             static foreach (idx; 0 .. T.length)
-                collectType!(typeof(T.init[0]), Seen, T)(o,
+                collectType!(typeof(T.init[0]), suffix, Seen, T)(o,
                     prefix ~ "[" ~ idx.to!string ~ "]");
         }
         // Dynamic elements have no finite address.
     }
     else static if (K == TypeKind.pointer)
     {
-        collectType!(typeof(*T.init), Seen, T)(o, prefix);
+        collectType!(typeof(*T.init), suffix, Seen, T)(o, prefix);
     }
     else static if (isScalarKind(K))
     {
@@ -252,12 +260,12 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
     // opaque / associative: no address.
 }
 
-private CollectedSchema collectSchema(T)() @safe
+private CollectedSchema collectSchema(T, string suffix = "Event")() @safe
 {
     import sparkles.reflection.member : firstDuplicate;
 
     CollectedSchema o;
-    collectType!T(o, "");
+    collectType!(T, suffix)(o, "");
 
     // Generated names must be injective or the first spelling silently
     // shadows the second in every lookup; a collision is a schema bug in
@@ -344,6 +352,33 @@ bool isDqlCategory(Schema)(scope const(char)[] name) @safe pure nothrow @nogc
     assert(isDqlCategory!Schema("move"));
     assert(isDqlCategory!Schema("stop"));
     assert(!isDqlCategory!Schema("payload"));
+}
+
+@("dql.schema: the stripped variant suffix is the vocabulary's to declare")
+@safe unittest
+{
+    import std.sumtype : SumType;
+
+    struct ReadyMsg { bool ok; }
+    struct FailedMsg { int code; }
+    alias Subject = SumType!(ReadyMsg, FailedMsg);
+
+    // The default suffix is "Event", so nothing is stripped here…
+    alias EventSchema = DqlSchema!Subject;
+    assert(isDqlPath!EventSchema("readyMsg.ok"));
+
+    // …while a vocabulary declaring its own suffix gets its spellings.
+    alias MsgSchema = DqlSchema!(Subject, "Msg");
+    assert(isDqlPath!MsgSchema("ready.ok"));
+    assert(isDqlPath!MsgSchema("failed.code"));
+    assert(isDqlCategory!MsgSchema("ready"));
+    assert(!isDqlPath!MsgSchema("readyMsg.ok"));
+
+    // The resolver follows the schema's declared suffix.
+    import sparkles.dql.resolve : resolveDqlCategory;
+    Subject event = ReadyMsg(true);
+    assert(resolveDqlCategory!MsgSchema(event, "ready"));
+    assert(!resolveDqlCategory!MsgSchema(event, "failed"));
 }
 
 @("dql.schema: colliding generated names are rejected at compile time")

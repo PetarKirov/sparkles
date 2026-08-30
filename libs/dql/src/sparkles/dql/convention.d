@@ -16,24 +16,29 @@ import std.traits : getUDAs, hasUDA;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
 import sparkles.metadata : Aliases, Description, Name;
 
-/// The mechanical query spelling of a variant type name: an `Event` suffix
-/// stripped, the rest recased to camelCase (acronym-aware, so `IMEEvent`
-/// reads `ime`, not `iME`).
-package(sparkles.dql) string mechanicalVariantName(string raw) @safe pure
+/// The mechanical query spelling of a variant type name: the schema's
+/// declared suffix stripped (when the name is longer than it), the rest
+/// recased to camelCase (acronym-aware, so `IMEEvent` reads `ime`, not
+/// `iME`).
+package(sparkles.dql) string mechanicalVariantName(string raw,
+    string suffix) @safe pure
 {
-    if (raw.length > 5 && raw[$ - 5 .. $] == "Event")
-        raw = raw[0 .. $ - 5];
+    if (suffix.length && raw.length > suffix.length
+        && raw[$ - suffix.length .. $] == suffix)
+        raw = raw[0 .. $ - suffix.length];
     return convertCase!(CaseStyle.camelCase)(raw);
 }
 
 /// The query segment of a `SumType` alternative: the mechanical spelling of
 /// its type name, unless a `@Name` UDA on the variant type overrides it.
-package(sparkles.dql) template variantNameOf(V)
+/// `suffix` is the subject vocabulary's declared type-name suffix
+/// (`DqlSchema`'s `strippedSuffix` parameter).
+package(sparkles.dql) template variantNameOf(V, string suffix = "Event")
 {
     static if (hasUDA!(V, Name))
         enum string variantNameOf = getUDAs!(V, Name)[0].name;
     else
-        enum string variantNameOf = mechanicalVariantName(V.stringof);
+        enum string variantNameOf = mechanicalVariantName(V.stringof, suffix);
 }
 
 /// Additional accepted category tokens for a variant: `@Aliases`.
@@ -218,12 +223,15 @@ package(sparkles.dql) size_t consumeIndex(scope const(char)[] path,
 @("dql.convention: mechanical variant names are acronym-aware")
 @safe pure unittest
 {
-    assert(mechanicalVariantName("PointerEvent") == "pointer");
-    assert(mechanicalVariantName("NoWindowEvent") == "noWindow");
-    assert(mechanicalVariantName("IMEEvent") == "ime");
-    assert(mechanicalVariantName("EndOfInput") == "endOfInput");
+    assert(mechanicalVariantName("PointerEvent", "Event") == "pointer");
+    assert(mechanicalVariantName("NoWindowEvent", "Event") == "noWindow");
+    assert(mechanicalVariantName("IMEEvent", "Event") == "ime");
+    assert(mechanicalVariantName("EndOfInput", "Event") == "endOfInput");
     // A type literally named `Event` keeps its name rather than vanishing.
-    assert(mechanicalVariantName("Event") == "event");
+    assert(mechanicalVariantName("Event", "Event") == "event");
+    // The suffix is the vocabulary's to declare.
+    assert(mechanicalVariantName("ReadyMsg", "Msg") == "ready");
+    assert(mechanicalVariantName("ReadyEvent", "") == "readyEvent");
 }
 
 @("dql.convention: consume matches segments and separators")

@@ -40,7 +40,7 @@ private auto propertyValue(T, alias getter)(ref const T value)
     return __traits(getMember, value, __traits(identifier, getter))();
 }
 
-private DqlResolution resolveValue(T, Sink)(ref const T value,
+private DqlResolution resolveValue(T, string suffix, Sink)(ref const T value,
     scope const(char)[] path, scope Sink sink, size_t hops)
 {
     alias K = typeKindOf!T;
@@ -56,7 +56,7 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
     {
         if (hops >= maxHops || value is null)
             return DqlResolution.absent;
-        return resolveValue(*value, path, sink, hops + 1);
+        return resolveValue!(typeof(*value), suffix, Sink)(*value, path, sink, hops + 1);
     }
     else static if (K == TypeKind.sumType)
     {
@@ -69,7 +69,7 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
         {{
             if (!matched)
             {
-                size_t consumed = consume(path, variantNameOf!V);
+                size_t consumed = consume(path, variantNameOf!(V, suffix));
                 static foreach (aliasName; variantAliasesOf!V)
                     if (!consumed)
                         consumed = consume(path, aliasName);
@@ -84,7 +84,7 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
                         static if (is(Unqual!(typeof(active)) == V))
                         {
                             isActive = true;
-                            result = resolveValue(active,
+                            result = resolveValue!(V, suffix, Sink)(active,
                                 path[consumed .. $], sink, hops);
                         }
                     });
@@ -135,8 +135,8 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
                 // generated them.
                 if (!matched)
                 {
-                    const sub = resolveValue(value.tupleof[i], path, sink,
-                        hops);
+                    const sub = resolveValue!(F, suffix, Sink)(
+                        value.tupleof[i], path, sink, hops);
                     if (sub != DqlResolution.unknown)
                     {
                         matched = true;
@@ -160,8 +160,9 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
                     if (consumed)
                     {
                         matched = true;
-                        result = resolveValue(value.tupleof[i],
-                            path[consumed .. $], sink, hops);
+                        result = resolveValue!(F, suffix, Sink)(
+                            value.tupleof[i], path[consumed .. $], sink,
+                            hops);
                     }
                 }
             }
@@ -217,7 +218,8 @@ private DqlResolution resolveValue(T, Sink)(ref const T value,
             return DqlResolution.unknown;
         if (index >= value.length)
             return DqlResolution.absent;
-        return resolveValue(value[index], path[consumed .. $], sink, hops);
+        return resolveValue!(typeof(value[index]), suffix, Sink)(
+            value[index], path[consumed .. $], sink, hops);
     }
     else static if (K == TypeKind.associative)
     {
@@ -242,10 +244,11 @@ registry.
 DqlResolution resolveDqlPath(Schema, Sink)(ref const Schema.Subject subject,
     scope const(char)[] path, scope Sink sink)
 {
-    return resolveValue!(Schema.Subject, Sink)(subject, path, sink, 0);
+    return resolveValue!(Schema.Subject, Schema.strippedSuffix, Sink)(
+        subject, path, sink, 0);
 }
 
-private bool categoryIn(T)(ref const T value,
+private bool categoryIn(T, string suffix)(ref const T value,
     scope const(char)[] category) @safe pure nothrow @nogc
 {
     alias K = typeKindOf!T;
@@ -254,14 +257,14 @@ private bool categoryIn(T)(ref const T value,
         bool result;
         value.match!((auto ref active) {
             alias V = Unqual!(typeof(active));
-            result = category == variantNameOf!V;
+            result = category == variantNameOf!(V, suffix);
             static foreach (aliasName; variantAliasesOf!V)
                 result |= category == aliasName;
             // The schema collects categories from every alternative the
             // walk reaches, nested sums included — matching recurses into
             // the active alternative so those categories can come true.
             if (!result)
-                result = categoryIn(active, category);
+                result = categoryIn!(V, suffix)(active, category);
         });
         return result;
     }
@@ -271,7 +274,8 @@ private bool categoryIn(T)(ref const T value,
         {
             static if (includeField!(T, i)
                 && typeKindOf!(fieldType!(T, i)) == TypeKind.sumType)
-                if (categoryIn(value.tupleof[i], category))
+                if (categoryIn!(fieldType!(T, i), suffix)(
+                        value.tupleof[i], category))
                     return true;
         }
         return false;
@@ -285,7 +289,8 @@ private bool categoryIn(T)(ref const T value,
 bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
     scope const(char)[] category) @safe pure nothrow @nogc
 {
-    return categoryIn(subject, category);
+    return categoryIn!(Schema.Subject, Schema.strippedSuffix)(
+        subject, category);
 }
 
 @("dql.resolve: transparent sums distinguish value, absent, and unknown")
