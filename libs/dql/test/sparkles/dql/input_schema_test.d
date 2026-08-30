@@ -9,19 +9,19 @@ only input-side contributions are neutral metadata (`@Name`/`@Aliases` on
 */
 module sparkles.dql.input_schema_test;
 
-version (unittest)
-{
+version (unittest):
+
 import std.sumtype : SumType;
 
 import sparkles.dql.engine : DqlEngine;
-import sparkles.dql.eval : evalDql;
-import sparkles.dql.parser : parseDql;
 import sparkles.dql.schema : DqlSchema, isDqlCategory, isDqlPath;
+import sparkles.dql.testing : parseAndEvalDql;
 import sparkles.input : Event, FocusEvent, Gesture, GestureEvent, Key, KeyAction,
     KeyEvent, Mods, NoEvent, Point, PointerAction, PointerButton, PointerEvent,
     ResizeEvent, WheelEvent;
 
 alias InputSchema = DqlSchema!Event;
+alias parseAndEval = parseAndEvalDql!InputSchema;
 
 @("dql.input-schema: canonical paths mirror the event vocabulary")
 @safe unittest
@@ -72,18 +72,11 @@ alias InputSchema = DqlSchema!Event;
         "key.mods.meta == false",
         "key.text == ``",        // no text paired
     ])
-    {
-        auto parsed = parseDql!InputSchema(engine, query);
-        assert(parsed.hasValue, parsed.error.message);
-        assert(evalDql!InputSchema(engine, parsed.value, event), query);
-    }
+        assert(parseAndEval(engine, query, event), query);
 
     // Inactive variants are absent, not null and not matching.
-    auto wrong = parseDql!InputSchema(engine, "pointer.button == left");
-    assert(wrong.hasValue && !evalDql!InputSchema(engine, wrong.value, event));
-    auto nullCheck = parseDql!InputSchema(engine, "pointer.button == null");
-    assert(nullCheck.hasValue
-        && evalDql!InputSchema(engine, nullCheck.value, event));
+    assert(!parseAndEval(engine, "pointer.button == left", event));
+    assert(parseAndEval(engine, "pointer.button == null", event));
 }
 
 @("dql.input-schema: computed key text resolves from the event's own storage")
@@ -95,12 +88,8 @@ alias InputSchema = DqlSchema!Event;
     stroke.text("hello");
     Event event = stroke;
 
-    auto parsed = parseDql!InputSchema(engine, "key.text == `hello`");
-    assert(parsed.hasValue, parsed.error.message);
-    assert(evalDql!InputSchema(engine, parsed.value, event));
-
-    auto other = parseDql!InputSchema(engine, "key.text != `world`");
-    assert(other.hasValue && evalDql!InputSchema(engine, other.value, event));
+    assert(parseAndEval(engine, "key.text == `hello`", event));
+    assert(parseAndEval(engine, "key.text != `world`", event));
 }
 
 @("dql.input-schema: pointer coordinates and derived-value queries")
@@ -117,26 +106,14 @@ alias InputSchema = DqlSchema!Event;
         "pointer.action == move",
         "pointer.pointerId == 3",
     ])
-    {
-        auto parsed = parseDql!InputSchema(engine, query);
-        assert(parsed.hasValue, parsed.error.message);
-        assert(evalDql!InputSchema(engine, parsed.value, pointer) == true,
-            query);
-    }
+        assert(parseAndEval(engine, query, pointer), query);
 
-    auto outside = parseDql!InputSchema(engine, "pointer.pos.x > 160");
-    assert(outside.hasValue
-        && !evalDql!InputSchema(engine, outside.value, pointer));
+    assert(!parseAndEval(engine, "pointer.pos.x > 160", pointer));
 
     // A present scalar is not null, whatever its value.
-    auto nullCheck = parseDql!InputSchema(engine, "pointer.pos.x == null");
-    assert(nullCheck.hasValue
-        && !evalDql!InputSchema(engine, nullCheck.value, pointer));
+    assert(!parseAndEval(engine, "pointer.pos.x == null", pointer));
 
     // The value-dependent category spellings are expressed as field
     // predicates now.
-    auto motion = parseDql!InputSchema(engine, "pointer.action == move");
-    assert(motion.hasValue && evalDql!InputSchema(engine, motion.value,
-        pointer));
-}
+    assert(parseAndEval(engine, "pointer.action == move", pointer));
 }
