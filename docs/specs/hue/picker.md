@@ -125,14 +125,14 @@ has already been measured against the best in the field.
 
 ## The query language (`PKQ`)
 
-| ID     | Requirement                                                                                                                                                      | Status              | Traces to                       |
-| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------- |
-| `PKQ1` | A query must split into **constraints** plus a fuzzy remainder, in one pass, with every span **borrowed** from the input so parsing allocates nothing.           | full (working tree) | `sparkles.fuzzy.query`          |
-| `PKQ2` | Constraints must cover `*.ext`, a **glob**, a path segment, a file path suffix, and `git:<status>` (`modified`/`staged`/`untracked`/`ignored`).                  | full (working tree) | compiled constraint evaluator   |
-| `PKQ3` | Any actual constraint must be **negatable** (`!seg:test`, `!*.rs`); ordinary fuzzy text, `!=`, and `!!foo` remain literal.                                       | full (working tree) | deterministic dispatch + tests  |
-| `PKQ4` | A trailing **`:line[:col]`** must parse as a location, so pasting `src/app.d:120` from a compiler diagnostic opens where it points.                              | full (working tree) | `Location`; Windows-drive guard |
-| `PKQ5` | The matcher must be **typo-resistant**, not merely subsequence-based — a transposition or a dropped character must still rank, which is the difference from fzf. | full (working tree) | exact bounded-deletion witness  |
-| `PKQ6` | Match **positions** must be returned so the list can highlight what matched.                                                                                     | full (working tree) | canonical merged byte ranges    |
+| ID     | Requirement                                                                                                                                                      | Status              | Traces to                                                      |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------- |
+| `PKQ1` | A query must split into **constraints** plus a fuzzy remainder, in one pass, with every span **borrowed** from the input so parsing allocates nothing.           | full (working tree) | `sparkles.fuzzy.query`                                         |
+| `PKQ2` | Constraints must cover `*.ext`, a **glob**, a path segment, a file path suffix, and `git:<status>` (`modified`/`staged`/`untracked`/`ignored`).                  | full (working tree) | compiled constraint evaluator                                  |
+| `PKQ3` | Any actual constraint must be **negatable** (`!seg:test`, `!*.rs`); ordinary fuzzy text, `!=`, and `!!foo` remain literal.                                       | full (working tree) | deterministic dispatch + tests                                 |
+| `PKQ4` | A trailing **`:line[:col]`** must parse as a location, so pasting `src/app.d:120` from a compiler diagnostic opens where it points.                              | full (working tree) | `Location` → `PickerTarget`; `openTarget`; Windows-drive guard |
+| `PKQ5` | The matcher must be **typo-resistant**, not merely subsequence-based — a transposition or a dropped character must still rank, which is the difference from fzf. | full (working tree) | exact bounded-deletion witness                                 |
+| `PKQ6` | Match **positions** must be returned so the list can highlight what matched.                                                                                     | full (working tree) | canonical merged byte ranges                                   |
 
 ## Ranking (`PKR`)
 

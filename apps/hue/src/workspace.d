@@ -54,6 +54,7 @@ import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 
 import picker_host : OwnedPicker, PickerAction, PickerHost;
+import picker_sources : PickerTarget;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
 import settings : HueConfig;
@@ -818,17 +819,28 @@ struct WorkspaceTui
         }
     }
 
-    /// Opens `path` in the viewer pane and reveals it in the tree (XPL3/4).
-    private void openDoc(string path) @system
+    /**
+    Open `path` in the viewer pane and reveal it in the tree (`XPL3`/`XPL4`).
+
+    Returns whether the document actually opened. It used to return `void`
+    and swallow both failure modes — no loader, or a loader that threw — so
+    a caller could not tell "opened" from "the previous document is still
+    on screen because this one does not exist". That is tolerable for a
+    tree click, where the entry came from a walk of the filesystem; it is
+    not tolerable for the picker, where `PKQ4` lets a user paste
+    `src/app.d:120` from a compiler diagnostic and the path may simply be
+    wrong.
+    */
+    private bool openDoc(string path) @system
     {
         if (loadDoc is null)
-            return;
+            return false;
         WorkspaceDoc doc;
         try
             doc = loadDoc(path);
         catch (Exception)
         {
-            return; // the previous document stays on screen
+            return false; // the previous document stays on screen
         }
         currentDocPath = path;
         viewer.setDocument(doc.title, doc.source, doc.events, doc.preview,
@@ -847,6 +859,27 @@ struct WorkspaceTui
         tree.reveal(path);
         treeFocused = false;
         startLive(path, doc.twoslash.code.length != 0);
+        return true;
+    }
+
+    /**
+    Open where an accepted picker row points (`PKC3`), landing on its line.
+
+    A files row names no position and this is exactly `openDoc`. A grep row
+    names one, and the jump has to happen after the document is on screen —
+    `gotoSrcLine` reads the laid-out rows, which do not exist until the load
+    has rebuilt them.
+
+    `line`/`column` are 1-based (`PKQ4`'s `path:line:col`, and every
+    compiler diagnostic); the model counts lines from zero.
+    */
+    private bool openTarget(in PickerTarget target) @system
+    {
+        if (!target.valid || !openDoc(target.path))
+            return false;
+        if (target.line != 0)
+            viewer.vm.gotoSrcLine(target.line - 1, target.column);
+        return true;
     }
 
     // ── Live D types ────────────────────────────────────────────────────────
@@ -1367,7 +1400,7 @@ struct WorkspaceTui
                 case PickerAction.accepted:
                     if (pickerDoc !is null)
                         pickerDoc.close();
-                    openDoc(picker.get.acceptedPath);
+                    openTarget(picker.get.acceptedTarget);
                     break;
                 }
             }
