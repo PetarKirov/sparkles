@@ -190,6 +190,13 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     // an application that lays out before its first frame can now do it.
     setup(host);
 
+    // `HST20`: a scripted prelude, through the SAME `handle` live input uses.
+    // After `setup` because a position is meaningless before the surface has a
+    // size, and before the first frame because the point is to photograph the
+    // state the script reaches.
+    foreach (ref e; cfg.prelude)
+        handle(host, e);
+
     RaylibEvents events;
     events.capabilities = host.capabilities;
 

@@ -232,6 +232,11 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
     }();
     setup(host);
 
+    // `HST20`: see the GPU arm — the same prelude, the same `handle`, ahead of
+    // the first frame.
+    foreach (ref e; cfg.prelude)
+        handle(host, e);
+
     void frame()
     {
         const sz = session.resizeToTerminal();

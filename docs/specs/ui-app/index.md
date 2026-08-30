@@ -127,20 +127,20 @@ the remaining open rows (`TST3`, `TST4`) belong to the phase-2 migrations.
 Planned files, each owned by at least one requirement. The table is the code →
 requirement direction; the "Traces to" column of each row is the reverse.
 
-| Planned source file                              | Areas                  |
-| ------------------------------------------------ | ---------------------- |
-| `libs/ui-app/src/sparkles/ui_app/backend.d`      | `BKD1`–`BKD5`          |
-| `libs/ui-app/src/sparkles/ui_app/gui_options.d`  | `CLI1`–`CLI3`          |
-| `libs/ui-app/src/sparkles/ui_app/gui_setup.d`    | `CLI4`–`CLI6`          |
-| `libs/ui-app/src/sparkles/ui_app/host.d`         | `HST1`–`HST8`          |
-| `libs/ui-app/src/sparkles/ui_app/run.d`          | `HST1`, `HST9`, `BKD5` |
-| `libs/ui-app/src/sparkles/ui_app/run_app.d`      | `HST10`–`HST12`        |
-| `libs/ui-app/src/sparkles/ui_app/display.d`      | `BKD3`                 |
-| `libs/ui-app/src/sparkles/ui_app/event_source.d` | `HST9`                 |
-| `libs/ui-app/src/sparkles/ui_app/tui_loop.d`     | `APP4`, `HST6`, `HST7` |
-| `libs/ui-app/src/sparkles/ui_app/gui_loop.d`     | `APP4`, `HST6`, `HST7` |
-| `libs/ui-app/src/sparkles/ui_app/record.d`       | `TST1`–`TST3`          |
-| `libs/ui-app/dub.sdl`                            | `APP2`–`APP4`          |
+| Planned source file                              | Areas                           |
+| ------------------------------------------------ | ------------------------------- |
+| `libs/ui-app/src/sparkles/ui_app/backend.d`      | `BKD1`–`BKD5`                   |
+| `libs/ui-app/src/sparkles/ui_app/gui_options.d`  | `CLI1`–`CLI3`                   |
+| `libs/ui-app/src/sparkles/ui_app/gui_setup.d`    | `CLI4`–`CLI6`                   |
+| `libs/ui-app/src/sparkles/ui_app/host.d`         | `HST1`–`HST8`, `HST20`          |
+| `libs/ui-app/src/sparkles/ui_app/run.d`          | `HST1`, `HST9`, `BKD5`          |
+| `libs/ui-app/src/sparkles/ui_app/run_app.d`      | `HST10`–`HST12`                 |
+| `libs/ui-app/src/sparkles/ui_app/display.d`      | `BKD3`                          |
+| `libs/ui-app/src/sparkles/ui_app/event_source.d` | `HST9`                          |
+| `libs/ui-app/src/sparkles/ui_app/tui_loop.d`     | `APP4`, `HST6`, `HST7`          |
+| `libs/ui-app/src/sparkles/ui_app/gui_loop.d`     | `APP4`, `HST6`, `HST7`, `HST20` |
+| `libs/ui-app/src/sparkles/ui_app/record.d`       | `TST1`–`TST3`, `HST20`          |
+| `libs/ui-app/dub.sdl`                            | `APP2`–`APP4`                   |
 
 ## Relationship to existing specs
 

@@ -14,7 +14,7 @@ hue's configuration surface is real and entirely **ephemeral**. Today it is:
 | CLI options (`@CliOption`)                                               | ~28      | one invocation   |
 | Runtime toggles (`l`, `c`, `y`, `t`, `Tab`, `e`, `Ctrl-±`, theme arrows) | ~10      | until exit       |
 | Keybindings (`keymap.hueBindings`)                                       | ~60 rows | hardcoded table  |
-| Environment variables (`HUE_GUI_*`)                                      | 13       | test/debug hooks |
+| Environment variables (`HUE_GUI_*`, `HUE_REPLAY`)                        | 14       | test/debug hooks |
 
 Three consequences, each observed rather than hypothetical:
 

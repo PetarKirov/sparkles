@@ -130,6 +130,22 @@ struct RunConfig
     cannot be a `setup` errand: by then it is too late.
     */
     BackendTraceSink traceSink;
+
+    /**
+    Events delivered through `handle` before the application's first frame
+    (`INP22`, `HST20`) — a scripted way into a state, on every arm.
+
+    They go through the $(B same) `handle` live input does, after `setup` so the
+    surface size is known and a position means something. That is the whole
+    point: an application put into a state this way is in a state its real input
+    path can reach, whereas one assigned from outside may be in a state nothing
+    can reach — and a golden photographing the second proves nothing about the
+    first (`PRN7`).
+
+    A recorded run delivers these ahead of its own script, so a prelude means
+    the same thing whether the frames go to a window, a terminal or a recorder.
+    */
+    Event[] prelude;
 }
 
 /**

@@ -322,6 +322,32 @@ unittest
     assert(ops[0].visual.bg != RgbColor(0, 0, 0));
 }
 
+@("ui_app.run_app.aPreludeArrivesBeforeTheFirstFrame")
+@safe
+unittest
+{
+    import sparkles.input.script : parseScript;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // `HST20`: the state a recording starts from is reached by SENDING input,
+    // not by assigning state — so a script and a person produce the same
+    // application, and a golden of the result is evidence about the real path.
+    SmallBuffer!(Event, 8) evs;
+    assert(!parseScript("char a\nchar b\nchar c", evs).hasError);
+
+    CounterApp app;
+    RunConfig cfg;
+    cfg.prelude = evs[].dup;
+    auto rec = runAppRecorded(app, cfg, []);
+
+    assert(app.events == 3, "every prelude event went through `handle`");
+    // Still ONE frame: a prelude describes where the recording begins, so its
+    // own steps are not part of what was recorded. A caller wanting them
+    // recorded passes them as the script instead — that is the difference
+    // between the two arguments.
+    assert(rec.frames.length == 1);
+}
+
 @("ui_app.run_app.skipFrameIsHonouredBeforeLayout")
 @safe
 unittest

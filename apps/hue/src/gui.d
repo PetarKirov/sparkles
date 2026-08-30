@@ -429,6 +429,20 @@ int runGui(GuiArgs guiArgs) @system
         cfg.extraFontSources = [fontsDir(androidDataDir()), "/system/fonts"];
     }
 
+    // `HST20`/`DBG4`: the scripted prelude. The host delivers these through the
+    // same `handle` a window's own events go through, after the surface exists
+    // and before the first frame — so a capture photographs a state hue's real
+    // input path reached, not one assigned into it.
+    //
+    // `HUE_GUI_POINTER` is expressed here rather than as a position written
+    // over the fold. That difference is the whole bug it used to cause: an
+    // assigned position is a position that never MOVED, so nothing downstream
+    // saw motion, and the settings pane had to be handed a hover synthesised
+    // per frame to make its bar light up for a screenshot. One `move` event
+    // folds like any other and every consumer sees it, so the synthetic one is
+    // gone.
+    cfg.prelude = capture.prelude;
+
     // The window and the face set, published by the setup phase (`HST19`) the
     // moment the arm has opened them. Every downstream `window`/`fonts` use is
     // written exactly as it was; what changed is who owns the session.
@@ -2075,12 +2089,6 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
         inp.fin = foldFrame(evBuf, inp.fin);
-        // Deterministic GUI captures need to park the pointer on sub-cell
-        // chrome without synthesising a live window-system event. Override
-        // only the position; button levels and edges still come from the
-        // folded stream.
-        if (capture.pointerSet)
-            inp.fin.pos = capture.pointer;
         // The dock drains these real events below, after its current geometry
         // and content extents have been published. The frame fold above is a
         // read, not ownership transfer.
@@ -2467,20 +2475,6 @@ int runGui(GuiArgs guiArgs) @system
         {
             // The settings pane is modal exactly like the picker (`SET*`).
             cast(void) currentSettingsGeometry();
-            // Bar hover comes from the FOLDED pointer, per frame: the window
-            // host synthesizes no bare motion events (RaylibEvents emits
-            // edges, drags and wheel only), so the machine's hover — the
-            // trackLit and the expand easing — must be fed the way the dock
-            // feeds its own bars. This is also what HUE_GUI_POINTER
-            // overrides, so a hover is photographable.
-            if (!inp.fin.buttons[PointerButton.left].down)
-            {
-                PointerEvent hover;
-                hover.action = PointerAction.move;
-                hover.pos = Point(cast(int) inp.fin.pos.x,
-                    cast(int) inp.fin.pos.y);
-                routeSettingsOverlay(Event(hover));
-            }
             settingsPane.tickAnims(dur!"msecs"(frameMs(window.frameSeconds)));
             foreach (k; keyBuf)
                 applySettingsResult(settingsPane.handleKey(k));

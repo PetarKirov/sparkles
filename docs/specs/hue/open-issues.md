@@ -102,3 +102,42 @@ Close this when the HTML interpreter maps a fixed-size stack to a
 `position: relative` container and its positioned children to
 `position: absolute` offsets (the cell/em grid the page already uses), with
 a table-bearing tree in its round-trip tests.
+
+## HUE-O6 — Two debug hooks photograph states no keystroke can produce {#hue-o6}
+
+`DBG4` replaced the pointer hook with a scripted event and left the five hooks
+that reach a state by calling a component's methods. Measured against the real
+key path, they do not divide the way the row implies. Each pair below is a
+golden capture of the same file at the same font size, hook against script:
+
+| Hook                | Real keys       | Frame                             |
+| ------------------- | --------------- | --------------------------------- |
+| `HUE_GUI_SETTINGS=` | `,`             | **identical** (`fcc79fff`)        |
+| `HUE_GUI_INSPECT=1` | `<leader>vi`    | **identical** (`7330a222`)        |
+| `HUE_GUI_SEARCH=`   | `/` + the query | differs (`324f3c41` / `c9eb3429`) |
+| `HUE_GUI_PICKER=`   | `<leader>ff` +  | differs (`45436629` / `37f6ddd9`) |
+
+The first two are straightforward deletions: a keystroke through `handle`
+reproduces the hook's frame byte for byte, so the hook is a second route to a
+state the real one already reaches.
+
+The last two are the defect. `HUE_GUI_SEARCH` fills `inp.query`, runs the search
+and scrolls to the first match **without entering search mode**, so it
+photographs highlighted matches with no search prompt — a state typing `/scope`
+cannot produce, because typing `/` is what puts the prompt on screen. Whatever
+the golden has been guarding there, it is not what a reader sees. The picker
+differs for a reason not yet established, but the shape of the question is the
+same.
+
+This is `PRN8` from the capture side: two independently-written ways into one
+state, and they disagree. It is recorded rather than fixed because resolving it
+**changes what those goldens show**, which is a decision about the harness
+rather than a refactor of it (`MIG12`).
+
+Close this when the search and picker captures are reachable by script and the
+five method-call hooks are gone. The lantern is a separate question and blocks
+on one first: `HUE_GUI_LANTERN` sets `shown = true`, bypassing the guide's
+appearance delay (`LTN4`), so a script reaches the same `pending` and leaves the
+panel hidden. Expressing that needs the feed to say _time passes_ — which turns
+a script from a description of input into a description of a session, and is a
+`INP22` vocabulary decision, not an implementation detail.

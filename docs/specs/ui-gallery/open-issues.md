@@ -152,3 +152,47 @@ the gallery never skips frames, so an idle visible terminal still repaints —
 skip is the follow-up. The `forkpty` under an open io_uring ring (both arms'
 event-horizon variants) also deserves a CLOEXEC audit: the child `execv`s
 immediately, but the ring fd should not survive into the shell.
+
+## `UGL-O11` — the Dock page's tab strip is drawn in one place and hit in another · open
+
+Clicking a tab on the Dock page does nothing where the tab is, and switches
+tabs about twenty columns to its right. Reported from use; reproduced headlessly
+at a 96×32 surface:
+
+```bash
+# the strip is painted with `document` at column 45 and `notes` at column 55
+ui-gallery --render-plain --page dock
+
+ui-gallery --render-plain --page dock --script 'press left 55,11;release left 55,11'
+#   unchanged — a click ON `notes` does nothing
+
+ui-gallery --render-plain --page dock --script 'press left 78,11;release left 78,11'
+#   the pane switches to `notes` — twenty-three columns right of the label
+```
+
+**Two layouts of one strip.** `renderNode` paints the group with
+`tabStrip(b, labels, active, 0)`, sized by the widget layout engine inside the
+page's box chrome; `DockContainer.arrange` independently computes `tabs[].rect`
+in its own space, and `handlePointer` translates a screen point into that space
+by subtracting the arrangement's painted origin. The translation is a pure
+offset, but the two interior layouts are not related by one — so the offset
+cannot reconcile them, and the hit zones drift steadily further from the labels
+across the strip. The comment above the call says the strip carries "the
+container's own tab ids so a click resolves without a second map"; the call
+passes `0` and there are no ids.
+
+**Why no test caught it.** `dockTabDragsAndDrops` asks the container where the
+tab is (`foreach (ref t; s.dock.tabs) … tabRect = t.rect`) and clicks there. A
+test that takes its coordinates from the hit model can never detect that the hit
+model disagrees with the paint — it is the paint that is unverified, and the
+test is self-consistent by construction. This is `IXR27` in the place the
+toolkit is supposed to be demonstrating the fix.
+
+Dividers on the same page work, which is why this reads as "tabs are dead"
+rather than "the demo is dead".
+
+Close this when the strip's painted rects are the ones routed against —
+`SCV11`'s rule for bars (`the painted rect is the geometry authority`) applied
+to tabs, most likely by giving the strip the container's tab ids and resolving
+through `keyedRects`/`hoverTargets` instead of a second arrangement — and when
+the test clicks at a rect taken from the FRAMES rather than from `dock.tabs`.

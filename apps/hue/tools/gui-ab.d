@@ -44,8 +44,26 @@
 // capture whose size quietly follows the panel's DPI is a broken oracle rather
 // than a cosmetic difference (`CLI6`).
 //
-// `--pointer x,y` parks the pointer through `HUE_GUI_POINTER`, which is how a
-// hovered scrollbar — a lit track, an expanded rail — becomes photographable.
+// `--pointer x,y` parks the pointer through `HUE_GUI_POINTER`, and `--env
+// NAME=VALUE` sets any other hook, so a state reached by opening a pane or
+// replaying a script can be captured without this tool learning each one.
+//
+// CHECK THAT WHAT YOU ARE COMPARING IS IN THE FRAME. A capture testifies only
+// about what it contains, and two frames that agree because neither shows the
+// affordance read exactly like two frames that agree because it is unchanged.
+// This bit me: a settings-pane capture was compared across a change to hover
+// handling, at pointer positions off the window entirely, in frames whose
+// property tree fit its panel and therefore had no scrollbar in them at all.
+// Three ways to be sure, cheapest first:
+//
+//   * Run the capture twice with the affordance's input present and absent. If
+//     the frames match, the input is not reaching it and nothing below matters.
+//   * `--diff a.png:b.png` reports where two captures differ, as a bounding box
+//     and a mask — which is how you find a one-cell-wide bar in a window
+//     instead of sweeping the pointer past it.
+//   * Prefer an assertion where one is possible. `ui-gallery --render-plain
+//     --script 'move 49,11'` puts the same question to a component as TEXT,
+//     and text fails loudly.
 //
 // Exit status: 0 identical, 1 drift, 2 a setup problem — a missing binary,
 // no `xvfb-run`, or a non-reproducible capture.
@@ -57,6 +75,7 @@ import std.digest.md : md5Of, toHexString;
 import std.file : exists, isFile, mkdirRecurse, read, remove;
 import std.format : format;
 import std.path : absolutePath, buildPath;
+import std.string : indexOf;
 import std.process : Config, environment, spawnProcess, wait;
 import std.stdio : stderr, writefln, writeln;
 
@@ -101,6 +120,14 @@ struct Params
 
     @(Option("out|O", description: "Directory for the captured PNGs"))
     string outDir = "/tmp/hue-gui-ab";
+
+    @(Option("env|e", description: "Extra NAME=VALUE hooks, set on BOTH sides"))
+    string[] extraEnv;
+
+    @(Option("diff", description: "Compare two existing PNGs and exit — "
+        ~ "'a.png:b.png'. Locating an affordance in a capture is the same "
+        ~ "question as reporting drift, so it is the same code."))
+    string diffPair;
 }
 
 int main(string[] rawArgs)
@@ -112,6 +139,22 @@ int main(string[] rawArgs)
     if (!parsed)
         return reportCliError(parsed.error);
     auto p = parsed.value;
+
+    // Reporting where two captures differ is useful on its own: finding a
+    // one-cell-wide bar in a 1600px window by sweeping the pointer is hopeless,
+    // and asking "what moved between these two frames" answers it directly.
+    if (p.diffPair.length)
+    {
+        const sep = p.diffPair.indexOf(':');
+        if (sep <= 0 || sep + 1 >= p.diffPair.length)
+        {
+            stderr.writeln("gui-ab: --diff expects 'a.png:b.png'");
+            return 2;
+        }
+        reportPixelDiff(p.diffPair[0 .. sep], p.diffPair[sep + 1 .. $],
+            p.outDir);
+        return 0;
+    }
 
     if (!onPath("xvfb-run"))
     {
@@ -314,6 +357,22 @@ private bool shoot(in Params p, string bin, string side, out ubyte[] bytes)
         env["HUE_GUI_POINTER"] = p.pointer;
     if (p.top >= 0)
         env["HUE_GUI_TOP"] = p.top.to!string;
+    // Everything else the harness understands, without this tool having to
+    // learn each hook: the interesting states are reached by opening a pane or
+    // replaying a script, and hardcoding a flag per hook meant the states that
+    // most needed a picture were the ones that could not have one. Set on both
+    // sides by construction — an A/B where the two runs saw different hooks
+    // measures the hooks.
+    foreach (kv; p.extraEnv)
+    {
+        const eq = kv.indexOf('=');
+        if (eq <= 0)
+        {
+            stderr.writefln("gui-ab: --env expects NAME=VALUE, got '%s'", kv);
+            return false;
+        }
+        env[kv[0 .. eq]] = kv[eq + 1 .. $];
+    }
     // A Wayland socket in the environment makes raylib's GLFW prefer it over
     // the Xvfb display we just pinned, and the capture then lands on the real
     // compositor (or fails outright).
