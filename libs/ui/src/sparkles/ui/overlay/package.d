@@ -16,6 +16,7 @@ $(LIST
     * $(MREF sparkles,ui,overlay,anchor) — the anchor value and its resolution
     * $(MREF sparkles,ui,overlay,place) — the placement solve and its result
     * $(MREF sparkles,ui,overlay,arena) — the ordered top layer and its bands
+    * $(MREF sparkles,ui,overlay,policy) — triggers, dismissal and containment
 )
 
 $(B Out) of the primitive, deliberately: focus behaviour defaults, timing
@@ -47,3 +48,4 @@ module sparkles.ui.overlay;
 public import sparkles.ui.overlay.anchor;
 public import sparkles.ui.overlay.place;
 public import sparkles.ui.overlay.arena;
+public import sparkles.ui.overlay.policy;
