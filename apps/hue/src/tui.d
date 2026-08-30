@@ -188,6 +188,16 @@ struct PreviewTui
     // pending OSC 52 sequence that the loop flushes after a copy.
     private Selection!long sel;
     private RgbColor selBg;
+
+    // Search-match tints, in cell space. The window paints translucent gold
+    // over each match and a stronger orange over the current one
+    // (`matchTint`/`currentMatchTint` in `gui.d`); a cell has no alpha, so the
+    // same colours are pre-mixed against the page background at the window's
+    // alphas — 70/255 and 130/255. This is `SCB2`-style degradation stated in
+    // the code rather than left to drift: the same colour, reached the way a
+    // grid can reach it.
+    private RgbColor matchBg;
+    private RgbColor curMatchBg;
     private SmallBuffer!char clip;
     private bool clipReady;
 
@@ -384,6 +394,8 @@ struct PreviewTui
         // Selection tint: toward the theme link color, like the scrollbars.
         const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
         selBg = mix(pageBg, linkC, 0.4);
+        matchBg = mix(pageBg, RgbColor(255, 215, 0), 70.0 / 255.0);
+        curMatchBg = mix(pageBg, RgbColor(255, 145, 0), 130.0 / 255.0);
         refreshHover();
         clampTop();
     }
@@ -863,6 +875,30 @@ struct PreviewTui
                     if (x >= 0 && x < contentWidth)
                         g[cast(ushort)(originX + x), cast(ushort) gy]
                             .style.bg = inspFill;
+            }
+        }
+
+        // Search matches (`FND2`), through the same identity channel: the
+        // window derives these rects and paints them, and until now this pane
+        // resolved nothing and painted nothing — its search was jump-only, and
+        // `tui.md`'s parity map claimed a tint that did not exist.
+        //
+        // Painted in every view, not just the raw one. The rects come from
+        // `selectionRects` over the widget tree, and the preview's blocks carry
+        // the same source anchors — which is why the inspector tint above is
+        // already painted in every view.
+        foreach (mi, ref const rects; vm.matchRects)
+        {
+            const fill = Color.fromRgb(mi == vm.curMatch ? curMatchBg : matchBg);
+            foreach (ref const r; rects)
+            {
+                const gy = 1 + r.y - top;
+                if (gy < 1 || gy > rows)
+                    continue;
+                foreach (x; r.x - hx .. r.x - hx + r.width)
+                    if (x >= 0 && x < contentWidth)
+                        g[cast(ushort)(originX + x), cast(ushort) gy]
+                            .style.bg = fill;
             }
         }
 
@@ -2921,4 +2957,77 @@ unittest
     // numbers is the scrolled text, so the two cameras really are separate.
     assert(row(3).canFind("ZZZ"), row(3));
     assert(!row(1).canFind("alpha"), "line 1's text scrolled out from under it");
+}
+
+@("tui.search.matchesArePainted")
+@system
+unittest
+{
+    // `FND2` in the terminal. Until this landed, `tui.md`'s parity map claimed
+    // matches showed "via reverse-video / tint" and the pane painted none —
+    // search was jump-only.
+    //
+    // The document carries ONE `sourceSpan` event covering the whole file,
+    // which is what every hue document has: `Document.highlight` synthesizes
+    // exactly that whenever a grammar is missing or the language is plain
+    // text, so this is the plain-file case and not a contrived one. It
+    // matters because `buildCodeWidgets` treats a line with no styled run as
+    // BLANK — one `" "` with a zero-width anchor — so a caller that passes no
+    // events at all gets a document whose text is invisible and whose
+    // identity channel resolves nothing. That trap is real, but it is a
+    // library precondition, not this pane's behaviour.
+    import sparkles.source_view.search : SearchPolicy;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+
+    static immutable src = "alpha\nbeta alpha\ngamma\n";
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto events = [HighlightEvent.sourceSpan(0, src.length)];
+
+    PreviewTui t;
+    t.title = "t.txt";
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(30, 10);
+    t.vm.searchPolicy = SearchPolicy.init;
+    t.setDocument("t.txt", src, events, PreviewModel.init, startPreview: false);
+    t.relayout();
+
+    Grid g;
+    g.resize(30, 10);
+    t.paint(g);
+    const plain = g[cast(ushort) 1, cast(ushort) 1].style.bg;
+
+    t.vm.search("alpha");
+    assert(t.vm.matches.length == 2, "expected two matches");
+    size_t rectCount;
+    foreach (ref const rs; t.vm.matchRects)
+        rectCount += rs.length;
+    assert(rectCount == 2, "the identity channel resolved no rects");
+
+    g.resize(30, 10);
+    t.paint(g);
+
+    // Both matches must be tinted, and the CURRENT one differently from the
+    // other — a single flat highlight would pass a "something changed" check
+    // while losing the only cue that says which match `n` is sitting on.
+    size_t tinted;
+    bool sawCurrent, sawOther;
+    foreach (mi, ref const rects; t.vm.matchRects)
+        foreach (ref const r; rects)
+            foreach (x; r.x .. r.x + r.width)
+            {
+                const bg = g[cast(ushort)(t.originX + x),
+                    cast(ushort)(1 + r.y - t.top)].style.bg;
+                if (bg == plain)
+                    continue;
+                ++tinted;
+                if (mi == t.vm.curMatch)
+                    sawCurrent = true;
+                else
+                    sawOther = true;
+            }
+    assert(tinted > 0, "no match cell was tinted");
+    assert(sawCurrent && sawOther, "the current match is not distinguished");
 }
