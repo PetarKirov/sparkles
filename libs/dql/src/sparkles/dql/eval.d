@@ -91,14 +91,6 @@ private NumericOrder reverse(NumericOrder order) @safe pure nothrow @nogc
     }
 }
 
-private NumericOrder orderSignedUnsigned(long a, ulong b)
-    @safe pure nothrow @nogc
-    => a < 0 ? NumericOrder.less : orderOf(cast(ulong) a, b);
-
-private NumericOrder orderUnsignedSigned(ulong a, long b)
-    @safe pure nothrow @nogc
-    => reverse(orderSignedUnsigned(b, a));
-
 private NumericOrder orderSignedDouble(long a, double b)
     @safe pure nothrow @nogc
 {
