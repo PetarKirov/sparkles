@@ -19,6 +19,8 @@ would one get at it".
 */
 module picker_grep;
 
+import sparkles.base.text.analysis : AnalysisCase;
+
 import picker_sources : PickerTarget;
 
 /**
@@ -481,4 +483,376 @@ unittest
     // scanner applies the path filter BEFORE it has read anything.
     assert(searchable("src/app.d", ""), "path-only, pre-read");
     assert(searchable("", "plain bytes"), "bytes-only, e.g. a memory document");
+}
+
+// ── the scan (`PKC1`, `PKC10`, `PKC11`, `PKC12`, `PKC17`) ───────────────────
+
+/// How a query is interpreted (`PKC9`). Classified once from the query, with
+/// one visible fallback rung — never a ladder that silently retries.
+enum GrepMode : ubyte
+{
+    /// A literal needle, spaces included (`PKC17`).
+    plain,
+    /// The bounded engine (`PKC16`). Not implemented yet.
+    regex,
+    /// Subsequence admission over the stored window.
+    fuzzy,
+}
+
+/**
+Whether a mode may run on the raw CPU pool (`PKC15`).
+
+`RawJobFn` is `void function(void*) @safe nothrow @nogc`, so a mode that
+cannot meet those attributes cannot be a pool job. Stating that per mode
+from the first commit is deliberate: the regex arm is the one part of `P4`
+with real schedule risk, and if it lands non-`@nogc` this degrades THAT MODE
+to the synchronous path rather than forcing the whole scan off the pool.
+*/
+bool poolEligible(GrepMode mode) @safe pure nothrow @nogc
+    => mode != GrepMode.regex;
+
+/// Bytes of context stored around a hit (`PKC11`). Chosen so a row stays
+/// inside `maxDpUnits` and scoring never silently degrades.
+enum size_t windowBytes = 512;
+
+/**
+One hit: where it is. Deliberately small — hits are sorted and ranked, and
+the context they display lives beside them in $(LREF GrepContext).
+*/
+struct GrepHit
+{
+    DocHandle doc;
+    /// 1-based source line.
+    uint line;
+    /// 1-based **byte** column of the match within its line. True to the
+    /// source, not to the trimmed window: what a reader pastes into
+    /// `file:line:col` has to land where the match actually is.
+    uint column;
+    /// Absolute byte offset, so the preview seeks without rescanning
+    /// (fff's `GrepMatch` carries the same field for the same reason).
+    size_t offset;
+
+    /**
+    Identity for the top-K's dedup.
+
+    Mixes the document, line AND column. Keying on the document alone
+    collides across every hit in a file, and `TopK` treats colliding ids as
+    the same row — so a file with twenty matches would show one, and the
+    list would freeze as later hits were folded into the first (`PKC12`).
+    */
+    ulong fingerprint() const @safe pure nothrow @nogc
+    {
+        static ulong mix(ulong h, ulong v) @safe pure nothrow @nogc
+            => (h ^ v) * 0x100000001b3UL;
+
+        ulong h = 0xcbf29ce484222325UL;
+        h = mix(h, doc.index);
+        h = mix(h, doc.generation);
+        h = mix(h, line);
+        h = mix(h, column);
+        return h;
+    }
+}
+
+/// The stored context for one hit — the row's visible text (`PKC11`).
+struct GrepContext
+{
+    private char[windowBytes] bytes = void;
+    /// Bytes actually stored.
+    ushort length;
+    /// Match position **within the stored window**.
+    ushort matchStart;
+    /// Match length within the window, clipped at its end.
+    ushort matchLen;
+    /// Whether text was dropped on each side — the row renders an ellipsis
+    /// so a truncated line says so rather than looking complete
+    /// (ripgrep's `--max-columns-preview` behaviour).
+    bool elidedLeft, elidedRight;
+
+    /// The stored text.
+    const(char)[] text() const return @safe pure nothrow @nogc
+        => bytes[0 .. length];
+}
+
+/**
+Scan one document's bytes for a literal needle (`PKC17`).
+
+Fills `hits`/`contexts` in parallel and returns how many were written,
+stopping when either runs out — a document with more matches than the
+caller has room for is truncated, not an error, and the caller decides
+whether that matters.
+
+Pure, `@nogc`, and clock-free: it can therefore run as a pool job
+(`PKC15`), and it does no I/O — acquiring the bytes is the caller's job
+(`PKC7`).
+
+`startsWithFolded` comes from `sparkles.source_view.search`: grep owns its
+scan, not its idea of what matches.
+*/
+size_t scanText(scope const(char)[] text, scope const(char)[] needle,
+    AnalysisCase mode, DocHandle doc,
+    scope GrepHit[] hits, scope GrepContext[] contexts)
+    @safe pure nothrow @nogc
+{
+    import sparkles.source_view.search : startsWithFolded;
+
+    if (needle.length == 0 || needle.length > text.length)
+        return 0;
+
+    size_t found;
+    const room = hits.length < contexts.length ? hits.length : contexts.length;
+    uint line = 1;
+    size_t lineStart;
+    size_t i;
+    while (i + needle.length <= text.length && found < room)
+    {
+        if (text[i] == '\n')
+        {
+            ++line;
+            lineStart = i + 1;
+            ++i;
+            continue;
+        }
+        if (!startsWithFolded(text[i .. $], needle, mode))
+        {
+            ++i;
+            continue;
+        }
+
+        // The line's extent, for both the window and the match clip.
+        size_t lineEnd = i;
+        while (lineEnd < text.length && text[lineEnd] != '\n')
+            ++lineEnd;
+
+        hits[found] = GrepHit(doc: doc, line: line,
+            column: cast(uint)(i - lineStart + 1), offset: i);
+        contexts[found] = captureWindow(text[lineStart .. lineEnd],
+            i - lineStart, needle.length);
+        ++found;
+
+        // Non-overlapping, like the in-document search.
+        const next = i + needle.length;
+        while (i < next && i < text.length)
+        {
+            if (text[i] == '\n')
+            {
+                ++line;
+                lineStart = i + 1;
+            }
+            ++i;
+        }
+    }
+    return found;
+}
+
+/**
+Store a bounded window of `lineText` around a match (`PKC11`).
+
+Leading whitespace is dropped — an indented line otherwise spends its
+window on indentation — but the hit's reported column is computed from the
+untrimmed line, so trimming changes what is SHOWN and never what is
+reported. A window that renamed the column would make `file:line:col`
+land in the wrong place, which is the failure worth stating.
+
+When the line still does not fit, the window slides to keep the match
+visible and marks the sides it cut.
+*/
+private GrepContext captureWindow(scope const(char)[] lineText,
+    size_t matchInLine, size_t matchLen) @safe pure nothrow @nogc
+{
+    GrepContext ctx;
+
+    size_t from;
+    while (from < lineText.length && from < matchInLine
+        && (lineText[from] == ' ' || lineText[from] == '\t'))
+        ++from;
+    ctx.elidedLeft = from != 0;
+
+    // Slide so the match stays visible on a long line.
+    if (matchInLine >= from + windowBytes)
+    {
+        from = matchInLine > windowBytes / 4 ? matchInLine - windowBytes / 4 : 0;
+        ctx.elidedLeft = from != 0;
+    }
+
+    size_t to = from + windowBytes;
+    if (to >= lineText.length)
+        to = lineText.length;
+    else
+        ctx.elidedRight = true;
+
+    const span = lineText[from .. to];
+    ctx.length = cast(ushort) span.length;
+    ctx.bytes[0 .. span.length] = span;
+
+    ctx.matchStart = matchInLine >= from
+        ? cast(ushort)(matchInLine - from) : 0;
+    const avail = ctx.length > ctx.matchStart ? ctx.length - ctx.matchStart : 0;
+    ctx.matchLen = cast(ushort)(matchLen < avail ? matchLen : avail);
+    return ctx;
+}
+
+@("picker_grep.scan.reportsTrueLineAndByteColumn")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable text = "alpha beta\ngamma alpha\n    alpha indented\n";
+    GrepHit[8] hits = void;
+    GrepContext[8] ctx = void;
+    const n = scanText(text, "alpha", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 3, "three occurrences");
+
+    // 1-based line and 1-based BYTE column, both true to the source.
+    assert(hits[0].line == 1 && hits[0].column == 1);
+    assert(hits[1].line == 2 && hits[1].column == 7);
+    assert(hits[2].line == 3 && hits[2].column == 5,
+        "the indented hit's column counts the indentation");
+
+    // The absolute offset lets the preview seek without rescanning.
+    assert(text[hits[1].offset .. hits[1].offset + 5] == "alpha");
+    assert(text[hits[2].offset .. hits[2].offset + 5] == "alpha");
+}
+
+@("picker_grep.scan.trimmingChangesWhatIsShownNotWhatIsReported")
+@safe pure nothrow @nogc
+unittest
+{
+    // The window drops leading indentation so a row does not spend itself on
+    // whitespace — but the COLUMN is computed from the untrimmed line. A
+    // window that renamed the column would make `file:line:col` land in the
+    // wrong place, and it would look right on screen the whole time.
+    static immutable text = "\t\t    needle here\n";
+    GrepHit[2] hits = void;
+    GrepContext[2] ctx = void;
+    const n = scanText(text, "needle", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 1);
+    assert(hits[0].column == 7, "6 bytes of indentation, so column 7");
+
+    assert(ctx[0].text == "needle here", "the window is trimmed");
+    assert(ctx[0].elidedLeft, "and says it dropped something");
+    assert(ctx[0].matchStart == 0, "the match is at the window's start");
+    assert(ctx[0].matchLen == 6);
+    assert(ctx[0].text[ctx[0].matchStart .. ctx[0].matchStart + ctx[0].matchLen]
+        == "needle");
+}
+
+@("picker_grep.scan.aLongLineSlidesItsWindowAndSaysSo")
+@safe pure nothrow @nogc
+unittest
+{
+    // A minified file is one enormous line. The window has to keep the match
+    // VISIBLE rather than storing the first 512 bytes and reporting a hit
+    // nobody can see in the row.
+    char[4000] buf = 'x';
+    buf[3000 .. 3006] = "needle";
+    const text = buf[];
+
+    GrepHit[2] hits = void;
+    GrepContext[2] ctx = void;
+    const n = scanText(text, "needle", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 1);
+    assert(hits[0].line == 1 && hits[0].column == 3001);
+
+    assert(ctx[0].length <= windowBytes, "the window is bounded");
+    assert(ctx[0].elidedLeft && ctx[0].elidedRight, "cut on both sides");
+    const shown = ctx[0].text[ctx[0].matchStart
+        .. ctx[0].matchStart + ctx[0].matchLen];
+    assert(shown == "needle", "the match must be inside the stored window");
+}
+
+@("picker_grep.scan.hitsInOneFileHaveDistinctFingerprints")
+@safe pure nothrow @nogc
+unittest
+{
+    // `TopK` dedups by fingerprint. Keying on the document alone collides
+    // across every hit in a file, so a file with twenty matches would show
+    // one and the list would freeze as later hits folded into the first
+    // (`PKC12`). Two hits on the SAME line differ only by column, which is
+    // the case a document+line key would still get wrong.
+    static immutable text = "alpha alpha\nalpha\n";
+    GrepHit[8] hits = void;
+    GrepContext[8] ctx = void;
+    const n = scanText(text, "alpha", AnalysisCase.sensitive,
+        DocHandle(7, 3), hits[], ctx[]);
+    assert(n == 3);
+
+    assert(hits[0].line == hits[1].line, "same line…");
+    assert(hits[0].column != hits[1].column, "…different column");
+    assert(hits[0].fingerprint != hits[1].fingerprint,
+        "two hits on one line must not collide");
+    assert(hits[1].fingerprint != hits[2].fingerprint);
+    assert(hits[0].fingerprint != hits[2].fingerprint);
+}
+
+@("picker_grep.scan.foldingFollowsTheSharedCaseRule")
+@safe pure nothrow @nogc
+unittest
+{
+    // Grep owns its scan, NOT its idea of what matches: the predicate is
+    // `startsWithFolded` from `sparkles.source_view.search`, so plain-mode
+    // grep and the in-document search admit the same set. Two literal
+    // predicates is how the two in-document searches diverged.
+    static immutable text = "Alpha\nalpha\nALPHA\n";
+    GrepHit[8] hits = void;
+    GrepContext[8] ctx = void;
+
+    assert(scanText(text, "alpha", AnalysisCase.simpleFold,
+        DocHandle(1, 1), hits[], ctx[]) == 3, "folded: all three");
+    assert(scanText(text, "alpha", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]) == 1, "sensitive: only the exact one");
+}
+
+@("picker_grep.scan.spacesArePartOfTheNeedle")
+@safe pure nothrow @nogc
+unittest
+{
+    // `PKC17`: plain mode searches a literal, spaces included. An
+    // AND-of-terms reading would match the second line too, and then have no
+    // single column to report for it.
+    static immutable text = "if (foo bar)\nfoo = 1; bar = 2;\n";
+    GrepHit[8] hits = void;
+    GrepContext[8] ctx = void;
+    const n = scanText(text, "foo bar", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 1, "only the literal occurrence");
+    assert(hits[0].line == 1);
+}
+
+@("picker_grep.scan.boundedByTheCallersRoom")
+@safe pure nothrow @nogc
+unittest
+{
+    // A work unit is one whole file (`PKC10`), and a caller's bank is
+    // finite. Running out is truncation, not an error.
+    static immutable text = "x\nx\nx\nx\nx\n";
+    GrepHit[2] hits = void;
+    GrepContext[2] ctx = void;
+    assert(scanText(text, "x", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]) == 2, "stops at the caller's room");
+
+    GrepHit[8] big = void;
+    GrepContext[8] bigCtx = void;
+    assert(scanText(text, "x", AnalysisCase.sensitive,
+        DocHandle(1, 1), big[], bigCtx[]) == 5);
+
+    // Degenerate queries answer without scanning.
+    assert(scanText(text, "", AnalysisCase.sensitive,
+        DocHandle(1, 1), big[], bigCtx[]) == 0);
+    assert(scanText("ab", "abcdef", AnalysisCase.sensitive,
+        DocHandle(1, 1), big[], bigCtx[]) == 0);
+}
+
+@("picker_grep.mode.regexIsNotPoolEligibleYet")
+@safe pure nothrow @nogc
+unittest
+{
+    // `PKC15`, stated from the first commit rather than retrofitted: if the
+    // bounded engine lands non-`@nogc`, THAT MODE loses the pool and the
+    // design survives.
+    assert(poolEligible(GrepMode.plain));
+    assert(poolEligible(GrepMode.fuzzy));
+    assert(!poolEligible(GrepMode.regex), "the bounded engine is not written");
 }
