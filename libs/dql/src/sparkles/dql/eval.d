@@ -7,6 +7,8 @@ import std.traits : isBoolean, isFloatingPoint, isIntegral, isSomeString,
     isUnsigned;
 
 import sparkles.base.text.span : TextSpan;
+import sparkles.base.text.utf : decodeFirstUtf8;
+import sparkles.reflection.kind : TypeKind, typeKindOf;
 import sparkles.dql.ast;
 import sparkles.dql.engine : DqlEngine;
 import sparkles.dql.resolve : resolveDqlCategory, resolveDqlPath;
@@ -411,6 +413,25 @@ bool evalDql(Resolver)(ref DqlEngine engine, scope ref const DqlFilter filter, s
     return evalAstNode(engine, filter, filter.rootIndex, resolver);
 }
 
+/// `true` when a reflected leaf of type `V` is comparable and matchable as
+/// UTF-8 text: the `text` kind (strings $(B and) `char[N]` inline storage),
+/// restricted to char-element slices — `wchar`/`dchar` strings would need
+/// transcoding and no vocabulary carries one, so they stay unsupported.
+private enum bool isTextLeaf(V) = typeKindOf!V == TypeKind.text
+    && is(typeof(V.init[]) : const(char)[]);
+
+/// Decodes `s` as exactly one UTF-8 code point.
+private bool singleCodePoint(scope const(char)[] s, out dchar cp)
+    @safe pure nothrow @nogc
+{
+    if (!s.length)
+        return false;
+    cp = decodeFirstUtf8(s);
+    const c0 = cast(ubyte) s[0];
+    const len = c0 < 0x80 ? 1 : c0 < 0xE0 ? 2 : c0 < 0xF0 ? 3 : 4;
+    return s.length == len;
+}
+
 private bool compareReflected(V)(ref DqlEngine engine, in V actual,
     DqlOp op, in DqlValue target)
 {
@@ -421,11 +442,23 @@ private bool compareReflected(V)(ref DqlEngine engine, in V actual,
                     == (op == DqlOp.eq)),
             _ => false,
         );
-    else static if (isSomeString!V)
+    else static if (isTextLeaf!V)
         return target.match!(
-            (in TextSpan text) => compareString(actual, op,
+            (in TextSpan text) => compareString(actual[], op,
                 engine.textOf(text)),
             _ => false,
+        );
+    else static if (typeKindOf!V == TypeKind.character)
+        // A char leaf answers both spellings: a one-code-point text literal
+        // (`key.ch == \`a\``) and the numeric code point (`key.ch == 97`),
+        // ordered as code points either way.
+        return target.match!(
+            (in TextSpan text) {
+                dchar cp;
+                return singleCodePoint(engine.textOf(text), cp)
+                    && compareScalar(cast(uint) actual, op, cast(uint) cp);
+            },
+            (auto ref t) => compareLiteral(engine, cast(ulong) actual, op, t),
         );
     else static if (isBoolean!V)
         return compareValues(engine, DqlValue(cast(bool) actual), op, target);
@@ -465,8 +498,8 @@ private struct RegexSink
 
     void opCall(V)(in V value)
     {
-        static if (isSomeString!V)
-            *result = evalRegex(*engine, value, pattern);
+        static if (isTextLeaf!V)
+            *result = evalRegex(*engine, value[], pattern);
     }
 }
 
@@ -478,8 +511,8 @@ private struct GlobSink
 
     void opCall(V)(in V value)
     {
-        static if (isSomeString!V)
-            *result = evalGlob(*engine, value, pattern);
+        static if (isTextLeaf!V)
+            *result = evalGlob(*engine, value[], pattern);
     }
 }
 
@@ -491,8 +524,8 @@ private struct FuzzySink
 
     void opCall(V)(in V value)
     {
-        static if (isSomeString!V)
-            *result = evalFuzzy(*engine, value, pattern);
+        static if (isTextLeaf!V)
+            *result = evalFuzzy(*engine, value[], pattern);
     }
 }
 
@@ -586,6 +619,58 @@ unittest
     assert(value.hasValue && evalDql!Schema(engine, value.value, event));
     auto absent = parseDql!Schema(engine, "b.enabled == null");
     assert(absent.hasValue && evalDql!Schema(engine, absent.value, event));
+}
+
+@("dql.eval: character and char-array leaves compare as text")
+@safe
+unittest
+{
+    import sparkles.dql.parser : parseDql;
+    import sparkles.dql.schema : DqlSchema;
+
+    struct KeyedEvent
+    {
+        dchar ch;
+        char[4] tag;
+    }
+
+    struct OtherEvent
+    {
+        int n;
+    }
+
+    alias Event = SumType!(KeyedEvent, OtherEvent);
+    alias Schema = DqlSchema!Event;
+
+    DqlEngine engine;
+    Event event = KeyedEvent('a', "abcd");
+
+    foreach (query, expected; [
+        "keyed.ch == `a`": true,
+        "keyed.ch != `a`": false,   // the negation really is the complement
+        "keyed.ch == 97": true,     // the numeric code-point spelling
+        "keyed.ch >= `a`": true,
+        "keyed.ch < `b`": true,
+        "keyed.ch == `ab`": false,  // not a single code point
+        "keyed.tag == `abcd`": true,
+        "keyed.tag != `abcd`": false,
+        "regexMatch(keyed.tag, `^ab`)": true,
+        "globMatch(keyed.tag, `ab*`)": true,
+    ])
+    {
+        auto parsed = parseDql!Schema(engine, query);
+        assert(parsed.hasValue, parsed.error.message);
+        assert(evalDql!Schema(engine, parsed.value, event) == expected, query);
+    }
+
+    // A non-ASCII code point works through both spellings.
+    Event accented = KeyedEvent('\u00e9', "\u00e9\u00e9");
+    foreach (query; ["keyed.ch == `\u00e9`", "keyed.ch == 233"])
+    {
+        auto parsed = parseDql!Schema(engine, query);
+        assert(parsed.hasValue, parsed.error.message);
+        assert(evalDql!Schema(engine, parsed.value, accented), query);
+    }
 }
 
 @("dql.eval: typed value comparisons")
