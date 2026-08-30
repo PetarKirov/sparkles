@@ -1014,8 +1014,19 @@ private final class Printer
         const head = run[0 .. brk];
         auto parts = joinInline(g, head, false);
         if (endsClauseHeader(g, head))
+        {
+            // `with (a)` / `with (b)` / `{ … }` is a set of scopes over one
+            // block, and D writes the siblings at equal indent — D12. Every
+            // other chain staircases, because there the inner header really is
+            // the outer one's body: `if (c)` over a `while (…) { … }` is a
+            // nesting, and flattening it would say otherwise.
+            if (trailer.length && isWithHeader(g, head)
+                && startsWith(g, run[brk .. $], TOK.with_))
+                return parts ~ [hardline]
+                    ~ buildStatementRun(g, run[brk .. $], false, trailer);
             return parts ~ [indented([hardline]
                 ~ buildStatementRun(g, run[brk .. $], false, trailer))];
+        }
         // An own-line comment annotates what follows it; the two are siblings
         // at one level, not a wrap and its continuation. Without this, a
         // comment between a clause header and its body pushes the body right.
@@ -1030,6 +1041,17 @@ private final class Printer
     /// where the break after it really is a wrap.
     private static bool startsOwnLineComment(const Item item) @safe pure nothrow @nogc
         => item.kind == ItemKind.comment && item.newlinesBefore > 0;
+
+    /// Does `head` end with a `with (…)` header specifically?
+    private bool isWithHeader(const Group g, const Item[] head) const @safe
+        => head.length >= 2 && endsClauseHeader(g, head)
+            && head[$ - 2].kind == ItemKind.token
+            && spine.entries[head[$ - 2].index].kind == TOK.with_;
+
+    /// Does this run open with the given keyword?
+    private bool startsWith(const Group g, const Item[] run, TOK kind) const @safe
+        => run.length && run[0].kind == ItemKind.token
+            && spine.entries[run[0].index].kind == kind;
 
     /// Does `head` end with a clause header — `if (…)`, `foreach (…)`, or a
     /// bare `else`/`do`/`try`? A call ends with a parenthesis too, so the

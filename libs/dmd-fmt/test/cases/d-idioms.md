@@ -72,31 +72,34 @@ void f(Args...)(Args args)
 
 :::
 
-## A braced body sits at the column of the header that opens it
+## Sibling `with`s share a level; every other chain nests
 
-<!-- fmt id=D10 -->
+`with (a)` over `with (b)` is a set of scopes over one block, and D writes the siblings at equal
+indent. `if` over `if` — or over a `while` — is a nesting, and says so.
+
+<!-- fmt id=D12 -->
 
 ::: code-group
 
 ```d [Before]
 void f()
 {
-    with (A)
-    with (B)
-    {
-        g();
-    }
+with (A)
+with (B)
+{
+g();
+}
 
-    if (a)
-    if (b)
-    {
-        h();
-    }
+if (a)
+if (b)
+{
+h();
+}
 
-    if (c)
-    {
-        plain();
-    }
+if (c)
+{
+plain();
+}
 }
 ```
 
@@ -104,10 +107,10 @@ void f()
 void f()
 {
     with (A)
-        with (B)
-        {
-            g();
-        }
+    with (B)
+    {
+        g();
+    }
 
     if (a)
         if (b)
@@ -119,6 +122,64 @@ void f()
     {
         plain();
     }
+}
+```
+
+:::
+
+## The one-line header shapes D actually writes
+
+<!-- fmt id=D12 -->
+
+::: code-group
+
+```d [Before]
+void f(ClockType clockType, TOK kind)
+{
+switch (kind) with (TOK)
+{
+case identifier:
+break;
+default:
+}
+
+with (ClockType) final switch (clockType)
+{
+case normal:
+break;
+}
+
+foreach (triplet; data.triplets) with (triplet)
+{
+use(a, b);
+}
+
+with (yearMonth) this(year, month, day(assumePeriod));
+}
+```
+
+```d [After]
+void f(ClockType clockType, TOK kind)
+{
+    switch (kind) with (TOK)
+    {
+        case identifier:
+            break;
+        default:
+    }
+
+    with (ClockType) final switch (clockType)
+    {
+        case normal:
+            break;
+    }
+
+    foreach (triplet; data.triplets) with (triplet)
+    {
+        use(a, b);
+    }
+
+    with (yearMonth) this(year, month, day(assumePeriod));
 }
 ```
 

@@ -502,6 +502,67 @@ void describe(Args...)(Args args)
 
 ---
 
+### One-line headers stay on one line {#d12}
+
+<!-- fmt id=D12 -->
+
+`switch (kind) with (TOK)` is how D gets `case` labels without the enum prefix, and the whole
+point of it is that the two headers share a line. The formatter leaves them there — along with
+`with (E) final switch (…)`, `foreach (…) with (x)`, `with (a) with (b)`, and a one-line
+`with (e) stmt;`.
+
+That is not a special case in the engine so much as the author's-breaks policy doing its job: a
+survey of ~460 `with` statements across dmd, phobos, ldc, mir and arsd found 155 written as a
+joined header and 3 split across lines. The shape you write is the shape you get back.
+
+When sibling `with`s _are_ split over a block they share one level, which is what the real-world
+instances do — they scope the same block rather than nesting inside one another. Every other chain
+indents per header, because there the inner one really is the outer one's body.
+
+::: code-group
+
+```d [Before]
+void render(TOK kind)
+{
+switch (kind) with (TOK)
+{
+case identifier:
+emit();
+break;
+default:
+}
+
+with (config)
+with (theme)
+{
+apply();
+}
+}
+```
+
+```d [After]
+void render(TOK kind)
+{
+    switch (kind) with (TOK)
+    {
+        case identifier:
+            emit();
+            break;
+        default:
+    }
+
+    with (config)
+    with (theme)
+    {
+        apply();
+    }
+}
+```
+
+:::
+
+---
+
 ## What this page does not cover yet
 
 The layout tier is one of two. Token-changing rules — trailing-comma insertion, import sorting,
