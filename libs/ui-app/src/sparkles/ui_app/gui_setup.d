@@ -106,8 +106,6 @@ without a font would produce a blank one.
 */
 bool openGuiSession(in GuiRequest req, out GuiSession session) @system
 {
-    import std.string : toStringz;
-
     if (req.traceSink !is null)
     {
         import sparkles.ui_raylib.window : traceLogTo;
