@@ -106,8 +106,8 @@ if (is(Cmd == enum) && is(Scope == enum))
     Scope scope_;
     Cmd cmd;
     ubyte arg;       /// for a ranged chord, the value the range's first key maps to
-    ubyte require;   /// context bits that must all be set
-    ubyte forbid;    /// context bits that must all be clear
+    ushort require;  /// context bits that must all be set
+    ushort forbid;   /// context bits that must all be clear
     ModeReq mode;
     bool reveal;     /// executing this row shows the guide panel instead
     string desc;     /// what it does, for the guide
@@ -119,7 +119,7 @@ if (is(Cmd == enum) && is(Scope == enum))
 /// Builds a one-chord row. Optional arguments are named at call sites, so a
 /// table reads as a table rather than as positional noise.
 Binding!(Cmd, Scope) bind(Scope, Cmd)(Scope scope_, Chord a, Cmd cmd,
-    string desc, ubyte require = 0, ubyte forbid = 0,
+    string desc, ushort require = 0, ushort forbid = 0,
     ModeReq mode = ModeReq.any, ubyte arg = 0, bool reveal = false)
 if (is(Cmd == enum) && is(Scope == enum))
 {
@@ -139,7 +139,7 @@ if (is(Cmd == enum) && is(Scope == enum))
 
 /// ditto, for a two-chord path (`z c`, `<leader> e`).
 Binding!(Cmd, Scope) bind(Scope, Cmd)(Scope scope_, Chord a, Chord b_, Cmd cmd,
-    string desc, ubyte require = 0, ubyte forbid = 0, ubyte arg = 0,
+    string desc, ushort require = 0, ushort forbid = 0, ubyte arg = 0,
     bool reveal = false)
 if (is(Cmd == enum) && is(Scope == enum))
 {
@@ -152,7 +152,7 @@ if (is(Cmd == enum) && is(Scope == enum))
 
 /// ditto, for a three-chord path (`<leader> v r`).
 Binding!(Cmd, Scope) bind(Scope, Cmd)(Scope scope_, Chord a, Chord b_,
-    Chord c_, Cmd cmd, string desc, ubyte require = 0, ubyte forbid = 0)
+    Chord c_, Cmd cmd, string desc, ushort require = 0, ushort forbid = 0)
 if (is(Cmd == enum) && is(Scope == enum))
 {
     auto b = bind(scope_, a, b_, cmd, desc, require, forbid);
@@ -175,7 +175,7 @@ the group's `+name` is the better label.
 caller names it — or wraps this in an app-local helper that does.
 */
 Binding!(Cmd, Scope) group(Cmd, Scope)(Scope scope_, Chord a,
-    string name, ubyte require = 0, ubyte forbid = 0)
+    string name, ushort require = 0, ushort forbid = 0)
 if (is(Cmd == enum) && is(Scope == enum))
 {
     auto b = bind(scope_, a, Cmd.init, name, require, forbid);
@@ -185,7 +185,7 @@ if (is(Cmd == enum) && is(Scope == enum))
 
 /// ditto, for a nested group (`<leader> v`).
 Binding!(Cmd, Scope) group(Cmd, Scope)(Scope scope_, Chord a,
-    Chord b_, string name, ubyte require = 0, ubyte forbid = 0)
+    Chord b_, string name, ushort require = 0, ushort forbid = 0)
 if (is(Cmd == enum) && is(Scope == enum))
 {
     auto b = bind(scope_, a, b_, Cmd.init, name, require, forbid);
@@ -347,7 +347,7 @@ private bool scopeActiveOf(Scope, Ctx)(Scope s, in Ctx ctx, in KeyEvent k)
         return reachableOf(s, ctx);
 }
 
-private ubyte bitsOf(Ctx)(in Ctx ctx)
+private ushort bitsOf(Ctx)(in Ctx ctx)
 {
     static if (__traits(hasMember, Ctx, "bits"))
         return ctx.bits;
