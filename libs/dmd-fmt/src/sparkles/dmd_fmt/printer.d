@@ -813,6 +813,7 @@ private final class Printer
         bool expectColonEnd;
         int ternaryDepth;
         TOK prevToken = TOK.reserved;
+        const commaTerminates = !hasTopLevelSemicolon(items);
 
         void flush() @safe
         {
@@ -864,7 +865,7 @@ private final class Printer
                     ternaryDepth++;
             }
             const terminated = isTerminator(item, expectColonEnd,
-                ternaryDepth, prevToken);
+                ternaryDepth, prevToken, commaTerminates);
             if (item.kind == ItemKind.token)
                 prevToken = spine.entries[item.index].kind;
             run ~= item;
@@ -919,8 +920,31 @@ private final class Printer
         return sequence(parts);
     }
 
+    /**
+    Does this container separate its statements with `,` rather than `;`?
+
+    An `enum` body and a struct initializer do — the comma is the container's
+    separator, and each member is its own statement. A function body, a struct
+    body, a module: those terminate with `;`, and a top-level comma there is
+    $(I inside) a statement (`int a = 1, b = 2;`, a wrapped selective import).
+    Ending the run at it would restart the next line at the statement's own
+    level, so a wrapped list would lose its continuation indent — the shape
+    that de-indented a wrapped `import … : a, b,` in a third of this repo.
+
+    One `;` anywhere at the container's top level settles it: a member list
+    has none.
+    */
+    private bool hasTopLevelSemicolon(const Item[] items) const @safe
+    {
+        foreach (item; items)
+            if (item.kind == ItemKind.token
+                && spine.entries[item.index].kind == TOK.semicolon)
+                return true;
+        return false;
+    }
+
     private bool isTerminator(const Item item, bool expectColonEnd,
-        ref int ternaryDepth, TOK prevToken) const @safe
+        ref int ternaryDepth, TOK prevToken, bool commaTerminates) const @safe
     {
         if (item.kind == ItemKind.child)
         {
@@ -960,7 +984,8 @@ private final class Printer
             }
             return true;
         }
-        return k == TOK.semicolon || k == TOK.comma || k == TOK.rightCurly;
+        return k == TOK.semicolon || k == TOK.rightCurly
+            || (commaTerminates && k == TOK.comma);
     }
 
     /// One statement: inline joining with a single continuation level for

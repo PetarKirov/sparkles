@@ -216,3 +216,92 @@ void f()
 ```
 
 :::
+
+## A comma inside a statement is not a statement boundary
+
+`P84` where the wrap point is a comma. A selective import, a run of declarators and a call's
+argument list all wrap at one, and none of them starts a new statement there — so the tail keeps
+the continuation level instead of returning to the statement's own column.
+
+<!-- fmt id=P84 -->
+
+::: code-group
+
+```d [Before]
+import sparkles.raylib_text : FontSet, drawGrapheme,
+drawText, TextStyle;
+import sparkles.base.text : Reader,
+            Writer;
+
+void f()
+{
+    int first = 1,
+second = 2,
+        third = 3;
+    sink(alpha, beta,
+gamma);
+}
+```
+
+```d [After]
+import sparkles.raylib_text : FontSet, drawGrapheme,
+    drawText, TextStyle;
+import sparkles.base.text : Reader,
+    Writer;
+
+void f()
+{
+    int first = 1,
+        second = 2,
+        third = 3;
+    sink(alpha, beta,
+        gamma);
+}
+```
+
+:::
+
+## A comma-separated body still gives each member its own statement
+
+The mirror: an `enum` body and a struct initializer have no `;` to separate anything, so there the
+comma _is_ the separator and each member is a statement of its own.
+
+<!-- fmt id=P84 -->
+
+::: code-group
+
+```d [Before]
+enum Colour
+{
+red,
+        green,
+  blue,
+}
+
+void f()
+{
+    Point p = {
+x: 1,
+            y: 2,
+    };
+}
+```
+
+```d [After]
+enum Colour
+{
+    red,
+    green,
+    blue,
+}
+
+void f()
+{
+    Point p = {
+        x: 1,
+        y: 2,
+    };
+}
+```
+
+:::

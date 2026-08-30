@@ -314,6 +314,38 @@ taste: the first cut flattened every chain ending in a block, and formatting
 nests `if` over `while` and wants the indent. The evidence only ever covered
 `with` over `with`, so that is all the rule covers.
 
+### D13 — What the magic trailing comma asks, and what a comma separates
+
+Two amendments to M4 and to the continuation rule, both measured against the
+repository corpus rather than argued: together they removed 24% of the
+formatter's churn over every `.d` file in this tree (81,540 changed lines to
+61,399), and one file went from 15,784 changed lines to zero.
+
+**The trailing comma pins a shape; it does not impose one.** M4's rule was
+"canonical one-per-line", tested before the branch that preserves an author's
+multi-line shape — so it re-flowed lists that already had one. On
+`libs/base/.../text/unicode_tables.d`, a generated table packed ten values to
+the row, that turned 345 lines into 3,449, one value per line, and no reader
+would accept the result. The comma is a request for the exploded shape, and a
+list the author already broke _is_ exploded; the request is already granted.
+So: **explosion applies to a list written flat.** A broken list keeps its
+rows, and the comma still pins it against being folded onto one line — which
+is the whole of what M4 promised anyone.
+
+**A `,` separates statements only where nothing else does.** The statement
+splitter treated every top-level comma as a terminator. In an `enum` body or a
+struct initializer that is right — the comma is the container's separator and
+each member is a statement. In a function body, a struct body or a module it
+is wrong: the comma is _inside_ a statement (`int a = 1, b = 2;`, a selective
+import wrapped after one of its symbols), and ending the run there restarted
+the next line at the statement's own column, so a wrapped list lost its
+continuation indent and read as a new declaration at the left margin. This
+was visible in 234 files of this repository.
+
+The container settles it: **one `;` at a container's top level means `,` does
+not terminate there.** A member list has no semicolon to find, and a body that
+terminates its statements with one has no use for a comma that also does.
+
 ## Spike results
 
 | Spike                                | Result         | Where                                      |
@@ -409,7 +441,7 @@ revision.
 | M1 verifier              | `verify.d` — tier-3 token equality, the separate DDoc-attachment check (double-lex), bounded idempotence harness                                                              |
 | M2 `Doc` IR + engine     | `doc.d` — Lindig's strict worklist with `fits` over the rest of the worklist, `conditionalGroup` in the IR, injected display-column measurer, mid-document start, lazy indent |
 | M3 printer + valve       | `printer.d` — spine+group walk emitting `Doc`; verbatim by default (`dfmt off/on`, `asm`, directives, tail, multi-line literals/comments); broken input never invents tokens  |
-| M4 author signals        | blank-run collapse, magic trailing comma (read, never written), author-aligned comments and table literals preserved verbatim                                                 |
+| M4 author signals        | blank-run collapse, magic trailing comma (read, never written; explodes a flat list, pins a broken one — D13), author-aligned comments and table literals preserved verbatim  |
 | M5 edits                 | `edits.d` — minimal line edits via `sparkles:diff`, `--check` in the `dmd-fmt` CLI (dub config `cli`)                                                                         |
 | M6 range/cursor/suppress | `formatRange` (format-all/filter per D2), `mapCursor`, the single suppression mechanism; on-type stays an LSP-server concern built from these primitives                      |
 | M7 configuration         | `.editorconfig` discovery honoring dfmt's keys; unimplemented `dfmt_*` keys ignored (documented migration posture)                                                            |

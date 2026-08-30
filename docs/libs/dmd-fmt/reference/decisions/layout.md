@@ -401,6 +401,47 @@ void f()
 
 :::
 
+### A wrapped statement steps right once, whatever it wraps at {#p84}
+
+<!-- fmt id=P84 -->
+
+Break a statement across lines and every line after the first sits one level in — once, not once
+per line. A comma is not a statement boundary: a selective import or a run of declarators wrapped
+at one keeps that continuation, so the second line still reads as the tail of the first rather
+than as something new starting at the left margin.
+
+::: code-group
+
+```d [Before]
+import sparkles.raylib_text : FontSet, drawGrapheme,
+drawText, TextStyle;
+
+void f()
+{
+    int first = 1,
+            second = 2;
+    auto total = first +
+  second +
+            third;
+}
+```
+
+```d [After]
+import sparkles.raylib_text : FontSet, drawGrapheme,
+    drawText, TextStyle;
+
+void f()
+{
+    int first = 1,
+        second = 2;
+    auto total = first +
+        second +
+        third;
+}
+```
+
+:::
+
 ---
 
 ## Orphans
