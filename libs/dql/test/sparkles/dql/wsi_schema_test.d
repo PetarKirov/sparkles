@@ -8,20 +8,20 @@ segment array with enumerated indices.
 */
 module sparkles.dql.wsi_schema_test;
 
-version (unittest)
-{
+version (unittest):
+
 import sparkles.dql.engine : DqlEngine;
-import sparkles.dql.eval : evalDql;
-import sparkles.dql.parser : parseDql;
 import sparkles.dql.schema : DqlSchema, DqlResolution, isDqlCategory,
     isDqlPath;
 import sparkles.dql.resolve : resolveDqlPath;
+import sparkles.dql.testing : parseAndEvalDql;
 import sparkles.wsi : CompositionEvent, CompositionSegmentStyle, FrameReadyEvent,
     KeyboardEvent, ScrollEvent, TextCommittedEvent, WindowEvent,
     WindowEventPayload, WindowId;
 import std.sumtype : SumType;
 
 alias WindowSchema = DqlSchema!WindowEvent;
+alias parseAndEval = parseAndEvalDql!WindowSchema;
 
 @("dql.wsi-schema: envelope fields and mechanical variant names")
 @safe unittest
@@ -77,11 +77,7 @@ alias WindowSchema = DqlSchema!WindowEvent;
         "frameReady.token == 9007199254740993",
         "frameReady.predictedPresentationNanoseconds == 42",
     ])
-    {
-        auto parsed = parseDql!WindowSchema(engine, query);
-        assert(parsed.hasValue, parsed.error.message);
-        assert(evalDql!WindowSchema(engine, parsed.value, event), query);
-    }
+        assert(parseAndEval(engine, query, event), query);
 }
 
 @("dql.wsi-schema: inline text, segments, and presence")
@@ -94,20 +90,15 @@ alias WindowSchema = DqlSchema!WindowEvent;
     WindowEvent text = WindowEvent(1, WindowId(1, 1),
         WindowEventPayload(committed));
 
-    auto textQuery = parseDql!WindowSchema(engine,
-        "textCommitted.text == `hello`");
-    assert(textQuery.hasValue, textQuery.error.message);
-    assert(evalDql!WindowSchema(engine, textQuery.value, text));
+    assert(parseAndEval(engine, "textCommitted.text == `hello`", text));
 
     CompositionEvent composition;
     composition.segments[7].style = CompositionSegmentStyle.selected;
     WindowEvent ime = WindowEvent(2, WindowId(1, 1),
         WindowEventPayload(composition));
 
-    auto segment = parseDql!WindowSchema(engine,
-        "composition.segments[7].style == selected");
-    assert(segment.hasValue, segment.error.message);
-    assert(evalDql!WindowSchema(engine, segment.value, ime));
+    assert(parseAndEval(engine,
+        "composition.segments[7].style == selected", ime));
 
     // Out-of-range static index: present schema address, absent value.
     struct Reject
@@ -127,5 +118,4 @@ alias WindowSchema = DqlSchema!WindowEvent;
         == DqlResolution.absent);
     assert(resolveDqlPath!WindowSchema(text, "sequence", Reject.init)
         == DqlResolution.value);
-}
 }
