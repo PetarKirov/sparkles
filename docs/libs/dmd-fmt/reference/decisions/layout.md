@@ -391,7 +391,9 @@ A closing `)`, `]` or struct-initializer `}` **under contents that never broke**
 break there is a leftover, not a shape.
 
 When the contents _do_ break, the closer on its own line is the exploded shape and stays exactly
-where you put it — that is the next case. A statement block's `}` always keeps its line.
+where you put it — that is the next case. A statement block's `}` is never an orphan: a block
+spread over more than one line gets its closer on a line of its own, even where you left it beside
+a statement.
 
 ::: code-group
 
