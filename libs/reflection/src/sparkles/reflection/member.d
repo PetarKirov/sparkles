@@ -66,21 +66,24 @@ private template overloadGetters(T, string name)
         }
 
         alias all = pick!(__traits(getOverloads, T, name));
-        static if (all.length > 0)
+        // An `alias opDollar = length;` member resolves to `length`'s
+        // overloads under the alias's name; keep a getter only under its
+        // own identifier, so one getter is one member, not one per alias.
+        static if (all.length > 0 && __traits(identifier, all[0]) == name)
             alias overloadGetters = AliasSeq!(all[0]);
         else
             alias overloadGetters = AliasSeq!();
     }
 }
 
-private template memberGetters(T, size_t i, names...)
+private template memberGetters(T, names...)
 {
     static if (names.length == 0)
         alias memberGetters = AliasSeq!();
     else
     {
         alias head = overloadGetters!(T, names[0]);
-        alias tail = memberGetters!(T, i + 1, names[1 .. $]);
+        alias tail = memberGetters!(T, names[1 .. $]);
         static if (head.length > 0)
             alias memberGetters = AliasSeq!(head, tail);
         else
@@ -92,7 +95,7 @@ private template memberGetters(T, size_t i, names...)
 /// in declaration order. Private storage and setters never appear.
 template propertyGetters(T)
 {
-    alias propertyGetters = memberGetters!(T, 0, __traits(allMembers, T));
+    alias propertyGetters = memberGetters!(T, __traits(allMembers, T));
 }
 
 /// `true` when `T` exposes at least one public declared field.
@@ -102,7 +105,7 @@ enum bool hasPublicFields(T) = () {
         bool any;
         static foreach (i; 0 .. fieldCount!T)
         {
-            static if (__traits(getProtection, T.tupleof[i]) == "public")
+            static if (isPublic!(T.tupleof[i]))
                 any = true;
         }
         return any;
@@ -143,6 +146,12 @@ enum bool isTextSliceLike(T) = (is(T == struct) || is(T == union)
         || is(T == class))
     && !hasPublicFields!T
     && __traits(compiles, { const T v = T.init; const(char)[] s = v[]; });
+
+/// `true` when `getter` can be invoked on a `const` view of `T` — the
+/// capability a read-only consumer (a resolver over `ref const` subjects)
+/// must check before it may call a getter it discovered.
+enum bool isConstReadable(T, alias getter) = __traits(compiles,
+    (ref const T v) => __traits(getMember, v, __traits(identifier, getter))());
 
 /// The names `T` exposes through `alias this`.
 template aliasThisMembers(T)
@@ -258,6 +267,45 @@ string firstDuplicate(scope const(string)[] names) @safe pure
 
     struct Empty {}
     static assert(propertyGetters!Empty.length == 0);
+
+    // An alias of a getter is not a second getter (`opDollar = length`).
+    struct Sized
+    {
+        private size_t n_;
+        @property size_t length() const => n_;
+        alias opDollar = length;
+    }
+    static assert(propertyGetters!Sized.length == 1);
+    static assert(__traits(identifier, propertyGetters!Sized[0]) == "length");
+}
+
+@("reflection.member.isConstReadable")
+@safe pure unittest
+{
+    struct S
+    {
+        private int n_;
+        @property int stable() const => n_;
+        @property int hot() => ++n_;
+    }
+
+    alias getters = propertyGetters!S;
+    static assert(getters.length == 2);
+    static assert(isConstReadable!(S, getters[0]));  // stable
+    static assert(!isConstReadable!(S, getters[1])); // hot mutates
+}
+
+@("reflection.member.hasPublicFields.export")
+@safe pure unittest
+{
+    struct Exported
+    {
+        export int visible;
+    }
+
+    // `isPublic` and `hasPublicFields` give one answer: export counts.
+    static assert(isPublic!(Exported.tupleof[0]));
+    static assert(hasPublicFields!Exported);
 }
 
 @("reflection.member.valueLikeGetter")
