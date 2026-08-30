@@ -35,9 +35,10 @@ $(LIST
         too wide for `softMaxLineLength` explodes via the greedy engine.
         Read, never written: writing it is the one default-on rewrite D9
         schedules, and it belongs to tier 2, not to this pass.
-    * $(B Verbatim by default) (M3's do-no-harm valve): `// dfmt off` …
-        `// dfmt on` ranges and `asm { … }` bodies are emitted
-        byte-for-byte; `#line`/shebang directives, the `__EOF__` tail, the
+    * $(B Verbatim by default) (M3's do-no-harm valve): what `// dfmt off` …
+        `// dfmt on` encloses, and `asm { … }` bodies, are emitted
+        byte-for-byte — the two markers themselves are ordinary comments and
+        land at the structural indent (D5); `#line`/shebang directives, the `__EOF__` tail, the
         BOM, and every single-entry construct (`q{}`, delimited/hex/
         interpolated strings, comments — no reflow, DDoc included) pass
         through untouched.
@@ -102,6 +103,11 @@ private final class Printer
     {
         suppressed = new bool[](spine.entries.length);
 
+        // The markers delimit the region; they are not inside it. Both are
+        // laid out as the ordinary comments they are — a `// dfmt on` left at
+        // the wrong depth is a comment about the code around it, and reads as
+        // one only if it sits where the code does. What the markers enclose is
+        // emitted byte-for-byte, its own indentation included.
         bool off;
         foreach (i, t; spine.entries)
         {
@@ -109,12 +115,22 @@ private final class Printer
             {
                 const directive = commentDirective(entryText(i));
                 if (directive == "dfmt off")
+                {
                     off = true;
-                if (off)
-                    suppressed[i] = true;
+                    continue;
+                }
                 if (directive == "dfmt on")
+                {
                     off = false;
-                continue;
+                    // The whitespace in front of the marker belongs to the
+                    // marker's own line, not to the region's last line, so
+                    // release it too — otherwise the region's trailing bytes
+                    // put the marker back where the author had it.
+                    for (size_t j = i; j > 0
+                        && spine.entries[j - 1].cls == SpineClass.whitespace; )
+                        suppressed[--j] = false;
+                    continue;
+                }
             }
             if (off)
                 suppressed[i] = true;
@@ -536,6 +552,13 @@ private final class Printer
         return false;
     }
 
+    /// Does this item's own text start with a newline? Only a verbatim run
+    /// can: it carries the author's bytes, line break included.
+    private bool opensWithNewline(const Item item) const @safe
+        => item.kind == ItemKind.verbatimRun
+            && item.runStart < item.runEnd
+            && spine.source[item.runStart] == '\n';
+
     /// Is this item a `;` or `,`? Both terminate what precedes them, so a
     /// break before one is never information: D writes the comma at the end
     /// of the element, not at the start of the next.
@@ -855,11 +878,15 @@ private final class Printer
             }
             else if (i != 0)
             {
-                // Same-line join: keep an author-aligned comment's gap.
+                // Same-line join: keep an author-aligned comment's gap. A
+                // verbatim run that opens with its own newline needs no
+                // separator — it brings the line break with it, and a space
+                // here would be trailing whitespace on the line above.
                 const first = stmt.run[0];
                 const gap = spine.source[first.gapStart .. first.gapEnd];
-                *target ~= first.kind == ItemKind.comment && gap.length > 1
-                    ? text(gap.idup) : text(" ");
+                if (!opensWithNewline(first))
+                    *target ~= first.kind == ItemKind.comment && gap.length > 1
+                        ? text(gap.idup) : text(" ");
             }
             foreach (piece; buildStatement(g, stmt.run))
                 *target ~= piece;

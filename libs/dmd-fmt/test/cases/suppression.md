@@ -2,7 +2,11 @@
 
 The M3 do-no-harm valve, pushed into the corners. Unpublished (`TST3`).
 
-## `// dfmt off` inside a bracket keeps its own line
+## The markers are laid out; what they enclose is not
+
+Both markers are ordinary comments and land at the structural indent — a `// dfmt on` left at the
+wrong depth is a comment about the code around it, and reads as one only where the code is. The
+region between them keeps its own bytes, alignment included.
 
 <!-- fmt id=D5 -->
 
@@ -23,7 +27,7 @@ enum t = [
     // dfmt off
     [1,   0,  0],
     [0, 1,    0],
-        // dfmt on
+    // dfmt on
 ];
 auto after = 1;
 ```
