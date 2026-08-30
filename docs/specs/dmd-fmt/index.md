@@ -202,10 +202,13 @@ An amendment to the v1 layout policy, which is otherwise "a newline between
 tokens stays a newline". Three shapes are exempt, because the break in them
 carries no information to preserve:
 
-- **A line whose only content is `;` or `,`.** Nobody chooses that layout; it
-  is what deleting an argument or a bad merge leaves behind. The token rejoins
-  what it terminates. "Only content" is the whole test — `, b` is
-  leading-comma style, a real if rare choice, and it survives untouched.
+- **A `;` or `,` that starts a line.** Both terminate what precedes them, so a
+  break in front of one is never information: D writes the comma at the end of
+  the element, not at the start of the next. The separator moves up — and the
+  break moves with it, so a list written one-per-line stays one-per-line and
+  only the commas change ends. This normalizes leading-comma style rather than
+  preserving it, which is the one place D10 overrules a layout somebody could
+  have chosen: the comma's position is not a matter of taste in D.
 - **A closing `)` or `]` under contents that never broke.** `[1, 2, 3\n]`
   becomes `[1, 2, 3]`. When the contents _do_ break, the closer on its own line
   is the exploded shape and the point of it, so it stays.
@@ -220,9 +223,14 @@ tier. The v1 policy preserves breaks because it cannot tell which are
 meaningful; these are the shapes where that doubt does not apply, and dfmt
 already joins all of them.
 
-The exemption list is deliberately closed. Every entry names a token that can
-be alone on a line only by accident — extending it to breaks that a reader
-might have chosen would put us back to guessing.
+The exemption list is deliberately closed, and the closer/brace entries are
+the conservative ones: they touch only breaks that cannot have been chosen,
+because the contents beside them did not break either. The separator entry is
+the deliberate exception to that conservatism.
+
+Note what stays untouched. `q{ … }` and every other multi-token literal is one
+spine entry, emitted byte-for-byte — interior spacing included. What rejoins is
+the `;` after the closing brace, not anything inside it.
 
 ## Spike results
 

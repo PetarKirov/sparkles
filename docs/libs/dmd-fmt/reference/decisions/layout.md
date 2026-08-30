@@ -380,10 +380,15 @@ void f()
 
 <!-- fmt id=D10 -->
 
-Your line breaks are yours — with three exceptions, for the shapes where the break cannot have
-been a choice. A line holding nothing but `;` or `,` is what deleting an argument or a bad merge
-leaves behind, so the token rejoins what it terminates. A closing `)`, `]` or struct-initializer
-`}` under contents that never broke is orphaned the same way, and rejoins them.
+Your line breaks are yours, with three exceptions.
+
+A `;` or `,` that starts a line **moves up to the end of the line above** — both terminate what
+precedes them, and D writes the comma at the end of an element rather than the start of the next.
+The break moves with it, so a list written one-per-line stays one-per-line; only the commas change
+ends.
+
+A closing `)`, `]` or struct-initializer `}` **under contents that never broke** rejoins them: the
+break there is a leftover, not a shape.
 
 When the contents _do_ break, the closer on its own line is the exploded shape and stays exactly
 where you put it — that is the next case. A statement block's `}` always keeps its line.
@@ -396,7 +401,9 @@ void save(Config config)
     write(config.path
         )
         ;
-    auto flags = [readable, writable
+    auto flags = [
+          readable
+        , writable
     ];
 }
 ```
@@ -405,7 +412,10 @@ void save(Config config)
 void save(Config config)
 {
     write(config.path);
-    auto flags = [readable, writable];
+    auto flags = [
+        readable,
+        writable
+    ];
 }
 ```
 
