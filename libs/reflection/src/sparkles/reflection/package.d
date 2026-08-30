@@ -2,10 +2,10 @@
 `sparkles:reflection` — dependency-free structural reflection.
 
 The shared reflection kernel of the monorepo: a closed structural
-classification ($(MREF sparkles,reflection,kind)), member/field/property
-primitives with one-pass CTFE tables ($(MREF sparkles,reflection,member)), and
-the DbI type and value visitor shells
-($(MREF sparkles,reflection,visit)) whose hooks are all optional.
+classification ($(MREF sparkles,reflection,kind)) and member/field/property
+primitives ($(MREF sparkles,reflection,member)) — the field spine, public
+`@property` getter discovery, the value-like wrapper rule, and CTFE helpers
+such as `firstDuplicate`.
 
 Consumers supply semantics; the kernel supplies structure. The property tree,
 the text writers, query-path resolution, and serialization front ends
@@ -17,4 +17,3 @@ module sparkles.reflection;
 
 public import sparkles.reflection.kind;
 public import sparkles.reflection.member;
-public import sparkles.reflection.visit;

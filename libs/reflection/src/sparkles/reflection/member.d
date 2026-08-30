@@ -1,7 +1,7 @@
 /**
 Structural member primitives: declared-field enumeration, public
-`@property`-getter discovery, the value-like wrapper rule, and the one-pass
-CTFE tables consumers reduce member data into.
+`@property`-getter discovery, the value-like wrapper rule, and small CTFE
+helpers consumers reduce member data with.
 
 The field primitives are indexed into `T.tupleof` — the same spine the
 property tree and serialization walk — so a field's compile-time symbol, type,
@@ -23,9 +23,6 @@ enum size_t fieldCount(T) = T.tupleof.length - (__traits(isNested, T) ? 1 : 0);
 
 /// The declared type of field `i` of `T`.
 alias fieldType(T, size_t i) = typeof(T.tupleof[i]);
-
-/// The compile-time symbol of field `i` of `T` (UDA and protection source).
-alias fieldSymbol(T, size_t i) = T.tupleof[i];
 
 /// The declared identifier of field `i` of `T`.
 enum string fieldIdentifier(T, size_t i) = __traits(identifier, T.tupleof[i]);
@@ -152,55 +149,6 @@ enum bool isTextSliceLike(T) = (is(T == struct) || is(T == union)
 /// must check before it may call a getter it discovered.
 enum bool isConstReadable(T, alias getter) = __traits(compiles,
     (ref const T v) => __traits(getMember, v, __traits(identifier, getter))());
-
-/// The names `T` exposes through `alias this`.
-template aliasThisMembers(T)
-{
-    alias aliasThisMembers = __traits(getAliasThis, T);
-}
-
-/**
-One-pass CTFE table over `T`'s declared fields: `reduce` is a template
-returning one uniform value per field index, and the table is built once
-(a `static immutable` array, not a manifest constant, so per-index reads do
-not re-materialize the whole table). This is the shared spine serialization
-policies, schema generators, and row mappers reduce into.
-*/
-template fieldTable(T, alias reduce)
-if (is(T == struct) || is(T == class) || is(T == union))
-{
-    static if (fieldCount!T == 0)
-    {
-        static immutable bool[0] fieldTable;
-    }
-    else
-    {
-        alias R = typeof(reduce!0);
-        static immutable R[] fieldTable = () {
-            R[] r;
-            static foreach (i; 0 .. fieldCount!T)
-                r ~= reduce!i;
-            return r;
-        }();
-        static foreach (i; 0 .. fieldCount!T)
-            static assert(is(typeof(reduce!i) == R),
-                "fieldTable: reduce must produce one uniform type per field");
-    }
-}
-
-/// ditto — one entry per member name of enum `E`; `reduce` takes the member
-/// name string and resolves the member symbol itself.
-template enumMemberTable(E, alias reduce)
-if (is(E == enum))
-{
-    alias R = typeof(reduce!(__traits(allMembers, E)[0]));
-    static immutable R[] enumMemberTable = () {
-        R[] r;
-        static foreach (m; __traits(allMembers, E))
-            r ~= reduce!m;
-        return r;
-    }();
-}
 
 /// The first value in `names` that equals an earlier one, or `null` when all
 /// are distinct. CTFE helper for the uniqueness checks consumers run on their
@@ -364,41 +312,6 @@ string firstDuplicate(scope const(string)[] names) @safe pure
         const(char)[] opSlice() const return => text[];
     }
     static assert(!isTextSliceLike!Open); // public storage is addressable
-}
-
-@("reflection.member.fieldTable")
-@safe pure unittest
-{
-    struct S
-    {
-        int alpha;
-        string beta;
-    }
-
-    template namesOf(size_t i)
-    {
-        enum string namesOf = fieldIdentifier!(S, i);
-    }
-
-    alias table = fieldTable!(S, namesOf);
-    static assert(table == ["alpha", "beta"]);
-
-    struct None {}
-    static assert(fieldTable!(None, namesOf).length == 0);
-}
-
-@("reflection.member.enumMemberTable")
-@safe pure unittest
-{
-    enum Mode { fast, slow }
-
-    template quoted(string m)
-    {
-        enum string quoted = "\"" ~ m ~ "\"";
-    }
-
-    alias table = enumMemberTable!(Mode, quoted);
-    static assert(table == ["\"fast\"", "\"slow\""]);
 }
 
 @("reflection.member.firstDuplicate")
