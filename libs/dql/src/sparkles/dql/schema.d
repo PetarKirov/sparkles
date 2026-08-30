@@ -93,6 +93,12 @@ private string leafExample(T)(string path) @safe pure
         return path ~ " == true";
     else static if (typeKindOf!T == TypeKind.text)
         return path ~ " == `text`";
+    else static if (typeKindOf!T == TypeKind.character)
+        return path ~ " == `a`";
+    else static if (typeKindOf!T == TypeKind.aggregate)
+        // A presence leaf (an empty variant): it has no comparable value,
+        // only existence.
+        return path ~ " != null";
     else
         return path ~ " == 0";
 }
@@ -102,6 +108,26 @@ private struct CollectedSchema
 {
     DqlPathDoc[] paths;
     DqlCategoryDoc[] categories;
+
+    /// The declaring variant type of each category entry (mangled), so a
+    /// repeat of one type collapses while two types sharing a token fail.
+    string[] categoryTags;
+
+    /// Appends a category, collapsing exact repeats (one alternative type
+    /// reached through several sums is one category, not a collision).
+    void addCategory(DqlCategoryDoc doc, string tag) @safe pure
+    {
+        foreach (i, ref const existing; categories)
+            if (existing.name == doc.name)
+            {
+                assert(categoryTags[i] == tag,
+                    "DQL category token `" ~ doc.name
+                        ~ "` names two different variants");
+                return;
+            }
+        categories ~= doc;
+        categoryTags ~= tag;
+    }
 }
 
 private string joinSegment(string prefix, string segment) @safe pure
@@ -137,8 +163,8 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
     {
         static foreach (V; TemplateArgsOf!T)
         {{
-            o.categories ~= DqlCategoryDoc(variantNameOf!V,
-                variantAliasesOf!V, descriptionOf!V);
+            o.addCategory(DqlCategoryDoc(variantNameOf!V,
+                variantAliasesOf!V, descriptionOf!V), V.mangleof);
             collectType!(V, Seen, T)(o, joinSegment(prefix, variantNameOf!V));
         }}
     }
@@ -210,8 +236,31 @@ private void collectTypeBody(T, Seen...)(ref CollectedSchema o, string prefix)
 
 private CollectedSchema collectSchema(T)() @safe
 {
+    import sparkles.reflection.member : firstDuplicate;
+
     CollectedSchema o;
     collectType!T(o, "");
+
+    // Generated names must be injective or the first spelling silently
+    // shadows the second in every lookup; a collision is a schema bug in
+    // the subject vocabulary and fails the build with the token named.
+    string[] pathNames;
+    foreach (ref const doc; o.paths)
+        pathNames ~= doc.path;
+    if (const dup = firstDuplicate(pathNames))
+        assert(false,
+            "DqlSchema!" ~ T.stringof ~ ": duplicate path `" ~ dup ~ "`");
+
+    string[] tokens;
+    foreach (ref const doc; o.categories)
+    {
+        tokens ~= doc.name;
+        tokens ~= doc.aliases;
+    }
+    if (const dup = firstDuplicate(tokens))
+        assert(false,
+            "DqlSchema!" ~ T.stringof ~ ": duplicate category token `"
+                ~ dup ~ "`");
     return o;
 }
 
@@ -268,6 +317,55 @@ bool isDqlCategory(Schema)(scope const(char)[] name) @safe pure nothrow @nogc
     assert(isDqlCategory!Schema("move"));
     assert(isDqlCategory!Schema("stop"));
     assert(!isDqlCategory!Schema("payload"));
+}
+
+@("dql.schema: colliding generated names are rejected at compile time")
+@safe unittest
+{
+    import std.sumtype : SumType;
+    import sparkles.metadata : Name;
+
+    struct FirstEvent { int a; }
+
+    @Name("first")
+    struct SecondEvent { int b; }
+
+    // Two alternatives answering to one token would silently shadow each
+    // other in every lookup; the schema refuses to evaluate instead. (The
+    // probe forces the CTFE walk — the table initializers are lazy, so a
+    // `paths.length` mention alone would not run it.)
+    alias Bad = SumType!(FirstEvent, SecondEvent);
+    static assert(!__traits(compiles, { enum t = collectSchema!Bad(); }));
+
+    // The same type reached through two sums is one category, not a clash.
+    struct WrapAEvent { SumType!FirstEvent inner; }
+    struct WrapBEvent { SumType!FirstEvent inner; }
+    static assert(__traits(compiles,
+        { enum t = collectSchema!(SumType!(WrapAEvent, WrapBEvent))(); }));
+}
+
+@("dql.schema: examples follow the leaf kind")
+@safe unittest
+{
+    import std.sumtype : SumType;
+
+    struct KeyedEvent { dchar ch; }
+    struct GoneEvent {}
+    alias Schema = DqlSchema!(SumType!(KeyedEvent, GoneEvent));
+
+    string exampleOf(string path)
+    {
+        foreach (ref const doc; Schema.paths)
+            if (doc.path == path)
+                return doc.example;
+        return null;
+    }
+
+    // A char leaf compares as a quoted code point; a presence leaf has no
+    // comparable value, only existence — `key.ch == 0` and `gone == 0`
+    // would parse and then never be true.
+    assert(exampleOf("keyed.ch") == "keyed.ch == `a`");
+    assert(exampleOf("gone") == "gone != null");
 }
 
 @("dql.schema: a nested transparent sum keeps the enclosing prefix")
