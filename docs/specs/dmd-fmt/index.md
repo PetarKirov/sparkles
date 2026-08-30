@@ -196,6 +196,34 @@ brace-injected — and **DStyle's spacing rules become the target** rather than 
 token level; it is the same prerequisite as operator flattening and parenthesis normalization, so
 the three are one investment, not three.
 
+### D10 — Orphaned separators and closers rejoin
+
+An amendment to the v1 layout policy, which is otherwise "a newline between
+tokens stays a newline". Three shapes are exempt, because the break in them
+carries no information to preserve:
+
+- **A line whose only content is `;` or `,`.** Nobody chooses that layout; it
+  is what deleting an argument or a bad merge leaves behind. The token rejoins
+  what it terminates. "Only content" is the whole test — `, b` is
+  leading-comma style, a real if rare choice, and it survives untouched.
+- **A closing `)` or `]` under contents that never broke.** `[1, 2, 3\n]`
+  becomes `[1, 2, 3]`. When the contents _do_ break, the closer on its own line
+  is the exploded shape and the point of it, so it stays.
+- **A closing `}` of an expression brace**, on the same terms — a struct
+  initializer is a list like any other. A statement block's `}` always earns
+  its line, and the token before the brace is what separates the two: `=`,
+  `,`, `(`, `[`, `return` and `=>` introduce a value; anything else opens a
+  block.
+
+Nothing here adds or removes a token, so this is tier 1, not D9's rewrite
+tier. The v1 policy preserves breaks because it cannot tell which are
+meaningful; these are the shapes where that doubt does not apply, and dfmt
+already joins all of them.
+
+The exemption list is deliberately closed. Every entry names a token that can
+be alone on a line only by accident — extending it to breaks that a reader
+might have chosen would put us back to guessing.
+
 ## Spike results
 
 | Spike                                | Result         | Where                                      |

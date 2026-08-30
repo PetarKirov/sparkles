@@ -166,8 +166,8 @@ void f()
 {
     foo(a)
 .bar();
-    check(value)
-            ;
+    receive(handler)
+            .then(next);
 }
 ```
 
@@ -176,8 +176,8 @@ void f()
 {
     foo(a)
         .bar();
-    check(value)
-        ;
+    receive(handler)
+        .then(next);
 }
 ```
 

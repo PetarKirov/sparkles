@@ -17,7 +17,10 @@ unary-vs-binary token disambiguation. Concretely:
 
 $(LIST
     * $(B Line structure is the author's): a newline between tokens stays a
-        newline, same-line stays same-line. Indentation is recomputed
+        newline, same-line stays same-line — except for the orphans D10
+        exempts, where the break carries nothing to preserve (a line holding
+        only `;` or `,`, and a `)`/`]`/expression-`}` under contents that
+        never broke). Indentation is recomputed
         structurally — brace nesting, `case`/`default` bodies one level
         deeper, wrapped statements one continuation level (dfmt's
         single-indent style).
@@ -476,7 +479,12 @@ private final class Printer
         }
         const items = collectItems(g, g.firstEntry + 1,
             g.lastEntry > g.firstEntry ? g.lastEntry - 1 : g.firstEntry);
-        const multiline = itemsSpanLines(items) || closerOnOwnLine(g);
+        // A statement block's `}` always earns its line. An expression brace —
+        // a struct initializer — is a list like any other, so an orphaned
+        // closer under contents that never broke rejoins them.
+        const multiline = isExpressionBrace(g)
+            ? itemsSpanLines(items)
+            : (itemsSpanLines(items) || closerOnOwnLine(g));
         if (!multiline)
         {
             Doc[] parts = [text("{")];
@@ -497,6 +505,72 @@ private final class Printer
             indented(hardline, buildStatements(g, items)),
             hardline, text("}"));
     }
+
+    /**
+    Is this `{ … }` an expression rather than a statement block?
+
+    A struct initializer (`S s = { a: 1 }`), an element of an array of them,
+    an initializer passed as an argument: all are values, and the token before
+    the brace is what says so. A block after `)` or an identifier — a function
+    body, a `case` arm, a nested scope — is not, and its `}` always earns its
+    own line.
+    */
+    private bool isExpressionBrace(const Group g) const @safe
+    {
+        if (spine.entries[g.firstEntry].kind != TOK.leftCurly)
+            return false;
+        foreach_reverse (i; 0 .. g.firstEntry)
+        {
+            const t = spine.entries[i];
+            if (t.cls == SpineClass.whitespace || t.cls == SpineClass.comment)
+                continue;
+            switch (t.kind)
+            {
+                case TOK.assign, TOK.comma, TOK.leftParenthesis,
+                    TOK.leftBracket, TOK.return_, TOK.goesTo:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        return false;
+    }
+
+    /// Is `items[at]` a `;` or `,` sitting alone on its line? "Alone" is the
+    /// whole point: `, b` is leading-comma style, a real if rare choice, and
+    /// the author's-breaks rule keeps it.
+    private bool isOrphanedSeparator(const Item[] items, size_t at) const @safe
+    {
+        const item = items[at];
+        if (item.kind != ItemKind.token)
+            return false;
+        const kind = spine.entries[item.index].kind;
+        if (kind != TOK.semicolon && kind != TOK.comma)
+            return false;
+        return at + 1 == items.length || items[at + 1].newlinesBefore > 0;
+    }
+
+    /**
+    Does the closer deserve its own line?
+
+    It does when the contents broke — that is the exploded shape, and the
+    closer at the construct's own column is the point of it:
+
+    ---
+    auto x = [
+        1,
+        2,
+    ];
+    ---
+
+    It does not when the contents all sit on one line, because then the closer
+    is $(I orphaned): a line holding nothing but `]` under a list that did not
+    break is a leftover, not a layout the author chose. Same argument as the
+    lone `;` and the lone `,` — the break carries no information, so v1's
+    author's-breaks rule has nothing to preserve.
+    */
+    private bool closerDeservesOwnLine(const Group g, const Item[] items) const @safe
+        => closerOnOwnLine(g) && itemsSpanLines(items);
 
     /// Did the author break the line immediately after the opener? A `(`/`[`
     /// container emits no break of its own before its first item, so without
@@ -556,9 +630,8 @@ private final class Printer
                 return sequence(text(openText), text(closeText));
             return sequence(text(openText),
                 indented(joinInline(g, items, true, opensOnOwnLine(items))),
-                itemsSpanLines(items) || closerOnOwnLine(g)
-                    ? sequence(closerOnOwnLine(g)
-                        ? [hardline, text(closeText)] : [text(closeText)])
+                closerDeservesOwnLine(g, items)
+                    ? sequence(hardline, text(closeText))
                     : text(closeText));
         }
         return buildList(g, items, openText, closeText);
@@ -634,7 +707,8 @@ private final class Printer
             return sequence(text(openText),
                 indented(joinInline(g, items, false, opensOnOwnLine(items),
                     true)),
-                closerOnOwnLine(g) ? sequence(hardline, text(closeText))
+                closerDeservesOwnLine(g, items)
+                    ? sequence(hardline, text(closeText))
                     : text(closeText));
         }
 
@@ -887,7 +961,8 @@ private final class Printer
         size_t brk = size_t.max;
         foreach (i, item; run)
             if (i != 0 && item.newlinesBefore > 0
-                && !(atStatementStart && inAttributePrefix(g, run, i)))
+                && !(atStatementStart && inAttributePrefix(g, run, i))
+                && !isOrphanedSeparator(run, i))
             {
                 brk = i;
                 break;
@@ -971,6 +1046,18 @@ private final class Printer
         Doc[] parts;
         foreach (i, item; items)
         {
+            // A line holding nothing but `;` or `,` is never a layout anyone
+            // chose — it is what a deleted argument or a bad merge leaves
+            // behind. The break before it carries no information, so the
+            // author's-breaks rule has nothing to preserve: the token rejoins
+            // what it terminates. Leading-comma style is untouched, because
+            // there the comma is not alone on its line.
+            if (i != 0 && item.newlinesBefore > 0
+                && isOrphanedSeparator(items, i))
+            {
+                parts ~= buildItem(g, item);
+                continue;
+            }
             if (i == 0 && leadingBreak)
             {
                 // The author broke the line right after the opener. Keep the
