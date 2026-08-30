@@ -5251,6 +5251,87 @@
         ]
       },
       {
+        "text": "UI Virtualization",
+        "link": "/research/ui-virtualization/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts",
+            "link": "/research/ui-virtualization/concepts"
+          },
+          {
+            "text": "Immediate mode",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Dear ImGui — list clipper",
+                "link": "/research/ui-virtualization/dear-imgui-clipper"
+              },
+              {
+                "text": "egui — show_rows",
+                "link": "/research/ui-virtualization/egui-show-rows"
+              },
+              {
+                "text": "Gio — layout.List",
+                "link": "/research/ui-virtualization/gio-list"
+              }
+            ]
+          },
+          {
+            "text": "Terminal",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Ratatui — offsets",
+                "link": "/research/ui-virtualization/ratatui-offsets"
+              },
+              {
+                "text": "Textual — the line API",
+                "link": "/research/ui-virtualization/textual-line-api"
+              }
+            ]
+          },
+          {
+            "text": "Retained mode",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Flutter — slivers",
+                "link": "/research/ui-virtualization/flutter-slivers"
+              },
+              {
+                "text": "GTK 4 — list factories",
+                "link": "/research/ui-virtualization/gtk4-list-factories"
+              },
+              {
+                "text": "Qt Quick — reuseItems",
+                "link": "/research/ui-virtualization/qt-quick-listview"
+              },
+              {
+                "text": "WPF & Avalonia — virtualizing panels",
+                "link": "/research/ui-virtualization/avalonia-wpf-virtualizing-panels"
+              },
+              {
+                "text": "VS Code — range diffing",
+                "link": "/research/ui-virtualization/vscode-listview"
+              },
+              {
+                "text": "Slint — repeaters",
+                "link": "/research/ui-virtualization/slint-repeater"
+              }
+            ]
+          },
+          {
+            "text": "Sparkles baseline",
+            "link": "/research/ui-virtualization/sparkles-baseline"
+          },
+          {
+            "text": "Comparison",
+            "link": "/research/ui-virtualization/comparison"
+          }
+        ]
+      },
+      {
         "text": "UI backend seam",
         "collapsed": true,
         "items": [
