@@ -3799,7 +3799,21 @@ unittest
         assert(w.viewer.vm.matches == window.matches,
             "the terminal and the window disagreed on: " ~ q);
 
+        // `FND5`: cancelling drops the matches, not just the query. The
+        // terminal used to clear `qlen` and leave `vm.matches` populated, so
+        // `n` went on cycling an abandoned search; the window nulled
+        // `matches` but not `matchRects`, and it paints the tint FROM the
+        // rects — so Esc cleared the count and kept the highlight. Both are
+        // asserted here because both were wrong, in opposite halves.
         w.handle(Event(KeyEvent(key: Key.escape)));
+        assert(w.viewer.vm.matches.length == 0,
+            "the terminal kept its matches after Esc: " ~ q);
+        assert(w.viewer.vm.matchRects.length == 0,
+            "the terminal kept its match rects after Esc: " ~ q);
+
+        window.clearSearch();
+        assert(window.matches.length == 0 && window.matchRects.length == 0,
+            "clearSearch left state behind: " ~ q);
     }
 
     // Smart case. Before the unification the window found 1 here, the

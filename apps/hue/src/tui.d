@@ -1531,7 +1531,9 @@ struct PreviewTui
                 }
                 break;
 
-            case Command.startSearch: searching = true; qlen = 0; break;
+            // Opening the bar starts from nothing — query AND matches, so a
+            // fresh `/` never shows the previous search's tint (`FND5`).
+            case Command.startSearch: searching = true; qlen = 0; vm.clearSearch(); break;
             case Command.dsvFilter: filtering = true; qlen = 0; break;
             case Command.dsvReset:
                 if (onDsvReset !is null)
@@ -1969,6 +1971,11 @@ struct PreviewTui
             case Key.escape:
                 searching = false;
                 qlen = 0;
+                // Cancelling drops the matches, not just the query (`FND5`).
+                // Clearing `qlen` alone left `vm.matches` populated, so `n`
+                // kept cycling a search the reviewer had already abandoned —
+                // and the count in the status bar outlived its query.
+                vm.clearSearch();
                 break;
             default: break;
         }
