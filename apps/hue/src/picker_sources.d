@@ -1,9 +1,9 @@
 /** Incremental picker source seam and the `.gitignore`-aware files finder. */
 module picker_sources;
 
-import std.path : baseName, buildPath, globMatch;
+import std.path : baseName, buildPath;
 
-import sparkles.build_primitives : walkGitRepository;
+import sparkles.build_primitives.glob_walk : globWalkGitRepository;
 import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
     CorpusId, PathFlavor, RankContext;
 
@@ -92,9 +92,16 @@ static assert(isFinder!FilesFinder);
 /**
 Walk `root` with nested `.gitignore` rules and freeze a files snapshot.
 
-Include globs have the explorer's snacks-style precedence: an explicit include
-keeps a file even when an exclude also matches. Both basename and root-relative
-path are tested, matching the explorer pane.
+The walk is `globWalkGitRepository` — the repository's one glob-filtered
+walk (`PKC4`), which the grep source will share. It used to be
+`walkGitRepository` with a hand-rolled glob layer on top, and the two
+layers did not agree: `.gitignore` was applied FIRST, so an `include` glob
+could only rescue a file from `exclude`, never from being ignored.
+
+The explorer's `XPF2` precedence — snacks' — is that `include` overrides
+hidden, ignored AND exclude, which is what `GitGlobFilter` implements. So a
+gitignored file matching an include glob appeared in the tree and not in
+the picker, and the two panes disagreed about what the project contains.
 */
 FilesFinder collectFilesFinder(string root,
     scope const(string)[] includeGlobs = null,
@@ -102,18 +109,13 @@ FilesFinder collectFilesFinder(string root,
 {
     FilesFinder result;
     result.root = root;
-    auto files = walkGitRepository(root);
+    auto files = globWalkGitRepository(root, includeGlobs, excludeGlobs);
     ulong corpusHigh = fnv1a(root, 0xcbf29ce484222325UL);
     ulong corpusLow = fnv1a(root, 0x84222325cbf29ce4UL);
     while (!files.empty)
     {
         const relative = files.front;
         files.popFront();
-        const name = relative.baseName;
-        const explicitlyIncluded = matchesAny(name, relative, includeGlobs);
-        if (!explicitlyIncluded
-            && matchesAny(name, relative, excludeGlobs))
-            continue;
 
         result.paths ~= relative;
         CandidateView candidate;
@@ -131,15 +133,6 @@ FilesFinder collectFilesFinder(string root,
     }
     result.corpus = CorpusId(corpusHigh, corpusLow);
     return result;
-}
-
-private bool matchesAny(scope const(char)[] name, scope const(char)[] path,
-    scope const(string)[] patterns) @safe
-{
-    foreach (pattern; patterns)
-        if (globMatch(name, pattern) || globMatch(path, pattern))
-            return true;
-    return false;
 }
 
 private CandidateId stablePathId(scope const(char)[] path)
@@ -196,6 +189,25 @@ unittest
     assert(snapshot.candidates.length == finder.length);
     foreach (candidate; snapshot.candidates)
         assert(candidate.path != "drop.tmp" && candidate.path != "build/out.d");
+
+    // `XPF2`/snacks precedence: an `include` glob overrides `.gitignore`,
+    // not merely `exclude`. `drop.tmp` is ignored by `*.tmp`, and naming it
+    // explicitly brings it back — which is what the explorer has always
+    // done, and what this finder did NOT do while it applied `.gitignore`
+    // first and layered its own globs on the survivors. The two panes
+    // disagreed about what the project contains (`PKC4`).
+    auto rescued = collectFilesFinder(root, ["drop.tmp"], null);
+    bool sawDrop;
+    foreach (candidate; rescued.snapshot().candidates)
+        if (candidate.path == "drop.tmp")
+            sawDrop = true;
+    assert(sawDrop, "an explicit include must override `.gitignore`");
+
+    // And a directory `.gitignore` excludes stays excluded when nothing
+    // includes it — an include re-admits what the walk reaches, it does not
+    // force entry into an ignored directory.
+    foreach (candidate; rescued.snapshot().candidates)
+        assert(candidate.path != "build/out.d");
 }
 
 @("picker_sources.PickerTarget.filesResolveNamesNoPosition")
