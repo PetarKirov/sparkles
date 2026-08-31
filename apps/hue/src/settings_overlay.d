@@ -1,71 +1,39 @@
 /**
-The derived sparse overlay (`CFG2`, resolving open question 3 by deriving):
-every configuration layer decodes into `Sparse!HueConfig` — the schema with
-each leaf rewritten to `Nullable` — so $(I unset) differs from $(I set to the
-default value), and the compiled defaults stay the schema's field
+Hue's layering vocabulary over `sparkles.wired.overlay` (`CFG2`, resolving open
+question 3 by deriving): every configuration layer decodes into `Sparse!HueConfig`
+— the schema with each leaf rewritten to `Nullable` — so $(I unset) differs from
+$(I set to the default value), and the compiled defaults stay the schema's field
 initialisers with no second declaration anywhere.
 
-`Mapped` is the one generator, instantiated twice: `Sparse!T` for the layers
-and `Origins!T` for the per-field provenance mirror `hue config show`
-renders (`CFG10`). Resolution is `applyOverlay` called once per layer in
-`CFG2` order onto `HueConfig.init`; a field a layer leaves null inherits.
+$(B The generator itself is not here.) `Mapped`, `Sparse`, `applyOverlay` and
+`mergeSparse` moved to `sparkles.wired.overlay` once a second consumer appeared:
+they are defined in terms of `@WireOptional`, `Nullable`, and wired's rule that a
+missing key decodes to a field's initialiser, none of which is hue's to own. What
+stays is the part that genuinely is hue's — what a $(I layer) means here.
 
-`@Compose` list fields (`CFG14`/`CFG20`) $(B prepend) instead of replace, so
-a higher layer's entries are searched first. The environment's
-`SPARKLES_TS_GRAMMAR_PATH` is deliberately $(B not) a layer for these
-fields: `CFG14` places configured paths ahead of the environment's (the
-variable is packaging — the nix bundle's store path — while a file entry is
-user intent), so that composition happens where the grammar registry is
-built, not in the merge.
-
-Lives in hue, not a library: `DCK2` already rules that encoding is the
-application's, and this generator has exactly one consumer.
+Resolution is `applyOverlay` called once per layer in `CFG2` order onto
+`HueConfig.init`; a field a layer leaves null inherits. `@Compose` list fields
+(`CFG14`/`CFG20`) $(B prepend) instead of replace, so a higher layer's entries are
+searched first. The environment's `SPARKLES_TS_GRAMMAR_PATH` is deliberately
+$(B not) a layer for these fields: `CFG14` places configured paths ahead of the
+environment's (the variable is packaging — the nix bundle's store path — while a
+file entry is user intent), so that composition happens where the grammar registry
+is built, not in the merge.
 
 NOTE: no module-level `@safe:` — `Sparse!T` feeds straight into wired's
 decode/encode, which infers `@system` for aggregates.
 */
 module settings_overlay;
 
-import std.traits : FieldNameTuple, hasUDA;
-import std.typecons : Nullable;
+public import sparkles.wired.overlay : applyOverlay, mergeSparse, Sparse;
 
-import sparkles.wired.policy : WireOptional;
+import sparkles.wired.overlay : WiredOrigins = Origins;
 
-import settings : Compose, ConfigSection, HueConfig;
+import settings : HueConfig;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The generator.
+// What a layer is, here.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
-`T` with every leaf field's type rewritten to `Map!(...)`; `@ConfigSection`
-struct fields recurse. Field names are preserved, so the wire spelling is the
-schema's; every derived field carries `@WireOptional()`, so a missing key
-decodes to "unset" and an unset field is omitted on encode — which is what
-makes a saved user file a sparse overlay rather than a full snapshot.
-*/
-struct Mapped(T, alias Map)
-if (is(T == struct))
-{
-    static foreach (i, name; FieldNameTuple!T)
-    {
-        static if (hasUDA!(typeof(T.tupleof[i]), ConfigSection))
-            mixin("@(WireOptional()) Mapped!(typeof(T.tupleof[", i, "]), Map) ",
-                name, ";");
-        else
-            mixin("@(WireOptional()) Map!(typeof(T.tupleof[", i, "])) ",
-                name, ";");
-    }
-}
-
-/// The sparse layer form: unset = inherit from the layer below.
-alias Sparse(T) = Mapped!(T, Nullable);
-
-/// A `Map` that ignores the field type — every leaf becomes `Leaf`.
-private template Just(Leaf)
-{
-    alias Just(F) = Leaf;
-}
 
 /// Where each effective value came from (`CFG10`), lowest to highest.
 enum OriginKind : ubyte
@@ -90,51 +58,10 @@ struct Origin
     string detail;
 }
 
-/// The per-field provenance mirror of `T`, same shape as `Sparse!T`.
-alias Origins(T) = Mapped!(T, Just!Origin);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The merge.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
-Applies one layer onto the resolved value, recording `origin` for every field
-the layer sets. `@Compose` fields prepend (higher layer searched first) and
-record the last contributing layer; everything else replaces.
-
-`overlay` is taken by value on purpose: a `const`/`in` view would make
-`Nullable.get`'s payload `const` and unassignable into the resolved value —
-and a layer struct is all `Nullable`s, cheap to copy once per startup.
-*/
-void applyOverlay(T, O, S)(ref T resolved, ref O origins,
-    S overlay, Origin origin) @safe
-if (is(O == Mapped!(T, Just!Origin)) && is(S == Mapped!(T, Nullable)))
-{
-    static foreach (i, _; T.init.tupleof)
-    {
-        static if (hasUDA!(typeof(T.tupleof[i]), ConfigSection))
-        {
-            applyOverlay(resolved.tupleof[i], origins.tupleof[i],
-                overlay.tupleof[i], origin);
-        }
-        else static if (hasUDA!(T.tupleof[i], Compose))
-        {
-            if (!overlay.tupleof[i].isNull)
-            {
-                resolved.tupleof[i] = overlay.tupleof[i].get ~ resolved.tupleof[i];
-                origins.tupleof[i] = origin;
-            }
-        }
-        else
-        {
-            if (!overlay.tupleof[i].isNull)
-            {
-                resolved.tupleof[i] = overlay.tupleof[i].get;
-                origins.tupleof[i] = origin;
-            }
-        }
-    }
-}
+/// The per-field provenance mirror of `T`, same shape as `Sparse!T`. Pins
+/// wired's origin-type parameter to $(LREF Origin) once, so every call site in
+/// hue keeps spelling it `Origins!HueConfig`.
+alias Origins(T) = WiredOrigins!(T, Origin);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests. Serde-touching ones are `@system` (wired infers it for aggregates);
