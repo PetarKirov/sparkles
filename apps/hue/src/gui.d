@@ -1694,9 +1694,17 @@ int runGui(GuiArgs guiArgs) @system
             // popup happens to cover would steal the pointer through it, and
             // reading a long ddoc means moving across exactly such tokens —
             // so the popup swapped for whatever it was covering, mid-sentence.
+            // `TRG12`'s corridor. The popup sits one row below its token to
+            // leave room for the caret, and that row belongs to neither — so
+            // the pointer travelling into the popup crosses ground nobody
+            // owns, and the popup closes under it. The corridor gives that row
+            // to the popup: an extra entry carrying the overlay's own id, which
+            // is exactly what the requirement asks for.
+            const corridor = cellH;
             const overPopup = pop.hotNode != 0 && pop.havePopup
                 && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
-                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height;
+                && mp.y >= pop.hotPopup.y - corridor
+                && mp.y <= pop.hotPopup.y + pop.hotPopup.height;
             size_t overNode = 0;
             if (overPopup)
                 overNode = pop.hotNode; // it keeps the pointer while it is open
@@ -1755,6 +1763,20 @@ int runGui(GuiArgs guiArgs) @system
                         break;
                     }
             }
+            // `TRG6`'s cool-down. Nothing is hovered, but a popup is open:
+            // hold it for a moment rather than closing on the frame the
+            // pointer happened to be between things. Re-entering cancels.
+            if (overNode == 0 && pop.hotNode != 0 && !pop.dismissed)
+            {
+                if (pop.closeGraceMs <= 0)
+                    pop.closeGraceMs = HoverPopup.closeGrace;
+                pop.closeGraceMs -= frameMs(window.frameSeconds);
+                if (pop.closeGraceMs > 0)
+                    overNode = pop.hotNode;   // still open, still reachable
+            }
+            else
+                pop.closeGraceMs = 0;
+
             if (overNode != pop.hotNode)
                 pop.fade = Timeline.init;
             pop.hotNode = overNode;
