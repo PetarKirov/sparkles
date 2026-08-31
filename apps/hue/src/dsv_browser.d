@@ -14,7 +14,7 @@
 // admits overall when EVERY part does).
 module dsv_browser;
 
-import dsv_view : DsvInfo, DsvProjection;
+import dsv_view : DsvInfo, DsvModel, DsvProjection, flagsOf;
 import sparkles.dsv : ColumnType, Constraint, ConstraintOp, decodeCell,
     Dialect, DsvDoc, parseDsv, ProjectionSpec, SortKey;
 
@@ -441,18 +441,20 @@ private bool asciiEqNoCase(scope const(char)[] a, scope const(char)[] b)
 /// there are no parts (no masking). A cell the matcher cannot take (over its
 /// byte cap) falls back to a plain case-insensitive substring test.
 bool[] fuzzyRowMask(string dsvText, in DsvInfo info, const(string)[] parts) @safe
+    => fuzzyRowMask(DsvModel.of(dsvText, "", flagsOf(info)), parts);
+
+/// ditto, over a retained model (`DSN7`) — the form every host uses, so a
+/// keystroke in the filter bar does not re-parse the file the model already
+/// holds.
+bool[] fuzzyRowMask(DsvModel model, const(string)[] parts) @safe
 {
     import sparkles.fuzzy : CandidateView, DefaultFuzzyCaps, MatcherWorkspace,
         MatchKind, match, parseQuery;
 
-    if (!parts.length || !info.present)
+    if (!parts.length || model is null || !model.usable)
         return null;
 
-    auto res = parseDsv(dsvText, info.dialect);
-    if (res.hasError)
-        return null;
-    auto doc = res.value;
-    doc.hasHeader = info.hasHeader;
+    ref const(DsvDoc) doc() @safe pure nothrow @nogc => model.document;
 
     // One parsed query per part (a part is one fuzzy term by construction).
     alias Query = typeof(parseQuery("").value);
@@ -505,6 +507,21 @@ bool[] fuzzyRowMask(string dsvText, in DsvInfo info, const(string)[] parts) @saf
         mask[r] = all;
     }
     return mask;
+}
+
+/// The row mask for `parts` over `model`, **memoized on the model** (`DSN7`).
+///
+/// A scroll does not change the filter, so without the memo every notch of a
+/// filtered grid re-ran a fuzzy match over every cell of the file. The memo
+/// also gives the projection memo a stable slice to key on: an unchanged
+/// filter hands back the identical mask.
+const(bool)[] rowMaskFor(DsvModel model, const(string)[] parts) @safe
+{
+    if (model is null || !parts.length)
+        return null;
+    if (model.hasCachedRowMask(parts))
+        return model.cachedRowMask(parts);
+    return model.cacheRowMask(parts, fuzzyRowMask(model, parts));
 }
 
 private bool containsNoCase(scope const(char)[] hay, scope const(char)[] needle)

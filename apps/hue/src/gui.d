@@ -73,8 +73,9 @@ import sparkles.ui.components.tree_view : viewSlice;
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
-import dsv_browser : DsvBrowser, fuzzyRowMask, PaletteRow, paletteRows;
-import dsv_view : adaptDsv, DsvCopy, DsvInfo, dsvStatusNote, DsvWindow,
+import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
+import dsv_view : adaptDsv, DsvCopy, DsvInfo, DsvModel, dsvStatusNote,
+    DsvWindow, modelFor,
     flagsOf, resolveTableCopy, serializeGridCopy;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
@@ -378,6 +379,9 @@ int runGui(GuiArgs guiArgs) @system
     GuiRunState gs;
     DsvCopy dsvCopy; // the current document's grid-copy state (DSC2/DSC4)
     DsvBrowser dsvBrowser; // the data-browser projection state (DSB)
+    // `DSN7`: the open document's retained DSV model — parse, column types,
+    // header names and the memoized projection. A scroll queries it.
+    DsvModel dsvModel;
     bool dsvPalOpen;   // the columns palette (DSB3), modal while open
     uint dsvPalCursor; // ditto: the selected palette row
     with (gs)
@@ -825,7 +829,12 @@ int runGui(GuiArgs guiArgs) @system
             doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides, doc.diffSession,
             doc.diffEmphasis, doc.coverage, doc.hasCoverage);
         vm.docPath = path; // .editorconfig discovery + {path} (format preview)
-        dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
+        // `DSN7`: a new document is a new model; the old one's parse and memo
+        // describe bytes that are no longer open.
+        dsvModel = doc.dsvInfo.present
+            ? modelFor(null, doc.dsvText, "", flagsOf(doc.dsvInfo)) : null;
+        dsvCopy = dsvModel !is null
+            ? DsvCopy.of(dsvModel, doc.dsvInfo) : DsvCopy.of(doc.dsvText, doc.dsvInfo);
         dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)
         dsvPalOpen = false;
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
@@ -849,13 +858,16 @@ int runGui(GuiArgs guiArgs) @system
         auto st = dsvCopy;
         if (!st.info.present)
             return;
+        // `DSN7`: the document's model is resolved once and kept; a scroll is
+        // a query against it, not a re-derivation of it.
+        dsvModel = modelFor(dsvModel, st.rawText, "", flagsOf(st.info));
         auto proj = dsvBrowser.projection(st.info.columns);
-        proj.rowMask = fuzzyRowMask(st.rawText, st.info, dsvBrowser.fuzzyParts);
+        proj.rowMask = rowMaskFor(dsvModel, dsvBrowser.fuzzyParts);
         // `DSN4`: re-materialize the window the grid is looking at.
         const gridTop = firstRow != uint.max ? firstRow
             : ((0 in vm.tableScrollAt) ? cast(uint) (*(0 in vm.tableScrollAt)).y : 0);
         const paneLines = vm.resolvedTableMaxLines();
-        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj,
+        auto adapted = adaptDsv(dsvModel, proj,
             DsvWindow(start: gridTop,
                 rows: paneLines > 0 ? cast(uint) paneLines + 8 : 0));
         auto pm = previewOf(*vm.cache, adapted.doc);
@@ -875,7 +887,7 @@ int runGui(GuiArgs guiArgs) @system
                     ~ (chrome.length ? " · " ~ chrome : ""),
                 adapted.text, ev, pm, TwoslashReturn.init);
         vm.docPath = path;
-        dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
+        dsvCopy = DsvCopy.of(dsvModel, adapted.info, proj);
         cm.tableFmt = fmt;
     }
 

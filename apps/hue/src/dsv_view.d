@@ -96,6 +96,232 @@ struct DsvProjection
         => spec.pristine && columns is null && rowMask is null;
 }
 
+/**
+`DSN7`: the persistent half of the pipeline — everything a scroll does **not**
+change.
+
+`DSN4` bounded the build to a window of rows, but every window change still
+re-derived the model that window is a slice of: a re-sniff, a re-parse and a
+re-projection of the whole file, plus a second parse inside `DsvCopy` and a
+third inside the fuzzy filter. Measured over a 3012-row file that was 11 ms of
+a 16 ms scroll notch against 4.8 ms of actual view rebuilding — and 26 ms more
+whenever a sort was engaged, because the same permutation was recomputed
+identically on every notch.
+
+This is the [model protocol](../../docs/research/ui-virtualization/concepts.md)
+every framework that virtualizes properly has and hue did not: the model
+outlives the view, and the window is a **query against it** rather than a
+pipeline that reproduces it. The dialect, the parse, the column types and the
+header names are functions of the bytes; the row permutation is a function of
+the projection. None of them is a function of the scroll offset.
+
+Held by reference (a `class`) for two reasons: it must outlive every window
+built from it, and a `DsvDoc` owns reference-counted storage that there is no
+reason to copy per frame.
+*/
+final class DsvModel
+{
+    private string source_;
+    private DsvFlags flags_;
+    private DsvInfo base_;
+    private DsvDoc doc_;
+    private bool usable_;
+    private SmallBuffer!(ColumnType, 16) types_;
+    private string[] headerNames_;
+
+    // The memoized projection (`DSN7`): the permutation, and the projection it
+    // was computed for. `rowMask` is compared by slice identity, which is exact
+    // because the mask is itself memoized below — a filter that did not change
+    // hands back the same slice.
+    private uint[] perm_;
+    private ProjectionSpec permSpec_;
+    private const(bool)[] permMask_;
+    private bool permValid_;
+
+    // The memoized fuzzy row mask. Computing it needs `sparkles:fuzzy`, which
+    // this module does not depend on, so `dsv_browser.rowMaskFor` computes and
+    // deposits it; the model only owns the memo.
+    private const(string)[] maskParts_;
+    private const(bool)[] mask_;
+    private bool maskValid_;
+
+    private this() @safe {}
+
+    /**
+    Resolves the dialect and header per the `DSD` precedence (flags > sniff >
+    extension seed), parses, and samples the column types. `ext` is the
+    extension without its dot ("" for stdin).
+    */
+    static DsvModel of(string source, string ext, in DsvFlags flags) @safe
+    {
+        auto m = new DsvModel;
+        m.source_ = source;
+        // Copied, not aliased: `-preview=in` makes `flags` `scope const`, and
+        // the model outlives the caller's frame.
+        m.flags_ = DsvFlags(delimiter: flags.delimiter.idup,
+            quote: flags.quote.idup, header: flags.header.idup);
+
+        // `DSN7`: a sniff whose verdict is entirely overridden is a 256 KiB
+        // scan for nothing. `Dialect` is exactly (delimiter, quote), so when
+        // both are forced the sniffer cannot contribute — which is precisely
+        // the case every replay hits, since `flagsOf` always sets both.
+        Dialect dialect;
+        if (flags.delimiter.length && flags.quote.length)
+        {
+            dialect.delimiter = flagChar(flags.delimiter, dialect.delimiter);
+            dialect.quote = flagChar(flags.quote, dialect.quote);
+        }
+        else
+        {
+            const seed = seedForExtension(ext);
+            const sampleLen = source.length < sniffMaxBytes
+                ? source.length : sniffMaxBytes;
+            const sniffed = sniff(source[0 .. sampleLen], seed);
+            dialect = sniffed.dialect;
+            dialect.delimiter = flagChar(flags.delimiter, dialect.delimiter);
+            dialect.quote = flagChar(flags.quote, dialect.quote);
+        }
+
+        auto parsed = parseDsv(source, dialect);
+        if (parsed.hasError)
+            return m; // an unusable forced dialect: the caller keeps the raw view
+        m.doc_ = parsed.value;
+
+        // The sniffer's header verdict was computed under the sniffed dialect;
+        // a flag override changes the grid, so re-run the heuristic on the
+        // final parse (`DSD3`).
+        const hasHeader = flags.header == "yes" ? true
+            : flags.header == "no" ? false : detectHeader(m.doc_);
+        m.doc_.hasHeader = hasHeader;
+        m.usable_ = true;
+
+        inferColumnTypes(m.doc_, sniffMaxRecords, m.types_);
+
+        m.base_ = DsvInfo(
+            present: true,
+            dialect: dialect,
+            hasHeader: hasHeader,
+            syntheticHeader: !hasHeader,
+            columns: m.doc_.columnCount,
+            dataRows: cast(uint) m.doc_.dataRecordCount,
+            ragged: m.doc_.raggedCount,
+        );
+
+        m.headerNames_ = new string[](m.doc_.columnCount);
+        SmallBuffer!(char, 256) nameBuf;
+        const hasNames = hasHeader && m.doc_.records.length;
+        foreach (col; 0 .. m.doc_.columnCount)
+            m.headerNames_[col] = hasNames && col < m.doc_.records[0].cellCount
+                ? decodeCell(m.doc_,
+                    m.doc_.cells[m.doc_.records[0].cellsStart + col],
+                    nameBuf).idup
+                : columnName(col);
+        return m;
+    }
+
+    /// Whether this model already describes exactly these bytes under exactly
+    /// these flags — the reuse test. The source is compared by **slice
+    /// identity**, not by content: a reload produces a different buffer and
+    /// must re-resolve even when the bytes happen to match.
+    bool describes(string source, in DsvFlags flags) const @safe pure nothrow @nogc
+        => source_.ptr is source.ptr && source_.length == source.length
+            && flags_ == flags;
+
+    /// The parse succeeded and the grid is renderable.
+    bool usable() const @safe pure nothrow @nogc => usable_;
+    /// The resolved facts that do not depend on a projection or a window.
+    DsvInfo baseInfo() const @safe pure nothrow @nogc => base_;
+    /// ditto
+    string source() const @safe pure nothrow @nogc => source_;
+    /// The parsed document. Borrowed — it lives as long as this model.
+    ref const(DsvDoc) document() const @safe pure nothrow @nogc return => doc_;
+    /// The sampled per-column types (`DSG3`).
+    const(ColumnType)[] columnTypes() const @safe pure nothrow @nogc => types_[];
+    /// Decoded (or synthetic) DATA column names, for filter-name resolution
+    /// and the columns palette.
+    const(string)[] headerNames() const @safe pure nothrow @nogc => headerNames_;
+
+    /**
+    The projected order — data-record indexes in view order — memoized.
+
+    A scroll changes the window, never the projection, so this is the call that
+    turns a sorted 3 k-row file from 26 ms per notch into a slice return. Sort
+    and filter still pay in full, once, when they actually change.
+    */
+    const(uint)[] permutation(in DsvProjection proj) @safe
+    {
+        if (!usable_)
+            return null;
+        if (permValid_ && sameSpec(permSpec_, proj.spec)
+            && permMask_ == proj.rowMask)
+            return perm_;
+
+        SmallBuffer!(uint, 64) perm;
+        applyProjection(doc_, types_[], proj.spec, perm);
+        if (proj.rowMask !is null)
+            maskPermutation(perm, proj.rowMask);
+        perm_ = perm[].dup;
+        // The key is COPIED. `-preview=in` makes `proj` `scope const`, and a
+        // memo that aliased the caller's slices would outlive them; the copies
+        // are a few sort keys and one bool per row, paid only when the
+        // projection actually changes — never on a scroll.
+        permSpec_ = ProjectionSpec(sortKeys: proj.spec.sortKeys.dup,
+            constraints: proj.spec.constraints.dup);
+        permMask_ = proj.rowMask.dup;
+        permValid_ = true;
+        return perm_;
+    }
+
+    /// The memoized fuzzy row mask for `parts`, or `null` when this model holds
+    /// none for them. `parts` is compared by content — it is rebuilt from the
+    /// filter text on every keystroke, so identity would never hit.
+    const(bool)[] cachedRowMask(const(string)[] parts) const @safe pure nothrow
+        => hasCachedRowMask(parts) ? mask_ : null;
+
+    /// Whether a memo exists for `parts` — distinct from the memo being
+    /// `null`, which is what an unparseable query legitimately yields.
+    bool hasCachedRowMask(const(string)[] parts) const @safe pure nothrow
+        => maskValid_ && maskParts_ == parts;
+
+    /// Deposits a freshly computed mask for `parts` and returns it, so the
+    /// caller can write `return model.cacheRowMask(parts, compute())`.
+    const(bool)[] cacheRowMask(const(string)[] parts, const(bool)[] mask)
+        @safe pure nothrow
+    {
+        maskParts_ = parts.dup;
+        mask_ = mask;
+        maskValid_ = true;
+        return mask_;
+    }
+}
+
+/// `model` when it already describes exactly these bytes under these flags,
+/// otherwise a freshly resolved one (`DSN7`). This one-line reuse test is what
+/// makes a scroll free: the document has not changed, so nothing above the
+/// window needs re-deriving.
+DsvModel modelFor(DsvModel model, string source, string ext, in DsvFlags flags)
+    @safe
+    => model !is null && model.describes(source, flags)
+        ? model : DsvModel.of(source, ext, flags);
+
+/// Projection-spec equality for the memo. `ProjectionSpec` holds slices, so
+/// `==` would compare them by content anyway — this exists to say which
+/// fields the memo depends on, and to stay `@nogc`-friendly.
+private bool sameSpec(in ProjectionSpec a, in ProjectionSpec b)
+    @safe pure nothrow @nogc
+{
+    if (a.sortKeys.length != b.sortKeys.length
+        || a.constraints.length != b.constraints.length)
+        return false;
+    foreach (i, ref k; a.sortKeys)
+        if (k != b.sortKeys[i])
+            return false;
+    foreach (i, ref c; a.constraints)
+        if (c != b.constraints[i])
+            return false;
+    return true;
+}
+
 /// The adapter's product: the decoded buffer and the table model over it,
 /// plus the table refinements every sink forwards (`MdViewOptions.tableExtras`
 /// via `PreviewModel`): the record-number stub column (`DSG5`), the
@@ -172,37 +398,27 @@ string columnName(size_t index) @safe pure nothrow
 DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
     in DsvProjection proj = DsvProjection.init,
     in DsvWindow window = DsvWindow.init) @safe
+    => adaptDsv(DsvModel.of(original, ext, flags), proj, window);
+
+/**
+`DSN7`: the same adaptation as a **query against a retained model** — the form
+every scrolling caller uses. The window selects rows; nothing here re-derives
+what the model already holds.
+*/
+DsvAdapted adaptDsv(DsvModel model, in DsvProjection proj = DsvProjection.init,
+    in DsvWindow window = DsvWindow.init) @safe
+in (model !is null)
 {
     DsvAdapted a;
-
-    const seed = seedForExtension(ext);
-    const sampleLen = original.length < sniffMaxBytes ? original.length : sniffMaxBytes;
-    const sniffed = sniff(original[0 .. sampleLen], seed);
-
-    Dialect dialect = sniffed.dialect;
-    dialect.delimiter = flagChar(flags.delimiter, dialect.delimiter);
-    dialect.quote = flagChar(flags.quote, dialect.quote);
-
-    auto parsed = parseDsv(original, dialect);
-    if (parsed.hasError)
+    if (!model.usable)
         return a; // an unusable forced dialect: the caller keeps the raw view
-    auto doc = parsed.value;
 
-    // The sniffer's header verdict was computed under the sniffed dialect;
-    // a flag override changes the grid, so re-run the heuristic on the final
-    // parse (`DSD3`).
-    const hasHeader = flags.header == "yes" ? true
-        : flags.header == "no" ? false : detectHeader(doc);
-    doc.hasHeader = hasHeader;
+    ref const(DsvDoc) doc() @safe pure nothrow @nogc => model.document;
 
     // The projection resolves here (`DSB1`): the engine's permutation over
-    // data records, and the host's visible-column list.
-    SmallBuffer!(ColumnType, 16) types;
-    inferColumnTypes(doc, sniffMaxRecords, types);
-    SmallBuffer!(uint, 64) rowPerm;
-    applyProjection(doc, types[], proj.spec, rowPerm);
-    if (proj.rowMask !is null)
-        maskPermutation(rowPerm, proj.rowMask);
+    // data records — memoized on the model, so a scroll pays nothing for it —
+    // and the host's visible-column list.
+    const rowPerm = model.permutation(proj);
     auto visCols = proj.columns !is null ? proj.columns.dup : {
         auto all = new uint[](doc.columnCount);
         foreach (c; 0 .. doc.columnCount)
@@ -210,23 +426,17 @@ DsvAdapted adaptDsv(string original, string ext, in DsvFlags flags,
         return all;
     }();
 
-    a.info = DsvInfo(
-        present: true,
-        dialect: dialect,
-        hasHeader: hasHeader,
-        syntheticHeader: !hasHeader,
-        columns: doc.columnCount,
-        dataRows: cast(uint) doc.dataRecordCount,
-        ragged: doc.raggedCount,
-        visibleRows: cast(uint) rowPerm.length,
-        projected: !proj.pristine,
-        windowStart: window.whole ? 0 : window.start,
-        windowRows: window.rows,
-    );
+    a.info = model.baseInfo;
+    a.info.visibleRows = cast(uint) rowPerm.length;
+    a.info.projected = !proj.pristine;
+    a.info.windowStart = window.whole ? 0 : window.start;
+    a.info.windowRows = window.rows;
+
     if (doc.columnCount == 0 || visCols.length == 0)
         return a; // empty input / all columns hidden: the caller degrades
 
-    buildTable(a, doc, types[], rowPerm[], visCols, proj.spec.sortKeys, window);
+    buildTable(a, doc, model.columnTypes, rowPerm, visCols,
+        proj.spec.sortKeys, window);
     return a;
 }
 
@@ -586,54 +796,49 @@ struct DsvCopy
     size_t skipRows() const @safe pure nothrow @nogc
         => info.present && info.syntheticHeader ? 1 : 0;
 
+    /// Over a retained model (`DSN7`) — the form every scrolling caller uses.
+    /// The parse, the types and the header names are the model's; only the
+    /// view-coordinate maps are built here.
+    static DsvCopy of(DsvModel model, in DsvInfo info,
+        in DsvProjection proj = DsvProjection.init) @safe
+    in (model !is null)
+    {
+        DsvCopy c = { rawText: model.source, info: info };
+        c.projPristine = proj.pristine;
+        if (!info.present || !model.usable)
+            return c;
+
+        c.parsed = model.document;
+        c.parsedOk = true;
+        // The same deterministic projection the adapter rendered (`DSS3` makes
+        // it exact), so view coordinates map through it (`DSC5`: WYSIWYG).
+        // Memoized on the model, so this is the adapter's own permutation
+        // rather than a second computation of it.
+        c.rowPerm = model.permutation(proj).dup;
+        c.headerNames = model.headerNames.dup;
+        if (proj.columns !is null)
+            c.viewCols = proj.columns.dup;
+        else
+        {
+            c.viewCols = new uint[](c.parsed.columnCount);
+            foreach (col; 0 .. c.parsed.columnCount)
+                c.viewCols[col] = cast(uint) col;
+        }
+        return c;
+    }
+
+    /// Resolving form, for callers that hold only bytes (tests, and the
+    /// one-shot sinks that never scroll).
     static DsvCopy of(string rawText, in DsvInfo info,
         in DsvProjection proj = DsvProjection.init) @safe
     {
-        DsvCopy c = { rawText: rawText, info: info };
-        c.projPristine = proj.pristine;
-        if (info.present)
+        if (!info.present)
         {
-            auto res = parseDsv(rawText, info.dialect);
-            if (!res.hasError)
-            {
-                c.parsed = res.value;
-                c.parsed.hasHeader = info.hasHeader;
-                c.parsedOk = true;
-                // The same deterministic projection the adapter rendered
-                // (`DSS3` makes re-deriving it here exact), so view
-                // coordinates map through it (`DSC5`: WYSIWYG).
-                SmallBuffer!(ColumnType, 16) types;
-                inferColumnTypes(c.parsed, sniffMaxRecords, types);
-                SmallBuffer!(uint, 64) perm;
-                applyProjection(c.parsed, types[], proj.spec, perm);
-                if (proj.rowMask !is null)
-                    maskPermutation(perm, proj.rowMask);
-                c.rowPerm = perm[].dup;
-                c.headerNames = new string[](c.parsed.columnCount);
-                {
-                    SmallBuffer!(char, 256) nameBuf;
-                    const hasHdr = info.hasHeader && c.parsed.records.length;
-                    foreach (col; 0 .. c.parsed.columnCount)
-                    {
-                        if (hasHdr && col < c.parsed.records[0].cellCount)
-                            c.headerNames[col] = decodeCell(c.parsed,
-                                c.parsed.cells[c.parsed.records[0].cellsStart + col],
-                                nameBuf).idup;
-                        else
-                            c.headerNames[col] = columnName(col);
-                    }
-                }
-                if (proj.columns !is null)
-                    c.viewCols = proj.columns.dup;
-                else
-                {
-                    c.viewCols = new uint[](c.parsed.columnCount);
-                    foreach (col; 0 .. c.parsed.columnCount)
-                        c.viewCols[col] = cast(uint) col;
-                }
-            }
+            DsvCopy c = { rawText: rawText, info: info };
+            c.projPristine = proj.pristine;
+            return c;
         }
-        return c;
+        return of(DsvModel.of(rawText, "", flagsOf(info)), info, proj);
     }
 
     /// Raw bytes of VIEW cell `(row, col)`: view column 0 is the gutter (""),
@@ -1213,6 +1418,151 @@ unittest
         DsvWindow(start: 0, rows: 8));
     assert(dsvGridText(win, 10).canFind("▲"),
         "a sorted column must show its direction inside its pinned width");
+}
+
+// `DSN7`: the retained model. A scroll must be a QUERY against it — same
+// answers as the resolving path, without re-deriving anything.
+
+@("dsv_view.model.windowsAgreeWithTheResolvingPath")
+@safe
+unittest
+{
+    auto src = "n,name\n";
+    foreach (i; 0 .. 300)
+        src ~= text(i, ",row", i, "\n");
+
+    auto model = DsvModel.of(src, "csv", DsvFlags());
+    assert(model.usable);
+
+    // Every window built from the retained model must be byte-identical to
+    // the one the one-shot path produces — the model is an optimization, not
+    // a different renderer.
+    foreach (start; [0u, 37u, 260u, 299u, 400u])
+    {
+        const win = DsvWindow(start: start, rows: 25);
+        const viaModel = adaptDsv(model, DsvProjection.init, win);
+        const viaBytes = adaptDsv(src, "csv", DsvFlags(), DsvProjection.init, win);
+        assert(viaModel.text == viaBytes.text,
+            "a windowed query must render exactly what re-deriving renders");
+        assert(viaModel.info.visibleRows == viaBytes.info.visibleRows);
+        assert(viaModel.info.windowStart == viaBytes.info.windowStart);
+        assert(viaModel.extras.columnWidths == viaBytes.extras.columnWidths,
+            "and pin the same geometry");
+    }
+}
+
+@("dsv_view.model.memoizesTheProjection")
+@safe
+unittest
+{
+    auto src = "n,name\n";
+    foreach (i; 0 .. 200)
+        src ~= text(i, ",row", 199 - i, "\n");
+
+    auto model = DsvModel.of(src, "csv", DsvFlags());
+
+    // The same projection must hand back the SAME array, not an equal one:
+    // identity is the proof that the sort did not run again. This is the
+    // whole point — a sorted 3 k-row file was re-sorting on every notch.
+    DsvProjection sorted;
+    sorted.spec = ProjectionSpec(sortKeys: [SortKey(column: 1)]);
+    const first = model.permutation(sorted);
+    const again = model.permutation(sorted);
+    assert(first.ptr is again.ptr && first.length == again.length,
+        "an unchanged projection must not recompute the permutation");
+    assert(first.length == 200);
+
+    // A projection that is EQUAL but freshly built still hits: the memo is
+    // keyed by value, so the caller may rebuild its spec every frame (which
+    // `DsvBrowser.projection` does).
+    DsvProjection rebuilt;
+    rebuilt.spec = ProjectionSpec(sortKeys: [SortKey(column: 1)]);
+    assert(model.permutation(rebuilt).ptr is first.ptr,
+        "an equal projection is the same projection");
+
+    // A different one must miss, and be right.
+    DsvProjection desc;
+    desc.spec = ProjectionSpec(sortKeys: [SortKey(column: 1, descending: true)]);
+    const flipped = model.permutation(desc);
+    assert(flipped.ptr !is first.ptr, "a changed sort must recompute");
+    assert(flipped[0] != first[0], "and must actually reverse the order");
+
+    // Going back re-computes rather than resurrecting a stale answer — the
+    // memo holds one entry, and must never hand back the wrong one.
+    assert(model.permutation(sorted) == first);
+}
+
+@("dsv_view.model.reresolvesWhenTheDocumentChanges")
+@safe
+unittest
+{
+    const a = "n,name\n1,alice\n2,bob\n";
+    auto model = DsvModel.of(a, "csv", DsvFlags());
+    assert(model.describes(a, DsvFlags()));
+
+    // A reload produces a different buffer. Equal CONTENT is not the same
+    // document: the model borrows the bytes, so identity is the test.
+    const sameContent = "n,name\n1,alice\n2,bob\n".idup;
+    assert(!model.describes(sameContent, DsvFlags()),
+        "a fresh buffer must re-resolve even when the bytes match");
+    assert(modelFor(model, sameContent, "csv", DsvFlags()) !is model);
+    assert(modelFor(model, a, "csv", DsvFlags()) is model,
+        "the same bytes and flags reuse the model");
+
+    // A flag override changes the grid, so it must re-resolve too.
+    assert(!model.describes(a, DsvFlags(delimiter: ";")));
+    assert(modelFor(model, a, "csv", DsvFlags(delimiter: ";")) !is model);
+}
+
+@("dsv_view.model.rowMaskMemoFollowsTheParts")
+@safe
+unittest
+{
+    const src = "n,name\n1,alice\n2,bob\n";
+    auto model = DsvModel.of(src, "csv", DsvFlags());
+
+    assert(!model.hasCachedRowMask(["alice"]));
+    auto mask = [true, false];
+    assert(model.cacheRowMask(["alice"], mask) is mask);
+    assert(model.hasCachedRowMask(["alice"]));
+    assert(model.cachedRowMask(["alice"]) is mask);
+
+    // Keyed by CONTENT: the parts are rebuilt from the filter text on every
+    // keystroke, so an identity key would never hit.
+    assert(model.hasCachedRowMask(["alice".idup]));
+    assert(!model.hasCachedRowMask(["bob"]));
+    assert(model.cachedRowMask(["bob"]) is null);
+
+    // A null memo is a memo: an unparseable query legitimately yields none,
+    // and must not be recomputed on every frame.
+    model.cacheRowMask(["("], null);
+    assert(model.hasCachedRowMask(["("]));
+    assert(model.cachedRowMask(["("]) is null);
+}
+
+@("dsv_view.model.copyReadsTheSameCellsAsTheResolvingPath")
+@safe
+unittest
+{
+    auto src = "n,name\n";
+    foreach (i; 0 .. 120)
+        src ~= text(i, ",row", i, "\n");
+
+    DsvProjection sorted;
+    sorted.spec = ProjectionSpec(sortKeys: [SortKey(column: 1, descending: true)]);
+
+    auto model = DsvModel.of(src, "csv", DsvFlags());
+    const win = adaptDsv(model, sorted, DsvWindow(start: 30, rows: 20));
+    const viaModel = DsvCopy.of(model, win.info, sorted);
+    const viaBytes = DsvCopy.of(src, win.info, sorted);
+
+    // `DSC5`: copy maps view coordinates through the projection AND the
+    // window. Sharing the model's memoized permutation must not change which
+    // record a view cell names.
+    foreach (row; 0 .. 21)
+        foreach (col; 0 .. 3)
+            assert(viaModel.rawCell(row, col) == viaBytes.rawCell(row, col),
+                "the model-backed copy must name the same cells");
 }
 
 @("dsv_view.window.sortAndFilterKeepTheGeometry")

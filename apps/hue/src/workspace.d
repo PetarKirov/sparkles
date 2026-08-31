@@ -45,8 +45,9 @@ import sparkles.ui.style : Slot;
 import ansi_model : BackgroundMode;
 import diff_view : DiffLayout;
 import document : Document;
-import dsv_browser : DsvBrowser, fuzzyRowMask, PaletteRow, paletteRows;
-import dsv_view : adaptDsv, DsvCopy, dsvStatusNote, DsvWindow, flagsOf,
+import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
+import dsv_view : adaptDsv, DsvCopy, DsvModel, dsvStatusNote, DsvWindow,
+    flagsOf, modelFor,
     resolveTableCopy;
 import sparkles.source_view.markdown : TableScroll;
 import explorer : ExplorerTui;
@@ -89,6 +90,10 @@ struct WorkspaceTui
     WsLoader loadDoc;
     string tableCopyFlag = "auto"; /// `--table-copy` raw flag (`DSC2`)
     DsvBrowser dsvBrowser; /// the data browser's projection state (`DSB1`)
+    /// `DSN7`: the open document's retained DSV model — the parse, the column
+    /// types, the header names and the memoized projection. Rebuilt only when
+    /// the document changes; a scroll is a query against it.
+    private DsvModel dsvModel;
     /// Live D types (`PRJ12`-`PRJ16`): a `twoslash-extract --dub --serve`
     /// oracle for the open `.d` document. The session belongs to the document
     /// — opening another file ends it — and its stderr is silenced, because
@@ -1047,13 +1052,17 @@ struct WorkspaceTui
         auto st = viewer.dsvCopy;
         if (!st.info.present)
             return;
+        // `DSN7`: the parse, the column types and the header names belong to
+        // the DOCUMENT, not to this window — resolve them once and keep them.
+        // `modelFor` re-resolves only when the bytes or the flags changed.
+        dsvModel = modelFor(dsvModel, st.rawText, "", flagsOf(st.info));
         auto proj = dsvBrowser.projection(st.info.columns);
-        proj.rowMask = fuzzyRowMask(st.rawText, st.info, dsvBrowser.fuzzyParts);
+        proj.rowMask = rowMaskFor(dsvModel, dsvBrowser.fuzzyParts);
         // `DSN4`: re-materialize the window the grid is looking at. A
         // projection edit (sort, filter, columns) reads the current scroll;
         // a scroll passes the row it just moved to.
         const top = firstRow == uint.max ? dsvGridTop() : firstRow;
-        auto adapted = adaptDsv(st.rawText, "", flagsOf(st.info), proj,
+        auto adapted = adaptDsv(dsvModel, proj,
             DsvWindow(start: top, rows: dsvWindowRows()));
         auto pm = previewOf(*viewer.cache, adapted.doc);
         pm.tableExtras = adapted.extras;
@@ -1074,7 +1083,7 @@ struct WorkspaceTui
         const chrome = dsvBrowser.chromeNote;
         viewer.docNote = dsvStatusNote(adapted.info)
             ~ (chrome.length ? " · " ~ chrome : "");
-        viewer.dsvCopy = DsvCopy.of(st.rawText, adapted.info, proj);
+        viewer.dsvCopy = DsvCopy.of(dsvModel, adapted.info, proj);
         viewer.tableFmt = fmt;
         wireDsvHooks();
     }
