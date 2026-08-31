@@ -325,3 +325,96 @@ void main()
 "high-priority"
 true
 ```
+
+## Layered configuration — `Sparse` and `applyOverlay`
+
+A configuration assembled from several sources — built-in defaults, a user file,
+a project file, the command line — needs one distinction the schema type cannot
+make: **unset** is not the same as **set to the default value**. Decoding a
+document straight into `T` collapses them on the first field that happens to hold
+its own default, and a lower-priority layer can then never turn off something
+whose default is on.
+
+`Sparse!T` is `T` with every leaf rewritten to `Nullable` and every field marked
+`@WireOptional`, so a decoded layer says exactly what its document said and
+nothing more. `applyOverlay` folds a stack of those onto a starting value —
+`T.init`, so the compiled defaults stay the schema's own field initialisers, with
+no second declaration anywhere.
+
+Mark nested sections with `@WireSection` so the transform recurses into them
+rather than treating the whole section as one leaf:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "wired_overlay"
+    dependency "sparkles:wired" version="*"
++/
+
+import std.stdio : writeln;
+import sparkles.wired : fromJSON;
+import sparkles.wired.overlay : applyOverlay, Origins, Sparse, WireSection;
+
+@WireSection
+struct Pane
+{
+    bool lineNumbers = true;
+    int tabWidth = 4;
+}
+
+struct Config
+{
+    string theme = "default";
+    Pane pane;
+}
+
+/// What identifies a layer is yours to define; `Origins` is generic over it.
+enum Layer { none, user, project }
+
+void main()
+{
+    // Each layer is a partial document. `{}` is the empty layer.
+    auto user = fromJSON!(Sparse!Config)(
+        `{"theme":"dark","pane":{"lineNumbers":true}}`).value;
+    auto project = fromJSON!(Sparse!Config)(`{"pane":{"lineNumbers":false}}`).value;
+
+    Config resolved;                 // starts at the schema's defaults
+    Origins!(Config, Layer) origins; // where each field's value came from
+
+    applyOverlay(resolved, origins, user, Layer.user);
+    applyOverlay(resolved, origins, project, Layer.project);
+
+    // The project file turned OFF what the user file set to its own default —
+    // which only works because "set to true" and "didn't say" stayed distinct.
+    writeln(resolved.pane.lineNumbers);
+    writeln(resolved.theme);
+    writeln(origins.theme);                 // the user file won this one
+    writeln(resolved.pane.tabWidth);        // nobody spoke: the schema default
+}
+```
+
+```ansi
+false
+dark
+user
+4
+```
+
+Encoding is sparse too, so a layer round-trips without inventing the fields it
+never mentioned — which is what lets an application write a user file back out
+without baking in values that actually came from the environment or the command
+line.
+
+Two more pieces round it out:
+
+- **`@WireCompose`** on a list field makes layers _compose_ rather than override:
+  a higher layer's entries are prepended, so they are searched first and the
+  lower layers' entries are still there behind them. Useful for search paths,
+  where a user wants to shadow a bundled entry without restating the bundle.
+- **`mergeSparse`** unions two sparse overlays — where the second speaks it wins,
+  everywhere else the first stands — and the result is still sparse. That is the
+  shape of "this session's changes applied to what the file already said".
+
+This module has no opinion on where layers come from, what order they stack in,
+or whether a malformed one is fatal. Those are policy, they differ per
+application, and they belong at the call site that knows.
