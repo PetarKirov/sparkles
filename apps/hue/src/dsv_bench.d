@@ -415,3 +415,99 @@ private final class ViewFixture
     }, ["phase": "scroll-notch", "model": "retained",
         "scope": "build+view", "rows": "3012-sorted"]);
 }
+
+// ── inside the view half: where the remaining 26.6M instructions go ─────────
+//
+// `DSN7` left the notch dominated by the view rebuild. These legs isolate the
+// two stages with clean inputs — layout over the built arena, and the display
+// list over the laid-out frames — so the remainder (the md-model-to-arena
+// build, plus `derive`/`keyedRects`/`collectStructure`) is what
+// `remateralize-window` costs minus these. The next round gets aimed the same
+// way this one was.
+
+/// A fixture whose preview model is already built, so a leg times one stage.
+private final class StageFixture
+{
+    TsConfigCache cache;
+    ViewerModel vm;
+    string text;
+    PreviewModel preview;
+
+    this() @system
+    {
+        auto a = adaptDsv(DsvModel.of(bigCsv(benchRows), "csv", DsvFlags()),
+            DsvProjection.init, DsvWindow(start: 600, rows: windowRows));
+        text = a.text;
+        preview = previewOf(cache, a.doc);
+        preview.tableExtras = a.extras;
+
+        vm.names = ["dark"];
+        vm.themes = [builtinDark];
+        vm.widthCols = 120;
+        vm.applyTheme(0);
+        auto ev = new HighlightEvent[](1);
+        ev[0] = HighlightEvent.sourceSpan(0, text.length);
+        vm.setDocument("bench.csv", "", text, ev, preview,
+            typeof(vm.tw).init, "csv");
+    }
+}
+
+/// Stage 2 — box-flow layout over that arena.
+@("dsv.bench.stage-layout")
+@benchmark @system unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+
+    auto fx = new StageFixture;
+    benchIter({
+        auto frames = layout(fx.vm.tree, Constraints(maxW: fx.vm.widthCols));
+        blackBox(frames.length);
+    }, ["stage": "2-layout", "scope": "window", "rows": "48"]);
+}
+
+/// Stage 3 — the display list (slot resolution + clip stack + draw ops).
+@("dsv.bench.stage-displayList")
+@benchmark @system unittest
+{
+    import sparkles.ui.display_list : buildDisplayList;
+
+    auto fx = new StageFixture;
+    benchIter({
+        auto ops = buildDisplayList(fx.vm.tree, fx.vm.frames,
+            fx.vm.palette, fx.vm.pageFg, fx.vm.pageBg);
+        blackBox(ops.length);
+    }, ["stage": "3-display-list", "scope": "window", "rows": "48"]);
+}
+
+/// Stage 1 — the md model becomes a widget arena (`viewMarkdownInto`). The
+/// options are the table-relevant subset the viewer builds; the grid path
+/// touches no fences, links or folds, so the rest are defaults.
+@("dsv.bench.stage-viewMarkdown")
+@benchmark @system unittest
+{
+    import sparkles.source_view.markdown : MdViewOptions, viewMarkdownInto;
+    import sparkles.ui.widget : Builder;
+
+    auto fx = new StageFixture;
+    MdViewOptions opt;
+    opt.maxWidth = 120;
+    opt.tableExtras = fx.preview.tableExtras;
+    benchIter({
+        auto mb = Builder();
+        blackBox(viewMarkdownInto(mb, fx.preview.doc, opt));
+    }, ["stage": "1-view", "scope": "window", "rows": "48"]);
+}
+
+/// Stage 4 — `keyedRects`, one of the derived-data passes that run after the
+/// display list on every rebuild.
+@("dsv.bench.stage-keyedRects")
+@benchmark @system unittest
+{
+    import sparkles.ui.state : keyedRects;
+
+    auto fx = new StageFixture;
+    benchIter({
+        blackBox(keyedRects(fx.vm.tree, fx.vm.frames).length);
+    }, ["stage": "4-keyed-rects", "scope": "window", "rows": "48"]);
+}
