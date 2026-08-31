@@ -106,6 +106,16 @@ struct FontSet
     private CodepointMap[MAX_CODEPOINT_MAPS] codepointMaps;
     private int codepointMapCount;
 
+    // Styled faces, fallbacks and `--font-codepoint-map` entries are loaded
+    // after the first swap (`completeLoad`): they cost several `fc-match` /
+    // `fc-scan` subprocesses plus one `LoadFontEx` per extra face, and the
+    // first frame can fake-bold / fake-italic off the primary. `tryLoad`
+    // records the request here so `completeLoad` can finish the job.
+    private bool extrasPending;
+    private FaceOverrides extraFaces;
+    private FontSources extraSources;
+    private string[] extraMaps;
+
     // ── accessors ────────────────────────────────────────────────────────────
 
     int cellW() const @safe pure nothrow @nogc => cellW_;
@@ -140,14 +150,6 @@ struct FontSet
 
     // ── loading ──────────────────────────────────────────────────────────────
 
-    /**
-    Resolve `nameOrPath` (a font file, family name, or fontconfig preference
-    list) and load the whole face set at `fontSizePx`: the primary + real
-    bold/italic/bold-italic variants (found by scanning the primary's directory),
-    a regular and a Nerd-Font fallback, and any `--font-codepoint-map` entries.
-    Returns `false` (leaving the caller to error out) only if the primary can't be
-    resolved or loaded. Must run after `InitWindow`. `@system`, GC-allocating.
-    */
     /// Explicit per-style face selection (ghostty's `font-family-bold` /
     /// `-italic` / `-bold-italic`): a family name, fontconfig pattern, or
     /// file path per styled face; empty = auto-detect from the primary.
@@ -161,6 +163,18 @@ struct FontSet
     /// so `FontSet.FontSources` keeps working for every existing caller.
     alias FontSources = sparkles.raylib_text.font_discovery.FontSources;
 
+    /**
+    Resolve `nameOrPath` (a font file, family name, or fontconfig preference
+    list) and load the $(B primary) face at `fontSizePx`, seeded with
+    $(REF baseCodepoints, sparkles,raylib_text,atlas).
+
+    Styled variants, fallbacks and `--font-codepoint-map` entries are
+    recorded and loaded by $(LREF completeLoad) after the first swap — that
+    work is several fontconfig subprocesses and one `LoadFontEx` per extra
+    face, and it must not sit on the first-frame path. Returns `false`
+    (leaving the caller to error out) only if the primary can't be resolved
+    or loaded. Must run after `InitWindow`. `@system`, GC-allocating.
+    */
     static bool tryLoad(string nameOrPath, int fontSizePx, out FontSet fs,
         string[] codepointMapOpt = null,
         FaceOverrides faces = FaceOverrides.init,
@@ -168,7 +182,9 @@ struct FontSet
         float atlasScale = 1.0f) @system
     {
         import std.file : exists;
-        import std.string : toStringz, splitLines;
+        import std.string : toStringz;
+
+        import sparkles.base.logger : traceCall, traceSpan;
 
         string fontPath = nameOrPath;
         if (!fontPath.exists)
@@ -179,7 +195,7 @@ struct FontSet
                     fontPath = resolveFamilyList(nameOrPath);
                 else
                 {
-                    auto res = fcRun(["fc-match", "-f", "%{file}", nameOrPath]);
+                    auto res = traceCall!fcRun(["fc-match", "-f", "%{file}", nameOrPath]);
                     if (res.status == 0 && res.output.strip.length > 0)
                         fontPath = res.output.strip.idup;
                 }
@@ -195,22 +211,58 @@ struct FontSet
         fs.codepoints = baseCodepoints;
         foreach (cp; baseCodepoints)
             fs.requestedCps ~= cp;
-        fs.loadFaceCharset(fontPath, sources.useSystemFontDb);
+        {
+            auto charsetSpan = traceSpan!"fc-query charset"();
+            fs.loadFaceCharset(fontPath, sources.useSystemFontDb);
+        }
 
         fs.primary.pathZ = fontPath.toStringz;
-        loadFontInto(fs.primary, fs.atlasPx, fs.requestedCps[]);
+        {
+            auto loadSpan = traceSpan!"LoadFontEx primary"();
+            loadFontInto(fs.primary, fs.atlasPx, fs.requestedCps[]);
+        }
         if (!fs.primary.present)
             return false;
 
+        fs.extraFaces = faces;
+        fs.extraSources = sources;
+        fs.extraSources.dirs = sources.dirs.dup;
+        fs.extraMaps = codepointMapOpt.dup;
+        fs.extrasPending = true;
+        fs.measure();
+        return true;
+    }
+
+    /**
+    Load styled variants, fallbacks and `--font-codepoint-map` faces recorded
+    by $(LREF tryLoad).
+
+    Idempotent: a second call is a no-op. Call after the first swap so the
+    window is already on screen; the next frame picks up real bold/italic
+    (the first frame fake-bolds off the primary). Returns `true` if any
+    face was loaded (the caller should repaint).
+    */
+    bool completeLoad() @system
+    {
+        import std.string : fromStringz, splitLines, toStringz;
+        import sparkles.base.logger : traceSpan;
+
+        if (!extrasPending)
+            return false;
+        extrasPending = false;
+        auto span = traceSpan!"completeLoad"();
+
+        const fontPath = fromStringz(primary.pathZ).idup;
+        const sources = extraSources;
+        const faces = extraFaces;
+
         // Explicit per-style faces first (they win); the same-family scan
         // then fills only the still-empty slots.
-        fs.loadFaceOverride(fs.fontBold, faces.bold, "bold", sources);
-        fs.loadFaceOverride(fs.fontItalic, faces.italic, "italic", sources);
-        fs.loadFaceOverride(fs.fontBoldItalic, faces.boldItalic, "bold:italic", sources);
-        // Real bold/italic/bold-italic faces of the same family.
-        fs.loadStyleVariants(fontPath, sources);
-        // Optional --font-codepoint-map fonts.
-        fs.parseCodepointMaps(codepointMapOpt, sources);
+        loadFaceOverride(fontBold, faces.bold, "bold", sources);
+        loadFaceOverride(fontItalic, faces.italic, "italic", sources);
+        loadFaceOverride(fontBoldItalic, faces.boldItalic, "bold:italic", sources);
+        loadStyleVariants(fontPath, sources);
+        parseCodepointMaps(extraMaps, sources);
 
         if (sources.useSystemFontDb)
         {
@@ -222,13 +274,13 @@ struct FontSet
                 fallbackFaces(fontPath, nerdPath, regularPath);
                 if (nerdPath.length != 0)
                 {
-                    fs.nerdFallback.pathZ = nerdPath.toStringz;
-                    loadFontInto(fs.nerdFallback, fs.atlasPx, fs.codepoints);
+                    nerdFallback.pathZ = nerdPath.toStringz;
+                    loadFontInto(nerdFallback, atlasPx, codepoints);
                 }
                 if (regularPath.length != 0)
                 {
-                    fs.regularFallback.pathZ = regularPath.toStringz;
-                    loadFontInto(fs.regularFallback, fs.atlasPx, fs.codepoints);
+                    regularFallback.pathZ = regularPath.toStringz;
+                    loadFontInto(regularFallback, atlasPx, codepoints);
                 }
             }
             else
@@ -245,28 +297,29 @@ struct FontSet
                             continue;
                         const isNerd = path.canFind("NerdFont")
                             || path.canFind("Nerd Font");
-                        if (isNerd && !fs.nerdFallback.present)
+                        if (isNerd && !nerdFallback.present)
                         {
-                            fs.nerdFallback.pathZ = path.toStringz;
-                            loadFontInto(fs.nerdFallback, fs.atlasPx, fs.codepoints);
+                            nerdFallback.pathZ = path.toStringz;
+                            loadFontInto(nerdFallback, atlasPx, codepoints);
                         }
-                        else if (!isNerd && !fs.regularFallback.present
+                        else if (!isNerd && !regularFallback.present
                             && (path.canFind("DejaVu") || path.canFind("FreeMono")
                                 || path.canFind("LiberationMono")))
                         {
-                            fs.regularFallback.pathZ = path.toStringz;
-                            loadFontInto(fs.regularFallback, fs.atlasPx, fs.codepoints);
+                            regularFallback.pathZ = path.toStringz;
+                            loadFontInto(regularFallback, atlasPx, codepoints);
                         }
-                        if (fs.nerdFallback.present && fs.regularFallback.present)
+                        if (nerdFallback.present && regularFallback.present)
                             break;
                     }
                 }
             }
         }
         else
-            fs.loadFallbacksFromDirs(fontPath, sources.dirs);
+            loadFallbacksFromDirs(fontPath, sources.dirs);
 
-        fs.measure();
+        extraMaps = null;
+        measure();
         return true;
     }
 

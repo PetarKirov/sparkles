@@ -345,6 +345,10 @@ struct GuiCapture
 {
     string screenshotPath;    /// `HUE_GUI_SCREENSHOT`; path anchoring (Android) is the caller's
     int screenshotFrame = 20; /// `HUE_GUI_SCREENSHOT_FRAME`; a bad value keeps the default
+    /// `HUE_GUI_QUIT_AFTER_FRAME`: exit after this many painted frames
+    /// (`0` = off). A startup-timing hook, not a golden capture — it does
+    /// not wait for git-status to settle.
+    int quitAfterFrame;
     bool flash;               /// `HUE_GUI_FLASH`: the ghosting discriminator
     long initialTop;          /// `HUE_GUI_TOP`: initial scroll line (clamped downstream)
     int fontSizePx;           /// `HUE_GUI_FONTSIZE` in pixels; 0 = no override
@@ -382,6 +386,12 @@ struct GuiCapture
         try
             if (get("HUE_GUI_SCREENSHOT_FRAME", null).length)
                 c.screenshotFrame = get("HUE_GUI_SCREENSHOT_FRAME", null).to!int;
+        catch (Exception)
+        {
+        }
+        try
+            if (get("HUE_GUI_QUIT_AFTER_FRAME", null).length)
+                c.quitAfterFrame = get("HUE_GUI_QUIT_AFTER_FRAME", null).to!int;
         catch (Exception)
         {
         }
@@ -449,6 +459,7 @@ unittest
     auto c = GuiCapture.fromEnv(&get);
     assert(c.screenshotFrame == 20 && !c.flash && c.fontSizePx == 0);
     assert(c.forceHover == -1 && !c.lanternSet);
+    assert(c.quitAfterFrame == 0);
 
     env = [
         "HUE_GUI_SCREENSHOT": "shot.png",
@@ -481,6 +492,11 @@ unittest
     // A bad frame keeps the default rather than dying.
     env = ["HUE_GUI_SCREENSHOT_FRAME": "soon"];
     assert(GuiCapture.fromEnv(&get).screenshotFrame == 20);
+
+    env = ["HUE_GUI_QUIT_AFTER_FRAME": "1"];
+    assert(GuiCapture.fromEnv(&get).quitAfterFrame == 1);
+    env = ["HUE_GUI_QUIT_AFTER_FRAME": "soon"];
+    assert(GuiCapture.fromEnv(&get).quitAfterFrame == 0);
 
     env = ["HUE_GUI_POINTER": "somewhere"];
     assert(!GuiCapture.fromEnv(&get).pointerSet);
