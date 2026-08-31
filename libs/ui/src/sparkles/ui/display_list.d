@@ -14,7 +14,8 @@ import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
 import sparkles.ui.overlay.arena : hoistedBy, OverlayArena;
-import sparkles.ui.style : BoxSide, Palette, resolveVisual, Slot, Visual;
+import sparkles.ui.style : BoxSide, opposite, Palette, resolveVisual, Slot,
+    Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
@@ -95,7 +96,12 @@ if (isDisplayListSink!Sink)
         emit(tree, rec.node, frames, pal, pageFg, pageBg, unclipped(), ops,
             hoisted.hoisted, ArrowOverride(active: true,
                 visible: rec.resolved.arrowVisible,
-                side: rec.resolved.side, cell: rec.resolved.arrowCell));
+                // The OPPOSITE edge: `side` names the edge of the ANCHOR the
+                // overlay attached to, and the caret hangs off the edge of the
+                // BOX that faces it. Both are `BoxSide`, so passing one for the
+                // other type-checks and points every caret the wrong way.
+                side: rec.resolved.side.opposite,
+                cell: rec.resolved.arrowCell));
     }
 }
 

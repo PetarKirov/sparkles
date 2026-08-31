@@ -1090,7 +1090,8 @@ struct PreviewTui
         import sparkles.source_view.markdown : highlightedFenceRenderer,
             MdViewTheme;
         import sparkles.twoslash.render_widgets : HoverViewOptions,
-            placeHoverPopup, popupBound, popupScrollExtents, signatureSpans;
+            applyPopupArrow, placeHoverPopup, popupBound,
+            popupScrollExtents, signatureSpans;
         import sparkles.ui.geometry : Rect;
         import sparkles.ui.overlay.anchor : AnchorRect;
         import sparkles.ui.state : clippedSelectionRects;
@@ -1144,7 +1145,6 @@ struct PreviewTui
         if (!tree.nodes.length)
             return;
         auto frames = layout(tree);
-        auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
         // What the body may scroll over, measured off the frames just laid
         // out — so a wheel notch clamps against a real extent next frame.
         const sc = popupScrollExtents(tree, frames);
@@ -1167,6 +1167,11 @@ struct PreviewTui
             frames[tree.root].rect.size, boundary);
         if (!placed.paintable)
             return;
+        // Between `layout` and the display list — the only window in which the
+        // popup's measured box and its resolved side both exist, and therefore
+        // the only place the caret can be aimed at the token it describes.
+        applyPopupArrow(tree, placed);
+        auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
         // `paintGrid` clips in canvas-local cells. The solve guarantees the
         // rect is inside `boundary` unless it reports `overflowing`, so this is
         // the honest ceiling rather than the defensive one it replaces.
