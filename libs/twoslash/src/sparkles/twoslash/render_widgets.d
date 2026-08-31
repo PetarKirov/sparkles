@@ -47,7 +47,8 @@ import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.overlay.anchor : AnchorRect;
 import sparkles.ui.overlay.place : Align, OverlayGeometry, place, Placement, Side;
-import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, BoxSide, Decoration, FontRole,
+    opposite, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
@@ -495,11 +496,14 @@ OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
     auto req = Placement.init;
     req.minSize = Size(pal.popupMinWidth, pal.popupMinHeight);
     req.maxSize = popupBound(pal, boundary);
-    // A hover popup hangs directly below the token it describes, with no gap:
-    // `TRG12` makes zero cells the default precisely so the pointer can travel
-    // into the popup without crossing a corridor that belongs to nobody.
+    // A hover popup hangs directly below the token it describes, with no gap
+    // of its own: `TRG12` makes zero cells the default precisely so the pointer
+    // can travel into the popup without crossing a corridor that belongs to
+    // nobody. The caret's one cell of clearance is not such a corridor — it is
+    // part of the popup, and the solve folds it in before testing the fit.
     req.side = Side.bottom;
     req.alignment = Align.start;
+    req.arrow = true;
     return place(req, anchor, content, boundary);
 }
 
@@ -535,7 +539,12 @@ OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
     const g = placeHoverPopup(pal, anchor, Size(60, 6), pane);
     assert(g.rect.x >= pane.x, "it stays inside the pane");
     assert(g.rect.x != 0, "column 0 is in the EXPLORER, not the viewer");
-    assert(g.rect.y == 5, "directly below the token — no invented gap (TRG12)");
+    // One row below the token's own row, plus the caret's clearance. `TRG12`
+    // forbids an invented corridor between anchor and popup; the caret's row
+    // is not one, since it is part of the popup and the solve folds it in
+    // before testing the fit.
+    assert(g.rect.y == 6, "below the token, with room for its caret");
+    assert(g.arrowVisible, "and the caret points back at what it describes");
 
     // The old rule, reproduced, so the difference is visible rather than
     // described. `clampOrigin` took the far edge as a bare scalar and floored
@@ -847,6 +856,36 @@ private uint popupHeaderRow(ref Builder b, uint[] sigRows,
     return b.add(Widget(kind: WidgetKind.row, children: [sig, lane],
         width: SizeSpec.grow(), stretch: true, gap: 1,
         padding: Insets(0, 1, 0, 1)));
+}
+
+/**
+Points the popup's caret at what it describes.
+
+The view declares that it $(I wants) a caret; where that caret goes is the
+solve's answer, because it depends on which side the popup was placed on and how
+far along that edge the anchor fell. So the tree is built first, placed, and
+then told — between `layout` and the display list, which is the only window in
+which both facts exist.
+
+Without this a popup's caret sits wherever its `Decoration` was authored — cell
+one of the top edge, always — so it pointed at the popup's own left corner
+rather than at the token the reader was hovering.
+*/
+void applyPopupArrow(ref WidgetTree tree, in OverlayGeometry g)
+    @safe pure nothrow @nogc
+{
+    if (!tree.nodes.length)
+        return;
+    auto n = &tree.nodes[tree.root];
+    n.decoration.arrow = g.arrowVisible;
+    // The OPPOSITE edge. `OverlayGeometry.side` names the edge of the ANCHOR
+    // the popup attached to; `Decoration.arrowSide` names the edge of the BOX
+    // the caret hangs off, and a popup hanging BELOW its anchor wears its
+    // caret on its own TOP edge. Passing the side through unchanged points
+    // every caret at the wrong edge, silently — the two enums are the same
+    // type, so nothing complains.
+    n.decoration.arrowSide = g.side.opposite;
+    n.decoration.arrowOffset = g.arrowCell;
 }
 
 /// Not a node index any builder can return.
@@ -2533,4 +2572,128 @@ version (unittest)
             assert(t.rect.right >= fh[hot.root].rect.right - 2,
                 "hard against the right edge");
         }
+}
+
+@("render_widgets.applyPopupArrow.pointsAtTheTokenNotAtTheCorner")
+@safe unittest
+{
+    // The caret must point at what the popup describes. Left to the view's own
+    // `Decoration` it sat at cell one of the top edge, always — aimed at the
+    // popup's left corner, wherever the token actually was.
+    import sparkles.ui.canvas : arrowCellOf, arrowFits;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : BoxSide, defaultTwoslashPalette,
+        schemeForBackground;
+    import sparkles.base.term_color : RgbColor;
+
+    const pal = defaultTwoslashPalette(
+        schemeForBackground(RgbColor(0x1a, 0x1b, 0x26)));
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int reduce(int[] r)", docs: "Some prose.\n"),
+    ]);
+
+    // The same popup against three anchors at different columns. The caret
+    // must move with the anchor, not stay put.
+    int[] cells;
+    foreach (ax; [4, 30, 60])
+    {
+        auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+        auto f = layout(tree);
+        const anchor = AnchorRect(primary: Rect(ax, 3, 6, 1), live: true);
+        const g = placeHoverPopup(pal, anchor, f[tree.root].rect.size,
+            Rect(0, 0, 100, 30));
+        assert(g.paintable && g.arrowVisible);
+        applyPopupArrow(tree, g);
+
+        const deco = tree.nodes[tree.root].decoration;
+        assert(deco.arrow && deco.arrowSide == BoxSide.top,
+            "it hangs below, so its caret is on its own top edge");
+
+        // The caret's absolute cell is the anchor's centre, or as near as the
+        // edge allows — never the corner.
+        const box = Rect(g.rect.x, g.rect.y, g.rect.width, g.rect.height);
+        assert(arrowFits(box, deco.arrowSide, deco.arrowOffset));
+        const at = arrowCellOf(box, deco.arrowSide, deco.arrowOffset);
+        const centre = ax + 3;
+        assert(at.x >= box.x + 1 && at.x <= box.right - 2, "inside the edge");
+        assert(at.x == centre || at.x == box.x + 1 || at.x == box.right - 2,
+            "the anchor's centre, or the nearest legal cell to it");
+        cells ~= at.x;
+    }
+
+    // The ABSOLUTE cell tracks the anchor. The overlay-local offset does not
+    // have to: a start-aligned popup moves WITH its anchor, so the caret keeps
+    // the same distance from the popup's left edge — which is the anchor's
+    // centre, correctly.
+    assert(cells[0] < cells[1] && cells[1] < cells[2]);
+
+    // Where the popup cannot follow — an anchor near the right edge slides it
+    // left — the local offset moves instead, and still lands on the anchor.
+    auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+    auto f = layout(tree);
+    const edge = AnchorRect(primary: Rect(90, 3, 6, 1), live: true);
+    const g = placeHoverPopup(pal, edge, f[tree.root].rect.size,
+        Rect(0, 0, 100, 30));
+    assert(g.paintable && g.arrowVisible);
+    applyPopupArrow(tree, g);
+    const box = Rect(g.rect.x, g.rect.y, g.rect.width, g.rect.height);
+    const at = arrowCellOf(box, tree.nodes[tree.root].decoration.arrowSide,
+        tree.nodes[tree.root].decoration.arrowOffset);
+    assert(box.x < 90, "the popup slid left to stay inside");
+    assert(at.x == 93 || at.x == box.right - 2,
+        "and the caret stayed on the token, not on the popup's edge");
+}
+
+@("render_widgets.applyPopupArrow.theCaretReachesTheGridAboveItsAnchor")
+@safe unittest
+{
+    // Through a real grid, because the last two caret defects were both
+    // invisible in the widget tree: the offset was right and the EDGE was
+    // wrong, which type-checks because both are `BoxSide`.
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+
+    const bg = RgbColor(0x1a, 0x1b, 0x26), fg = RgbColor(0xc0, 0xc0, 0xc0);
+    const pal = defaultTwoslashPalette(schemeForBackground(bg));
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int reduce(int[] r)", docs: "Some prose.\n"),
+    ]);
+
+    auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+    auto f = layout(tree);
+    const anchor = AnchorRect(primary: Rect(20, 2, 6, 1), live: true);
+    const g = placeHoverPopup(pal, anchor, f[tree.root].rect.size,
+        Rect(0, 0, 80, 30));
+    assert(g.paintable);
+    applyPopupArrow(tree, g);
+
+    auto grid = CellGrid(80, 30, fg, bg);
+    paint(grid, buildDisplayList(tree, f, pal, fg, bg));
+
+    // The tree lays out at the ORIGIN; only the host translates it to where
+    // the solve put it. So the caret is checked against the tree's own frame,
+    // and the anchor-tracking is the previous test's job.
+    const box = f[tree.root].rect;
+    const off = tree.nodes[tree.root].decoration.arrowOffset;
+
+    size_t found;
+    foreach (y; 0 .. grid.height)
+        foreach (x; 0 .. grid.width)
+            if (grid.cells[y * grid.width + x].glyph == '┴')
+            {
+                ++found;
+                assert(y == box.y, "on the popup's own top row — the edge "
+                    ~ "facing the anchor; `┬` would be the opposite one");
+                assert(x == box.x + off, "at the cell the solve chose");
+            }
+    assert(found == 1, "exactly one caret");
+
+    // And translated by the host, that cell lands on the token.
+    assert(g.rect.x + off >= 20 && g.rect.x + off <= 26);
 }

@@ -26,8 +26,9 @@ import sparkles.base.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : HoverViewOptions, placeHoverPopup,
-    popupBound, signatureSpans, viewHoverPopup, viewTwoslashDocument;
+import sparkles.twoslash.render_widgets : applyPopupArrow, HoverViewOptions,
+    placeHoverPopup, popupBound, signatureSpans, viewHoverPopup,
+    viewTwoslashDocument;
 
 import sparkles.syntax : HighlightEvent, LabelSet,
     ResolvedTheme, RgbColor, toRgb;
@@ -274,7 +275,12 @@ private struct TwoslashTui
             const placed = placeHoverPopup(pal, anchor,
                 frames[tree.root].rect.size, boundary);
             if (placed.paintable)
+            {
+                // Aimed between `layout` and the display list, the only window
+                // in which the box and the resolved side both exist.
+                applyPopupArrow(tree, placed);
                 paintTree(grid, tree, placed.rect.x, placed.rect.y);
+            }
         }
 
         drawStatus(grid);

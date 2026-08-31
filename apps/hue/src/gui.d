@@ -4168,7 +4168,8 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     out long fenceContentCols, out long fenceViewportCols) @system
 {
     import sparkles.twoslash.render_widgets : HoverViewOptions,
-        placeHoverPopup, popupBound, popupScrollExtents, signatureSpans;
+        applyPopupArrow, placeHoverPopup, popupBound,
+        popupScrollExtents, signatureSpans;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
@@ -4201,12 +4202,16 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     if (!tree.nodes.length)
         return PixelRect(originX, originY, 0, 0);
     auto frames = layout(tree);
-    auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
-
     const box = frames[tree.root].rect;
     const placed = placeHoverPopup(pal, anchor, box.size, boundary);
     if (!placed.paintable)
         return PixelRect(originX, originY, 0, 0);
+
+    // Between `layout` and the display list — the only window in which both
+    // the popup's measured box and its resolved side exist, and therefore the
+    // only place the caret can be aimed at the token it describes.
+    applyPopupArrow(tree, placed);
+    auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
     // The one cell → pixel conversion in the whole path.
     const px = originX + placed.rect.x * cellW;
