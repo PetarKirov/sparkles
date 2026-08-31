@@ -40,7 +40,8 @@ version (unittest) import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
+import sparkles.twoslash.render_widgets : abbrevRegion, isPopupCloseKey,
+    viewHoverPopup, viewTwoslashDocument;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
@@ -51,9 +52,9 @@ import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
-    ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt,
-    Timeline;
+import sparkles.ui.state : DisclosureState, DocRow, HoverTarget, keyAt,
+    KeyTarget, keyTargets, ScrollbarState, scrollbarThumb, Selection,
+    selectionRects, sourceOffsetAt, Timeline;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
     TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
@@ -329,6 +330,14 @@ struct PreviewTui
     private long hoverFenceContentCols;
     /// ditto
     private long hoverFenceViewportCols;
+    /// Where the popup was last painted, and what its rows mean — so a click
+    /// on the ✕ lands and so the pointer resting on it reveals one at all.
+    private Rect hoverPopupRect;
+    /// ditto
+    private KeyTarget[] hoverPopupKeys;
+    /// Whether the pointer is inside `hoverPopupRect`. One frame stale, like
+    /// every hit rect.
+    private bool hoverPointerInside;
 
     /// Every scroll offset the open popup owns, back to the top-left. A
     /// different symbol is a different document, and there are three of them —
@@ -1118,7 +1127,7 @@ struct PreviewTui
         auto opts = HoverViewOptions(
             maxWidth: bound.width, maxHeight: bound.height,
             scrollOffset: hoverScroll, scrollOffsetX: hoverScrollX,
-            fenceScrollX: hoverFenceX,
+            fenceScrollX: hoverFenceX, showClose: hoverPointerInside,
             barContent: hoverContentRows, barViewport: hoverViewportRows,
             barContentX: hoverFenceContentCols,
             barViewportX: hoverFenceViewportCols, barOffsetX: hoverFenceX,
@@ -1161,6 +1170,10 @@ struct PreviewTui
         // `paintGrid` clips in canvas-local cells. The solve guarantees the
         // rect is inside `boundary` unless it reports `overflowing`, so this is
         // the honest ceiling rather than the defensive one it replaces.
+        // Kept for the next frame's pointer work: where it landed, and where
+        // its clickable parts are within it.
+        hoverPopupRect = placed.rect;
+        hoverPopupKeys = keyTargets(tree, frames);
         paintGrid(g, pageBg, ops, placed.rect.x, placed.rect.y,
             Rect(boundary.x - placed.rect.x, boundary.y - placed.rect.y,
                 boundary.width, boundary.height));
@@ -1911,6 +1924,32 @@ struct PreviewTui
     private bool handlePointer(in PointerEvent e) @system
     {
         const rows = bodyRows();
+
+        // The popup, first: while it is open it BLOCKS what is painted under
+        // it (`MDL1`), so a press inside it is never the document's. The rect
+        // is last frame's, which is what the reader aimed at.
+        const insidePopup = hoverSel >= 0 && !hoverPopupRect.empty
+            && hoverPopupRect.contains(e.pos);
+        hoverPointerInside = insidePopup;
+        if (insidePopup && e.button == PointerButton.left
+            && e.action == PointerAction.press)
+        {
+            const k = keyAt(hoverPopupKeys,
+                Point(e.pos.x - hoverPopupRect.x, e.pos.y - hoverPopupRect.y));
+            if (isPopupCloseKey(k))
+            {
+                hoverSel = -1;
+                resetHoverScroll();
+                return true;
+            }
+            if (k != 0)
+            {
+                const r = abbrevRegion(k);
+                hoverExpanded[r] = !hoverExpanded.get(r, false);
+                return true;
+            }
+            return true;   // a press inside the popup is the popup's
+        }
 
         // The format-preview ruler (`RUL2`/`RUL6`): pane cell → document
         // column is the only TUI-side arithmetic; tolerance, drag state and

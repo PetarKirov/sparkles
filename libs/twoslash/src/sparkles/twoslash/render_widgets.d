@@ -611,6 +611,17 @@ struct HoverViewOptions
     long barViewportX;  /// ditto
     long barOffsetX;    /// ditto — the fence offset the thumb reports
 
+    /**
+    Whether to reveal the close affordance — the host says so when the pointer
+    is over the popup.
+
+    Its column is reserved $(B always), so revealing it does not reflow the
+    signature the reader is looking at. That is the bargain the gallery's
+    terminal tab list already makes for its own ✕, and the reason a
+    hover-revealed control can sit inside content at all.
+    */
+    bool showClose;
+
     /// The signature as resolved syntax-colored spans (`signatureSpans`).
     TextSpan[] sigSpans;
 
@@ -643,6 +654,23 @@ struct HoverViewOptions
 /// popups a frame may hold.
 size_t abbrevKey(size_t nodeKey, size_t region) @safe pure nothrow @nogc
     => ((nodeKey + 1) << 20) | (region + 1);
+
+/**
+The region reserved for the popup's own close affordance.
+
+A click on the ✕ resolves through the $(B same) `Widget.key` channel a collapsed
+run does, so a backend decodes one lookup rather than growing a second way for a
+click inside a popup to mean something.
+*/
+private enum size_t closeRegion = 0xF_FFFE;
+
+/// The key the close affordance carries.
+size_t popupCloseKey(size_t nodeKey) @safe pure nothrow @nogc
+    => abbrevKey(nodeKey, closeRegion);
+
+/// Whether `key` names a close affordance rather than a collapsible run.
+bool isPopupCloseKey(size_t key) @safe pure nothrow @nogc
+    => key != 0 && abbrevRegion(key) == closeRegion;
 
 /// The region a `Widget.key` names, undoing `abbrevKey`. Backends resolve a
 /// click to a key and index `ExpandedRegions` — which is per signature — with
@@ -750,7 +778,7 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     // qualify it. `@safe pure nothrow @nogc` is part of what the signature SAYS
     // — a reader scrolled past it has lost half the declaration — so the two
     // are pinned together and the rule goes after them, not between them.
-    uint[] header = [popupSection(b, sigRows)];
+    uint[] header = [popupHeaderRow(b, sigRows, opts)];
     if (structured && node.signature.effects != Effects.init)
         header ~= popupSection(b,
             effectChips(b, node.signature.effects, hit, opts.unicode));
@@ -797,6 +825,28 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
         paintBackground: true, decoration: surfaceDeco(arrow: true),
         children: [col], hitId: hit));
     return b.finish(popup);
+}
+
+/**
+The header's first row: the signature, and the close affordance beside it.
+
+The ✕ sits in the popup's top-right corner and its column is reserved whether or
+not it shows, so revealing it on hover cannot reflow the declaration underneath.
+It carries a `Widget.key` rather than a hit id because a click inside a popup is
+already decoded through keys, and one channel is enough.
+*/
+private uint popupHeaderRow(ref Builder b, uint[] sigRows,
+    in HoverViewOptions opts)
+{
+    const sig = b.add(Widget(kind: WidgetKind.column, children: sigRows,
+        width: SizeSpec.grow(), stretch: true));
+    const lane = opts.showClose
+        ? b.add(Widget(kind: WidgetKind.text, text: "✕", slot: Slot.muted,
+            key: popupCloseKey(opts.nodeKey)))
+        : b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+    return b.add(Widget(kind: WidgetKind.row, children: [sig, lane],
+        width: SizeSpec.grow(), stretch: true, gap: 1,
+        padding: Insets(0, 1, 0, 1)));
 }
 
 /// Not a node index any builder can return.
@@ -2433,4 +2483,54 @@ version (unittest)
     auto f2 = layout(fits);
     assert(!popupScrollExtents(fits, f2).live);
     assert(bars(fits) == 0);
+}
+
+@("render_widgets.viewHoverPopup.theCloseLaneIsReservedAndRevealed")
+@safe unittest
+{
+    // The gallery's terminal tab list makes this bargain and it is the reason a
+    // hover-revealed control can sit inside content at all: the column is
+    // reserved WHETHER OR NOT the ✕ shows, so revealing it cannot reflow the
+    // declaration the reader is looking at.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : keyAt, keyTargets;
+
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int reduce(int[] r)", docs: "Some prose.\n"),
+    ]);
+
+    const idle = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, nodeKey: 1));
+    const hot = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, nodeKey: 1, showClose: true));
+    auto fi = layout(idle), fh = layout(hot);
+
+    assert(fi[idle.root].rect == fh[hot.root].rect,
+        "revealing the ✕ must not move or resize the popup");
+
+    // It is clickable through the SAME key channel a collapsed run uses, so a
+    // backend decodes one lookup rather than growing a second.
+    const targets = keyTargets(hot, fh);
+    size_t found;
+    foreach (t; targets)
+        if (isPopupCloseKey(t.key))
+            found = t.key;
+    assert(found == popupCloseKey(1));
+    assert(!isPopupCloseKey(abbrevKey(1, 0)),
+        "and a collapsed run is not mistaken for it");
+
+    // Idle, there is nothing to click.
+    foreach (t; keyTargets(idle, fi))
+        assert(!isPopupCloseKey(t.key));
+
+    // It sits in the top-right corner: the popup's first content row, at its
+    // right edge rather than after the signature text.
+    foreach (t; targets)
+        if (isPopupCloseKey(t.key))
+        {
+            assert(t.rect.y == fh[hot.root].rect.y + 1, "the top row");
+            assert(t.rect.right >= fh[hot.root].rect.right - 2,
+                "hard against the right edge");
+        }
 }

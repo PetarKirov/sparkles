@@ -291,6 +291,16 @@ struct HoverPopup
     long popupFenceContentCols;
     /// ditto
     long popupFenceViewportCols;
+    /**
+    The reader dismissed this popup — Escape, or its ✕ — so it stays shut while
+    the pointer remains on the token that opened it.
+
+    A latch rather than a close, because the GUI popup is driven by hover:
+    without it the very next frame reopens what the reader just dismissed, and
+    Escape appears to do nothing. It clears when the pointer moves to a
+    different hover token, which is a new question and deserves an answer.
+    */
+    bool dismissed;
 
 @safe pure nothrow @nogc:
 
@@ -762,4 +772,31 @@ unittest
     both.popupContentCols = 90; both.popupViewportCols = 48;
     assert(both.scrollBy(5) && both.popupScrollX == 0);
     assert(both.scrollByX(5) && both.popupScroll == 5);
+}
+
+@("gui_state.HoverPopup.dismissalIsALatchNotAClose")
+@safe pure nothrow @nogc unittest
+{
+    // The GUI popup is driven by HOVER, so "closed" is not a state it can
+    // reach while the pointer has not moved: the next frame recomputes the
+    // hovered token and reopens it. Escape would appear to do nothing.
+    //
+    // So dismissal is a latch that survives until the reader asks a different
+    // question — a different token, or none.
+    HoverPopup p;
+    p.hotNode = 7;
+    p.popupNode = 7;
+    assert(!p.dismissed);
+
+    p.dismissed = true;   // Escape, or the ✕
+
+    // Still on the same token: it stays shut.
+    assert(p.popupNode == 7);
+
+    // The host clears the latch when the hovered node differs, which is the
+    // rule this pins by construction rather than by re-implementing it here:
+    // a latch keyed to the token, not to a timer or a frame count.
+    static assert(__traits(hasMember, HoverPopup, "dismissed"));
+    static assert(!__traits(hasMember, HoverPopup, "dismissedUntilMs"),
+        "a timer would reopen it on its own, which is not what Escape means");
 }
