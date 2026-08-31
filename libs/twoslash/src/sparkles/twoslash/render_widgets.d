@@ -1032,6 +1032,15 @@ in (frames.length == tree.nodes.length,
     // `Widget.key`. Keying it would add an entry to `keyTargets`, which is the
     // channel a click uses to name a collapsed signature run, and "which run
     // did I click" would stop meaning what it says.
+    //
+    // $(B Through the gutters.) Once the body scrolls, `withScrollbars` wraps
+    // it — a row beside the vertical bar, a column above the horizontal one —
+    // so the column's last child is a wrapper, not the viewport. Both wrappers
+    // carry the viewport as their FIRST child, so the descent finds it either
+    // way. Stopping at the wrapper is what made the measurement collapse to
+    // zero on every frame a bar was up, which unbuilt the bar on the next one:
+    // the popup flickered between having a bar and having none, and a fence's
+    // sideways extent went with it.
     const root = tree.nodes[tree.root];
     uint body_ = uint.max;
     if (root.children.length == 1)
@@ -1039,9 +1048,19 @@ in (frames.length == tree.nodes.length,
         const col = tree.nodes[root.children[0]];
         if (col.children.length)
         {
-            const last = col.children[$ - 1];
-            if (tree.nodes[last].clipY && tree.nodes[last].children.length == 1)
-                body_ = last;
+            uint at = col.children[$ - 1];
+            // At most the two gutters, so a malformed tree cannot loop.
+            foreach (_; 0 .. 3)
+            {
+                if (tree.nodes[at].clipY && tree.nodes[at].children.length == 1)
+                {
+                    body_ = at;
+                    break;
+                }
+                if (tree.nodes[at].children.length == 0)
+                    break;
+                at = tree.nodes[at].children[0];
+            }
         }
     }
     if (body_ != uint.max)
@@ -1055,12 +1074,21 @@ in (frames.length == tree.nodes.length,
 
     // Every other clipping node is content that scrolls itself — a fence, a
     // table. The widest overflow is what a horizontal bar would represent.
+    //
+    // A fence's viewport holds ONE CHILD PER LINE, not a single content node:
+    // its extent is the widest of them. Demanding a lone child (which is what
+    // the popup body happens to have) matched no fence at all, so the sideways
+    // extent read zero and a fence that plainly ran off the edge reported
+    // nothing to scroll.
     foreach (i, ref const n; tree.nodes)
     {
-        if (i == body_ || !n.clipX || n.children.length != 1)
+        if (i == body_ || !n.clipX || n.children.length == 0)
             continue;
         const have = frames[i].rect.width;
-        const want = frames[n.children[0]].rect.width;
+        int want;
+        foreach (c; n.children)
+            if (frames[c].rect.width > want)
+                want = frames[c].rect.width;
         if (want - have > sc.fenceContentX - sc.fenceViewportX)
         {
             sc.fenceContentX = want;
@@ -2696,4 +2724,96 @@ version (unittest)
 
     // And translated by the host, that cell lands on the token.
     assert(g.rect.x + off >= 20 && g.rect.x + off <= 26);
+}
+
+@("render_widgets.popupScrollExtents.theBarSurvivesTheFrameThatDrawsIt")
+@safe unittest
+{
+    // The measurement and the bar are a FEEDBACK LOOP: the bar is built from
+    // last frame's extents, and the extents are read off this frame's layout.
+    // A measurement that only works while the bar is absent therefore unbuilds
+    // the bar it just caused — the popup flickers, and on a terminal that
+    // repaints per event the reader simply never sees one.
+    //
+    // Two frames prove nothing here. The loop has period two, and the second
+    // frame is exactly the one that looked right.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : WidgetKind;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    static size_t bars(in WidgetTree t)
+    {
+        size_t n;
+        foreach (ref const w; t.nodes)
+            if (w.kind == WidgetKind.scrollbar)
+                ++n;
+        return n;
+    }
+
+    PopupScroll sc;
+    foreach (frame; 0 .. 6)
+    {
+        const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44,
+            maxHeight: 12, barContent: sc.content, barViewport: sc.viewport));
+        auto f = layout(t);
+        const now = popupScrollExtents(t, f);
+        if (frame > 0)
+        {
+            assert(bars(t) == 1, "the bar must survive its own frame");
+            assert(now.live, "and the measurement must survive the bar");
+            // Not merely live: STILL THE SAME. A gutter costs the body a
+            // column, never a row, so the vertical extents may not drift.
+            assert(now.content == sc.content && now.viewport == sc.viewport,
+                "a settled popup must measure the same every frame");
+        }
+        sc = now;
+    }
+}
+
+@("render_widgets.popupScrollExtents.aFenceReportsItsSidewaysOverflow")
+@system unittest
+{
+    // A fence's viewport holds ONE CHILD PER LINE. Reading its content extent
+    // as "the width of its only child" matched no fence at all, so a code
+    // block that plainly ran off the popup's edge reported nothing to scroll
+    // — and a sideways wheel notch fell through to the document underneath.
+    import sparkles.ui.layout : layout;
+    import std.process : environment;
+
+    // The fence only becomes a viewport once markdown has parsed it, which
+    // needs the grammar bundle.
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("SPARKLES_TS_GRAMMAR_PATH unset");
+        return;
+    }
+    auto registry = GrammarRegistry.fromEnvironment();
+
+    // MORE THAN ONE LINE, deliberately: a one-line fence has a one-child
+    // viewport and would pass under the very rule this test exists to reject.
+    const wide = "auto x = someFunction(withArguments, thatGoOn, andOn, forever);";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, text: "int f(int a)",
+            docs: "Prose.\n\n```d\nvoid main()\n{\n    " ~ wide
+                ~ "\n}\n```\n"),
+    ]);
+
+    auto t = viewHoverPopup(tw, 0, registry, HoverViewOptions(maxWidth: 44,
+        maxHeight: 12));
+    auto f = layout(t);
+    const sc = popupScrollExtents(t, f);
+    assert(sc.liveFenceX, "the fence is wider than the popup lets it be");
+    assert(sc.maxFenceX > 0);
+    // The reported extent is the LINE's, not the viewport's: a bar built from
+    // it must describe how far the code actually runs.
+    assert(sc.fenceContentX >= cast(long) wide.length - 4,
+        "the widest line, not the room it was given");
 }
