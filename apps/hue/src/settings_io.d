@@ -32,7 +32,7 @@ import sparkles.ui.property_tree : Doc;
 
 import settings : ConfigSection, HueConfig;
 import settings_load : LoadedConfig;
-import settings_overlay : Origin, OriginKind, Origins, Sparse;
+import settings_overlay : mergeSparse, Origin, OriginKind, Origins, Sparse;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JSONC → strict JSON, offsets preserved.
@@ -495,28 +495,6 @@ struct SaveRefusal
     /// Rendered explanation; for `humanOwned` it carries the exact strict-
     /// JSON delta snippet to paste, so the refusal is instructive, not lossy.
     string message;
-}
-
-/// Field-wise union of two sparse overlays: where `deltas` speaks it wins,
-/// everywhere else `base` stands — the shape of "this session's changes
-/// applied to what the user file already said".
-Sparse!T mergeSparse(T)(Sparse!T base, Sparse!T deltas) @safe
-{
-    import settings : ConfigSection;
-
-    Sparse!T merged = base;
-    static foreach (i, _; base.tupleof)
-    {
-        static if (hasUDA!(typeof(T.tupleof[i]), ConfigSection))
-            merged.tupleof[i] = mergeSparse!(typeof(T.tupleof[i]))(
-                base.tupleof[i], deltas.tupleof[i]);
-        else
-        {
-            if (!deltas.tupleof[i].isNull)
-                merged.tupleof[i] = deltas.tupleof[i];
-        }
-    }
-    return merged;
 }
 
 /// The pretty strict-JSON text of a sparse overlay (unset fields omitted) —

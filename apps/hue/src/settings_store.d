@@ -13,9 +13,10 @@ import std.algorithm.searching : canFind, startsWith;
 import std.traits : FieldNameTuple, hasUDA;
 
 import settings : ConfigSection, HueConfig;
-import settings_io : mergeSparse, saveUserConfig;
+import settings_io : saveUserConfig;
 import settings_load : LoadedConfig;
-import settings_overlay : applyOverlay, Origin, OriginKind, Origins, Sparse;
+import settings_overlay : applyOverlay, mergeSparse, Origin, OriginKind,
+    Origins, Sparse;
 import settings_pane : ApplyMask, ApplyRule, SettingsPaneT;
 
 /// The concrete pane both hosts mount.

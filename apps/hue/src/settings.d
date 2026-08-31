@@ -40,6 +40,7 @@ import viewer_model : ScrollAnchorMode;
 
 import sparkles.diff.normalize : WhitespaceMode;
 import sparkles.ui.components.lantern_view : Placement;
+import sparkles.wired.overlay : WireCompose, WireSection;
 import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultGuiFont,
     defaultGuiFontFamily, defaultTheme, defaultWindowCols, defaultWindowRows,
     uiuaCodepointMap;
@@ -49,8 +50,9 @@ import sparkles.ui_app.gui_options : defaultFontSizePoints, defaultGuiFont,
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Marks a struct-typed field as a config section: the derived sparse overlay
-/// (`settings_overlay.d`) recurses into it instead of treating it as a leaf.
-enum ConfigSection;
+/// recurses into it instead of treating it as a leaf. Hue's spelling of
+/// `sparkles.wired.overlay.WireSection`, which the generator keys on.
+alias ConfigSection = WireSection;
 
 /**
 Marks a list-valued field whose layers $(B compose) instead of override
@@ -58,8 +60,10 @@ Marks a list-valued field whose layers $(B compose) instead of override
 lower layers', then the built-in default — so a user can shadow a bundled
 grammar with a newer build of it. Scalar fields follow `CFG2`'s
 higher-layer-wins rule; this is the documented exception.
+
+Hue's spelling of `sparkles.wired.overlay.WireCompose`.
 */
-enum Compose;
+alias Compose = WireCompose;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // New closed-domain enums (CLI strings become members; wire name = identifier).
