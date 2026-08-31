@@ -16,10 +16,13 @@ import sparkles.base.buffer : SharedBuffer;
 public import input_line : InputState, Mode;
 import sparkles.input.frame : InputFrame;
 import sparkles.input.gesture : PointF;
+import sparkles.twoslash.render_widgets : PopupBar, popupBarOf;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.components.table : GridHit;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.components.dock : DockContainer, PaneId;
-import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
+import sparkles.ui.state : CaptureState, KeyTarget, ScrollAxis,
+    ScrollbarState, Timeline;
 
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
@@ -292,6 +295,13 @@ struct HoverPopup
     long popupFenceContentCols;
     /// ditto
     long popupFenceViewportCols;
+    /// The popup's own bar grabs. A bar is a CONTROL: a reader who can see
+    /// that a popup scrolls reaches for its thumb, and until these existed the
+    /// press landed on the generic "some key inside the popup" arm and toggled
+    /// a signature run instead.
+    ScrollbarState vBar;
+    /// ditto
+    ScrollbarState hBar = ScrollbarState(axis: ScrollAxis.horizontal);
     /**
     The reader dismissed this popup — Escape, or its ✕ — so it stays shut while
     the pointer remains on the token that opened it.
@@ -354,7 +364,86 @@ struct HoverPopup
         popupScroll = 0;
         popupScrollX = 0;
         popupFenceX = 0;
+        vBar = ScrollbarState.init;
+        hBar = ScrollbarState(axis: ScrollAxis.horizontal);
     }
+
+    /// Where one of the popup's bars was painted, in cells relative to the
+    /// popup's own box — empty when this popup has no such bar. Read back from
+    /// last frame's `keyTargets`, which is the rect the display list drew, so
+    /// a grab measures against what the reader aimed at.
+    Rect barRect(PopupBar bar) const scope
+    {
+        foreach (ref const kt; popupKeys)
+            if (popupBarOf(kt.key) == bar)
+                return kt.rect;
+        return Rect.init;
+    }
+
+    /// A press on one of the popup's bars: the one scrollbar machine (`STM9`)
+    /// on the popup's own offsets. On the thumb it grabs in place, on the
+    /// track it jumps — the bargain every other bar in hue makes. `p` is in
+    /// cells relative to the popup's box.
+    void barPressed(PopupBar bar, Point p) scope
+    {
+        const r = barRect(bar);
+        if (r.empty)
+            return;
+        if (bar == PopupBar.vertical)
+        {
+            vBar.offset = popupScroll;
+            vBar = vBar.pressed(p.y - r.y, popupContentRows,
+                popupViewportRows, r.height);
+            popupScroll = vBar.offset;
+        }
+        else
+        {
+            // The horizontal bar reports the FENCES' extent, because prose
+            // wraps to the popup and code does not — so its thumb moves the
+            // same offset a sideways notch does.
+            hBar.offset = popupFenceX;
+            hBar = hBar.pressed(p.x - r.x, popupFenceContentCols,
+                popupFenceViewportCols, r.width);
+            popupFenceX = cast(int) hBar.offset;
+        }
+    }
+
+    /// ditto — a drag while grabbed tracks wherever the pointer strays, which
+    /// is why a host answers it before testing whether the pointer is still
+    /// inside the popup.
+    void barDragged(Point p) scope
+    {
+        if (vBar.dragging)
+        {
+            const r = barRect(PopupBar.vertical);
+            if (!r.empty)
+            {
+                vBar = vBar.dragged(p.y - r.y, popupContentRows,
+                    popupViewportRows, r.height);
+                popupScroll = vBar.offset;
+            }
+        }
+        if (hBar.dragging)
+        {
+            const r = barRect(PopupBar.horizontal);
+            if (!r.empty)
+            {
+                hBar = hBar.dragged(p.x - r.x, popupFenceContentCols,
+                    popupFenceViewportCols, r.width);
+                popupFenceX = cast(int) hBar.offset;
+            }
+        }
+    }
+
+    /// ditto — the grab ends.
+    void barReleased() scope
+    {
+        vBar = vBar.released();
+        hBar = hBar.released();
+    }
+
+    /// Whether a bar grab is live, and therefore owns the pointer.
+    bool barGrabbing() const scope => vBar.dragging || hBar.dragging;
 
     /// How long an unhovered popup lingers before it closes. Long enough to
     /// cross the gap at an unhurried pointer speed — a reader who looks away
