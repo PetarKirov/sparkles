@@ -9,7 +9,7 @@
    Decoration        |                                                                         #
    Grid              | +---------------------------------------------------------------------+ #
    Components        | | your view                                                           | #
- ▸ Tree              | | ├─ ▸ src/                                                           | #
+ · Tree              | | ├─ ▸ src/                                                           | #
    Property tree     | | ├─ ▸ docs/                                                          | #
    Table             | | └─ ▪ README.md                                                      | #
    Scrolling         | +---------------------------------------------------------------------+ #
@@ -29,4 +29,4 @@
                      | | │  ├─ ▪ index.md                                                    | |
                      | | │  └─ ▪ layout.md                                                   | |
                      |
- pages ↓ down ↑ up → expand ← collapse / up ⏎ toggle O open all C close all     ? keys   q quit
+ page ↓ down ↑ up → expand ← collapse / up ⏎ toggle O open all C close all      ? keys   q quit

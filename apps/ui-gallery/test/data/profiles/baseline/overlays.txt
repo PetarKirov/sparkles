@@ -17,7 +17,7 @@
    Split             |                                                                         #
    Dock              | +---------------------------------------------------------------------+ #
    Terminal          | | hover a chip · the caret follows the resolved edge                  | #
- ▸ Overlays          | | below    above    left    right                                     | #
+ · Overlays          | | below    above    left    right                                     | #
                      | | one arrowCellOf, four backends — and it is suppressed, not clamped ont#
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
@@ -29,4 +29,4 @@
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      |
- pages o open/close the dropdown                                                ? keys   q quit
+ page o open/close the dropdown                                                 ? keys   q quit

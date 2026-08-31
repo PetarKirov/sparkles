@@ -13,7 +13,7 @@
    Property tree     | | hot            nothing                                              | #
    Table             | | Move the pointer over a tile.                                       | |
    Scrolling         | +---------------------------------------------------------------------+ |
- ▸ State             |                                                                         |
+ · State             |                                                                         |
    Split             | +---------------------------------------------------------------------+ |
    Dock              | | PressState — arm, then activate on the same target                  | |
    Terminal          | | armed          —                                                    | |
@@ -29,4 +29,4 @@
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      |
- pagea anchor selece extend selecf focus nF focus prd toggle foD fold polarp pulse  ? keys   q q
+ paga anchor selece extend selecf focus nF focus pd toggle foD fold polarip pulse  ? keys   q qu

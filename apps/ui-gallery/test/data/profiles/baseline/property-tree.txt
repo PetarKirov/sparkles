@@ -10,7 +10,7 @@
    Grid              | / starts the ranked fuzzy filter                                        #
    Components        |                                                                         #
    Tree              | +---------------------------------------------------------------------+ #
- ▸ Property tree     | | the live tree                                                       | #
+ · Property tree     | | the live tree                                                       | #
    Table             | | ├─ name                   "background"  ⟨needs EDT⟩            #    | #
    Scrolling         | | ├─ visible                [x] true                             #    | #
    State             | | ├─ blend                  ◂ normal ▸                           #    | #
@@ -29,4 +29,4 @@
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
                      |
- pa↓ ↑ → e← coll⏎ tog+ s- stv prevu uU r/ fin nexN preb revep read-e exteO opeC clor reset? keys
+ pa↓ ↑ → e← coll⏎ tog+ s- stv preu U r/ fin nexN preb reveap read-e exterO opeC clor reset? keys

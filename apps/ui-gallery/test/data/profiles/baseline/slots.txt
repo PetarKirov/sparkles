@@ -5,7 +5,7 @@
    Tracks            | Thirty-four roles. A widget names one; the palette turns it into a      #
    Text              | concrete foreground, background and alpha while the display list is     #
    Themes            | built. Nothing below hardcodes a colour — press ] and every swatch      #
- ▸ Slots             | re-resolves.                                                            #
+ · Slots             | re-resolves.                                                            #
    Decoration        |                                                                         |
    Grid              | +---------------------------------------------------------------------+ |
    Components        | | text                                                                | |
@@ -29,4 +29,4 @@
                      | | success            Aa 0123    #1ba673       #1ba673 12%             | |
                      | | annotate           Aa 0123    #1ba673       #1ba673 12%             | |
                      |
- pages                                                                          ? keys   q quit
+ page                                                                           ? keys   q quit

@@ -8,7 +8,7 @@
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
    Grid              | | headerBar — leading · centre · trailing                             | #
- ▸ Components        | |  hue                         file.d                         q quit  | #
+ · Components        | |  hue                         file.d                         q quit  | #
    Tree              | |                                                                     | #
    Property tree     | |  focused pane                                                       | |
    Table             | +---------------------------------------------------------------------+ |
@@ -29,4 +29,4 @@
                      | things: this one is showing, this one is being pressed. Conflating them |
                      | is why a hand-rolled strip flickers the wrong tab mid-drag.             |
                      |
- pages ← prev tab → next tab 1-4 action row n scroll down p scroll up           ? keys   q quit
+ page ← prev tab → next tab 1-4 action row n scroll down p scroll up            ? keys   q quit

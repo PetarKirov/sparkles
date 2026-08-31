@@ -1,6 +1,6 @@
  sparkles:ui the ten widget kinds                                                   tokyo-night
    Welcome           | Primitives · the eleven widget kinds                                    #
- ▸ Primitives        |                                                                         #
+ · Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | Every tree in this catalog is built from these and nothing else. A      #
    Text              | widget names a semantic slot, never a colour — the palette resolves it  #
@@ -29,4 +29,4 @@
                      | | column            one                                               | |
                      | |                   two                                               | |
                      |
- pages                                                                          ? keys   q quit
+ page                                                                           ? keys   q quit

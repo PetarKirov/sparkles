@@ -1,5 +1,5 @@
  sparkles:ui what this build is                                                     tokyo-night
- ▸ Welcome           | sparkles:ui — the catalog                                               #
+ · Welcome           | sparkles:ui — the catalog                                               #
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | Every page below is built from the same widget tree, laid out by the    #
@@ -29,4 +29,4 @@
                      | | Enter open the selected page                                        | |
                      | | [ ] previous / next theme                                           | |
                      |
- pages                                                                          ? keys   q quit
+ page                                                                           ? keys   q quit

@@ -16,7 +16,7 @@
    State             | | (selection, links) waits on the mouse-event conversion.           |
    Split             | +-------------------------------------------------------------------+
    Dock              |
- ▸ Terminal          |
+ · Terminal          |
    Overlays          |
                      |
                      |
@@ -29,4 +29,4 @@
                      |
                      |
                      |
- pagesn new shelx close shelh prev tabl next tab e keep exited⏎ focus the shell  ? keys   q quit
+ pagen new shellx close shelh prev tabl next tab e keep exited⏎ focus the shell  ? keys   q quit

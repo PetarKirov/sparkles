@@ -14,7 +14,7 @@
    Table             | |                         │                                           | #
    Scrolling         | |                         │                                           | #
    State             | +---------------------------------------------------------------------+ #
- ▸ Split             |                                                                         #
+ · Split             |                                                                         #
    Dock              | +---------------------------------------------------------------------+ #
    Terminal          | | the machine                                                         | #
    Overlays          | | size             24                                                 | #
@@ -29,4 +29,4 @@
                      | back to an arrow the instant you move.                                  |
                      |                                                                         |
                      |
- pages ← narrower → wider                                                       ? keys   q quit
+ page ← narrower → wider                                                        ? keys   q quit

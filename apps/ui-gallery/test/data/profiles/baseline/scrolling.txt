@@ -12,7 +12,7 @@
    Tree              | |  1  — a landmark row —  #                                           | #
    Property tree     | |  2  the quick brown fox |                                           | #
    Table             | |  3  the quick brown fox |                                           | |
- ▸ Scrolling         | |  4  the quick brown fox |                                           | |
+ · Scrolling         | |  4  the quick brown fox |                                           | |
    State             | |  5  the quick brown fox |                                           | |
    Split             | |  6  — a landmark row —  |                                           | |
    Dock              | |  7  the quick brown fox |                                           | |
@@ -29,4 +29,4 @@
                      | +---------------------------------------------------------------------+ |
                      | | the same formula at three offsets                                   | |
                      |
- pages n down p up N page down P page up g top G bottom                         ? keys   q quit
+ page n down p up N page down P page up g top G bottom                          ? keys   q quit
