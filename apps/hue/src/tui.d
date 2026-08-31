@@ -321,6 +321,37 @@ struct PreviewTui
     private long hoverContentCols;
     /// ditto
     private long hoverViewportCols;
+    /// How far the popup's fenced code blocks are scrolled sideways, and what
+    /// they may scroll over — a fence clips its own long lines rather than
+    /// overflowing the body, so its overflow is a separate measurement.
+    private int hoverFenceX;
+    /// ditto
+    private long hoverFenceContentCols;
+    /// ditto
+    private long hoverFenceViewportCols;
+
+    /// Every scroll offset the open popup owns, back to the top-left. A
+    /// different symbol is a different document, and there are three of them —
+    /// which is exactly how many a caller forgets one of.
+    private void resetHoverScroll() @safe pure nothrow @nogc
+    {
+        hoverScroll = 0;
+        hoverScrollX = 0;
+        hoverFenceX = 0;
+    }
+
+    /// Scrolls the popup's fences sideways, clamped; `true` iff it moved.
+    private bool scrollHoverFenceX(long cells) @safe pure nothrow @nogc
+    {
+        const over = hoverFenceContentCols - hoverFenceViewportCols;
+        const maxOff = over > 0 ? over : 0;
+        const want = hoverFenceX + cells;
+        const clamped = want < 0 ? 0 : (want > maxOff ? maxOff : want);
+        if (clamped == hoverFenceX)
+            return false;
+        hoverFenceX = cast(int) clamped;
+        return true;
+    }
 
     /// Scrolls the open popup's body by `rows`, clamped; `true` iff it moved —
     /// which is also "the notch was consumed", so it does not also scroll the
@@ -526,9 +557,11 @@ struct PreviewTui
         const dx = w.dx + (w.mods.shift ? w.dy : 0);
         if (dx != 0)
         {
-            // An open popup takes a sideways notch before the document, for
-            // the fence a ddoc example puts in it.
-            if (hoverSel >= 0 && scrollHoverPopupX(dx))
+            // An open popup takes a sideways notch before the document. The
+            // fence first: it is the thing in a hover that does not wrap, so
+            // the notch is almost always for it.
+            if (hoverSel >= 0
+                && (scrollHoverFenceX(dx) || scrollHoverPopupX(dx)))
                 return true;
             const fb = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
             if (fb != size_t.max && vm.scrollFence(fb, dx))
@@ -727,8 +760,7 @@ struct PreviewTui
         dsvCopy = DsvCopy.init;
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
-        hoverScroll = 0;
-        hoverScrollX = 0;
+        resetHoverScroll();
         sel = Selection!long.cleared;
         inp.mode = Mode.normal;
         inp.query.clear();
@@ -758,8 +790,7 @@ struct PreviewTui
     {
         tw = tw_;
         hoverSel = -1;
-        hoverScroll = 0;
-        hoverScrollX = 0;
+        resetHoverScroll();
         showPreview = tw.code.length != 0 || model.present;
         relayout(); // clamps the scroll to the document view's row count
     }
@@ -1087,6 +1118,10 @@ struct PreviewTui
         auto opts = HoverViewOptions(
             maxWidth: bound.width, maxHeight: bound.height,
             scrollOffset: hoverScroll, scrollOffsetX: hoverScrollX,
+            fenceScrollX: hoverFenceX,
+            barContent: hoverContentRows, barViewport: hoverViewportRows,
+            barContentX: hoverFenceContentCols,
+            barViewportX: hoverFenceViewportCols, barOffsetX: hoverFenceX,
             sigSpans: sig,
             expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1,
             mdTheme: MdViewTheme.derive(vm.current, pageFg, pageBg),
@@ -1108,6 +1143,8 @@ struct PreviewTui
         hoverViewportRows = sc.viewport;
         hoverContentCols = sc.contentX;
         hoverViewportCols = sc.viewportX;
+        hoverFenceContentCols = sc.fenceContentX;
+        hoverFenceViewportCols = sc.fenceViewportX;
 
         // The token's own cell, in GRID coordinates — the same transform the
         // document itself is painted through at `originX - hx, 1 - top`. The
@@ -1605,9 +1642,7 @@ struct PreviewTui
         if (e.key == Key.escape && hoverSel >= 0 && !lantern.active)
         {
             hoverSel = -1;
-            hoverScroll = 0;
-        hoverScrollX = 0;
-            hoverScrollX = 0;
+            resetHoverScroll();
             return true;
         }
 
@@ -1719,10 +1754,7 @@ struct PreviewTui
                 if (hoverNodes.length)
                 {
                     hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
-                    hoverScroll = 0;
-        hoverScrollX = 0;
-                    hoverScrollX = 0;
-            hoverScrollX = 0;
+                    resetHoverScroll();
                     hoverExpanded = null;
                 }
                 break;
@@ -1998,19 +2030,13 @@ struct PreviewTui
                             hoverSel = hoverSel == cast(int) i
                                 ? -1 : cast(int) i;
                             hoverExpanded = null;
-                            hoverScroll = 0;
-        hoverScrollX = 0;
-                    hoverScrollX = 0;
-            hoverScrollX = 0;
+                            resetHoverScroll();
                             return true;
                         }
                 if (hoverSel >= 0)
                 {
                     hoverSel = -1;
-                    hoverScroll = 0;
-        hoverScrollX = 0;
-                    hoverScrollX = 0;
-            hoverScrollX = 0; // a click elsewhere dismisses the popup
+                    resetHoverScroll();  // a click elsewhere dismisses the popup
                     return true;
                 }
             }
