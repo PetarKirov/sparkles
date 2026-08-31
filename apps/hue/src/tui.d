@@ -22,7 +22,8 @@ import table_select : serializeTable, TableCopyFormat, TableRegion;
 import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
 import input_line : InputState, Mode;
-import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
+import keymap : Binding, bindingsAt, Command, InputMode, KeyContext,
+    scrollAskOf;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
@@ -388,6 +389,41 @@ struct PreviewTui
             return false;
         hoverScrollX = clamped;
         return true;
+    }
+
+    /**
+    A scroll command, offered to an open popup before the document.
+
+    The same rule the wheel already follows: the innermost surface under the
+    reader wins, and only when it cannot move does the keystroke reach the
+    document (`LYR5`'s arm, hand-routed until the popup joins the arena).
+
+    Without it the popup is scrollable by wheel and inert to the keyboard —
+    and a reader who opened it with `p` never touched the mouse. Which
+    commands scroll, and on which axis, is $(REF scrollAskOf, keymap)'s to
+    say: the GUI answers the same question about the same popup, and two
+    spellings of one table drift where no test can see it.
+    */
+    private bool scrollHoverByCommand(Command c, long hStep)
+        @safe pure nothrow @nogc
+    {
+        if (hoverSel < 0)
+            return false;
+        const ask = scrollAskOf(c);
+        if (!ask.any)
+            return false;
+        if (ask.toTop)
+            return scrollHoverPopup(-hoverScroll);
+        if (ask.toBottom)
+            return scrollHoverPopup(hoverContentRows);
+        if (ask.cells != 0)
+            // The fence first, exactly as sideways notches are routed: a fence
+            // is the thing in a hover that does not wrap, so it is what a
+            // sideways key is almost always for.
+            return scrollHoverFenceX(ask.cells * hStep)
+                || scrollHoverPopupX(ask.cells * hStep);
+        const page = hoverViewportRows > 1 ? hoverViewportRows : 1;
+        return scrollHoverPopup(ask.rows * (ask.pages ? page : 1));
     }
 
     // ── the model's vocabulary, forwarded (IXB5) ─────────────────────────────
@@ -1668,6 +1704,13 @@ struct PreviewTui
         if (st.kind != LtnStepKind.execute)
             return true;
 
+        // An open popup takes a scroll command before the document does — the
+        // wheel's rule, reached by keyboard. It is offered BEFORE the switch
+        // rather than inside each arm so a command added later cannot quietly
+        // scroll the document out from under a popup.
+        if (scrollHoverByCommand(st.cmd.cmd, vm.hScrollStep))
+            return true;
+
         final switch (st.cmd.cmd)
         {
             case Command.none:
@@ -2874,6 +2917,59 @@ unittest
         if (row(cast(ushort) y).canFind("const b: any"))
             sawSig = true;
     assert(!sawSig, "popup dismissed");
+}
+
+@("tui.keys.anOpenPopupTakesTheScrollBeforeTheDocument")
+@system
+unittest
+{
+    import sparkles.syntax : LabelSet;
+    import sparkles.twoslash.protocol : Node;
+
+    // A hover whose ddoc is far taller than the popup may be. The popup is
+    // reached with `p`, which means it was reached WITHOUT a pointer — so a
+    // reader who cannot scroll it by keyboard cannot scroll it at all.
+    string docs;
+    foreach (i; 0 .. 60)
+        docs ~= "Paragraph " ~ cast(char)('a' + (i % 26)) ~ ".\n";
+    const code = "const b = a\n";
+    TwoslashReturn tw = {code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0,
+            character: 6, text: "const b: any", docs: docs),
+    ]};
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("x.twoslash.json", code,
+        [HighlightEvent.sourceSpan(0, code.length)], PreviewModel.init,
+        startPreview: true, tw);
+
+    Grid g;
+    g.resize(60, 20);
+    t.paint(g);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'p')));
+    t.paint(g);   // the paint that MEASURES: the extents are last frame's
+    assert(t.hoverContentRows > t.hoverViewportRows,
+        "the fixture must overflow, or this proves nothing");
+
+    const docTop = t.top;
+    assert(t.handle(Event(KeyEvent(key: Key.char_, ch: 'j'))));
+    assert(t.hoverScroll > 0, "the popup scrolled");
+    assert(t.top == docTop, "and the document under it did not");
+
+    // A page, then back to the top: the absolute asks reach the popup too.
+    // `viewPageDown` and `viewTop` are the two the signed-count path cannot
+    // express, so they are the two most likely to be left behind.
+    assert(t.handle(Event(KeyEvent(key: Key.pageDown))));
+    assert(t.hoverScroll > 1, "a page is more than a line");
+    assert(t.handle(Event(KeyEvent(key: Key.home))));
+    assert(t.hoverScroll == 0, "and Home is the popup's top, not the file's");
+    assert(t.top == docTop);
 }
 
 @("tui.wheel.horizontalNotchesAndShiftScrollSideways")
