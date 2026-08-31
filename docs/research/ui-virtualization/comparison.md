@@ -9,20 +9,20 @@ What the eleven subjects agree on, where they diverge, and what that implies for
 
 ## At a glance
 
-| Subject                                                 | Mode                | Window bounds                    | Range computed by                  | Retained                    | Extent                    |
-| ------------------------------------------------------- | ------------------- | -------------------------------- | ---------------------------------- | --------------------------- | ------------------------- |
-| [Dear ImGui](./dear-imgui-clipper.md)                   | immediate           | build + caller's data            | division (measured height)         | item height only            | declared                  |
-| [egui](./egui-show-rows.md)                             | immediate           | build + caller's data            | division (given height)            | id-keyed widget state       | declared, exact           |
-| [Gio](./gio-list.md)                                    | immediate           | build + caller's data            | walk from an index anchor          | scroll anchor only          | **estimated**             |
-| [Ratatui](./ratatui-offsets.md)                         | immediate (TUI)     | **paint/measure only**           | walk from an offset                | offset + selection          | caller-supplied           |
-| [Textual](./textual-line-api.md)                        | retained (TUI)      | build + data, per **line**       | compositor-resolved lines          | DOM, styles, strips         | declared (`virtual_size`) |
-| [Flutter](./flutter-slivers.md)                         | retained            | build + data                     | walk (or division if fixed-extent) | elements + kept-alives      | progressive               |
-| [GTK 4](./gtk4-list-factories.md)                       | retained            | build + data                     | walk + size cache                  | **widget pool** + model     | estimated, refined        |
-| [Qt Quick](./qt-quick-listview.md)                      | retained            | build + data                     | walk                               | **delegate pool** + model   | estimated                 |
-| [WPF / Avalonia](./avalonia-wpf-virtualizing-panels.md) | retained            | build (+ data if supported)      | walk + estimate                    | **container pool** + model  | estimated                 |
-| [VS Code](./vscode-listview.md)                         | retained            | build; data materialized         | **prefix sums**, `O(log N)`        | **row pool** + range map    | declared, exact           |
-| [Slint](./slint-repeater.md)                            | retained (compiled) | build + data                     | division (cached height)           | **instance vector** + model | declared                  |
-| [**sparkles** today](./sparkles-baseline.md)            | immediate           | build only — **data re-derived** | division (1 line/row)              | nothing relevant            | declared, exact           |
+| Subject                                                 | Mode                | Window bounds               | Range computed by                  | Retained                        | Extent                    |
+| ------------------------------------------------------- | ------------------- | --------------------------- | ---------------------------------- | ------------------------------- | ------------------------- |
+| [Dear ImGui](./dear-imgui-clipper.md)                   | immediate           | build + caller's data       | division (measured height)         | item height only                | declared                  |
+| [egui](./egui-show-rows.md)                             | immediate           | build + caller's data       | division (given height)            | id-keyed widget state           | declared, exact           |
+| [Gio](./gio-list.md)                                    | immediate           | build + caller's data       | walk from an index anchor          | scroll anchor only              | **estimated**             |
+| [Ratatui](./ratatui-offsets.md)                         | immediate (TUI)     | **paint/measure only**      | walk from an offset                | offset + selection              | caller-supplied           |
+| [Textual](./textual-line-api.md)                        | retained (TUI)      | build + data, per **line**  | compositor-resolved lines          | DOM, styles, strips             | declared (`virtual_size`) |
+| [Flutter](./flutter-slivers.md)                         | retained            | build + data                | walk (or division if fixed-extent) | elements + kept-alives          | progressive               |
+| [GTK 4](./gtk4-list-factories.md)                       | retained            | build + data                | walk + size cache                  | **widget pool** + model         | estimated, refined        |
+| [Qt Quick](./qt-quick-listview.md)                      | retained            | build + data                | walk                               | **delegate pool** + model       | estimated                 |
+| [WPF / Avalonia](./avalonia-wpf-virtualizing-panels.md) | retained            | build (+ data if supported) | walk + estimate                    | **container pool** + model      | estimated                 |
+| [VS Code](./vscode-listview.md)                         | retained            | build; data materialized    | **prefix sums**, `O(log N)`        | **row pool** + range map        | declared, exact           |
+| [Slint](./slint-repeater.md)                            | retained (compiled) | build + data                | division (cached height)           | **instance vector** + model     | declared                  |
+| [**sparkles**](./sparkles-baseline.md)                  | immediate           | build + data (`DSN7`)       | division (1 line/row)              | the model + its projection memo | declared, exact           |
 
 ---
 
@@ -73,8 +73,9 @@ claim about _where the cost lives_ rather than about clipping:
 
 The toolkit's own per-item cost is small enough that the reason to virtualize is
 _the application's_ data cost. That is precisely the shape of the
-[sparkles measurement](./sparkles-baseline.md): the view half is 4.8 ms; the data
-half is 11 ms, and 27 ms more when sorted.
+[sparkles measurement](./sparkles-baseline.md): before `DSN7` the view half was
+2.8 ms and the model half 2.4 ms, the latter rising to 7.4 ms the moment a sort
+was engaged.
 
 ### Recycling exists where constructing a view is expensive
 
@@ -186,46 +187,49 @@ context, and a lifecycle. It therefore sits with
 [Gio](./gio-list.md), and the unanimous choice of that family is **wins 1 and 2,
 never win 3**.
 
-Sparkles has win 1 (`DSN4`'s `DsvWindow`). It does **not** have win 2: every
-scroll notch re-sniffs, re-parses and re-projects the whole file. The
-[measurement](./sparkles-baseline.md) says so unambiguously:
+Sparkles had win 1 (`DSN4`'s `DsvWindow`) and lacked win 2: every scroll notch
+re-sniffed, re-parsed and re-projected the whole file — three times over, once
+in the adapter, once in `DsvCopy` and once in the fuzzy filter. The
+[measurement](./sparkles-baseline.md) said so unambiguously: 1.9 ms (44.6M
+instructions) of re-sniff whose verdict was then overridden by flags the caller
+already had, 290 µs of re-parsing bytes that had not changed, and 5.2 ms of
+re-sorting — under an active sort — a permutation recomputed identically every
+time. The view rebuild, the _only_ part win 3 could attack, was 2.8 ms.
 
-- **9.4 ms** of a 16 ms notch is a re-sniff whose result is then overridden by
-  flags the caller already had.
-- **1.6 ms** is a re-parse of bytes that did not change.
-- **27 ms** is a re-sort, under an active sort, of a permutation that is
-  recomputed identically every time.
-- **4.8 ms** — under a third of the notch, and the _only_ part win 3 could
-  attack — is the view rebuild.
+### What was done
 
-### The recommendation
+**Win 2, in the order the measurement gave** — `DSN7`, a persistent per-document
+model that the window is a query against rather than a pipeline the window
+re-runs. This is [GTK's `GListModel`](./gtk4-list-factories.md) /
+[Slint's `Model`](./slint-repeater.md) reduced to its essentials: the model
+outlives the view, and the view indexes it.
 
-**Take win 2, in the order the measurement gives.** Concretely, that means
-introducing what every model-protocol framework in this catalog has and hue does
-not: a **persistent per-document model** that the window is a query against,
-rather than a pipeline the window re-runs.
+1. **Stop re-sniffing and re-parsing.** `DsvModel.of` resolves the dialect,
+   parses, samples the types and decodes the header names once;
+   `modelFor` reuses it whenever the bytes and flags are unchanged.
+2. **Retain the projection.** The row permutation is a function of
+   `(doc, ProjectionSpec, rowMask)`, and a scroll changes none of them, so it is
+   memoized on the model. The fuzzy filter mask is memoized beside it, which
+   both removes a whole-file fuzzy match per notch and gives the permutation
+   memo a stable key.
+3. **Route every consumer through it.** `adaptDsv`, `DsvCopy.of` and
+   `fuzzyRowMask` all take the model, which is what removed the second and third
+   parses.
 
-1. **Stop re-sniffing.** Pass the already-resolved `Dialect` into `adaptDsv`
-   instead of re-deriving it from the bytes and then overriding it. Largest single
-   win, smallest change, no architectural risk.
-2. **Retain the parse.** A `DsvDoc` is a function of `(bytes, dialect)`, both of
-   which are stable for the life of the document. This is
-   [GTK's `GListModel`](./gtk4-list-factories.md) /
-   [Slint's `Model`](./slint-repeater.md) reduced to its essentials: the model
-   outlives the view, and the view indexes it.
-3. **Retain the projection.** The row permutation is a function of
-   `(doc, ProjectionSpec, rowMask)`; a scroll changes none of them. Caching it
-   turns the sorted-view notch from 27 ms into a lookup, and is the difference
-   between "sorting a big file is usable" and "it is not".
-4. **Then re-measure.** With the model half bounded, the notch should be
-   dominated by the ~4.8 ms view rebuild, and _that_ is the moment to ask whether
-   win 3 is worth its documented hazards — with a number rather than an
-   intuition.
+| Scroll notch, 3012 rows |      re-derived |            retained |    Δ |
+| ----------------------- | --------------: | ------------------: | ---: |
+| unsorted                | 5.0 ms / 79.14M | **2.7 ms / 26.94M** | 1.9× |
+| with a sort engaged     | 10 ms / 214.47M | **2.8 ms / 26.98M** | 3.6× |
+
+The two are now the same cost — 0.15% apart in instructions, which is what makes
+it a claim rather than an impression — and that is the property to look for: the
+sort has stopped participating in scrolling. What remains is the view rebuild,
+so the notch is now, as predicted, dominated by the one thing win 3 addresses.
 
 ### On win 3 specifically
 
-If the view half does become the bottleneck, the catalog says the cheapest form
-first, and it is not recycling:
+The view half is now essentially the whole notch — the retained notch is 26.94M
+instructions against the view rebuild's 26.62M — so this is live. The catalog says to take the cheapest form first, and it is not recycling:
 
 - **Skip the rebuild entirely when nothing changed.** The most common case in a
   drag is a frame where the window did not move; no subject in this catalog

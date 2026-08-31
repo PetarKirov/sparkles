@@ -138,53 +138,129 @@ the same offset.
 > **already-windowed** table double-scrolls it. `markdown.d` therefore forces
 > `y: opt.tableExtras.virtualRows > 0 ? 0 : ts.y` — the window _is_ the scroll.
 
-## What is not virtualized — the measurement
+## What was not virtualized — the measurement
 
 `apps/hue/src/dsv_bench.d` decomposes one scroll notch. Corpus: a
 `files.csv`-shaped table, 3012 rows × 8 columns (~200 KiB), window 48 rows.
-LDC 1.42, `dub test` (debug build — the absolute numbers are pessimistic, the
-proportions are the point). Median per iteration:
+LDC 1.42, run as
 
-| Phase                                               | Scope                |     Median | Bounded by the window? |
-| --------------------------------------------------- | -------------------- | ---------: | ---------------------- |
-| **`sniff`**                                         | 256 KiB sample       | **9.4 ms** | ✗                      |
-| `parseDsv`                                          | whole file           |     1.6 ms | ✗                      |
-| `applyProjection`, no sort                          | whole file           |      63 µs | ✗                      |
-| `applyProjection`, **one sort key**                 | whole file           |  **27 ms** | ✗                      |
-| `detectHeader`                                      | bounded              |      35 µs | n/a                    |
-| `inferColumnTypes`                                  | 100 records          |      35 µs | n/a                    |
-| `adaptDsv` **with** a 48-row window                 | model + build        |  **11 ms** | partly                 |
-| `adaptDsv` with no window (pre-`DSN4`)              | model + build        |      16 ms | ✗                      |
-| `adaptDsv`, windowed, over a 100-row file           | model + build        |    0.57 ms | —                      |
-| `previewOf`                                         | window               |       2 µs | ✓                      |
-| `remateralizeWindow` (view + layout + display list) | window               | **4.8 ms** | ✓                      |
-| **one scroll notch, total**                         | model + build + view |  **16 ms** |                        |
+```bash
+dub test :hue -b bench -- --bench -i dsv.bench \
+    --perf --metrics=instr --perf-iters=8 --bench-min-time 200
+```
 
-Three findings follow, and they reorder the work:
+Both knobs matter. `-b bench` is the optimized, assertions-off build the runner
+demands (it warns outright that assert-enabled numbers are meaningless).
+`--perf-iters` pins the counting pass and `--bench-min-time 200` widens the
+wall-clock budget, without which the auto-scaler gives different legs different
+batch sizes and the medians wander by hundreds of microseconds — see the
+[caution below](#a-caution-about-reading-these-numbers).
 
-1. **The sniffer is the single largest cost in a scroll notch — 9.4 ms of
-   16 ms — and it is pure waste.** `adaptDsv` re-sniffs the dialect on every
-   call even though the caller already resolved it and passes it back in as
-   flags; the sniff's verdict is then overridden. `sniffMaxBytes` is 256 KiB, so
+**Instructions per iteration are the number to compare.** They are
+architectural: immune to frequency scaling, to how the auto-scaler batched the
+leg, and to whatever else the machine was doing.
+
+| Phase                                               | Scope                |     Median |  instr/iter | Bounded by the window? |
+| --------------------------------------------------- | -------------------- | ---------: | ----------: | ---------------------- |
+| **`sniff`**                                         | 256 KiB sample       | **1.9 ms** |  **44.58M** | ✗                      |
+| `parseDsv`                                          | whole file           |     291 µs |       7.12M | ✗                      |
+| `applyProjection`, no sort                          | whole file           |      10 µs |       248 k | ✗                      |
+| `applyProjection`, **one sort key**                 | whole file           | **5.2 ms** | **134.29M** | ✗                      |
+| `detectHeader`                                      | bounded              |       8 µs |       168 k | n/a                    |
+| `inferColumnTypes`                                  | 100 records          |       7 µs |       167 k | n/a                    |
+| `adaptDsv` **with** a 48-row window                 | model + build        |     2.3 ms |      53.42M | partly                 |
+| `adaptDsv` with no window (pre-`DSN4`)              | model + build        |     7.5 ms |      91.74M | ✗                      |
+| `adaptDsv`, windowed, over a 100-row file           | model + build        |     167 µs |       2.96M | —                      |
+| `previewOf`                                         | window               |     930 ns |      21.7 k | ✓                      |
+| `remateralizeWindow` (view + layout + display list) | window               | **2.8 ms** |  **26.62M** | ✓                      |
+| **one scroll notch, total**                         | model + build + view | **5.0 ms** |      79.14M |                        |
+| **one scroll notch, with a sort engaged**           | model + build + view |  **10 ms** |     214.47M |                        |
+
+Three findings followed, and they reordered the work:
+
+1. **The sniffer was the largest single item in the model half — and pure
+   waste.** `adaptDsv` re-sniffed the dialect on every call even though the
+   caller had already resolved it and was passing it straight back in as flags,
+   whereupon the sniff's verdict was overridden. `sniffMaxBytes` is 256 KiB, so
    for any file up to that size the "bounded sample" is the whole file.
 
 2. **The view half is the smaller half.** Building the widget tree, laying it
-   out and producing the display list for a 48-row window costs 4.8 ms — 30% of
-   the notch. Retaining that tree and mutating cells (the
+   out and producing the display list for a 48-row window costs 2.8 ms.
+   Retaining that tree and mutating cells (the
    [VS Code range-diff](./vscode-listview.md) or
-   [GTK bind](./gtk4-list-factories.md) approach) can attack at most that 30%,
-   and only the part of it that is genuinely redundant.
+   [GTK bind](./gtk4-list-factories.md) approach) could attack only that, and
+   only the genuinely redundant part of it.
 
-3. **Under an active sort, the model half is catastrophic.** `applyProjection`
-   with one sort key costs 27 ms — more than everything else combined — because
-   the comparator decodes cells on every comparison, so a sorted view re-sorts
-   the entire file on every scroll notch. The same permutation is recomputed
-   identically each time.
+3. **Under an active sort the model half dominated everything.**
+   `applyProjection` with one sort key costs 5.2 ms / 134M instructions — more
+   than the entire unsorted notch — because the comparator decodes cells on
+   every comparison. A sorted view re-sorted the whole file on every notch,
+   recomputing an identical permutation each time.
 
 The two `adapt-window` rows bracket the waste directly: the same 48-row window
-costs **0.57 ms** over a 100-row file and **11 ms** over a 3012-row file. Since
-the _build_ is identical, the 10.4 ms difference is entirely the unbounded model
-work.
+cost **167 µs** over a 100-row file and **2.4 ms** over a 3012-row file. Since
+the _build_ is identical, the difference was entirely unbounded model work.
+
+### What changed: `DSN7`, the retained model
+
+The catalog's [win 2](./comparison.md#the-consensus) — _don't re-derive data you
+already had_ — is now implemented. `DsvModel` (`apps/hue/src/dsv_view.d`) holds
+the resolved dialect, the parse, the sampled column types and the header names,
+and memoizes both the row permutation and the fuzzy filter mask.
+`adaptDsv(model, proj, window)`, `DsvCopy.of(model, …)` and
+`fuzzyRowMask(model, …)` all take it — which also removed the **second and third
+whole-file parses** a notch used to pay, one inside `DsvCopy` and one inside the
+filter. `modelFor` is the reuse test, comparing the source by slice **identity**
+so a reload re-resolves.
+
+| Scroll notch, 3012 rows | model re-derived |      model retained |    Δ |
+| ----------------------- | ---------------: | ------------------: | ---: |
+| unsorted                |  5.0 ms / 79.14M | **2.7 ms / 26.94M** | 1.9× |
+| **with a sort engaged** |  10 ms / 214.47M | **2.8 ms / 26.98M** | 3.6× |
+
+The two retained rows are the result worth having, and the instruction counts
+are what make it a claim rather than an impression: **26.94M against 26.98M —
+0.15% apart.** A scroll over a sorted view and a scroll over an unsorted one now
+execute the same work, because the sort does not participate in scrolling at
+all. Sorting still costs its full 5.2 ms — once, when the user actually sorts.
+
+The retained notch is also, almost exactly, the `remateralizeWindow` row above
+(26.94M vs 26.62M): with the model retained, **the windowed build costs about
+0.3M instructions and everything else in a notch is the view rebuild.**
+
+End to end through a real pty (`apps/hue/tools/tui-scroll-bench.d` over the
+3012-row `apps/hue/samples/dsv/files.csv`, which times how long the tty stays
+busy after a keystroke), one Down key went from a **6.2 ms** median to
+**3.3 ms** over 60 keystrokes — the same 1.9× the benchmark reports, with
+byte-identical frames, so it is the same output produced in half the time.
+First paint is unchanged (28–30 ms either way, over three runs each), as it
+must be: the first window still has to resolve the model.
+
+What remains is the view half, and it is now essentially the whole notch. That
+is the moment the catalog says to reconsider
+[win 3](./comparison.md#on-win-3-specifically) — with a number rather than an
+intuition.
+
+### A caution about reading these numbers
+
+An earlier pass at this table reported the sorted retained notch as **2.2 ms**,
+_faster_ than the unsorted **2.8 ms**, and the write-up went looking for a
+reason a sorted window might be cheaper to build. There is none. The two legs
+had been auto-scaled differently — one measured batches of two iterations, the
+other single iterations — and at ±480 µs of run-to-run spread the medians
+simply crossed. Pinning the counting pass (`--perf-iters=8`) and widening the
+budget (`--bench-min-time 200`) collapsed the spread to ±36 µs and put both legs
+on the same 2.8 ms, which the instruction counts then confirmed to 0.15%.
+
+Two rules follow, and they generalize past this table:
+
+- **Compare instructions, not wall time**, whenever the question is "does this
+  do less work?". `instr/iter` is architectural; it does not care about CPU
+  frequency, batch size, or the rest of the machine.
+- **A difference you cannot explain is usually not real.** The tell was that no
+  mechanism could account for it: with the model retained, the sorted and
+  unsorted paths run the same code over the same window. That should have
+  prompted a re-measure, not a search for an explanation.
 
 > [!NOTE]
 > Writing this benchmark surfaced a trap worth recording: `benchIter` does not
@@ -201,11 +277,18 @@ work.
 
 ### 1. What the window bounds
 
-**Build, layout and paint — not data.** Every scroll re-sniffs, re-parses and
-re-projects the entire file. In the catalog's terms sparkles is where
-[Ratatui](./ratatui-offsets.md) is (a bounded view over a fully-materialized
-model), except that sparkles re-materializes the model itself per frame, which
-Ratatui does not.
+**Build, layout, paint — and, since `DSN7`, data access too.** The model is
+resolved once per document and indexed per window, which puts sparkles with the
+[builder/model](./concepts.md#model-protocol) family rather than with
+[Ratatui](./ratatui-offsets.md), whose bounded view still sits on a
+fully-materialized item vector.
+
+The data laziness is one level coarser than
+[GTK's `GListModel`](./gtk4-list-factories.md) or
+[Slint's `Model`](./slint-repeater.md), which can be lazy per row: sparkles
+parses the whole file once, eagerly, and then indexes it. That is the right
+trade at the sizes the spec targets today, and `DSN2`'s background record index
+is where per-row laziness would land.
 
 ### 2. How the range is computed
 
@@ -216,10 +299,13 @@ assumed.
 
 ### 3. What survives between frames
 
-The raw bytes, the projection spec, the scroll offset, and the interaction
-machines that `remateralizeWindow` deliberately preserves (`barSv`,
-`tableScrollAt`, folds). **Not** the parse, **not** the permutation, **not** the
-widget tree.
+The `DsvModel` — the parse, the column types, the header names, the memoized
+row permutation and the memoized filter mask — plus the scroll offset and the
+interaction machines that `remateralizeWindow` deliberately preserves (`barSv`,
+`tableScrollAt`, folds). **Not** the widget tree: sparkles remains immediate
+mode, in company with [Dear ImGui](./dear-imgui-clipper.md),
+[egui](./egui-show-rows.md) and [Gio](./gio-list.md), none of which retains
+per-item views either.
 
 ### 4. How the extent is known
 
@@ -230,25 +316,34 @@ Declared and exact, via `virtualLines` / `virtualOffset`.
 - The window offset must be applied everywhere a view coordinate becomes a data
   coordinate — already fixed for copy, and a standing obligation for every new
   feature.
-- Scroll latency is dominated by re-derivation, not by rendering.
-- A sorted or filtered view multiplies that re-derivation cost.
+- **Model staleness.** A retained model is a cache, and `modelFor`'s identity
+  test is what keeps it honest: the source is compared by slice identity, so a
+  reload of the same bytes re-resolves rather than silently reusing a model
+  built over a buffer the document no longer owns.
+- **Memo depth.** The projection memo holds exactly one entry, so alternating
+  between two sorts recomputes each time. That is deliberate — the entry is
+  keyed by a copy of the spec, and a multi-entry cache would need an eviction
+  policy for a case no interaction produces.
+- Scroll latency is now dominated by the view rebuild, which is where
+  [win 3](./comparison.md#on-win-3-specifically) would apply if it ever needs
+  to.
 
 ## The delta
 
-| Capability                              | Prior art                                                                                                                                                     | Sparkles today                                                                |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Bounded build                           | universal                                                                                                                                                     | ✓ `DsvWindow` (`DSN4`)                                                        |
-| Exact virtual extent                    | [egui](./egui-show-rows.md), [Slint](./slint-repeater.md), [VS Code](./vscode-listview.md)                                                                    | ✓ `virtualLines` / `virtualOffset`                                            |
-| Overscan band                           | [Flutter](./flutter-slivers.md), [WPF](./avalonia-wpf-virtualizing-panels.md), [Qt Quick](./qt-quick-listview.md)                                             | ✓ `+8` rows                                                                   |
-| Stable geometry across scroll           | rare — most estimate                                                                                                                                          | ✓ `DSN3` pinned widths (stronger than the field)                              |
-| Window-offset identity correction       | [egui](./egui-show-rows.md), [Flutter](./flutter-slivers.md)                                                                                                  | ✓ `windowStart` / `virtualRowOffset`                                          |
-| **Persistent model, queried per index** | [Qt](./qt-quick-listview.md), [GTK](./gtk4-list-factories.md), [Flutter](./flutter-slivers.md), [Slint](./slint-repeater.md), [VS Code](./vscode-listview.md) | ✗ **re-derived per scroll**                                                   |
-| **Cached projection (sort/filter)**     | implied by every model protocol                                                                                                                               | ✗ **recomputed per scroll**                                                   |
-| View reuse across scroll (recycling)    | [GTK](./gtk4-list-factories.md), [Qt](./qt-quick-listview.md), [WPF](./avalonia-wpf-virtualizing-panels.md), [VS Code](./vscode-listview.md)                  | ✗ (and see [`comparison.md`](./comparison.md) for whether it is worth having) |
+| Capability                              | Prior art                                                                                                                                                     | Sparkles today                                                                 |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Bounded build                           | universal                                                                                                                                                     | ✓ `DsvWindow` (`DSN4`)                                                         |
+| Exact virtual extent                    | [egui](./egui-show-rows.md), [Slint](./slint-repeater.md), [VS Code](./vscode-listview.md)                                                                    | ✓ `virtualLines` / `virtualOffset`                                             |
+| Overscan band                           | [Flutter](./flutter-slivers.md), [WPF](./avalonia-wpf-virtualizing-panels.md), [Qt Quick](./qt-quick-listview.md)                                             | ✓ `+8` rows                                                                    |
+| Stable geometry across scroll           | rare — most estimate                                                                                                                                          | ✓ `DSN3` pinned widths (stronger than the field)                               |
+| Window-offset identity correction       | [egui](./egui-show-rows.md), [Flutter](./flutter-slivers.md)                                                                                                  | ✓ `windowStart` / `virtualRowOffset`                                           |
+| **Persistent model, queried per index** | [Qt](./qt-quick-listview.md), [GTK](./gtk4-list-factories.md), [Flutter](./flutter-slivers.md), [Slint](./slint-repeater.md), [VS Code](./vscode-listview.md) | ✓ `DsvModel` (`DSN7`); whole-file eager parse, not per-row lazy                |
+| **Cached projection (sort/filter)**     | implied by every model protocol                                                                                                                               | ✓ memoized on the model, one entry                                             |
+| View reuse across scroll (recycling)    | [GTK](./gtk4-list-factories.md), [Qt](./qt-quick-listview.md), [WPF](./avalonia-wpf-virtualizing-panels.md), [VS Code](./vscode-listview.md)                  | ✗ — deliberately; see [`comparison.md`](./comparison.md#on-win-3-specifically) |
 
 ## Sources
 
-- [`apps/hue/src/dsv_view.d`](../../../apps/hue/src/dsv_view.d) — `adaptDsv`, `DsvWindow`, `sampledColumnWidths`, `DsvCopy`
+- [`apps/hue/src/dsv_view.d`](../../../apps/hue/src/dsv_view.d) — `DsvModel`, `modelFor`, `adaptDsv`, `DsvWindow`, `sampledColumnWidths`, `DsvCopy`
 - [`apps/hue/src/workspace.d`](../../../apps/hue/src/workspace.d) — `applyDsvBrowser`, `dsvWindowRows`, `dsvGridTop`
 - [`apps/hue/src/viewer_model.d`](../../../apps/hue/src/viewer_model.d) — `remateralizeWindow`, `rebuildTree`
 - [`apps/hue/src/dsv_bench.d`](../../../apps/hue/src/dsv_bench.d) — the phase decomposition above
