@@ -2835,6 +2835,14 @@ int runGui(GuiArgs guiArgs) @system
                 if (st.kind != LtnStepKind.execute)
                     continue;
                 const kc = st.cmd;
+                // An open popup takes a scroll command before the document
+                // does — the wheel's rule, reached by keyboard. Offered
+                // BEFORE the switch rather than inside each arm, so a command
+                // added later cannot quietly scroll the document out from
+                // under a popup the reader is reading.
+                if (pop.hotNode != 0 && pop.havePopup
+                    && pop.scrollByCommand(kc.cmd, vm.hScrollStep))
+                    continue;
                 final switch (kc.cmd)
                 {
                 case Command.none:

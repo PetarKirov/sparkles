@@ -23,6 +23,7 @@ import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
 
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
+import keymap : Command, scrollAskOf;
 import lantern : LanternState;
 import table_select : TableCopyFormat;
 
@@ -392,6 +393,33 @@ struct HoverPopup
             return false;
         popupScroll = clamped;
         return true;
+    }
+
+    /**
+    A scroll command, applied to this popup; `true` iff it moved.
+
+    The wheel's rule, reached by keyboard: the popup takes a scroll command
+    before the document does, and only when it cannot move does the keystroke
+    fall through. Which commands scroll, and on which axis, is
+    $(REF scrollAskOf, keymap)'s to say — the TUI asks the same question about
+    the same popup and keeps its offsets in different fields, so the table is
+    what the two can share.
+    */
+    bool scrollByCommand(Command c, long hStep) scope
+    {
+        const ask = scrollAskOf(c);
+        if (!ask.any)
+            return false;
+        if (ask.toTop)
+            return scrollBy(-popupScroll);
+        if (ask.toBottom)
+            return scrollBy(popupContentRows);
+        if (ask.cells != 0)
+            // The fence first: it is the thing in a hover that does not wrap.
+            return scrollFenceX(ask.cells * hStep)
+                || scrollByX(ask.cells * hStep);
+        const page = popupViewportRows > 1 ? popupViewportRows : 1;
+        return scrollBy(ask.rows * (ask.pages ? page : 1));
     }
 }
 

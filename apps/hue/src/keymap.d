@@ -344,6 +344,73 @@ enum Command : ubyte
 }
 
 /**
+What a scroll command asks of a scrollable surface, in that surface's own units.
+
+$(B One table, two hosts.) The TUI and the GUI keep the hover popup's scroll
+offsets in different places — loose fields in one, a `HoverPopup` in the other —
+so they cannot share the code that moves it. They can share the $(I decision),
+and this is it: which commands are scroll commands, on which axis, and by how
+much. Written twice, the two spellings drift, and the drift is invisible
+because no test compares them.
+
+Zero on every field means $(B not a scroll command) — the caller passes it on
+untouched.
+*/
+struct ScrollAsk
+{
+    /// Rows, or pages when $(LREF pages) is set. Positive is downward.
+    int rows;
+    /// Horizontal steps; positive is rightward. Never set with `rows`.
+    int cells;
+    /// Whether `rows` counts viewports rather than lines.
+    bool pages;
+    /// The two absolute asks, which no signed count can express.
+    bool toTop;
+    bool toBottom;   /// ditto
+
+@safe pure nothrow @nogc const:
+
+    /// Whether this command asks for any scrolling at all.
+    bool any() => rows != 0 || cells != 0 || toTop || toBottom;
+}
+
+/// ditto
+ScrollAsk scrollAskOf(Command c) @safe pure nothrow @nogc
+{
+    switch (c)
+    {
+        case Command.viewDown:        return ScrollAsk(rows: 1);
+        case Command.viewUp:          return ScrollAsk(rows: -1);
+        case Command.viewPageDown:    return ScrollAsk(rows: 1, pages: true);
+        case Command.viewPageUp:      return ScrollAsk(rows: -1, pages: true);
+        case Command.viewHome:
+        case Command.viewTop:         return ScrollAsk(toTop: true);
+        case Command.viewEnd:
+        case Command.viewBottom:      return ScrollAsk(toBottom: true);
+        case Command.viewScrollLeft:  return ScrollAsk(cells: -1);
+        case Command.viewScrollRight: return ScrollAsk(cells: 1);
+        default:                      return ScrollAsk.init;
+    }
+}
+
+@("keymap.scrollAskOf.everyViewScrollCommandIsClassified")
+@safe pure nothrow @nogc unittest
+{
+    // The point of the table is that a command a host scrolls with is a
+    // command the popup gets FIRST. One left unclassified scrolls the
+    // document out from under an open popup, silently.
+    static foreach (c; [Command.viewDown, Command.viewUp, Command.viewPageDown,
+        Command.viewPageUp, Command.viewHome, Command.viewTop, Command.viewEnd,
+        Command.viewBottom, Command.viewScrollLeft, Command.viewScrollRight])
+        assert(scrollAskOf(c).any);
+    assert(!scrollAskOf(Command.quit).any);
+    assert(!scrollAskOf(Command.none).any);
+    // A vertical ask and a horizontal one are never the same ask.
+    assert(scrollAskOf(Command.viewDown).cells == 0);
+    assert(scrollAskOf(Command.viewScrollRight).rows == 0);
+}
+
+/**
 Which surface a binding belongs to — $(B and, by declaration order, when it is
 resolved).
 
