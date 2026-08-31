@@ -771,6 +771,13 @@ private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts)
     if (opts.maxHeight <= 0 || rest.length == 0)
         return invalidNode;
 
+    // The rule that separates the signature from the body belongs to the
+    // POPUP, not to the body's first section — leave it there and it scrolls
+    // away with the paragraph it was drawn above. So it moves onto the
+    // viewport's own frame, which does not move, and the section it came from
+    // gives it up.
+    b.nodes[rest[0]].decoration = Decoration.init;
+
     const content = b.container(WidgetKind.column, rest);
     // One row for the signature, two for the popup's own padding: what is left
     // is the body's. A floor of one keeps the viewport representable on a
@@ -785,7 +792,16 @@ private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts)
         clipY: true,
         childOffset: Point(0, cast(int) opts.scrollOffset),
     ));
-    return view;
+    return b.add(Widget(
+        kind: WidgetKind.column,
+        children: [view],
+        width: SizeSpec.grow(),
+        stretch: true,
+        decoration: Decoration(
+            borderWidth: Insets(M.borderWidth, 0, 0, 0),
+            borderStyle: BorderStyle.solid,
+            borderSlot: Slot.border),
+    ));
 }
 
 /**
@@ -2001,4 +2017,67 @@ version (unittest)
     const sc2 = popupScrollExtents(scrolled, sf);
     assert(sc2.content == sc.content && sc2.viewport == sc.viewport,
         "the offset moves the body; it does not resize it");
+}
+
+@("render_widgets.viewHoverPopup.theDividerIsPinnedNotScrolled")
+@safe unittest
+{
+    // The rule under the signature separates the signature from the body, so
+    // it belongs to the POPUP. Left on the body's first section it scrolls away
+    // with the paragraph it was drawn above, and the popup loses the line that
+    // says where its header ends.
+    import sparkles.ui.layout : layout;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    // The node carrying the rule is the one wrapping the viewport, so its
+    // frame is fixed while the content under it moves.
+    static int ruleRowOf(in WidgetTree t, in Frame[] f)
+    {
+        foreach (i, ref const n; t.nodes)
+        {
+            const w = n.decoration.borderWidth;
+            if (w.top > 0 && w.left == 0 && w.right == 0 && w.bottom == 0
+                && n.children.length == 1 && t.nodes[n.children[0]].clipY)
+                return f[i].rect.y;
+        }
+        return -1;
+    }
+
+    int firstRow = -1;
+    foreach (off; [0, 4, 11, 30])
+    {
+        const t = viewHoverPopup(tw, 0,
+            HoverViewOptions(maxWidth: 44, maxHeight: 12, scrollOffset: off));
+        auto f = layout(t);
+        const row = ruleRowOf(t, f);
+        assert(row >= 0, "the pinned rule exists");
+        if (firstRow < 0)
+            firstRow = row;
+        assert(row == firstRow, "and does not move as the body scrolls");
+        // …and the body under it really is scrolling, or the assertion above
+        // would hold for the wrong reason.
+        assert(popupScrollExtents(t, f).live);
+    }
+
+    // The body's own first section gave the rule up: two rules there would
+    // draw a double line under the signature. A RULE is a top border alone —
+    // the popup's own surface has a border on all four sides and is not one.
+    const t = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12));
+    size_t rules;
+    foreach (ref const n; t.nodes)
+    {
+        const w = n.decoration.borderWidth;
+        if (w.top > 0 && w.left == 0 && w.right == 0 && w.bottom == 0
+            && n.decoration.borderStyle == BorderStyle.solid)
+            ++rules;
+    }
+    assert(rules == 1, "exactly one rule under the signature");
 }

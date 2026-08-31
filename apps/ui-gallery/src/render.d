@@ -35,7 +35,7 @@ import sparkles.ui_tui.grid_canvas : paintGrid;
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
 import gallery : Gallery;
-import state : GalleryState;
+import state : GalleryState, Region;
 
 @safe:
 
@@ -200,7 +200,12 @@ string gridText(in Grid grid)
 /// terminal's own painter rather than a lookalike.
 Grid renderGrid(in RenderRequest req)
 {
-    auto app = Gallery(GalleryState(page: req.page));
+    // `--render` names a page, so the keyboard starts IN it. A page's own
+    // bindings are reachable only from the content region — that is the
+    // "page gets first refusal" rule — so a render that stayed in the nav
+    // list would silently drop every key `--keys` delivered, which is exactly
+    // what it did: `--keys "o"` on the Overlays page did nothing at all.
+    auto app = Gallery(GalleryState(page: req.page, region: Region.content));
 
     Event[] script;
     foreach (dchar c; req.keys)

@@ -1686,8 +1686,20 @@ int runGui(GuiArgs guiArgs) @system
         if (vm.showPreview && vm.tw.code.length && tsCache !is null)
         {
             const mp = inp.fin.pos;
+            // `MDL1`: an open popup BLOCKS what is painted under it, so it is
+            // tested FIRST and the document is not consulted at all while the
+            // pointer is inside it. Testing the document first and falling back
+            // to the popup looks equivalent and is not: a hover token that the
+            // popup happens to cover would steal the pointer through it, and
+            // reading a long ddoc means moving across exactly such tokens —
+            // so the popup swapped for whatever it was covering, mid-sentence.
+            const overPopup = pop.hotNode != 0 && pop.havePopup
+                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
+                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height;
             size_t overNode = 0;
-            if (mp.x >= gutterPx)
+            if (overPopup)
+                overNode = pop.hotNode; // it keeps the pointer while it is open
+            else if (mp.x >= gutterPx)
             {
                 const off = sourceOffsetAt(vm.tree, vm.frames,
                     Point(contentColOf(cast(int) mp.x, gutterPx, cellW, dhx, pinned),
@@ -1698,11 +1710,6 @@ int runGui(GuiArgs guiArgs) @system
                             && off < cast(long)(n.start + n.length))
                             overNode = ni + 1;
             }
-            const overPopup = pop.hotNode != 0 && pop.havePopup
-                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
-                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height;
-            if (overNode == 0 && overPopup)
-                overNode = pop.hotNode; // still over the open popup → keep it open
             // A notch over the popup scrolls the POPUP. Without this it falls
             // through to the document, which scrolls the token the popup
             // describes out from under it — the popup stays put and the thing
