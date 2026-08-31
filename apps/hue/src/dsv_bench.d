@@ -3,18 +3,34 @@ Where a DSV scroll notch's time actually goes.
 
 `DSN4` bounded the *build*: the grid materializes a window of rows rather
 than the whole file, and the first paint went from 756 ms to 31 ms. What it
-did not bound is everything upstream of the build — every window change still
-re-sniffs, re-parses and re-projects the entire buffer before slicing ~50 rows
-out of the result. These benchmarks decompose one scroll notch into the phases
-`Workspace.applyDsvBrowser` actually runs, so the next round of work is aimed
-by measurement instead of by intuition:
+did not bound was everything upstream of the build — a window change re-sniffed,
+re-parsed and re-projected the entire buffer before slicing ~50 rows out of the
+result. These benchmarks decompose one scroll notch into the phases
+`Workspace.applyDsvBrowser` actually runs, which is what aimed `DSN7` at the
+model rather than at the widget tree:
 
 $(UL
-$(LI `parse` / `project` — the **model** half, O(file), re-run per notch)
-$(LI `build-window` — the windowed table synthesis, O(window))
+$(LI `sniff` / `parse` / `project` — the **model** half, O(file))
+$(LI `adapt-window` — the windowed table synthesis, O(window))
 $(LI `view` / `layout` / `display-list` — the **view** half, O(window)))
 
-Run with `dub test :hue -- --bench -i dsv.bench`.
+The `scroll-notch-*` legs are the before/after pair: `-resolving-` re-derives
+the model per notch (the pre-`DSN7` path, kept as the standing comparison),
+`-retained-` queries a `DsvModel` the host holds for the life of the document.
+
+Run with
+
+---
+dub test :hue -b bench -- --bench -i dsv.bench \
+    --perf --metrics=instr --perf-iters=8 --bench-min-time 200
+---
+
+`-b bench` is required — the runner warns that assert-enabled numbers are
+meaningless. The other three matter almost as much: without a pinned counting
+pass and a wide enough wall budget the auto-scaler batches different legs
+differently, and at this scale the medians wander far enough to invert a
+comparison. Compare `instr/iter` rather than wall time whenever the question is
+whether something does less work.
 
 Test-only module: `@benchmark` lives in the test-runner shim, a dependency of
 the unittest configuration alone.
@@ -35,7 +51,7 @@ import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchIter, blackBox;
 import sparkles.ui.themes : builtinDark;
 
-import dsv_view : adaptDsv, DsvFlags, DsvProjection, DsvWindow;
+import dsv_view : adaptDsv, DsvFlags, DsvModel, DsvProjection, DsvWindow;
 import gui_preview : PreviewModel, previewOf;
 import viewer_model : ViewerModel;
 
@@ -304,9 +320,10 @@ private final class ViewFixture
     }, ["phase": "view+layout+ops", "scope": "window", "rows": "48"]);
 }
 
-/// One scroll notch as `applyDsvBrowser` actually spends it: re-adapt the
-/// window (model + build) and re-materialize the view.
-@("dsv.bench.scroll-notch-3k")
+/// One scroll notch the way it was spent **before `DSN7`**: re-derive the
+/// whole model, then build and re-materialize the window. Kept as the
+/// standing comparison leg.
+@("dsv.bench.scroll-notch-resolving-3k")
 @benchmark @system unittest
 {
     const src = bigCsv(benchRows);
@@ -323,5 +340,78 @@ private final class ViewFixture
         ev[0] = HighlightEvent.sourceSpan(0, a.text.length);
         fx.vm.remateralizeWindow(a.text, ev, pm);
         blackBox(fx.vm.ops.length);
-    }, ["phase": "scroll-notch-total", "scope": "model+build+view", "rows": "3012"]);
+    }, ["phase": "scroll-notch", "model": "re-derived",
+        "scope": "model+build+view", "rows": "3012"]);
+}
+
+/// The same notch over a **retained model** (`DSN7`) — what a scroll costs
+/// now. The model is resolved once, outside the timed loop, exactly as a host
+/// holds it for the life of the document.
+@("dsv.bench.scroll-notch-retained-3k")
+@benchmark @system unittest
+{
+    auto fx = new ViewFixture(1);
+    auto model = DsvModel.of(bigCsv(benchRows), "csv", DsvFlags());
+    TsConfigCache cache;
+    uint top;
+    benchIter({
+        top = (top + windowRows) % (benchRows - windowRows);
+        auto a = adaptDsv(model, DsvProjection.init,
+            DsvWindow(start: top, rows: windowRows));
+        auto pm = previewOf(cache, a.doc);
+        pm.tableExtras = a.extras;
+        auto ev = new HighlightEvent[](1);
+        ev[0] = HighlightEvent.sourceSpan(0, a.text.length);
+        fx.vm.remateralizeWindow(a.text, ev, pm);
+        blackBox(fx.vm.ops.length);
+    }, ["phase": "scroll-notch", "model": "retained",
+        "scope": "build+view", "rows": "3012"]);
+}
+
+/// The sorted case, which is where re-deriving hurt most: the permutation is
+/// a function of the projection, and a scroll does not change the projection.
+@("dsv.bench.scroll-notch-sorted-resolving-3k")
+@benchmark @system unittest
+{
+    const src = bigCsv(benchRows);
+    auto fx = new ViewFixture(1);
+    TsConfigCache cache;
+    DsvProjection proj;
+    proj.spec = ProjectionSpec(sortKeys: [SortKey(column: 1)]);
+    uint top;
+    benchIter({
+        top = (top + windowRows) % (benchRows - windowRows);
+        auto a = adaptDsv(src, "csv", DsvFlags(), proj,
+            DsvWindow(start: top, rows: windowRows));
+        auto pm = previewOf(cache, a.doc);
+        pm.tableExtras = a.extras;
+        auto ev = new HighlightEvent[](1);
+        ev[0] = HighlightEvent.sourceSpan(0, a.text.length);
+        fx.vm.remateralizeWindow(a.text, ev, pm);
+        blackBox(fx.vm.ops.length);
+    }, ["phase": "scroll-notch", "model": "re-derived",
+        "scope": "model+build+view", "rows": "3012-sorted"]);
+}
+
+/// ditto, retained.
+@("dsv.bench.scroll-notch-sorted-retained-3k")
+@benchmark @system unittest
+{
+    auto fx = new ViewFixture(1);
+    auto model = DsvModel.of(bigCsv(benchRows), "csv", DsvFlags());
+    TsConfigCache cache;
+    DsvProjection proj;
+    proj.spec = ProjectionSpec(sortKeys: [SortKey(column: 1)]);
+    uint top;
+    benchIter({
+        top = (top + windowRows) % (benchRows - windowRows);
+        auto a = adaptDsv(model, proj, DsvWindow(start: top, rows: windowRows));
+        auto pm = previewOf(cache, a.doc);
+        pm.tableExtras = a.extras;
+        auto ev = new HighlightEvent[](1);
+        ev[0] = HighlightEvent.sourceSpan(0, a.text.length);
+        fx.vm.remateralizeWindow(a.text, ev, pm);
+        blackBox(fx.vm.ops.length);
+    }, ["phase": "scroll-notch", "model": "retained",
+        "scope": "build+view", "rows": "3012-sorted"]);
 }

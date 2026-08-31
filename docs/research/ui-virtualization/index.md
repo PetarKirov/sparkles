@@ -40,30 +40,30 @@ models) — none of which covers the viewport-versus-data-size axis.
 
 ## Master catalog
 
-| Subject                | Language   | Mode            | Mechanism                               | Model protocol         | Recycles   | Link                                       |
-| ---------------------- | ---------- | --------------- | --------------------------------------- | ---------------------- | ---------- | ------------------------------------------ |
-| **Dear ImGui**         | C++        | immediate       | `ImGuiListClipper` index range          | ✗ (caller's loop)      | ✗          | [→](./dear-imgui-clipper.md)               |
-| **egui**               | Rust       | immediate       | `ScrollArea::show_rows(Range)`          | ✗ (closure)            | ✗          | [→](./egui-show-rows.md)                   |
-| **Gio**                | Go         | immediate       | `layout.List` + `ListElement` builder   | ✗ (closure)            | ✗          | [→](./gio-list.md)                         |
-| **Ratatui**            | Rust       | immediate (TUI) | `ListState::offset` + bounded walk      | ✗ (owns a `Vec`)       | ✗          | [→](./ratatui-offsets.md)                  |
-| **Textual**            | Python     | retained (TUI)  | `render_line(y)` / `render_lines(crop)` | subclass-defined       | ✗          | [→](./textual-line-api.md)                 |
-| **Flutter**            | Dart       | retained        | slivers + `SliverChildBuilderDelegate`  | builder                | elements   | [→](./flutter-slivers.md)                  |
-| **GTK 4**              | C          | retained        | `GListModel` + `GtkListItemFactory`     | `GListModel`           | widgets    | [→](./gtk4-list-factories.md)              |
-| **Qt Quick**           | C++/QML    | retained        | `ListView` + `reuseItems` pool          | `QAbstractItemModel`   | delegates  | [→](./qt-quick-listview.md)                |
-| **WPF / Avalonia**     | C#         | retained        | `VirtualizingStackPanel`                | `ItemsSource`          | containers | [→](./avalonia-wpf-virtualizing-panels.md) |
-| **VS Code**            | TypeScript | retained        | range diff + `RowCache` + `RangeMap`    | `IListVirtualDelegate` | DOM rows   | [→](./vscode-listview.md)                  |
-| **Slint**              | Rust       | retained        | `Repeater::ensure_updated_listview`     | `Model`                | instances  | [→](./slint-repeater.md)                   |
-| **sparkles (hue DSV)** | D          | immediate       | `DsvWindow` (`DSN4`) + virtual bar      | ✗ **re-derives**       | ✗          | [→](./sparkles-baseline.md)                |
+| Subject                | Language   | Mode            | Mechanism                                  | Model protocol         | Recycles   | Link                                       |
+| ---------------------- | ---------- | --------------- | ------------------------------------------ | ---------------------- | ---------- | ------------------------------------------ |
+| **Dear ImGui**         | C++        | immediate       | `ImGuiListClipper` index range             | ✗ (caller's loop)      | ✗          | [→](./dear-imgui-clipper.md)               |
+| **egui**               | Rust       | immediate       | `ScrollArea::show_rows(Range)`             | ✗ (closure)            | ✗          | [→](./egui-show-rows.md)                   |
+| **Gio**                | Go         | immediate       | `layout.List` + `ListElement` builder      | ✗ (closure)            | ✗          | [→](./gio-list.md)                         |
+| **Ratatui**            | Rust       | immediate (TUI) | `ListState::offset` + bounded walk         | ✗ (owns a `Vec`)       | ✗          | [→](./ratatui-offsets.md)                  |
+| **Textual**            | Python     | retained (TUI)  | `render_line(y)` / `render_lines(crop)`    | subclass-defined       | ✗          | [→](./textual-line-api.md)                 |
+| **Flutter**            | Dart       | retained        | slivers + `SliverChildBuilderDelegate`     | builder                | elements   | [→](./flutter-slivers.md)                  |
+| **GTK 4**              | C          | retained        | `GListModel` + `GtkListItemFactory`        | `GListModel`           | widgets    | [→](./gtk4-list-factories.md)              |
+| **Qt Quick**           | C++/QML    | retained        | `ListView` + `reuseItems` pool             | `QAbstractItemModel`   | delegates  | [→](./qt-quick-listview.md)                |
+| **WPF / Avalonia**     | C#         | retained        | `VirtualizingStackPanel`                   | `ItemsSource`          | containers | [→](./avalonia-wpf-virtualizing-panels.md) |
+| **VS Code**            | TypeScript | retained        | range diff + `RowCache` + `RangeMap`       | `IListVirtualDelegate` | DOM rows   | [→](./vscode-listview.md)                  |
+| **Slint**              | Rust       | retained        | `Repeater::ensure_updated_listview`        | `Model`                | instances  | [→](./slint-repeater.md)                   |
+| **sparkles (hue DSV)** | D          | immediate       | `DsvWindow` (`DSN4`) + `DsvModel` (`DSN7`) | retained model         | ✗          | [→](./sparkles-baseline.md)                |
 
 ## Taxonomy
 
 ### By what the window bounds
 
-| Bounds                 | Subjects                                                                                                                                                                                                                                                         |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Paint and measure only | [Ratatui](./ratatui-offsets.md)                                                                                                                                                                                                                                  |
-| Build, layout, paint   | [WPF / Avalonia](./avalonia-wpf-virtualizing-panels.md) (default), [VS Code](./vscode-listview.md), [sparkles](./sparkles-baseline.md)                                                                                                                           |
-| …and data access       | [Dear ImGui](./dear-imgui-clipper.md), [egui](./egui-show-rows.md), [Gio](./gio-list.md), [Textual](./textual-line-api.md), [Flutter](./flutter-slivers.md), [GTK 4](./gtk4-list-factories.md), [Qt Quick](./qt-quick-listview.md), [Slint](./slint-repeater.md) |
+| Bounds                 | Subjects                                                                                                                                                                                                                                                                                             |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Paint and measure only | [Ratatui](./ratatui-offsets.md)                                                                                                                                                                                                                                                                      |
+| Build, layout, paint   | [WPF / Avalonia](./avalonia-wpf-virtualizing-panels.md) (default), [VS Code](./vscode-listview.md)                                                                                                                                                                                                   |
+| …and data access       | [Dear ImGui](./dear-imgui-clipper.md), [egui](./egui-show-rows.md), [Gio](./gio-list.md), [Textual](./textual-line-api.md), [Flutter](./flutter-slivers.md), [GTK 4](./gtk4-list-factories.md), [Qt Quick](./qt-quick-listview.md), [Slint](./slint-repeater.md), [sparkles](./sparkles-baseline.md) |
 
 ### By how the visible range is computed
 
@@ -93,18 +93,18 @@ models) — none of which covers the viewport-versus-data-size axis.
 
 ## Milestones
 
-| Year | Event                                                                                      |
-| ---- | ------------------------------------------------------------------------------------------ |
-| 1996 | Windows `LVS_OWNERDATA` — the Win32 "virtual list view", a callback per visible item       |
-| 2006 | WPF ships `VirtualizingStackPanel` with `VirtualizationMode.Standard`                      |
-| 2008 | WPF 3.5 SP1 adds `VirtualizationMode.Recycling` and `VirtualizationCacheLength`            |
-| 2009 | Qt Quick 1.0 `ListView` instantiates only visible delegates                                |
-| 2014 | Android `RecyclerView` makes "recycling" the mainstream name for the idea                  |
-| 2015 | Dear ImGui gains `ImGuiListClipper` (evolving out of the earlier `CalcListClipping`)       |
-| 2017 | Flutter's sliver protocol and `ListView.builder`                                           |
-| 2020 | Qt 5.15 adds `ListView.reuseItems` — recycling, opt-in                                     |
-| 2020 | GTK 4 ships `GtkListView` / `GtkListItemFactory`, retiring `GtkTreeView`                   |
-| 2026 | sparkles `DSN4` — hue's DSV grid renders a row window ([baseline](./sparkles-baseline.md)) |
+| Year | Event                                                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1996 | Windows `LVS_OWNERDATA` — the Win32 "virtual list view", a callback per visible item                                                          |
+| 2006 | WPF ships `VirtualizingStackPanel` with `VirtualizationMode.Standard`                                                                         |
+| 2008 | WPF 3.5 SP1 adds `VirtualizationMode.Recycling` and `VirtualizationCacheLength`                                                               |
+| 2009 | Qt Quick 1.0 `ListView` instantiates only visible delegates                                                                                   |
+| 2014 | Android `RecyclerView` makes "recycling" the mainstream name for the idea                                                                     |
+| 2015 | Dear ImGui gains `ImGuiListClipper` (evolving out of the earlier `CalcListClipping`)                                                          |
+| 2017 | Flutter's sliver protocol and `ListView.builder`                                                                                              |
+| 2020 | Qt 5.15 adds `ListView.reuseItems` — recycling, opt-in                                                                                        |
+| 2020 | GTK 4 ships `GtkListView` / `GtkListItemFactory`, retiring `GtkTreeView`                                                                      |
+| 2026 | sparkles `DSN4` — hue's DSV grid renders a row window, then `DSN7` retains the model it is a window onto ([baseline](./sparkles-baseline.md)) |
 
 > [!NOTE]
 > Dates before 2020 are from release history rather than from the pinned trees
