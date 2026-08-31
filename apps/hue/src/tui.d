@@ -1933,8 +1933,15 @@ struct PreviewTui
         // The popup, first: while it is open it BLOCKS what is painted under
         // it (`MDL1`), so a press inside it is never the document's. The rect
         // is last frame's, which is what the reader aimed at.
-        const insidePopup = hoverSel >= 0 && !hoverPopupRect.empty
-            && hoverPopupRect.contains(e.pos);
+        // `TRG12`'s corridor: the popup sits one row below its token to leave
+        // room for the caret, and that row belongs to neither. Giving it to the
+        // popup is what lets the pointer travel into it without crossing ground
+        // nobody owns.
+        const corridorRect = hoverPopupRect.empty ? hoverPopupRect
+            : Rect(hoverPopupRect.x, hoverPopupRect.y - 1,
+                hoverPopupRect.width, hoverPopupRect.height + 1);
+        const insidePopup = hoverSel >= 0 && !corridorRect.empty
+            && corridorRect.contains(e.pos);
         hoverPointerInside = insidePopup;
         if (insidePopup && e.button == PointerButton.left
             && e.action == PointerAction.press)

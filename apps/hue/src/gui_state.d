@@ -301,6 +301,21 @@ struct HoverPopup
     different hover token, which is a new question and deserves an answer.
     */
     bool dismissed;
+    /**
+    Milliseconds left before an unhovered popup actually closes (`TRG6`).
+
+    Travelling from the token to the popup crosses the caret's clearance row,
+    which belongs to neither — so a popup that closed the instant nothing was
+    hovered could not be reached at all. The corridor removes most of that, but
+    a pointer moving fast enough to skip a frame still lands on nothing for one,
+    and the grace covers it.
+
+    It is a $(B countdown), not a deadline: hue's GUI has a frame clock and no
+    wall clock, and the terminal has neither — where `frameSeconds` is zero the
+    countdown never advances and a popup simply stays until something else
+    closes it, which is the honest degradation rather than a broken timer.
+    */
+    int closeGraceMs;
 
 @safe pure nothrow @nogc:
 
@@ -339,6 +354,11 @@ struct HoverPopup
         popupScrollX = 0;
         popupFenceX = 0;
     }
+
+    /// How long an unhovered popup lingers before it closes. Long enough to
+    /// cross a one-row gap at a human pointer speed, short enough that a popup
+    /// left behind does not feel stuck.
+    enum int closeGrace = 250;
 
     /// The furthest the popup's fences may be scrolled.
     long maxFenceX() const scope
@@ -799,4 +819,55 @@ unittest
     static assert(__traits(hasMember, HoverPopup, "dismissed"));
     static assert(!__traits(hasMember, HoverPopup, "dismissedUntilMs"),
         "a timer would reopen it on its own, which is not what Escape means");
+}
+
+@("gui_state.HoverPopup.closeGraceSurvivesAGapTheTravelCrosses")
+@safe pure nothrow @nogc unittest
+{
+    // The reported failure: moving from the token to the popup crosses the
+    // caret's clearance row, which belongs to neither — so a popup that closed
+    // the instant nothing was hovered could not be reached at all.
+    //
+    // The corridor removes most of that by giving the row to the popup. The
+    // grace covers what it cannot: a pointer moving fast enough to skip a
+    // frame still lands on nothing for one.
+    HoverPopup p;
+    p.hotNode = 7;
+
+    // Frame one with nothing hovered: the countdown arms and the popup stays.
+    p.closeGraceMs = HoverPopup.closeGrace;
+    p.closeGraceMs -= 16;                       // ~one frame at 60 Hz
+    assert(p.closeGraceMs > 0, "still open after a frame off the token");
+
+    // It expires after a human-scale pause, not a stuck-forever one.
+    p.closeGraceMs -= HoverPopup.closeGrace;
+    assert(p.closeGraceMs <= 0);
+
+    // Re-entering cancels it: the host resets the countdown whenever something
+    // IS hovered, so a return trip costs nothing.
+    p.closeGraceMs = 0;
+    assert(p.closeGraceMs == 0);
+
+    // The grace is long enough to cross a row at a human pointer speed, and
+    // short enough that a popup left behind does not read as stuck.
+    static assert(HoverPopup.closeGrace >= 120 && HoverPopup.closeGrace <= 400);
+}
+
+@("gui_state.HoverPopup.withoutAFrameClockTheGraceIsInertNotBroken")
+@safe pure nothrow @nogc unittest
+{
+    // A countdown, not a deadline. hue's GUI has a frame clock and no wall
+    // clock; the terminal has neither, and `frameSeconds` there is zero.
+    //
+    // Subtracting zero forever leaves the popup open rather than closing it at
+    // an arbitrary moment — which is the honest degradation. A deadline
+    // computed from a clock that does not advance would either never fire or
+    // fire immediately, and which one depended on the sign of an uninitialised
+    // reading.
+    HoverPopup p;
+    p.hotNode = 7;
+    p.closeGraceMs = HoverPopup.closeGrace;
+    foreach (_; 0 .. 1000)
+        p.closeGraceMs -= 0;               // a terminal's frame delta
+    assert(p.closeGraceMs == HoverPopup.closeGrace, "inert, and still open");
 }
