@@ -30,7 +30,7 @@ module sparkles.twoslash.render_widgets;
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.source_view.code : applyTints, CodeViewOptions;
-import sparkles.source_view.markdown : MdViewTheme;
+import sparkles.source_view.markdown : FenceScroll, MdViewTheme;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, Span;
@@ -578,13 +578,38 @@ struct HoverViewOptions
     /// backend and a pixel one unchanged.
     long scrollOffset;
 
-    /// The body's $(B horizontal) offset, in cells.
-    ///
-    /// Prose wraps to the popup, so it never needs one — but a fenced code
-    /// block does not wrap, and a `unittest` example in a ddoc is routinely
-    /// wider than the popup that shows it. Without this the end of every such
-    /// line is unreachable: rendered, clipped, and with no way to get at it.
+    /// The body's $(B horizontal) offset, in cells, for content that neither
+    /// wraps nor scrolls itself — a wide table, say.
     long scrollOffsetX;
+
+    /**
+    How far every fenced code block in this popup is scrolled sideways.
+
+    A fence is its OWN horizontal viewport: it clips its long lines rather than
+    overflowing its parent, which is right for a document and is why the body's
+    own horizontal offset never reaches one. So the offset has to go where the
+    clip is, and $(LREF markdownDocsRows) hands it to each fence it finds.
+
+    One offset for every fence in the popup, not one per fence: a hover shows
+    one example at a time, and per-fence state would need hit-testing rows the
+    host does not keep between frames — for a surface that is rebuilt whenever
+    the pointer moves.
+    */
+    int fenceScrollX;
+
+    /**
+    Last frame's measurement, so this frame can draw bars.
+
+    The extents come from `layout`, and the bars are part of the tree `layout`
+    measures — so a bar can only ever describe the frame before it. That is the
+    same one-frame lag every hit rect already has, and the reason a host feeds
+    the numbers back rather than the view discovering them.
+    */
+    long barContent;
+    long barViewport;   /// ditto
+    long barContentX;   /// ditto — the widest fence, and the room it has
+    long barViewportX;  /// ditto
+    long barOffsetX;    /// ditto — the fence offset the thumb reports
 
     /// The signature as resolved syntax-colored spans (`signatureSpans`).
     TextSpan[] sigSpans;
@@ -755,7 +780,9 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     // popup's own vertical padding. Counted rather than assumed, because the
     // effect chips add a row only for a function.
     const headerRows = cast(int) header.length + (rest.length ? 1 : 0) + 2;
-    const body = popupBody(b, rest, opts, headerRows);
+    auto body = popupBody(b, rest, opts, headerRows);
+    if (body != invalidNode)
+        body = withScrollbars(b, body, opts);
     uint[] stack = header;
     if (rest.length)
         stack ~= popupRule(b);
@@ -774,6 +801,50 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
 
 /// Not a node index any builder can return.
 private enum uint invalidNode = uint.max;
+
+/**
+`view` with the bars its scrollable axes call for (`SCV`).
+
+$(B A container that scrolls says so.) A viewport with no bar gives a reader no
+way to know there is more, and no way to tell how much — which is the whole
+complaint a clipped surface answers. The rows are the caller's measurement from
+the previous frame, because the extents come from `layout` and the bars are
+built before it; a first frame therefore shows none, and every frame after it
+shows the truth.
+
+The vertical bar rides a one-column gutter beside the body; the horizontal one a
+one-row gutter beneath it. Both are $(B reserved unconditionally) while their
+axis can scroll, so the body does not reflow as the reader moves through it.
+*/
+private uint withScrollbars(ref Builder b, uint view, in HoverViewOptions opts)
+{
+    import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec;
+    import sparkles.ui.state : ScrollAxis;
+
+    const rows = opts.maxHeight > 0 ? opts.maxHeight : 0;
+    uint out_ = view;
+
+    if (opts.barContent > opts.barViewport && rows > 0)
+    {
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: opts.barContent, viewport: opts.barViewport,
+            offset: opts.scrollOffset, axis: ScrollAxis.vertical,
+            paintsIdleTrack: true), 0);
+        out_ = b.add(Widget(kind: WidgetKind.row, children: [out_, bar],
+            width: SizeSpec.grow()));
+    }
+
+    if (opts.barContentX > opts.barViewportX)
+    {
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: opts.barContentX, viewport: opts.barViewportX,
+            offset: opts.barOffsetX, axis: ScrollAxis.horizontal,
+            paintsIdleTrack: true), 0);
+        out_ = b.add(Widget(kind: WidgetKind.column, children: [out_, bar],
+            width: SizeSpec.grow()));
+    }
+    return out_;
+}
 
 /**
 The popup's scrolling body: everything below the signature, inside a clipped
@@ -803,8 +874,8 @@ private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts,
     const rows = opts.maxHeight - headerRows > 1
         ? opts.maxHeight - headerRows : 1;
     // Clipped on BOTH axes. The vertical clip is what makes the body a
-    // viewport; the horizontal one is what makes a wide fence reachable
-    // instead of merely truncated.
+    // viewport; the horizontal one is what makes wide content that does not
+    // clip itself reachable instead of merely truncated.
     const view = b.add(Widget(
         kind: WidgetKind.column,
         children: [content],
@@ -837,15 +908,26 @@ struct PopupScroll
     long viewport;  /// rows it has
     long contentX;  /// cells its widest row would need
     long viewportX; /// cells it has
+    /// The widest fenced code block, and the room it has. A fence clips its own
+    /// long lines rather than overflowing the body, so its overflow is
+    /// invisible to the pair above and has to be reported separately.
+    long fenceContentX;
+    /// ditto
+    long fenceViewportX;
 
 @safe pure nothrow @nogc const:
 
     /// Whether there is anything to scroll vertically — the test a host makes
     /// before spending a gutter column on a bar.
     bool live() => content > viewport;
-    /// Whether anything overflows sideways. Prose wraps, so this is `true`
-    /// exactly when the body holds something that does not — a fence, a table.
+    /// Whether the BODY overflows sideways. Prose wraps and a fence clips
+    /// itself, so this is about the rest: a wide table, mostly.
     bool liveX() => contentX > viewportX;
+    /// Whether a fence overflows sideways — the usual reason a hover needs a
+    /// horizontal bar at all.
+    bool liveFenceX() => fenceContentX > fenceViewportX;
+    /// The furthest a fence may be scrolled.
+    long maxFenceX() => liveFenceX ? fenceContentX - fenceViewportX : 0;
 }
 
 /// ditto
@@ -854,14 +936,49 @@ PopupScroll popupScrollExtents(in WidgetTree tree, in Frame[] frames)
 in (frames.length == tree.nodes.length,
     "frames must be the layout of exactly this tree")
 {
+    PopupScroll sc;
+
+    // The body is at a KNOWN position — the shell builds it as the last child
+    // of the popup's column — so it is found structurally rather than by a
+    // `Widget.key`. Keying it would add an entry to `keyTargets`, which is the
+    // channel a click uses to name a collapsed signature run, and "which run
+    // did I click" would stop meaning what it says.
+    const root = tree.nodes[tree.root];
+    uint body_ = uint.max;
+    if (root.children.length == 1)
+    {
+        const col = tree.nodes[root.children[0]];
+        if (col.children.length)
+        {
+            const last = col.children[$ - 1];
+            if (tree.nodes[last].clipY && tree.nodes[last].children.length == 1)
+                body_ = last;
+        }
+    }
+    if (body_ != uint.max)
+    {
+        const inner = tree.nodes[body_].children[0];
+        sc.content = frames[inner].rect.height;
+        sc.viewport = frames[body_].rect.height;
+        sc.contentX = frames[inner].rect.width;
+        sc.viewportX = frames[body_].rect.width;
+    }
+
+    // Every other clipping node is content that scrolls itself — a fence, a
+    // table. The widest overflow is what a horizontal bar would represent.
     foreach (i, ref const n; tree.nodes)
-        if (n.clipY && n.children.length == 1)
-            return PopupScroll(
-                content: frames[n.children[0]].rect.height,
-                viewport: frames[i].rect.height,
-                contentX: frames[n.children[0]].rect.width,
-                viewportX: frames[i].rect.width);
-    return PopupScroll.init;
+    {
+        if (i == body_ || !n.clipX || n.children.length != 1)
+            continue;
+        const have = frames[i].rect.width;
+        const want = frames[n.children[0]].rect.width;
+        if (want - have > sc.fenceContentX - sc.fenceViewportX)
+        {
+            sc.fenceContentX = want;
+            sc.fenceViewportX = have;
+        }
+    }
+    return sc;
 }
 
 /// The signature as rows: structural breaking when the producer described this
@@ -1105,6 +1222,31 @@ private uint popupRule(ref Builder b)
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
 
+/**
+Every fence in `doc`, at one shared horizontal offset.
+
+A fence clips its own long lines, so the offset must reach the fence's viewport
+rather than the popup's — and the view addresses fences by their body's source
+start, which only the parsed document knows.
+*/
+private FenceScroll[] fenceScrollsOf(in MdDoc doc, int x) @safe
+{
+    if (x == 0)
+        return null;   // the common case allocates nothing
+
+    FenceScroll[] out_;
+    void walk(in MdBlock blk)
+    {
+        if (blk.kind == MdBlockKind.codeFence)
+            out_ ~= FenceScroll(bodyStart: blk.codeBody.start, x: x);
+        foreach (ref const c; blk.children)
+            walk(c);
+    }
+
+    walk(doc.root);
+    return out_;
+}
+
 /// Renders `docs` (JSDoc markdown) into wrapped, inline-styled widget rows via the
 /// `sparkles:syntax` `MdDoc` model. Empty parse (no grammar) ⇒ plain-line fallback.
 private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
@@ -1129,7 +1271,8 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
     return [viewMarkdownInto(b, doc, MdViewOptions(
         maxWidth: docsWidth, hitId: hit,
         baseStyle: docsBase(), proseSlot: Slot.docs,
-        theme: opts.mdTheme, fenceRenderer: opts.fenceRenderer))];
+        theme: opts.mdTheme, fenceRenderer: opts.fenceRenderer,
+        fenceScrolls: fenceScrollsOf(doc, opts.fenceScrollX)))];
 }
 /// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
 /// so a `\n` reads as a line break instead of a tofu glyph.
@@ -2235,4 +2378,59 @@ version (unittest)
     // The popup's own top and bottom border, plus the two internal rules.
     assert(ruleRows >= 4,
         "the section dividers must reach the grid, not only the widget tree");
+}
+
+@("render_widgets.viewHoverPopup.aScrollableBodyShowsItsBars")
+@safe unittest
+{
+    // `SCV`: a container that scrolls says so. A viewport with no bar gives a
+    // reader no way to know there is more and no way to tell how much, which
+    // is the whole complaint a clipped surface answers.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : WidgetKind;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    static size_t bars(in WidgetTree t)
+    {
+        size_t n;
+        foreach (ref const w; t.nodes)
+            if (w.kind == WidgetKind.scrollbar)
+                ++n;
+        return n;
+    }
+
+    // Frame one: the host has measured nothing yet, so there is no bar to draw
+    // — the extents come from `layout`, and the bars are part of what it
+    // measures. One frame of lag, the same every hit rect already has.
+    const first = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12));
+    assert(bars(first) == 0);
+
+    // Frame two, with last frame's measurement fed back.
+    auto f1 = layout(first);
+    const sc = popupScrollExtents(first, f1);
+    assert(sc.live, "the body does overflow");
+
+    const second = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44,
+        maxHeight: 12, barContent: sc.content, barViewport: sc.viewport));
+    assert(bars(second) == 1, "a vertical bar, because the body scrolls");
+
+    // A popup that fits shows none: a gutter spent on a bar nobody can use is
+    // a column stolen from the text.
+    const short_ = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: "One line.\n"),
+    ]);
+    const fits = viewHoverPopup(short_, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12));
+    auto f2 = layout(fits);
+    assert(!popupScrollExtents(fits, f2).live);
+    assert(bars(fits) == 0);
 }

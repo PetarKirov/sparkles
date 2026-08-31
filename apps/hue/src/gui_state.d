@@ -283,6 +283,14 @@ struct HoverPopup
     long popupContentCols;
     /// ditto
     long popupViewportCols;
+    /// How far the popup's fenced code blocks are scrolled sideways, and what
+    /// they may scroll over. A fence clips its own long lines rather than
+    /// overflowing the body, so its overflow is a separate measurement.
+    int popupFenceX;
+    /// ditto
+    long popupFenceContentCols;
+    /// ditto
+    long popupFenceViewportCols;
 
 @safe pure nothrow @nogc:
 
@@ -309,6 +317,36 @@ struct HoverPopup
         if (clamped == popupScrollX)
             return false;
         popupScrollX = clamped;
+        return true;
+    }
+
+    /// Every scroll offset this popup owns, back to the top-left. A different
+    /// symbol is a different document, and there are three of them — which is
+    /// exactly how many a caller forgets one of.
+    void resetScroll() scope
+    {
+        popupScroll = 0;
+        popupScrollX = 0;
+        popupFenceX = 0;
+    }
+
+    /// The furthest the popup's fences may be scrolled.
+    long maxFenceX() const scope
+    {
+        const over = popupFenceContentCols - popupFenceViewportCols;
+        return over > 0 ? over : 0;
+    }
+
+    /// Scrolls the popup's fenced code blocks sideways, clamped. Tried BEFORE
+    /// the body: a fence is the thing in a hover that does not wrap, so it is
+    /// what a sideways notch is almost always for.
+    bool scrollFenceX(long cells) scope
+    {
+        const want = popupFenceX + cells;
+        const clamped = want < 0 ? 0 : (want > maxFenceX ? maxFenceX : want);
+        if (clamped == popupFenceX)
+            return false;
+        popupFenceX = cast(int) clamped;
         return true;
     }
 

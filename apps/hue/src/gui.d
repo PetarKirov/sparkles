@@ -1725,7 +1725,11 @@ int runGui(GuiArgs guiArgs) @system
             // end of a wide line is otherwise unreachable.
             if (overPopup && inp.fin.wheelCellsX != 0)
             {
-                cast(void) pop.scrollByX(inp.fin.wheelCellsX);
+                // The fence first: it is the thing in a hover that does not
+                // wrap, so a sideways notch is almost always for it. Only once
+                // it is at its edge does the body take the rest.
+                if (!pop.scrollFenceX(inp.fin.wheelCellsX))
+                    cast(void) pop.scrollByX(inp.fin.wheelCellsX);
                 inp.fin.wheelCellsX = 0;
             }
             bool forced = false;
@@ -1799,8 +1803,7 @@ int runGui(GuiArgs guiArgs) @system
                         pop.expandedRegions = null;
                         // A different symbol is a different document: its
                         // scroll offsets are not this one's.
-                        pop.popupScroll = 0;
-                        pop.popupScrollX = 0;
+                        pop.resetScroll();
                         pop.popupNode = pop.hotNode;
                     }
                     pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
@@ -1809,10 +1812,10 @@ int runGui(GuiArgs guiArgs) @system
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         vm.pageFg, vm.pageBg,
-                        pop.expandedRegions, pop.popupScroll,
-                        pop.popupScrollX, pop.popupKeys,
+                        pop.expandedRegions, pop, pop.popupKeys,
                         pop.popupContentRows, pop.popupViewportRows,
-                        pop.popupContentCols, pop.popupViewportCols);
+                        pop.popupContentCols, pop.popupViewportCols,
+                        pop.popupFenceContentCols, pop.popupFenceViewportCols);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
                     pop.havePopup = pop.hotPopup.width > 0;
@@ -4138,9 +4141,10 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     in Rect boundary, float originX, float originY, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg,
-    ExpandedRegions expanded, long scrollOffset, long scrollOffsetX,
-    out KeyTarget[] keys, out long contentRows, out long viewportRows,
-    out long contentCols, out long viewportCols) @system
+    ExpandedRegions expanded, in HoverPopup pop, out KeyTarget[] keys,
+    out long contentRows, out long viewportRows,
+    out long contentCols, out long viewportCols,
+    out long fenceContentCols, out long fenceViewportCols) @system
 {
     import sparkles.twoslash.render_widgets : HoverViewOptions,
         placeHoverPopup, popupBound, popupScrollExtents, signatureSpans;
@@ -4159,7 +4163,13 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     const bound = popupBound(pal, boundary);
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
         HoverViewOptions(maxWidth: bound.width, maxHeight: bound.height,
-            scrollOffset: scrollOffset, scrollOffsetX: scrollOffsetX,
+            scrollOffset: pop.popupScroll, scrollOffsetX: pop.popupScrollX,
+            fenceScrollX: pop.popupFenceX,
+            barContent: pop.popupContentRows,
+            barViewport: pop.popupViewportRows,
+            barContentX: pop.popupFenceContentCols,
+            barViewportX: pop.popupFenceViewportCols,
+            barOffsetX: pop.popupFenceX,
             sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
             mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(&cache,
@@ -4196,6 +4206,8 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     viewportRows = sc.viewport;
     contentCols = sc.contentX;
     viewportCols = sc.viewportX;
+    fenceContentCols = sc.fenceContentX;
+    fenceViewportCols = sc.fenceViewportX;
 
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
