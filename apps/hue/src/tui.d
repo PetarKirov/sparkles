@@ -309,10 +309,18 @@ struct PreviewTui
     /// what it may scroll over. A ddoc-heavy hover used to run off the pane
     /// with no way to reach the rest of it.
     private long hoverScroll;
+    /// The body's horizontal offset, in cells: prose wraps to the popup, so
+    /// only a fenced example overflows sideways — and its tail is otherwise
+    /// unreachable.
+    private long hoverScrollX;
     /// ditto
     private long hoverContentRows;
     /// ditto
     private long hoverViewportRows;
+    /// ditto
+    private long hoverContentCols;
+    /// ditto
+    private long hoverViewportCols;
 
     /// Scrolls the open popup's body by `rows`, clamped; `true` iff it moved —
     /// which is also "the notch was consumed", so it does not also scroll the
@@ -326,6 +334,19 @@ struct PreviewTui
         if (clamped == hoverScroll)
             return false;
         hoverScroll = clamped;
+        return true;
+    }
+
+    /// ditto, sideways.
+    private bool scrollHoverPopupX(long cells) @safe pure nothrow @nogc
+    {
+        const over = hoverContentCols - hoverViewportCols;
+        const maxOff = over > 0 ? over : 0;
+        const want = hoverScrollX + cells;
+        const clamped = want < 0 ? 0 : (want > maxOff ? maxOff : want);
+        if (clamped == hoverScrollX)
+            return false;
+        hoverScrollX = clamped;
         return true;
     }
 
@@ -505,6 +526,10 @@ struct PreviewTui
         const dx = w.dx + (w.mods.shift ? w.dy : 0);
         if (dx != 0)
         {
+            // An open popup takes a sideways notch before the document, for
+            // the fence a ddoc example puts in it.
+            if (hoverSel >= 0 && scrollHoverPopupX(dx))
+                return true;
             const fb = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
             if (fb != size_t.max && vm.scrollFence(fb, dx))
                 return true;
@@ -703,6 +728,7 @@ struct PreviewTui
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
         hoverScroll = 0;
+        hoverScrollX = 0;
         sel = Selection!long.cleared;
         inp.mode = Mode.normal;
         inp.query.clear();
@@ -733,6 +759,7 @@ struct PreviewTui
         tw = tw_;
         hoverSel = -1;
         hoverScroll = 0;
+        hoverScrollX = 0;
         showPreview = tw.code.length != 0 || model.present;
         relayout(); // clamps the scroll to the document view's row count
     }
@@ -1059,7 +1086,8 @@ struct PreviewTui
         // documented unittest arrives with its `unittest` fence label.
         auto opts = HoverViewOptions(
             maxWidth: bound.width, maxHeight: bound.height,
-            scrollOffset: hoverScroll, sigSpans: sig,
+            scrollOffset: hoverScroll, scrollOffsetX: hoverScrollX,
+            sigSpans: sig,
             expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1,
             mdTheme: MdViewTheme.derive(vm.current, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(cache,
@@ -1078,6 +1106,8 @@ struct PreviewTui
         const sc = popupScrollExtents(tree, frames);
         hoverContentRows = sc.content;
         hoverViewportRows = sc.viewport;
+        hoverContentCols = sc.contentX;
+        hoverViewportCols = sc.viewportX;
 
         // The token's own cell, in GRID coordinates — the same transform the
         // document itself is painted through at `originX - hx, 1 - top`. The
@@ -1576,6 +1606,8 @@ struct PreviewTui
         {
             hoverSel = -1;
             hoverScroll = 0;
+        hoverScrollX = 0;
+            hoverScrollX = 0;
             return true;
         }
 
@@ -1688,6 +1720,9 @@ struct PreviewTui
                 {
                     hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
                     hoverScroll = 0;
+        hoverScrollX = 0;
+                    hoverScrollX = 0;
+            hoverScrollX = 0;
                     hoverExpanded = null;
                 }
                 break;
@@ -1964,12 +1999,18 @@ struct PreviewTui
                                 ? -1 : cast(int) i;
                             hoverExpanded = null;
                             hoverScroll = 0;
+        hoverScrollX = 0;
+                    hoverScrollX = 0;
+            hoverScrollX = 0;
                             return true;
                         }
                 if (hoverSel >= 0)
                 {
                     hoverSel = -1;
-                    hoverScroll = 0; // a click elsewhere dismisses the popup
+                    hoverScroll = 0;
+        hoverScrollX = 0;
+                    hoverScrollX = 0;
+            hoverScrollX = 0; // a click elsewhere dismisses the popup
                     return true;
                 }
             }

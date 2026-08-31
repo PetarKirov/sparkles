@@ -270,11 +270,19 @@ struct HoverPopup
     /// rest of it; bounded, the body scrolls instead. Reset with `popupNode`,
     /// because a different symbol is a different document.
     long popupScroll;
+    /// The body's horizontal offset, in cells. Prose wraps to the popup, so
+    /// this stays zero until the body holds something that does not — a
+    /// `unittest` example in a ddoc is routinely wider than the popup.
+    long popupScrollX;
     /// ditto — last frame's measurement, so a wheel notch can clamp without
     /// re-laying-out the popup to find out how far it may go.
     long popupContentRows;
     /// ditto
     long popupViewportRows;
+    /// ditto
+    long popupContentCols;
+    /// ditto
+    long popupViewportCols;
 
 @safe pure nothrow @nogc:
 
@@ -283,6 +291,25 @@ struct HoverPopup
     {
         const over = popupContentRows - popupViewportRows;
         return over > 0 ? over : 0;
+    }
+
+    /// ditto, sideways.
+    long maxScrollX() const scope
+    {
+        const over = popupContentCols - popupViewportCols;
+        return over > 0 ? over : 0;
+    }
+
+    /// Scrolls the body sideways by `cells`, clamped. `true` iff it moved,
+    /// which is also "the notch was consumed".
+    bool scrollByX(long cells) scope
+    {
+        const want = popupScrollX + cells;
+        const clamped = want < 0 ? 0 : (want > maxScrollX ? maxScrollX : want);
+        if (clamped == popupScrollX)
+            return false;
+        popupScrollX = clamped;
+        return true;
     }
 
     /// Scrolls by `rows`, clamped. Returns `true` iff the offset moved — the
@@ -664,4 +691,37 @@ unittest
     small.popupContentRows = 3;
     small.popupViewportRows = 9;
     assert(small.maxScroll == 0 && !small.scrollBy(1));
+}
+
+@("gui_state.HoverPopup.theBodyScrollsSidewaysForWhatDoesNotWrap")
+@safe pure nothrow @nogc unittest
+{
+    // Prose wraps to the popup, so the horizontal offset stays zero for an
+    // ordinary ddoc. It exists for the thing that does NOT wrap — a `unittest`
+    // example is routinely wider than the popup showing it, and without this
+    // the end of every such line is rendered, clipped, and unreachable.
+    HoverPopup p;
+    p.popupContentCols = 90;
+    p.popupViewportCols = 48;
+    assert(p.maxScrollX == 42);
+
+    assert(p.scrollByX(10) && p.popupScrollX == 10);
+    assert(p.scrollByX(-999) && p.popupScrollX == 0, "clamped at the left");
+    assert(!p.scrollByX(-1), "and a notch off the left is NOT consumed");
+    assert(p.scrollByX(999) && p.popupScrollX == 42, "clamped at the last cell");
+    assert(!p.scrollByX(1));
+
+    // A popup whose content fits consumes nothing, so a sideways notch keeps
+    // reaching the document underneath.
+    HoverPopup wraps;
+    wraps.popupContentCols = 40;
+    wraps.popupViewportCols = 48;
+    assert(wraps.maxScrollX == 0 && !wraps.scrollByX(1));
+
+    // The two axes are independent: scrolling down does not move it sideways.
+    HoverPopup both;
+    both.popupContentRows = 30; both.popupViewportRows = 9;
+    both.popupContentCols = 90; both.popupViewportCols = 48;
+    assert(both.scrollBy(5) && both.popupScrollX == 0);
+    assert(both.scrollByX(5) && both.popupScroll == 5);
 }
