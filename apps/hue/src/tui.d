@@ -3142,6 +3142,80 @@ unittest
     assert(!t.hoverVBar.dragging);
 }
 
+@("tui.pointer.aFenceInAPopupGetsAHorizontalBar")
+@system
+unittest
+{
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.twoslash.protocol : Node;
+    import std.process : environment;
+
+    // The reported case, end to end: a ddoc example wider than the popup. It
+    // needs the grammar bundle, because a fence only becomes a scrolling
+    // viewport once markdown has parsed it — without one the docs fall back to
+    // plain lines and there is no fence to scroll.
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+    {
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+        return;
+    }
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+
+    const code = "const b = a\n";
+    TwoslashReturn tw = {code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0,
+            character: 6, text: "const b: any",
+            docs: "Prose.\n\n```d\nvoid main()\n{\n"
+                ~ "    auto x = someFunction(withArguments, thatGoOn, andOn,"
+                ~ " andOnAndOn, forever);\n}\n```\n"),
+    ]};
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = labels;
+    t.names = names[];
+    t.themes = themes[];
+    t.cache = &cache;
+    t.resize(60, 20);
+    t.setDocument("x.twoslash.json", code,
+        [HighlightEvent.sourceSpan(0, code.length)], PreviewModel.init,
+        startPreview: true, tw);
+
+    Grid g;
+    g.resize(60, 20);
+    t.paint(g);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'p')));
+    t.paint(g);   // measures
+    assert(t.hoverFenceContentCols > t.hoverFenceViewportCols,
+        "the fence runs off the popup, which is the whole fixture");
+    t.paint(g);   // and now the bar exists, because the measurement fed it
+
+    const bar = t.hoverBarRect(PopupBar.horizontal);
+    assert(!bar.empty, "a fence that overflows gets a bar");
+    assert(bar.width > 2, "with a track to grab along");
+
+    // A sideways notch reaches the fence rather than the document under it.
+    const docCol = t.vm.hsb.offset;
+    assert(t.handle(Event(WheelEvent(dx: 3, pos: Point(bar.x, bar.y)))));
+    assert(t.hoverFenceX > 0, "the fence scrolled");
+    assert(t.vm.hsb.offset == docCol, "and the document did not");
+
+    // And so does its thumb: a press near the right end of the track.
+    t.hoverFenceX = 0;
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press,
+        pos: Point(bar.x + bar.width - 1, bar.y))));
+    assert(t.hoverFenceX > 0, "the bar is a control, not a readout");
+    assert(t.hoverHBar.dragging);
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(bar.x, bar.y))));
+}
+
 @("tui.wheel.horizontalNotchesAndShiftScrollSideways")
 @system unittest
 {
