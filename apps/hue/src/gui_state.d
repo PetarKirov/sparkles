@@ -356,9 +356,10 @@ struct HoverPopup
     }
 
     /// How long an unhovered popup lingers before it closes. Long enough to
-    /// cross a one-row gap at a human pointer speed, short enough that a popup
-    /// left behind does not feel stuck.
-    enum int closeGrace = 250;
+    /// cross the gap at an unhurried pointer speed — a reader who looks away
+    /// mid-move should still find the popup where they left it — and short
+    /// enough that one left behind does not read as stuck.
+    enum int closeGrace = 1000;
 
     /// The furthest the popup's fences may be scrolled.
     long maxFenceX() const scope
@@ -850,7 +851,10 @@ unittest
 
     // The grace is long enough to cross a row at a human pointer speed, and
     // short enough that a popup left behind does not read as stuck.
-    static assert(HoverPopup.closeGrace >= 120 && HoverPopup.closeGrace <= 400);
+    // A range, not the value: the number is a judgement and may be tuned, but
+    // below this a hurried pointer loses the popup and above it one left
+    // behind reads as stuck.
+    static assert(HoverPopup.closeGrace >= 800 && HoverPopup.closeGrace <= 1200);
 }
 
 @("gui_state.HoverPopup.withoutAFrameClockTheGraceIsInertNotBroken")
