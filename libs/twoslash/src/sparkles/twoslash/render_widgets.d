@@ -492,6 +492,24 @@ again with `lastGoodSide` pinned so the second pass cannot re-collide.
 */
 OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
     in Size content, in Rect boundary) @safe pure nothrow @nogc
+    => place(popupPlacement(pal, boundary), anchor, content, boundary);
+
+/// ditto — the second pass, with the budget pass's side pinned so it cannot
+/// re-collide and cannot oscillate between two sides that each fit only the
+/// other's measurement.
+OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
+    in Size content, in Rect boundary, in OverlayGeometry budget)
+    @safe pure nothrow @nogc
+{
+    auto req = popupPlacement(pal, boundary);
+    req.lastGoodSide = budget.side;
+    req.haveLastGood = budget.paintable;
+    return place(req, anchor, content, boundary);
+}
+
+/// The popup's placement request, spelled once for both passes.
+private Placement popupPlacement(in Palette pal, in Rect boundary)
+    @safe pure nothrow @nogc
 {
     auto req = Placement.init;
     req.minSize = Size(pal.popupMinWidth, pal.popupMinHeight);
@@ -504,7 +522,49 @@ OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
     req.side = Side.bottom;
     req.alignment = Align.start;
     req.arrow = true;
-    return place(req, anchor, content, boundary);
+    return req;
+}
+
+/**
+The room the popup may claim, decided $(B before) it is built (`PLC9`).
+
+Ask the solve where a popup of the largest permitted size would go: whatever it
+answers is the room this anchor actually has, on the side it actually has it.
+Building the view at $(LREF popupBound) instead — the boundary's own size —
+overstates the room whenever the anchor sits low in the pane, and the surplus
+does not vanish quietly. The tree is laid out taller than the box the solve
+later hands back, so the tail is clipped away unreachably, the viewport
+measurement counts rows nobody can see, and the bar beside it runs off the
+bottom edge describing a viewport that is not there.
+
+Feed $(LREF OverlayGeometry.rect)'s size to `HoverViewOptions.maxWidth` /
+`maxHeight`, then place the laid-out tree with the $(B five)-argument
+$(LREF placeHoverPopup) so the second pass keeps this pass's side.
+*/
+OverlayGeometry popupBudget(in Palette pal, in AnchorRect anchor,
+    in Rect boundary) @safe pure nothrow @nogc
+    => placeHoverPopup(pal, anchor, popupBound(pal, boundary), boundary);
+
+@("render_widgets.popupBudget.theRoomIsTheAnchorsNotThePanes")
+@safe pure nothrow @nogc unittest
+{
+    const pal = Palette.init;
+    const pane = Rect(0, 0, 80, 24);
+
+    // High in the pane: everything below the token, less its caret's row.
+    const high = popupBudget(pal,
+        AnchorRect(primary: Rect(4, 0, 6, 1), live: true), pane);
+    assert(high.paintable);
+    assert(high.rect.height <= popupBound(pal, pane).height);
+    assert(high.rect.bottom <= pane.bottom);
+
+    // Low in the pane: it may not, and the difference is exactly the rows a
+    // view built against `popupBound` would have laid out into nothing.
+    const low = popupBudget(pal,
+        AnchorRect(primary: Rect(4, 18, 6, 1), live: true), pane);
+    assert(low.paintable);
+    assert(low.rect.height < high.rect.height, "the room is the anchor's");
+    assert(low.rect.bottom <= pane.bottom, "and it stays inside the pane");
 }
 
 @("render_widgets.popupBound.ceilingRoomAndFloor")
@@ -681,6 +741,42 @@ size_t popupCloseKey(size_t nodeKey) @safe pure nothrow @nogc
 bool isPopupCloseKey(size_t key) @safe pure nothrow @nogc
     => key != 0 && abbrevRegion(key) == closeRegion;
 
+/// ditto — the popup's own scrollbars, which a host must be able to grab.
+private enum size_t vBarRegion = 0xF_FFFD;
+private enum size_t hBarRegion = 0xF_FFFC;   /// ditto
+
+/**
+Which of the popup's scrollbars a `Widget.key` names, if either.
+
+A bar is a $(B control), not decoration: a reader who can see that a popup
+scrolls reaches for its thumb. Naming the bars through the same key channel the
+✕ and the collapsed runs already use means a host decodes one lookup for every
+click inside a popup, and gets the bar's rect from the same `keyTargets` list —
+which is what a grab needs, because a thumb drag is track-relative.
+*/
+enum PopupBar : ubyte
+{
+    none,       /// the key names something else
+    vertical,   /// the body's rows
+    horizontal, /// the fences' columns
+}
+
+/// ditto
+PopupBar popupBarOf(size_t key) @safe pure nothrow @nogc
+{
+    if (key == 0)
+        return PopupBar.none;
+    const r = abbrevRegion(key);
+    return r == vBarRegion ? PopupBar.vertical
+        : r == hBarRegion ? PopupBar.horizontal : PopupBar.none;
+}
+
+/// ditto — the key a given bar carries.
+size_t popupBarKey(size_t nodeKey, PopupBar bar) @safe pure nothrow @nogc
+in (bar != PopupBar.none)
+    => abbrevKey(nodeKey,
+        bar == PopupBar.vertical ? vBarRegion : hBarRegion);
+
 /// The region a `Widget.key` names, undoing `abbrevKey`. Backends resolve a
 /// click to a key and index `ExpandedRegions` — which is per signature — with
 /// this; `abbrevNode` says which popup the key belonged to.
@@ -817,9 +913,10 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     // popup's own vertical padding. Counted rather than assumed, because the
     // effect chips add a row only for a function.
     const headerRows = cast(int) header.length + (rest.length ? 1 : 0) + 2;
-    auto body = popupBody(b, rest, opts, headerRows);
+    const bodyRows = popupBodyRows(opts, headerRows);
+    auto body = popupBody(b, rest, opts, bodyRows);
     if (body != invalidNode)
-        body = withScrollbars(b, body, opts);
+        body = withScrollbars(b, body, opts, bodyRows);
     uint[] stack = header;
     if (rest.length)
         stack ~= popupRule(b);
@@ -905,20 +1002,26 @@ The vertical bar rides a one-column gutter beside the body; the horizontal one a
 one-row gutter beneath it. Both are $(B reserved unconditionally) while their
 axis can scroll, so the body does not reflow as the reader moves through it.
 */
-private uint withScrollbars(ref Builder b, uint view, in HoverViewOptions opts)
+private uint withScrollbars(ref Builder b, uint view, in HoverViewOptions opts,
+    int bodyRows)
 {
     import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec;
     import sparkles.ui.state : ScrollAxis;
 
-    const rows = opts.maxHeight > 0 ? opts.maxHeight : 0;
     uint out_ = view;
 
-    if (opts.barContent > opts.barViewport && rows > 0)
+    if (opts.barContent > opts.barViewport && bodyRows > 0)
     {
+        // The track is the BODY's rows, which is what the bar stands beside.
+        // A zero here is not a default — `scrollbar` reads it as the widget's
+        // extent along its own axis, so the bar laid out one column wide and
+        // zero rows tall: present in the tree, absent from the screen, and
+        // absent from `keyTargets` too, because an empty rect is not hittable.
         const bar = scrollbar(b, ScrollbarSpec(
             content: opts.barContent, viewport: opts.barViewport,
             offset: opts.scrollOffset, axis: ScrollAxis.vertical,
-            paintsIdleTrack: true), 0);
+            paintsIdleTrack: true,
+            key: popupBarKey(opts.nodeKey, PopupBar.vertical)), bodyRows);
         out_ = b.add(Widget(kind: WidgetKind.row, children: [out_, bar],
             width: SizeSpec.grow()));
     }
@@ -928,11 +1031,37 @@ private uint withScrollbars(ref Builder b, uint view, in HoverViewOptions opts)
         const bar = scrollbar(b, ScrollbarSpec(
             content: opts.barContentX, viewport: opts.barViewportX,
             offset: opts.barOffsetX, axis: ScrollAxis.horizontal,
-            paintsIdleTrack: true), 0);
+            paintsIdleTrack: true,
+            key: popupBarKey(opts.nodeKey, PopupBar.horizontal)), 1);
+        // Its track is the popup's INTERIOR WIDTH, which no one knows before
+        // layout: the shell is a `fit` box that shrinks to its content and
+        // only caps at `maxWidth`. So the bar is told to grow instead, and the
+        // width it ends up with is the one the display list paints and the one
+        // a grab measures against — the same rect, by construction.
+        b.nodes[bar].width = SizeSpec.grow();
         out_ = b.add(Widget(kind: WidgetKind.column, children: [out_, bar],
             width: SizeSpec.grow()));
     }
     return out_;
+}
+
+/**
+How many rows the body gets: the cap, less the pinned header and the popup's own
+padding. Zero when nothing capped the popup, which is also "there is no
+viewport".
+
+Computed $(B once) and handed to both the viewport and its bar. They must agree
+on it exactly — the bar stands beside the body and a track of a different length
+is a thumb that lies about where it is.
+*/
+private int popupBodyRows(in HoverViewOptions opts, int headerRows)
+    @safe pure nothrow @nogc
+{
+    if (opts.maxHeight <= 0)
+        return 0;
+    // A floor of one keeps the viewport representable on a surface too short to
+    // be useful, where the solve has already reported `refused` or `shrunk`.
+    return opts.maxHeight - headerRows > 1 ? opts.maxHeight - headerRows : 1;
 }
 
 /**
@@ -950,18 +1079,12 @@ is the viewport and its child's frame is the full content extent. Neither is
 guessed, and neither costs a second pass.
 */
 private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts,
-    int headerRows)
+    int rows)
 {
-    if (opts.maxHeight <= 0 || rest.length == 0)
+    if (rows <= 0 || rest.length == 0)
         return invalidNode;
 
     const content = b.container(WidgetKind.column, rest);
-    // One row for the signature, two for the popup's own padding: what is left
-    // is the body's. A floor of one keeps the viewport representable on a
-    // surface too short to be useful, where the solve has already reported
-    // `refused` or `shrunk`.
-    const rows = opts.maxHeight - headerRows > 1
-        ? opts.maxHeight - headerRows : 1;
     // Clipped on BOTH axes. The vertical clip is what makes the body a
     // viewport; the horizontal one is what makes wide content that does not
     // clip itself reachable instead of merely truncated.
@@ -2539,6 +2662,29 @@ version (unittest)
         maxHeight: 12, barContent: sc.content, barViewport: sc.viewport));
     assert(bars(second) == 1, "a vertical bar, because the body scrolls");
 
+    // And it REACHES THE GRID. A bar in the widget tree is not a bar a reader
+    // can see: this one laid out one column wide and zero rows tall, because
+    // `scrollbar`'s track argument is the widget's extent along its own axis
+    // and the shell passed nothing. It was in the tree, in the display list,
+    // and nowhere on the screen — which is exactly how it was reported.
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+
+    auto f3 = layout(second);
+    const bg = RgbColor(0x1a, 0x1b, 0x26), fg = RgbColor(0xc0, 0xc0, 0xc0);
+    const pal = defaultTwoslashPalette(schemeForBackground(bg));
+    auto grid = CellGrid(60, cast(int) f3[second.root].rect.height + 2, fg, bg);
+    paint(grid, buildDisplayList(second, f3, pal, fg, bg));
+
+    size_t thumbCells;
+    foreach (ref const c; grid.cells)
+        if (c.glyph == '\u2588')   // the default thumb block
+            ++thumbCells;
+    assert(thumbCells > 0, "the bar must be painted, not merely built");
+
     // A popup that fits shows none: a gutter spent on a bar nobody can use is
     // a column stolen from the text.
     const short_ = TwoslashReturn(code: "x", nodes: [
@@ -2816,4 +2962,58 @@ version (unittest)
     // it must describe how far the code actually runs.
     assert(sc.fenceContentX >= cast(long) wide.length - 4,
         "the widest line, not the room it was given");
+}
+
+@("render_widgets.popupBarOf.theBarsAreNamedAndDistinct")
+@safe unittest
+{
+    // A bar is a control, so a host must be able to say "the press landed on
+    // the vertical thumb" — and must NOT mistake it for a collapsed run,
+    // which is what an unnamed bar in a key-decoded surface becomes.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : keyTargets;
+    import sparkles.ui.widget : WidgetKind;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    const first = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12, nodeKey: 7));
+    auto f1 = layout(first);
+    const sc = popupScrollExtents(first, f1);
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44,
+        maxHeight: 12, nodeKey: 7,
+        barContent: sc.content, barViewport: sc.viewport));
+
+    foreach (ref const w; t.nodes)
+        if (w.kind == WidgetKind.scrollbar)
+            assert(popupBarOf(w.key) == PopupBar.vertical,
+                "the bar must name itself");
+
+    // And through the channel a host actually reads: a rect, so a grab can be
+    // track-relative, from the same list the ✕ comes out of.
+    auto targets = keyTargets(t, layout(t));
+    bool sawBar;
+    foreach (ref const kt; targets)
+        if (popupBarOf(kt.key) == PopupBar.vertical)
+        {
+            sawBar = true;
+            assert(kt.rect.height > 1, "a track has rows to grab along");
+        }
+    assert(sawBar, "the bar reaches keyTargets");
+
+    // The three reserved meanings stay apart: a bar is not the ✕, and neither
+    // is a collapsed run — the host's fallback arm toggles a region for any
+    // key it does not recognise, so an overlap silently expands a signature.
+    assert(!isPopupCloseKey(popupBarKey(7, PopupBar.vertical)));
+    assert(!isPopupCloseKey(popupBarKey(7, PopupBar.horizontal)));
+    assert(popupBarOf(popupCloseKey(7)) == PopupBar.none);
+    assert(popupBarOf(abbrevKey(7, 0)) == PopupBar.none);
+    assert(popupBarKey(7, PopupBar.vertical)
+        != popupBarKey(7, PopupBar.horizontal));
 }

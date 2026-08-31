@@ -96,7 +96,7 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
 import sparkles.twoslash.render_widgets : abbrevRegion,
-    isPopupCloseKey, viewHoverPopup;
+    isPopupCloseKey, popupBarOf, viewHoverPopup;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 // The shared visual language: the twoslash palette is the single source for the
@@ -1701,10 +1701,15 @@ int runGui(GuiArgs guiArgs) @system
             // to the popup: an extra entry carrying the overlay's own id, which
             // is exactly what the requirement asks for.
             const corridor = cellH;
+            // A live bar grab keeps the popup: a thumb drag routinely leaves
+            // the box it is scrolling, and closing under the pointer mid-drag
+            // is the one thing a grab exists to prevent.
             const overPopup = pop.hotNode != 0 && pop.havePopup
-                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
-                && mp.y >= pop.hotPopup.y - corridor
-                && mp.y <= pop.hotPopup.y + pop.hotPopup.height;
+                && (pop.barGrabbing
+                    || (mp.x >= pop.hotPopup.x
+                        && mp.x <= pop.hotPopup.x + pop.hotPopup.width
+                        && mp.y >= pop.hotPopup.y - corridor
+                        && mp.y <= pop.hotPopup.y + pop.hotPopup.height));
             size_t overNode = 0;
             if (overPopup)
                 overNode = pop.hotNode; // it keeps the pointer while it is open
@@ -3888,17 +3893,35 @@ int runGui(GuiArgs guiArgs) @system
             if (pop.hotNode != 0 && pop.havePopup && keyBuf.hasKey(Key.escape))
                 pop.dismissed = true;
 
+            // A bar grab OWNS the pointer, like every other scrollbar grab
+            // here: the drag tracks wherever the pointer strays, so it is
+            // answered before the inside-the-popup test rather than after it.
             bool popupClicked;
-            if (pop.havePopup && pop.popupKeys.length && clickPressed()
+            if (pop.barGrabbing)
+            {
+                popupClicked = true;
+                if (inp.fin.leftDown)
+                    pop.barDragged(Point(
+                        cast(int)((mp.x - pop.hotPopup.x) / cellW),
+                        cast(int)((mp.y - pop.hotPopup.y) / cellH)));
+                else
+                    pop.barReleased();
+            }
+            else if (pop.havePopup && pop.popupKeys.length && clickPressed()
                 && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
                 && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
             {
                 popupClicked = true; // never a selection, hit or miss
-                const k = keyAt(pop.popupKeys,
-                    Point(cast(int)((mp.x - pop.hotPopup.x) / cellW),
-                        cast(int)((mp.y - pop.hotPopup.y) / cellH)));
+                const local = Point(cast(int)((mp.x - pop.hotPopup.x) / cellW),
+                    cast(int)((mp.y - pop.hotPopup.y) / cellH));
+                const k = keyAt(pop.popupKeys, local);
                 if (isPopupCloseKey(k))
                     pop.dismissed = true;   // the ✕ in its top-right corner
+                // Before the generic arm below, which toggles a signature run
+                // for any key it does not recognise — so an unhandled press on
+                // a bar would expand a collapsed run instead of scrolling.
+                else if (const bar = popupBarOf(k))
+                    pop.barPressed(bar, local);
                 else if (k != 0)
                 {
                     const r = abbrevRegion(k);
@@ -4198,7 +4221,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     out long fenceContentCols, out long fenceViewportCols) @system
 {
     import sparkles.twoslash.render_widgets : HoverViewOptions,
-        applyPopupArrow, placeHoverPopup, popupBound,
+        applyPopupArrow, placeHoverPopup, popupBound, popupBudget,
         popupScrollExtents, signatureSpans;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
@@ -4212,7 +4235,14 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     import sparkles.source_view.markdown : highlightedFenceRenderer,
         MdViewTheme;
 
-    const bound = popupBound(pal, boundary);
+    // `PLC9`, decide then measure: the room is THIS ANCHOR's, not the pane's.
+    // Built against the pane, a popup on a token near the bottom lays out
+    // taller than the box the solve later hands back — the tail is clipped
+    // away unreachably, and the bar beside it describes a viewport that is
+    // not on the screen.
+    const budget = popupBudget(pal, anchor, boundary);
+    const bound = budget.paintable ? budget.rect.size
+        : popupBound(pal, boundary);
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
         HoverViewOptions(maxWidth: bound.width, maxHeight: bound.height,
             scrollOffset: pop.popupScroll, scrollOffsetX: pop.popupScrollX,
@@ -4233,7 +4263,9 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
         return PixelRect(originX, originY, 0, 0);
     auto frames = layout(tree);
     const box = frames[tree.root].rect;
-    const placed = placeHoverPopup(pal, anchor, box.size, boundary);
+    // The second pass, with the budget's side pinned so it cannot re-collide
+    // against a measurement the first pass has not seen.
+    const placed = placeHoverPopup(pal, anchor, box.size, boundary, budget);
     if (!placed.paintable)
         return PixelRect(originX, originY, 0, 0);
 
@@ -4268,8 +4300,11 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
     // the moment it moves onto it.
-    return PixelRect(px, py, cast(float)(box.width * cellW),
-        cast(float)(box.height * cellH));
+    // The PLACED box, not the laid-out one: they agree now that the view is
+    // built inside the budget, and where they ever disagree the reader's
+    // pointer must follow what was drawn.
+    return PixelRect(px, py, cast(float)(placed.rect.width * cellW),
+        cast(float)(placed.rect.height * cellH));
 }
 
 
