@@ -578,6 +578,14 @@ struct HoverViewOptions
     /// backend and a pixel one unchanged.
     long scrollOffset;
 
+    /// The body's $(B horizontal) offset, in cells.
+    ///
+    /// Prose wraps to the popup, so it never needs one — but a fenced code
+    /// block does not wrap, and a `unittest` example in a ddoc is routinely
+    /// wider than the popup that shows it. Without this the end of every such
+    /// line is unreachable: rendered, clipped, and with no way to get at it.
+    long scrollOffsetX;
+
     /// The signature as resolved syntax-colored spans (`signatureSpans`).
     TextSpan[] sigSpans;
 
@@ -713,17 +721,25 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     const structured = node.signature != SignatureLayout.init;
     uint[] sigRows = signatureBlock(b, node, hit, opts, sigStyle, sigWidth, sigWrap);
 
-    uint[] sections = [popupSection(b, sigRows, divider: false)];
-    // Functions only: the producer reports effects for nothing else, and a
-    // variable's lone `@system` rides in its text where it was written.
+    // The HEADER is the signature plus, for a function, the effect chips that
+    // qualify it. `@safe pure nothrow @nogc` is part of what the signature SAYS
+    // — a reader scrolled past it has lost half the declaration — so the two
+    // are pinned together and the rule goes after them, not between them.
+    uint[] header = [popupSection(b, sigRows)];
     if (structured && node.signature.effects != Effects.init)
-        sections ~= popupSection(b,
-            effectChips(b, node.signature.effects, hit, opts.unicode),
-            divider: true);
+        header ~= popupSection(b,
+            effectChips(b, node.signature.effects, hit, opts.unicode));
+
+    // Everything below the header, each section preceded by its own rule.
+    uint[] rest;
     if (docsRows.length)
-        sections ~= popupSection(b, docsRows, divider: true);
+        rest ~= popupSection(b, docsRows);
     if (tagRows.length)
-        sections ~= popupSection(b, tagRows, divider: true);
+    {
+        if (rest.length)
+            rest ~= popupRule(b);   // examples above, `@returns` below
+        rest ~= popupSection(b, tagRows);
+    }
 
     // The cap is a clamp on a `fit` box, so the popup still shrinks to its
     // content — it just stops growing past the room the backend reported.
@@ -731,13 +747,20 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     if (opts.maxWidth > 0)
         width.max = opts.maxWidth;
 
-    // The SIGNATURE never scrolls. It is the thing the reader anchored on, and
+    // The header never scrolls. It is the thing the reader anchored on, and
     // scrolling it out of view is the same failure as overflowing the surface —
     // the popup is still on screen and still useless. So the shell splits: a
-    // pinned header, and everything else inside a viewport.
-    const body = popupBody(b, sections[1 .. $], opts);
-    const col = b.container(WidgetKind.column,
-        body == invalidNode ? sections : [sections[0], body]);
+    // pinned header, its rule, and everything else inside a viewport.
+    // What the header costs the body: its rows, the rule under it, and the
+    // popup's own vertical padding. Counted rather than assumed, because the
+    // effect chips add a row only for a function.
+    const headerRows = cast(int) header.length + (rest.length ? 1 : 0) + 2;
+    const body = popupBody(b, rest, opts, headerRows);
+    uint[] stack = header;
+    if (rest.length)
+        stack ~= popupRule(b);
+    stack ~= body == invalidNode ? rest : [body];
+    const col = b.container(WidgetKind.column, stack);
 
     auto height = SizeSpec.fit_;
     if (opts.maxHeight > 0)
@@ -766,42 +789,33 @@ The engine does the arithmetic: a clipped axis keeps its children $(B natural)
 is the viewport and its child's frame is the full content extent. Neither is
 guessed, and neither costs a second pass.
 */
-private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts)
+private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts,
+    int headerRows)
 {
     if (opts.maxHeight <= 0 || rest.length == 0)
         return invalidNode;
-
-    // The rule that separates the signature from the body belongs to the
-    // POPUP, not to the body's first section — leave it there and it scrolls
-    // away with the paragraph it was drawn above. So it moves onto the
-    // viewport's own frame, which does not move, and the section it came from
-    // gives it up.
-    b.nodes[rest[0]].decoration = Decoration.init;
 
     const content = b.container(WidgetKind.column, rest);
     // One row for the signature, two for the popup's own padding: what is left
     // is the body's. A floor of one keeps the viewport representable on a
     // surface too short to be useful, where the solve has already reported
     // `refused` or `shrunk`.
-    const rows = opts.maxHeight - 3 > 1 ? opts.maxHeight - 3 : 1;
+    const rows = opts.maxHeight - headerRows > 1
+        ? opts.maxHeight - headerRows : 1;
+    // Clipped on BOTH axes. The vertical clip is what makes the body a
+    // viewport; the horizontal one is what makes a wide fence reachable
+    // instead of merely truncated.
     const view = b.add(Widget(
         kind: WidgetKind.column,
         children: [content],
         height: SizeSpec.fixed(rows),
         width: SizeSpec.grow(),
+        clipX: true,
         clipY: true,
-        childOffset: Point(0, cast(int) opts.scrollOffset),
+        childOffset: Point(cast(int) opts.scrollOffsetX,
+            cast(int) opts.scrollOffset),
     ));
-    return b.add(Widget(
-        kind: WidgetKind.column,
-        children: [view],
-        width: SizeSpec.grow(),
-        stretch: true,
-        decoration: Decoration(
-            borderWidth: Insets(M.borderWidth, 0, 0, 0),
-            borderStyle: BorderStyle.solid,
-            borderSlot: Slot.border),
-    ));
+    return view;
 }
 
 /**
@@ -819,11 +833,19 @@ and neither is guessed.
 */
 struct PopupScroll
 {
-    long content;  /// rows the body would need
-    long viewport; /// rows it has
-    /// Whether there is anything to scroll — the test a host makes before
-    /// spending a gutter column on a bar.
-    bool live() const @safe pure nothrow @nogc => content > viewport;
+    long content;   /// rows the body would need
+    long viewport;  /// rows it has
+    long contentX;  /// cells its widest row would need
+    long viewportX; /// cells it has
+
+@safe pure nothrow @nogc const:
+
+    /// Whether there is anything to scroll vertically — the test a host makes
+    /// before spending a gutter column on a bar.
+    bool live() => content > viewport;
+    /// Whether anything overflows sideways. Prose wraps, so this is `true`
+    /// exactly when the body holds something that does not — a fence, a table.
+    bool liveX() => contentX > viewportX;
 }
 
 /// ditto
@@ -834,8 +856,11 @@ in (frames.length == tree.nodes.length,
 {
     foreach (i, ref const n; tree.nodes)
         if (n.clipY && n.children.length == 1)
-            return PopupScroll(frames[n.children[0]].rect.height,
-                frames[i].rect.height);
+            return PopupScroll(
+                content: frames[n.children[0]].rect.height,
+                viewport: frames[i].rect.height,
+                contentX: frames[n.children[0]].rect.width,
+                viewportX: frames[i].rect.width);
     return PopupScroll.init;
 }
 
@@ -1057,12 +1082,26 @@ private uint chipWidget(ref Builder b, string text, Slot slot, size_t hit)
 /// (`6px 8px` in the CSS) and, when `divider`, a 1px top border that — because the
 /// section stretches to the popup width and the popup has no horizontal padding —
 /// spans border-to-border as the section separator.
-private uint popupSection(ref Builder b, uint[] rows, bool divider)
+private uint popupSection(ref Builder b, uint[] rows)
     => b.add(Widget(kind: WidgetKind.column, children: rows, stretch: true,
-        padding: Insets(0, 1, 0, 1),
-        decoration: divider
-            ? Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
-                borderStyle: BorderStyle.solid, borderSlot: Slot.border) : Decoration.init));
+        padding: Insets(0, 1, 0, 1)));
+
+/**
+A full-width horizontal rule — the popup's section divider.
+
+$(B A one-row box with a BOTTOM border), which is the only spelling a cell
+backend can draw: a cell has an underline attribute and no overline, so a
+top-only border renders as nothing at all there. The dividers were top borders
+on the following section, so they had never appeared in the terminal — only in
+the GUI and HTML, where a top border is a real edge. This is the same widget
+$(REF viewMarkdownInto, sparkles,source_view,markdown) emits for a `---`
+thematic break, for the same reason.
+*/
+private uint popupRule(ref Builder b)
+    => b.add(Widget(kind: WidgetKind.box, stretch: true,
+        height: SizeSpec.fixed(1),
+        decoration: Decoration(borderWidth: Insets(0, 0, M.borderWidth, 0),
+            borderStyle: BorderStyle.solid, borderSlot: Slot.border)));
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
 
@@ -1079,10 +1118,14 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
         return plainDocsRows(b, docs, hit);
     // The shared composable markdown view — "JSDoc renders through the same
     // markdown view" — with the popup's docs face/slot/width and hit identity.
-    // The docs metric is a preferred measure; the room the backend reported
-    // wins when it is narrower.
-    const docsWidth = maxWidth > 0 && maxWidth < M.docsMaxWidth
-        ? maxWidth : M.docsMaxWidth;
+    //
+    // ONE wrap width for the whole popup. `docsMaxWidth` is a readable prose
+    // measure and it used to narrow this section further, so the description
+    // wrapped at 56 columns while the `@tag` rows beside it took the popup's
+    // full interior — two measures in one surface, which reads as a bug rather
+    // than as typography. The metric now caps a popup nobody sized (the
+    // unbounded path); a popup the solve sized wraps everything to it.
+    const docsWidth = maxWidth > 0 ? maxWidth : M.docsMaxWidth;
     return [viewMarkdownInto(b, doc, MdViewOptions(
         maxWidth: docsWidth, hitId: hit,
         baseStyle: docsBase(), proseSlot: Slot.docs,
@@ -2005,8 +2048,11 @@ version (unittest)
 
     const sc = popupScrollExtents(capped, frames);
     assert(sc.live, "there is more body than viewport");
-    assert(sc.content > sc.viewport && sc.viewport == 12 - 3,
-        "the viewport is the budget less the signature row and the padding");
+    // The budget less what the header costs it: one signature row, the rule
+    // under it, and the popup's own two rows of vertical padding. (No effect
+    // chips here — this node carries no `SignatureLayout`.)
+    assert(sc.content > sc.viewport && sc.viewport == 12 - 4,
+        "the viewport is the budget less the header, its rule and the padding");
 
     // The signature is still on the FIRST row of the surface, at every offset:
     // it is outside the viewport, so scrolling cannot take it away.
@@ -2019,65 +2065,174 @@ version (unittest)
         "the offset moves the body; it does not resize it");
 }
 
-@("render_widgets.viewHoverPopup.theDividerIsPinnedNotScrolled")
+@("render_widgets.viewHoverPopup.theRuleIsARowEveryBackendCanDraw")
 @safe unittest
 {
-    // The rule under the signature separates the signature from the body, so
-    // it belongs to the POPUP. Left on the body's first section it scrolls away
-    // with the paragraph it was drawn above, and the popup loses the line that
-    // says where its header ends.
+    // A cell has an underline attribute and NO overline, so a top-only border
+    // draws nothing at all in a terminal. The section dividers were top borders
+    // on the following section, so they had never appeared there — only in the
+    // GUI and HTML, where a top border is a real edge. A rule is a one-row box
+    // with a BOTTOM border, which every backend can draw.
+    import sparkles.ui.layout : layout;
+
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: "Some prose.\n",
+            tags: [["returns", "a number"]]),
+    ]);
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44));
+    auto f = layout(t);
+
+    size_t rules, topOnly;
+    foreach (i, ref const n; t.nodes)
+    {
+        const w = n.decoration.borderWidth;
+        if (w.bottom > 0 && w.top == 0 && w.left == 0 && w.right == 0
+            && n.decoration.borderStyle == BorderStyle.solid)
+        {
+            ++rules;
+            assert(f[i].rect.height == 1, "a rule is one row");
+        }
+        if (w.top > 0 && w.left == 0 && w.right == 0 && w.bottom == 0)
+            ++topOnly;
+    }
+    assert(topOnly == 0, "no divider may be a top border: cells cannot draw one");
+    // One under the header, one between the docs and the `@tag` rows.
+    assert(rules == 2, "a rule under the header, and one before the tags");
+}
+
+@("render_widgets.viewHoverPopup.theHeaderIsTheSignatureAndItsAttributes")
+@safe unittest
+{
+    // `@safe pure nothrow @nogc` is part of what the signature SAYS — a reader
+    // who has scrolled past it has lost half the declaration — so the chips are
+    // pinned with it and the rule goes AFTER them.
     import sparkles.ui.layout : layout;
 
     string docs;
     foreach (i; 0 .. 40)
         docs ~= "A paragraph that runs on for a while.\n\n";
+    SignatureLayout sig;
+    sig.effects = Effects(trust: "@safe", isPure: true);
     const tw = TwoslashReturn(code: "x", nodes: [
         Node(type: NodeType.hover, start: 0, length: 1,
-            text: "int f(int a)", docs: docs),
+            text: "int f(int a)", docs: docs, signature: sig),
     ]);
 
-    // The node carrying the rule is the one wrapping the viewport, so its
-    // frame is fixed while the content under it moves.
-    static int ruleRowOf(in WidgetTree t, in Frame[] f)
+    // The rule's row is fixed while the body scrolls under it, and it sits
+    // BELOW the chips rather than between them and the signature.
+    static int ruleRow(in WidgetTree t, in Frame[] f)
     {
+        int found = -1;
         foreach (i, ref const n; t.nodes)
         {
             const w = n.decoration.borderWidth;
-            if (w.top > 0 && w.left == 0 && w.right == 0 && w.bottom == 0
-                && n.children.length == 1 && t.nodes[n.children[0]].clipY)
-                return f[i].rect.y;
+            if (w.bottom > 0 && w.top == 0 && w.left == 0 && w.right == 0
+                && n.decoration.borderStyle == BorderStyle.solid
+                && (found < 0 || f[i].rect.y < found))
+                found = f[i].rect.y;
         }
-        return -1;
+        return found;
     }
 
     int firstRow = -1;
     foreach (off; [0, 4, 11, 30])
     {
         const t = viewHoverPopup(tw, 0,
-            HoverViewOptions(maxWidth: 44, maxHeight: 12, scrollOffset: off));
+            HoverViewOptions(maxWidth: 44, maxHeight: 14, scrollOffset: off));
         auto f = layout(t);
-        const row = ruleRowOf(t, f);
-        assert(row >= 0, "the pinned rule exists");
+        const row = ruleRow(t, f);
+        assert(row > 1, "the rule is below BOTH header rows");
         if (firstRow < 0)
             firstRow = row;
         assert(row == firstRow, "and does not move as the body scrolls");
-        // …and the body under it really is scrolling, or the assertion above
-        // would hold for the wrong reason.
-        assert(popupScrollExtents(t, f).live);
+        assert(popupScrollExtents(t, f).live,
+            "…while the body under it really is scrolling");
     }
+}
 
-    // The body's own first section gave the rule up: two rules there would
-    // draw a double line under the signature. A RULE is a top border alone —
-    // the popup's own surface has a border on all four sides and is not one.
-    const t = viewHoverPopup(tw, 0,
-        HoverViewOptions(maxWidth: 44, maxHeight: 12));
-    size_t rules;
-    foreach (ref const n; t.nodes)
+
+@("render_widgets.viewHoverPopup.everySectionWrapsToOneWidth")
+@safe unittest
+{
+    // The description used to be narrowed to `docsMaxWidth` while the `@tag`
+    // rows beside it took the popup's full interior, so one surface showed two
+    // wrap widths — which reads as a bug rather than as typography.
+    import sparkles.ui.layout : layout;
+
+    // Prose and a tag, both long enough to wrap at any sane width.
+    enum long_ = "one two three four five six seven eight nine ten eleven "
+        ~ "twelve thirteen fourteen fifteen sixteen seventeen eighteen";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: long_ ~ "\n",
+            tags: [["returns", long_]]),
+    ]);
+
+    // A popup far wider than the old 56-column prose measure.
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 96));
+    auto f = layout(t);
+
+    // The widest laid-out row of each section, which is what a reader compares.
+    int docsRight, tagRight;
+    foreach (i, ref const n; t.nodes)
     {
-        const w = n.decoration.borderWidth;
-        if (w.top > 0 && w.left == 0 && w.right == 0 && w.bottom == 0
-            && n.decoration.borderStyle == BorderStyle.solid)
-            ++rules;
+        if (n.kind != WidgetKind.text && n.kind != WidgetKind.rich)
+            continue;
+        const r = f[i].rect.right;
+        // The `@returns` row is the one carrying the tag's own name run.
+        if (n.text == "returns")
+            tagRight = tagRight > r ? tagRight : r;
     }
-    assert(rules == 1, "exactly one rule under the signature");
+    foreach (i, ref const n; t.nodes)
+        if (n.wrap != TextWrap.none && f[i].rect.width > docsRight)
+            docsRight = f[i].rect.width;
+
+    assert(docsRight > 56,
+        "prose is no longer clamped to the standalone docs measure");
+    assert(docsRight <= 96, "and still fits the popup the solve sized");
+}
+
+@("render_widgets.viewHoverPopup.theRuleActuallyPaintsInATerminal")
+@safe unittest
+{
+    // The bug this whole shape fixes: the dividers were TOP borders, which a
+    // cell backend cannot draw at all — a cell has an underline attribute and
+    // no overline — so the terminal showed a popup with no separators while
+    // the GUI showed them. Asserting the widget tree is not enough; the rule
+    // has to reach a grid.
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: "Some prose about it.\n",
+            tags: [["returns", "a number"]]),
+    ]);
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+    auto f = layout(t);
+
+    const bg = RgbColor(0x1a, 0x1b, 0x26), fg = RgbColor(0xc0, 0xc0, 0xc0);
+    const pal = defaultTwoslashPalette(schemeForBackground(bg));
+    auto grid = CellGrid(48, cast(int) f[t.root].rect.height + 2, fg, bg);
+    paint(grid, buildDisplayList(t, f, pal, fg, bg));
+
+    // Count rows made of the box-drawing horizontal — the rule's glyph.
+    size_t ruleRows;
+    foreach (y; 0 .. grid.height)
+    {
+        size_t run;
+        foreach (x; 0 .. grid.width)
+            if (grid.cells[y * grid.width + x].glyph == '─')
+                ++run;
+        if (run >= 8)
+            ++ruleRows;
+    }
+    // The popup's own top and bottom border, plus the two internal rules.
+    assert(ruleRows >= 4,
+        "the section dividers must reach the grid, not only the widget tree");
 }

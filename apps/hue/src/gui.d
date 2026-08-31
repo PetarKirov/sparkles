@@ -1720,6 +1720,14 @@ int runGui(GuiArgs guiArgs) @system
                 cast(void) pop.scrollBy(inp.fin.wheelCells);
                 inp.fin.wheelCells = 0;
             }
+            // Sideways, for the fence a ddoc example puts in it: prose wraps
+            // to the popup, so the only thing that overflows is code, and the
+            // end of a wide line is otherwise unreachable.
+            if (overPopup && inp.fin.wheelCellsX != 0)
+            {
+                cast(void) pop.scrollByX(inp.fin.wheelCellsX);
+                inp.fin.wheelCellsX = 0;
+            }
             bool forced = false;
             if (pop.forceHover >= 0)
             {
@@ -1790,8 +1798,9 @@ int runGui(GuiArgs guiArgs) @system
                     {
                         pop.expandedRegions = null;
                         // A different symbol is a different document: its
-                        // scroll offset is not this one's.
+                        // scroll offsets are not this one's.
                         pop.popupScroll = 0;
+                        pop.popupScrollX = 0;
                         pop.popupNode = pop.hotNode;
                     }
                     pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
@@ -1800,8 +1809,10 @@ int runGui(GuiArgs guiArgs) @system
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         vm.pageFg, vm.pageBg,
-                        pop.expandedRegions, pop.popupScroll, pop.popupKeys,
-                        pop.popupContentRows, pop.popupViewportRows);
+                        pop.expandedRegions, pop.popupScroll,
+                        pop.popupScrollX, pop.popupKeys,
+                        pop.popupContentRows, pop.popupViewportRows,
+                        pop.popupContentCols, pop.popupViewportCols);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
                     pop.havePopup = pop.hotPopup.width > 0;
@@ -4127,8 +4138,9 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     in Rect boundary, float originX, float originY, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg,
-    ExpandedRegions expanded, long scrollOffset, out KeyTarget[] keys,
-    out long contentRows, out long viewportRows) @system
+    ExpandedRegions expanded, long scrollOffset, long scrollOffsetX,
+    out KeyTarget[] keys, out long contentRows, out long viewportRows,
+    out long contentCols, out long viewportCols) @system
 {
     import sparkles.twoslash.render_widgets : HoverViewOptions,
         placeHoverPopup, popupBound, popupScrollExtents, signatureSpans;
@@ -4147,7 +4159,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     const bound = popupBound(pal, boundary);
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
         HoverViewOptions(maxWidth: bound.width, maxHeight: bound.height,
-            scrollOffset: scrollOffset,
+            scrollOffset: scrollOffset, scrollOffsetX: scrollOffsetX,
             sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
             mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(&cache,
@@ -4182,6 +4194,8 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     const sc = popupScrollExtents(tree, frames);
     contentRows = sc.content;
     viewportRows = sc.viewport;
+    contentCols = sc.contentX;
+    viewportCols = sc.viewportX;
 
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
