@@ -95,7 +95,8 @@ import sparkles.source_view.markdown : FenceScroll, OverflowPolicy,
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
-import sparkles.twoslash.render_widgets : abbrevRegion, viewHoverPopup;
+import sparkles.twoslash.render_widgets : abbrevRegion,
+    isPopupCloseKey, viewHoverPopup;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 // The shared visual language: the twoslash palette is the single source for the
@@ -1732,6 +1733,16 @@ int runGui(GuiArgs guiArgs) @system
                     cast(void) pop.scrollByX(inp.fin.wheelCellsX);
                 inp.fin.wheelCellsX = 0;
             }
+            // A dismissed popup stays shut while the pointer is still on the
+            // token that opened it. Without the latch the next frame reopens
+            // what the reader just dismissed, and Escape appears to do nothing.
+            if (pop.dismissed)
+            {
+                if (overNode != pop.popupNode || overNode == 0)
+                    pop.dismissed = false;   // a different token is a new question
+                else
+                    overNode = 0;
+            }
             bool forced = false;
             if (pop.forceHover >= 0)
             {
@@ -1812,7 +1823,7 @@ int runGui(GuiArgs guiArgs) @system
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
                         vm.pageFg, vm.pageBg,
-                        pop.expandedRegions, pop, pop.popupKeys,
+                        pop.expandedRegions, pop, overPopup, pop.popupKeys,
                         pop.popupContentRows, pop.popupViewportRows,
                         pop.popupContentCols, pop.popupViewportCols,
                         pop.popupFenceContentCols, pop.popupFenceViewportCols);
@@ -3840,6 +3851,13 @@ int runGui(GuiArgs guiArgs) @system
             // A click on a collapsed `\u2026` in the open popup opens that one run.
             // The popup's geometry is last frame's, which is what the reader
             // aimed at; keys are cell-relative to the box.
+            // Escape dismisses an open popup before anything else claims it
+            // — `INP13`'s close request, resolved innermost-first. It is
+            // checked here rather than in the keymap because a hover popup is
+            // not a mode, so nothing else would know to yield to it.
+            if (pop.hotNode != 0 && pop.havePopup && keyBuf.hasKey(Key.escape))
+                pop.dismissed = true;
+
             bool popupClicked;
             if (pop.havePopup && pop.popupKeys.length && clickPressed()
                 && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
@@ -3849,7 +3867,9 @@ int runGui(GuiArgs guiArgs) @system
                 const k = keyAt(pop.popupKeys,
                     Point(cast(int)((mp.x - pop.hotPopup.x) / cellW),
                         cast(int)((mp.y - pop.hotPopup.y) / cellH)));
-                if (k != 0)
+                if (isPopupCloseKey(k))
+                    pop.dismissed = true;   // the ✕ in its top-right corner
+                else if (k != 0)
                 {
                     const r = abbrevRegion(k);
                     pop.expandedRegions[r] = !pop.expandedRegions.get(r, false);
@@ -4141,7 +4161,8 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     in Rect boundary, float originX, float originY, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg,
-    ExpandedRegions expanded, in HoverPopup pop, out KeyTarget[] keys,
+    ExpandedRegions expanded, in HoverPopup pop, bool showClose,
+    out KeyTarget[] keys,
     out long contentRows, out long viewportRows,
     out long contentCols, out long viewportCols,
     out long fenceContentCols, out long fenceViewportCols) @system
@@ -4169,7 +4190,7 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
             barViewport: pop.popupViewportRows,
             barContentX: pop.popupFenceContentCols,
             barViewportX: pop.popupFenceViewportCols,
-            barOffsetX: pop.popupFenceX,
+            barOffsetX: pop.popupFenceX, showClose: showClose,
             sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
             mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(&cache,
