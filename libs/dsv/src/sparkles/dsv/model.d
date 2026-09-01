@@ -14,13 +14,28 @@ module sparkles.dsv.model;
 
 import sparkles.base.buffer : SharedBuffer;
 
-/// A byte span into the borrowed source.
+/**
+A byte span into the borrowed source.
+
+Deliberately `uint`, not `size_t`. A span is the unit this model is made of —
+one per cell plus one per record — so its width sets the size of the two
+arenas a parse materializes, and those dominate parse cost at scale: a 73 MB
+document produces 8M cells, and every byte of `Span` is 8 MB of arena and 8 MB
+of memory traffic. Halving the span halves both.
+
+The cost is a 4 GiB ceiling on a single document, which $(REF parseDsv,
+sparkles,dsv,parse) rejects explicitly rather than letting it wrap. The
+normative target is 100 MB (`DSN6`), so the ceiling is 40× the requirement.
+*/
 struct Span
 {
-    size_t start;
-    size_t length;
+    uint start;
+    uint length;
 
-    size_t end() const @safe pure nothrow @nogc => start + length;
+    /// Widened deliberately: `start + length` is in range by construction
+    /// (the parser caps the source at `uint.max`), but the sum is used to
+    /// slice, and a `size_t` keeps that arithmetic away from the boundary.
+    size_t end() const @safe pure nothrow @nogc => size_t(start) + length;
 }
 
 /// How the first record is interpreted; `auto_` defers to the sniffer's
@@ -243,7 +258,7 @@ unittest
 {
     DsvDoc doc;
     doc.source = `"he said ""hi"", left"`;
-    const cell = DsvCell(Span(0, doc.source.length), CellFlags.quoted);
+    const cell = DsvCell(Span(0, cast(uint) doc.source.length), CellFlags.quoted);
     SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == `he said "hi", left`);
 }
@@ -255,7 +270,7 @@ unittest
     // `"a"b"c"` — quoted "a", literal b, re-entered quoted "c" (`DSM1`).
     DsvDoc doc;
     doc.source = `"a"b"c"`;
-    const cell = DsvCell(Span(0, doc.source.length), CellFlags.quoted);
+    const cell = DsvCell(Span(0, cast(uint) doc.source.length), CellFlags.quoted);
     SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == "abc");
 }
