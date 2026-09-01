@@ -182,10 +182,19 @@ final class DsvModel
             dialect.quote = flagChar(flags.quote, dialect.quote);
         }
 
-        auto parsed = parseDsv(source, dialect);
-        if (parsed.hasError)
-            return m; // an unusable forced dialect: the caller keeps the raw view
-        m.doc_ = parsed.value;
+        // Scoped deliberately. `DsvDoc`'s record and cell arenas are
+        // reference-counted copy-on-write `SmallBuffer`s, so while BOTH the
+        // `Expected` and the model hold the document its buffers have a
+        // refcount of two — and the next mutable access clones all of them.
+        // At the `DSN6` target that is a ~100 MB copy nobody asked for. Ending
+        // the parse result's lifetime here drops the count back to one, and
+        // the work below mutates a document it solely owns.
+        {
+            auto parsed = parseDsv(source, dialect);
+            if (parsed.hasError)
+                return m; // unusably forced dialect: the caller keeps the raw view
+            m.doc_ = parsed.value;
+        }
 
         // The sniffer's header verdict was computed under the sniffed dialect;
         // a flag override changes the grid, so re-run the heuristic on the
@@ -782,7 +791,14 @@ struct DsvCopy
     DsvInfo info;
     private DsvDoc parsed;
     private bool parsedOk;
-    private uint[] rowPerm;  /// view data row → data record (`DSC5`)
+    /// View data row → data record (`DSC5`). **Borrowed** from the
+    /// `DsvModel` that produced it, never copied: at the `DSN6` target this
+    /// is a million entries, and duplicating it on every scroll notch would
+    /// put an O(rows) memcpy — and its garbage — back on a path `DSN4` and
+    /// `DSN7` exist to keep O(window). The model outlives every copy made
+    /// from it, and a projection change replaces the array rather than
+    /// mutating it, so a stale slice cannot be observed.
+    private const(uint)[] rowPerm;
     private uint[] viewCols; /// view data col → data column
     private bool projPristine = true;
     /// Decoded (or synthetic) DATA column names, for filter-name resolution
@@ -814,7 +830,7 @@ struct DsvCopy
         // it exact), so view coordinates map through it (`DSC5`: WYSIWYG).
         // Memoized on the model, so this is the adapter's own permutation
         // rather than a second computation of it.
-        c.rowPerm = model.permutation(proj).dup;
+        c.rowPerm = model.permutation(proj);
         c.headerNames = model.headerNames.dup;
         if (proj.columns !is null)
             c.viewCols = proj.columns.dup;
