@@ -23,9 +23,9 @@ arenas a parse materializes, and those dominate parse cost at scale: a 73 MB
 document produces 8M cells, and every byte of `Span` is 8 MB of arena and 8 MB
 of memory traffic. Halving the span halves both.
 
-The cost is a 4 GiB ceiling on a single document, which $(REF parseDsv,
+The cost is a 2 GiB ceiling on a single document, which $(REF parseDsv,
 sparkles,dsv,parse) rejects explicitly rather than letting it wrap. The
-normative target is 100 MB (`DSN6`), so the ceiling is 40× the requirement.
+normative target is 100 MB (`DSN6`), so the ceiling is 20× the requirement.
 */
 struct Span
 {
@@ -33,7 +33,7 @@ struct Span
     uint length;
 
     /// Widened deliberately: `start + length` is in range by construction
-    /// (the parser caps the source at `uint.max`), but the sum is used to
+    /// (the parser caps the source at `int.max`), but the sum is used to
     /// slice, and a `size_t` keeps that arithmetic away from the boundary.
     size_t end() const @safe pure nothrow @nogc => size_t(start) + length;
 }
@@ -75,16 +75,46 @@ enum CellFlags : ubyte
     quoted = 1 << 0,
 }
 
-/// One cell. Plain data: `raw` spans the borrowed source **including** any
-/// quotes/escapes (the identity channel, `DSM2`); [cellRaw]/[decodeCell]
-/// resolve the text.
+/**
+One cell. Plain data: [raw] spans the borrowed source **including** any
+quotes/escapes (the identity channel, `DSM2`); [cellRaw]/[decodeCell] resolve
+the text.
+
+Exactly **8 bytes**, and packed to stay that way: the one flag lives in the
+top bit of the length rather than in a `ubyte` field, which would cost three
+bytes of tail padding. That is not micro-optimization at this scale — a
+document materializes one of these per cell, 8M of them for a 1M-row file,
+and the arena's cost is dominated by first-touching its pages, which is
+linear in its size. The three bytes padding would have cost would be 24 MB of
+fresh pages, and ~9 ms of faults, on every parse of such a file.
+*/
 struct DsvCell
 {
-    Span raw;
-    ubyte flags;
+    private uint start_;
+    /// Length in the low 31 bits, the quoted flag in the top one.
+    private uint lenFlags_;
+
+    private enum uint quotedBit = 1u << 31;
+    private enum uint lengthMask = quotedBit - 1;
+
+    this(Span raw, CellFlags flags = CellFlags.none) @safe pure nothrow @nogc
+    in (raw.length <= lengthMask, "a cell cannot exceed 2 GiB")
+    {
+        start_ = raw.start;
+        lenFlags_ = raw.length
+            | ((flags & CellFlags.quoted) ? quotedBit : 0u);
+    }
+
+    /// The raw span, quotes included (the identity channel, `DSM2`).
+    Span raw() const @safe pure nothrow @nogc
+        => Span(start_, lenFlags_ & lengthMask);
+
+    /// ditto
+    CellFlags flags() const @safe pure nothrow @nogc
+        => (lenFlags_ & quotedBit) ? CellFlags.quoted : CellFlags.none;
 
     bool needsDecode() const @safe pure nothrow @nogc
-        => (flags & CellFlags.quoted) != 0;
+        => (lenFlags_ & quotedBit) != 0;
 }
 
 /// One record: its cell range in the document's `cells` arena, its raw span
