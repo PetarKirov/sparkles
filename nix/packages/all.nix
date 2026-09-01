@@ -20,6 +20,7 @@
       #
       # `or [ ]` because the android module only defines its outputs on
       # x86_64-linux; everywhere else there is nothing to subtract.
+      exclusions = import ../flake-exclusions.nix;
       androidNames = config.legacyPackages.androidPackageNames or [ ];
     in
     {
@@ -36,7 +37,9 @@
           # rebuilds it from source.
           devshell-ci = config.devShells.ci;
         }
-        // builtins.removeAttrs config.packages ([ "all-desktop" ] ++ androidNames)
+        // builtins.removeAttrs config.packages (
+          [ "all-desktop" ] ++ androidNames ++ exclusions.excludedCiPackages
+        )
         // lib.concatMapAttrs (
           libName: lib.mapAttrs' (exName: lib.nameValuePair "example-${libName}-${exName}")
         ) config.legacyPackages.examples

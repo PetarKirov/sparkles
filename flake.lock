@@ -422,6 +422,10 @@
         "ufo-extractor-wheel": "ufo-extractor-wheel",
         "vtebench-src": "vtebench-src",
         "wcwidth-src": "wcwidth-src",
+        "wired-bench-external-cloudtrail": "wired-bench-external-cloudtrail",
+        "wired-bench-external-elasticsearch": "wired-bench-external-elasticsearch",
+        "wired-bench-external-osm": "wired-bench-external-osm",
+        "wired-bench-external-wikidata": "wired-bench-external-wikidata",
         "yyjson-src": "yyjson-src"
       }
     },
@@ -562,6 +566,54 @@
       "original": {
         "type": "tarball",
         "url": "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz"
+      }
+    },
+    "wired-bench-external-cloudtrail": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-63anghZTCNAyDFKIlpX1NbsEWH8p7Sys9KstAZTPevU=",
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
+      }
+    },
+    "wired-bench-external-elasticsearch": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-63anghZTCNAyDFKIlpX1NbsEWH8p7Sys9KstAZTPevU=",
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
+      }
+    },
+    "wired-bench-external-osm": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-0iZuQLqCNXvHj5DaG+8onqQo2IlkeUW6Gh6+H7PiqVE=",
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json"
+      }
+    },
+    "wired-bench-external-wikidata": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-VuourYysgHpfyU2prUinUN4mWNCHWa8Xvanuqtjaiio=",
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/numbers.json"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/numbers.json"
       }
     },
     "yyjson-src": {
