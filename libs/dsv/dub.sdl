@@ -33,3 +33,12 @@ configuration "unittest" {
 buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
 }
+
+// Optimized unittest build for the `@benchmark`/`@workload` runs, including
+// the `DSN6` scale harness. `unittests` is load-bearing — without it `dub test`
+// registers zero tests and the runner never takes over. Run:
+// `dub test :dsv -b bench -- --bench -i dsv.scale`.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" platform="ldc"
+}
