@@ -220,12 +220,17 @@ via Nix with `nix build .#wired-bench-external-data` (or run directly with
 `nix run .#run-wired-bench -- --full`), or manually placed in a directory exported as
 `$WIRED_BENCH_EXTERNAL_DATA`:
 
-| selector        | file                   | framing / benchmark op                                                   |
-| --------------- | ---------------------- | ------------------------------------------------------------------------ |
-| `wikidata`      | `wikidata.json`        | top-level array, one entity per physical line; `parse-stream`            |
-| `osm`           | `osm.json`             | one Overpass/OSM JSON document; `parse`                                  |
-| `cloudtrail`    | `cloudtrail.ndjson`    | one compact CloudTrail log-file object per line; `parse-stream`          |
-| `elasticsearch` | `elasticsearch.ndjson` | Bulk API actions/sources or log records, one JSON value per line; stream |
+| selector         | file                    | framing / benchmark op                                                   |
+| ---------------- | ----------------------- | ------------------------------------------------------------------------ |
+| `wikidata`       | `wikidata.json`         | top-level array, one entity per physical line; `parse-stream`            |
+| `wikidata_full`  | `wikidata_full.json`    | full Wikidata multi-gigabyte entity dump slice; `parse-stream`           |
+| `osm`            | `osm.json`              | one Overpass/OSM JSON document; `parse`                                  |
+| `osm_large`      | `osm_large.json`        | large multi-gigabyte monolithic OSM geometry document; `parse`           |
+| `cloudtrail`     | `cloudtrail.ndjson`     | one compact CloudTrail log-file object per line; `parse-stream`          |
+| `elasticsearch`  | `elasticsearch.ndjson`  | Bulk API actions/sources or log records, one JSON value per line; stream |
+| `gharchive`      | `gharchive.ndjson`      | GitHub event stream (Push/PR/Issue events), one JSON value per line      |
+| `amazon_reviews` | `amazon_reviews.ndjson` | Amazon product reviews & metadata (UCSD/McAuley); `parse-stream`         |
+| `openalex`       | `openalex.ndjson`       | OpenAlex academic works & citation graphs; `parse-stream`                |
 
 External files are read through a read-only memory map. They do not incur a
 second heap-sized input copy, and record streams release each parsed document
@@ -241,9 +246,14 @@ external RSS profiler.
   `lbzip2 -dc latest-all.json.bz2 > "$WIRED_BENCH_EXTERNAL_DATA/wikidata.json"`.
   The dump is enormous; a dated dump is preferable when publishing results.
 - **OpenStreetMap:** request JSON from the [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API/Overpass_QL)
-  (`[out:json]`) and save the complete response as `osm.json`. Include geometry
-  (`out geom`) when the goal is a high-density coordinate workload, and use a dated
-  query/bounding box in any published benchmark so the input is reproducible.
+  (`[out:json]`) and save the complete response as `osm.json` (or `osm_large.json`).
+  Include geometry (`out geom`) when the goal is a high-density coordinate workload,
+  and use a dated query/bounding box in any published benchmark so the input is reproducible.
+- **GHArchive:** download public hourly archives from [GHArchive](https://www.gharchive.org/)
+  (e.g., `wget https://data.gharchive.org/2024-01-01-15.json.gz && gunzip 2024-01-01-15.json.gz -c > "$WIRED_BENCH_EXTERNAL_DATA/gharchive.ndjson"`).
+- **Amazon Reviews:** use [Amazon Review Data](https://nijianmo.github.io/amazon/index.html)
+  (e.g. _Books_ or _Electronics_ category NDJSON) and place it as `amazon_reviews.ndjson`.
+- **OpenAlex:** export works partitions from [OpenAlex](https://docs.openalex.org/) and place as `openalex.ndjson`.
 - **CloudTrail:** [AWS delivers](https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-log-file-examples.html)
   gzip-compressed JSON documents whose root has a `Records` array. Compact each
   decompressed log file to one physical line (for example with `jq -c .`) and

@@ -70,5 +70,35 @@
       input = "wired-bench-external-elasticsearch";
       subpath = "";
     }
+    {
+      name = "gharchive.ndjson";
+      selector = "gharchive";
+      input = "wired-bench-external-gharchive";
+      subpath = "";
+    }
+    {
+      name = "amazon_reviews.ndjson";
+      selector = "amazon_reviews";
+      input = "wired-bench-external-amazon-reviews";
+      subpath = "";
+    }
+    {
+      name = "osm_large.json";
+      selector = "osm_large";
+      input = "wired-bench-external-osm-large";
+      subpath = "";
+    }
+    {
+      name = "wikidata_full.json";
+      selector = "wikidata_full";
+      input = "wired-bench-external-wikidata-full";
+      subpath = "";
+    }
+    {
+      name = "openalex.ndjson";
+      selector = "openalex";
+      input = "wired-bench-external-openalex";
+      subpath = "";
+    }
   ];
 }

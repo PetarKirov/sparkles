@@ -168,6 +168,31 @@
       url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
       flake = false;
     };
+    wired-bench-external-gharchive = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
+      flake = false;
+    };
+    wired-bench-external-amazon-reviews = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
+      flake = false;
+    };
+    wired-bench-external-osm-large = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json";
+      flake = false;
+    };
+    wired-bench-external-wikidata-full = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/Wikidata-Toolkit/Wikidata-Toolkit/master/wdtk-dumpfiles/src/test/resources/mock-dump-for-long-testing.json";
+      flake = false;
+    };
+    wired-bench-external-openalex = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
+      flake = false;
+    };
   };
   outputs =
     inputs@{ flake-parts, ... }:
