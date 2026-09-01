@@ -607,13 +607,13 @@
     "wired-bench-external-wikidata": {
       "flake": false,
       "locked": {
-        "narHash": "sha256-VuourYysgHpfyU2prUinUN4mWNCHWa8Xvanuqtjaiio=",
+        "narHash": "sha256-hJpEDQl0rHUvmagWjC4DLgcx0TqISLwSim1+fcEPJEc=",
         "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/numbers.json"
+        "url": "https://raw.githubusercontent.com/Wikidata-Toolkit/Wikidata-Toolkit/master/wdtk-dumpfiles/src/test/resources/mock-dump-for-long-testing.json"
       },
       "original": {
         "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/numbers.json"
+        "url": "https://raw.githubusercontent.com/Wikidata-Toolkit/Wikidata-Toolkit/master/wdtk-dumpfiles/src/test/resources/mock-dump-for-long-testing.json"
       }
     },
     "yyjson-src": {

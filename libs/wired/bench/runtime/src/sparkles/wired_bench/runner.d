@@ -69,10 +69,12 @@ private bool engineEnabled(string name) @safe
 private string[] selectedDatasetNames() @safe
 {
     import core.runtime : Runtime;
-    import std.algorithm.iteration : splitter;
-    import std.algorithm.searching : startsWith;
+    import std.algorithm.iteration : filter, splitter;
+    import std.algorithm.searching : any, startsWith;
     import std.array : array;
     import std.process : environment;
+    import sparkles.wired_bench.data : datasetSources, defaultDatasetNames;
+    import sparkles.test_runner.metrics : matchesMetricGlob;
 
     string selected;
     const args = () @trusted { return Runtime.args; }();
@@ -83,9 +85,24 @@ private string[] selectedDatasetNames() @safe
     if (!selected.length)
         selected = environment.get("WIRED_BENCH_DATASETS", "");
 
-    return selected.length
-        ? selected.splitter(',').array
-        : defaultDatasetNames.dup;
+    if (!selected.length)
+        return defaultDatasetNames.dup;
+
+    if (selected == "all" || selected == "help" || selected == "?")
+    {
+        string[] all;
+        foreach (s; datasetSources)
+            all ~= s.name;
+        return all;
+    }
+
+    string[] result;
+    const patterns = selected.splitter(',').array;
+    foreach (source; datasetSources)
+        if (patterns.any!(p => matchesMetricGlob(source.name, p)))
+            result ~= source.name;
+
+    return result;
 }
 
 private bool datasetEnabled(string name) @safe
@@ -101,20 +118,25 @@ private Dataset[] benchDatasets(DatasetFormat format = DatasetFormat.document)
     import std.algorithm.iteration : filter;
     import std.algorithm.searching : any;
     import std.array : array;
+    import sparkles.wired_bench.data : datasetSource, loadDatasets,
+        resolveDataDir, resolveExternalDataDir;
 
+    const extDir = resolveExternalDataDir(null);
     const names = selectedDatasetNames
-        .filter!(n => datasetSource(n).format == format).array;
+        .filter!(n => datasetSource(n).format == format)
+        .filter!(n => datasetSource(n).bundled || extDir.length)
+        .array;
+    if (!names.length)
+        return null;
     const needsBundled = names.any!(n => datasetSource(n).bundled);
-    return loadDatasets(names, needsBundled ? resolveDataDir(null) : null);
+    return loadDatasets(names, needsBundled ? resolveDataDir(null) : null, extDir);
 }
 
-/// The env filters can empty an op's matrix; an explicitly-labeled marker row
-/// beats the runner's zero-case whole-body fallback, which would silently
-/// measure this registration body instead.
+/// The env filters can empty an op's matrix; skip the test cleanly.
 private void markFilteredOut(string operation)
 {
-    benchCase(name: "(filtered out)", timed: () {}, after: () {},
-        labels: ["operation": operation]);
+    import sparkles.test_runner.skip : skipTest;
+    skipTest("no matching datasets or engines enabled for " ~ operation);
 }
 
 /// Registers one engine × dataset op through `reg`, isolating a

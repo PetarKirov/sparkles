@@ -150,7 +150,7 @@
     # and nix/flake-exclusions.nix). Kept out of the devshell closure.
     wired-bench-external-wikidata = {
       type = "file";
-      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/numbers.json";
+      url = "https://raw.githubusercontent.com/Wikidata-Toolkit/Wikidata-Toolkit/master/wdtk-dumpfiles/src/test/resources/mock-dump-for-long-testing.json";
       flake = false;
     };
     wired-bench-external-osm = {
