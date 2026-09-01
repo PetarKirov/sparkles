@@ -31,13 +31,14 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
     if (d == q || d == '\r' || d == '\n' || q == '\r' || q == '\n')
         return parseErr!DsvDoc(ParseErrorCode.unexpectedCharacter, 0,
             "delimiter and quote must be distinct, non-newline bytes");
-    // `Span` is a `uint` pair — half the arena, at the price of a 4 GiB
-    // ceiling. Refused outright rather than wrapped: a truncated span would
-    // silently point at the wrong bytes, which is the worst failure this
-    // model can have.
-    if (source.length > uint.max)
+    // `Span` is a `uint` pair and `DsvCell` spends the top length bit on its
+    // quoted flag, so a span is 8 bytes at the price of a 2 GiB ceiling.
+    // Refused outright rather than wrapped: a truncated span would silently
+    // point at the wrong bytes, which is the worst failure this model can
+    // have.
+    if (source.length > int.max)
         return parseErr!DsvDoc(ParseErrorCode.numericOverflow, 0,
-            "document exceeds the 4 GiB span limit");
+            "document exceeds the 2 GiB span limit");
 
     DsvDoc doc;
     doc.source = source;
