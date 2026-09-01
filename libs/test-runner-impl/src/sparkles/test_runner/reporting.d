@@ -1817,6 +1817,7 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
 struct DatasetInfo
 {
     string name;
+    string tier;   /// dataset scale tier (e.g. "light", "medium", "huge")
     ulong byteSize; /// file size in bytes (0 if unknown)
     ulong records;  /// record/document count (0 if unknown)
     size_t caseCount;
@@ -1831,13 +1832,40 @@ string formatDatasetCatalog(in DatasetInfo[] datasets, bool colored) @system
     import std.array : appender, join;
     import std.conv : to;
 
-    string[][] cells = [[
-        render(colored, i"{bold dataset}"),
-        render(colored, i"{bold size}"),
-        render(colored, i"{bold records}"),
-        render(colored, i"{bold cases}"),
-        render(colored, i"{bold operations}"),
-    ]];
+    bool hasTiers = false;
+    foreach (ref d; datasets)
+        if (d.tier.length)
+        {
+            hasTiers = true;
+            break;
+        }
+
+    string[][] cells;
+    Align[] aligns;
+    if (hasTiers)
+    {
+        cells = [[
+            render(colored, i"{bold dataset}"),
+            render(colored, i"{bold tier}"),
+            render(colored, i"{bold size}"),
+            render(colored, i"{bold records}"),
+            render(colored, i"{bold cases}"),
+            render(colored, i"{bold operations}"),
+        ]];
+        aligns = [Align.left, Align.left, Align.right, Align.right, Align.right, Align.left];
+    }
+    else
+    {
+        cells = [[
+            render(colored, i"{bold dataset}"),
+            render(colored, i"{bold size}"),
+            render(colored, i"{bold records}"),
+            render(colored, i"{bold cases}"),
+            render(colored, i"{bold operations}"),
+        ]];
+        aligns = [Align.left, Align.right, Align.right, Align.right, Align.left];
+    }
+
     foreach (ref d; datasets)
     {
         string sizeStr = "—";
@@ -1852,15 +1880,28 @@ string formatDatasetCatalog(in DatasetInfo[] datasets, bool colored) @system
         if (d.records > 0)
             recordsStr = d.records.to!string;
 
-        cells ~= [
-            d.name,
-            sizeStr,
-            recordsStr,
-            d.caseCount.to!string,
-            d.operations.length ? d.operations.join(", ") : "—",
-        ];
+        if (hasTiers)
+        {
+            cells ~= [
+                d.name,
+                d.tier.length ? d.tier : "—",
+                sizeStr,
+                recordsStr,
+                d.caseCount.to!string,
+                d.operations.length ? d.operations.join(", ") : "—",
+            ];
+        }
+        else
+        {
+            cells ~= [
+                d.name,
+                sizeStr,
+                recordsStr,
+                d.caseCount.to!string,
+                d.operations.length ? d.operations.join(", ") : "—",
+            ];
+        }
     }
-    Align[] aligns = [Align.left, Align.right, Align.right, Align.right, Align.left];
     return renderCells(cells, aligns, headerRows: 1);
 }
 
@@ -2318,18 +2359,21 @@ unittest
     import std.algorithm.searching : canFind;
 
     DatasetInfo[2] datasets = [
-        DatasetInfo("twitter", 631_514, 0, 24, ["decode", "parse", "serialize", "validate"]),
-        DatasetInfo("cloudtrail", 278_800, 3680, 5, ["parse-stream"]),
+        DatasetInfo("twitter", "light", 631_514, 0, 24, ["decode", "parse", "serialize", "validate"]),
+        DatasetInfo("cloudtrail", "medium", 278_800, 3680, 5, ["parse-stream"]),
     ];
     const rendered = formatDatasetCatalog(datasets, false);
     assert(rendered.canFind("dataset"));
+    assert(rendered.canFind("tier"));
     assert(rendered.canFind("size"));
     assert(rendered.canFind("records"));
     assert(rendered.canFind("cases"));
     assert(rendered.canFind("operations"));
     assert(rendered.canFind("twitter"));
+    assert(rendered.canFind("light"));
     assert(rendered.canFind("616.7KiB"));
     assert(rendered.canFind("cloudtrail"));
+    assert(rendered.canFind("medium"));
     assert(rendered.canFind("3680"));
     assert(rendered.canFind("parse-stream"));
 }

@@ -22,6 +22,7 @@ $(MREF sparkles,wired_bench,data)).
 module sparkles.wired_bench.runner;
 
 import expected : err, ok;
+import std.conv : to;
 
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
@@ -154,7 +155,7 @@ private void isolated(string engineName, Dataset ds, string operation,
         const string msg = e.msg;
         benchCase(name: engineName, timed: () {},
             after: () => err!bool("registration failed: " ~ msg),
-            labels: ["dataset": ds.name, "operation": operation]);
+            labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": operation]);
     }
 }
 
@@ -330,7 +331,7 @@ private void registerParse(E)(Dataset ds, Fingerprint reference)
             return error.length ? err!bool(error) : ok!string(true);
         },
         metrics: [bytes(ds.text.length)],
-        labels: ["dataset": ds.name, "operation": "parse"],
+        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
     );
@@ -359,7 +360,7 @@ private void registerParseInsitu(E)(Dataset ds, Fingerprint reference)
             return error.length ? err!bool(error) : ok!string(true);
         },
         metrics: [bytes(ds.text.length)],
-        labels: ["dataset": ds.name, "operation": "parse-insitu"],
+        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-insitu"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
     );
@@ -430,7 +431,7 @@ private void registerParseStream(E)(Dataset ds, StreamReference reference)
             return error.length ? err!bool(error) : ok!string(true);
         },
         metrics: [bytes(ds.text.length), documents(reference.records)],
-        labels: ["dataset": ds.name, "operation": "parse-stream"],
+        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-stream"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
     );
@@ -459,7 +460,7 @@ private void registerValidate(E)(Dataset ds)
             return error.length ? err!bool(error) : ok!string(true);
         },
         metrics: [bytes(ds.text.length)],
-        labels: ["dataset": ds.name, "operation": "validate"],
+        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "validate"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
     );
@@ -506,7 +507,7 @@ private void registerSerialize(E)(Dataset ds, Fingerprint reference)
             return error.length ? err!bool(error) : ok!string(true);
         },
         metrics: [bytes(outBytes)],
-        labels: ["dataset": ds.name, "operation": "serialize"],
+        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "serialize"],
         // Hold one parsed document across the whole case (untimed).
         setup: () {
             static if (hasSetup!E)
@@ -542,7 +543,7 @@ private void registerDecode(E)(Dataset ds)
             return error.length ? err!bool(error) : ok!string(true);
         },
         metrics: [bytes(ds.text.length)],
-        labels: ["dataset": ds.name, "operation": "decode"],
+        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "decode"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
     );

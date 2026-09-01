@@ -14,6 +14,8 @@ in
   # Packages excluded from the desktop CI build aggregate:
   excludedCiPackages = [
     "wired-bench-external-data"
+    "wired-bench-huge-data"
+    "wired-bench-medium-data"
     "run-wired-bench"
   ];
 }
