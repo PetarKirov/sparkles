@@ -1806,6 +1806,57 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
     return renderCells(cells, headerRows: 1);
 }
 
+/// A summary of one dataset's statistics extracted from registered benchmark cases.
+struct DatasetInfo
+{
+    string name;
+    ulong byteSize; /// file size in bytes (0 if unknown)
+    ulong records;  /// record/document count (0 if unknown)
+    size_t caseCount;
+    string[] operations;
+}
+
+/// The `--list-datasets` report: every registered dataset with its size, records,
+/// case count, and supported operations.
+string formatDatasetCatalog(in DatasetInfo[] datasets, bool colored) @system
+{
+    import sparkles.base.text.writers : writeBytes;
+    import std.array : appender, join;
+    import std.conv : to;
+
+    string[][] cells = [[
+        render(colored, i"{bold dataset}"),
+        render(colored, i"{bold size}"),
+        render(colored, i"{bold records}"),
+        render(colored, i"{bold cases}"),
+        render(colored, i"{bold operations}"),
+    ]];
+    foreach (ref d; datasets)
+    {
+        string sizeStr = "—";
+        if (d.byteSize > 0)
+        {
+            auto w = appender!string;
+            writeBytes(w, d.byteSize);
+            sizeStr = w.data;
+        }
+
+        string recordsStr = "—";
+        if (d.records > 0)
+            recordsStr = d.records.to!string;
+
+        cells ~= [
+            d.name,
+            sizeStr,
+            recordsStr,
+            d.caseCount.to!string,
+            d.operations.length ? d.operations.join(", ") : "—",
+        ];
+    }
+    Align[] aligns = [Align.left, Align.right, Align.right, Align.right, Align.left];
+    return renderCells(cells, aligns, headerRows: 1);
+}
+
 /// The `--list-metrics` capability block: what each backend can deliver on
 /// this host, this run — one `✓ capability` / `✗ capability — reason` line
 /// per flag a backend claims or explains, grouped by backend, flags in
@@ -2251,4 +2302,27 @@ unittest
     const bare = buildWorkloadTable([stampless], false);
     assert(!bare.cells[0].canFind("regime"));
     assert(bare.cells[0].countUntil("wall") == 2);
+}
+
+@("reporting.formatDatasetCatalog")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    DatasetInfo[2] datasets = [
+        DatasetInfo("twitter", 631_514, 0, 24, ["decode", "parse", "serialize", "validate"]),
+        DatasetInfo("cloudtrail", 278_800, 3680, 5, ["parse-stream"]),
+    ];
+    const rendered = formatDatasetCatalog(datasets, false);
+    assert(rendered.canFind("dataset"));
+    assert(rendered.canFind("size"));
+    assert(rendered.canFind("records"));
+    assert(rendered.canFind("cases"));
+    assert(rendered.canFind("operations"));
+    assert(rendered.canFind("twitter"));
+    assert(rendered.canFind("616.7KiB"));
+    assert(rendered.canFind("cloudtrail"));
+    assert(rendered.canFind("3680"));
+    assert(rendered.canFind("parse-stream"));
 }

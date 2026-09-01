@@ -31,6 +31,7 @@ import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
     formatBenchTable, formatCapabilityBlock, formatCtfeFailedLine, formatCtfeLine,
     formatWorkloadTable,
+    formatDatasetCatalog, DatasetInfo,
     formatFailedRecap, formatMetricCatalog, formatResultLine, formatSummary,
     formatThrown, progressEnabled, RunTotals, TableGeometry;
 
@@ -973,9 +974,44 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             stdout.writeln("no @benchmark cases carry a dataset label");
         else
         {
-            stdout.writeln("--datasets available in registered @benchmark cases:");
+            DatasetInfo[] infos;
             foreach (ds; allDatasets)
-                stdout.writeln("  ", ds);
+            {
+                DatasetInfo info;
+                info.name = ds;
+                bool[string] ops;
+                foreach (ref s; all)
+                {
+                    if (auto dsp = "dataset" in s.c.labels)
+                    {
+                        if (*dsp == ds)
+                        {
+                            info.caseCount++;
+                            if (auto op = "operation" in s.c.labels)
+                                ops[*op] = true;
+                            foreach (m; s.c.metrics)
+                            {
+                                if (m.unit.symbol == "B" || m.unit.symbol == "byte" || m.unit.symbol == "bytes")
+                                {
+                                    if (m.amount > info.byteSize)
+                                        info.byteSize = cast(ulong) m.amount;
+                                }
+                                else if (m.unit.symbol == "doc" || m.unit.symbol == "docs"
+                                    || m.unit.symbol == "document" || m.unit.symbol == "record"
+                                    || m.unit.symbol == "records")
+                                {
+                                    if (m.amount > info.records)
+                                        info.records = cast(ulong) m.amount;
+                                }
+                            }
+                        }
+                    }
+                }
+                info.operations = ops.keys.sort.release;
+                infos ~= info;
+            }
+            stdout.write(formatDatasetCatalog(infos, colored));
+            stdout.writeln;
         }
         return UnitTestResult(failed, 0, false, false);
     }
