@@ -2,9 +2,9 @@
 # (libs/wired/bench/runtime).
 #
 # Datasets are declared in nix/packages/wired-bench-datasets.nix.
-# - Bundled datasets are pinned by packages.wired-bench-data (exposed to devshell as $WIRED_BENCH_DATA)
-# - External datasets are pinned by packages.wired-bench-external-data (opt-in; excluded from devshell)
-# - run-wired-bench provides a unified wrapper script for running benchmarks.
+# - Light datasets (< 5 MB) are pinned by packages.wired-bench-data (exposed to devshell as $WIRED_BENCH_DATA)
+# - Medium (10 MB - 200 MB) and Huge (> 1 GB) corpora are opt-in (excluded from devshell).
+# - run-wired-bench provides a unified wrapper script supporting --light, --medium, and --huge.
 { inputs, ... }:
 let
   datasets = import ./wired-bench-datasets.nix;
@@ -16,28 +16,45 @@ in
       inherit (pkgs) lib;
 
       resolvePath =
-        d: if d.subpath != "" then "${inputs.${d.input}}/${d.subpath}" else "${inputs.${d.input}}";
+        d:
+        let
+          src = if d.subpath != "" then "${inputs.${d.input}}/${d.subpath}" else "${inputs.${d.input}}";
+        in
+        if d ? decompress && d.decompress == "gz" then
+          pkgs.runCommand d.name { } "${pkgs.gzip}/bin/gunzip -c ${src} > $out"
+        else if d ? decompress && d.decompress == "zstd" then
+          pkgs.runCommand d.name { } "${pkgs.zstd}/bin/zstd -d -c ${src} > $out"
+        else
+          src;
 
-      bundledList = map (d: {
-        inherit (d) name;
-        path = resolvePath d;
-      }) datasets.bundled;
+      mapList =
+        list:
+        map (d: {
+          inherit (d) name;
+          path = resolvePath d;
+        }) list;
 
-      externalList = map (d: {
-        inherit (d) name;
-        path = resolvePath d;
-      }) datasets.external;
+      lightList = mapList datasets.light;
+      mediumList = mapList datasets.medium;
+      hugeList = mapList datasets.huge;
+      externalList = mediumList ++ hugeList;
 
-      bundledSelectors = map (d: d.selector) datasets.bundled;
-      externalSelectors = map (d: d.selector) datasets.external;
-      allSelectors = bundledSelectors ++ externalSelectors;
+      lightSelectors = map (d: d.selector) datasets.light;
+      mediumSelectors = map (d: d.selector) datasets.medium;
+      hugeSelectors = map (d: d.selector) datasets.huge;
+      mediumPlusLightSelectors = lightSelectors ++ mediumSelectors;
+      allSelectors = lightSelectors ++ mediumSelectors ++ hugeSelectors;
 
-      bundledListStr = lib.concatStringsSep "," bundledSelectors;
+      lightListStr = lib.concatStringsSep "," lightSelectors;
+      mediumPlusLightListStr = lib.concatStringsSep "," mediumPlusLightSelectors;
       allListStr = lib.concatStringsSep "," allSelectors;
     in
     {
-      packages.wired-bench-data = pkgs.linkFarm "wired-bench-data" bundledList;
-      packages.wired-bench-external-data = pkgs.linkFarm "wired-bench-external-data" externalList;
+      packages.wired-bench-data = pkgs.linkFarm "wired-bench-data" lightList;
+      packages.wired-bench-light-data = config.packages.wired-bench-data;
+      packages.wired-bench-medium-data = pkgs.linkFarm "wired-bench-medium-data" mediumList;
+      packages.wired-bench-huge-data = pkgs.linkFarm "wired-bench-huge-data" externalList;
+      packages.wired-bench-external-data = config.packages.wired-bench-huge-data;
 
       packages.run-wired-bench = pkgs.writeShellApplication {
         name = "run-wired-bench";
@@ -49,19 +66,29 @@ in
         text = ''
           export WIRED_BENCH_DATA="${config.packages.wired-bench-data}"
 
-          full_mode=0
-          if [ "''${1:-}" = "--full" ] || [ "''${1:-}" = "--external" ]; then
-            full_mode=1
+          tier="light"
+          if [ "''${1:-}" = "--huge" ] || [ "''${1:-}" = "--full" ] || [ "''${1:-}" = "--external" ]; then
+            tier="huge"
+            shift
+          elif [ "''${1:-}" = "--medium" ]; then
+            tier="medium"
+            shift
+          elif [ "''${1:-}" = "--light" ]; then
+            tier="light"
             shift
           fi
 
-          if [ "$full_mode" -eq 1 ]; then
-            export WIRED_BENCH_EXTERNAL_DATA="${config.packages.wired-bench-external-data}"
+          if [ "$tier" = "huge" ]; then
+            export WIRED_BENCH_EXTERNAL_DATA="${config.packages.wired-bench-huge-data}"
             export WIRED_BENCH_DATASETS="''${WIRED_BENCH_DATASETS:-${allListStr}}"
-            echo "==> Running full wired benchmark (bundled + external datasets)"
+            echo "==> Running huge wired benchmark (light + medium + huge datasets)"
+          elif [ "$tier" = "medium" ]; then
+            export WIRED_BENCH_EXTERNAL_DATA="${config.packages.wired-bench-medium-data}"
+            export WIRED_BENCH_DATASETS="''${WIRED_BENCH_DATASETS:-${mediumPlusLightListStr}}"
+            echo "==> Running medium wired benchmark (light + medium datasets)"
           else
-            export WIRED_BENCH_DATASETS="''${WIRED_BENCH_DATASETS:-${bundledListStr}}"
-            echo "==> Running standard wired benchmark (bundled datasets)"
+            export WIRED_BENCH_DATASETS="''${WIRED_BENCH_DATASETS:-${lightListStr}}"
+            echo "==> Running light wired benchmark (< 5 MB datasets)"
           fi
 
           REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"

@@ -22,14 +22,18 @@ Historical findings and every accepted/rejected optimization are recorded in
 ### Nix runner (automated setup & datasets)
 
 ```sh
-# Canonical standard run (bundled datasets):
+# Standard light benchmark (< 5 MB datasets, default):
 nix run .#run-wired-bench
+nix run .#run-wired-bench -- --light
 
-# Full competitive benchmark (bundled + external datasets):
-nix run .#run-wired-bench -- --full
+# Medium-scale benchmark (light + medium datasets):
+nix run .#run-wired-bench -- --medium
 
-# List available datasets or run a subset:
-nix run .#run-wired-bench -- --list-datasets
+# Full large-scale production benchmark (light + medium + huge datasets):
+nix run .#run-wired-bench -- --huge
+
+# List available datasets across all tiers:
+nix run .#run-wired-bench -- --huge --list-datasets
 nix run .#run-wired-bench -- --datasets=twitter,canada -i 'wired\.parse$'
 ```
 

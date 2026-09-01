@@ -987,6 +987,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
                         if (*dsp == ds)
                         {
                             info.caseCount++;
+                            if (auto tp = "tier" in s.c.labels)
+                                info.tier = *tp;
                             if (auto op = "operation" in s.c.labels)
                                 ops[*op] = true;
                             foreach (m; s.c.metrics)

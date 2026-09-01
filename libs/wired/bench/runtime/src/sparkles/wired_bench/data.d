@@ -26,43 +26,48 @@ enum DatasetFormat
     jsonArrayLines, /// `[`/`]` plus one comma-terminated value per line
 }
 
+/// Scale tier of a dataset: light (< 5 MB), medium (10 MB – 200 MB), huge (> 1 GB).
+enum DatasetTier
+{
+    light,
+    medium,
+    huge,
+}
+
 /// One known corpus and its on-disk convention.
 struct DatasetSource
 {
     string name;
     string fileName;
     DatasetFormat format;
+    DatasetTier tier;
     bool bundled;
 }
 
 /// The normal, reproducible benchmark matrix. External corpora are opt-in.
 immutable string[] defaultDatasetNames =
     ["twitter", "citm_catalog", "canada", "github_events", "mesh",
-        "mesh_pretty"];
+        "mesh_pretty", "wikidata", "osm", "cloudtrail", "elasticsearch"];
 
 /// Every dataset name accepted by `$WIRED_BENCH_DATASETS`.
 immutable DatasetSource[] datasetSources =
 [
-    DatasetSource("twitter", "twitter.json", DatasetFormat.document, true),
-    DatasetSource("citm_catalog", "citm_catalog.json", DatasetFormat.document, true),
-    DatasetSource("canada", "canada.json", DatasetFormat.document, true),
-    DatasetSource("github_events", "github_events.json", DatasetFormat.document, true),
-    DatasetSource("mesh", "mesh.json", DatasetFormat.document, true),
-    DatasetSource("mesh_pretty", "mesh.pretty.json", DatasetFormat.document, true),
+    DatasetSource("twitter", "twitter.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("citm_catalog", "citm_catalog.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("canada", "canada.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("github_events", "github_events.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("mesh", "mesh.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("mesh_pretty", "mesh.pretty.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("wikidata", "wikidata.json", DatasetFormat.jsonArrayLines, DatasetTier.light, true),
+    DatasetSource("osm", "osm.json", DatasetFormat.document, DatasetTier.light, true),
+    DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, DatasetTier.light, true),
+    DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, DatasetTier.light, true),
 
-    // The Wikidata dump is a single array on disk, but its documented physical
-    // layout is one entity per line. Treating those lines as records keeps the
-    // live parse tree bounded under sustained runs. `recordLine` removes the
-    // surrounding array and each line's separator comma.
-    DatasetSource("wikidata", "wikidata.json", DatasetFormat.jsonArrayLines, false),
-    DatasetSource("osm", "osm.json", DatasetFormat.document, false),
-    DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, false),
-    DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, false),
-    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, false),
-    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, false),
-    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, false),
-    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, false),
-    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, false),
+    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false),
+    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false),
+    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, DatasetTier.huge, false),
+    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, DatasetTier.huge, false),
+    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false),
 ];
 
 /// One loaded benchmark corpus.
@@ -71,6 +76,7 @@ struct Dataset
     string name;            /// dataset name, e.g. `twitter`
     const(char)[] text;      /// the raw corpus text
     DatasetFormat format;   /// document framing
+    DatasetTier tier;       /// scale tier
     private MmFile mapping; /// keeps an external corpus's read-only map alive
 
     /// A lazy range of JSON texts in a line-oriented corpus.
@@ -136,18 +142,18 @@ Dataset[] loadDatasets(const string[] names, string dataDir,
         const path = root.buildPath(source.fileName);
         enforce(path.exists, "dataset not found: " ~ path);
         result ~= source.bundled
-            ? Dataset(name, readText(path), source.format)
-            : mapDataset(name, path, source.format);
+            ? Dataset(name, readText(path), source.format, source.tier)
+            : mapDataset(name, path, source.format, source.tier);
     }
     return result;
 }
 
 /// Maps a potentially enormous external corpus without a heap-sized input copy.
-private Dataset mapDataset(string name, string path, DatasetFormat format)
-    @trusted
+private Dataset mapDataset(string name, string path, DatasetFormat format,
+    DatasetTier tier) @trusted
 {
     auto mapping = new MmFile(path);
-    return Dataset(name, cast(const(char)[]) mapping[], format, mapping);
+    return Dataset(name, cast(const(char)[]) mapping[], format, tier, mapping);
 }
 
 /// Normalizes one physical line into a JSON record view.
