@@ -15,11 +15,16 @@
         lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
       );
 
+      exclusions = import ../flake-exclusions.nix;
+
       # Every flake input as a `/nix/store` path. `self` is omitted — interpolating
-      # it recurses / re-copies the tree into the shell closure. Name transform:
-      # `dmd-src` → `SPARKLES_FLAKE_INPUT_DMD_SRC`. See AGENTS.md
+      # it recurses / re-copies the tree into the shell closure. Opt-in benchmark
+      # corpora from nix/flake-exclusions.nix are also omitted to keep the shell lean.
+      # Name transform: `dmd-src` → `SPARKLES_FLAKE_INPUT_DMD_SRC`. See AGENTS.md
       # "Flake-input store paths".
-      flakeInputPaths = lib.mapAttrs (_: v: toString v) (removeAttrs inputs [ "self" ]);
+      flakeInputPaths = lib.mapAttrs (_: v: toString v) (
+        removeAttrs inputs ([ "self" ] ++ exclusions.excludedFlakeInputs)
+      );
       flakeInputEnvName =
         name: "SPARKLES_FLAKE_INPUT_" + lib.toUpper (lib.replaceStrings [ "-" ] [ "_" ] name);
       flakeInputExports = lib.concatStringsSep "\n" (

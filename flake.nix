@@ -145,6 +145,29 @@
       url = "https://code.dlang.org/packages/bolts/1.3.1.zip";
       flake = false;
     };
+
+    # Opt-in external benchmark datasets for sparkles:wired (see nix/packages/wired-bench-datasets.nix
+    # and nix/flake-exclusions.nix). Kept out of the devshell closure.
+    wired-bench-external-wikidata = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/numbers.json";
+      flake = false;
+    };
+    wired-bench-external-osm = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json";
+      flake = false;
+    };
+    wired-bench-external-cloudtrail = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
+      flake = false;
+    };
+    wired-bench-external-elasticsearch = {
+      type = "file";
+      url = "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson";
+      flake = false;
+    };
   };
   outputs =
     inputs@{ flake-parts, ... }:
