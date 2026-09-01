@@ -75,8 +75,8 @@ binary. JSON (de)serialization uses `sparkles:wired` (`toJSON`/`fromJSON` over
 ```text
 release [-s|--stage <stage>] [-a|--auto] [-g|--agent <key>]
         [-b|--bump major|minor|patch] [-n|--notes manual|agent]
-        [-S|--split] [-N|--no-verify] [-L|--log-level <level>]
-        [<command>]
+        [-S|--split] [-P|--plan <file>] [-N|--no-verify]
+        [-L|--log-level <level>] [<command>]
 ```
 
 `release` is a command group whose **root is itself runnable** (`isDefault`),
@@ -84,16 +84,17 @@ so the bare form above is the cut-a-release flow it has always been. The
 subcommands exist because that flow is built to compute the _next_ version and
 so structurally cannot express operations on a tag that already exists.
 
-| Flag                | Values / default                                                                    | Meaning                                                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `-s`, `--stage`     | `create-tag` (default), `push-tag`, `create-gh-release-draft`, `publish-gh-release` | Cumulative target stage; each implies the earlier ones (§5.4). In split mode the stage applies to **every** segment. |
-| `-a`, `--auto`      | off                                                                                 | Non-interactive: every prompt takes its default, agent notes are used verbatim (no `$EDITOR`).                       |
-| `-g`, `--agent`     | none                                                                                | Agent key (`claude-code`, `codex`, `gemini`, …). Only agents found on `PATH` are usable.                             |
-| `-b`, `--bump`      | none                                                                                | Classic mode only: override the suggested bump.                                                                      |
-| `-n`, `--notes`     | `manual` interactively, `agent` under `--auto`                                      | Release-notes mode (§8).                                                                                             |
-| `-S`, `--split`     | off                                                                                 | Split mode: segment the unreleased backlog into multiple chained releases (§7). Requires `gh` and an agent.          |
-| `-N`, `--no-verify` | off                                                                                 | Skip the pre-flight checks.                                                                                          |
-| `-L`, `--log-level` | `info`                                                                              | `trace`, `info`, `warning`, `error`.                                                                                 |
+| Flag                | Values / default                                                                    | Meaning                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `-s`, `--stage`     | `create-tag` (default), `push-tag`, `create-gh-release-draft`, `publish-gh-release` | Cumulative target stage; each implies the earlier ones (§5.4). In split mode the stage applies to **every** segment.                |
+| `-a`, `--auto`      | off                                                                                 | Non-interactive: every prompt takes its default, agent notes are used verbatim (no `$EDITOR`).                                      |
+| `-g`, `--agent`     | none                                                                                | Agent key (`claude-code`, `codex`, `gemini`, …). Only agents found on `PATH` are usable.                                            |
+| `-b`, `--bump`      | none                                                                                | Classic mode only: override the suggested bump.                                                                                     |
+| `-n`, `--notes`     | `manual` interactively, `agent` under `--auto`                                      | Release-notes mode (§8).                                                                                                            |
+| `-S`, `--split`     | off                                                                                 | Split mode: segment the unreleased backlog into multiple chained releases (§7). Requires `gh` and an agent.                         |
+| `-P`, `--plan`      | none                                                                                | Resume a split run from a saved `plan.json` (§7.6): no association, no segmentation; created tags count as done. Implies `--split`. |
+| `-N`, `--no-verify` | off                                                                                 | Skip the pre-flight checks.                                                                                                         |
+| `-L`, `--log-level` | `info`                                                                              | `trace`, `info`, `warning`, `error`.                                                                                                |
 
 Option conflicts (hard errors, before any work):
 
@@ -386,6 +387,40 @@ For each segment, oldest first:
 Publishing oldest-first leaves GitHub's "Latest release" marker on the newest
 tag. A failing stage stops the loop; the summary receipt lists every tag that
 was created/pushed and the retry command.
+
+### 7.6 Resuming a plan (`--plan <file>`)
+
+Because §7.5 creates tags one segment at a time, an interruption leaves some
+releases made and the rest not — and §7.3 step 5 then refuses any plan naming a
+tag that exists, including a freshly segmented one. `--plan` takes the run back
+from the `plan.json` artifact (§9), which is written before the first tag:
+
+- PR association (§6) and segmentation (§7.1–§7.3) are both skipped, so no
+  `gh` GraphQL calls and no agent call are made for the plan itself. `gh` is
+  then required only by the stages that use it (§5.4). Notes still go through
+  §8 per segment.
+- A segment whose tag already exists is **already released**: it is dropped,
+  along with the commits it covered. The range now starts after it, which is
+  why the saved `begin`/`end` indices are not reused.
+- Every surviving segment is re-anchored by resolving its `boundarySha` in the
+  current range, so commits that landed after the plan was saved shift nothing
+  — they fall into the remainder, and the remainder decision (§7.4) is offered
+  as usual (extending the last release simply widens it; there is no reply to
+  re-plan from).
+- `theme`, `highlights`, `bump`, `version_`, `tag` and `prNumbers` are the
+  saved plan's own: resuming re-uses the agent's decisions rather than
+  re-deriving them. `remainderNote` is dropped (it explains a remainder the
+  agent chose, not what has landed since) and `noPrCommits` is zeroed (the
+  association that counts it did not run).
+- `--plan` implies `--split`.
+
+It is refused when: the file cannot be read or decoded; the plan has no
+segments; **every** segment's tag exists (`nothing to resume`); a surviving
+segment's `boundarySha` is not in the current range (`the branch moved under
+the saved plan` — a rebase, typically); or the first surviving segment's
+version is not ahead of the latest tag, which would mean the plan belongs to a
+different range. An empty range still stops earlier, at §7's "nothing to
+split".
 
 ## 8. Notes
 

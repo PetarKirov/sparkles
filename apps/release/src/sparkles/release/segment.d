@@ -426,6 +426,101 @@ in (rows.length == commits.length)
     return success(plan);
 }
 
+/++
+Re-anchors a saved plan (SPEC §7.6) onto the current backlog so a run that
+died part-way can be resumed.
+
+A `--split` run creates its tags one segment at a time, so an interruption
+leaves some releases made and the rest not — and the fresh-tag check in
+`app.d` then refuses any plan naming a tag that exists, including a re-derived
+one. This takes the plan back:
+
+$(LIST
+    * a segment whose tag is in `existingTags` is already released and is
+        dropped, along with the commits it covered — the range now starts
+        after it, so the saved `begin`/`end` indices cannot be reused;
+    * every surviving segment is re-anchored by resolving its `boundarySha`
+        in `rows`, so new commits at the tip shift nothing;
+    * `prNumbers`, `highlights`, `theme`, `bump` and `version_` are the
+        plan's own — resuming re-uses the agent's decisions rather than
+        re-deriving them, which is the point.
+)
+
+`noPrCommits` is zeroed (resuming skips the PR association that counts it) and
+`remainderNote` is dropped: the note explains the remainder the agent decided
+on, and after a resume the remainder is whatever has landed since — keeping it
+would caption a different set of commits. Ours said "No remainder: every unit
+is releasable" above 982 of them.
++/
+Result!ReleasePlan resumePlan(
+    const ReleasePlan saved, const(SegmentInput)[] rows, const SemVer current,
+    const(string)[] existingTags) @safe
+{
+    import std.algorithm.iteration : filter, map;
+    import std.algorithm.searching : canFind, find;
+    import std.array : array, empty, front;
+    import std.conv : text;
+
+    if (saved.segments.empty)
+        return failure!ReleasePlan("the saved plan has no segments");
+
+    auto pending = saved.segments.filter!(s => !existingTags.canFind(s.tag)).array;
+    if (pending.empty)
+        return failure!ReleasePlan(text(
+            "every release in the saved plan already exists (", saved.segments.length,
+            " tags, newest ", saved.segments[$ - 1].tag, "); nothing to resume"));
+
+    // The plan's own chain must continue where the repository now stands: a
+    // release cut outside it (or a plan for another range) would silently
+    // renumber everything downstream.
+    if (!(current < pending.front.version_))
+        return failure!ReleasePlan(text(
+            "the saved plan resumes at ", pending.front.tag, ", which is not"
+            ~ " ahead of the latest tag v", verString(current)
+            ~ " — the plan is for a different range"));
+
+    ReleasePlan plan;
+    plan.segments.reserve(pending.length);
+
+    size_t begin = 0;
+    foreach (ref seg; pending)
+    {
+        auto at = rows.find!(r => r.sha == seg.boundarySha);
+        if (at.empty)
+            return failure!ReleasePlan(text(
+                "the boundary of ", seg.tag, " (", shortSha(seg.boundarySha),
+                ") is not in the current range — the branch moved under the"
+                ~ " saved plan"));
+        const end = rows.length - at.length + 1;
+        if (end <= begin)
+            return failure!ReleasePlan(text(
+                "the saved plan is out of order at ", seg.tag,
+                " (its boundary precedes the previous segment's)"));
+
+        // Everything but the indices is the plan's own decision, carried over.
+        plan.segments ~= SegmentPlan(
+            begin: begin,
+            end: end,
+            boundarySha: seg.boundarySha,
+            theme: seg.theme,
+            highlights: seg.highlights.dup,
+            bump: seg.bump,
+            bumpOrigin: seg.bumpOrigin,
+            version_: seg.version_,
+            tag: seg.tag,
+            prNumbers: seg.prNumbers.dup,
+        );
+        begin = end;
+    }
+    plan.remainderBegin = begin;
+    return success(plan);
+}
+
+/// The first 8 characters of `sha`, for a message (a shorter one may not be
+/// unique, and the whole OID reads as noise).
+private string shortSha(string sha) @safe pure nothrow
+    => sha.length >= 8 ? sha[0 .. 8] : sha;
+
 private string normalizeToken(string s) @safe pure nothrow
 {
     auto t = trimAscii(s);
@@ -818,4 +913,105 @@ version (unittest)
     assert(plan.hasValue);
     assert(plan.value.remainderBegin == 1);
     assert(plan.value.remainderNote == "release tool still cooking");
+}
+
+version (unittest)
+{
+    /// The three-segment plan a `--split` run over `rows` would have saved.
+    private ReleasePlan savedPlanOf(const(SegmentInput)[] rows, const(Commit)[] commits)
+        @safe
+    {
+        const reply = AgentReply(segments: [
+            seg("0", "minor", "first"), seg("1", "minor", "second"),
+            seg("2", "minor", "third"),
+        ], remainderNote: "nothing held back");
+        auto planR = buildPlan(reply, rows, commits, SemVer(major: 0, minor: 4, patch: 0));
+        assert(planR.hasValue);
+        return planR.value;
+    }
+}
+
+@("segment.resumePlan.dropsCreatedTagsAndReanchors")
+@safe unittest
+{
+    SegmentInput[] rows;
+    Commit[] commits;
+    mkRange(["feat: a", "feat: b", "feat: c"], [1, 2, 3], rows, commits);
+    const saved = savedPlanOf(rows, commits);
+    assert(saved.segments.length == 3);          // v0.5.0, v0.6.0, v0.7.0
+
+    // v0.5.0 was created before the run died, so the range now starts after
+    // it: the remaining segments re-anchor onto the shorter row list.
+    auto resumed = resumePlan(saved, rows[1 .. $],
+        SemVer(major: 0, minor: 5, patch: 0), ["v0.4.0", "v0.5.0"]);
+    assert(resumed.hasValue);
+    const plan = resumed.value;
+    assert(plan.segments.length == 2);
+    assert(plan.segments[0].tag == "v0.6.0");
+    assert(plan.segments[0].begin == 0 && plan.segments[0].end == 1);
+    assert(plan.segments[1].tag == "v0.7.0");
+    assert(plan.segments[1].begin == 1 && plan.segments[1].end == 2);
+    assert(plan.remainderBegin == 2);            // nothing left over
+
+    // The agent's decisions ride along rather than being re-derived.
+    assert(plan.segments[0].theme == "second");
+    assert(plan.segments[0].prNumbers == [2]);
+    assert(plan.segments[0].bump == BumpKind.minor);
+}
+
+@("segment.resumePlan.newTipCommitsBecomeTheRemainder")
+@safe unittest
+{
+    SegmentInput[] rows;
+    Commit[] commits;
+    mkRange(["feat: a", "feat: b", "feat: c"], [1, 2, 3], rows, commits);
+    const saved = savedPlanOf(rows, commits);
+
+    // Work landed after the plan was saved: boundaries still resolve, and the
+    // new commits fall into the remainder rather than shifting anything.
+    auto grown = rows.dup;
+    grown ~= SegmentInput(sha: fakeSha(9), prNumber: 4, subject: "feat: later");
+    auto resumed = resumePlan(saved, grown,
+        SemVer(major: 0, minor: 4, patch: 0), ["v0.4.0"]);
+    assert(resumed.hasValue);
+    assert(resumed.value.segments.length == 3);
+    assert(resumed.value.remainderBegin == 3);
+    assert(grown.length - resumed.value.remainderBegin == 1);
+
+    // The saved note explained the remainder the agent chose to leave; this
+    // one is simply what has landed since, so the note does not carry over.
+    assert(resumed.value.remainderNote.length == 0);
+}
+
+@("segment.resumePlan.rejections")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+
+    SegmentInput[] rows;
+    Commit[] commits;
+    mkRange(["feat: a", "feat: b", "feat: c"], [1, 2, 3], rows, commits);
+    const saved = savedPlanOf(rows, commits);
+
+    // Everything already released.
+    const done = resumePlan(saved, rows, SemVer(major: 0, minor: 7, patch: 0),
+        ["v0.5.0", "v0.6.0", "v0.7.0"]);
+    assert(done.hasError);
+    assert(done.error.canFind("nothing to resume"));
+
+    // A boundary the branch no longer contains (rebased or reset away).
+    const moved = resumePlan(saved, rows[0 .. 2],
+        SemVer(major: 0, minor: 4, patch: 0), ["v0.4.0"]);
+    assert(moved.hasError);
+    assert(moved.error.canFind("not in the current range"));
+
+    // A plan whose chain does not continue from the latest tag: v0.5.0 is not
+    // ahead of v0.9.0, so resuming it would renumber everything after it.
+    const stale = resumePlan(saved, rows, SemVer(major: 0, minor: 9, patch: 0), []);
+    assert(stale.hasError);
+    assert(stale.error.canFind("different range"));
+
+    // An empty plan is not a resumable one.
+    assert(resumePlan(ReleasePlan.init, rows,
+        SemVer(major: 0, minor: 4, patch: 0), []).hasError);
 }
