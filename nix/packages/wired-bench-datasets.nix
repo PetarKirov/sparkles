@@ -85,38 +85,48 @@ let
   huge = [
     {
       name = "gharchive.ndjson";
+      downloadName = "gharchive.json.gz";
       selector = "gharchive";
       tier = "huge";
-      input = "wired-bench-external-gharchive";
-      subpath = "";
+      url = "https://data.gharchive.org/2024-01-01-15.json.gz";
+      sha256 = "1l43pibhi1jwy1f22zz6n0s96fnjn08vgn3ij0ipns9q6r0khwkf";
+      decompress = "gz";
     }
     {
       name = "amazon_reviews.ndjson";
+      downloadName = "amazon_reviews.ndjson";
       selector = "amazon_reviews";
       tier = "huge";
-      input = "wired-bench-external-amazon-reviews";
-      subpath = "";
+      url = "https://huggingface.co/datasets/McAuley-Lab/Amazon-Reviews-2023/resolve/main/raw/review_categories/Software.jsonl";
+      sha256 = "";
+      decompress = "none";
     }
     {
       name = "osm_large.json";
+      downloadName = "osm_large.geojson";
       selector = "osm_large";
       tier = "huge";
-      input = "wired-bench-external-osm-large";
-      subpath = "";
+      url = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson";
+      sha256 = "0mgjx16anypz304mnxmfa25k2b3mavycydi53shh1w8pmibyr7i3";
+      decompress = "none";
     }
     {
       name = "wikidata_full.json";
+      downloadName = "wikidata_full.json.gz";
       selector = "wikidata_full";
       tier = "huge";
-      input = "wired-bench-external-wikidata-full";
-      subpath = "";
+      url = "https://dumps.wikimedia.org/wikidatawiki/entities/latest-lexemes.json.gz";
+      sha256 = "";
+      decompress = "gz";
     }
     {
       name = "openalex.ndjson";
+      downloadName = "openalex.ndjson";
       selector = "openalex";
       tier = "huge";
-      input = "wired-bench-external-openalex";
-      subpath = "";
+      url = "https://huggingface.co/datasets/UniverseTBD/arxiv-abstracts-large/resolve/main/arxiv-metadata-oai-snapshot.json";
+      sha256 = "";
+      decompress = "none";
     }
   ];
 in

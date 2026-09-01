@@ -18,7 +18,11 @@ in
       resolvePath =
         d:
         let
-          src = if d.subpath != "" then "${inputs.${d.input}}/${d.subpath}" else "${inputs.${d.input}}";
+          src =
+            if d ? input then
+              if d.subpath != "" then "${inputs.${d.input}}/${d.subpath}" else "${inputs.${d.input}}"
+            else
+              pkgs.emptyFile;
         in
         if d ? decompress && d.decompress == "gz" then
           pkgs.runCommand d.name { } "${pkgs.gzip}/bin/gunzip -c ${src} > $out"
@@ -36,8 +40,6 @@ in
 
       lightList = mapList datasets.light;
       mediumList = mapList datasets.medium;
-      hugeList = mapList datasets.huge;
-      externalList = mediumList ++ hugeList;
 
       lightSelectors = map (d: d.selector) datasets.light;
       mediumSelectors = map (d: d.selector) datasets.medium;
@@ -48,17 +50,47 @@ in
       lightListStr = lib.concatStringsSep "," lightSelectors;
       mediumPlusLightListStr = lib.concatStringsSep "," mediumPlusLightSelectors;
       allListStr = lib.concatStringsSep "," allSelectors;
+
+      hugeFetchScript = lib.concatStringsSep "\n" (
+        map (d: ''
+          if [ ! -s "$CACHE_DIR/${d.name}" ]; then
+            echo "==> Fetching ${d.selector} dataset (${d.url})..."
+            curl -f -L --progress-bar -C - "${d.url}" -o "$CACHE_DIR/${d.downloadName}"
+            ${
+              if d ? decompress && d.decompress == "gz" then
+                ''
+                  echo "==> Decompressing ${d.downloadName} -> ${d.name}..."
+                  gzip -dc "$CACHE_DIR/${d.downloadName}" > "$CACHE_DIR/${d.name}.tmp"
+                  mv "$CACHE_DIR/${d.name}.tmp" "$CACHE_DIR/${d.name}"
+                ''
+              else if d ? decompress && d.decompress == "zstd" then
+                ''
+                  echo "==> Decompressing ${d.downloadName} -> ${d.name}..."
+                  zstd -d -c "$CACHE_DIR/${d.downloadName}" > "$CACHE_DIR/${d.name}.tmp"
+                  mv "$CACHE_DIR/${d.name}.tmp" "$CACHE_DIR/${d.name}"
+                ''
+              else if d.name != d.downloadName then
+                ''
+                  mv "$CACHE_DIR/${d.downloadName}" "$CACHE_DIR/${d.name}"
+                ''
+              else
+                ""
+            }
+          fi
+        '') datasets.huge
+      );
     in
     {
       packages.wired-bench-data = pkgs.linkFarm "wired-bench-data" lightList;
       packages.wired-bench-light-data = config.packages.wired-bench-data;
       packages.wired-bench-medium-data = pkgs.linkFarm "wired-bench-medium-data" mediumList;
-      packages.wired-bench-huge-data = pkgs.linkFarm "wired-bench-huge-data" externalList;
-      packages.wired-bench-external-data = config.packages.wired-bench-huge-data;
 
       packages.run-wired-bench = pkgs.writeShellApplication {
         name = "run-wired-bench";
         runtimeInputs = [
+          pkgs.curl
+          pkgs.gzip
+          pkgs.zstd
           pkgs.dub
           pkgs.ldc
           pkgs.pkg-config
@@ -79,7 +111,10 @@ in
           fi
 
           if [ "$tier" = "huge" ]; then
-            export WIRED_BENCH_EXTERNAL_DATA="${config.packages.wired-bench-huge-data}"
+            CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/sparkles/wired-bench-data"
+            mkdir -p "$CACHE_DIR"
+            ${hugeFetchScript}
+            export WIRED_BENCH_EXTERNAL_DATA="$CACHE_DIR"
             export WIRED_BENCH_DATASETS="''${WIRED_BENCH_DATASETS:-${allListStr}}"
             echo "==> Running huge wired benchmark (light + medium + huge datasets)"
           elif [ "$tier" = "medium" ]; then

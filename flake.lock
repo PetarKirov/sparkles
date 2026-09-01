@@ -422,15 +422,10 @@
         "ufo-extractor-wheel": "ufo-extractor-wheel",
         "vtebench-src": "vtebench-src",
         "wcwidth-src": "wcwidth-src",
-        "wired-bench-external-amazon-reviews": "wired-bench-external-amazon-reviews",
         "wired-bench-external-cloudtrail": "wired-bench-external-cloudtrail",
         "wired-bench-external-elasticsearch": "wired-bench-external-elasticsearch",
-        "wired-bench-external-gharchive": "wired-bench-external-gharchive",
-        "wired-bench-external-openalex": "wired-bench-external-openalex",
         "wired-bench-external-osm": "wired-bench-external-osm",
-        "wired-bench-external-osm-large": "wired-bench-external-osm-large",
         "wired-bench-external-wikidata": "wired-bench-external-wikidata",
-        "wired-bench-external-wikidata-full": "wired-bench-external-wikidata-full",
         "yyjson-src": "yyjson-src"
       }
     },
@@ -573,18 +568,6 @@
         "url": "https://files.pythonhosted.org/packages/source/w/wcwidth/wcwidth-0.8.2.tar.gz"
       }
     },
-    "wired-bench-external-amazon-reviews": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-63anghZTCNAyDFKIlpX1NbsEWH8p7Sys9KstAZTPevU=",
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
-      }
-    },
     "wired-bench-external-cloudtrail": {
       "flake": false,
       "locked": {
@@ -609,30 +592,6 @@
         "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
       }
     },
-    "wired-bench-external-gharchive": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-63anghZTCNAyDFKIlpX1NbsEWH8p7Sys9KstAZTPevU=",
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
-      }
-    },
-    "wired-bench-external-openalex": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-63anghZTCNAyDFKIlpX1NbsEWH8p7Sys9KstAZTPevU=",
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/amazon_cellphones.ndjson"
-      }
-    },
     "wired-bench-external-osm": {
       "flake": false,
       "locked": {
@@ -645,31 +604,7 @@
         "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json"
       }
     },
-    "wired-bench-external-osm-large": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-0iZuQLqCNXvHj5DaG+8onqQo2IlkeUW6Gh6+H7PiqVE=",
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/simdjson/simdjson-data/master/jsonexamples/marine_ik.json"
-      }
-    },
     "wired-bench-external-wikidata": {
-      "flake": false,
-      "locked": {
-        "narHash": "sha256-hJpEDQl0rHUvmagWjC4DLgcx0TqISLwSim1+fcEPJEc=",
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/Wikidata-Toolkit/Wikidata-Toolkit/master/wdtk-dumpfiles/src/test/resources/mock-dump-for-long-testing.json"
-      },
-      "original": {
-        "type": "file",
-        "url": "https://raw.githubusercontent.com/Wikidata-Toolkit/Wikidata-Toolkit/master/wdtk-dumpfiles/src/test/resources/mock-dump-for-long-testing.json"
-      }
-    },
-    "wired-bench-external-wikidata-full": {
       "flake": false,
       "locked": {
         "narHash": "sha256-hJpEDQl0rHUvmagWjC4DLgcx0TqISLwSim1+fcEPJEc=",

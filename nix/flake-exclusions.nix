@@ -9,12 +9,10 @@ let
 in
 {
   # Programmatically derived from the external dataset catalog:
-  excludedFlakeInputs = map (d: d.input) datasets.external;
+  excludedFlakeInputs = map (d: d.input) (builtins.filter (d: d ? input) datasets.external);
 
   # Packages excluded from the desktop CI build aggregate:
   excludedCiPackages = [
-    "wired-bench-external-data"
-    "wired-bench-huge-data"
     "wired-bench-medium-data"
     "run-wired-bench"
   ];
