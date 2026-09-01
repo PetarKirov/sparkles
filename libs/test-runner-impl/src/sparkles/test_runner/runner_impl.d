@@ -81,6 +81,8 @@ private struct RunnerOptions
     string benchJson;  /// --bench-json=FILE ("" = off)
     uint benchMinTime; /// --bench-min-time=MS (0 = BenchConfig's 5 ms default)
     bool listMetrics;
+    string datasets;
+    bool listDatasets;
     string ctfeTrace;
     bool betterC;
     bool wasm;
@@ -300,6 +302,13 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
         "list-metrics",
             "With --bench: list the available metric columns (name, class, source) and exit",
             &options.listMetrics,
+        "datasets",
+            "With --bench: comma-separated dataset names to run (glob with '*'; " ~
+            "'all' = every dataset; '?'/'help' = list them)",
+            &options.datasets,
+        "list-datasets",
+            "With --bench: list available benchmark datasets and exit",
+            &options.listDatasets,
         "ctfe-trace",
             "Evaluate @ctfe tests under LDC -ftime-trace (writing the trace " ~
             "to the given file) and report per-test CTFE cost",
@@ -347,6 +356,11 @@ unittest
     auto ok = parseRunnerOptions(["prog", "--syscalls", "-t", "4"]);
     assert(!ok.error.length);
     assert(ok.options.syscalls == "*" && ok.options.threads == 4);
+
+    auto ds = parseRunnerOptions(["prog", "--datasets=twitter,canada", "--list-datasets"]);
+    assert(!ds.error.length);
+    assert(ds.options.datasets == "twitter,canada");
+    assert(ds.options.listDatasets);
 
     auto help = parseRunnerOptions(["prog", "--help"]);
     assert(!help.error.length && help.helpWanted && help.helpOptions.length);
@@ -884,7 +898,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import sparkles.test_runner.skip : TestSkipped;
     import std.algorithm.searching : canFind;
     import sparkles.test_runner.metrics : canonicalSortKey, catalog,
-        groupKeyDisplay, groupKeyOf, unknownMetricSelectors;
+        groupKeyDisplay, groupKeyOf, matchesMetricGlob, unknownMetricSelectors;
 
     auto benchTests = tests.filter!(t => t.traits.isBenchmark).array;
 
@@ -938,6 +952,45 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 
         foreach (line; provenanceLines)
             stderr.writeln("provenance: ", line);
+    }
+
+    // Collect distinct dataset labels across registered cases
+    bool[string] datasetSet;
+    foreach (ref s; all)
+        if (auto ds = "dataset" in s.c.labels)
+            datasetSet[*ds] = true;
+    auto allDatasets = datasetSet.keys.sort.release;
+
+    // --list-datasets / --datasets=? / --datasets=help : list available datasets and exit
+    if (options.listDatasets || options.datasets == "?" || options.datasets == "help")
+    {
+        if (allDatasets.length == 0)
+            stdout.writeln("no @benchmark cases carry a dataset label");
+        else
+        {
+            stdout.writeln("--datasets available in registered @benchmark cases:");
+            foreach (ds; allDatasets)
+                stdout.writeln("  ", ds);
+        }
+        return UnitTestResult(failed, 0, false, false);
+    }
+
+    // --datasets=... filter: keep only matching cases and warn on unmatched selectors
+    if (options.datasets.length && options.datasets != "all")
+    {
+        import std.algorithm.iteration : splitter;
+        import std.algorithm.searching : any;
+
+        auto patterns = options.datasets.splitter(',').array;
+        foreach (p; patterns)
+            if (!allDatasets.any!(ds => matchesMetricGlob(ds, p)))
+                stderr.writeln("--datasets: no @benchmark case has dataset '", p, "'");
+
+        all = all.filter!((s) {
+            if (auto ds = "dataset" in s.c.labels)
+                return patterns.any!(p => matchesMetricGlob(*ds, p));
+            return true;
+        }).array;
     }
 
     // The label keys available to --group-by: the sorted union across all cases.
