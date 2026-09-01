@@ -58,6 +58,11 @@ immutable DatasetSource[] datasetSources =
     DatasetSource("osm", "osm.json", DatasetFormat.document, false),
     DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, false),
     DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, false),
+    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, false),
+    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, false),
+    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, false),
+    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, false),
+    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, false),
 ];
 
 /// One loaded benchmark corpus.
@@ -105,9 +110,7 @@ DatasetSource datasetSource(scope const(char)[] name) @safe
     foreach (source; datasetSources)
         if (source.name == name)
             return source;
-    enforce(false, "unknown dataset '" ~ name ~ "' (known: twitter, "
-        ~ "citm_catalog, canada, github_events, mesh, mesh_pretty, wikidata, "
-        ~ "osm, cloudtrail, elasticsearch)");
+    enforce(false, "unknown dataset '" ~ name ~ "'");
     assert(false);
 }
 
