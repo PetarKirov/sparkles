@@ -17,7 +17,8 @@ See `docs/guidelines/release.md` for the policy this encodes.
 Usage:
     release [--stage=create-tag|push-tag|create-gh-release-draft|publish-gh-release]
             [--auto] [--agent=<key>] [--bump=major|minor|patch]
-            [--notes=manual|agent] [--split] [--no-verify] [--log-level=<level>]
+            [--notes=manual|agent] [--split] [--plan=<file>] [--no-verify]
+            [--log-level=<level>]
 +/
 module sparkles.release.app;
 
@@ -41,17 +42,17 @@ import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, b
 import sparkles.release.artifacts : ArtifactSink, makeArtifactSink;
 import sparkles.release.bump : applyBump, BumpKind, parseBumpKind, suggestBump;
 import sparkles.release.conventional : CommitType;
-import sparkles.release.git : authorCounts, countCommitsNotOn, createAnnotatedTag, currentBranch, diffStat, latestTag, listTags, logRange, logStatRange, numstat, pushTag, remoteUrl, repoRoot, tagExists;
+import sparkles.release.git : authorCounts, countCommitsNotOn, createAnnotatedTag, currentBranch, diffStat, latestTag, listTags, logRange, logStatRange, numstat, pushTag, remoteUrl, repoRoot, tagExists, TaggedVersion;
 import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer, stripComments;
-import sparkles.release.pr : associatePrs, parseRemoteUrl, PrRef;
+import sparkles.release.pr : associatePrs, parseRemoteUrl, PrRef, RepoSlug;
 import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
-import sparkles.release.result : Result;
+import sparkles.release.result : failure, Result;
 import sparkles.release.store.run : applicationId, RunOptions, runPublish, runPublishPlay;
 import sparkles.release.store.stage : defaultStage, PublishStage, publishStageNames, tryParseStage;
 import sparkles.release.store.version_map : apkVersionForTag, describe;
 import std.sumtype : SumType;
 import sparkles.release.json_utils : parseJsonText;
-import sparkles.release.segment : AgentReply, buildPlan, BumpOrigin, parseSegmentReply, ReleasePlan, SegmentInput, SegmentPlan, stripJsonFence;
+import sparkles.release.segment : AgentReply, buildPlan, buildUnits, BumpOrigin, parseSegmentReply, ReleasePlan, SegmentInput, SegmentPlan, stripJsonFence;
 import sparkles.release.stages : Stage, parseStage, stageAtLeast, stageToken;
 import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, CommitTally, AuthorCount, FileStat, AreaStat, areaBreakdown;
 
@@ -97,6 +98,12 @@ struct CliParams
         "Segment the unreleased backlog into multiple chained releases "
         ~ "(associates commits with PRs via gh; an LLM agent proposes the split)."))
     bool split;
+
+    @(Option(`P|plan`, description:
+        "Resume a split run from a saved plan.json instead of associating and "
+        ~ "segmenting again: releases whose tags already exist are treated as "
+        ~ "done, the rest are re-anchored onto the current range. Implies --split."))
+    string plan;
 
     @(Option(`N|no-verify`, description: "Skip the pre-flight checks (clean tree, on main, ci tests)."))
     bool noVerify;
@@ -364,7 +371,10 @@ private int runCut(CliParams cli)
     if (notesMode.isNull)
         return fail("--notes=manual is incompatible with --auto (manual needs $EDITOR)");
 
-    if (cli.split)
+    // `--plan` is only meaningful for a split run, and naming one says plainly
+    // enough that a split is wanted — so it implies `--split` rather than
+    // failing on the pair.
+    if (cli.split || cli.plan.length)
     {
         if (cli.bump.length)
             return fail("--bump is incompatible with --split "
@@ -499,8 +509,11 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
     import std.array : array;
     import sparkles.core_cli.prompts : confirm, PromptPolicy, select, SelectOption, stdioPromptIo;
 
-    // Split needs gh for the association even at --stage create-tag.
-    if (auto e = checkGhReady(stage, needGhAnyway: true))
+    const resuming = cli.plan.length > 0;
+
+    // Split needs gh for the association even at --stage create-tag; a resumed
+    // run does no association, so gh is only its usual stage requirement.
+    if (auto e = checkGhReady(stage, needGhAnyway: !resuming))
         return fail(e);
 
     // One agent serves the segmentation and every segment's notes.
@@ -529,14 +542,18 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
     const current = firstRelease ? SemVer(major: 0, minor: 0, patch: 0)
         : latest.get.version_;
 
-    // ----- GitHub slug -----
-    auto urlR = remoteUrl();
-    if (urlR.hasError)
-        return fail(urlR.error);
-    const slug = parseRemoteUrl(urlR.value);
-    if (slug.isNull)
-        return fail("origin remote `" ~ urlR.value
-            ~ "` is not a GitHub repository (--split associates commits via gh)");
+    // ----- GitHub slug (association only) -----
+    Nullable!RepoSlug slug;
+    if (!resuming)
+    {
+        auto urlR = remoteUrl();
+        if (urlR.hasError)
+            return fail(urlR.error);
+        slug = parseRemoteUrl(urlR.value);
+        if (slug.isNull)
+            return fail("origin remote `" ~ urlR.value
+                ~ "` is not a GitHub repository (--split associates commits via gh)");
+    }
 
     const root = repoRoot();
     auto sink = makeArtifactSink(root.hasValue ? root.value : ".");
@@ -548,7 +565,8 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
     stdout.flush();
 
     // ----- PR association (live progress) -----
-    PrRef[] prRefs;
+    PrRef[] prRefs = new PrRef[](commits.length);   // resumed: no PR data
+    if (!resuming)
     {
         auto region = stdoutLiveRegion();
         scope (exit)
@@ -574,15 +592,25 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
         rows ~= SegmentInput(sha: c.sha, prNumber: prRefs[i].number,
             prTitle: prRefs[i].title, subject: c.subject);
 
-    // ----- segmentation (retry once on an invalid reply) -----
-    auto promptR = buildSegmentationPrompt(rows, current);
-    if (promptR.hasError)
-        return fail(promptR.error);
-    sink.save("segmentation-prompt.md", promptR.value.forArtifact);
-
+    // ----- the plan: resumed from disk, or segmented by the agent -----
     ReleasePlan plan;
     AgentReply reply;
+    if (resuming)
     {
+        auto resumedR = loadPlan(cli.plan, rows, current, tagsR.value);
+        if (resumedR.hasError)
+            return fail(resumedR.error);
+        plan = resumedR.value;
+        info(i"Resumed $(plan.segments.length) release(s) from $(cli.plan) — PR association and segmentation skipped.");
+    }
+    else
+    {
+        // ----- segmentation (retry once on an invalid reply) -----
+        auto promptR = buildSegmentationPrompt(rows, current);
+        if (promptR.hasError)
+            return fail(promptR.error);
+        sink.save("segmentation-prompt.md", promptR.value.forArtifact);
+
         string lastError;
         bool valid = false;
         foreach (attempt; 1 .. 3)
@@ -661,14 +689,28 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
             stdioPromptIo(), theme);
         if (choice.hasValue && choice.value == 1)
         {
-            auto extended = reply;
-            extended.segments = reply.segments.dup;
-            extended.segments[$ - 1].boundary = rows[$ - 1].sha;
-            extended.remainderNote = null;
-            auto planR = buildPlan(extended, rows, commits, current);
-            if (planR.hasError)
-                return fail(planR.error);      // cannot happen structurally
-            plan = planR.value;
+            if (resuming)
+            {
+                // No agent reply to re-plan from, and none needed: the last
+                // segment simply swallows what is left.
+                plan.segments[$ - 1].end = rows.length;
+                plan.segments[$ - 1].boundarySha = rows[$ - 1].sha;
+                plan.remainderBegin = rows.length;
+                plan.remainderNote = null;
+            }
+            else
+            {
+                auto extended = reply;
+                extended.segments = reply.segments.dup;
+                // A boundary is a unit index (SPEC §7.2), so extending names
+                // the last unit — not, as it once did, the last commit's SHA.
+                extended.segments[$ - 1].boundary = text(buildUnits(rows).length - 1);
+                extended.remainderNote = null;
+                auto planR = buildPlan(extended, rows, commits, current);
+                if (planR.hasError)
+                    return fail(planR.error);      // cannot happen structurally
+                plan = planR.value;
+            }
             renderPlan(plan, rows, theme);
         }
     }
@@ -901,6 +943,39 @@ private void printSplitReceipt(
 
 /// The validated plan as pretty JSON for the `.result/` artifact (best-effort:
 /// an encode failure yields an explanatory stub instead of aborting anything).
+/++
+Reads a saved `plan.json` and re-anchors it onto the current range
+($(REF resumePlan, sparkles,release,segment)).
+
+The file is the artifact a `--split` run writes before it starts creating
+tags, so resuming needs nothing the tool did not already persist.
++/
+private Result!ReleasePlan loadPlan(
+    string path, const(SegmentInput)[] rows, const SemVer current,
+    const(TaggedVersion)[] tags)
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.file : FileException, readText;
+
+    import sparkles.release.json_utils : decodeJson;
+    import sparkles.release.segment : resumePlan;
+
+    string text_;
+    try
+        text_ = readText(path);
+    catch (FileException e)
+        return failure!ReleasePlan("could not read the plan `" ~ path ~ "`: " ~ e.msg);
+    catch (Exception e)
+        return failure!ReleasePlan("could not read the plan `" ~ path ~ "`: " ~ e.msg);
+
+    auto saved = decodeJson!ReleasePlan(text_);
+    if (saved.hasError)
+        return failure!ReleasePlan("plan `" ~ path ~ "`: " ~ saved.error);
+
+    return resumePlan(saved.value, rows, current, tags.map!(t => t.tag).array);
+}
+
 private string planJson(in ReleasePlan plan)
 {
     import sparkles.release.json_utils : encodeJson;
