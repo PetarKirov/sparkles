@@ -31,6 +31,13 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
     if (d == q || d == '\r' || d == '\n' || q == '\r' || q == '\n')
         return parseErr!DsvDoc(ParseErrorCode.unexpectedCharacter, 0,
             "delimiter and quote must be distinct, non-newline bytes");
+    // `Span` is a `uint` pair — half the arena, at the price of a 4 GiB
+    // ceiling. Refused outright rather than wrapped: a truncated span would
+    // silently point at the wrong bytes, which is the worst failure this
+    // model can have.
+    if (source.length > uint.max)
+        return parseErr!DsvDoc(ParseErrorCode.numericOverflow, 0,
+            "document exceeds the 4 GiB span limit");
 
     DsvDoc doc;
     doc.source = source;
@@ -107,7 +114,8 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
                 doc.unterminatedQuote = true;
 
             const fieldEnd = i;
-            doc.cells ~= DsvCell(Span(fieldStart, fieldEnd - fieldStart),
+            doc.cells ~= DsvCell(Span(cast(uint) fieldStart,
+                cast(uint)(fieldEnd - fieldStart)),
                 startedQuoted ? CellFlags.quoted : CellFlags.none);
             cellCount++;
 
@@ -138,7 +146,7 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
         }
 
         doc.records ~= DsvRecord(cellsStart, cellCount, term,
-            Span(recStart, recEnd - recStart));
+            Span(cast(uint) recStart, cast(uint)(recEnd - recStart)));
     }
 
     finishCounts(doc);
