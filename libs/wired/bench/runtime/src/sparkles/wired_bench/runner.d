@@ -68,11 +68,21 @@ private bool engineEnabled(string name) @safe
 
 private string[] selectedDatasetNames() @safe
 {
+    import core.runtime : Runtime;
     import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : startsWith;
     import std.array : array;
     import std.process : environment;
 
-    const selected = environment.get("WIRED_BENCH_DATASETS", "");
+    string selected;
+    const args = () @trusted { return Runtime.args; }();
+    foreach (arg; args)
+        if (arg.startsWith("--datasets="))
+            selected = arg["--datasets=".length .. $];
+
+    if (!selected.length)
+        selected = environment.get("WIRED_BENCH_DATASETS", "");
+
     return selected.length
         ? selected.splitter(',').array
         : defaultDatasetNames.dup;

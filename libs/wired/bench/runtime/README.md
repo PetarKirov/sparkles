@@ -19,6 +19,22 @@ Historical findings and every accepted/rejected optimization are recorded in
 
 ## Running
 
+### Nix runner (automated setup & datasets)
+
+```sh
+# Canonical standard run (bundled datasets):
+nix run .#run-wired-bench
+
+# Full competitive benchmark (bundled + external datasets):
+nix run .#run-wired-bench -- --full
+
+# List available datasets or run a subset:
+nix run .#run-wired-bench -- --list-datasets
+nix run .#run-wired-bench -- --datasets=twitter,canada -i 'wired\.parse$'
+```
+
+### Manual run from devshell
+
 From the devshell (which provides the corpora as `$WIRED_BENCH_DATA`):
 
 ```sh
@@ -32,10 +48,11 @@ dub test -b bench -c unittest-foreign -- \
     --bench --perf --bench-min-time=2000 --group-by=dataset,operation
 
 # Useful subsets while iterating:
-dub test -b bench -- --bench -i 'wired\.serialize'      # one op
+dub test -b bench -- --bench -i 'wired\.serialize'            # one op
+dub test -b bench -- --bench --datasets=twitter,mesh         # dataset subset via CLI
 WIRED_BENCH_ENGINES=asdf,std.json \
 WIRED_BENCH_DATASETS=twitter \
-dub test -b bench -- --bench                            # engine/dataset subset
+dub test -b bench -- --bench                                  # engine/dataset subset via env
 
 # Sustained record stream (external corpus; see Datasets):
 WIRED_BENCH_EXTERNAL_DATA=/data/wired-json \
@@ -50,10 +67,11 @@ dub test -b bench -- --bench --perf --bench-min-time=2000 \
 
 Each op is its own `@benchmark` test (`wired.parse`, `wired.parse-stream`,
 `wired.validate`, `wired.serialize`, `wired.decode`), so the runner's
-`-i`/`-e` select ops. Engines and datasets subset via the
-`$WIRED_BENCH_ENGINES` / `$WIRED_BENCH_DATASETS` comma lists. An empty engine
+`-i`/`-e` select ops. Engines and datasets subset via `--datasets` (or
+`$WIRED_BENCH_ENGINES` / `$WIRED_BENCH_DATASETS` comma lists). An empty engine
 list means every compiled engine; an empty dataset list means the six bundled,
 reproducible datasets. The large external corpora must be named explicitly.
+Inspect available datasets with `--list-datasets` (or `--datasets=?`).
 
 Numbers from non-release builds are meaningless; the runner prints a loud
 warning under `--bench` when built with asserts enabled. `dub test` without
@@ -197,9 +215,10 @@ GitHub events and both mesh forms come from
 The compact and pretty mesh pair isolates whitespace skipping without changing
 the data.
 
-Large or account-specific datasets are opt-in. Put these exact filenames in
-one directory, export that directory as `$WIRED_BENCH_EXTERNAL_DATA`, and name
-the selectors in `$WIRED_BENCH_DATASETS`:
+Large or account-specific datasets are opt-in. They can be materialized automatically
+via Nix with `nix build .#wired-bench-external-data` (or run directly with
+`nix run .#run-wired-bench -- --full`), or manually placed in a directory exported as
+`$WIRED_BENCH_EXTERNAL_DATA`:
 
 | selector        | file                   | framing / benchmark op                                                   |
 | --------------- | ---------------------- | ------------------------------------------------------------------------ |
