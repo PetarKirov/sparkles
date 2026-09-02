@@ -86,7 +86,7 @@ bool evalGlob(ref DqlEngine engine, scope const(char)[] text, in GlobPayload pay
 {
     if (payload.globIndex >= engine.globPrograms.length)
         return false;
-    auto matched = globMatch(engine.globPrograms[payload.globIndex], text, engine.globWorkspace);
+    auto matched = globMatch(engine.globPrograms[payload.globIndex], text, engine.globWorkspace());
     if (matched.hasError)
         return false;
     return matched.value;
@@ -101,7 +101,7 @@ bool evalFuzzy(ref DqlEngine engine, scope const(char)[] text, in FuzzyPayload p
     candidate.path = text;
     candidate.filenameOffset = 0;
 
-    auto result = match(engine.fuzzyQueries[payload.fuzzyIndex], candidate, engine.matcherWorkspace);
+    auto result = match(engine.fuzzyQueries[payload.fuzzyIndex], candidate, engine.matcherWorkspace());
     if (result.hasError)
         return false;
     return result.value.kind != MatchKind.rejected;
