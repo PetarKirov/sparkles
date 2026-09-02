@@ -46,7 +46,7 @@ None of it contradicts the [comparison's Sparkles-fit sketch][comparison] — it
   **infer** so `@nogc`/`@safe`/`pure`/`nothrow` propagate from the caller's leaf parsers.
 - **Zero-allocation by construction.** A parser returning `void`/a slice must run with **no
   heap allocation** — the property [flatparse] proves a combinator API can have and the one
-  most relevant to Sparkles (validating a version string, a CLI token). `SharedBuffer`
+  most relevant to Sparkles (validating a version string, a CLI token). A `Buffer`
   replaces `appender` where accumulation is unavoidable; **no packrat memoization by default**
   ([the space cost][peg] is the wrong default; reserve it for a measured hot spot).
 - **A [Pratt][pratt] expression engine.** A table-free, `O(n)` binding-power loop for any

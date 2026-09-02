@@ -22,13 +22,13 @@ builds on it with pretty-printing, UI components, CLI helpers, and process utili
 - [Interactive Prompts](#interactive-prompts)
 - [Terminal Capabilities & Themes](#terminal-capabilities--themes)
 - [Logger](#logger)
-- [SharedBuffer (@nogc)](#sharedbuffer-nogc)
+- [Buffers (@nogc)](#buffers-nogc)
 - [Running Examples](#running-examples)
 
 ## Installation
 
 Add the package you need as a dependency. Use `sparkles:base` for styling,
-logging, `SharedBuffer`, lifetime helpers, and text readers/writers. Use
+logging, the `Buffer` family, lifetime helpers, and text readers/writers. Use
 `sparkles:core-cli` when you also need pretty-printing, UI components, CLI
 argument parsing, or process utilities.
 
@@ -707,9 +707,9 @@ void main()
 | `initLogger(level)`   | Install `DeltaTimeLogger` for both Phobos and Sparkles globals  |
 | `writeLogPrefix(...)` | Write prefix to an output range (zero-allocation)               |
 
-## SharedBuffer (@nogc)
+## Buffers (@nogc)
 
-A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
+One `@nogc` container with four storage policies, each behind an alias. `UniqueBuffer` is the default for a buffer with a single owner: it stores small data inline and switches to the heap when capacity is exceeded, and because copying is disabled the grow path carries no reference count.
 
 ```d
 #!/usr/bin/env dub
@@ -718,12 +718,12 @@ A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inli
     dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.base.buffer : Buffer, SharedBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 
 void main()
 {
     // 64 chars inline, heap if exceeded
-    SharedBuffer!(char, 64) buf;
+    UniqueBuffer!(char, 64) buf;
 
     buf ~= "Hello";
     buf ~= ' ';
@@ -745,6 +745,15 @@ On heap: false
 - **Output range**: Works with `std.algorithm` and other range-based APIs
 - **Automatic growth**: Switches to heap allocation when needed
 - **Slicing**: Access elements via `buf[]` or `buf[start..end]`
+
+### Choosing a policy
+
+| Alias                 | Use when                                                                        |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `InlineBuffer!(T, N)` | The bound is hard and overflow is a condition to report — write with `tryWrite` |
+| `UniqueBuffer!(T, N)` | The buffer has one owner: a local builder, a field nobody copies                |
+| `SharedBuffer!(T, N)` | Copies genuinely happen and should share the block until one of them writes     |
+| `HeapBuffer!T`        | An inline array would be dead weight; size it with `reserve`                    |
 
 ## Running Examples
 

@@ -2773,12 +2773,6 @@ is no second owner to consult. Hand a finished one to the shared world with
 alias UniqueBuffer(T, size_t N = max(size_t(1), (T[]).sizeof / T.sizeof)) =
     Buffer!(T, N, cast(Storage)(Storage.inline | Storage.heap | Storage.unique));
 
-/// Deprecated spelling of `SharedBuffer`/`UniqueBuffer`. Use those instead.
-alias SmallBuffer(T, size_t N = max(size_t(1), (T[]).sizeof / T.sizeof),
-    bool unique = false) =
-    Buffer!(T, N, cast(Storage)(Storage.inline | Storage.heap
-        | (unique ? Storage.unique : Storage.none)));
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Bounded writing.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -699,7 +699,7 @@ This eliminates the virtual dispatch, garbage collection, and runtime type check
 
 ### Flexbox Layout via CTFE
 
-Ink uses Yoga (a WASM/native runtime dependency) to compute Flexbox layout. For **static layouts** where dimensions are known at compile time, D's CTFE could pre-compute the entire layout at compile time, producing a flat array of positioned rectangles with zero runtime cost. For dynamic layouts, a `@nogc` Yoga-equivalent could compute layout into a `SharedBuffer` without heap allocation:
+Ink uses Yoga (a WASM/native runtime dependency) to compute Flexbox layout. For **static layouts** where dimensions are known at compile time, D's CTFE could pre-compute the entire layout at compile time, producing a flat array of positioned rectangles with zero runtime cost. For dynamic layouts, a `@nogc` Yoga-equivalent could compute layout into a `Buffer` without heap allocation:
 
 ```d
 // Static layout computed at compile time
@@ -730,11 +730,11 @@ scope(exit) subscription.cancel();
 
 ### Virtual DOM Diffing via `@nogc` Buffers
 
-Ink's rendering pipeline diffs a virtual tree and flushes changes to the terminal. D's `SharedBuffer` (already in Sparkles) could implement efficient terminal diffing without GC allocation. A double-buffering approach -- writing the new frame to one buffer while comparing against the previous frame in another -- maps naturally to `@nogc` D:
+Ink's rendering pipeline diffs a virtual tree and flushes changes to the terminal. D's `Buffer` (already in Sparkles) could implement efficient terminal diffing without GC allocation. A double-buffering approach -- writing the new frame to one buffer while comparing against the previous frame in another -- maps naturally to `@nogc` D:
 
 ```d
 @nogc nothrow
-void renderFrame(ref SharedBuffer!(char, 4096) front, ref SharedBuffer!(char, 4096) back) {
+void renderFrame(ref UniqueBuffer!(char, 4096) front, ref UniqueBuffer!(char, 4096) back) {
     // Render new frame into `back`
     renderTree(root, back);
     // Diff against `front`, emit only changed ANSI sequences
@@ -766,12 +766,12 @@ auto ui = box(
 
 ### Testing via Output Ranges
 
-Ink's `ink-testing-library` renders components to strings for assertion. In D, since Sparkles already uses output ranges extensively (`prettyPrint` writes to any output range), **testing terminal UI is natural**: render to a `SharedBuffer` or `appender!string` and compare the output. No special testing library is needed -- the output range pattern makes UI components inherently testable:
+Ink's `ink-testing-library` renders components to strings for assertion. In D, since Sparkles already uses output ranges extensively (`prettyPrint` writes to any output range), **testing terminal UI is natural**: render to a `Buffer` or `appender!string` and compare the output. No special testing library is needed -- the output range pattern makes UI components inherently testable:
 
 ```d
 @safe pure nothrow @nogc
 unittest {
-    SharedBuffer!(char, 4096) buf;
+    UniqueBuffer!(char, 4096) buf;
     renderComponent(myWidget, buf);
     assert(buf[] == expectedOutput);
 }

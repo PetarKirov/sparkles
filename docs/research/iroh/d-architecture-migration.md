@@ -43,13 +43,13 @@ component with no direct iroh analogue. The link cell points at the deep-dive.
 
 | Subsystem (Rust crate/module)                                       | Size (Rust)             | D strategy                                          | Key event-horizon primitives                                                                                                        | Deep-dive                                            |
 | ------------------------------------------------------------------- | ----------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| **Identity & crypto** (`iroh-base` `key.rs`, `iroh/src/tls`)        | ~1.2k + crypto          | native                                              | value structs; `Rng` capability; `SharedBuffer` codecs; `@safe pure nothrow @nogc`                                                  | [identity-crypto][identity]                          |
+| **Identity & crypto** (`iroh-base` `key.rs`, `iroh/src/tls`)        | ~1.2k + crypto          | native                                              | value structs; `Rng` capability; `Buffer` codecs; `@safe pure nothrow @nogc`                                                        | [identity-crypto][identity]                          |
 | **Ed25519 / SHA-512 / BLAKE3** (dalek, `blake3`)                    | (library)               | native or C-binding                                 | `verify_strict` interop-exact; BLAKE3 `hazmat` (chunk-counter CVs, ROOT flag)                                                       | [identity-crypto][identity] · [bao-tree][bao-tree]   |
-| **Wire codec** (`postcard`, `iroh-tickets`, `iroh-base` addressing) | ~0.8k + codec           | native / from-scratch                               | CTFE `static foreach` over `tupleof`; LEB128 + QUIC-varint; `SharedBuffer`; `isOwnedIoBuf`                                          | [wire-serialization][wire]                           |
+| **Wire codec** (`postcard`, `iroh-tickets`, `iroh-base` addressing) | ~0.8k + codec           | native / from-scratch                               | CTFE `static foreach` over `tupleof`; LEB128 + QUIC-varint; `Buffer`; `isOwnedIoBuf`                                                | [wire-serialization][wire]                           |
 | **QUIC core** (`noq-proto`)                                         | ~38.2k non-test         | sans-io reuse                                       | one fiber owning `Connection`; tier-B verbs; one in-ring `TIMEOUT`; `SumType` controllers; **O19** msghdr; `WallClock` + `Rng` caps | [quic-transport][quic]                               |
 | **TLS 1.3 + QUIC AEAD** (`rustls` + `ring`/`aws-lc-rs`)             | load-bearing            | C-binding **or** native (decision)                  | sans-io `Session` fed `CRYPTO` bytes; `PacketKey` with **`PathId`-aware** nonce                                                     | [identity-crypto][identity] · [quic-transport][quic] |
 | **`noq-udp`** (platform UDP: GSO/GRO/ECN/pktinfo)                   | ~10k with `noq`         | native (per-OS syscalls)                            | `sendTo`/`recvFrom` verbs; **O19** msghdr/cmsg; `BufRing`                                                                           | [quic-transport][quic]                               |
-| **Verified streaming** (`bao-tree`)                                 | ~5.6k                   | native (pure)                                       | `@safe pure nothrow @nogc` geometry; `SharedBuffer!(Hash,10)`; `isByteStream`; yield checkpoints                                    | [bao-tree][bao-tree]                                 |
+| **Verified streaming** (`bao-tree`)                                 | ~5.6k                   | native (pure)                                       | `@safe pure nothrow @nogc` geometry; `UniqueBuffer!(Hash,10)`; `isByteStream`; yield checkpoints                                    | [bao-tree][bao-tree]                                 |
 | **Endpoint & Router** (`iroh` `endpoint`/`protocol`/`runtime`)      | ~6.1k non-test          | native (policy shell)                               | `Scope`; capability row; DbI `Connection<State>`; `ProtocolMap` AA; `Watchable`; memoized completion cell                           | [endpoint][endpoint]                                 |
 | **Multipath socket** (`iroh` `socket`, ex-`magicsock`)              | ~8k non-test            | native                                              | per-transport recv fibers; multishot `BufRing`; plain `MappedAddrs`; `Watchable`; **O19**                                           | [socket][socket]                                     |
 | **NAT traversal / QAD / QNT** (`noq-proto`, `iroh` `remote_state`)  | ~2.6k                   | sans-io reuse + native                              | value `ClientState`/`ServerState`; in-ring `TIMEOUT`; `race`; `Chan!T`                                                              | [nat-traversal][nat]                                 |
@@ -261,7 +261,7 @@ pool, [gossip][gossip]'s 9-arm event loop, and [docs-sync][docs-sync]'s `LiveAct
 
 Four seams carry the whole port. For each, the Rust shape (verbatim, cited) sits beside
 the proposed D equivalent — marked _proposed / sketch_, in Sparkles D idioms
-([`IoResult!`][eh-spec], `Buf`, `SharedBuffer`, capability structs, `Scope`).
+([`IoResult!`][eh-spec], `Buf`, `Buffer`, capability structs, `Scope`).
 
 ### 3.1 The `Runtime` / `AsyncUdpSocket` trait → an event-horizon capability row
 
@@ -496,9 +496,9 @@ cancellation latches the interrupt and wakes immediately ([SPEC §8.4][eh-spec])
 ```d
 // proposed / sketch — the cross-fiber channel event-horizon v1 lacks (open-issue O20).
 // One thread ⇒ no atomics/locks: a bounded ring plus two intrusive waiter lists.
-struct Chan(T, size_t N)                       // N = capacity; SharedBuffer-backed FIFO
+struct Chan(T, size_t N)                       // N = capacity; `Buffer`-backed FIFO
 {
-    private SharedBuffer!(T, N) ring;
+    private UniqueBuffer!(T, N) ring;
     private WaiterList notFull;                 // senders parked on a full ring
     private WaiterList notEmpty;                // owner parked on an empty ring
     private uint senders = 1;                   // live producer count; 0 ⇒ closed

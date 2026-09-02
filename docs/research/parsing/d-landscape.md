@@ -215,7 +215,7 @@ Sparkles already hand-parses several small languages, and they set the idiom the
 - **The `@nogc` text substrate** ([`sparkles.base.text`][base-text]) — `readers.d` provides
   **zero-copy, cursor-advancing** primitives (`readInteger`, `skipSpaces`, `tryConsume`,
   `readUntil`) that take `ref scope const(char)[]` and advance only on success, returning
-  slices into the input; `writers.d` mirrors them for output ranges (`SharedBuffer`); `errors.d`
+  slices into the input; `writers.d` mirrors them for output ranges (`Buffer`); `errors.d`
   defines the shared `ParseError`/`ParseErrorCode`/`Expected` vocabulary. Documented as
   "mechanism, not policy" — the ideal foundation for a combinator layer.
 - **CLI arguments** ([`sparkles.core_cli.args`][cli-args]) — the pragmatic exception: a

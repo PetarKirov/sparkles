@@ -236,7 +236,7 @@ This dimension is genuinely thin across the whole lineage, and the thinness is a
 
 What the generated string _does_ contain is a manually assembled path fragment, which is the same trap circe and aeson fall into: a path attached by hand is a path eventually forgotten. Compare [unjson's accumulating errors with a usable partial value][invertible], which is the best-in-class shape.
 
-**D verdict: [(a)][tags] to [(b)][tags], and an easy win.** Both hazards dissolve in a generated design: every field's branch always runs, so accumulation costs nothing structural, and the field path is a compile-time string constant the walker emits unconditionally. Accumulate into a `SharedBuffer!(Anchored, N)` rather than a monadic transformer, and the partial value comes free because the decoder is writing into a `T` that already holds its initializers.
+**D verdict: [(a)][tags] to [(b)][tags], and an easy win.** Both hazards dissolve in a generated design: every field's branch always runs, so accumulation costs nothing structural, and the field path is a compile-time string constant the walker emits unconditionally. Accumulate into a `UniqueBuffer!(Anchored, N)` rather than a monadic transformer, and the partial value comes free because the decoder is writing into a `T` that already holds its initializers.
 
 ---
 

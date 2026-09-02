@@ -630,7 +630,7 @@ admit rowspan from day one so it is not a breaking change later.
 ### 9. `@nogc` / output-range rendering
 
 Per the project [functional/declarative guidelines][functional-guidelines], the renderer writes
-to any output range (`SharedBuffer`, `appender`, a terminal buffer) and the flat `Cell[]` /
+to any output range (`Buffer`, `appender`, a terminal buffer) and the flat `Cell[]` /
 slot-grid storage stays `@nogc`-friendly — no recursive allocation, matching the
 [tree-view study's][tree-view-case-study] flat-storage recommendation.
 

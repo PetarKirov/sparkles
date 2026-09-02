@@ -59,7 +59,7 @@ module anchored_overlays_tooltip_timing;
 import std.range.primitives : put;
 import std.stdio : writefln, writeln;
 
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.writers : writeValue;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.state : Timeline;
@@ -450,7 +450,7 @@ void main() @safe
         assert(s.active.life.phase != Timeline.Phase.fadeOut);
         assert(before.group.warmMsLeft >= 0);
 
-        SharedBuffer!(char, 32) ev, grp;
+        UniqueBuffer!(char, 32) ev, grp;
         writeEvent(ev, st);
         writeGroup(grp, s.group);
         writefln!"%5d  %-9s  %-8s  %-9s  %-5s  %s"(
@@ -565,7 +565,7 @@ void main() @safe
             assert(!p.active.warming, "warming is unreachable on touch");
             assert(p.group.warmMsLeft == 0, "the cool-down is unreachable too");
 
-            SharedBuffer!(char, 32) ev, grp;
+            UniqueBuffer!(char, 32) ev, grp;
             writeEvent(ev, st);
             writeGroup(grp, p.group);
             writefln!"%5d  %-11s  %-8s  %-9s  %-5s  %s"(
@@ -584,7 +584,7 @@ void main() @safe
     // -- 5. the tier-0 collapse ---------------------------------------------
     writeln("\n=== 5. The tier-0 collapse (static HTML: no script, no timers) ===");
     {
-        SharedBuffer!(char, 512) css;
+        UniqueBuffer!(char, 512) css;
         writeTier0Css(css, cfg);
         writeln(css[]);
     }
@@ -623,7 +623,7 @@ void main() @safe
             if (mv != hv)
                 ++diverged;
 
-            SharedBuffer!(char, 32) ev;
+            UniqueBuffer!(char, 32) ev;
             writeEvent(ev, st);
             writefln!"%5d  %-9s  %-9s  %s"(ct, ev[], mv,
                 mv == hv ? hv : hv ~ "        <-- differs");

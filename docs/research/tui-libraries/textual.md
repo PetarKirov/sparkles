@@ -773,7 +773,7 @@ Rather than loading and parsing `.tcss` files at runtime (as Textual does), D co
 
 ### Widget Rendering -> Output Ranges for `@nogc` Rendering
 
-Textual widgets produce Rich `Segment` objects (text + style tuples). D widgets could render to output ranges, enabling `@nogc nothrow` rendering into `SharedBuffer` or directly to a terminal write buffer with zero heap allocation:
+Textual widgets produce Rich `Segment` objects (text + style tuples). D widgets could render to output ranges, enabling `@nogc nothrow` rendering into `Buffer` or directly to a terminal write buffer with zero heap allocation:
 
 ```d
 @safe pure nothrow @nogc
@@ -785,7 +785,7 @@ void render(Writer)(ref Writer writer, in Style style) {
 
 ### Retained Mode with Dirty Tracking -> `@nogc` Diffing Buffers
 
-Textual's compositor diffs visible regions and only repaints changed areas. D could implement a double-buffered screen model where the current and previous frames are `SharedBuffer`-backed cell grids. A `@nogc` diff pass identifies changed cells and emits only the minimal escape sequences needed, combining retained-mode convenience with `@nogc` performance.
+Textual's compositor diffs visible regions and only repaints changed areas. D could implement a double-buffered screen model where the current and previous frames are `Buffer`-backed cell grids. A `@nogc` diff pass identifies changed cells and emits only the minimal escape sequences needed, combining retained-mode convenience with `@nogc` performance.
 
 ---
 

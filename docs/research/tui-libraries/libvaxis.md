@@ -870,7 +870,7 @@ enum generateDispatch(Handlers...) = {
 mixin(generateDispatch!(onKeyPress, onMouse, onResize));
 ```
 
-### Explicit Allocators -> D's @nogc + SharedBuffer
+### Explicit Allocators -> D's @nogc + the Buffer family
 
 Zig passes allocators explicitly to every function that allocates:
 
@@ -886,7 +886,7 @@ D achieves similar control through a combination of mechanisms:
    This is arguably more ergonomic than explicit allocator passing because it is checked by
    the compiler rather than by convention.
 
-2. **`SharedBuffer`** -- Sparkles' existing `SharedBuffer` provides inline allocation with
+2. **`Buffer`** -- Sparkles' existing `Buffer` provides inline allocation with
    heap fallback, similar to Zig's `std.ArrayList` but with a small-buffer optimization
    that avoids allocation entirely for typical sizes.
 
@@ -896,10 +896,10 @@ D achieves similar control through a combination of mechanisms:
 ```d
 @safe pure nothrow @nogc:
 
-/// Arena-style per-frame allocation using SharedBuffer.
+/// Arena-style per-frame allocation using a Buffer.
 struct FrameArena
 {
-    SharedBuffer!(ubyte, 4096) storage;
+    UniqueBuffer!(ubyte, 4096) storage;
 
     T[] alloc(T)(size_t count) return
     {

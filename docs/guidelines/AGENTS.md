@@ -20,7 +20,7 @@ library backing `sparkles:test-runner` — see the runner integration notes belo
 | `twoslash-extract`              | `apps/twoslash-extract`     | Batch D twoslash extractor: runs the `sparkles:twoslash-d` pipeline over an annotated D sample (or a directory, one child process per file) and writes the `.twoslash.json` payload `hue --twoslash` renders; `--verify` guards the golden fixtures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `ui-gallery`                    | `apps/ui-gallery`           | A browsable catalog of the `sparkles:ui` toolkit — widget kinds, layout, the 36 themes, the component set and the interaction machines — written as a `sparkles:ui-app` component, so one `view` serves both the terminal and the window. Also the host contract's first real consumer, and `sparkles:terminal-view`'s embedding proof (`TVW7`): the Terminal page runs real shells in VSCode-style tabs, terminal-in-terminal included. `--render`/`--render-plain` paint one frame with no backend at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `diagram`                       | `apps/diagram`              | A draw.io-style diagram board on `sparkles:ui-app` — an infinite world with a camera, a dense entity store, orthogonal connectors, groups, labels and a configurable Cartesian grid backdrop (`--config-file`, plus a modal `PropertyTree` settings pane over the live config — `,` or the context menu). It exists to stress the host abstraction from a direction hue and terminal cannot: neither has a camera, a world coordinate space, or a surface larger than its viewport. Its central claim is checkable by grep — no backend name appears anywhere under `apps/diagram/` (`DIA1`/`DIA2`), and `--tui` and `--gui` are the same `view`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `sparkles:base`                 | `libs/base`                 | Allocation-conscious foundation utilities: `SharedBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, terminal capability probing (`term_caps` — size/tty/colors/unicode, the single place that decision is made), hardware parallelism (`hw_caps` — CPU quota/affinity plus memory/load/swap so a pool is not wider than the host can usefully run), styled IES, and logging                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `sparkles:base`                 | `libs/base`                 | Allocation-conscious foundation utilities: `Buffer` (four storage policies), lifetime helpers, `@nogc` text readers/writers, terminal styling, terminal capability probing (`term_caps` — size/tty/colors/unicode, the single place that decision is made), hardware parallelism (`hw_caps` — CPU quota/affinity plus memory/load/swap so a pool is not wider than the host can usefully run), styled IES, and logging                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `sparkles:build-primitives`     | `libs/build-primitives`     | Build-system and VCS primitives: `.gitignore` parsing/matching (nested + ancestor scopes) and a DbI-hook directory walker (`walkGitRepository`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `sparkles:code-instrumentation` | `libs/code-instrumentation` | Code coverage ingestion library: universal coverage data model (`LineCoverage`, `FileCoverage`, `CoverageReport`), multi-format parsers over a shared record scanner (DMD `.lst`, GCC `gcov`, LCOV `.info`, V8 AST byte-range blocks, llvm-cov JSON) reporting failures as `ParseExpected`, anchored format auto-detection, and overlay planning (`CoveragePlan`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `sparkles:core-cli`             | `libs/core-cli`             | CLI argument parsing, help formatting, interactive prompts, process utilities, ANSI unstyle helpers. The UI components moved to `sparkles:ui` (`sparkles.ui.components.*`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -139,7 +139,7 @@ sparkles/
 │   │   ├── lifetime.d              # recycledInstance / recycledErrorInstance (@nogc throwing)
 │   │   ├── logger.d                # CoreLogger, DeltaTimeLogger, Sparkles logging wrappers
 │   │   ├── prettyprint.d           # Colorized pretty-printing
-│   │   ├── buffer.d           # @nogc dynamic buffer + checkToString/checkWriter test helpers
+│   │   ├── buffer.d               # Buffer + Storage policies, checkToString/checkWriter helpers
 │   │   ├── source_uri.d            # OSC 8 source-URI hooks (editor links)
 │   │   ├── styled_template.d       # IES-based styled text processing
 │   │   ├── term_caps.d             # Terminal capability probing (size, tty, colors, unicode)
@@ -624,8 +624,21 @@ guide (transform/chain/flatten patterns, Rust ↔ D comparisons, and a cheat she
 
 ### `@nogc` primitives (and what breaks `@nogc`/`nothrow`)
 
-- `SharedBuffer!(T, N)` — dynamic array with small-buffer optimization; works as an
-  output range. Use it instead of `appender` in `@nogc` code.
+- **Buffers** (`sparkles.base.buffer`) — one container, four policies. Use one
+  instead of `appender` in `@nogc` code, and let the alias state what the buffer
+  may do:
+
+  | Alias                 | Reach for it when                                                                                                                 |
+  | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+  | `UniqueBuffer!(T, N)` | **The default.** One owner — a local builder, a field nobody copies. Move-only, so the grow path carries no reference count.      |
+  | `SharedBuffer!(T, N)` | Copies genuinely happen. The block is shared and cloned on the next write; naming it is a claim that something copies the buffer. |
+  | `InlineBuffer!(T, N)` | The bound is hard and overflow is a condition to report. Deliberately not an output range — write into it with `tryWrite`.        |
+  | `HeapBuffer!T`        | An inline array would be dead weight. Size it up front with `reserve`.                                                            |
+
+  Spelling the policy out as `Buffer!(T, N, storage)` is for combinations no alias
+  names, such as `InlineBuffer!(T, N, Storage.unique)`. Full design:
+  [the buffer spec](../specs/base/buffer.md).
+
 - `sparkles.base.text.writers` / `.readers` — `@nogc` integer/float/duration
   formatting and parsing. Prefer these over `.text` / `std.conv` (which GC-allocate)
   and over `std.format` in hot paths.
@@ -640,7 +653,7 @@ guide (transform/chain/flatten patterns, Rust ↔ D comparisons, and a cheat she
 @safe pure nothrow @nogc
 unittest
 {
-    SharedBuffer!(char, 256) buf;
+    UniqueBuffer!(char, 256) buf;
     buf ~= "Hello";
     buf ~= ' ';
     buf ~= "World";
@@ -736,11 +749,11 @@ Always give unittests explicit safety attributes:
 - Add `pure`, `nothrow`, `@nogc` whenever possible.
 
 ```d
-@("SharedBuffer.basic.creation")
+@("Buffer.basic.creation")
 @safe pure nothrow @nogc
 unittest
 {
-    SharedBuffer!(int, 4) buf;
+    UniqueBuffer!(int, 4) buf;
     assert(buf.length == 0);
     assert(buf.empty);
 }
@@ -749,7 +762,7 @@ unittest
 ### `@nogc nothrow` testing
 
 - `recycledErrorInstance!T("msg")` throws without GC allocation.
-- `SharedBuffer` as an output range instead of `appender`.
+- A `Buffer` as an output range instead of `appender`.
 
 ```d
 @("prettyPrint.integers")
@@ -757,9 +770,9 @@ unittest
 unittest
 {
     import sparkles.base.lifetime : recycledErrorInstance;
-    import sparkles.base.buffer : Buffer, checkToString, checkWriter, SharedBuffer;
+    import sparkles.base.buffer : UniqueBuffer;
 
-    SharedBuffer!(char, 1024) buf;
+    UniqueBuffer!(char, 1024) buf;
     prettyPrint(42, buf);
 
     if (buf[] != "42")
@@ -772,7 +785,7 @@ unittest
 Prefer the project's helpers over hand-rolled assertions:
 
 - **`checkToString` / `checkWriter`** (`sparkles.base.buffer`) — for types
-  exposing `void toString(Writer)(ref Writer w)`. They render into a `SharedBuffer`
+  exposing `void toString(Writer)(ref Writer w)`. They render into a `Buffer`
   (so the test stays `@safe pure nothrow @nogc`) and report an expected/actual diff
   via a recycled `AssertError` on mismatch.
 - **`checkRoundTrip` / `checkRejects` / `checkAscending`** (`sparkles.versions.testing`)

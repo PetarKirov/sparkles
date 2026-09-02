@@ -228,7 +228,7 @@ This dimension does not apply: the serialization layer is pure, synchronous, all
 
 The codec maps onto [`sparkles:event-horizon`][eh-spec] as **pure value code**, not fibers or capabilities — it is `@safe pure nothrow @nogc`-friendly throughout, and needs none of the [async-io][async-io] machinery. The design work is concentrated in four places.
 
-**1. A CTFE-friendly, allocation-free `postcard` codec.** Encode by walking `tupleof` in declaration order; the varint and enum-discriminant rules are a handful of `@nogc` helpers over any owned output buffer (`SharedBuffer` or a [`BufRing`][eh-spec] lease). `POSTCARD_MAX_SIZE` becomes a compile-time `enum` computed by the same introspection.
+**1. A CTFE-friendly, allocation-free `postcard` codec.** Encode by walking `tupleof` in declaration order; the varint and enum-discriminant rules are a handful of `@nogc` helpers over any owned output buffer (`Buffer` or a [`BufRing`][eh-spec] lease). `POSTCARD_MAX_SIZE` becomes a compile-time `enum` computed by the same introspection.
 
 ```rust
 // iroh-tickets/src/endpoint.rs:35-43, 129-137 (verbatim, the wire mirror structs)
@@ -286,7 +286,7 @@ struct TransportAddr
 }
 ```
 
-**3. Ticket string codecs and the fail-fast decode.** hex, two base32 alphabets, z-base-32, and base64url-nopad are one table-driven codec parameterized by alphabet (a template or DbI parameter). Ticket payloads are small with a computable max size (base32 output is `⌈8n/5⌉`), so a stack `SharedBuffer` suffices — no heap. The four-stage decode maps cleanly onto the project's [`Expected`][expected] idiom:
+**3. Ticket string codecs and the fail-fast decode.** hex, two base32 alphabets, z-base-32, and base64url-nopad are one table-driven codec parameterized by alphabet (a template or DbI parameter). Ticket payloads are small with a computable max size (base32 output is `⌈8n/5⌉`), so a stack `Buffer` suffices — no heap. The four-stage decode maps cleanly onto the project's [`Expected`][expected] idiom:
 
 ```d
 // proposed / sketch — mirrors ParseError { Kind, Encoding, Postcard, Verify }

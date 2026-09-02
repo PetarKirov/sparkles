@@ -4,7 +4,7 @@ Options go after `--`, exactly as with silly:
 
 ```bash
 dub test :base                       # run everything, in parallel
-dub test :base -- -i "Buffer"   # only tests matching a regex
+dub test :base -- -i "Buffer"        # only tests matching a regex
 dub test :base -- -e "slow"          # skip tests matching a regex
 dub test :base -- -v                 # durations, locations, full traces
 dub test :base -- -t 1               # single-threaded

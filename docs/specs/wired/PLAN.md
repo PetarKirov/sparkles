@@ -30,7 +30,7 @@ Format-agnostic, no policy:
 
 Gate: `dub test :base` — `convertCase` runtime cases plus `static assert` CTFE
 coverage (incl. acronym/digit boundaries), `writeConvertedCase` into a
-`SharedBuffer` matching `convertCase` for every style (and a `@nogc` case), the
+`Buffer` matching `convertCase` for every style (and a `@nogc` case), the
 enum primitives, and a non-integer-backed enum; plus
 `nix run .#ci -- --verify --files docs/specs/base/text/case-style.md`.
 

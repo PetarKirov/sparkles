@@ -905,7 +905,7 @@ if (isOutputRange!(Writer, char))
 }
 ```
 
-This pattern is already established in Sparkles' `prettyPrint`, which writes to arbitrary output ranges including `SharedBuffer` for `@nogc` operation.
+This pattern is already established in Sparkles' `prettyPrint`, which writes to arbitrary output ranges including `Buffer` for `@nogc` operation.
 
 ### Lip Gloss Styling with UFCS Builder Chains
 
@@ -969,13 +969,13 @@ unittest
     m = update(m, KeyMsg(KeyType.down));
     assert(m.cursor == 1);
 
-    SharedBuffer!(char, 1024) buf;
+    UniqueBuffer!(char, 1024) buf;
     view(m, buf);
     // buf[] contains the rendered view -- compare without allocation
 }
 ```
 
-The combination of `pure`, `@nogc`, and `SharedBuffer` means UI tests run with zero allocation and can verify both state transitions and rendered output.
+The combination of `pure`, `@nogc`, and `Buffer` means UI tests run with zero allocation and can verify both state transitions and rendered output.
 
 ---
 
