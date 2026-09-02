@@ -13,6 +13,8 @@ import sparkles.fuzzy.glob : GlobInstruction, GlobMatchWorkspace, GlobProgram,
 
 import sparkles.test_runner.attributes : benchmark;
 
+version (unittest) import sparkles.base.unique : makeUnique;
+
 /// A borrowed raw token span plus logical decoded trimming.
 struct QueryText
 {
@@ -1285,10 +1287,18 @@ unittest
         && range.value.location.startColumn == 4
         && range.value.location.endLine == 14
         && range.value.location.endColumn == 20);
+}
 
-    // Earliest-colon-wins survives the bounded candidate window: colons whose
-    // tails hold more separators than any location grammar admits are
-    // guaranteed failures, so skipping all but the last few changes nothing.
+// Split: each live `QueryStorage` (~26 KiB) is a stack slot, and LDC inlines
+// `parseQuery` into the unittest frame. Three live parses blew the 384 KiB
+// worker watermark.
+@("fuzzy.query.earliestColonWins")
+@safe pure nothrow @nogc
+unittest
+{
+    // Colons whose tails hold more separators than any location grammar
+    // admits are guaranteed failures, so skipping all but the last few
+    // changes nothing.
     auto manyColons = parseQuery(`a:1:2:3:4:5`);
     assert(manyColons.hasValue);
     assert(manyColons.value.location.startLine == 4
@@ -1339,7 +1349,8 @@ unittest
 {
     auto parsed = parseQuery(`!*.rs !*.md foo`);
     assert(parsed.hasValue);
-    ConstraintWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
     CandidateView candidate;
     candidate.path = "src/main.rs";
     candidate.filenameOffset = 4;
@@ -1355,7 +1366,8 @@ unittest
     auto parsed = parseQuery(
         `ext:d ext:md path:src/app.d seg:src glob:**/*.d status:st`);
     assert(parsed.hasValue && parsed.value.constraints.length == 6);
-    ConstraintWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
     CandidateView candidate;
     candidate.path = "src/app.d";
     candidate.filenameOffset = 4;
@@ -1381,7 +1393,8 @@ unittest
 {
     auto parsed = parseQuery(`glob:literal/\*.d`);
     assert(parsed.hasValue);
-    ConstraintWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
     CandidateView candidate;
     candidate.path = "literal/*.d";
     candidate.filenameOffset = 8;
@@ -1440,7 +1453,8 @@ unittest
     CandidateView candidate;
     candidate.path = "a.d";
     candidate.filenameOffset = size_t.max;
-    ConstraintWorkspace!() workspace;
+    auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
     assert(evaluateConstraints(query.value, candidate, workspace).error.code
         == FuzzyErrorCode.invalidCandidate);
 }

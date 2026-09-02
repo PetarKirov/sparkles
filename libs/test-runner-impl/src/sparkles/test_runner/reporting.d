@@ -234,6 +234,8 @@ string formatResultLine(in TestResult result, bool colored, bool verbose, uint w
     // The reason is the point of surfacing a skip — always shown.
     if (skipped && result.skipReason.length)
         line ~= render(colored, i" {dim ($(result.skipReason))}");
+    else if (result.stackBudgetExceeded)
+        line ~= render(colored, i" {dim (stack budget exceeded)}");
 
     if (verbose)
     {
@@ -264,6 +266,10 @@ unittest
 
     result.succeeded = false;
     assert(formatResultLine(result, false, false) == " ✗ pkg.mod case");
+
+    result.stackBudgetExceeded = true;
+    assert(formatResultLine(result, false, false)
+        == " ✗ pkg.mod case (stack budget exceeded)");
 }
 
 @("formatResultLine.truncation")
@@ -348,6 +354,7 @@ private bool isInternalFrame(string frame) @safe pure nothrow @nogc
     return frame.canFind("sparkles.test_runner")
         || frame.canFind("libs/test-runner")
         || frame.canFind("std.parallelism")
+        || frame.canFind("sparkles.test_runner.workers")
         || frame.canFind("thread_entryPoint")
         || frame.canFind("core.thread")
         || frame.canFind("runModuleUnitTests")
