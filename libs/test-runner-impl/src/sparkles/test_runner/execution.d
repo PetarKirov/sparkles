@@ -5,6 +5,7 @@ module sparkles.test_runner.execution;
 
 import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.skip : TestSkipped;
+import sparkles.test_runner.stack_budget : StackBudgetExceeded, runWithStackBudget;
 
 /// Runs one test, capturing anything it throws.
 ///
@@ -26,7 +27,7 @@ TestResult executeTest(Test test)
     {
         scope (exit)
             result.duration = MonoTime.currTime - started;
-        test.ptr();
+        runWithStackBudget({ test.ptr(); });
         result.succeeded = true;
     }
     catch (TestSkipped s)
@@ -35,6 +36,11 @@ TestResult executeTest(Test test)
         // The recycled instance's message buffer is reused by the next
         // skipTest on this thread — copy now.
         result.skipReason = s.message.idup;
+    }
+    catch (StackBudgetExceeded b)
+    {
+        result.stackBudgetExceeded = true;
+        result.thrown = toThrown(b);
     }
     catch (Throwable t)
         result.thrown = toThrown(t); // re-throws OutOfMemoryError

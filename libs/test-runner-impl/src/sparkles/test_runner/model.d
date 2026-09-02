@@ -106,4 +106,5 @@ struct TestResult
     string skipReason;
     Duration duration;
     immutable(Thrown)[] thrown;
+    bool stackBudgetExceeded; /// body crossed the 384 KiB worker-stack watermark
 }

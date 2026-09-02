@@ -4,16 +4,16 @@ Everything after `--` in `dub test :pkg -- <options>` goes to the runner.
 
 ## Selection and output
 
-| Option            | Description                                                                                              |
-| ----------------- | -------------------------------------------------------------------------------------------------------- |
-| `-i`, `--include` | Run only tests whose `fullName name` matches the regular expression                                      |
-| `-e`, `--exclude` | Skip tests whose `fullName name` matches; combines with `-i` (a test must match `-i` and not match `-e`) |
-| `-v`, `--verbose` | Durations, `[file:line]` locations, full stack traces                                                    |
-| `-t`, `--threads` | Worker threads; `0` (default) auto-detects, `1` runs single-threaded                                     |
-| `--no-colors`     | Disable colored output (also honors `$NO_COLOR` and non-tty stdout)                                      |
-| `-l`, `--list`    | List discovered tests with `@ctfe`/`@benchmark`/`@workload`/`@betterC`/`@wasm` markers                   |
-| `--self-test`     | Also run the test runner's own unittests                                                                 |
-| `-h`, `--help`    | Option summary                                                                                           |
+| Option            | Description                                                                                                                                                                                                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-i`, `--include` | Run only tests whose `fullName name` matches the regular expression                                                                                                                                                                                                                                                                        |
+| `-e`, `--exclude` | Skip tests whose `fullName name` matches; combines with `-i` (a test must match `-i` and not match `-e`)                                                                                                                                                                                                                                   |
+| `-v`, `--verbose` | Durations, `[file:line]` locations, full stack traces                                                                                                                                                                                                                                                                                      |
+| `-t`, `--threads` | Worker threads; `0` (default) auto-detects, `1` runs on the main thread. `N>1` uses `N` workers, each with a **512 KiB** stack (Darwin's pthread default). The main thread never runs a test body in that case. A test that grows the stack more than **384 KiB** fails with `stack budget exceeded` instead of a process-killing SIGSEGV. |
+| `--no-colors`     | Disable colored output (also honors `$NO_COLOR` and non-tty stdout)                                                                                                                                                                                                                                                                        |
+| `-l`, `--list`    | List discovered tests with `@ctfe`/`@benchmark`/`@workload`/`@betterC`/`@wasm` markers                                                                                                                                                                                                                                                     |
+| `--self-test`     | Also run the test runner's own unittests                                                                                                                                                                                                                                                                                                   |
+| `-h`, `--help`    | Option summary                                                                                                                                                                                                                                                                                                                             |
 
 ## Modes
 

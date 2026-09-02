@@ -25,7 +25,8 @@ import core.time : Duration, MonoTime;
 import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups;
 import sparkles.test_runner.capability : Capability, capabilityName, CapabilityReport;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
-import sparkles.test_runner.execution : executeTest;
+import sparkles.test_runner.stack_budget : installStackBudgetHandler;
+import sparkles.test_runner.workers : joinTestWorkers, startTestWorkers;
 import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
@@ -53,6 +54,7 @@ extern (C) void sparkles_test_runner_run(
 
         installInProcessTraceHandler();
     }
+    installStackBudgetHandler();
 
     const result = runnerMain(testsPtr[0 .. count], hostIsRunner);
     *executed = cast(uint) result.executed;
@@ -652,7 +654,6 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     import std.algorithm.iteration : filter;
     import std.array : array;
     import sparkles.base.hw_caps : hwParallelism;
-    import std.parallelism : TaskPool;
     import std.stdio : stdout;
 
     RunTotals totals;
@@ -697,27 +698,21 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         import core.sync.mutex : Mutex;
 
         auto mutex = new Mutex;
-        with (new TaskPool(threads - 1))
-        {
-            foreach (test; parallel(runnable))
-            {
-                const result = executeTest(test);
+        auto workers = startTestWorkers(runnable, threads, (result) {
+            auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+            foreach (thrown; result.thrown)
+                output ~= formatThrown(thrown, colored, options.verbose);
+            stdout.lockingTextWriter.put(output);
 
-                auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
-                foreach (thrown; result.thrown)
-                    output ~= formatThrown(thrown, colored, options.verbose);
-                stdout.lockingTextWriter.put(output);
-
-                if (result.skipped)
-                    atomicOp!"+="(skipped, size_t(1));
-                else
-                    atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
-                if (!result.succeeded && !result.skipped)
-                    synchronized (mutex)
-                        failures ~= result;
-            }
-            finish(true);
-        }
+            if (result.skipped)
+                atomicOp!"+="(skipped, size_t(1));
+            else
+                atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+            if (!result.succeeded && !result.skipped)
+                synchronized (mutex)
+                    failures ~= result;
+        });
+        joinTestWorkers(workers);
     }
 
     totals.passed = passed;
@@ -1404,42 +1399,35 @@ private void runParallelLive(
     import core.thread : Thread;
     import core.time : MonoTime, msecs;
     import std.array : appender;
-    import std.parallelism : task, TaskPool;
     import std.string : lineSplitter;
     import sparkles.ui.components.live : stdoutLiveRegion;
     import sparkles.ui.components.progress : ProgressLine;
-
-    auto pool = new TaskPool(threads < 1 ? 1 : threads);
-    scope (exit)
-        pool.finish(true);
 
     auto mutex = new Mutex;
     string[] pendingOutput;
     shared size_t completed;
 
-    void runOne(size_t idx)
-    {
-        const result = executeTest(runnable[idx]);
-        auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
-        foreach (thrown; result.thrown)
-            output ~= formatThrown(thrown, colored, options.verbose);
-        synchronized (mutex)
-        {
-            pendingOutput ~= output;
-            if (!result.succeeded && !result.skipped)
-                failures ~= result;
-        }
-        // Same three buckets as the plain path: a skip (yellow ⊘ line) counts
-        // in neither passed nor failed, so it never fails the run.
-        if (result.skipped)
-            atomicOp!"+="(skipped, size_t(1));
-        else
-            atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
-        atomicOp!"+="(completed, size_t(1)); // after the queue append (see drain)
-    }
-
-    foreach (i; 0 .. runnable.length)
-        pool.put(task(&runOne, i));
+    auto workers = startTestWorkers(runnable, threads < 1 ? 1 : threads,
+        (result) {
+            auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+            foreach (thrown; result.thrown)
+                output ~= formatThrown(thrown, colored, options.verbose);
+            synchronized (mutex)
+            {
+                pendingOutput ~= output;
+                if (!result.succeeded && !result.skipped)
+                    failures ~= result;
+            }
+            // Same three buckets as the plain path: a skip (yellow ⊘ line) counts
+            // in neither passed nor failed, so it never fails the run.
+            if (result.skipped)
+                atomicOp!"+="(skipped, size_t(1));
+            else
+                atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+            atomicOp!"+="(completed, size_t(1)); // after the queue append (see drain)
+        });
+    scope (exit)
+        joinTestWorkers(workers);
 
     auto region = stdoutLiveRegion();
     scope (exit)

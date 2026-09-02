@@ -1192,6 +1192,7 @@ A quick scan of the gotchas above plus a few more:
 - [ ] Cross-module-but-internal symbols use `package` visibility, not `private`.
 - [ ] Symbols used only as UDAs are camelCase (lowercase first letter).
 - [ ] Don't search `/nix/store` for C headers/libraries — use `pkg-config --cflags <pkg>` / `pkg-config --libs <pkg>`.
+- [ ] Don't put a large value type on the stack in a unittest (`MatcherWorkspace`, `DqlEngine` scratch, …). Test workers are 512 KiB and a 384 KiB watermark fails the test; heap-own it with `Unique` / `HeapBuffer`.
 - [ ] Dependency version changes need matching `dub.selections.json` and
       `nix/dub-lock.json` updates.
 

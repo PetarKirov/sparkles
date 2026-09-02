@@ -139,6 +139,27 @@ runs on `proc_pid_rusage`'s free-running fixed counters (per-bracket
 snapshot pairs with the bracket's own syscall cost calibrated out — not
 ioctl-excluded like Linux); on other platforms it is skipped entirely.
 
+## Worker stacks and the 256 KiB budget
+
+`std.parallelism.TaskPool` uses the OS default pthread stack: ~8 MiB on
+Linux, **512 KiB on macOS**. A 1 MiB stack local therefore passes Linux CI
+and SIGSEGV/SIGBUS on a Mac worker, and because the old pool let the 8 MiB
+main thread steal work, the crash was probabilistic.
+
+The runner no longer uses `TaskPool` for the default suite:
+
+- Workers are `core.thread.Thread`s constructed with a 512 KiB stack on
+  every OS.
+- When `-t > 1` the main thread only joins (and, on a tty, paints). It
+  never runs a test body.
+- Before each body the unused stack below a 384 KiB watermark is
+  `mprotect`'d `PROT_NONE`. A fault there is a named
+  `StackBudgetExceeded` failure, not a process abort. Nested
+  `executeTest` calls (the runner's own tests) reuse the outer watermark.
+
+`-t 1` still runs on the main thread so a developer can debug without the
+tight stack; `ci --test` always follows it with a `-t N` (`N ≥ 2`) leg.
+
 ## Live progress: three displays, one policy
 
 The runner has three redraw-in-place displays, all answering to one policy —
