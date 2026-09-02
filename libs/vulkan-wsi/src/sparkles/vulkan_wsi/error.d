@@ -4,7 +4,8 @@ module sparkles.vulkan_wsi.error;
 import expected : Expected, err, ok;
 
 import sparkles.vulkan : VkResult;
-import sparkles.wsi : BackendKind, InlineUtf8;
+import sparkles.base.buffer : InlineBuffer;
+import sparkles.wsi : BackendKind;
 
 @safe:
 
@@ -36,7 +37,7 @@ struct VulkanWsiError
     VulkanWsiOperation operation;
     BackendKind backend;
     VkResult vkResult;
-    InlineUtf8!128 diagnostic;
+    InlineBuffer!(char, 128) diagnostic;
 }
 
 struct VulkanWsiExpectedHook

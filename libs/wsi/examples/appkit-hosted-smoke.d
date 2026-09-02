@@ -336,7 +336,7 @@ private void checkMarkedText(ref AppKitWsi wsi)
         lastSequence = event.sequence;
         event.payload.match!(
             (in CompositionEvent composition) {
-                assert(composition.preedit.value == "にほん");
+                assert(composition.preedit[] == "にほん");
                 assert(composition.cursor == 3);
                 assert(composition.selectionStart == 3
                     && composition.selectionLength == 3);
@@ -359,7 +359,7 @@ private void checkMarkedText(ref AppKitWsi wsi)
         lastSequence = event.sequence;
         event.payload.match!(
             (in TextCommittedEvent text) {
-                assert(text.text.value == "日本");
+                assert(text.text[] == "日本");
                 sawCommit = true;
             },
             (in CompositionEvent composition) {

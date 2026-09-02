@@ -214,7 +214,7 @@ private void checkTextAndComposition(ref Win32Wsi wsi)
                 keyReleased |= key.action == KeyAction.release;
             },
             (in TextCommittedEvent text) {
-                charCommitted |= text.text.value == "a";
+                charCommitted |= text.text[] == "a";
             },
             (_) {});
     });
@@ -239,7 +239,7 @@ private void checkTextAndComposition(ref Win32Wsi wsi)
         lastSequence = event.sequence;
         event.payload.match!(
             (in CompositionEvent composition) {
-                if (composition.preedit.value == "nihao")
+                if (composition.preedit[] == "nihao")
                 {
                     sawPreedit = true;
                     assert(composition.cursor == 5);
@@ -251,7 +251,7 @@ private void checkTextAndComposition(ref Win32Wsi wsi)
                     sawCompositionEnd = true;
             },
             (in TextCommittedEvent text) {
-                sawImeCommit |= text.text.value == "nihao";
+                sawImeCommit |= text.text[] == "nihao";
             },
             (_) {});
     });

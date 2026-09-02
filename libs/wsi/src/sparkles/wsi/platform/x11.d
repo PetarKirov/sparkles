@@ -249,7 +249,7 @@ struct X11Wsi
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
                 "requested X11 startup configuration is not implemented",
                 WsiErrorKind.unsupported);
-        if (validateUtf8(config.title.value).hasError)
+        if (validateUtf8(config.title[]).hasError)
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
                 "window title is not valid UTF-8",
                 WsiErrorKind.invalidArgument);
@@ -290,7 +290,7 @@ struct X11Wsi
             &bootstrap_.wmDeleteWindow);
         xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, window,
             XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8,
-            cast(uint) config.title.length, config.title.value.ptr);
+            cast(uint) config.title.length, config.title[].ptr);
         if (config.visible)
             xcb_map_window(connection_, window);
         const error = xcb_flush(connection_) > 0

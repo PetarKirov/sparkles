@@ -20,6 +20,7 @@ import core.time : Duration, msecs;
 import std.math : isFinite;
 import std.traits : Parameters;
 
+import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
@@ -217,7 +218,7 @@ struct WaylandWsi
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "requested Wayland startup configuration is not implemented",
                 WsiErrorKind.unsupported);
-        if (validateUtf8(config.title.value).hasError)
+        if (validateUtf8(config.title[]).hasError)
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "window title is not valid UTF-8",
                 WsiErrorKind.invalidArgument);
@@ -278,7 +279,7 @@ struct WaylandWsi
         }
 
         char[257] title;
-        title[0 .. config.title.length] = config.title.value;
+        title[0 .. config.title.length] = config.title[];
         title[config.title.length] = '\0';
         xdg_toplevel_set_title(slot.toplevel, title.ptr);
         xdg_toplevel_set_app_id(slot.toplevel, "sparkles-wsi");
@@ -1660,7 +1661,7 @@ struct WaylandWsi
     {
         auto owner = cast(WaylandWsi*) data;
         // An oversized pre-edit degrades to none rather than to a cut
-        // multi-byte sequence; InlineUtf8.assign rejects overflow whole.
+        // multi-byte sequence; `assign` rejects overflow whole.
         owner.pendingText_.preedit.clear();
         if (text !is null)
         {
@@ -1895,8 +1896,8 @@ private immutable wl_keyboard_listener keyboardListener = {
 /// One text-input-v3 batch, stashed between events and applied on `done`.
 struct PendingTextInput
 {
-    InlineUtf8!512 preedit;
-    InlineUtf8!256 commit;
+    InlineBuffer!(char, 512) preedit;
+    InlineBuffer!(char, 256) commit;
     int cursorBegin = -1;
     int cursorEnd = -1;
     uint deleteBefore;
@@ -1968,7 +1969,7 @@ TextInputBatch textInputBatch(in PendingTextInput pending,
     if (!pending.preedit.empty)
     {
         batch.emitComposition = true;
-        batch.composition = compositionFromPreedit(pending.preedit.value,
+        batch.composition = compositionFromPreedit(pending.preedit[],
             pending.cursorBegin, pending.cursorEnd);
         batch.compositionActiveAfter = true;
     }
@@ -1995,7 +1996,7 @@ unittest
     PendingTextInput accepted;
     assert(accepted.commit.assign("日本"));
     const done = textInputBatch(accepted, true);
-    assert(done.emitCommit && done.committed.text.value == "日本");
+    assert(done.emitCommit && done.committed.text[] == "日本");
     assert(done.emitComposition && done.composition.preedit.empty);
     assert(!done.compositionActiveAfter);
 
@@ -2010,7 +2011,7 @@ unittest
 {
     // A visible cursor between the bytes of a multi-byte pre-edit.
     const plain = compositionFromPreedit("にほん", 3, 3);
-    assert(plain.preedit.value == "にほん");
+    assert(plain.preedit[] == "にほん");
     assert(plain.cursor == 3 && plain.selectionLength == 0);
     assert(plain.segmentCount == 1);
     assert(plain.segments[0] == CompositionSegment(0, 9,

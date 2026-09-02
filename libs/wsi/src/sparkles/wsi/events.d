@@ -10,6 +10,7 @@ module sparkles.wsi.events;
 import std.sumtype : SumType;
 public import std.sumtype : match;
 
+import sparkles.base.buffer : InlineBuffer;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.types;
@@ -83,7 +84,7 @@ struct KeyboardEvent
     bool composing;
 }
 
-struct TextCommittedEvent { InlineUtf8!256 text; }
+struct TextCommittedEvent { InlineBuffer!(char, 256) text; }
 
 enum CompositionSegmentStyle : ubyte
 {
@@ -102,7 +103,7 @@ struct CompositionSegment
 
 struct CompositionEvent
 {
-    InlineUtf8!512 preedit;
+    InlineBuffer!(char, 512) preedit;
     ushort selectionStart;
     ushort selectionLength;
     ushort cursor;
@@ -235,7 +236,7 @@ struct DataOfferEvent
 {
     OfferId offer;
     DataOfferAction action;
-    InlineUtf8!128 mimeType;
+    InlineBuffer!(char, 128) mimeType;
     LogicalPosition logicalPosition;
 }
 
@@ -275,7 +276,7 @@ unittest
     auto b = a;
     assert(a == b);
     assert(b.payload.match!(
-        (in TextCommittedEvent t) => t.text.value == "λ",
+        (in TextCommittedEvent t) => t.text[] == "λ",
         _ => false));
 }
 

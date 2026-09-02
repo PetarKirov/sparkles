@@ -10,6 +10,7 @@ module sparkles.wsi.types;
 import expected : Expected, err, ok;
 import std.math : isFinite;
 
+import sparkles.base.buffer : InlineBuffer;
 import sparkles.math : ScreenPosition, ScreenSize;
 
 @safe:
@@ -41,46 +42,6 @@ struct SurfaceMetrics
     /// A zero pixel extent suspends presentation but is not a WSI error.
     bool suspended() const pure nothrow @nogc
         => physicalSize.width == 0 || physicalSize.height == 0;
-}
-
-/**
-Fixed-capacity owned UTF-8 bytes.
-
-Assignment rejects overflow rather than cutting a multi-byte sequence. UTF-8
-validation belongs to the shared base conversion milestone; this type's job is
-ownership and deterministic storage.
-*/
-struct InlineUtf8(size_t Capacity)
-if (Capacity > 0 && Capacity <= ushort.max)
-{
-    private char[Capacity] bytes_;
-    private ushort length_;
-
-    /// Replace the value. On overflow the old value is retained.
-    bool assign(scope const(char)[] value) pure nothrow @nogc
-    {
-        if (value.length > Capacity)
-            return false;
-
-        bytes_[] = 0;
-        bytes_[0 .. value.length] = value;
-        length_ = cast(ushort) value.length;
-        return true;
-    }
-
-    /// Borrow this value's own storage.
-    const(char)[] value() const return pure nothrow @nogc
-        => bytes_[0 .. length_];
-
-    /// Remove all bytes, including unused bytes relevant to value equality.
-    void clear() pure nothrow @nogc
-    {
-        bytes_[] = 0;
-        length_ = 0;
-    }
-
-    size_t length() const pure nothrow @nogc => length_;
-    bool empty() const pure nothrow @nogc => length_ == 0;
 }
 
 /// Generation-checked public identity. The all-zero value is invalid.
@@ -147,7 +108,7 @@ enum WindowStartupState : ubyte
 
 struct WindowConfig
 {
-    InlineUtf8!256 title;
+    InlineBuffer!(char, 256) title;
     LogicalSize logicalSize = LogicalSize(800, 600);
     bool visible = true;
     bool resizable = true;
@@ -191,7 +152,7 @@ struct WsiError
     BackendKind backend;
     WsiOperation operation;
     long nativeCode;
-    InlineUtf8!96 diagnostic;
+    InlineBuffer!(char, 96) diagnostic;
 }
 
 struct WsiExpectedHook
@@ -230,19 +191,6 @@ WsiError wsiError(WsiErrorKind kind, WsiOperation operation,
         assert(assigned);
     }
     return result;
-}
-
-@("wsi.types.inlineTextOwnsAndRejectsOverflow")
-pure nothrow @nogc
-unittest
-{
-    InlineUtf8!8 text;
-    assert(text.assign("wayland"));
-    assert(text.value == "wayland");
-    assert(!text.assign("too-long!"));
-    assert(text.value == "wayland");
-    text.clear();
-    assert(text.empty);
 }
 
 @("wsi.types.idsRequireSlotAndGeneration")
