@@ -698,8 +698,8 @@ int runGui(GuiArgs guiArgs) @system
     {
         vm.widthCols = widthCols();
         vm.applyTheme(i);
-        window.title(text("hue — ", title, " — ", names[i],
-            " (", i + 1, "/", names.length, ")").toStringz);
+        window.title(text(
+            i"hue — $(title) — $(names[i]) ($(i + 1)/$(names.length))"));
         // The explorer pane follows the theme too — page colors and the
         // palette its slots resolve against, not just the syntax colors.
         pn.tree.theme = vm.current;
@@ -840,7 +840,7 @@ int runGui(GuiArgs guiArgs) @system
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         inp.query.clear();
         inp.mode = Mode.normal;
-        window.title(("hue — " ~ name).toStringz);
+        window.title(text(i"hue — $(name)"));
         pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
         return true;
@@ -1234,7 +1234,7 @@ int runGui(GuiArgs guiArgs) @system
                 warning(i"copy: JNI clipboard bridge failed");
         }
         else
-            window.clipboard(text.toStringz);
+            window.clipboard(text);
     }
 
     void showToast(string msg, bool success = false)
@@ -2143,7 +2143,7 @@ int runGui(GuiArgs guiArgs) @system
         if (shotAt < 0 && frame >= shotFrame
             && (settled || frame >= shotFrame + shotSettleCap))
         {
-            window.screenshot(shotPath.toStringz);
+            window.screenshot(shotPath);
             shotAt = frame;
         }
         return !(shotAt >= 0 && frame >= shotAt + 1);

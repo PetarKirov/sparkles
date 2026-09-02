@@ -23,10 +23,10 @@ import core.stdc.stdarg : va_list;
 
 import raylib;
 
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
-import sparkles.base.text.cstring : CString, tryToCString;
+import sparkles.base.text.cstring : stringz, toTempStringz;
 import sparkles.ui_raylib.events : toRaylibCursor;
 
 /**
@@ -99,7 +99,7 @@ struct Window
     private bool fullscreen_;
     // A capture requested for the current frame, performed by `endFrame` just
     // before the swap. See $(LREF screenshot).
-    private SharedBuffer!(char, 256) pendingShot;
+    private UniqueBuffer!(char, 256) pendingShot;
 
     @disable this(this);
 
@@ -123,22 +123,9 @@ struct Window
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
         SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
-        // NUL-terminate here rather than trusting the caller's slice. raylib
-        // hands the pointer straight to the platform, which reads until it
-        // finds a NUL: a title built by concatenation (hue's `"hue — " ~ name`)
-        // ends at its length with no terminator, so GLFW's macOS path fed the
-        // trailing garbage to `[NSString stringWithUTF8String:]`, got `nil`
-        // back for the invalid UTF-8, and `-[NSWindow setTitle:nil]` raised
-        // `NSInternalInconsistencyException` before the window ever appeared.
-        // Only a string literal happened to work.
-        //
-        // A title is a caller's free text, so overflow is a condition rather
-        // than a bug: `tryToCString` leaves an over-long one empty, which costs
-        // the title and nothing else. Either way `ptr` is never `null`, so the
-        // empty case needs no branch of its own.
-        CString!512 titleZ;
-        cast(void) tryToCString(titleZ, [r.title]);
-        InitWindow(r.width, r.height, titleZ.ptr);
+        // Unbounded on purpose: a `hue --diff` of two paths builds a title in
+        // the hundreds of bytes, so any cap here would silently lose one.
+        InitWindow(r.width, r.height, r.title.toTempStringz.ptr);
         // Checked HERE, before any other raylib call. `InitWindow` reports
         // failure only through `IsWindowReady`, and every call below assumes a
         // live GLFW: on a host with no window server they warn ("The GLFW
@@ -186,8 +173,9 @@ struct Window
     /// Seconds the last frame took — the frame clock every animation reads.
     float frameSeconds() const @system => GetFrameTime();
 
-    /// Retitles the window. `title` must be NUL-terminated.
-    void title(scope const(char)* title) @system => SetWindowTitle(title);
+    /// Retitles the window. Long titles are shown in full, not truncated.
+    void title(in char[] title) @trusted
+        => SetWindowTitle(title.toTempStringz.ptr);
 
     /// Resizes the window (pixels).
     void resize(int w, int h) @system => SetWindowSize(w, h);
@@ -206,7 +194,7 @@ struct Window
     {
         if (pendingShot.length != 0)
         {
-            captureNow(pendingShot[].ptr);
+            captureNow(pendingShot.stringz.ptr);
             pendingShot.clear();
         }
         EndDrawing();
@@ -252,11 +240,13 @@ struct Window
     /// The pointer shape the application wants right now.
     void pointerShape(PointerShape s) @system => SetMouseCursor(toRaylibCursor(s));
 
-    /// Puts `text` (NUL-terminated) on the system clipboard.
-    void clipboard(scope const(char)* text) @system => SetClipboardText(text);
+    /// Puts `text` on the system clipboard. Unbounded — a copied selection may
+    /// be a whole document.
+    void clipboard(in char[] text) @trusted
+        => SetClipboardText(text.toTempStringz!1024.ptr);
 
     /**
-    Requests that the surface be written to `path` (NUL-terminated).
+    Requests that the surface be written to `path`.
 
     $(B Deferred, not immediate.) The write happens in the next
     $(LREF endFrame), immediately before the buffer swap. Calling it from
@@ -276,15 +266,12 @@ struct Window
     Unlike raylib's version this one takes `path` verbatim rather than
     resolving it against the working directory, so an absolute path works.
     */
-    void screenshot(scope const(char)* path) @system
+    void screenshot(in char[] path) @safe
+    in (path.length != 0, "screenshot: empty path")
+    in (pendingShot.length == 0,
+        "screenshot: a capture is already armed for this frame")
     {
-        import core.stdc.string : strlen;
-
-        pendingShot.clear();
-        if (path is null)
-            return;
-        pendingShot ~= path[0 .. strlen(path)];
-        pendingShot ~= '\0';
+        pendingShot ~= path;
     }
 
     /**

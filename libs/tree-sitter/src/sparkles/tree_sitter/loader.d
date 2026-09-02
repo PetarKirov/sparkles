@@ -13,8 +13,8 @@ highlights (the same lifetime policy Helix uses).
 */
 module sparkles.tree_sitter.loader;
 
-import sparkles.base.buffer : SharedBuffer;
-import sparkles.base.text.cstring : toCString;
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.text.cstring : stringz, toTempStringz;
 
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
 import sparkles.tree_sitter.tree_sitter_c : TSLanguage, ts_language_abi_version,
@@ -45,18 +45,18 @@ TsExpected!Grammar loadGrammar(scope const(char)[] soPath, scope const(char)[] s
     {
         import core.sys.posix.dlfcn : dlopen, dlsym, RTLD_LOCAL, RTLD_NOW;
 
-        auto pathZ = toCString!512([soPath]);
-        void* handle = dlopen(pathZ.ptr, RTLD_NOW | RTLD_LOCAL);
+        void* handle = dlopen(soPath.toTempStringz!512.ptr, RTLD_NOW | RTLD_LOCAL);
         if (handle is null)
             return tsErr!Grammar(TsErrorCode.dlopenFailed);
 
-        SharedBuffer!(char, 128) symbolZ;
+        // Built rather than converted: the symbol is a prefix plus `symbolName`
+        // with `-` mapped to `_`, so there is no single slice to terminate.
+        UniqueBuffer!(char, 128) symbolZ;
         symbolZ ~= "tree_sitter_";
         foreach (char c; symbolName)
             symbolZ ~= c == '-' ? '_' : c;
-        symbolZ ~= '\0';
 
-        auto symbol = dlsym(handle, symbolZ[].ptr);
+        auto symbol = dlsym(handle, symbolZ.stringz.ptr);
         if (symbol is null)
             return tsErr!Grammar(TsErrorCode.symbolNotFound);
 
