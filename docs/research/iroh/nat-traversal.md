@@ -424,7 +424,7 @@ on-path validation RTT (bounded by 3×PTO) before `Established`.
 | -------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `noq-proto` (the QUIC engine)                                                    | load-bearing                   | QNT/QAD/MP are _inside_ the QUIC state machine. Cannot bolt onto an off-the-shelf QUIC — must own a multipath QUIC stack with custom frames + transport parameters. The single biggest reimplementation cost. |
 | `rustc_hash` (`FxHashMap`/`FxHashSet`)                                           | API-surface                    | Fast hash maps keyed on `VarInt`/`IpPort`/`u64`; any D map works.                                                                                                                                             |
-| `bytes` (`Buf`/`BufMut`)                                                         | API-surface                    | Frame encode/decode; a bounded D writer over [`SharedBuffer`][eh-spec] suffices.                                                                                                                              |
+| `bytes` (`Buf`/`BufMut`)                                                         | API-surface                    | Frame encode/decode; a bounded D writer over [`Buffer`][eh-spec] suffices.                                                                                                                                    |
 | `tokio::sync::{broadcast, watch, mpsc, oneshot}`                                 | load-bearing (noq/iroh layers) | _These are_ the concurrency model; a port must redesign them (see below).                                                                                                                                     |
 | `n0_future`/`tokio_stream` (`MergeUnbounded`, `FuturesUnordered`, `MaybeFuture`) | load-bearing                   | The actor's select-over-many-streams pattern; needs a fiber redesign.                                                                                                                                         |
 | `iroh_base` (`EndpointId`, `TransportAddr`, `RelayUrl`)                          | load-bearing                   | Addressing types the driver keys on — see [Identity & Cryptography][identity-crypto].                                                                                                                         |
@@ -489,19 +489,19 @@ pub(crate) struct ClientState {
 ```d
 // proposed / sketch — a plain value type owned by the connection fiber.
 // Path counts are <= 8 (MAX_MULTIPATH_PATHS) and addresses <= 32
-// (MAX_QNT_ADDRESSES), so fixed-capacity SmallBuffers beat hashmaps and
+// (MAX_QNT_ADDRESSES), so fixed-capacity buffers beat hashmaps and
 // keep the whole struct @nogc.
 struct ClientState
 {
     size_t maxRemoteAddresses;
     size_t maxLocalAddresses;
-    SharedBuffer!(RemoteCandidate, 32) remoteAddresses;   // keyed by seqNo, linear scan
-    SharedBuffer!(CanonicalIpPort, 32) localAddresses;
+    UniqueBuffer!(RemoteCandidate, 32) remoteAddresses;   // keyed by seqNo, linear scan
+    UniqueBuffer!(CanonicalIpPort, 32) localAddresses;
     VarInt round;
     ubyte attempt;
-    SharedBuffer!(SentChallenge, 32) sentChallenges;      // token -> IpPort
-    SharedBuffer!(IpPort, 32) pendingProbes;
-    SharedBuffer!(FourTuple, 8) pathsToBeOpened;          // validated, awaiting openPath
+    UniqueBuffer!(SentChallenge, 32) sentChallenges;      // token -> IpPort
+    UniqueBuffer!(IpPort, 32) pendingProbes;
+    UniqueBuffer!(FourTuple, 8) pathsToBeOpened;          // validated, awaiting openPath
 }
 
 struct RemoteCandidate { VarInt seqNo; CanonicalIpPort addr; ProbeState probe; }

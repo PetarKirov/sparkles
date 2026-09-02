@@ -811,7 +811,7 @@ The relevant takeaways for a D-based pretty-printer / CLI layout engine:
    has no cross-axis upper bound (you can always print more lines). The SwiftUI model
    maps onto this cleanly.
 2. **Expose a `Layout`-like protocol** with separate _size_ and _place_ phases. The
-   place phase can write into a target buffer (Sparkles' `SharedBuffer!(Cell, N)`),
+   place phase can write into a target buffer (Sparkles' `UniqueBuffer!(Cell, N)`),
    while the size phase produces a cached layout description usable for tests and for
    `--width=auto` flow.
 3. **Treat alignment guides as a separate dimension.** When mixing labels, prefixes,

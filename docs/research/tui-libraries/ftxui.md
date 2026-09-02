@@ -1159,7 +1159,7 @@ allocation for the layout pass.
 FTXUI's two-tier architecture translates directly:
 
 1. **Dom layer** -- Pure `@nogc nothrow` Element types. Elements are value types (D
-   structs) stored in a `SharedBuffer`-backed tree. Layout computation is a pure function
+   structs) stored in a `Buffer`-backed tree. Layout computation is a pure function
    from Element tree to positioned boxes. No GC allocation, no exceptions, no state.
 
 2. **Component layer** -- Stateful components using Design by Introspection. A component
@@ -1226,10 +1226,10 @@ struct Counter {
 }
 ```
 
-### Element as Value Type maps to SharedBuffer-Backed Trees
+### Element as Value Type maps to Buffer-Backed Trees
 
 FTXUI uses `shared_ptr<Node>` for elements, which means heap allocation for every node.
-In D, elements could be value types stored in a `SharedBuffer`:
+In D, elements could be value types stored in a `Buffer`:
 
 ```d
 // D: Element tree without GC allocation
@@ -1242,7 +1242,7 @@ struct Element {
 ```
 
 For small-to-medium UIs (the common case in CLI tools), the entire Element tree fits in
-a `SharedBuffer` with no heap allocation. This is a significant performance advantage
+a `Buffer` with no heap allocation. This is a significant performance advantage
 over FTXUI's `shared_ptr`-per-node approach.
 
 ### WebAssembly Target
@@ -1257,13 +1257,13 @@ to ANSI for terminals or HTML for browsers.
 
 | FTXUI Pattern              | D / Sparkles Equivalent                          |
 | -------------------------- | ------------------------------------------------ |
-| `Element` via `shared_ptr` | `Element` as `@nogc` struct in `SharedBuffer`    |
+| `Element` via `shared_ptr` | `Element` as `@nogc` struct in `Buffer`          |
 | `operator\|` pipe          | UFCS (built-in, zero cost)                       |
 | `FlexboxConfig` struct     | Named-argument struct with CTFE validation       |
 | `ComponentBase` virtual    | DbI trait detection (`__traits(hasMember, ...)`) |
 | Lambda capture state       | D delegates / struct member state                |
 | `ComputeRequirement`       | `@nogc pure nothrow` layout pass                 |
-| `Screen` pixel grid        | `SharedBuffer!(Pixel, N)` grid                   |
+| `Screen` pixel grid        | `UniqueBuffer!(Pixel, N)` grid                   |
 | WebAssembly via Emscripten | WebAssembly via LDC                              |
 
 ---

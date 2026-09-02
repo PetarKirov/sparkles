@@ -242,7 +242,7 @@ survey suggests the design center for an allocation-conscious D parsing toolkit:
   [nom][nom] and its fork [winnow] do in Rust (slices, no allocator on the recognizer
   path) and matches the repo's existing `@nogc` text readers in
   [`sparkles.base.text`][base-text]. A PEG-style ordered-choice combinator over
-  `const(char)[]`/`SharedBuffer` slices would compose with the existing primitives.
+  `const(char)[]`/`Buffer` slices would compose with the existing primitives.
 - **A combinator API _can_ be zero-allocation — [flatparse] is the proof.** Its pure
   validators (parsers returning `()`) run with **zero heap allocation** via unboxed
   results; that is exactly the target for a `@nogc` D combinator, and its failure-vs-error

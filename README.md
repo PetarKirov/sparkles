@@ -29,7 +29,7 @@ compatibility; `sparkles:core-cli` builds on it with higher-level CLI tools.
 
 ### What's Inside
 
-- **Base** -- `SharedBuffer`, lifetime helpers, text readers/writers, terminal styling, styled templates, terminal control sequences, and logging
+- **Base** -- the `Buffer` family, lifetime helpers, text readers/writers, terminal styling, styled templates, terminal control sequences, and logging
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
 - **UI Components** -- Tables (spans, alignment, titles, streaming), boxes, headers, trees, meters/progress bars, key-value lists, horizontal layout, and OSC 8 hyperlinks
@@ -62,7 +62,7 @@ Or `dub.json`:
 ### Base
 
 `sparkles:base` contains the shared low-level modules used by the rest of the
-monorepo: `SharedBuffer`, `recycledInstance`, `recycledErrorInstance`, `@nogc`
+monorepo: the `Buffer` family, `recycledInstance`, `recycledErrorInstance`, `@nogc`
 text parsing/formatting, terminal styling, styled IES rendering, and the
 `CoreLogger` logging interface. See the [base documentation](docs/libs/base/index.md)
 for the tutorial, how-to guides, and API index.
@@ -709,16 +709,25 @@ Valid values:
 
 The same screen comes from `--color=?`, `--color?`, `-c=help`, and `-c?`. For free-form options (strings, integers, paths) it describes the accepted shape instead of enumerating values; for `bool` options it lists the `true / false / yes / no` tokens.
 
-### SharedBuffer
+### Buffers
 
-A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
+One `@nogc` container, four storage policies. The capabilities _are_ the policy, so the alias names what the buffer may do:
+
+| Alias                 | Storage                           | Copying                                    |
+| --------------------- | --------------------------------- | ------------------------------------------ |
+| `InlineBuffer!(T, N)` | the inline `T[N]`, never the heap | free — plain data, no destructor           |
+| `UniqueBuffer!(T, N)` | inline while it fits, then heap   | disabled — sole owner                      |
+| `SharedBuffer!(T, N)` | inline while it fits, then heap   | shares the block, cloned on the next write |
+| `HeapBuffer!T`        | heap only                         | as `SharedBuffer`                          |
+
+Reach for `UniqueBuffer` by default: one owner means the grow path carries no reference count. `SharedBuffer` is a claim that copies actually happen.
 
 ```d
 import sparkles.base.buffer;
 
 @safe pure nothrow @nogc
 unittest {
-    SharedBuffer!(char, 64) buf;
+    UniqueBuffer!(char, 64) buf;
     buf ~= "Hello";
     buf ~= ' ';
     buf ~= "World";
@@ -727,7 +736,7 @@ unittest {
 }
 ```
 
-Works as an output range, so it composes with `std.algorithm`, `prettyPrint`, styled templates, and the rest of the library.
+Every policy that can allocate is an output range, so it composes with `std.algorithm`, `prettyPrint`, styled templates, and the rest of the library. `InlineBuffer` is deliberately not one — `put` promises to accept what it is given, and a fixed buffer cannot — so you write into it with `tryWrite`, which reports overflow rather than growing.
 
 ### @nogc Utilities
 

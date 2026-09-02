@@ -1212,7 +1212,7 @@ Judged on **UX impact × implementation cost × how many of our five targets can
   layer manager; Flutter forces a submenu to inherit its root anchor's choice. The forcing rule
   is needed either way.
 - **How deep may nesting go, and is the cap a static array bound (keeping the arena `@nogc` and
-  `SharedBuffer`-sized) or a runtime assert?** GPUI asserts depth < 10; Qt bounds its close loop
+  `Buffer`-sized) or a runtime assert?** GPUI asserts depth < 10; Qt bounds its close loop
   at 1024.
 - **Does the recording canvas need to observe the arena, or only the emitted display list?** If
   assertions want "this overlay is a child of that one", the arena must be reachable from the

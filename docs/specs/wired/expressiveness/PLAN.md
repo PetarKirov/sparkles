@@ -96,7 +96,7 @@ The error-sink decode overloads (all-failures-with-paths, first error in the
 `void` default, decode/encode independent (SPEC §7).
 
 Gate: a six-bad-fields fixture yields six pathed errors in one pass, `@nogc`
-with a `SharedBuffer` sink; context reaches a context-taking converter and
+with a `UniqueBuffer` sink; context reaches a context-taking converter and
 check on decode while encode instantiates context-free; zero codegen delta
 when `Ctx == void` (compile-time-bench guarded).
 

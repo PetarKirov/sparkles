@@ -686,7 +686,7 @@ Notcurses detects terminal capabilities at runtime (Sixel, Kitty, true color). D
 
 ### Cell Struct with SharedBuffer
 
-The `nccell` approach of packing short glyph clusters inline (32-bit `gcluster`) and spilling to heap for longer EGCs maps directly to `SharedBuffer`. A D cell could use `SharedBuffer!(char, 4)` for the glyph cluster, keeping the common case allocation-free while supporting arbitrary Unicode:
+The `nccell` approach of packing short glyph clusters inline (32-bit `gcluster`) and spilling to heap for longer EGCs maps directly to `Buffer`. A D cell could use `SharedBuffer!(char, 4)` for the glyph cluster, keeping the common case allocation-free while supporting arbitrary Unicode:
 
 ```d
 struct Cell {
@@ -702,7 +702,7 @@ D has excellent C interop via `extern(C)` and `importC`. A D binding to Notcurse
 
 ### Performance Patterns
 
-Notcurses' zero-allocation rendering philosophy (packed cells, frame diffing, minimal escape output) aligns with D's `@nogc` + output range patterns. A D TUI renderer could write escape sequences to a `SharedBuffer` or directly to an output range, avoiding GC allocation entirely in the render path.
+Notcurses' zero-allocation rendering philosophy (packed cells, frame diffing, minimal escape output) aligns with D's `@nogc` + output range patterns. A D TUI renderer could write escape sequences to a `Buffer` or directly to an output range, avoiding GC allocation entirely in the render path.
 
 ---
 

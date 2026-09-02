@@ -426,7 +426,7 @@ is imposed by the `iroh-blobs` store, not by `bao-tree`.
 | ---------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `blake3` (1.8, `hazmat`)     | load-bearing algorithm | Must expose chunk-counter CVs, `set_input_offset`, `finalize_non_root`, `merge_subtrees_{root,non_root}` — a full BLAKE3, not just one-shot hashing.                                                                                  |
 | `range-collections` (0.4.5)  | load-bearing algorithm | `RangeSet2<ChunkNum>` sorted-boundary sets with union/intersection and a zero-copy `split(mid)` on borrowed boundary slices ([`lib.rs:839`][lib]); the split-by-reference trick drives the whole traversal and must be reimplemented. |
-| `smallvec`                   | convenience            | Hash stacks are `SmallVec<[Hash; 10]>` — depth ≈ `log2(chunks)`; maps to `SharedBuffer!(Hash, 10)`.                                                                                                                                   |
+| `smallvec`                   | convenience            | Hash stacks are `SmallVec<[Hash; 10]>` — depth ≈ `log2(chunks)`; maps to `UniqueBuffer!(Hash, 10)`.                                                                                                                                   |
 | `bytes`                      | zero-copy buffers      | `Leaf.data: Bytes`; maps to an owned/refcounted D buffer (`isOwnedIoBuf`) or a GC slice off the hot path.                                                                                                                             |
 | `self_cell`                  | convenience            | Owning iterator over `ChunkRanges` ([`iter.rs:682`][iter]); a D fiber or index-based iterator makes it moot.                                                                                                                          |
 | `positioned-io` / `iroh-io`  | I/O trait surface      | `ReadAt`/`WriteAt` pread/pwrite; io_uring positioned ops cover these natively.                                                                                                                                                        |
@@ -513,7 +513,7 @@ struct TreeNode
 **The decoder is a pull parser, not an async task.** Under tier B a byte stream is a
 blocking-looking verb (`recv`/`readExact`) that parks the fiber and resumes on the
 terminal CQE, so the verified-decode state machine needs no `async`/`Future`
-coloring at all — it is a plain struct with a `SharedBuffer` hash stack that reads
+coloring at all — it is a plain struct with a `Buffer` hash stack that reads
 from any `isByteStream` source:
 
 ```rust
@@ -531,7 +531,7 @@ pub struct DecodeResponseIter<'a, R> {
 struct BaoDecoder(Reader) if (isByteStream!Reader)
 {
     ResponseIter        iter;   // recomputes traversal from (size, blockSize, ranges)
-    SharedBuffer!(Hash, 10) stack; // expected hashes, seeded with the root
+    UniqueBuffer!(Hash, 10) stack; // expected hashes, seeded with the root
     Reader              encoded;
 
     // Blocks the fiber on `encoded` (tier-B), verifies, returns one item.
@@ -563,7 +563,7 @@ Mapping table for the constructs that do and do not carry over:
 | Rust / bao-tree                                    | event-horizon                                                                                                  |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `TreeNode` bit tricks, `BaoTree::shifted`, offsets | Pure D `@safe pure nothrow @nogc` structs/functions — direct translation                                       |
-| `SmallVec<[blake3::Hash; 10]>` hash stack          | `SharedBuffer!(Hash, 10)` (depth ≈ `log2(chunks)`, never large)                                                |
+| `SmallVec<[blake3::Hash; 10]>` hash stack          | `UniqueBuffer!(Hash, 10)` (depth ≈ `log2(chunks)`, never large)                                                |
 | sync / fsm / mixed I/O front-ends                  | **one** tier-B implementation over `isByteStream` verbs — the three-flavor split disappears                    |
 | `Leaf.data: Bytes` (refcounted)                    | an owned buffer (`isOwnedIoBuf`) for the hot path; a refcounted immutable buffer where cheap sharing is wanted |
 | `range_collections::RangeSet2<ChunkNum>`           | must be reimplemented, incl. the zero-copy `split(mid)` on a borrowed boundary slice ([`lib.rs:839`][lib])     |

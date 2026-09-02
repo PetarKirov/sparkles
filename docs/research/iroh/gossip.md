@@ -344,9 +344,9 @@ struct PeerState
 {
     enum Kind { pending, active }
     Kind kind;
-    SharedBuffer!(ProtoMessage, 8) queue;   // Pending: buffered until dial completes
+    UniqueBuffer!(ProtoMessage, 8) queue;   // Pending: buffered until dial completes
     ConnId activeConnId;                    // Active: the current send stream owner
-    SharedBuffer!(ConnId, 2) otherConns;     // superseded conns, still draining
+    UniqueBuffer!(ConnId, 2) otherConns;     // superseded conns, still draining
     UniStreamMap streams;                   // one send stream per topic, lazily opened
 }
 ```

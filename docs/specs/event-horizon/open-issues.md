@@ -8,7 +8,7 @@ then delete the entry here (and reference the commit)._
 
 Settled during the initial design pass (now normative in SPEC.md, listed here
 so they are not relitigated by accident): no epoll fallback (§3.4); `Buf`
-not `SharedBuffer` as the tier-A transfer currency (§6.1); slab tokens, not
+not an inline-storage `Buffer` as the tier-A transfer currency (§6.1); slab tokens, not
 raw pointers, in `user_data` (§4.2); work-stealing limited to never-started
 tasks (§11); flattened `Cause` (§9.2); `Effect!(T, E)` with no `R` (§12);
 Schedule composition via `&`/`|` (§10.4); function-pointer callbacks at tier

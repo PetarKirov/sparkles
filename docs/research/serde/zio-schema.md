@@ -366,7 +366,7 @@ The places context _does_ exist are revealing about where the library's attentio
 
 The structural lesson the survey keeps returning to is that accumulation requires an applicative and any monadic bind in the chain silently destroys it, and that manually attached paths are paths eventually forgotten. Both hazards dissolve in a generated design: every branch always runs, and the path is a compile-time string emitted unconditionally. The best-in-class shape to aim at is [unjson's accumulated errors plus a usable partial value][invertible], not this.
 
-**D verdict: [(a)][tags] to [(b)][tags], and an area where D should beat the subject rather than copy it.** Field paths are compile-time string constants that the generated walker emits with no author effort, accumulation is a `SharedBuffer!(Anchored, N)` rather than a monad transformer, and the "partial value" story is natural because the decoder writes into a `T` that already holds its initializers.
+**D verdict: [(a)][tags] to [(b)][tags], and an area where D should beat the subject rather than copy it.** Field paths are compile-time string constants that the generated walker emits with no author effort, accumulation is a `UniqueBuffer!(Anchored, N)` rather than a monad transformer, and the "partial value" story is natural because the decoder writes into a `T` that already holds its initializers.
 
 ---
 

@@ -285,7 +285,7 @@ assert(DrawOp.sizeof <= 64)`, so a `PopClip` that carries no fields is as wide
 > [`dl_op_records.h`][dl-op-records] splits a payload rather than widen one
 > ("packed into 3 different OpTypes to avoid expanding the fixed payload beyond
 > the 8 bytes"); `DisplayList::Equals` still bulk-`memcmp`s across contiguous
-> runs. In D the shape is a byte `SharedBuffer` plus a `size_t[]` and a `switch`
+> runs. In D the shape is a byte `Buffer` plus a `size_t[]` and a `switch`
 > on a stored tag.
 >
 > The price is four things at once. The recovered bytes are only the spread
@@ -528,7 +528,7 @@ established during `Preroll`.
    exactly-sized records plus an offsets table** keeps value semantics and
    comparability, pays no widest-variant padding, and puts a variable-length
    payload inline after its record rather than in a slice, which is friction §7
-   from the other end. In D that is a byte `SharedBuffer` plus a `size_t[]` and a
+   from the other end. In D that is a byte `Buffer` plus a `size_t[]` and a
    `switch` on a stored tag. It is **answered**: variable stride buys nothing
    once the widest payload fits the `<= 64`-byte budget, and it costs
    `RecordingCanvas` the pairwise-comparable value semantics the friction log

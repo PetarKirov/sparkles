@@ -15,7 +15,7 @@ hero:
 
 features:
   - title: base
-    details: 'Allocation-conscious foundation modules: SharedBuffer, @nogc text readers and writers, terminal styling, styled templates, and CoreLogger.'
+    details: 'Allocation-conscious foundation modules: the Buffer family, @nogc text readers and writers, terminal styling, styled templates, and CoreLogger.'
   - title: core-cli
     details: 'CLI argument parsing, pretty-printing for any D type, process helpers, terminal helpers, and UI components (tables, boxes, headers).'
   - title: terminal

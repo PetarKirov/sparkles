@@ -53,15 +53,15 @@ It is now a `static assert` instead.
 ## Encoding and decoding
 
 ```d
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text : encodeBase64, decodeBase64;
 import std.string : representation;
 
-SharedBuffer!(char, 64) text;
+UniqueBuffer!(char, 64) text;
 encodeBase64(text, "Man".representation);
 assert(text[] == "TWFu");
 
-SharedBuffer!(ubyte, 64) bytes;
+UniqueBuffer!(ubyte, 64) bytes;
 auto r = decodeBase64(bytes, text[]);
 assert(r.value == 3 && bytes[] == "Man".representation);
 ```
@@ -77,7 +77,7 @@ Each name is one overload set with two forms:
 - **Streaming** — `encodeBase!a(w, data)` writes chars to any output range;
   `decodeBase!a(w, text)` writes `ubyte`s and returns
   `ParseExpected!size_t` (bytes written). Attributes infer: with a
-  `SharedBuffer` writer both are `@safe pure nothrow @nogc`.
+  `UniqueBuffer` writer both are `@safe pure nothrow @nogc`.
 - **Fixed-length** — when the byte count `N` is compile-time-known:
 
   ```d
@@ -155,7 +155,7 @@ shorthands are aliases: `readHex!T` / `writeHex`, `readBinary!T` /
 const(char)[] s = "DeadBEEF";
 assert(readHex!uint(s).value == 0xDEADBEEF);
 
-SharedBuffer!(char, 16) buf;
+UniqueBuffer!(char, 16) buf;
 writeHex(buf, 0xDEADu);
 assert(buf[] == "dead");
 ```

@@ -479,11 +479,11 @@ Further mapping notes:
 
 - **All five `Arc`s in `TlsConfig` collapse** under the `single` topology to plain fields of the
   endpoint struct; `ClientSessionMemoryCache`, `TokenMemoryCache`, and the relay `KeyCache` become
-  plain `SharedBuffer`-backed LRUs with no `Mutex`. The rustls "same Arc pointer across 0-RTT
+  plain `Buffer`-backed LRUs with no `Mutex`. The rustls "same Arc pointer across 0-RTT
   sessions" constraint simply disappears — it never applied to a single-threaded owner.
 - **Encoders** (hex, two base32 alphabets, z-base-32, base64url) are all table-driven codecs with
   a computable max output size; implement once with the alphabet as a template/DbI parameter and
-  stage into a `SharedBuffer` (`⌈8n/5⌉` for base32), keeping `toString` allocation-free.
+  stage into a `Buffer` (`⌈8n/5⌉` for base32), keeping `toString` allocation-free.
 - **No `spawn_blocking` substitute is needed.** Ed25519 sign/verify and BLAKE3 are microsecond
   scale; running them inline on the loop fiber is fine, which matters because event-horizon has
   **no** thread pool (flagged in [`d-architecture-migration.md`][migration]).

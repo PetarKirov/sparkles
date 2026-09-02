@@ -474,7 +474,7 @@ changes. A port re-arms a single in-ring `TIMEOUT` op — never one timer per sp
 | `socket2`, `libc`/`windows-sys`   | API-surface                   | cmsg/`sendmsg`/`recvmmsg` — ~1–2k LoC of D syscalls per platform                                                                |
 | `sorted-index-buffer` (n0)        | load-bearing container        | `sent_packets`/`lost_packets` ordered-by-pn map with range iteration below `largest_acked`                                      |
 | `rand` (`StdRng`) / `rand_pcg`    | mixed                         | CSPRNG (pn-skip filter, tokens, CID grease) must be injectable; BBR3 probe jitter can be any PRNG                               |
-| `tinyvec`, `rustc-hash`, `slab`   | perf detail                   | `ArrayRangeSet` ≈ `SharedBuffer`; `FxHashMap`; connection-handle arena                                                          |
+| `tinyvec`, `rustc-hash`, `slab`   | perf detail                   | `ArrayRangeSet` ≈ `Buffer`; `FxHashMap`; connection-handle arena                                                                |
 
 There is **no external QUIC/CC/recovery library to bind** — BBRv3, Cubic, the pacer, MTUD, the dedup
 window, and the reassembler are all in-tree and must be reimplemented. A planning split of the ~38.2k

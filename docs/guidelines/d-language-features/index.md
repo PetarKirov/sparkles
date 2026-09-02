@@ -284,7 +284,7 @@ this(this)` when migrating a type that has postblit-bearing fields.
   `-vgc`/`-profile=gc` ([2.066]/[2.068]) to find allocation points. Since
   [2.113] `-vgc` also reports which nested function/variable closes over what
   (matching `@nogc` error detail). The repo's `@nogc` toolkit
-  ([AGENTS § @nogc primitives][agents-nogc]): `SharedBuffer`, the `text`
+  ([AGENTS § @nogc primitives][agents-nogc]): the `Buffer` family, the `text`
   readers/writers, `recycledErrorInstance`.
 - **`@mustuse` — DIP1038** ([2.100]) — on a `struct`/`union`, makes silently
   discarding a returned value a compile error; designed for "alternative

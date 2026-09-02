@@ -577,8 +577,8 @@ a flat append-log + eviction index) runs on the ring directly — no `spawn_bloc
 equivalent to fake.
 
 **The crypto/IO split is clean and `@nogc`-friendly.** `SignedPacket` build/verify is pure
-and allocation-light: the packet caps at 1104 bytes, ideal for a `SharedBuffer!(ubyte,
-1104)`; verification is one ed25519 check over a `SharedBuffer`-built BEP-44 signable. The
+and allocation-light: the packet caps at 1104 bytes, ideal for a `UniqueBuffer!(ubyte,
+1104)`; verification is one ed25519 check over a `Buffer`-built BEP-44 signable. The
 monotonic `Timestamp` needs only a module-level `ulong` under `single` topology — no CAS:
 
 ```d

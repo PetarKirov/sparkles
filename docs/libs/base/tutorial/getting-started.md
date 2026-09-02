@@ -1,7 +1,7 @@
 # Getting started with `sparkles:base`
 
 This tutorial builds one tiny program that uses the most common `base`
-building blocks: `SharedBuffer`, the `@nogc` text writers, styled IES
+building blocks: the `Buffer` family, the `@nogc` text writers, styled IES
 rendering, and `CoreLogger`.
 
 ## What you need
@@ -25,15 +25,16 @@ Everything below goes into the same file.
 
 ## Step 2 — write text without the GC
 
-`SharedBuffer` is an output range with inline storage. The text writers
-write directly into it:
+`UniqueBuffer` is an output range that starts inline and grows onto the heap
+only if it must. It is the policy to reach for whenever a buffer has a single
+owner, as a local builder does. The text writers write directly into it:
 
 ```d
 import core.time : dur;
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.writers : writeDuration, writeIntegerPadded;
 
-SharedBuffer!(char, 64) line;
+UniqueBuffer!(char, 64) line;
 writeIntegerPadded(line, 7, 3);
 line ~= ' ';
 writeDuration(line, dur!"msecs"(1_500));
@@ -76,13 +77,13 @@ import core.time : dur;
 import std.stdio : writeln;
 
 import sparkles.base.logger : LogLevel, initLogger;
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.styled_template : plainText;
 import sparkles.base.text.writers : writeDuration, writeIntegerPadded;
 
 void main()
 {
-    SharedBuffer!(char, 64) line;
+    UniqueBuffer!(char, 64) line;
     writeIntegerPadded(line, 7, 3);
     line ~= ' ';
     writeDuration(line, dur!"msecs"(1_500));

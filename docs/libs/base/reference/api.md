@@ -4,16 +4,27 @@ The public symbols of `sparkles:base`, by module.
 
 ## `sparkles.base`
 
-Package module re-exporting `lifetime`, `logger`, `prettyprint`,
-`buffer`, `source_uri`, `styled_template`, `term_color`, `term_style`,
-`text`, and `unique`.
+Package module re-exporting `buffer`, `lifetime`, `logger`, `meta`,
+`prettyprint`, `source_uri`, `styled_template`, `term_caps`, `term_color`,
+`term_style`, `text`, and `unique`.
 
 ## `sparkles.base.buffer`
 
-| Symbol                          | Description                                                       |
-| ------------------------------- | ----------------------------------------------------------------- |
-| `SharedBuffer!(T, N)`           | Stack-first append buffer that grows with `pureMalloc` if needed. |
-| `checkToString` / `checkWriter` | `@nogc` unit-test helpers for output-range rendering assertions.  |
+| Symbol                          | Description                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `Buffer!(T, N, storage)`        | The container; `storage` is a set of `Storage` capability bits. Prefer an alias below.          |
+| `Storage`                       | `inline` / `heap` / `unique` — the capability bits whose combination is the policy.             |
+| `InlineBuffer!(T, N)`           | Never allocates; not an output range — write with `tryWrite`. Plain data, no destructor.        |
+| `UniqueBuffer!(T, N)`           | Inline until it spills, then heap; move-only, so the grow path carries no reference count.      |
+| `SharedBuffer!(T, N)`           | As `UniqueBuffer`, but copyable: copies share the heap block and clone on the next write.       |
+| `HeapBuffer!T`                  | Heap only, no inline array; size it with `reserve`.                                             |
+| `tryWrite(dest, fn)`            | Bounded write into storage someone else owns; returns the written slice, or `null` on overflow. |
+| `BoundedSink!T`                 | The bounded output range `tryWrite` hands to `fn`.                                              |
+| `checkToString` / `checkWriter` | `@nogc` unit-test helpers for output-range rendering assertions.                                |
+
+`UniqueBuffer` is the default choice: a buffer with a single owner should not
+pay for a reference count. Reach for `SharedBuffer` when copies genuinely
+happen — see the [buffer spec](../../../specs/base/buffer.md).
 
 ## `sparkles.base.unique`
 

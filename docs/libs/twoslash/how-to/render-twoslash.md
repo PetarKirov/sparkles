@@ -45,12 +45,12 @@ const labels = LabelSet.standard();
 const theme  = resolveTheme(builtinDark, labels);
 auto registry = GrammarRegistry.fromEnvironment();
 auto cache    = TsConfigCache.create(&registry, labels);
-SharedBuffer!HighlightEvent events;
+UniqueBuffer!HighlightEvent events;
 if (highlightInjected(cache, "typescript", tw.code, events).hasError)
     events ~= HighlightEvent.sourceSpan(0, tw.code.length); // plain-text fallback
 
 // 3a. HTML overlay (content only — wrap it yourself).
-SharedBuffer!char html;
+UniqueBuffer!char html;
 html ~= `<style>`;
 writeThemeStylesheet(theme, html);  // syntax token colors (.syn-*)
 writeTwoslashStyles(html);          // the .twoslash-* chrome
@@ -59,7 +59,7 @@ renderTwoslashHtml(tw, events[], theme, cache, html);
 html ~= `</code></pre>`;
 
 // 3b. ANSI overlay.
-SharedBuffer!char ansi;
+UniqueBuffer!char ansi;
 renderTwoslashAnsi(tw, events[], theme, cache, ansi,
     TwoslashAnsiOptions(depth: detectColorDepth()));
 ```
