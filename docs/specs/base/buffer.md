@@ -45,8 +45,11 @@ enum Storage : ubyte
 struct Buffer(T, size_t N, Storage storage = Storage.inline | Storage.heap)
 if (storage & (Storage.inline | Storage.heap));
 
-alias InlineBuffer(T, size_t N, Storage extra = Storage.none) = Buffer!(T, N, Storage.inline | extra);
-alias HeapBuffer(T, Storage extra = Storage.none)             = Buffer!(T, 0, Storage.heap | extra);
+// `extra` is the ownership axis only: a residency bit there is rejected.
+template InlineBuffer(T, size_t N, Storage extra = Storage.none) if (!(extra & ~Storage.unique))
+    { alias InlineBuffer = Buffer!(T, N, Storage.inline | extra); }
+template HeapBuffer(T, Storage extra = Storage.none) if (!(extra & ~Storage.unique))
+    { alias HeapBuffer = Buffer!(T, 0, Storage.heap | extra); }
 alias SharedBuffer(T, size_t N) = Buffer!(T, N, Storage.inline | Storage.heap);
 alias UniqueBuffer(T, size_t N) = Buffer!(T, N, Storage.inline | Storage.heap | Storage.unique);
 
