@@ -175,14 +175,14 @@ an ordinary local.
 
 ### Requirements
 
-| ID     | Requirement                                                                                                                                                                                                                              | Status      |
-| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `TMP1` | `TempBuffer` must take at most one sentinel as a compile-time value, and must reject two.                                                                                                                                                | not started |
-| `TMP2` | `TempBuffer` must not be default-constructible and must not be copyable, so exactly one owner frees the storage.                                                                                                                         | not started |
-| `TMP3` | `TempBuffer` must own a `UniqueBuffer!(T, N)`: inline while the value fits, heap when it does not.                                                                                                                                       | not started |
-| `TMP4` | `ptr` must be recomputed from `this` on each call, never cached, so a by-value return remains correct after the move.                                                                                                                    | not started |
-| `TMP5` | The documentation must state that the pointer is valid only within the full expression that created the buffer, that binding it to a variable is undiagnosed, and that naming the buffer is the supported way to outlive the expression. | not started |
-| `TMP6` | `TempStringz(N)` must be an alias for `TempBuffer!(char, N, '\0')`.                                                                                                                                                                      | decided     |
+| ID     | Requirement                                                                                                                                                                                                                              | Status  |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `TMP1` | `TempBuffer` must take at most one sentinel as a compile-time value, and must reject two.                                                                                                                                                | full    |
+| `TMP2` | `TempBuffer` must not be default-constructible and must not be copyable, so exactly one owner frees the storage.                                                                                                                         | full    |
+| `TMP3` | `TempBuffer` must own a `UniqueBuffer!(T, N)`: inline while the value fits, heap when it does not.                                                                                                                                       | full    |
+| `TMP4` | `ptr` must be recomputed from `this` on each call, never cached, so a by-value return remains correct after the move.                                                                                                                    | full    |
+| `TMP5` | The documentation must state that the pointer is valid only within the full expression that created the buffer, that binding it to a variable is undiagnosed, and that naming the buffer is the supported way to outlive the expression. | full    |
+| `TMP6` | `TempStringz(N)` must be an alias for `TempBuffer!(char, N, '\0')`.                                                                                                                                                                      | decided |
 
 ## 6. C strings (`CST`)
 
@@ -202,14 +202,14 @@ input to accommodate?**
 
 ### Requirements
 
-| ID     | Requirement                                                                                                                                                                                         | Status      |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| `CST1` | `CString!N` must be implemented over `InlineBuffer!(char, N)` and must not declare its own raw array.                                                                                               | not started |
-| `CST2` | `CString!N` must guarantee a terminator at `N - 1` or earlier, and `ptr` must never be `null`.                                                                                                      | full        |
-| `CST3` | `CString` must inherit `BUF6`: `-dip1000` must reject escaping its slice or pointer from a `@safe` function.                                                                                        | full        |
-| `CST4` | `toCString` must treat overflow as a programmer error; `tryToCString` must report it without writing.                                                                                               | full        |
-| `CST5` | `CStr` must be the borrowed form — a pointer and the length before the terminator — and must appear in no D signature as a parameter; D APIs take `string` or `in char[]` and terminate internally. | not started |
-| `CST6` | `stringz` must terminate a buffer that outlives the call and must be idempotent.                                                                                                                    | not started |
+| ID     | Requirement                                                                                                                                                                                         | Status |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `CST1` | `CString!N` must be implemented over `InlineBuffer!(char, N)` and must not declare its own raw array.                                                                                               | full   |
+| `CST2` | `CString!N` must guarantee a terminator at `N - 1` or earlier, and `ptr` must never be `null`.                                                                                                      | full   |
+| `CST3` | `CString` must inherit `BUF6`: `-dip1000` must reject escaping its slice or pointer from a `@safe` function.                                                                                        | full   |
+| `CST4` | `toCString` must treat overflow as a programmer error; `tryToCString` must report it without writing.                                                                                               | full   |
+| `CST5` | `CStr` must be the borrowed form — a pointer and the length before the terminator — and must appear in no D signature as a parameter; D APIs take `string` or `in char[]` and terminate internally. | full   |
+| `CST6` | `stringz` must terminate a buffer that outlives the call and must be idempotent.                                                                                                                    | full   |
 
 ## 7. Mechanism proofs
 

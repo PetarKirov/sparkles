@@ -343,6 +343,8 @@ interpolated value — a filename like `fixture{1}.d` — survives as a brace ra
 than being read as style markup. Outside `@nogc`, `std.conv.text(i"…")` already
 does the same job.
 
+See [Strings, and the C boundary](./AGENTS.md#strings-and-the-c-boundary).
+
 ---
 
 ## 5. Complete Patterns

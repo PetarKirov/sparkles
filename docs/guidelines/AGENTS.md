@@ -661,6 +661,52 @@ unittest
 }
 ```
 
+### Strings, and the C boundary
+
+**A D API takes `string` or `in char[]` — never `const(char)*`.** NUL-termination
+is the callee's errand. A signature asking for a pointer states its real
+requirement only in prose, and prose does not fail to compile: that is exactly how
+`InitWindow(…, title.ptr)` shipped a macOS crash, since a D slice carries no
+terminator and only a string literal happened to have one.
+
+`sparkles.base.text.cstring` has one tool per lifetime, and the lifetime is the
+whole question:
+
+| Need                                    | Use                                          |
+| --------------------------------------- | -------------------------------------------- |
+| Hand a C string to a call, nothing more | `toTempStringz`                              |
+| The buffer outlives the call (a field)  | `stringz` on it                              |
+| Input has a known bound                 | `CString!N` via `toCString` / `tryToCString` |
+| Name a literal as a C string            | `cstr!"…"`                                   |
+| A pointer arriving _from_ C             | `CStr.fromStringz`                           |
+| Append a terminator into a writer       | `writeStringz`                               |
+
+```d
+// One call, no named buffer. The temporary lives to the end of the full
+// expression — past the call — so this is sound.
+SetWindowTitle(title.toTempStringz.ptr);
+```
+
+> [!WARNING]
+> Never bind that pointer to a variable: `auto p = s.toTempStringz.ptr;` ends the
+> full expression, destroys the buffer, and leaves `p` dangling. Nothing catches
+> it — `-dip1000` models escapes, not destructor timing. Name the _buffer_ instead
+> (`auto z = s.toTempStringz;`). `std.string.toStringz` remains the right answer
+> when the C string must outlive the call and a GC allocation is acceptable.
+
+**Rendering.** `writeText` writes an interpolated sequence into any output range
+with no markup parsing; `writeStyled` parses `{red …}` and is only for style
+templates. Reach for `writeText` whenever the text is not one — a brace in a
+filename is silently eaten otherwise. Outside `@nogc`, `std.conv.text(i"…")`
+already does the same job.
+
+**Testing.** Use `checkWriter!((ref b) => …)("expected")` for anything that renders
+into a writer, and `checkToString` for a type with a `toString(Writer)`. Both report
+a diff on mismatch and stay `@safe pure nothrow @nogc`.
+
+See [Write `@nogc` text](../libs/base/how-to/write-nogc-text.md) and
+[Test with check helpers](../libs/base/how-to/test-with-check-helpers.md).
+
 ### Contracts (DIP1009)
 
 Use expression-based `in`/`out` contracts for pre/postconditions:
@@ -1139,6 +1185,8 @@ A quick scan of the gotchas above plus a few more:
 - [ ] Don't force `@safe`/`@trusted` on templates; let attributes infer.
 - [ ] `dip1000`/`in` can reject `scope` for some Phobos calls — relax to `const(char)[]`.
 - [ ] `splitter`/`std.utf`/`.text`/`std.conv` break `nothrow @nogc` — use the `text` package.
+- [ ] D APIs take `string`/`in char[]`, never `const(char)*` — terminate at the seam.
+- [ ] Don't store `.ptr` off a `toTempStringz` temporary; it dangles and nothing warns.
 - [ ] Example output blocks must be ` ```ansi `, never bare ` ``` ` (and no new
       ` ```[Output] ` — it strips color).
 - [ ] Cross-module-but-internal symbols use `package` visibility, not `private`.
