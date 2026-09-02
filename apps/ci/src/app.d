@@ -36,7 +36,7 @@ $(LIST
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
     $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
-    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
+    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--exclude-files` — drop matching files from the include set (or from the mode's defaults); same path/glob selectors as `--include-files`)
@@ -2280,13 +2280,14 @@ private struct PackageTestStream
 {
     this(
         const(string)[] baseCmd,
+        const(string)[] runnerArgs,
         CoverageRun cov,
         const string[string] extraEnv,
         Duration interval,
         void delegate(in ResourceUsage sample) @safe onSample,
     )
     {
-        _s = new State(baseCmd, cov, extraEnv, interval, onSample);
+        _s = new State(baseCmd, runnerArgs, cov, extraEnv, interval, onSample);
     }
 
     @property ref PackageRun result()
@@ -2309,6 +2310,7 @@ private:
     {
         this(
             const(string)[] baseCmd,
+            const(string)[] runnerArgs,
             CoverageRun cov,
             const string[string] extraEnv,
             Duration interval,
@@ -2316,6 +2318,7 @@ private:
         )
         {
             this.baseCmd = baseCmd;
+            this.runnerArgs = runnerArgs;
             this.cov = cov;
             this.extraEnv = extraEnv;
             this.interval = interval;
@@ -2339,7 +2342,8 @@ private:
                 notePending = true;
                 note = styledText(i"{dim coverage build failed; retrying without -cov}");
                 inner = executeMonitoredLines(
-                    baseCmd, interval, onSample, ChildStdin.empty, Duration.zero,
+                    withTestArgs(baseCmd, null, runnerArgs),
+                    interval, onSample, ChildStdin.empty, Duration.zero,
                     withLdcThreadEnv(extraEnv));
                 return false;
             }
@@ -2370,12 +2374,13 @@ private:
             started = true;
             if (cov.enabled)
                 inner = executeMonitoredLines(
-                    baseCmd ~ cov.dubArgs ~ cov.runtimeArgs,
+                    withTestArgs(baseCmd, cov.dubArgs, cov.runtimeArgs ~ runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
                     withLdcThreadEnv(mergeEnv(extraEnv, cov.env)));
             else
                 inner = executeMonitoredLines(
-                    baseCmd, interval, onSample, ChildStdin.empty, Duration.zero,
+                    withTestArgs(baseCmd, null, runnerArgs),
+                    interval, onSample, ChildStdin.empty, Duration.zero,
                     withLdcThreadEnv(extraEnv));
         }
 
@@ -2401,6 +2406,7 @@ private:
         }
 
         const(string)[] baseCmd;
+        const(string)[] runnerArgs;
         CoverageRun cov;
         const string[string] extraEnv;
         Duration interval;
@@ -2450,7 +2456,7 @@ private PackageRun runPackageTests(const(string)[] baseCmd, in CoverageRun cov,
     if (!cov.enabled)
         return exec(baseCmd, null);
 
-    auto result = exec(baseCmd ~ cov.dubArgs ~ cov.runtimeArgs, cov.env);
+    auto result = exec(withTestArgs(baseCmd, cov.dubArgs, cov.runtimeArgs), cov.env);
     if (result.status == 0)
     {
         result.coverageCollected = true;
@@ -2488,9 +2494,9 @@ private struct CoverageRun
     string[] dubArgs() const @safe pure nothrow
         => enabled ? ["-b", "unittest-cov"] : null;
 
-    /// The runtime arguments, after `--`.
+    /// The runtime arguments — the test binary's, so they belong after `--`.
     string[] runtimeArgs() const @safe pure nothrow
-        => enabled ? ["--", "--DRT-covopt=merge:1", "--DRT-covopt=dstpath:" ~ dir] : null;
+        => enabled ? ["--DRT-covopt=merge:1", "--DRT-covopt=dstpath:" ~ dir] : null;
 
     /// The environment additions for the child.
     const(string[string]) env() const @safe pure nothrow
@@ -2692,34 +2698,51 @@ private int runDubTestsMode(bool failFast, bool coverage)
     size_t processed = 0;
     string[] failedPackages, uncovered;
 
-    foreach (i, pkg; subPackages)
+    const parallelN = parallelTestThreads(hwParallelism());
+    static struct TestLeg
+    {
+        string label;
+        string[] runnerArgs; /// the test binary's, after `--`
+    }
+    const TestLeg[2] legs = [
+        TestLeg("-t 1", ["-t", "1"]),
+        TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string]),
+    ];
+
+    packageLoop: foreach (i, pkg; subPackages)
     {
         const pkgName = pkg.baseName;
         const progress = i"[$(i + 1)/$(subPackages.length)]".text;
-        const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName)}");
-
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        // Honour `$DC` so the sub-package tests use the CI matrix's compiler
-        // (the dev shell provides both dmd and ldc). Example verification keeps
-        // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
-        auto testCmd = dubTestCommand(repoRoot, pkgName);
-        auto lines = PackageTestStream(testCmd, cov, null, 250.msecs, &onSample);
-        streamResultBox(header, lines,
-            () => resultVerdict(lines.result.status == 0),
-            (LogDelta d) => resultFooterRight(lines.result.usage, d));
-        monitor.sample();
 
-        if (cov.enabled && !lines.result.coverageCollected && lines.result.status == 0)
-            uncovered ~= pkgName;
-
-        if (lines.result.status != 0)
+        foreach (leg; legs)
         {
-            failures++;
-            failedPackages ~= pkgName;
-            if (failFast)
+            const header = styledText(
+                i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName) -- $(leg.label)}");
+            // Honour `$DC` so the sub-package tests use the CI matrix's compiler
+            // (the dev shell provides both dmd and ldc). Example verification keeps
+            // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
+            auto testCmd = dubTestCommand(repoRoot, pkgName);
+            auto lines = PackageTestStream(testCmd, leg.runnerArgs, cov, null, 250.msecs, &onSample);
+            streamResultBox(header, lines,
+                () => resultVerdict(lines.result.status == 0),
+                (LogDelta d) => resultFooterRight(lines.result.usage, d));
+            monitor.sample();
+
+            if (cov.enabled && !lines.result.coverageCollected && lines.result.status == 0
+                && !uncovered.canFind(pkgName))
+                uncovered ~= pkgName;
+
+            if (lines.result.status != 0)
             {
-                processed = i + 1;
-                writeln();
+                failures++;
+                failedPackages ~= pkgName ~ " (" ~ leg.label ~ ")";
+                if (failFast)
+                {
+                    processed = i + 1;
+                    writeln();
+                    break packageLoop;
+                }
                 break;
             }
         }
@@ -2984,8 +3007,8 @@ private int runExtractedTestsMode(bool failFast)
         // `--self-test` also covers the runner's own extracted tests, which are
         // the ones exercising the `selfContained` opt-out.
         auto cmd = dubTestCommand(
-            repoRoot, job.packageName,
-            ["--", job.flag, "--self-test", "--require-toolchain"]);
+            repoRoot, job.packageName, null,
+            [job.flag, "--self-test", "--require-toolchain"]);
 
         auto lines = executeMonitoredLines(
             cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
@@ -3795,17 +3818,60 @@ private string[] dubBuildCommand(string repoRoot, string packagePath, string pkg
     return cmd;
 }
 
-/// `dub test :pkg` argv, honouring `$DC`. LDC codegen threads are bounded
-/// separately via $(LREF withLdcThreadEnv).
-private string[] dubTestCommand(string repoRoot, string pkgName, string[] extra = null)
+/// Worker count for the parallel `ci --test` leg: at least 2 so a test
+/// cannot hide on the 8 MiB main thread.
+uint parallelTestThreads(uint hw) @safe pure nothrow @nogc
+    => hw < 2 ? 2 : hw;
+
+@("ci.parallelTestThreads.atLeastTwo")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(parallelTestThreads(0) == 2);
+    assert(parallelTestThreads(1) == 2);
+    assert(parallelTestThreads(8) == 8);
+}
+
+/// `dub test :pkg` argv, honouring `$DC`: `dubArgs` are dub's, `runnerArgs`
+/// the test binary's (see $(LREF withTestArgs)). LDC codegen threads are
+/// bounded separately via $(LREF withLdcThreadEnv).
+private string[] dubTestCommand(string repoRoot, string pkgName,
+    const(string)[] dubArgs = null, const(string)[] runnerArgs = null)
 {
     auto cmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName];
     const dc = environment.get("DC", "");
     if (dc.length)
         cmd ~= "--compiler=" ~ dc;
-    if (extra.length)
-        cmd ~= extra;
+    return withTestArgs(cmd, dubArgs, runnerArgs);
+}
+
+/// `baseCmd` plus `dubArgs` for dub and `runtimeArgs` for the test binary.
+///
+/// dub stops reading its own options at the first `--` and hands the rest to
+/// the program, so the order is load-bearing: a `-b` placed after the runner's
+/// `-t 1` is an argument the test binary ignores, not a build type.
+private string[] withTestArgs(const(string)[] baseCmd, const(string)[] dubArgs,
+    const(string)[] runtimeArgs) @safe pure nothrow
+{
+    string[] cmd = baseCmd.dup;
+    cmd ~= dubArgs;
+    if (runtimeArgs.length)
+    {
+        cmd ~= "--";
+        cmd ~= runtimeArgs;
+    }
     return cmd;
+}
+
+@("ci.withTestArgs.dubBeforeDoubleDash")
+@safe pure nothrow
+unittest
+{
+    const base = ["dub", "test", ":x"];
+    assert(withTestArgs(base, ["-b", "unittest-cov"], ["--DRT-covopt=merge:1", "-t", "1"])
+        == ["dub", "test", ":x", "-b", "unittest-cov", "--", "--DRT-covopt=merge:1", "-t", "1"]);
+    assert(withTestArgs(base, null, null) == base);
+    assert(withTestArgs(base, ["-b", "unittest"], null) == ["dub", "test", ":x", "-b", "unittest"]);
 }
 
 /// True when `$DC` (or its basename) is LDC.
@@ -3833,6 +3899,15 @@ unittest
     const cmd = dubBuildCommand("/repo", "libs/base", "base");
     assert(cmd[0 .. 4] == ["dub", "--root", "/repo", "build"]);
     assert(cmd[4] == ":base");
+}
+
+@("ci.dubTestCommand.forwardsRunnerArgs")
+unittest
+{
+    const cmd = dubTestCommand("/repo", "dql", ["-b", "unittest-cov"], ["-t", "1"]);
+    assert(cmd[0 .. 4] == ["dub", "--root", "/repo", "test"]);
+    assert(cmd[4] == ":dql");
+    assert(cmd[$ - 5 .. $] == ["-b", "unittest-cov", "--", "-t", "1"]);
 }
 
 @("ci.validateCliMode.buildExclusions")
