@@ -218,11 +218,7 @@ struct Gallery
                 // `TakeScreenshot` called from here wrote a black PNG on macOS.
                 static if (__traits(hasMember, H, "screenshot"))
                     if (dbgFrame == 260)
-                        (() @trusted {
-                            import std.string : toStringz;
-
-                            h.screenshot(shot.toStringz);
-                        })();
+                        h.screenshot(shot);
                 if (dbgFrame == 280)
                     h.quit();
             }

@@ -107,22 +107,11 @@ struct GuiHost
     it from `frame`, outside the drawing bracket, which is the only place it
     has a host to call.
     */
-    void screenshot(scope const(char)* path) @system
-        => session.window.screenshot(path);
+    void screenshot(in char[] path) @safe => session.window.screenshot(path);
 
-    void clipboard(scope const(char)[] text) @system
-    {
-        import std.string : toStringz;
+    void clipboard(in char[] text) @safe => session.window.clipboard(text);
 
-        session.window.clipboard(text.toStringz);
-    }
-
-    void title(scope const(char)[] t) @system
-    {
-        import std.string : toStringz;
-
-        session.window.title(t.toStringz);
-    }
+    void title(in char[] t) @safe => session.window.title(t);
 
     /// A window has no out-of-band channel: the terminal's escape sequences
     /// address a terminal. Accepted and dropped so an application does not have

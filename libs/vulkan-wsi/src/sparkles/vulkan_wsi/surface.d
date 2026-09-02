@@ -7,10 +7,13 @@ import sparkles.wsi;
 
 @safe:
 
+import sparkles.base.text.cstring : cstr, CStr;
+
 struct NativeSurfacePlan
 {
     BackendKind backend;
-    string platformExtension;
+    /// The instance extension that can consume this backend's handles.
+    CStr platformExtension;
 }
 
 /**
@@ -32,7 +35,7 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                         return invalidPlan(BackendKind.wayland, "null Wayland handle");
                     version (linux)
                         return vulkanWsiOk(NativeSurfacePlan(
-                            BackendKind.wayland, khrWaylandSurface));
+                            BackendKind.wayland, cstr!khrWaylandSurface));
                     else
                         return unsupportedPlan(BackendKind.wayland);
                 },
@@ -45,7 +48,7 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                         return invalidPlan(BackendKind.x11, "null XCB handle");
                     version (linux)
                         return vulkanWsiOk(NativeSurfacePlan(
-                            BackendKind.x11, khrXcbSurface));
+                            BackendKind.x11, cstr!khrXcbSurface));
                     else
                         return unsupportedPlan(BackendKind.x11);
                 },
@@ -58,7 +61,7 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                         return invalidPlan(BackendKind.win32, "null Win32 handle");
                     version (Windows)
                         return vulkanWsiOk(NativeSurfacePlan(
-                            BackendKind.win32, khrWin32Surface));
+                            BackendKind.win32, cstr!khrWin32Surface));
                     else
                         return unsupportedPlan(BackendKind.win32);
                 },
@@ -198,7 +201,7 @@ private VulkanWsiResult!T unsupportedCreate(T)(BackendKind backend)
     {
         assert(wayland.hasValue);
         assert(wayland.value.backend == BackendKind.wayland);
-        assert(wayland.value.platformExtension == khrWaylandSurface);
+        assert(wayland.value.platformExtension[] == khrWaylandSurface);
     }
     else
         assert(wayland.hasError);

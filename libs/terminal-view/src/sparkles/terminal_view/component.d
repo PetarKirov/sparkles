@@ -623,7 +623,7 @@ struct TerminalView
             // discards the pixels a post-`EndDrawing` read goes looking for.
             static if (__traits(hasMember, H, "screenshot"))
                 if (frameCount == 120)
-                    h.screenshot("test_screenshot.png".ptr);
+                    h.screenshot("test_screenshot.png");
             if (frameCount == 130)
                 h.quit();
         }

@@ -91,7 +91,7 @@ struct VulkanContext
         auto advertised = queryVkList!VkExtensionProperties(
             context.global.enumerateInstanceExtensionProperties, null);
         if (!advertised.hasExtension(khrSurface)
-            || !advertised.hasExtension(planned.value.platformExtension))
+            || !advertised.hasExtension(planned.value.platformExtension[]))
             return context.fail(VulkanWsiErrorKind.missingExtension,
                 VulkanWsiOperation.createInstance, VkResult.VK_ERROR_EXTENSION_NOT_PRESENT,
                 "required native surface extension is unavailable");
@@ -183,8 +183,7 @@ private:
             apiVersion: request.apiVersion,
         ));
 
-        static immutable validationLayer = "VK_LAYER_KHRONOS_validation";
-        const(char)* layerName = validationLayer.ptr;
+        const(char)* layerName = "VK_LAYER_KHRONOS_validation".ptr;
         auto info = vkInfo(VkInstanceCreateInfo(
             flags: portability.flags,
             pApplicationInfo: &appInfo,
