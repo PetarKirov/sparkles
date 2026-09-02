@@ -75,21 +75,25 @@ import std.conv : to;
 import std.math : abs, floor;
 import std.stdio : stdout, writeln;
 
-import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
+import sparkles.base.buffer : HeapBuffer, SharedBuffer, Storage;
 import sparkles.base.term_color : Color, ColorDepth;
 import sparkles.base.term_control : CtlSeq;
 import sparkles.base.term_style : TermStyle, writeStyleTransition;
 import sparkles.base.text.writers : writeInteger;
 import sparkles.base.term_caps : detectTermCaps, terminalSize;
 
-/// One built row (title or a spectrum line) of the frame. Sized so it never
-/// spills to the heap for any realistic terminal width (~40 bytes/cell), which
-/// keeps `clear()` — and therefore the whole loop — allocation-free.
-// `unique` (move-only) mode: this buffer is a sole owner that is only ever
-// built, sliced, and cleared in place — never copied or shared — so it opts out
-// of the copy-on-write machinery. That drops the per-`put` alias check on the
-// hot render path (~10% faster frame render here).
-alias RowBuffer = UniqueBuffer!(char, 131_072);
+/// One built row (title or a spectrum line) of the frame. Heap-only: an inline
+/// array this large would put 128 KB inside every struct that holds one, and a
+/// heap-only buffer keeps its block across `clear()`, so one `reserve` of
+/// `rowCapacity` up front keeps the whole loop allocation-free.
+// `unique` (move-only): this buffer is a sole owner that is only ever built,
+// sliced, and cleared in place — never copied or shared — so it opts out of the
+// copy-on-write machinery. That drops the per-`put` alias check on the hot
+// render path (~10% faster frame render here).
+alias RowBuffer = HeapBuffer!(char, Storage.unique);
+
+/// Sized so a row never grows for any realistic terminal width (~40 bytes/cell).
+enum size_t rowCapacity = 131_072;
 
 /// Set by the SIGINT handler; the frame loop checks it and exits so the
 /// `scope (exit)` cleanup runs (restoring the cursor and primary screen).
@@ -128,6 +132,7 @@ void main(string[] args)
     uint height = caps.size.height ? caps.size.height : 24;
 
     RowBuffer row;
+    row.reserve(rowCapacity); // once; `clear()` keeps the block
 
     // Piped / non-tty: emit one static frame and exit — never send alt-screen or
     // cursor-control sequences to a file.
@@ -361,7 +366,7 @@ version (unittest)
         @disable this(this); // holds a File; only ever used via `new St` + pointer
 
         uint width, height;
-        RowBuffer buf;      // reused; stays inline → render is allocation-free
+        RowBuffer buf;      // reserved once; `clear()` keeps the block → render is allocation-free
         SpectrumCache cache; // built once per case (fixed size), then lookups only
         size_t frameIdx;
         bool toFd;
@@ -393,6 +398,7 @@ version (unittest)
     private void registerFrame(BenchSize sz, bool toFd)
     {
         auto st = new St;
+        st.buf.reserve(rowCapacity);
         st.width = sz.width;
         st.height = sz.height;
         st.toFd = toFd;
@@ -455,6 +461,7 @@ version (unittest)
         SpectrumCache cache;
         cache.resize(width, cast(uint)(rows * 2));
         RowBuffer buf;
+        buf.reserve(rowCapacity);
         size_t total;
         buf.clear();
         writeTitle(buf, width, 60.0);
