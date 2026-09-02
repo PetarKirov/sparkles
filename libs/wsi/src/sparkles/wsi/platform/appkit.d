@@ -13,6 +13,7 @@ version (OSX):
 import core.attribute : selector;
 import std.math : isFinite;
 
+import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
@@ -523,7 +524,7 @@ struct AppKitWsi
         bool live;
         bool ready;
         SurfaceMetrics metrics;
-        InlineUtf8!512 marked;
+        InlineBuffer!(char, 512) marked;
         ulong markedUnits16;
     }
 
@@ -597,11 +598,11 @@ struct AppKitWsi
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                 "AppKit parent windows are not implemented",
                 WsiErrorKind.unsupported);
-        if (validateUtf8(config.title.value).hasError)
+        if (validateUtf8(config.title[]).hasError)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                 "window title is not valid UTF-8",
                 WsiErrorKind.invalidArgument);
-        foreach (byte_; config.title.value)
+        foreach (byte_; config.title[])
             if (byte_ == 0)
                 return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                     "window title contains an embedded NUL",
@@ -658,7 +659,7 @@ struct AppKitWsi
         slot.ready = false;
 
         char[257] title = 0;
-        title[0 .. config.title.length] = config.title.value;
+        title[0 .. config.title.length] = config.title[];
         auto nativeTitle = NSString.alloc().initWithUTF8String(title.ptr);
         if (nativeTitle is null)
         {
@@ -1482,7 +1483,7 @@ unittest
 {
     // Selection over the second of three kana (3 bytes each, 1 unit each).
     const kana = appKitComposition("にほん", 1, 1);
-    assert(kana.preedit.value == "にほん");
+    assert(kana.preedit[] == "にほん");
     assert(kana.cursor == 3);
     assert(kana.selectionStart == 3 && kana.selectionLength == 3);
     assert(kana.segmentCount == 2);

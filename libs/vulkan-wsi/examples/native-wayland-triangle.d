@@ -521,11 +521,11 @@ private Expected!(void, string) skip(string what, string detail)
 
 private string describe(in WsiError error)
     => text("WSI ", error.operation, "/", error.kind, " (", error.backend,
-        ", native=", error.nativeCode, "): ", error.diagnostic.value);
+        ", native=", error.nativeCode, "): ", error.diagnostic[]);
 
 private string describe(in VulkanWsiError error)
     => text("Vulkan WSI ", error.operation, "/", error.kind, " (", error.backend,
-        ", ", describeResult(error.vkResult), "): ", error.diagnostic.value);
+        ", ", describeResult(error.vkResult), "): ", error.diagnostic[]);
 
 private string describe(in IoError error)
     => text(error.op, "/", error.stage, " errno=", error.errnoValue,

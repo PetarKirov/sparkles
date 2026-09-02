@@ -166,7 +166,7 @@ struct Win32Wsi
             return wsiErr!WindowId(parent.error);
 
         wchar[257] title;
-        auto converted = utf8ToUtf16z(config.title.value, title[]);
+        auto converted = utf8ToUtf16z(config.title[], title[]);
         if (converted.hasError)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
                 "window title is not valid bounded UTF-8",

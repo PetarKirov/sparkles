@@ -884,6 +884,39 @@ pure nothrow @nogc:
             _length += written.length;
             return true;
         }
+
+        /**
+         * Replaces the value, or keeps the old one.
+         *
+         * Returns `false` when `source` does not fit, leaving this buffer
+         * untouched — the whole-value counterpart to
+         * $(LREF Buffer.tryWrite)'s transactional append. A caller that would
+         * rather truncate should slice `source` itself; refusing is the
+         * default because a fixed buffer usually holds something whose meaning
+         * a silent truncation would change (a UTF-8 sequence, a path).
+         */
+        bool assign(scope const(T)[] source) @safe
+        {
+            if (source.length > N)
+                return false;
+
+            copyElements(_inline[0 .. source.length], source);
+            _length = source.length;
+            return true;
+        }
+
+        /**
+         * Removes all elements.
+         *
+         * There is no storage to release — `N` is the whole capacity — so this
+         * is the length reset alone. It is what makes a fixed buffer
+         * rewritable: `clear` then $(LREF Buffer.tryWrite) builds a new value
+         * in pieces, where $(LREF Buffer.assign) takes one already assembled.
+         */
+        void clear() @safe
+        {
+            _length = 0;
+        }
     }
 
     /**
@@ -2927,6 +2960,45 @@ unittest
     static assert(!__traits(compiles, Buffer!(char, 8, Storage.unique)));
     static assert(!__traits(compiles, Buffer!(char, 8, Storage.heap)));
     static assert(__traits(compiles, Buffer!(char, 0, Storage.heap)));
+}
+
+@("buffer.inline.assignReplacesWholeValue")
+@safe pure nothrow @nogc
+unittest
+{
+    InlineBuffer!(char, 8) b;
+    assert(b.assign("wayland"));
+    assert(b[] == "wayland");
+
+    // Refused, and the old value survives — which is exactly what separates
+    // `assign` from `clear` followed by a write.
+    assert(!b.assign("too-long!"));
+    assert(b[] == "wayland");
+
+    assert(b.assign(""));
+    assert(b.length == 0);
+}
+
+@("buffer.inline.clearResetsLength")
+@safe pure nothrow @nogc
+unittest
+{
+    // An inline-only buffer has no storage to release, so `clear` is the
+    // length reset alone — and `clear` + `tryWrite` is how a fixed buffer
+    // replaces its value.
+    InlineBuffer!(char, 8) b;
+    assert(b.tryWrite((scope ref BoundedSink!char w) { w.put("first"); }));
+    b.clear();
+    assert(b.length == 0);
+    assert(b[] == "");
+    assert(b.tryWrite((scope ref BoundedSink!char w) { w.put("second"); }));
+    assert(b[] == "second");
+
+    // The replacement is transactional: one that cannot fit leaves the buffer
+    // empty rather than half-written.
+    b.clear();
+    assert(!b.tryWrite((scope ref BoundedSink!char w) { w.put("far too long"); }));
+    assert(b[] == "");
 }
 
 @("buffer.opEquals.comparesContentsNotStorage")

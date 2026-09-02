@@ -681,7 +681,7 @@ private void observeCommit(Hooks)(ref Hooks hooks, ref Observed seen,
     in TextCommittedEvent event)
 {
     static if (is(typeof(Hooks.imeCommittedText)))
-        seen.imeCommitted |= event.text.value == Hooks.imeCommittedText;
+        seen.imeCommitted |= event.text[] == Hooks.imeCommittedText;
 }
 
 @("wsi.conformance.recordingBackendPassesTheValueContract")
