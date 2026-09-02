@@ -55,4 +55,5 @@ _Information-oriented._ Lookup material for modules and symbols.
 _Understanding-oriented._ Why `base` exists as a separate package.
 
 - [The design](./explanation/design.md)
+- [Buffers: storage as capabilities](./explanation/buffer.md)
 - [Base codecs: design notes](./explanation/base-codecs.md)

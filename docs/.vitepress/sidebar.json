@@ -246,6 +246,10 @@
                 "link": "/libs/base/explanation/design"
               },
               {
+                "text": "Buffers: storage as capabilities",
+                "link": "/libs/base/explanation/buffer"
+              },
+              {
                 "text": "Base codecs: design notes",
                 "link": "/libs/base/explanation/base-codecs"
               }
