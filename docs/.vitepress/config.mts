@@ -112,6 +112,7 @@ export default withMermaid(
     srcExclude: docsConfig.srcExclude,
 
     markdown: {
+      math: true,
       config(md) {
         md.use(groupIconMdPlugin);
         // Pushed last so it wins over VitePress's own link handling: rewrite a

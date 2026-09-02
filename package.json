@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "dockview-vue": "^7.0.2",
+    "markdown-it-mathjax3": "^4.3.2",
     "mermaid": "^11.15.0",
     "shiki": "^2.5.0",
     "vitepress": "^1.6.4",
