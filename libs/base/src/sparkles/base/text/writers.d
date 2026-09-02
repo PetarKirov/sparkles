@@ -6,11 +6,19 @@
  */
 module sparkles.base.text.writers;
 
+import core.interpolation;
 import core.time : Duration;
 import std.traits : isSomeChar, isSomeString;
 
 import sparkles.base.term_style : Style;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
+
+version (unittest)
+{
+    import core.time : dur;
+
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
@@ -143,8 +151,6 @@ if (__traits(isUnsigned, T) && radix >= 2 && radix <= 36)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter, SharedBuffer;
-
     checkWriter!((ref b) => writeIntegerPadded(b, 7, 3))("007");
 }
 
@@ -152,8 +158,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeIntegerPadded(b, 1234, 3))("1234");
 }
 
@@ -161,8 +165,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeIntegerPadded(b, 42u, 0))("42");
 }
 
@@ -170,8 +172,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeIntegerPadded(b, -5, 3))("-005");
 }
 
@@ -179,8 +179,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeInteger(b, 42))("42");
 }
 
@@ -188,8 +186,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     // The branchlut writer switches strategy at 100 / 10^4 / 10^6 / 10^8 /
     // 10^16 — pin one value on each side of every boundary, plus the
     // 20-digit extremes.
@@ -216,8 +212,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     // The CTFE per-digit path and the runtime branchlut path must agree.
     static char[32] render(ulong v)
     {
@@ -238,8 +232,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeInteger(b, -123))("-123");
 }
 
@@ -247,8 +239,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeInteger(b, 0))("0");
 }
 
@@ -256,8 +246,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeInteger(b, 0uL))("0");
 }
 
@@ -265,8 +253,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeHex(b, 0xDEADu))("dead");
     checkWriter!((ref b) => writeBinary(b, 0b1011u))("1011");
     checkWriter!((ref b) => writeOctal(b, 493u))("755");
@@ -281,8 +267,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : checkWriter;
-
     checkWriter!((ref b) => writeIntegerPadded!16(b, 0xABu, 4))("00ab");
     checkWriter!((ref b) => writeIntegerPadded!2(b, 5u, 8))("00000101");
 }
@@ -394,8 +378,6 @@ if (__traits(isFloating, T))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeFloat(buf, 3.14);
     assert(buf[] == "3.14");
@@ -405,8 +387,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
 
     writeFloat(buf, double.nan);
@@ -429,8 +409,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
 
     writeFloat(buf, 0.0);
@@ -445,8 +423,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
 
     writeFloat(buf, 10.0);
@@ -465,8 +441,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 64) buf;
 
     // Large value should use scientific notation
@@ -524,8 +498,6 @@ void writeEscapedChar(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeEscapedChar(buf, '\n');
     assert(buf[] == `\n`);
@@ -546,8 +518,6 @@ void writeEscapedString(Writer, S)(ref Writer w, S s) if (isSomeString!S)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 64) buf;
     writeEscapedString(buf, "hello\nworld");
     assert(buf[] == `"hello\nworld"`);
@@ -567,8 +537,6 @@ void writeEscapedCharLiteral(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeEscapedCharLiteral(buf, '\t');
     assert(buf[] == `'\t'`);
@@ -582,7 +550,7 @@ unittest
 /// i.g. `void toString(W)(ref W writer)`.
 template hasOutputRangeToString(T)
 {
-    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     enum hasOutputRangeToString = __traits(compiles, () {
         T t = T.init;
@@ -595,7 +563,7 @@ template hasOutputRangeToString(T)
 /// output range writer.
 template hasNogcOutputRangeToString(T)
 {
-    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     enum hasNogcOutputRangeToString = __traits(compiles, () @nogc {
         T t = T.init;
@@ -685,6 +653,88 @@ unittest
     static assert(hasNogcToString!NogcOutputRangeType);
 }
 
+/**
+Writes an interpolated sequence to an output range, verbatim.
+
+---
+SharedBuffer!(char, 128) buf;
+buf.writeText(i"pid $(pid) exited with $(status)");
+---
+
+$(B Plain, not styled.) Literals are copied through and interpolated values go
+via $(LREF writeValue); nothing is parsed. That is the difference from
+`sparkles.base.styled_template.writeStyled`, which reads `{red …}` as markup —
+and the reason to reach for this one whenever the text is not a style template.
+Interpolating a value that may contain a brace (a file path, a user's input)
+through the styled writer silently eats it as a style block; here a brace is a
+brace.
+
+$(B The `@nogc` half of the pair.) `std.conv.text` already renders an
+interpolated sequence to a `string`, so use that where a GC allocation is fine;
+this is for the paths where it is not, and it inherits `Writer`'s attributes the
+way every template in this module does.
+*/
+void writeText(Writer, Args...)(
+    ref Writer w, InterpolationHeader, Args args, InterpolationFooter)
+{
+    static foreach (arg; args)
+    {{
+        alias T = typeof(arg);
+        static if (is(T == InterpolatedLiteral!lit, string lit))
+        {
+            import std.range.primitives : put;
+
+            put(w, lit);
+        }
+        else static if (is(T == InterpolatedExpression!code, string code))
+        {
+            // The expression's source text is metadata, not output.
+        }
+        else
+        {
+            writeValue(w, arg);
+        }
+    }}
+}
+
+///
+@("writers.writeText.rendersLiteralsAndValues")
+@safe pure nothrow @nogc
+unittest
+{
+    SharedBuffer!(char, 64) buf;
+    const pid = 1234;
+    buf.writeText(i"/proc/$(pid)/status");
+    assert(buf[] == "/proc/1234/status");
+}
+
+@("writers.writeText.doesNotParseMarkup")
+@safe pure nothrow @nogc
+unittest
+{
+    // The whole reason this exists beside `writeStyled`: a brace in the text —
+    // a filename, a user's input — must survive as a brace.
+    checkWriter!((ref b) {
+        const name = "fixture{1}.d";
+        b.writeText(i"open $(name) {red not a style}");
+    })("open fixture{1}.d {red not a style}");
+}
+
+@("writers.writeText.literalOnlyAndEmpty")
+@safe pure nothrow @nogc
+unittest
+{
+    checkWriter!((ref b) => b.writeText(i"plain"))("plain");
+    checkWriter!((ref b) => b.writeText(i""))("");
+}
+
+@("writers.writeText.appendsRatherThanReplacing")
+@safe pure nothrow @nogc
+unittest
+{
+    checkWriter!((ref b) { b ~= "keep:"; b.writeText(i" $(7)"); })("keep: 7");
+}
+
 /// Writes any value to an output range using best-effort @nogc conversion.
 ///
 /// Dispatch order:
@@ -756,8 +806,6 @@ void writeValue(Writer, T)(ref Writer w, auto ref const T val)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeValue(buf, true);
     assert(buf[] == "true");
@@ -771,8 +819,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeValue(buf, 42);
     assert(buf[] == "42");
@@ -786,8 +832,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeValue(buf, 3.14);
     assert(buf[] == "3.14");
@@ -797,8 +841,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeValue(buf, 'A');
     assert(buf[] == "A");
@@ -808,8 +850,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 64) buf;
     writeValue(buf, "hello world");
     assert(buf[] == "hello world");
@@ -819,8 +859,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeValue(buf, NogcOutputRangeType(42));
     assert(buf[] == "NogcOR");
@@ -844,8 +882,6 @@ void writeEscapeSeq(Writer)(ref Writer w, uint code)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeEscapeSeq(buf, 34);
     assert(buf[] == "\x1b[34m");
@@ -872,8 +908,6 @@ void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool r
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 64) buf;
     writeStylized(buf, "hello", Style.blue);
     assert(buf[] == "\x1b[34mhello\x1b[39m");
@@ -883,8 +917,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 64) buf;
     writeStylized(buf, "hello", Style.blue, false);
     assert(buf[] == "\x1b[34mhello");
@@ -894,8 +926,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeStylized(buf, "hello", Style.none);
     assert(buf[] == "hello");
@@ -946,8 +976,6 @@ if (is(E == enum))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     enum Color { red, green, blue }
 
     SharedBuffer!(char, 32) buf;
@@ -959,8 +987,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     enum Mode { fastPath, slowPath }
 
     SharedBuffer!(char, 32) buf;
@@ -972,8 +998,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     enum Flags : ubyte { a = 1, b = 2 }
 
     SharedBuffer!(char, 32) buf;
@@ -985,8 +1009,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     enum Priority { low = 1, high = 5 }
 
     SharedBuffer!(char, 32) buf;
@@ -1140,8 +1162,6 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     struct NoHook {}
 
     SharedBuffer!(char, 64) buf;
@@ -1158,8 +1178,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     struct BlueInts
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc
@@ -1181,8 +1199,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     struct EscStrings
     {
         enum escapeStrings = true;
@@ -1214,8 +1230,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     enum Dir { north, south, east, west }
 
     struct EnumHook
@@ -1233,8 +1247,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     struct AlwaysBlue
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.blue;
@@ -1250,8 +1262,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     struct YellowNull
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.yellow;
@@ -1267,8 +1277,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     struct YellowBool
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc
@@ -1291,7 +1299,6 @@ unittest
 unittest
 {
     import std.math.traits : isNaN;
-    import sparkles.base.buffer : SharedBuffer;
 
     struct FloatHook
     {
@@ -1391,8 +1398,6 @@ void writeHexByte(Writer)(ref Writer w, ubyte b)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 8) buf;
     void check(ubyte b, string expected)
     {
@@ -1411,8 +1416,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     void check(alias call)(string expected)
     {
@@ -1616,8 +1619,9 @@ void writeDurationPadded(Writer)(
     ref Writer w, in Duration duration, size_t width,
     DurationPad pad = DurationPad.after)
 {
-    import sparkles.base.buffer : SharedBuffer;
     import std.range.primitives : put;
+
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     SharedBuffer!(char, 16) buf;
     writeDuration(buf, duration);
@@ -1726,8 +1730,6 @@ in (maxUnits >= 1, "maxUnits must be >= 1")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     void check(ulong bytes, string expected)
     {
@@ -1753,9 +1755,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import core.time : dur;
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     void check(Duration d, string expected)
     {
@@ -1798,9 +1797,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import core.time : dur;
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
 
     // `units` is compile-time, `precision` is a runtime argument.
@@ -1830,9 +1826,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import core.time : dur;
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     writeDurationPadded(buf, dur!"msecs"(1_500), 6);
     assert(buf[] == "1.5s  ");            // default DurationPad.after
@@ -1845,9 +1838,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import core.time : dur;
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 32) buf;
     void check(Duration d, string expected, DurationPad pad = DurationPad.after)
     {
@@ -1886,9 +1876,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import core.time : dur;
-    import sparkles.base.buffer : SharedBuffer;
-
     SharedBuffer!(char, 64) buf;
     void check(Duration d, uint maxUnits, string expected)
     {

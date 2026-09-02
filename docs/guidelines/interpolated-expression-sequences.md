@@ -327,17 +327,21 @@ For a production implementation of this pattern, see the [`styled_template` modu
 
 #### @nogc with a Buffer
 
-For @nogc contexts, use a `Buffer` and avoid `.to!string`:
+`writeText` (`sparkles.base.text.writers`) renders an IES into any output range
+without allocating — literals copied through, values via `writeValue`:
 
 ```d
-import core.interpolation;
 import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.text.writers : writeText;
 
-// Usage
 UniqueBuffer!(char, 256) buf;
-// Custom @nogc IES processing with integer-to-string conversion
-// that doesn't allocate...
+buf.writeText(i"pid $(pid) exited with $(status)");
 ```
+
+It parses nothing, which is the difference from `writeStyled` above: a brace in an
+interpolated value — a filename like `fixture{1}.d` — survives as a brace rather
+than being read as style markup. Outside `@nogc`, `std.conv.text(i"…")` already
+does the same job.
 
 ---
 
