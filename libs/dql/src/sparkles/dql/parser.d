@@ -6,7 +6,7 @@ import std.string : strip;
 import std.sumtype : match;
 
 import expected : Expected, err, ok;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.float_conv : readDecimalFloat;
 import sparkles.base.text.readers : isHexDigit, readQuotedString, skipSpaces;
 import sparkles.base.text.span : TextSpan;
@@ -59,7 +59,7 @@ struct DqlLexer
 {
     const(char)[] source;
     size_t cursor;
-    SmallBuffer!(char, 64, true) unescapeBuffer;
+    UniqueBuffer!(char, 64) unescapeBuffer;
 
     @safe:
 

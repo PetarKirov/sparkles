@@ -128,7 +128,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     checkToString(TsError(TsErrorCode.querySyntax, 17), "querySyntax at byte 17");
     checkToString(TsError(TsErrorCode.incompatibleAbi, 12), "incompatibleAbi (grammar ABI version 12)");

@@ -31,7 +31,7 @@ right-click context menu. `f` fits all content; `q`/Esc quits.
 | `sparkles:ui-app` | `runApp` (`HST10`) — one call; backend pick, window/font/theme CLI (`GuiCliFields`), the frame loop, the recording target for every test    |
 | `sparkles:ui`     | `DrawOp` as the board's render vocabulary; `Slot`/theme for color; `CaptureState`/`PressState`/`HoverState`/`LineEditState` for interaction |
 | `sparkles:input`  | the event vocabulary — pointer, wheel, key press/release levels, capability-gated bindings (`INP16`)                                        |
-| `sparkles:base`   | `SmallBuffer` world columns and frame ops — the steady-state `@nogc` path                                                                   |
+| `sparkles:base`   | `SharedBuffer` world columns and frame ops — the steady-state `@nogc` path                                                                  |
 
 The board is a **display-list application**, not a widget tree: freeform
 world-space content has no box-flow expression, so the render systems emit

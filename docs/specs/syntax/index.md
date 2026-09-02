@@ -112,7 +112,7 @@ palette)` concretizer and a `byStyledLine` per-line adapter are recorded seams.
 - [`sparkles.base.text.ansi`][base-ansi] — `SgrState`/`writeSgrReset`/`byAnsiToken`: the
   per-line-reset idiom, and the round-trip harness the ANSI renderer's invariant tests
   reuse.
-- [`sparkles.base.smallbuffer`](../../libs/base/index.md) — the `@nogc` event/label
+- [`sparkles.base.buffer`](../../libs/base/index.md) — the `@nogc` event/label
   stacks and the `checkWriter` golden-test helper.
 - The [`expected`](../../guidelines/idioms/expected/index.md) idiom — engine and loader
   failures are `Expected!(T, TsError)`, never exceptions on the highlight path.

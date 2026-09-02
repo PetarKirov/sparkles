@@ -100,7 +100,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
     import sparkles.versions.testing : checkRejects;
 
     // minor over 255 is rejected.

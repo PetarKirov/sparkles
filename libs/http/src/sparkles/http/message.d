@@ -13,7 +13,7 @@ documented follow-up.
 */
 module sparkles.http.message;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// The HTTP methods the parser recognizes (others parse as `unknown`).
 enum Method : ubyte

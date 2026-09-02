@@ -128,7 +128,7 @@ AAs. Encode checks and converters run in the shared order.
 
 Gate: typed goldens for DUB-shaped recipes (multiple `authors`, repeated
 `configuration`, positional dependency names, attributes, namespaces, and child
-settings); writer-template tests with `SmallBuffer`; deterministic AA output;
+settings); writer-template tests with `SharedBuffer`; deterministic AA output;
 all schema-supported scalar kinds; encode errors with role paths. Property tests
 enforce `fromSDL!T(toSDL(value)) == value` for types accepted by
 `isWireRoundTrippable!(Sdl, T)`.

@@ -47,10 +47,10 @@ this with a `static assert` at instantiation, mirroring
 ## Encoding
 
 ```d
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text : encodePercentComponent;
 
-SmallBuffer!(char, 64) buf;
+SharedBuffer!(char, 64) buf;
 encodePercentComponent(buf, "café / 100%");
 assert(buf[] == "caf%C3%A9%20%2F%20100%25");
 ```
@@ -76,7 +76,7 @@ pre-sizing a buffer.
 ```d
 import sparkles.base.text : decodePercentComponent;
 
-SmallBuffer!(ubyte, 64) bytes;
+SharedBuffer!(ubyte, 64) bytes;
 auto r = decodePercentComponent(bytes, "caf%C3%A9");
 assert(r.value == 5 && bytes[] == cast(const(ubyte)[]) "café");
 ```

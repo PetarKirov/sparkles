@@ -31,7 +31,7 @@ module http_plaintext_server;
 import core.lifetime : move;
 import std.stdio : writefln, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon;
 import sparkles.http;
 
@@ -68,18 +68,18 @@ int main()
         auto conn = env.net.connect(ipv4("127.0.0.1", port)).value;
         scope (exit) conn.close();
 
-        SmallBuffer!(ubyte, 128) reqBuf;
+        SharedBuffer!(ubyte, 128) reqBuf;
         reqBuf ~= cast(const(ubyte)[])
             ("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
         auto w = conn.send(move(reqBuf));
         assert(!w.res.hasError);
 
         // Read the whole response (server closes after replying).
-        SmallBuffer!(ubyte, 512) respBuf;
+        SharedBuffer!(ubyte, 512) respBuf;
         size_t total;
         for (;;)
         {
-            SmallBuffer!(ubyte, 256) chunk;
+            SharedBuffer!(ubyte, 256) chunk;
             chunk.length = 256;
             auto got = conn.recv(move(chunk));
             chunk = move(got.buf);

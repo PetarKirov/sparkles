@@ -56,7 +56,7 @@ module ratatui_colors_rgb_example;
 // resize (`SpectrumCache`, like ratatui's `setup_colors`); each frame is then a
 // cached lookup scrolled by the frame count, so no HSV math runs per frame. The
 // render itself is allocation-free: the frame is built one row at a time into a
-// single reused inline `SmallBuffer` (never heap-backed for a real terminal
+// single reused inline `SharedBuffer` (never heap-backed for a real terminal
 // width) and the row builders are `@nogc`, so the compiler proves the hot loop
 // performs no GC allocation.
 //
@@ -75,7 +75,7 @@ import std.conv : to;
 import std.math : abs, floor;
 import std.stdio : stdout, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.term_color : Color, ColorDepth;
 import sparkles.base.term_control : CtlSeq;
 import sparkles.base.term_style : TermStyle, writeStyleTransition;
@@ -89,7 +89,7 @@ import sparkles.base.term_caps : detectTermCaps, terminalSize;
 // built, sliced, and cleared in place — never copied or shared — so it opts out
 // of the copy-on-write machinery. That drops the per-`put` alias check on the
 // hot render path (~10% faster frame render here).
-alias RowBuffer = SmallBuffer!(char, 131_072, true);
+alias RowBuffer = UniqueBuffer!(char, 131_072);
 
 /// Set by the SIGINT handler; the frame loop checks it and exits so the
 /// `scope (exit)` cleanup runs (restoring the cursor and primary screen).
@@ -216,7 +216,7 @@ void writeTitle(ref RowBuffer w, uint width, double fps) @nogc
 {
     static immutable left = "colors-rgb - Ctrl+C to quit";
 
-    SmallBuffer!(char, 24) right;
+    SharedBuffer!(char, 24) right;
     if (fps >= 0)
     {
         const scaled = cast(uint)(fps * 10.0 + 0.5); // one decimal, no float formatter

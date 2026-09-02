@@ -36,7 +36,7 @@ import core.lifetime : move;
 import std.format : format;
 import std.stdio : stderr, writefln, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 int main(string[] args)
 {
@@ -120,11 +120,11 @@ int parentMain(string self)
         // before the mode switch — keys sent at spawn time would be eaten by
         // the flush, and the child would wait forever (found the hard way:
         // this demo hanging is exactly that race).
-        SmallBuffer!(ubyte, 4096) screen;
+        SharedBuffer!(ubyte, 4096) screen;
         bool typed;
         for (;;)
         {
-            SmallBuffer!(ubyte, 512) buf;
+            SharedBuffer!(ubyte, 512) buf;
             buf.length = 512;
             auto got = read(child.ptyMaster, move(buf));
             buf = move(got.buf);
@@ -137,7 +137,7 @@ int parentMain(string self)
                 // Script: three counting keypresses, then the quit key. One
                 // write — the child's assembler and channel do the rest.
                 typed = true;
-                SmallBuffer!(ubyte, 8) keys;
+                SharedBuffer!(ubyte, 8) keys;
                 keys ~= cast(const(ubyte)[]) "abcq";
                 auto sent = write(child.ptyMaster, move(keys));
                 assert(!sent.res.hasError);

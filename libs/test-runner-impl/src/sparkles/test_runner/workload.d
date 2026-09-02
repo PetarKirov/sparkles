@@ -420,10 +420,10 @@ private void appendNote(ref string note, string add) @safe pure nothrow
 /// A nanosecond quantity as integral microseconds, for `nothrow` note text.
 private string microsString(double ns) @safe pure nothrow
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
-    SmallBuffer!(char, 24) buf;
+    SharedBuffer!(char, 24) buf;
     writeInteger(buf, cast(long)(ns / 1000));
     return buf[].idup;
 }
@@ -804,10 +804,10 @@ private void workloadFilesImpl(WorkloadContext* ctx, CacheRegime regime,
 
 private string uintString(uint v) @safe pure nothrow
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
-    SmallBuffer!(char, 12) buf;
+    SharedBuffer!(char, 12) buf;
     writeInteger(buf, v);
     return buf[].idup;
 }

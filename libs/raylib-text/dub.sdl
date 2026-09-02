@@ -17,7 +17,7 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "raylib-d" version="~>6.0.1"
 libs "raylib"
 
-// SmallBuffer (unique mode) backs the per-face sorted glyph maps and the
+// UniqueBuffer backs the per-face sorted glyph maps and the
 // on-demand request set — the same @nogc buffers apps/terminal uses.
 dependency "sparkles:base" path="../.."
 

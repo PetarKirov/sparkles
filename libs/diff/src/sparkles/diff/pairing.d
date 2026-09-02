@@ -4,11 +4,11 @@
 /// linematch / delta precedent — so side-by-side rows align and word
 /// refinement compares the right lines. Pairing is monotonic (pairs never
 /// cross) and gated by a similarity floor, block-size cap, and per-line
-/// length cap (`DVM6`). `@nogc` throughout (`DVM8`): flat `SmallBuffer` DP
+/// length cap (`DVM6`). `@nogc` throughout (`DVM8`): flat `SharedBuffer` DP
 /// tables, sliced once per pass.
 module sparkles.diff.pairing;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.diff.model : DiffOptions, Row, RowKind;
 
@@ -34,7 +34,7 @@ double lineSimilarity(scope const(char)[] a, scope const(char)[] b, size_t cap)
 private size_t lcsLength(scope const(char)[] a, scope const(char)[] b)
     @safe pure nothrow @nogc
 {
-    SmallBuffer!size_t rowsBuf;
+    SharedBuffer!size_t rowsBuf;
     immutable w = b.length + 1;
     rowsBuf.reserve(2 * w);
     foreach (_; 0 .. 2 * w)
@@ -103,7 +103,7 @@ private void pairBlock(scope Row[] rows, scope const(char)[] oldText,
 
     // Alignment DP maximizing total similarity; a pair below the floor is
     // not allowed (scores as a gap). Both tables are flat buffers.
-    SmallBuffer!double simBuf;
+    SharedBuffer!double simBuf;
     simBuf.reserve(remLen * addLen);
     foreach (r; 0 .. remLen)
         foreach (c; 0 .. addLen)
@@ -115,7 +115,7 @@ private void pairBlock(scope Row[] rows, scope const(char)[] oldText,
 
     // score[r][c] = best over first r removed / first c added.
     immutable sw = addLen + 1;
-    SmallBuffer!double scoreBuf;
+    SharedBuffer!double scoreBuf;
     scoreBuf.reserve((remLen + 1) * sw);
     foreach (_; 0 .. (remLen + 1) * sw)
         scoreBuf ~= 0.0;

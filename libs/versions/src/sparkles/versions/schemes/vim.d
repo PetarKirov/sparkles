@@ -97,7 +97,7 @@ static assert(!supportsPrerelease!VimVer);
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
     import sparkles.versions.testing : checkParse, checkRejects, checkRoundTrip;
 
     auto v = checkParse!VimVer("9.1.0400");

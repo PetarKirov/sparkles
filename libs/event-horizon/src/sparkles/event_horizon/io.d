@@ -11,7 +11,7 @@ tier-B code wraps raw fds directly.
 
 Buffer genericity (SPEC §6.5): the verbs accept any owned buffer type whose
 memory is stable while the value is not moved (`isOwnedIoBuf`) — including
-inline-storage types like `SmallBuffer`. The moved-in buffer lives in the
+inline-storage types like `SharedBuffer`. The moved-in buffer lives in the
 suspended verb's stack frame, and the fiber resumes only at the terminal
 completion, so the frame (hence the buffer) provably outlives kernel use;
 internally the view is wrapped as a foreign `Buf` for the tier-A slot.
@@ -375,7 +375,7 @@ version (unittest)
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : Buffer, SharedBuffer;
 
     Sched s;
     schedOrSkip(s);
@@ -400,16 +400,16 @@ unittest
 
     bool verified;
     auto r = s.run(() {
-        // Writer fiber: SmallBuffer on this frame — the inline-storage
+        // Writer fiber: SharedBuffer on this frame — the inline-storage
         // soundness case of SPEC §6.5.
         cast(void) s.spawn(() {
-            SmallBuffer!(ubyte, 64) out_;
+            SharedBuffer!(ubyte, 64) out_;
             out_ ~= payload[];
             auto w = write(wr, move(out_));
             assert(!w.res.hasError && w.res.value == payload.length);
         });
 
-        SmallBuffer!(ubyte, 64) in_;
+        SharedBuffer!(ubyte, 64) in_;
         in_.length = 64;
         auto got = read(rd, move(in_));
         assert(!got.res.hasError);
@@ -607,7 +607,7 @@ unittest
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : Buffer, SharedBuffer;
     import sparkles.event_horizon.buffer : BufferPool;
 
     Sched s;
@@ -674,12 +674,12 @@ unittest
 
         assert(!client.connect(addr).hasError);
 
-        SmallBuffer!(ubyte, 64) msg;
+        SharedBuffer!(ubyte, 64) msg;
         msg ~= payload[];
         auto sent = client.send(move(msg));
         assert(!sent.res.hasError && sent.res.value == payload.length);
 
-        SmallBuffer!(ubyte, 64) back;
+        SharedBuffer!(ubyte, 64) back;
         back.length = 64;
         auto got = client.recv(move(back));
         assert(!got.res.hasError && got.res.value == payload.length);

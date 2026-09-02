@@ -225,9 +225,9 @@ string alignField(scope const(char)[] content, size_t width, Align align_) @safe
 @("width.alignField.horizontal")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     alignField(b, "hi", 5, Align.left);
     assert(b[] == "hi   ");
 
@@ -251,9 +251,9 @@ string alignField(scope const(char)[] content, size_t width, Align align_) @safe
 @("width.alignField.zeroPadAndOverflow")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     alignField(b, "hello", 5, Align.center); // already exact -> no pad
     assert(b[] == "hello");
 
@@ -265,10 +265,10 @@ string alignField(scope const(char)[] content, size_t width, Align align_) @safe
 @("width.alignField.styledAndWide")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // ANSI escapes cost nothing: "OK" is 2 visible cells, padded to 5.
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     alignField(b, "\x1b[32mOK\x1b[39m", 5, Align.left);
     assert(b[] == "\x1b[32mOK\x1b[39m   ");
 
@@ -281,11 +281,11 @@ string alignField(scope const(char)[] content, size_t width, Align align_) @safe
 @("width.alignField.stringFormMatchesRange")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     foreach (a; [Align.left, Align.center, Align.right, Align.inherit])
     {
-        SmallBuffer!(char, 64) b;
+        SharedBuffer!(char, 64) b;
         alignField(b, "abc", 7, a);
         assert(alignField("abc", 7, a) == b[]);
     }
@@ -353,9 +353,9 @@ string truncateField(scope const(char)[] content, size_t width,
 @("width.truncateField.basic")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     truncateField(b, "hello", 10); // fits -> verbatim, no ellipsis
     assert(b[] == "hello");
 
@@ -371,9 +371,9 @@ string truncateField(scope const(char)[] content, size_t width,
 @("width.truncateField.tinyWidths")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     truncateField(b, "hello", 1); // just the ellipsis
     assert(b[] == "…");
 
@@ -385,12 +385,12 @@ string truncateField(scope const(char)[] content, size_t width,
 @("width.truncateField.wideClustersNeverSplit")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.grapheme : visibleWidth;
 
     // "世界" is 2+2 cells; width 4 leaves budget 3 -> only one ideograph fits
     // (a wide cluster is never split), so the result is 3 cells, not 4.
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     truncateField(b, "世界丂", 4);
     assert(b[] == "世…");
     assert(visibleWidth(b[]) == 3);
@@ -399,10 +399,10 @@ string truncateField(scope const(char)[] content, size_t width,
 @("width.truncateField.styledNoBleed")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The kept prefix contains an opening SGR -> a reset precedes the ellipsis.
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     truncateField(b, "\x1b[31mred red red\x1b[39m", 6);
     assert(b[] == "\x1b[31mred r\x1b[0m…");
 }
@@ -413,8 +413,8 @@ string truncateField(scope const(char)[] content, size_t width,
     assert(truncateField("hello world", 8, "...") == "hello...");
     assert(truncateField("hello", 8, "...") == "hello");
 
-    import sparkles.base.smallbuffer : SmallBuffer;
-    SmallBuffer!(char, 64) b;
+    import sparkles.base.buffer : SharedBuffer;
+    SharedBuffer!(char, 64) b;
     truncateField(b, "hello world", 8, "...");
     assert(truncateField("hello world", 8, "...") == b[]);
 }

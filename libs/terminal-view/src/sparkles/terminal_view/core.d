@@ -11,7 +11,7 @@ import core.sys.posix.sys.types : pid_t;
 
 import raylib;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
 import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid,
@@ -407,7 +407,7 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
     return r;
 }
 
-// All per-run state the @nogc core loop touches. Holds non-copyable SmallBuffers
+// All per-run state the @nogc core loop touches. Holds non-copyable UniqueBuffers
 // (font glyph sets, hover URL), so it lives as a single stack-pinned instance in
 // main() and is passed only by `ref`.
 struct CoreState
@@ -536,7 +536,7 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
             segStart = i + 1;
             if (!s.oscScan.overflowed)
             {
-                SmallBuffer!(int, 4, true) codes;
+                UniqueBuffer!(int, 4) codes;
                 oscColorQueryCodes(s.oscScan.payload[], codes);
                 foreach (code; codes[])
                     replyColorQuery(s, code);

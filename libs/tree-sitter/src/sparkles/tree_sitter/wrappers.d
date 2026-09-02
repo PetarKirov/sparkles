@@ -633,7 +633,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tree_sitter.loader : loadGrammarForTest;
 
     const grammar = loadGrammarForTest("json");
@@ -646,7 +646,7 @@ unittest
     assert(tree.valid);
     assert(!tree.rootHasError);
 
-    SmallBuffer!(char, 512) sexp;
+    SharedBuffer!(char, 512) sexp;
     writeSExpression(sexp, tree.rootNode);
     assert(sexp.length > 9);
     assert(sexp[0 .. 9] == "(document");

@@ -6,7 +6,7 @@ available without pulling in the full `sparkles:core-cli` surface.
 Before the split, version parsing, process utilities, pretty printing,
 logging, terminal styling, and UI components all shared one package. That
 made `sparkles:versions` depend on a CLI package just to reuse
-`SmallBuffer` and text parsing primitives. `base` is the smaller layer:
+`SharedBuffer` and text parsing primitives. `base` is the smaller layer:
 mechanism without application-level policy.
 
 ## What belongs in `base`
@@ -14,7 +14,7 @@ mechanism without application-level policy.
 The package holds utilities that are useful across Sparkles libraries and
 do not need `core-cli` UI concepts:
 
-- stack-first output storage via `SmallBuffer`;
+- stack-first output storage via `SharedBuffer`;
 - recycled object storage for rare `@nogc` throw paths;
 - low-level text readers and writers;
 - ANSI style values and styled IES rendering;
@@ -40,7 +40,7 @@ explicit.
 ## Why styling moved too
 
 The text writers expose style-aware rendering helpers, and the logger
-needs styled IES rendering on its hot path. Moving only `SmallBuffer` and
+needs styled IES rendering on its hot path. Moving only `SharedBuffer` and
 text readers would either leave a package cycle or force duplicated style
 logic. `term_style` and `styled_template` therefore move with the base
 dependency closure.

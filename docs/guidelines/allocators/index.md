@@ -961,7 +961,7 @@ n=  4097  GC->  8192  malloc-default->  4112
 n= 16385  GC-> 20480  malloc-default-> 16400
 ```
 
-`goodAllocSize` is what lets size-aware containers (like `SmallBuffer`'s
+`goodAllocSize` is what lets size-aware containers (like `SharedBuffer`'s
 growth policy) claim the slack the allocator would waste anyway.
 
 ---

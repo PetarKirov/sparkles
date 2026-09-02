@@ -18,7 +18,7 @@ import dsv_view : DsvInfo, DsvModel, DsvProjection, flagsOf;
 import sparkles.dsv : ColumnType, Constraint, ConstraintOp, decodeCell,
     Dialect, DsvDoc, parseDsv, ProjectionSpec, SortKey;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// The browser's whole state (`DSB1`). Constraint/part values borrow from
 /// `queryText`, which this value owns.
@@ -469,7 +469,7 @@ bool[] fuzzyRowMask(DsvModel model, const(string)[] parts) @safe
         return null;
 
     auto ws = new MatcherWorkspace!DefaultFuzzyCaps;
-    SmallBuffer!(char, 256) cellBuf;
+    SharedBuffer!(char, 256) cellBuf;
     const first = doc.hasHeader ? 1 : 0;
     const total = doc.records.length - (doc.records.length ? first : 0);
     auto mask = new bool[](total);

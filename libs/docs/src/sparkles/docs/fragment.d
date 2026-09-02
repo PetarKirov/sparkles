@@ -16,7 +16,7 @@ import std.array : appender, Appender;
 import std.conv : text;
 import std.string : indexOf, lastIndexOf;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.syntax;
 import sparkles.twoslash;
 
@@ -53,13 +53,13 @@ single-file `--html` path and the gallery, so both emit byte-identical content.
 string plainFragment(scope const(char)[] source, scope const(HighlightEvent)[] events,
     in ResolvedTheme theme, in FragmentOptions opt = FragmentOptions.init) @system
 {
-    SmallBuffer!char styles;
+    SharedBuffer!char styles;
     if (opt.embedStyles)
     {
         styles ~= "pre { padding: 1em; }\n";
         writeThemeStylesheet(theme, styles);
     }
-    SmallBuffer!char code;
+    SharedBuffer!char code;
     renderHtml(source, events, theme, code, HtmlOptions(mode: HtmlMode.cssClasses));
     return assembleFragment(styles[], "syn-root", code[], opt);
 }
@@ -73,13 +73,13 @@ string twoslashFragment(in TwoslashReturn tw, scope const(HighlightEvent)[] even
     in ResolvedTheme theme, ref TsConfigCache cache,
     in FragmentOptions opt = FragmentOptions.init) @system
 {
-    SmallBuffer!char styles;
+    SharedBuffer!char styles;
     if (opt.embedStyles)
     {
         writeThemeStylesheet(theme, styles);
         writeTwoslashStyles(styles);
     }
-    SmallBuffer!char code;
+    SharedBuffer!char code;
     renderTwoslashHtml(tw, events, theme, cache, code);
     return assembleFragment(styles[], "syn-root twoslash", code[], opt);
 }

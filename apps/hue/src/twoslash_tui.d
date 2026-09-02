@@ -21,7 +21,7 @@ version (Posix):
 import sparkles.input : EndOfInput, Event, Key, KeyEvent, match,
     PointerAction, PointerEvent, WheelEvent;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;

@@ -4,7 +4,7 @@
 /// word-level refinement, and a unified-patch parser/emitter.
 ///
 /// The whole library is `@safe pure nothrow @nogc` (`DVM8`): the model is a
-/// flat arena of plain-data rows/hunks/files owned by `SmallBuffer` (the
+/// flat arena of plain-data rows/hunks/files owned by `SharedBuffer` (the
 /// vector-with-SBO, copy-on-write container from `sparkles:base`), texts are
 /// borrowed spans, and the emitter writes to caller-supplied output ranges.
 ///

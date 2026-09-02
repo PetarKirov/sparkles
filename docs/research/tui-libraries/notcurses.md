@@ -684,13 +684,13 @@ Notcurses' plane compositing (iterate planes in z-order, blend cells) maps natur
 
 Notcurses detects terminal capabilities at runtime (Sixel, Kitty, true color). D's compile-time introspection (Design by Introspection / DbI) could complement this with static feature detection, building different code paths based on backend capabilities -- e.g., a `SixelBlitter` that only compiles when the Sixel trait is satisfied.
 
-### Cell Struct with SmallBuffer
+### Cell Struct with SharedBuffer
 
-The `nccell` approach of packing short glyph clusters inline (32-bit `gcluster`) and spilling to heap for longer EGCs maps directly to `SmallBuffer`. A D cell could use `SmallBuffer!(char, 4)` for the glyph cluster, keeping the common case allocation-free while supporting arbitrary Unicode:
+The `nccell` approach of packing short glyph clusters inline (32-bit `gcluster`) and spilling to heap for longer EGCs maps directly to `SharedBuffer`. A D cell could use `SharedBuffer!(char, 4)` for the glyph cluster, keeping the common case allocation-free while supporting arbitrary Unicode:
 
 ```d
 struct Cell {
-    SmallBuffer!(char, 4) gcluster;  // inline for ASCII/BMP, spills for long EGCs
+    SharedBuffer!(char, 4) gcluster;  // inline for ASCII/BMP, spills for long EGCs
     ushort stylemask;
     ulong channels;
 }
@@ -702,7 +702,7 @@ D has excellent C interop via `extern(C)` and `importC`. A D binding to Notcurse
 
 ### Performance Patterns
 
-Notcurses' zero-allocation rendering philosophy (packed cells, frame diffing, minimal escape output) aligns with D's `@nogc` + output range patterns. A D TUI renderer could write escape sequences to a `SmallBuffer` or directly to an output range, avoiding GC allocation entirely in the render path.
+Notcurses' zero-allocation rendering philosophy (packed cells, frame diffing, minimal escape output) aligns with D's `@nogc` + output range patterns. A D TUI renderer could write escape sequences to a `SharedBuffer` or directly to an output range, avoiding GC allocation entirely in the render path.
 
 ---
 

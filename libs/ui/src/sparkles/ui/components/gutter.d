@@ -22,13 +22,13 @@ line with the continuations blank — which is exactly what a line-number gutter
 has to do, obtained rather than arranged.
 
 $(B Cells own their text inline.) A `GutterCell` carries a
-$(REF SmallBuffer, sparkles,base,smallbuffer) sized so that every realistic
+$(REF SharedBuffer, sparkles,base,buffer) sized so that every realistic
 channel fits without touching the heap, so building a document's chrome
 allocates nothing however often it reflows.
 */
 module sparkles.ui.components.gutter;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -38,7 +38,7 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind;
 /**
 How wide a cell's inline storage is, in bytes.
 
-`SmallBuffer`'s union overlays its `T[N]` inline array with the heap slice it
+`SharedBuffer`'s union overlays its `T[N]` inline array with the heap slice it
 promotes to, so its size is `size_t.sizeof + max(N, (T[]).sizeof)` — on a
 64-bit target every `N` up to 16 costs the same 24 bytes, and 16 is therefore
 the largest inline capacity available for nothing. It clears every channel
@@ -55,7 +55,7 @@ struct GutterCell
     /// The cell's content, already padded to its channel's width by
     /// $(LREF cellOf) — so a background fills the strip and no alignment
     /// container is needed per cell.
-    SmallBuffer!(char, gutterCellInline) text;
+    SharedBuffer!(char, gutterCellInline) text;
     Slot slot = Slot.gutter;
     /// Fill `slot`'s background across the cell (a coverage state band).
     bool paintBackground;
@@ -515,7 +515,7 @@ private uint joinStrip(ref Builder b, uint strip, uint content, int separator)
 @safe pure nothrow @nogc
 unittest
 {
-    // The reason the cell owns a `SmallBuffer` rather than a slice: a document
+    // The reason the cell owns a `SharedBuffer` rather than a slice: a document
     // rebuilds its chrome on every reflow, and a per-line allocation there is
     // garbage proportional to lines × channels. `gutterCellInline` is sized so
     // every realistic channel stays inline; this is what keeps a later `.text`

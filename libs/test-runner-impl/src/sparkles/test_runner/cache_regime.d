@@ -392,10 +392,10 @@ private void appendNote(ref string note, string add) @safe pure nothrow
 /// A fraction as integral percent, for `nothrow` note text.
 private string percentString(double fraction) @safe pure nothrow
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
-    SmallBuffer!(char, 8) buf;
+    SharedBuffer!(char, 8) buf;
     writeInteger(buf, cast(long)(fraction * 100));
     return buf[].idup ~ "%";
 }

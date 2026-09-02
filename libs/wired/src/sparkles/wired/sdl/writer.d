@@ -5,7 +5,7 @@ import core.time : Duration;
 import std.datetime.date : Date;
 import std.range.primitives : put;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.wired.json.writer : writeJsonDouble, writeJsonLong;
 import sparkles.wired.sdl.decimal : sdlDecimalSignificantDigits;
 import sparkles.wired.sdl.document;
@@ -18,7 +18,7 @@ version (unittest)
 }
 
 /// Owning text returned by SDL convenience APIs.
-alias SdlString = SmallBuffer!(char, 256);
+alias SdlString = SharedBuffer!(char, 256);
 
 /** Canonical document-writer options (SPEC §9/§11).
 
@@ -272,7 +272,7 @@ private SdlExpected!void writeDouble(Writer)(double value, ref Writer writer)
 
     // Reuse wired.json's measured shortest-binary64 emitter, then adapt its
     // notation only when JSON chose an exponent SDL cannot spell.
-    SmallBuffer!(char, 40) token;
+    SharedBuffer!(char, 40) token;
     writeJsonDouble(token, value);
     writeFixedDecimal(writer, token[]);
     put(writer, 'D');
@@ -335,7 +335,7 @@ if (is(T == float) || is(T == real))
     {
         foreach (precision; 1 .. maxDigits + 1)
         {
-            SmallBuffer!(char, 128) candidate;
+            SharedBuffer!(char, 128) candidate;
             formattedWrite(candidate, "%.*g", precision, value);
 
             // Test the bytes that will actually be emitted, decoded by the
@@ -344,7 +344,7 @@ if (is(T == float) || is(T == real))
             // 80-bit) whether a spelling round-trips both rejects reals that
             // are perfectly representable and lets through spellings this
             // backend would decode differently.
-            SmallBuffer!(char, 160) emitted;
+            SharedBuffer!(char, 160) emitted;
             writeFixedDecimal(emitted, candidate[]);
             if (roundTripsAsWritten!T(emitted[], value))
             {
@@ -598,7 +598,7 @@ $(LREF sparkles.wired.sdl.files.writeSDLFile) already do, so both are atomic.
 Individual scalars are atomic in either case: each validates before emitting.
 
 `Document` is any SdlDocument-like arena exposing `valid()` and `root()`.
-Attributes infer from `Writer`; over $(LREF SmallBuffer) the structural path
+Attributes infer from `Writer`; over $(LREF SharedBuffer) the structural path
 performs no GC allocation (the floating-point kernels may format through
 Phobos).
 */
@@ -617,7 +617,7 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
         return sdlErr!void(encodeError(SdlErrorCode.checkFailed, "indent",
             "indent must be a non-empty string"));
 
-    SmallBuffer!(char, 96) rolePath;
+    SharedBuffer!(char, 96) rolePath;
 
     /// Stamps the role path composed during the unwind onto the failure.
     SdlExpected!void attach(SdlError error)
@@ -688,7 +688,7 @@ SdlExpected!void writeSdlDocument(Document, Writer)(
     {
         import sparkles.base.text.writers : writeInteger;
 
-        SmallBuffer!(char, 96) composed;
+        SharedBuffer!(char, 96) composed;
         composed ~= ".";
         putName(composed, childNameAt(node, position));
         composed ~= "[";
@@ -792,16 +792,16 @@ while preserving every ordered channel, scalar kind, and payload byte.
 package bool sdlDocumentsSemanticallyEqual(A, B)(
     return scope const ref A left, return scope const ref B right)
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static bool canonical(D)(scope const ref D document,
-        ref SmallBuffer!(char, 512) bytes)
+        ref SharedBuffer!(char, 512) bytes)
     {
         return !writeSdlDocument(document, bytes).hasError;
     }
 
-    SmallBuffer!(char, 512) leftBytes;
-    SmallBuffer!(char, 512) rightBytes;
+    SharedBuffer!(char, 512) leftBytes;
+    SharedBuffer!(char, 512) rightBytes;
     if (!canonical(left, leftBytes) || !canonical(right, rightBytes))
         return false;
     return leftBytes[] == rightBytes[];
@@ -1050,7 +1050,7 @@ version (unittest)
             {
                 import sparkles.base.text.base_codecs : decodeBase64;
 
-                SmallBuffer!(ubyte, 64) decoded;
+                SharedBuffer!(ubyte, 64) decoded;
                 auto parsed = decodeBase64(decoded, token[1 .. $ - 1]);
                 assert(parsed.hasValue && decoded[] == original.binary);
                 break;
@@ -1103,7 +1103,7 @@ version (unittest)
 
     private void checkScalar(SdlScalar scalar, string expected)
     {
-        import sparkles.base.smallbuffer : checkWriter;
+        import sparkles.base.buffer : SharedBuffer, checkWriter;
 
         checkWriter!((ref writer) {
             auto result = writeSdlScalar(scalar, writer);
@@ -1186,7 +1186,7 @@ version (unittest)
     import sparkles.base.text.base_codecs : decodeBase64;
 
     auto rendered = renderScalar(SdlScalar(bytes[]));
-    SmallBuffer!(ubyte, 8) decoded;
+    SharedBuffer!(ubyte, 8) decoded;
     auto decodedResult = decodeBase64(decoded, rendered[][1 .. $ - 1]);
     assert(decodedResult.hasValue && decoded[] == bytes[]);
 }
@@ -1354,7 +1354,7 @@ version (unittest)
 {
     private string renderDocument(A)(scope const ref A document)
     {
-        SmallBuffer!(char, 1024) bytes;
+        SharedBuffer!(char, 1024) bytes;
         auto written = writeSdlDocument(document, bytes);
         assert(!written.hasError, written.error.toString);
         return bytes[].idup;
@@ -1510,23 +1510,23 @@ version (unittest)
 {
     auto nested = parseSdlDocument!sdlFull("a {\nb\n}\n");
     assert(nested.hasValue);
-    SmallBuffer!(char, 64) tabbed;
+    SharedBuffer!(char, 64) tabbed;
     assert(!writeSdlDocument(nested.document, tabbed,
         SdlWriteOptions(indent: "\t")).hasError);
     assert(tabbed[] == "a {\n\tb\n}\n");
 
-    SmallBuffer!(char, 8) emptyDefault;
+    SharedBuffer!(char, 8) emptyDefault;
     auto blank = parseSdlDocument!sdlFull("");
     assert(blank.hasValue);
     assert(!writeSdlDocument(blank.document, emptyDefault).hasError);
     assert(emptyDefault.length == 0);
 
-    SmallBuffer!(char, 8) blankNewline;
+    SharedBuffer!(char, 8) blankNewline;
     assert(!writeSdlDocument(blank.document, blankNewline,
         SdlWriteOptions(newlineForEmptyDocument: true)).hasError);
     assert(blankNewline[] == "\n");
 
-    SmallBuffer!(char, 8) untouched;
+    SharedBuffer!(char, 8) untouched;
     auto rejected = writeSdlDocument(nested.document, untouched,
         SdlWriteOptions(indent: ""));
     assert(rejected.hasError && rejected.error.code == SdlErrorCode.checkFailed);
@@ -1549,7 +1549,7 @@ version (unittest)
         else
             parsed.document.attributes[attributeIndex].value = replacement;
 
-        SmallBuffer!(char, 128) sink;
+        SharedBuffer!(char, 128) sink;
         const failure = writeSdlDocument(parsed.document, sink);
         assert(failure.hasError);
         assert(failure.error.code == code);
@@ -1602,7 +1602,7 @@ version (unittest)
     assert(parsed.document.root.childCount == tags);
 
     clock.reset();
-    SmallBuffer!(char, 1024) rendered;
+    SharedBuffer!(char, 1024) rendered;
     const written = writeSdlDocument(parsed.document, rendered);
     const writeMs = clock.peek.total!"msecs";
     assert(!written.hasError, written.error.toString);
@@ -1626,7 +1626,7 @@ version (unittest)
     auto parsed = parseSdlDocument!sdlFull(source, "partial.sdl");
     assert(parsed.hasValue, parsed.error.toString);
 
-    SmallBuffer!(char, 128) sink;
+    SharedBuffer!(char, 128) sink;
     sink ~= "PRE|";
     const written = writeSdlDocument(parsed.document, sink);
     assert(written.hasError);
@@ -1638,7 +1638,7 @@ version (unittest)
     assert(sink[] == "PRE|first \"ok\"\nsecond ", sink[].idup);
 
     // The failures caught before emission starts still leave it untouched.
-    SmallBuffer!(char, 64) untouched;
+    SharedBuffer!(char, 64) untouched;
     untouched ~= "PRE|";
     assert(writeSdlDocument(parsed.document, untouched,
         SdlWriteOptions(indent: "")).hasError);
@@ -1661,7 +1661,7 @@ version (unittest)
             if (!first.hasValue)
                 throw new Exception(first.error.toString ~ "\n---\n" ~ source);
 
-            SmallBuffer!(char, 512) once;
+            SharedBuffer!(char, 512) once;
             auto written = writeSdlDocument(first.document, once);
             if (written.hasError)
                 throw new Exception(written.error.toString ~ "\n---\n" ~ source);
@@ -1676,7 +1676,7 @@ version (unittest)
             assert(sdlDocumentsSemanticallyEqual(first.document,
                 second.document));
 
-            SmallBuffer!(char, 512) twice;
+            SharedBuffer!(char, 512) twice;
             auto rewritten = writeSdlDocument(second.document, twice);
             assert(!rewritten.hasError);
             // LAW 2: canonicalization is byte-idempotent.
@@ -1704,7 +1704,7 @@ version (unittest)
         if (!first.hasValue)
             throw new AssertError(path ~ ": " ~ first.error.toString);
 
-        SmallBuffer!(char, 512) once;
+        SharedBuffer!(char, 512) once;
         auto written = writeSdlDocument(first.document, once);
         if (written.hasError)
             throw new AssertError(path ~ ": " ~ written.error.toString);
@@ -1713,7 +1713,7 @@ version (unittest)
         if (!second.hasValue)
             throw new AssertError(path ~ ": " ~ second.error.toString);
 
-        SmallBuffer!(char, 512) twice;
+        SharedBuffer!(char, 512) twice;
         auto rewritten = writeSdlDocument(second.document, twice);
         assert(!rewritten.hasError);
         assert(twice[] == once[]);

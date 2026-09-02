@@ -20,7 +20,7 @@ import std.typecons : Yes;
 import std.uni : graphemeStride;
 import std.utf : decode;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.ansi : escapeLength;
 import sparkles.base.text.width : graphemeClusterWidth;
 
@@ -53,8 +53,8 @@ private struct ClusterScan
 private ClusterScan scanCluster(in char[] run) @safe pure nothrow @nogc
 in (run.length > 0)
 {
-    SmallBuffer!(dchar, maxClusterCps) win;
-    SmallBuffer!(size_t, maxClusterCps) ends; // ends[i] = byte offset just past cp i
+    SharedBuffer!(dchar, maxClusterCps) win;
+    SharedBuffer!(size_t, maxClusterCps) ends; // ends[i] = byte offset just past cp i
     size_t pos = 0;
     while (pos < run.length && win.length < maxClusterCps)
     {

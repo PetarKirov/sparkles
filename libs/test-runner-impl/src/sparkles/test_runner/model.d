@@ -55,7 +55,7 @@ struct TestTraits
 struct Test
 {
     /// Fully qualified name of the unittest symbol,
-    /// e.g. `sparkles.base.smallbuffer.__unittest_L42_C1`.
+    /// e.g. `sparkles.base.buffer.__unittest_L42_C1`.
     string fullName;
 
     /// Display name: the first string UDA, or the symbol identifier.

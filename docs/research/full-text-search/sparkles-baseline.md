@@ -154,7 +154,7 @@ nothrow` but not `@nogc`** — it appends a `size_t[]` — so it cannot be built
   inside a closure-free pool job.
 - `sparkles.base.text.utf8.indexOfInvalidUtf8` — `@safe pure nothrow @nogc`,
   word-at-a-time, CTFE-able. The natural primitive for a bounded binary sniff.
-- `SmallBuffer`, the `@nogc` readers/writers, and `tryToCString` for a fixed-buffer
+- `SharedBuffer`, the `@nogc` readers/writers, and `tryToCString` for a fixed-buffer
   path.
 
 **Absent:**

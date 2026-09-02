@@ -307,7 +307,7 @@ model (stackful fibers, direct-style) but are GC-coupled and reactor-on-epoll; [
 provides the _raw kernel surface_ (`@nogc nothrow betterC` SQE/CQE) but no scheduler. The
 recommendations below fill the gap between them, justified against the [agent guidelines][agents]
 (`@safe`/`@nogc`/`pure`/`nothrow`, `-preview=in`/`-preview=dip1000`, `-betterC`-friendliness,
-range/UFCS style, `SmallBuffer`).
+range/UFCS style, `SharedBuffer`).
 
 ### 2.1 Master recommendation table
 
@@ -320,7 +320,7 @@ range/UFCS style, `SmallBuffer`).
 | **Stackful fibers (`core.thread.Fiber`) for the concurrency model**                  | Direct-style, **no function coloring**, real backtraces, and D already ships the primitive `nothrow @nogc` for `yield`/`getThis`. Matches vibe-core/Photon/Go/Eio ergonomics.                                                              | Per-fiber stack memory tax (4 pages default); a context switch per resume; `betterC` needs a custom fiber if druntime is excluded (§2.3). |
 | **Build on [during][d-landscape] + `core.thread.Fiber`, not vibe-core/Photon**       | `during` is the only `@nogc nothrow betterC` SQE/CQE substrate with current opcode coverage; `Fiber` is the cheap suspension primitive. vibe-core/Photon are GC- and exception-coupled.                                                    | `during` has _no_ scheduler/await/timer/cancellation — that entire layer is the work.                                                     |
 | **Layer primitives in Tier order (0→3)**                                             | Each tier is a precondition for the next ([primitives][primitives]); ship a usable echo server (Tier 1) before chasing zero-copy.                                                                                                          | Resisting the temptation to wire `SEND_ZC`/zcrx early; they add the most lifetime complexity for the least early payoff.                  |
-| **Owned-buffer (move/`scope`) API for I/O**                                          | Completion semantics _force_ it — a borrowed slice is unsound across submission→CQE. Mirror Monoio's `IoBuf`/BufResult with D move semantics.                                                                                              | Less ergonomic than borrowed `read(buf[])`; users must thread buffers through; needs a clean `SmallBuffer`/pool story.                    |
+| **Owned-buffer (move/`scope`) API for I/O**                                          | Completion semantics _force_ it — a borrowed slice is unsound across submission→CQE. Mirror Monoio's `IoBuf`/BufResult with D move semantics.                                                                                              | Less ergonomic than borrowed `read(buf[])`; users must thread buffers through; needs a clean `SharedBuffer`/pool story.                   |
 | **Structured concurrency (scopes) over `IO_LINK` + `LINK_TIMEOUT` + `ASYNC_CANCEL`** | Trio/Eio/Loom consensus; cancellation must propagate structurally and clean up on scope exit.                                                                                                                                              | Must hold buffers/slots alive until the cancellation CQE; more bookkeeping than unstructured `abort`.                                     |
 | **Three-tier feature probing (backend → opcode → feature flag)**                     | The general pattern every portable uring runtime follows (Seastar/Tokio/Monoio); `during` already exposes `Uring.probe()` and the negotiated `SetupFeatures` bitset via `Uring.params()` (e.g. `params.features & SetupFeatures.EXT_ARG`). | A probe/dispatch layer on every capability; testing the matrix across kernels is hard.                                                    |
 
@@ -409,7 +409,7 @@ documenting that fibers require druntime while keeping the _raw submit/reap_ lay
 | Raw ring (submit/reap, `during` substrate)         | `@nogc nothrow @safe` (`@trusted` at syscall edge), `-betterC` clean |
 | Scheduler (fiber park/resume keyed by `user_data`) | `@nogc nothrow`; needs druntime for `Fiber` (or a custom context)    |
 | Direct-style I/O API (`read`/`write`/`accept`)     | `@nogc nothrow`; `@safe` surface over `@trusted` ring ops            |
-| Structured-concurrency scopes / timers             | `@nogc nothrow`; allocation via `SmallBuffer`/pools                  |
+| Structured-concurrency scopes / timers             | `@nogc nothrow`; allocation via `SharedBuffer`/pools                 |
 
 **Illustrative API shape.** The target ergonomics — direct-style, owned-buffer, structured —
 sketched (D pseudocode, _not_ runnable; it presumes the scheduler and scope types of §2.4):
@@ -428,7 +428,7 @@ void serve(ref Loop loop) @safe nothrow
 
 void echo(TcpConn conn) @safe nothrow
 {
-    auto buf = SmallBuffer!(ubyte, 4096)(); // or a pooled / registered buffer
+    auto buf = SharedBuffer!(ubyte, 4096)(); // or a pooled / registered buffer
     for (;;)
     {
         // owned-buffer transfer: `buf` moves in, comes back with the result.
@@ -443,7 +443,7 @@ void echo(TcpConn conn) @safe nothrow
 The key properties visible here map one-to-one to the recommendations: no `async`/`await`
 coloring (§2.3), `BufResult` ownership transfer (§2.5), a lexical `scope_` that joins its
 children (§2.4), multishot accept (§2.4 Tier 3), and `@nogc nothrow` throughout with
-`SmallBuffer`/pooled buffers (the [agent guidelines][agents]).
+`SharedBuffer`/pooled buffers (the [agent guidelines][agents]).
 
 ### 2.4 Primitive layering and the structured-concurrency story
 
@@ -495,7 +495,7 @@ and `scope`** instead of Rust's `'static`:
 - An I/O op _takes_ a buffer (by move / `scope` transfer) and _returns_ it alongside the
   result: `BufResult = (long res, Buf buf)` — the caller gets the buffer back when the op
   completes, never holds a dangling borrow.
-- For the common case, back buffers with `SmallBuffer` (the repo's `@nogc` dynamic buffer) or a
+- For the common case, back buffers with `SharedBuffer` (the repo's `@nogc` dynamic buffer) or a
   pooled slab; pair pooling with **registered buffers** (`READ_FIXED`/`WRITE_FIXED`) and
   **provided buffer rings** so long-lived reusable buffers serve double duty.
 - On the **receive** path, prefer provided buffer rings: submit `recv` _without_ a buffer and
@@ -533,7 +533,7 @@ flag semantics in [io_uring opcodes][uring-opcodes].
 | Completion-first vs. portability  | Full power is Linux-only; the fallback can't reach Tier 3                                   | Accept it: Sparkles is _io_uring-first_ by name; the fallback is correctness, not parity.                                                               |
 | Thread-per-core vs. work-stealing | Lower tail latency, but manual load balancing and hot-shard risk                            | Default thread-per-core; offer single-threaded; **work-stealing is out of scope** unless a clear need emerges (it would reintroduce `Send`/sync costs). |
 | Fibers vs. stackless              | Direct-style + backtraces, but a per-fiber stack tax                                        | Fibers win for D; **open:** how small can default stacks be, and is a `betterC` custom-context primitive worth building vs. requiring druntime?         |
-| Owned buffers vs. ergonomics      | Sound, but less convenient than borrowed slices                                             | Owned is non-negotiable for a proactor; invest in `SmallBuffer`/pool ergonomics + provided rings to soften it.                                          |
+| Owned buffers vs. ergonomics      | Sound, but less convenient than borrowed slices                                             | Owned is non-negotiable for a proactor; invest in `SharedBuffer`/pool ergonomics + provided rings to soften it.                                         |
 | `@nogc`/`betterC` reach           | Raw ring is `betterC`-clean; `Fiber` needs druntime                                         | **Open:** layer so the raw submit/reap API is usable below the scheduler in pure `-betterC`.                                                            |
 | Structured cancellation cost      | Clean propagation, but buffers/slots must outlive cancel CQEs                               | Worth it; encode the Monoio `Ignored`-style lifecycle in the scheduler, not the user API.                                                               |
 | `io_uring` security surface       | A steady stream of CVEs; some environments disable it (`io_uring_disabled` sysctl, seccomp) | The epoll fallback _is_ the mitigation; detect the lockdown at probe time and degrade silently.                                                         |

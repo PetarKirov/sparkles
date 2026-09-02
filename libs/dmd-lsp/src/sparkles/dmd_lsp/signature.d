@@ -1082,7 +1082,7 @@ private const(char)[] toDStr(const(char)* s) @system
     import sparkles.dmd_lsp.testing : analyzerConfigForTest;
 
     static immutable candidates = [
-        "libs/base/src/sparkles/base/smallbuffer.d",
+        "libs/base/src/sparkles/base/buffer.d",
         "libs/versions/src/sparkles/versions/schemes/semver.d",
         "libs/math/src/sparkles/math/vector.d",
     ];

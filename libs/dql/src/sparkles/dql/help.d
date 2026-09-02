@@ -4,7 +4,7 @@ import std.algorithm.searching : canFind;
 import std.array : appender;
 import std.stdio : stdout;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.styled_template : writeStyled;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.base.text.width : alignField, Align;
@@ -36,7 +36,7 @@ void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
         writeStyled(w, depth, i"  Coarse-grained category tokens for fast-path O(1) bitset filtering:\n\n");
         foreach (cat; categories)
         {
-            SmallBuffer!(char, 32, true) catPadded;
+            UniqueBuffer!(char, 32) catPadded;
             alignField(catPadded, cat, 14, Align.left);
             writeStyled(w, depth, i"    • {cyan $(catPadded[])} (e.g. {yellow -F \"$(cat)\"} or {yellow -F \"!$(cat)\"})\n");
         }
@@ -57,13 +57,13 @@ void writeDqlHelp(Writer)(ref Writer w, scope const(DqlPathDoc)[] paths,
             if (p.typeName.length > maxType) maxType = p.typeName.length;
         }
 
-        SmallBuffer!(char, 64, true) pBuf, tBuf, dBuf;
+        UniqueBuffer!(char, 64) pBuf, tBuf, dBuf;
         alignField(pBuf, "Path", maxPath, Align.left);
         alignField(tBuf, "Type", maxType, Align.left);
         alignField(dBuf, "Description", 30, Align.left);
         writeStyled(w, depth, i"  {dim $(pBuf[])  $(tBuf[])  $(dBuf[])  Example}\n");
 
-        SmallBuffer!(char, 256, true) divBuf;
+        UniqueBuffer!(char, 256) divBuf;
         divBuf.length = maxPath + maxType + 30 + 25 + 6;
         foreach (ref ch; divBuf[])
             ch = '-';

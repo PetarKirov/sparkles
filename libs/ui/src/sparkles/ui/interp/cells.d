@@ -622,7 +622,7 @@ static assert(isCanvas!CellGrid);
 @safe unittest
 {
     import std.algorithm.searching : canFind, count;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     auto grid = CellGrid(4, 1, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
     foreach (x; 1 .. 3)
@@ -632,12 +632,12 @@ static assert(isCanvas!CellGrid);
     }
 
     const(char)[][] links = ["http://x"];
-    SmallBuffer!(char, 512) buf;
+    SharedBuffer!(char, 512) buf;
     grid.writeAnsi(buf, ColorDepth.trueColor, BgEmit.spans, links);
     assert(buf[].canFind("\x1b]8;;http://x\x1b\\"), buf[]);
     assert(buf[].count("\x1b]8;;") == 2, "one open + one close for the run");
 
-    SmallBuffer!(char, 512) plain;
+    SharedBuffer!(char, 512) plain;
     grid.writeAnsi(plain);
     assert(!plain[].canFind("\x1b]8;;"), "inert without a table");
 }
@@ -666,9 +666,9 @@ static assert(isCanvas!CellGrid);
     // b differs from a in one cell only.
     b.textRun(Point(1, 0), "X", Visual(fg: RgbColor(255, 0, 0)));
 
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 256) w;
+    SharedBuffer!(char, 256) w;
     b.diff(w, a);
     const s = w[];
     // Cursor moved to row 1, col 2 (1-based) for the single changed cell.

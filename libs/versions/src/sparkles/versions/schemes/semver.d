@@ -441,14 +441,14 @@ if (hasComponents!S && S.components.length >= 3)
     {
         if (prerelease.length)
         {
-            import sparkles.base.smallbuffer : SmallBuffer;
+            import sparkles.base.buffer : SharedBuffer, checkToString;
             import sparkles.base.text.writers : writeInteger;
 
             // Staged inline: a version string fits the small buffer, so the
             // reconstruction itself never allocates. The `idup` below is the
             // one copy, forced by `parse` taking `string` — an `appender`
             // would have allocated for the staging as well.
-            SmallBuffer!(char, 64) w;
+            SharedBuffer!(char, 64) w;
             writeInteger(w, core[0]);
             w.put('.');
             writeInteger(w, core[1]);
@@ -1150,7 +1150,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
 
     static immutable cases = [
         ["v1.2.3", "1.2.3"],
@@ -1287,7 +1287,7 @@ unittest
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
 
     // The VERS textual form of a few ranges (SPEC §9): every comparator
     // `|`-joined, so a bounded interval is `>=lo|<hi`.

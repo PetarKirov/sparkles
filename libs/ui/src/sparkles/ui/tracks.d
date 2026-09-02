@@ -269,9 +269,9 @@ void writeGridTemplate(Writer)(ref Writer w, in TrackSpec[] tracks)
 @("ui.tracks.gridTemplateEmission")
 @safe pure unittest
 {
-    import sparkles.base.smallbuffer : assertRendered, SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, assertRendered;
 
-    SmallBuffer!(char, 64) w;
+    SharedBuffer!(char, 64) w;
     writeGridTemplate(w, [
         TrackSpec.fixed(12), TrackSpec.auto_, TrackSpec.fr(),
         TrackSpec.minmax(4, 8),

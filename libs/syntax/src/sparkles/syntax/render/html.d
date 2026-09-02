@@ -40,7 +40,7 @@ import sparkles.syntax.color : Color, RgbColor, xterm256ToRgb;
 import sparkles.syntax.event : HighlightEvent, LabelId, isHighlightEventRange;
 import sparkles.syntax.theme : ResolvedTheme, StyleSpec, TextAttr, UnderlineStyle;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, checkWriter;
 
 /// How $(LREF renderHtml) expresses styles.
 enum HtmlMode : ubyte
@@ -81,7 +81,7 @@ if (isHighlightEventRange!Events)
         bool emitted;
     }
 
-    SmallBuffer!(OpenSpan, 16) stack;
+    SharedBuffer!(OpenSpan, 16) stack;
 
     // Writes the opening tag for `label` if it produces one; returns whether
     // a tag was written (its pop/reopen must mirror the decision).
@@ -351,7 +351,7 @@ private void writeHexRgb(Writer)(ref Writer w, in RgbColor c)
 
 version (unittest)
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.syntax.label : LabelSet;
     import sparkles.syntax.theme : SyntaxTheme, ThemeRule, resolveTheme;
 
@@ -494,7 +494,7 @@ unittest
         "<span style=\"color:#a6e3a1\">cc</span>");
 
     // the machine-checked invariant: balanced tags on every line
-    SmallBuffer!(char, 512) buf;
+    SharedBuffer!(char, 512) buf;
     renderHtml(source, events[], resolved, buf,
         HtmlOptions(mode: HtmlMode.cssClasses));
     size_t open, close;
@@ -538,7 +538,7 @@ unittest
         HighlightEvent.popLabel(),
     ];
     const ResolvedTheme theme; // empty: everything renders unstyled
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     renderHtml("text", events[], theme, buf);
     assert(buf[] == "text");
 }
@@ -598,7 +598,7 @@ unittest
         "html.dark .syn-keyword{color:#cba6f7}\n");
 
     // No rule may escape the scope — the check the dual-theme sheet relies on.
-    SmallBuffer!(char, 512) buf;
+    SharedBuffer!(char, 512) buf;
     writeThemeStylesheet(resolved, buf, StylesheetOptions(scopeSelector: "html.dark "));
     bool atLineStart = true;
     foreach (char c; buf[])
@@ -632,7 +632,7 @@ unittest
     const theme = SyntaxTheme(name: "t", defaultFg: Color.fromRgb(1, 2, 3),
         defaultBg: Color.defaultColor);
     const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword"]));
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     writeThemeStylesheet(resolved, buf);
     const(char)[] sheet = buf[];
     assert(!sheet.canFind("background-color"));

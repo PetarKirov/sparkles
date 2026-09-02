@@ -98,7 +98,7 @@ back to the `AnyFormat` form, then to the built-in default.
 | Symbol                                                                    | Description                                                                   |
 | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `writeJSON(value, ref writer) → Expected!(void, JsonError)`               | Stream JSON into any output range — the primary encode form (§11.6).          |
-| `toJSON(value) → Expected!(JsonString, JsonError)`                        | Encode to minified text (`JsonString` = `SmallBuffer!(char, 256)`).           |
+| `toJSON(value) → Expected!(JsonString, JsonError)`                        | Encode to minified text (`JsonString` = `SharedBuffer!(char, 256)`).          |
 | `fromJSON!T(text) → Expected!(T, JsonError)`                              | Parse + decode JSON text; also accepts a parsed `JsonValue` subtree.          |
 | `fromJSON!T(JSONValue) → Expected!(T, JsonError)`                         | One-release compatibility shim: renders the value, decodes via the text path. |
 | `readJSONFile!T(string path) → Expected!(T, JsonError)`                   | Read, parse, and decode a file without throwing.                              |
@@ -1152,7 +1152,7 @@ the end state is reviewable up front:
    error construction does not allocate from the GC.
 2. **`toJSON` returns text, not `JSONValue`**:
    `Expected!(JsonString, JsonError) toJSON(T)(const T value)` with
-   `alias JsonString = SmallBuffer!(char, N)` (minified). The writer-based
+   `alias JsonString = SharedBuffer!(char, N)` (minified). The writer-based
    form is primary: `Expected!(void, JsonError) writeJSON(T, Writer)(const T, ref Writer)`.
    Decoding is text-based: `Expected!(T, JsonError) fromJSON(T)(scope const(char)[] text)`
    plus a `fromJSON!T(JsonValue)` subtree form. A transitional

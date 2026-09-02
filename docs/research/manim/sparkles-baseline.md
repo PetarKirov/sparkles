@@ -88,7 +88,7 @@ and not a home for native text shaping.
 ### The test runner and `@nogc` primitives
 
 `sparkles:test-runner` (the `@("name") unittest {}` convention with explicit
-`@safe pure nothrow @nogc` attributes), `SmallBuffer` (an `@nogc` output-range
+`@safe pure nothrow @nogc` attributes), `SharedBuffer` (an `@nogc` output-range
 container), the `sparkles.base.text` `@nogc` formatters, and `Expected!(T, E)`
 error handling are all available and are what a hot per-frame interpolation loop
 would use to stay allocation-free.

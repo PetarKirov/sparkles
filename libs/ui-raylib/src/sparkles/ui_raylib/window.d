@@ -23,7 +23,7 @@ import core.stdc.stdarg : va_list;
 
 import raylib;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.text.cstring : CString, tryToCString;
@@ -99,7 +99,7 @@ struct Window
     private bool fullscreen_;
     // A capture requested for the current frame, performed by `endFrame` just
     // before the swap. See $(LREF screenshot).
-    private SmallBuffer!(char, 256) pendingShot;
+    private SharedBuffer!(char, 256) pendingShot;
 
     @disable this(this);
 

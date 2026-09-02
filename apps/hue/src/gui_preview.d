@@ -10,7 +10,7 @@ import ansi_model : AnsiLine;
 import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEvent,
     ResolvedTheme, toRgb, RgbColor, GrammarRegistry, TsConfigCache,
     canonicalLanguage, extractMarkdown, highlightInjected;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.source_view.markdown : MdTableExtras;
 import sparkles.base.term_color : mix;
 import sparkles.test_runner.attributes : benchmark;
@@ -101,7 +101,7 @@ private void collectFences(Decode)(in MdBlock b, scope const(char)[] source,
         }
         else
         {
-            SmallBuffer!HighlightEvent ev;
+            SharedBuffer!HighlightEvent ev;
             auto r = highlightInjected(cache, f.lang, f.body, ev);
             f.events = r.hasError
                 ? [HighlightEvent.sourceSpan(0, f.body.length)] : ev[].dup;

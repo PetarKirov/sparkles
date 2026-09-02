@@ -7,7 +7,7 @@ This module owns:
 - Domain data models (`Job`, `JobStats`, `RunnerAggregate` …)
 - The injectable fetch policy (`fetchAndDeserializeJson` seam)
 - Pure statistical pipelines (std.algorithm + std.range only)
-- Rendering (LiveRegion / TaskReporter + drawTable* + SmallBuffer durations)
+- Rendering (LiveRegion / TaskReporter + drawTable* + SharedBuffer durations)
 
 All non-trivial data transformation after the JSON→domain boundary must be range pipelines.
 +/
@@ -32,7 +32,7 @@ import core.time : Duration;
 
 import expected : Expected, ok, err;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : styledWriteln;
 import sparkles.base.text.writers : writeDuration, writeFixedPoint, writeInteger;
 
@@ -464,7 +464,7 @@ if (isInputRange!R && is(ElementType!R == Job))
 }
 
 // ---------------------------------------------------------------------------
-// Rendering helpers (SmallBuffer + writers for durations, UI stack for tables)
+// Rendering helpers (SharedBuffer + writers for durations, UI stack for tables)
 // ---------------------------------------------------------------------------
 
 // These `fmt*` return `string` because the table APIs (`string[][]` / `Cell`)
@@ -472,7 +472,7 @@ if (isInputRange!R && is(ElementType!R == Job))
 // project's writer primitives.
 //
 // Preferred style elsewhere (IES, task details, logs):
-//   SmallBuffer!(char, N) buf;
+//   SharedBuffer!(char, N) buf;
 //   writeDuration(buf, d);
 //   styledWriteln(i"... $(buf[]) ...");
 // or using the TaskReporter proxy for live output.
@@ -481,14 +481,14 @@ if (isInputRange!R && is(ElementType!R == Job))
 
 string fmtDur(Duration d)
 {
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeDuration(buf, d);
     return buf[].idup;
 }
 
 string fmtCount(size_t n)
 {
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeInteger(buf, n);
     return buf[].idup;
 }
@@ -501,7 +501,7 @@ string fmtMinutesFromTotal(Duration total)
     // (the table column header already provides the "Minutes" unit).
     double m = total.total!"seconds" / 60.0;
     ulong scaled = cast(ulong)(m * 10.0 + 0.5);
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeFixedPoint(buf, scaled, 1);
     return buf[].idup;
 }
@@ -539,7 +539,7 @@ string fmtDeltaPercent(double pct)
     if (pct.isNaN)
         return "n/a";
     ulong scaled = cast(ulong)(pct.abs * 10.0 + 0.5);
-    SmallBuffer!(char, 24) buf;
+    SharedBuffer!(char, 24) buf;
     buf ~= pct < 0 ? '-' : '+';
     writeFixedPoint(buf, scaled, 1);
     buf ~= '%';
@@ -550,7 +550,7 @@ string fmtDeltaPercent(double pct)
 /// sign is carried explicitly and the value passed as its absolute.
 string fmtDeltaDuration(Duration d)
 {
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     buf ~= d < Duration.zero ? '-' : '+';
     writeDuration(buf, d < Duration.zero ? -d : d);
     return buf[].idup;
@@ -613,10 +613,10 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
     writeln();
     writeln(drawHeader("CI Usage Statistics", HeaderProps(style: HeaderStyle.banner)));
 
-    // Overall stats: use direct SmallBuffer + writers + slice in IES.
+    // Overall stats: use direct SharedBuffer + writers + slice in IES.
     // This avoids fmt* allocation for temporary display values.
     {
-        SmallBuffer!(char, 32) totalBuf, minBuf, maxBuf, avgBuf, medBuf, p95Buf;
+        SharedBuffer!(char, 32) totalBuf, minBuf, maxBuf, avgBuf, medBuf, p95Buf;
         writeDuration(totalBuf, overall.total);
         writeDuration(minBuf, overall.min);
         writeDuration(maxBuf, overall.max);

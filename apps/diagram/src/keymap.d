@@ -353,12 +353,12 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // A terminal, hiding scope means the guide advertises exactly what the
     // resolver would answer — so the panel cannot offer a board key that no
     // longer works (`FOC4`, and `SET2`'s point).
-    SmallBuffer!(Binding, 96) rows;
+    SharedBuffer!(Binding, 96) rows;
     bindingsAt(rows, DiagramContext(settingsOpen: true));
     assert(rows.length > 0);
     bool sawPaneRow;
@@ -386,11 +386,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // What the guide would list on a bare board: the board's keys, and none
     // of the modal scopes'.
-    SmallBuffer!(Binding, 64) rows;
+    SharedBuffer!(Binding, 64) rows;
     bindingsAt(rows, DiagramContext.init);
     bool sawTool, sawEditKey;
     foreach (ref r; rows[])
@@ -403,7 +403,7 @@ unittest
 
     // While editing, the modal scope hides everything below it — listing the
     // board's keys there would be a lie the panel tells (`FOC4`).
-    SmallBuffer!(Binding, 64) editRows;
+    SharedBuffer!(Binding, 64) editRows;
     bindingsAt(editRows, DiagramContext(isEditing: true));
     foreach (ref r; editRows[])
         assert(r.cmd != DiagramCommand.toolSelect);

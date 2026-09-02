@@ -5,7 +5,7 @@ Owned-buffer currency for the completion window (SPEC §6).
 slot, a registered-buffer slot, a provided-ring lease, or vouched-for foreign
 memory. The kernel holds the pointer from submission to the terminal
 completion, so the bytes must not move or be freed in that window; that is
-why `SmallBuffer` (whose small-buffer optimization relocates the payload on
+why `SharedBuffer` (whose small-buffer optimization relocates the payload on
 struct moves) is banned as the tier-A transfer currency.
 
 Memory management follows the

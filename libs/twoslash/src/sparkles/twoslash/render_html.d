@@ -39,7 +39,7 @@ import sparkles.syntax.render.html : renderHtml, HtmlMode, HtmlOptions;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.injection : TsConfigCache;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.twoslash.icons : completionIconGlyph, completionIconSvg,
     tagIconGlyph, tagIconSvg;
@@ -112,7 +112,7 @@ ref Writer renderTwoslashHtml(Writer)(
     const inlineDecos = plan.inlineDecorations; // sorted: start asc, end desc
     const below = plan.belowBlocks;             // sorted by line
 
-    SmallBuffer!(InlineDecoration, 8) openDecos;
+    SharedBuffer!(InlineDecoration, 8) openDecos;
     size_t di = 0;      // next decoration to open
     size_t si = 0;      // syntax run cursor
     size_t bi = 0;      // next below-block to flush
@@ -290,7 +290,7 @@ private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
     put(w, `<span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div>`);
     put(w, `<code class="twoslash-popup-code">`);
     const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
-    SmallBuffer!HighlightEvent sig;
+    SharedBuffer!HighlightEvent sig;
     highlightSignature(cache, language, text, sig);
     renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
     put(w, `</code>`);
@@ -380,7 +380,7 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
             put(w, `><div class="twoslash-popup-arrow"></div>`);
             put(w, `<code class="twoslash-popup-code">`);
             const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
-            SmallBuffer!HighlightEvent sig;
+            SharedBuffer!HighlightEvent sig;
             highlightSignature(cache, language, text, sig);
             renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
             put(w, `</code></div>`);
@@ -550,7 +550,7 @@ version (unittest)
     {
         auto registry = GrammarRegistry.fromDirs([]); // no grammars → plain-text popups
         auto cache = TsConfigCache.create(&registry, LabelSet.standard());
-        SmallBuffer!(char, 1024) buf;
+        SharedBuffer!(char, 1024) buf;
         renderTwoslashHtml(tw, events, testTheme(), cache, buf);
         return buf[].idup;
     }
@@ -609,12 +609,12 @@ version (unittest)
     ]);
 
     // Default keeps the quickinfo prefix.
-    SmallBuffer!(char, 512) keep;
+    SharedBuffer!(char, 512) keep;
     renderTwoslashHtml(tw, null, testTheme(), cache, keep);
     assert(canFind(keep[], "(property) title: string"));
 
     // Opt-in strips it.
-    SmallBuffer!(char, 512) strip;
+    SharedBuffer!(char, 512) strip;
     renderTwoslashHtml(tw, null, testTheme(), cache, strip,
         TwoslashHtmlOptions(stripQuickinfoPrefix: true));
     assert(!canFind(strip[], "(property)"));
@@ -677,7 +677,7 @@ version (unittest)
             text: "const a: 1", docs: "the `answer` value",
             tags: [["param", "the wrapped `obj`"]]),
     ]);
-    SmallBuffer!(char, 2048) buf;
+    SharedBuffer!(char, 2048) buf;
     renderTwoslashHtml(tw, null, testTheme(), cache, buf);
 
     // docs: block markdown → wrapped in a <p>, code span highlighted.
@@ -688,7 +688,7 @@ version (unittest)
         `<span class="twoslash-popup-docs-tag-value">the wrapped <code>obj</code></span>`));
 
     // Opt-out restores escaped text (no <code>/<p>).
-    SmallBuffer!(char, 2048) plain;
+    SharedBuffer!(char, 2048) plain;
     renderTwoslashHtml(tw, null, testTheme(), cache, plain,
         TwoslashHtmlOptions(renderDocsMarkdown: false));
     assert(canFind(plain[], `<div class="twoslash-popup-docs">the `~"`answer`"~` value</div>`));
@@ -721,7 +721,7 @@ version (unittest)
     // Icons off → golden is just the tag line.
     auto registry = GrammarRegistry.fromDirs([]);
     auto cache = TsConfigCache.create(&registry, LabelSet.standard());
-    SmallBuffer!(char, 512) buf;
+    SharedBuffer!(char, 512) buf;
     renderTwoslashHtml(tw, null, testTheme(), cache, buf,
         TwoslashHtmlOptions(tagIcons: IconStyle.none));
     assert(buf[] ==
@@ -744,7 +744,7 @@ version (unittest)
 
     auto registry = GrammarRegistry.fromDirs([]);
     auto cache = TsConfigCache.create(&registry, LabelSet.standard());
-    SmallBuffer!(char, 512) g;
+    SharedBuffer!(char, 512) g;
     renderTwoslashHtml(tw, null, testTheme(), cache, g,
         TwoslashHtmlOptions(tagIcons: IconStyle.glyph));
     assert(canFind(g[], `<span class="twoslash-tag-icon tag-annotate-icon">✎</span>`));
@@ -762,7 +762,7 @@ version (unittest)
     // Icons off → the golden isolates the trailing-flush behaviour.
     auto registry = GrammarRegistry.fromDirs([]);
     auto cache = TsConfigCache.create(&registry, LabelSet.standard());
-    SmallBuffer!(char, 512) buf;
+    SharedBuffer!(char, 512) buf;
     renderTwoslashHtml(tw, null, testTheme(), cache, buf,
         TwoslashHtmlOptions(tagIcons: IconStyle.none));
     assert(buf[] ==
@@ -785,7 +785,7 @@ version (unittest)
     // off the word.
     auto registry = GrammarRegistry.fromDirs([]);
     auto cache = TsConfigCache.create(&registry, LabelSet.standard());
-    SmallBuffer!(char, 1024) buf;
+    SharedBuffer!(char, 1024) buf;
     renderTwoslashHtml(tw, null, testTheme(), cache, buf,
         TwoslashHtmlOptions(completionIcons: IconStyle.none));
     assert(buf[] ==
@@ -815,13 +815,13 @@ version (unittest)
     auto registry = GrammarRegistry.fromDirs([]);
     auto cache = TsConfigCache.create(&registry, LabelSet.standard());
     // Glyph style: same class, a text glyph.
-    SmallBuffer!(char, 512) g;
+    SharedBuffer!(char, 512) g;
     renderTwoslashHtml(tw, null, testTheme(), cache, g,
         TwoslashHtmlOptions(completionIcons: IconStyle.glyph));
     assert(canFind(g[], `<span class="twoslash-completions-icon completions-method">ƒ</span>`));
 
     // Custom override wins over the style.
-    SmallBuffer!(char, 512) cu;
+    SharedBuffer!(char, 512) cu;
     renderTwoslashHtml(tw, null, testTheme(), cache, cu,
         TwoslashHtmlOptions(customCompletionIcon: (scope const(char)[] k) => "★"));
     assert(canFind(cu[], `<span class="twoslash-completions-icon completions-method">★</span>`));

@@ -11,7 +11,7 @@ stated once: $(B an operation is valid while the arena that built it is alive
 and unreset.)
 
 $(B Why chunks, and not one growable buffer.) This is the load-bearing detail.
-A single $(REF SmallBuffer, sparkles,base,smallbuffer) would reallocate as it
+A single $(REF SharedBuffer, sparkles,base,buffer) would reallocate as it
 grew, and every slice already handed to an earlier op in the same frame would
 dangle — a bug that shows up as garbled text only once a frame crosses the
 initial capacity, which is to say in the field. Chunks are `pureMalloc` blocks
@@ -38,7 +38,7 @@ module sparkles.ui.arena;
 
 import std.traits : hasIndirections;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// Bytes in a fresh chunk. One chunk holds a few hundred typical runs; a
 /// bigger request gets a chunk of its own rather than being split.
@@ -73,7 +73,7 @@ struct FrameArena(size_t chunkBytes = defaultChunkBytes)
     One block, as a plain-data record.
 
     Two deliberate choices. It is a `struct` rather than a bare `ubyte[]`
-    because a `SmallBuffer` whose element type is itself a slice cannot tell
+    because a `SharedBuffer` whose element type is itself a slice cannot tell
     `~= oneElement` from `~= manyElements`. And it holds the block's
     $(I address) rather than a pointer, for two reasons that point the same
     way: a `const(Chunk)` holding a `ubyte*` will not copy into a mutable one
@@ -94,7 +94,7 @@ struct FrameArena(size_t chunkBytes = defaultChunkBytes)
     {
         // The blocks, in allocation order. Their addresses are the promise
         // this type makes; only this list may move.
-        SmallBuffer!(Chunk, 4) _chunks;
+        SharedBuffer!(Chunk, 4) _chunks;
         size_t _at;   // index of the chunk being filled
         size_t _used; // bytes taken from `_chunks[_at]`
     }

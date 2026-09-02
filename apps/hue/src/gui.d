@@ -84,7 +84,7 @@ import dsv_view : adaptDsv, DsvCopy, DsvInfo, DsvModel, dsvStatusNote,
 import sparkles.syntax : HighlightEvent, LabelId, LabelSet, StyleSpec, TextAttr, UnderlineStyle,
     ResolvedTheme, RgbColor, toRgb;
 import sparkles.ui.theme : Theme;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.logger : warning;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_color : mix;
@@ -711,7 +711,7 @@ int runGui(GuiArgs guiArgs) @system
     }
 
 
-    SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
+    SharedBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
 
     // Live D types (`PRJ12`): a `.d` file that arrived without a payload gets a
     // `twoslash-extract --dub --serve` oracle of its own. The session is per
@@ -1960,7 +1960,7 @@ int runGui(GuiArgs guiArgs) @system
         // transient answer to "what can I press", not part of the document.
         if (pn.lantern.shown)
         {
-            SmallBuffer!(Binding, 128) listed;
+            SharedBuffer!(Binding, 128) listed;
             bindingsAt(listed, kctx, pn.lantern.pending[]);
             if (listed.length)
             {
@@ -4056,7 +4056,7 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
 /// painted through `RaylibCanvas`. The type signature renders as resolved
 /// syntax-colored spans (`signatureSpans`) inside the widget model itself, so
 /// nothing overpaints the toolkit's output.
-private PixelRect drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg, int availCells,
@@ -4170,7 +4170,7 @@ private char[] uintToBuf(size_t v) @safe nothrow
 
 /// Copies `s` into `buf` with a trailing NUL, returning the NUL-terminated
 /// slice (excluding the NUL) that raylib's `DrawTextEx` can read directly.
-private const(char)[] cstrOf(ref SmallBuffer!(char, 4096) buf, scope const(char)[] s) @safe
+private const(char)[] cstrOf(ref SharedBuffer!(char, 4096) buf, scope const(char)[] s) @safe
 {
     buf.clear();
     buf.writeStringz(s);

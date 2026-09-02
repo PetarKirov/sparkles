@@ -56,7 +56,7 @@ import std.string : indexOf, lineSplitter, strip;
 
 import sparkles.dsv : ColumnType, decodeCell, detectHeader, Dialect, DsvDoc,
     inferColumnTypes, parseDsv, seedForExtension, sniff;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 int main(string[] args)
 {
@@ -558,7 +558,7 @@ string check(string bytes, string name, in Expect ex)
     if (ex.noTrailingNewline && (bytes.length == 0 || bytes[$ - 1] == '\n'))
         return "expected no trailing newline";
 
-    SmallBuffer!(ColumnType, 64) types;
+    SharedBuffer!(ColumnType, 64) types;
     inferColumnTypes(doc, 200, types);
     foreach (col, want; ex.types)
     {

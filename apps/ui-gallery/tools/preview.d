@@ -31,7 +31,7 @@ module ui_gallery_preview;
 import std.conv : to;
 import std.stdio : write, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 import sparkles.input : charEvent, Event;
@@ -99,7 +99,7 @@ int main(string[] args)
         return 0;
     }
 
-    SmallBuffer!(char, 1 << 16) buf;
+    SharedBuffer!(char, 1 << 16) buf;
     grid.writeAnsi(buf);
     write(buf[]);
     writeln();

@@ -4,7 +4,7 @@ import std.algorithm.comparison : max;
 import std.regex : Regex;
 import std.sumtype : SumType, match;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.span : TextSpan;
 import sparkles.fuzzy.glob : GlobProgram;
 import sparkles.fuzzy.query : QueryStorage;
@@ -150,7 +150,7 @@ static assert(DqlAstNode.sizeof <= 56, "DqlAstNode must remain compact and fit i
 /// Compiled DQL filter containing a contiguous flat array of AST nodes.
 struct DqlFilter
 {
-    SmallBuffer!(DqlAstNode, 4, true) nodes;
+    UniqueBuffer!(DqlAstNode, 4) nodes;
     uint rootIndex = uint.max;
     bool allowAllByDefault = true;
     bool hasFineGrainedPredicates = false;

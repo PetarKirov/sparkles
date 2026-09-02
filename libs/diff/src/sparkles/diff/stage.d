@@ -205,7 +205,7 @@ void selectHunk(in DiffDoc doc, ulong hunkId, scope bool[] selected)
 @("stage.emitSelectionPatch.oneHunkOfSeveral")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.diff.engine : diffText;
     import sparkles.diff.patch : parsePatch;
 
@@ -218,7 +218,7 @@ void selectHunk(in DiffDoc doc, ulong hunkId, scope bool[] selected)
     auto selected = new bool[](doc.rows.length);
     selectHunk(doc, doc.hunks[1].id, selected);
 
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     const n = emitSelectionPatch(doc, doc.files[0], selected, buf);
     assert(n == 1, "one run of selected changes");
 
@@ -244,7 +244,7 @@ void selectHunk(in DiffDoc doc, ulong hunkId, scope bool[] selected)
 @("stage.emitSelectionPatch.perLineWithinAHunk")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.diff.engine : diffText;
     import sparkles.diff.patch : parsePatch;
     import std.algorithm.searching : canFind;
@@ -261,7 +261,7 @@ void selectHunk(in DiffDoc doc, ulong hunkId, scope bool[] selected)
             selected[i] = true;
     }
 
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     assert(emitSelectionPatch(doc, doc.files[0], selected, buf) >= 1);
     auto parsed = parsePatch(buf[]);
     assert(!parsed.hasError);
@@ -274,13 +274,13 @@ void selectHunk(in DiffDoc doc, ulong hunkId, scope bool[] selected)
 @("stage.emitSelectionPatch.nothingSelectedWritesNothing")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.diff.engine : diffText;
 
     auto doc = diffText("a\n", "b\n", "f", "f");
     auto none = new bool[](doc.rows.length);
 
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     assert(emitSelectionPatch(doc, doc.files[0], none, buf) == 0);
     assert(buf[].length == 0,
         "a file with nothing selected contributes no header either");
@@ -289,7 +289,7 @@ void selectHunk(in DiffDoc doc, ulong hunkId, scope bool[] selected)
     // context line is not a thing, and including one would corrupt the patch.
     auto contextOnly = new bool[](doc.rows.length);
     contextOnly[] = true;
-    SmallBuffer!char buf2;
+    SharedBuffer!char buf2;
     auto ctxDoc = diffText("keep\nkeep\n", "keep\nkeep\n", "f", "f");
     auto all = new bool[](ctxDoc.rows.length);
     all[] = true;

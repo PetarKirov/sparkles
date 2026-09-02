@@ -674,7 +674,7 @@ private uint foldPlaceholder(ref Builder b, size_t start, size_t end,
     const(char)[] src, MdViewOptions opt)
 {
     import sparkles.base.text.writers : writeInteger;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     const clampedEnd = end > src.length ? src.length : end;
     const body_ = src[start .. clampedEnd];
@@ -688,7 +688,7 @@ private uint foldPlaceholder(ref Builder b, size_t start, size_t end,
             ++lines;
         }
 
-    SmallBuffer!(char, 32) n;
+    SharedBuffer!(char, 32) n;
     writeInteger(n, lines);
     TextSpan[] spans;
     if (opt.inlineFoldMarker)
@@ -802,14 +802,14 @@ private uint collapsedFace(ref Builder b, ref const MdBlock blk,
 // The `⋯ N lines` chip text for a folded region.
 private string foldChip(const(char)[] src, size_t start, size_t end) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
     size_t lines = 1;
     foreach (char ch; src[start .. end])
         if (ch == '\n')
             ++lines;
-    SmallBuffer!(char, 32) n;
+    SharedBuffer!(char, 32) n;
     writeInteger(n, lines);
     return "\u22EF " ~ n[].idup ~ " lines";
 }
@@ -1273,10 +1273,10 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 ++numW;
             TextSpan numberSpan(size_t lineNo) @safe
             {
-                import sparkles.base.smallbuffer : SmallBuffer;
+                import sparkles.base.buffer : SharedBuffer;
                 import sparkles.base.text.writers : writeInteger;
 
-                SmallBuffer!(char, 24) t;
+                SharedBuffer!(char, 24) t;
                 writeInteger(t, lineNo);
                 char[] cell;
                 foreach (_; t[].length .. numW)
@@ -2291,9 +2291,9 @@ TextSpan[][] delegate(const(char)[], const(char)[]) @safe highlightedFenceRender
     TsConfigCache* cache, const(ResolvedTheme)* theme, RgbColor pageFg)
 {
     return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_) @trusted {
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         if (highlightInjected(*cache, canonicalLanguage(lang), body_, ev).hasError)
             ev ~= HighlightEvent.sourceSpan(0, body_.length);
 

@@ -3402,7 +3402,7 @@ number nothing rather than repeat its neighbour.
 GutterCell[] lineNumberCells(in DocRow[] rows, int width,
     scope size_t delegate(size_t) @safe lineOf) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
     auto cells = new GutterCell[](rows.length);
@@ -3422,7 +3422,7 @@ GutterCell[] lineNumberCells(in DocRow[] rows, int width,
             continue;
         }
         prev = line;
-        SmallBuffer!(char, 16) buf;
+        SharedBuffer!(char, 16) buf;
         writeInteger(buf, line + 1);
         cells[i] = cellOf(buf[], width);
     }

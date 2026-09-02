@@ -46,7 +46,7 @@ None of it contradicts the [comparison's Sparkles-fit sketch][comparison] — it
   **infer** so `@nogc`/`@safe`/`pure`/`nothrow` propagate from the caller's leaf parsers.
 - **Zero-allocation by construction.** A parser returning `void`/a slice must run with **no
   heap allocation** — the property [flatparse] proves a combinator API can have and the one
-  most relevant to Sparkles (validating a version string, a CLI token). `SmallBuffer`
+  most relevant to Sparkles (validating a version string, a CLI token). `SharedBuffer`
   replaces `appender` where accumulation is unavoidable; **no packrat memoization by default**
   ([the space cost][peg] is the wrong default; reserve it for a measured hot spot).
 - **A [Pratt][pratt] expression engine.** A table-free, `O(n)` binding-power loop for any
@@ -70,7 +70,7 @@ None of it contradicts the [comparison's Sparkles-fit sketch][comparison] — it
   this toolkit _is_ the policy layer.
 - [`sparkles.base.text.errors`][base-text] — `ParseError`/`ParseErrorCode`/`ParseExpected`/
   `parseOk`/`parseErr`/`NoGcHook` already exist and are the result vocabulary.
-- [`sparkles.base.smallbuffer`](../../libs/base/index.md) — the `@nogc` output range.
+- [`sparkles.base.buffer`](../../libs/base/index.md) — the `@nogc` output range.
 - The [`expected`](../../guidelines/idioms/expected/index.md) idiom — `Expected!(T, E)` chaining
   (`map`/`andThen`/`orElse`) is how parsers compose without exceptions.
 - [`parseSemVerShaped`][v-parsing] — the existing scannerless-RD exemplar; the version schemes

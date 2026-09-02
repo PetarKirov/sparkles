@@ -138,7 +138,7 @@ private:
 
 // ── the fiber pumps ─────────────────────────────────────────────────────────
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.channel : Channel;
 import sparkles.event_horizon.io : FileHandle, read;
 import sparkles.event_horizon.sched : Sched;
@@ -171,7 +171,7 @@ void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
 
     for (;;)
     {
-        SmallBuffer!(ubyte, 128) buf;
+        SharedBuffer!(ubyte, 128) buf;
         buf.length = 128;
 
         uint got;

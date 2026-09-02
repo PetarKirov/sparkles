@@ -25,7 +25,7 @@ public import sparkles.base.term_color : Color, ColorDepth;
 public import sparkles.base.term_style : CompactTermStyle, TextAttr, TermStyle,
     UnderlineStyle, writeStyle;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.text.utf : encodeUtf8, decodeFirstUtf8;
 import sparkles.base.text.width : codepointWidth;
 
@@ -108,7 +108,7 @@ alias Cell = CellT!16;
 
 /// A rectangular grid of cells, indexed `[x, y]` with `[0, 0]` top-left.
 ///
-/// Move-only: its `SmallBuffer` backing is a sole-owner, GC-free heap block reused
+/// Move-only: its `SharedBuffer` backing is a sole-owner, GC-free heap block reused
 /// across resizes, so a steady render loop allocates nothing. Copy explicitly via
 /// the copy-constructor (`auto b = a;`) or capacity-reusing assignment (`b = a;`).
 struct GridT(uint MaxBytes = 16)
@@ -117,7 +117,7 @@ struct GridT(uint MaxBytes = 16)
     {
         alias C = CellT!MaxBytes;
         // `unique` ⇒ sole-owner, move-only, GC-free; mutable access never clones.
-        SmallBuffer!(C, 1, true) _cells;
+        UniqueBuffer!(C, 1) _cells;
         ushort _cols;
         ushort _rows;
     }
@@ -269,7 +269,7 @@ struct GridT(uint MaxBytes = 16)
 
     private:
 
-    // Live cell count (cols*rows); the SmallBuffer may hold spare capacity beyond it.
+    // Live cell count (cols*rows); the SharedBuffer may hold spare capacity beyond it.
     size_t count() const scope @safe pure nothrow @nogc => cast(size_t) _cols * _rows;
 
     // Ensure the buffer holds at least `n` cells (append blanks; capacity reused).

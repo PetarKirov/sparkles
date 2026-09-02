@@ -349,7 +349,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref w) => FileUriHook.writeSourceUri!(
         "/home/user/project/main.d", size_t(42), size_t(5))(w))(
@@ -361,7 +361,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref w) => SchemeHook!"code".writeSourceUri!(
         "/home/user/project/main.d", size_t(10), size_t(3))(w))(

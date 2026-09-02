@@ -17,7 +17,7 @@ arbitration (`IXN1`).
 */
 module diagram_app;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.input : EndOfInput, Event, isEndOfInput, KeyAction, KeyEvent,
     match, Point, PointerAction, PointerEvent, WheelEvent;
@@ -277,7 +277,7 @@ struct DiagramApp
         if (!world.lantern.shown)
             return;
 
-        SmallBuffer!(Binding, guideRowCap) listed;
+        SharedBuffer!(Binding, guideRowCap) listed;
         bindingsAt(listed, DiagramContext(isEditing: world.isEditing,
             settingsOpen: world.settingsOpen), world.lantern.pending[]);
         if (listed.length == 0)
@@ -493,7 +493,7 @@ unittest
     // from `bindingsAt` over the same table, so this asserts the tie rather
     // than a hardcoded label. The board's set is taller than the panel's
     // window, so only the first rows are guaranteed painted.
-    SmallBuffer!(Binding, guideRowCap) listed;
+    SharedBuffer!(Binding, guideRowCap) listed;
     bindingsAt(listed, DiagramContext.init);
     assert(listed.length > 0);
     const firstDesc = listed[0].desc;

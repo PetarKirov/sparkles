@@ -25,7 +25,7 @@ import core.sys.posix.termios : ECHO, ICANON, IEXTEN, ISIG, tcgetattr, TCSAFLUSH
     TCSANOW, tcsetattr, termios, VMIN, VTIME;
 import core.sys.posix.unistd : STDIN_FILENO, STDOUT_FILENO, write;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : classifyColorDepth, ColorDepth;
 import sparkles.base.term_control : CtlSeq, DecMode, writeEscapeSeq, writeMouseTracking;
 import sparkles.base.term_caps : StdStream, terminalSize, TermSize;
@@ -53,7 +53,7 @@ struct Terminal
         termios _orig;
         TerminalOptions _opts;
         Screen _screen;
-        SmallBuffer!char _buf;
+        SharedBuffer!char _buf;
         int _inFd = STDIN_FILENO;
         int _outFd = STDOUT_FILENO;
         bool _active;
@@ -88,7 +88,7 @@ struct Terminal
         t._active = true;
         t._screen.colorDepth(detectColorDepthEnv()); // fold styles to the real depth
 
-        SmallBuffer!char s;
+        SharedBuffer!char s;
         if (opts.altScreen)
             writeEscapeSeq!(CtlSeq.enterAltScreen)(s);
         if (opts.hideCursor)
@@ -117,7 +117,7 @@ struct Terminal
             return;
         _active = false;
 
-        SmallBuffer!char s;
+        SharedBuffer!char s;
         if (_opts.mouse)
             writeMouseTracking(s, false, _opts.motion);
         writeEscapeSeq!(DecMode.autowrap, true)(s); // autowrap on
@@ -213,7 +213,7 @@ unittest
     // We can't open a real terminal under the test harness, but the frame
     // assembly (sync markers + a diffed grid) is exercised through the Screen
     // directly to lock the byte-framing contract the backend relies on.
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind;
 
@@ -222,7 +222,7 @@ unittest
     g.putText(0, 0, "ok", CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     buf.put(cast(string) CtlSeq.syncBegin);
     scr.render(g, buf);
     buf.put(cast(string) CtlSeq.syncEnd);

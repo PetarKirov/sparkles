@@ -12,13 +12,13 @@ does not allocate. Phase 0 supplies those; phases 1–3 build on them.
 
 ## Phase overview
 
-| #      | Deliverable                                                                                | Depends on | Status                                               |
-| ------ | ------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------- |
-| **P0** | Foundations: `SmallBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                              |
-| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target         | P0         | shipped (P1.1–P1.6; `TST3` still open — see its row) |
-| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                | P1         | shipped (P2.A as `TVW1`–`TVW7`; P2.B1–B5)            |
-| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                | P2         | open                                                 |
-| **P4** | Native WSI + Skia Graphite configurations; SDL/raylib retained explicitly                  | WSI M7     | planned                                              |
+| #      | Deliverable                                                                                 | Depends on | Status                                               |
+| ------ | ------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------- |
+| **P0** | Foundations: `SharedBuffer` for reference-bearing elements, `sparkles:input` growth, `NFR2` | —          | shipped                                              |
+| **P1** | `libs/ui-app`: backend selection, the CLI, the host contract, the recording target          | P0         | shipped (P1.1–P1.6; `TST3` still open — see its row) |
+| **P2** | `apps/terminal` and `apps/hue` fully migrated onto the host                                 | P1         | shipped (P2.A as `TVW1`–`TVW7`; P2.B1–B5)            |
+| **P3** | `apps/diagram` — a new dual-backend application that proves the abstraction                 | P2         | open                                                 |
+| **P4** | Native WSI + Skia Graphite configurations; SDL/raylib retained explicitly                   | WSI M7     | planned                                              |
 
 Each phase must be green before the next starts, and every commit inside a phase
 must build, test and lint on its own.
@@ -66,9 +66,9 @@ D's `-cov` counts template instantiations per instantiation and emits `.lst` fil
 for imported modules; the percentage is a trend indicator, which is precisely why it
 does not gate.
 
-### P0.2 — `SmallBuffer` for reference-bearing elements
+### P0.2 — `SharedBuffer` for reference-bearing elements
 
-`sparkles:base`'s `SmallBuffer` cannot safely hold an element type containing
+`sparkles:base`'s `SharedBuffer` cannot safely hold an element type containing
 references, for two independent reasons: its inline slots are `void`-initialized,
 and its heap block comes from `Mallocator` and so is **not scanned by the GC** — a
 buffer that outgrows its inline storage can have the memory its elements point at
@@ -123,7 +123,7 @@ Two additions, both traced in the [input spec](../ui/input.md):
 ### P0.4 — `NFR2`: the allocation-free display list
 
 P0.2 is what makes this legal. The widget arena and the display list both move onto
-`SmallBuffer`, closing [`NFR2`](../ui/feature-requirements.md).
+`SharedBuffer`, closing [`NFR2`](../ui/feature-requirements.md).
 
 The hazard is lifetime, not allocation: a display list sliced out of a buffer is
 **borrowed**, and the buffer must outlive every painter that walks it. Every

@@ -226,7 +226,7 @@ The path story is also weaker than it looks: `history` is a **reconstructed curs
 
 The `.:` combinator inserts one for you; a hand-written parser that forgets `(<?>)` produces a pathless error, and nothing warns about it.
 
-**D verdict: [(b)][tags], and D can beat both libraries on both axes.** The error path should be the **schema path** — known at compile time, sliceable as a static string — which is cheaper and more accurate than a reconstructed `List[CursorOp]`, and unconditional rather than an annotation the author can forget. And because a D field walk is _generated_ rather than composed from monadic combinators, the "`flatMap` kills accumulation" hazard structurally cannot arise: accumulate into a `SmallBuffer!(DecodeError, N)` and every branch always runs. The model to target is [`unjson`'s `Result a Problems`][haskell] — every problem, each anchored, plus a partial value you can still read.
+**D verdict: [(b)][tags], and D can beat both libraries on both axes.** The error path should be the **schema path** — known at compile time, sliceable as a static string — which is cheaper and more accurate than a reconstructed `List[CursorOp]`, and unconditional rather than an annotation the author can forget. And because a D field walk is _generated_ rather than composed from monadic combinators, the "`flatMap` kills accumulation" hazard structurally cannot arise: accumulate into a `SharedBuffer!(DecodeError, N)` and every branch always runs. The model to target is [`unjson`'s `Result a Problems`][haskell] — every problem, each anchored, plus a partial value you can still read.
 
 ---
 

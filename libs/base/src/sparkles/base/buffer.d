@@ -8,7 +8,7 @@
  * Primary use case: appending elements in a temporary scope where GC
  * allocation is not desired.
  */
-module sparkles.base.smallbuffer;
+module sparkles.base.buffer;
 
 import std.algorithm.comparison : max;
 import std.array : overlap;
@@ -1586,7 +1586,7 @@ unittest
     assert(error.msg == "frame mismatch:\nExpected:\nexpected\nActual:\nactual");
 }
 
-@("smallbuffer.helpers.betterC")
+@("buffer.helpers.betterC")
 @betterC
 @safe pure nothrow @nogc
 unittest

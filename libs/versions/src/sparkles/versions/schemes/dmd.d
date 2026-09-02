@@ -137,7 +137,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
     import sparkles.versions.testing : checkRejects;
 
     auto v = Dmd.parse("2.009.0");
@@ -162,7 +162,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     static immutable cases = [
         ["v2.79.0", "2.079.0"],

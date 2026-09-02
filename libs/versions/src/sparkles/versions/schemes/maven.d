@@ -535,7 +535,7 @@ version (unittest)
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     // `[1.0]` is the singleton 1.0.
     auto r = mvnRange("[1.0]");
@@ -549,7 +549,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     // `(,1.0]` is `<= 1.0`.
     auto r = mvnRange("(,1.0]");
@@ -563,7 +563,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     // `[1.2,1.3]` — both endpoints inclusive.
     auto r = mvnRange("[1.2,1.3]");
@@ -578,7 +578,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     // `[1.0,2.0)` — inclusive lower, exclusive upper.
     auto r = mvnRange("[1.0,2.0)");
@@ -603,7 +603,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     // `[1.5,)` is `>= 1.5`.
     auto r = mvnRange("[1.5,)");
@@ -617,7 +617,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     // `(,1.0],[1.2,)` — everything up to 1.0, and everything from 1.2 on.
     auto r = mvnRange("(,1.0],[1.2,)");

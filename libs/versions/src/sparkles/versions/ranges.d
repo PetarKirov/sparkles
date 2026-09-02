@@ -631,7 +631,7 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     checkToString(Ranges!U3.full(), "*");
     checkToString(Ranges!U3.singleton(U3(3)), "3");

@@ -214,10 +214,10 @@ Writes `value` to `writer` as a double-quoted string literal, escaping `\` and
 
 Takes an output range rather than returning a string so the escaping stays
 allocation-free and usable from `@nogc` and `-betterC` code; render into a
-$(REF SmallBuffer, sparkles,base,smallbuffer) and `idup` the result at the one
+$(REF SharedBuffer, sparkles,base,buffer) and `idup` the result at the one
 boundary that needs a garbage-collected string:
 ---
-SmallBuffer!(char, 256) buf;
+SharedBuffer!(char, 256) buf;
 buf.putQuotedStringLiteral(path);
 string literal = buf[].idup;
 ---
@@ -276,7 +276,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     checkWriter!((ref b) => b.putQuotedStringLiteral(`hello "world" \`))(
         `"hello \"world\" \\"`);

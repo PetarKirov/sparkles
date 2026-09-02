@@ -1424,7 +1424,7 @@ version (unittest)
     enum thisDir = __FILE_FULL_PATH__.dirName;
     enum repoRoot = thisDir.dirName.dirName.dirName.dirName.dirName;
     const path = buildPath(repoRoot, "libs", "base", "src", "sparkles",
-        "base", "smallbuffer.d");
+        "base", "buffer.d");
     const source = () @trusted { return cast(string) read(path); }();
 
     const got = formatText(source);

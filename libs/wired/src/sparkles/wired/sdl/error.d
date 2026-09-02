@@ -3,7 +3,7 @@ module sparkles.wired.sdl.error;
 
 import expected : Expected, err, ok;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.wired.sdl.document : SdlSpan;
 
@@ -55,18 +55,18 @@ struct SdlError
 {
     SdlErrorStage stage;
     SdlErrorCode code;
-    SmallBuffer!(char, 40) sourceName;
+    SharedBuffer!(char, 40) sourceName;
     SdlSpan span;
     SdlSpan relatedSpan;
     bool hasRelatedSpan;
-    SmallBuffer!(char, 48) valuePath;
-    SmallBuffer!(char, 48) rolePath;
+    SharedBuffer!(char, 48) valuePath;
+    SharedBuffer!(char, 48) rolePath;
     string sourceType;
     string targetType;
     string expectedKind;
     string actualKind;
-    SmallBuffer!(char, 96) reason;
-    SmallBuffer!(char, 40) filePath;
+    SharedBuffer!(char, 96) reason;
+    SharedBuffer!(char, 40) filePath;
     int cause;
 
     /// Human-readable rendering over any character output range.
@@ -154,7 +154,7 @@ SdlExpected!T sdlErr(T)(SdlError error) @safe pure nothrow @nogc
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.wired.sdl.document : SdlPosition;
 
     SdlError failure;

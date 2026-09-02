@@ -429,7 +429,7 @@ every decode entry point accepts an **error sink** — any output range of
 `JsonError`:
 
 ```d
-SmallBuffer!(JsonError, 16) issues;
+SharedBuffer!(JsonError, 16) issues;
 auto r = fromJSON!Config(text, issues);   // r: Expected!(Config, JsonError)
 // r.hasError ⇒ issues holds ALL failures, each with its own path; r.error is the first
 ```

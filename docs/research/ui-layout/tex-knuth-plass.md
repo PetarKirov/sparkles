@@ -531,9 +531,9 @@ For Sparkles specifically, the relevance is partial but clear:
   documentation), a Knuth-Plass-style optimiser would be visible win for
   paragraphs longer than a few lines.
 - **The box/glue/penalty stream is a natural fit for D.** Sparkles already
-  uses output ranges and `SmallBuffer` for `@nogc` text production. A
+  uses output ranges and `SharedBuffer` for `@nogc` text production. A
   Knuth-Plass implementation can be entirely `@nogc`: the item stream is a
-  `SmallBuffer!(Item, 256)`, the active set is another `SmallBuffer!(Node,
+  `SharedBuffer!(Item, 256)`, the active set is another `SharedBuffer!(Node,
 16)`, and the demerit arithmetic is pure floating-point.
 - **The simplified ragged-right case is cheap to ship first.** Setting all
   glue to non-stretchable (`stretch = shrink = 0`) reduces the algorithm to

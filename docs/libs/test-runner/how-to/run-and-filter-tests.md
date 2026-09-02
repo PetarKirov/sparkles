@@ -4,7 +4,7 @@ Options go after `--`, exactly as with silly:
 
 ```bash
 dub test :base                       # run everything, in parallel
-dub test :base -- -i "SmallBuffer"   # only tests matching a regex
+dub test :base -- -i "Buffer"   # only tests matching a regex
 dub test :base -- -e "slow"          # skip tests matching a regex
 dub test :base -- -v                 # durations, locations, full traces
 dub test :base -- -t 1               # single-threaded
@@ -14,8 +14,8 @@ dub test :base -- -l                 # list tests without running them
 ## Filtering
 
 `-i`/`-e` are regular expressions matched against
-`<fully.qualified.symbol> <test name>` — so both `-i "smallbuffer"` (module)
-and `-i "SmallBuffer.basic"` (name UDA) work. When both are given they combine:
+`<fully.qualified.symbol> <test name>` — so both `-i "buffer"` (module)
+and `-i "Buffer.basic"` (name UDA) work. When both are given they combine:
 a test must match `-i` **and** not match `-e`.
 
 ## Listing

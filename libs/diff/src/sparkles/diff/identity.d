@@ -19,7 +19,7 @@ duplicates stay distinguishable while both stay stable under line shifts.
 */
 module sparkles.diff.identity;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.diff.model : DiffDoc, Hunk, Row, RowKind;
 
@@ -73,10 +73,10 @@ void stampIds(ref DiffDoc doc)
     // Occurrence counters, so identical content in one file still yields
     // distinct ids. Small buffers rather than a map: a file's duplicate
     // hunks are few, and the engine is `@nogc`.
-    SmallBuffer!ulong seenHunks;
-    SmallBuffer!ulong seenRows;
+    SharedBuffer!ulong seenHunks;
+    SharedBuffer!ulong seenRows;
 
-    static uint bump(ref SmallBuffer!ulong seen, ulong id)
+    static uint bump(ref SharedBuffer!ulong seen, ulong id)
     {
         uint n;
         foreach (i; 0 .. seen.length)

@@ -374,7 +374,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
                 fr = (() @trusted => &r)();
         if (fr !is null)
         {
-            import sparkles.base.smallbuffer : SmallBuffer;
+            import sparkles.base.buffer : SharedBuffer;
             import sparkles.base.text.writers : writeInteger;
 
             const first = li;
@@ -384,7 +384,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
             size_t firstLen = lineEnd(first) - starts[first];
             if (firstLen && source[starts[first] + firstLen - 1] == '\n')
                 --firstLen;
-            SmallBuffer!(char, 32) cnt;
+            SharedBuffer!(char, 32) cnt;
             writeInteger(cnt, lines);
             const clampedEnd = fr.end > source.length ? source.length : fr.end;
             TextSpan[] ph;

@@ -71,7 +71,7 @@ receives the normalized unlabeled-text style.
 
 Allocation-free — the whole-table resolution logic without owning the buffer.
 A `@nogc nothrow` caller (e.g. an interactive previewer re-resolving on each
-theme switch into one reused `SmallBuffer`) drives this directly; `resolveTheme`
+theme switch into one reused `SharedBuffer`) drives this directly; `resolveTheme`
 is the GC-allocating convenience wrapper. A `defaultFg`/`defaultBg` of
 `Color.defaultColor` is normalized to unset — for a renderer, "the terminal
 default" and "unspecified" both mean "emit nothing".
@@ -166,15 +166,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    // Resolves into a reused SmallBuffer with no GC — the interactive-previewer
+    // Resolves into a reused SharedBuffer with no GC — the interactive-previewer
     // path. `put` appends each StyleSpec, so no pre-sizing/fill is needed.
     ThemeRule[1] rules = [ThemeRule("string", StyleSpec(fg: Color.fromPalette(2)))];
     const theme = SyntaxTheme(name: "t", defaultFg: Color.fromPalette(7), rules: rules[]);
     const labels = LabelSet.standard();
 
-    SmallBuffer!(StyleSpec, 128) styles;
+    SharedBuffer!(StyleSpec, 128) styles;
     StyleSpec defaults;
     writeThemeStyles(styles, theme, labels, defaults);
 
@@ -197,9 +197,9 @@ unittest
     const labels = LabelSet.standard();
     const wrapped = resolveTheme(theme, labels);
 
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!StyleSpec buf;
+    SharedBuffer!StyleSpec buf;
     StyleSpec defaults;
     buf.writeThemeStyles(theme, labels, defaults);
 

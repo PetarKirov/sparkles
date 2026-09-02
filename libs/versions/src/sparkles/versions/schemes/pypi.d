@@ -803,7 +803,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     auto a = PypiVersion.parseLoose("v1.0");
     assert(a.hasValue);

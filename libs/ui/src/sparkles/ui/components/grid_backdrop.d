@@ -1308,7 +1308,7 @@ private void writeBrushArr(W)(ref W w, string key, in StripeBrush[] brushes, boo
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     const pal = defaultTwoslashPalette(ColorScheme.dark);
@@ -1319,7 +1319,7 @@ unittest
         world: Rect(0, 0, 40, 16),
         origin: Point(0, 0),
     };
-    SmallBuffer!(DrawOp, 512) ops;
+    SharedBuffer!(DrawOp, 512) ops;
     appendGridBackdrop(ops, GridConfig.init, view, pal, fg, bg);
 
     size_t rules, fills, glyphs;
@@ -1341,7 +1341,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     const pal = defaultTwoslashPalette(ColorScheme.dark);
@@ -1355,7 +1355,7 @@ unittest
         world: Rect(0, 0, 4, 3),
         origin: Point(0, 0),
     };
-    SmallBuffer!(DrawOp, 64) ops;
+    SharedBuffer!(DrawOp, 64) ops;
     appendGridBackdrop(ops, cfg, view, pal, fg, bg);
 
     size_t n;
@@ -1376,7 +1376,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     const pal = defaultTwoslashPalette(ColorScheme.dark);
@@ -1390,7 +1390,7 @@ unittest
         world: Rect(0, 0, 16, 16),
         origin: Point(0, 0),
     };
-    SmallBuffer!(DrawOp, 64) ops;
+    SharedBuffer!(DrawOp, 64) ops;
     appendGridBackdrop(ops, cfg, view, pal, fg, bg);
 
     size_t xWarn, yError, yAnnotate;
@@ -1416,7 +1416,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     const pal = defaultTwoslashPalette(ColorScheme.dark);
@@ -1430,7 +1430,7 @@ unittest
         world: Rect(0, 0, 8, 8),
         origin: Point(0, 0),
     };
-    SmallBuffer!(DrawOp, 64) ops;
+    SharedBuffer!(DrawOp, 64) ops;
     appendGridBackdrop(ops, cfg, view, pal, fg, bg);
 
     foreach (ref op; ops[])
@@ -1446,7 +1446,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     const pal = defaultTwoslashPalette(ColorScheme.dark);
@@ -1461,7 +1461,7 @@ unittest
         worldPerCell: 8,
         cellsPerWorld: 1,
     };
-    SmallBuffer!(DrawOp, 64) ops;
+    SharedBuffer!(DrawOp, 64) ops;
     appendGridBackdrop(ops, cfg, view, pal, fg, bg);
 
     int[16] xs;

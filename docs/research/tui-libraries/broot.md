@@ -555,7 +555,7 @@ The [`Dam`][broot-dam] parameter allows builds to be interrupted when the user t
 
 ### Directly Applicable Patterns
 
-- **Flat array representation**: The `Vec<`[`TreeLine`][broot-tree-line]`>` model maps directly to a D `TreeLine[]` or `SmallBuffer!(TreeLine, N)`. This is the simplest correct representation for a scrollable, selectable tree view.
+- **Flat array representation**: The `Vec<`[`TreeLine`][broot-tree-line]`>` model maps directly to a D `TreeLine[]` or `SharedBuffer!(TreeLine, N)`. This is the simplest correct representation for a scrollable, selectable tree view.
 
 - **Build-time filtering**: Rather than building a full tree and hiding non-matching nodes, build a filtered tree from scratch. This avoids the complexity of maintaining visibility state and parent-chain invariants.
 

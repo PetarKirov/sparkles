@@ -26,7 +26,7 @@ module sparkles.ui_app.gui_loop;
 version (UiAppGui):
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.input : Event, InputCapabilities, Mods, mousePointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
@@ -44,7 +44,7 @@ struct GuiHost
     mixin HostState;
 
     private GuiSession* session;
-    private SmallBuffer!(char, 4096) drawScratch;
+    private SharedBuffer!(char, 4096) drawScratch;
 
     /// `true` when the event-horizon arm paces (raylib never sleeps);
     /// `false` on the raylib-paced fallback (no ring available).

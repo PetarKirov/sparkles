@@ -165,7 +165,7 @@ if (isHighlightEventRange!Events)
 
 version (unittest)
 {
-    import sparkles.base.smallbuffer : SmallBuffer, checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.syntax.event : HighlightEvent, LabelId;
     import sparkles.syntax.label : LabelSet;
     import sparkles.syntax.theme : SyntaxTheme, ThemeRule, resolveTheme;
@@ -362,7 +362,7 @@ unittest
         E.popLabel(),
     ];
 
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     renderAnsi(source, events[], resolved, buf,
         AnsiOptions(depth: ColorDepth.trueColor));
 
@@ -399,7 +399,7 @@ unittest
         HighlightEvent.popLabel(),
     ];
     const ResolvedTheme theme; // empty: everything renders unstyled
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     renderAnsi("text", events[], theme, buf);
     assert(buf[] == "text");
 }

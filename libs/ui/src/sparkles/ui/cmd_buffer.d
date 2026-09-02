@@ -25,7 +25,7 @@ $(UL
 */
 module sparkles.ui.cmd_buffer;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 
 import sparkles.ui.arena : FrameArena, GcArena, isArena;
@@ -52,7 +52,7 @@ if (isArena!Arena)
 {
     private
     {
-        SmallBuffer!(DrawOp, inlineOps) _ops;
+        SharedBuffer!(DrawOp, inlineOps) _ops;
         Arena _arena;
     }
 
@@ -64,7 +64,7 @@ if (isArena!Arena)
     /// ditto
     const(DrawOp)[] ops() const return scope @safe pure nothrow @nogc => _ops[];
 
-    /// ditto — `buf[]`, so a buffer reads like the `SmallBuffer` it replaced
+    /// ditto — `buf[]`, so a buffer reads like the `SharedBuffer` it replaced
     /// at the call sites that only want the operations.
     DrawOp[] opSlice() return scope @safe pure nothrow @nogc => _ops[];
 

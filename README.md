@@ -29,7 +29,7 @@ compatibility; `sparkles:core-cli` builds on it with higher-level CLI tools.
 
 ### What's Inside
 
-- **Base** -- `SmallBuffer`, lifetime helpers, text readers/writers, terminal styling, styled templates, terminal control sequences, and logging
+- **Base** -- `SharedBuffer`, lifetime helpers, text readers/writers, terminal styling, styled templates, terminal control sequences, and logging
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
 - **UI Components** -- Tables (spans, alignment, titles, streaming), boxes, headers, trees, meters/progress bars, key-value lists, horizontal layout, and OSC 8 hyperlinks
@@ -62,7 +62,7 @@ Or `dub.json`:
 ### Base
 
 `sparkles:base` contains the shared low-level modules used by the rest of the
-monorepo: `SmallBuffer`, `recycledInstance`, `recycledErrorInstance`, `@nogc`
+monorepo: `SharedBuffer`, `recycledInstance`, `recycledErrorInstance`, `@nogc`
 text parsing/formatting, terminal styling, styled IES rendering, and the
 `CoreLogger` logging interface. See the [base documentation](docs/libs/base/index.md)
 for the tutorial, how-to guides, and API index.
@@ -709,16 +709,16 @@ Valid values:
 
 The same screen comes from `--color=?`, `--color?`, `-c=help`, and `-c?`. For free-form options (strings, integers, paths) it describes the accepted shape instead of enumerating values; for `bool` options it lists the `true / false / yes / no` tokens.
 
-### SmallBuffer
+### SharedBuffer
 
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
 
 ```d
-import sparkles.base.smallbuffer;
+import sparkles.base.buffer;
 
 @safe pure nothrow @nogc
 unittest {
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     buf ~= "Hello";
     buf ~= ' ';
     buf ~= "World";
@@ -912,7 +912,7 @@ dub test :base
 dub test :core-cli
 
 # Run tests matching a pattern
-dub test :base -- -i "SmallBuffer"
+dub test :base -- -i "Buffer"
 
 # Verbose output with stack traces
 dub test :core-cli -- -v

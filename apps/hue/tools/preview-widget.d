@@ -12,7 +12,7 @@ module preview_widget;
 import std.file : readText;
 import std.stdio : write;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.source_view.markdown;
 import sparkles.syntax;
@@ -47,7 +47,7 @@ void main(string[] args)
     auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
     auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(), pageFg, pageBg);
     paint(grid, ops);
-    SmallBuffer!char outBuf;
+    SharedBuffer!char outBuf;
     grid.writeAnsi(outBuf);
     write(outBuf[]);
 }

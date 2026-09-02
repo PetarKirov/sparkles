@@ -29,7 +29,7 @@ module sparkles.syntax.event;
 
 import std.range.primitives : ElementType, empty, front, isInputRange, popFront;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// Index into a configured `LabelSet` vocabulary. `LabelId.none` (the
 /// default) means unresolved/uncolored.
@@ -264,7 +264,7 @@ unittest
 {
     // Deeper than the stack's inline capacity: exercises the heap spill.
     alias E = HighlightEvent;
-    SmallBuffer!(HighlightEvent, 8) events;
+    SharedBuffer!(HighlightEvent, 8) events;
     foreach (i; 0 .. 32)
         events ~= E.pushLabel(LabelId(cast(ushort) i));
     events ~= E.sourceSpan(0, 1);
@@ -497,7 +497,7 @@ close/reopen logic. Package-internal: consumers see only its effects.
 */
 package struct HighlightStack
 {
-    private SmallBuffer!(LabelId, 16) _stack;
+    private SharedBuffer!(LabelId, 16) _stack;
 
     void push(LabelId label) @safe pure nothrow @nogc
     {

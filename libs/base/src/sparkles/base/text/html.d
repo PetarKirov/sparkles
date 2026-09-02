@@ -47,7 +47,7 @@ void writeHtmlEscaped(Writer)(ref Writer w, scope const(char)[] s)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref w) => writeHtmlEscaped(w, `if (a < b && c > 'x') "quote"`))(
         "if (a &lt; b &amp;&amp; c &gt; &#39;x&#39;) &quot;quote&quot;");
@@ -57,7 +57,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     // nothing to escape: the input is flushed as one slice
     checkWriter!((ref w) => writeHtmlEscaped(w, "plain text 123"))("plain text 123");
@@ -68,7 +68,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref w) => writeHtmlEscaped(w, "&"))("&amp;");
     checkWriter!((ref w) => writeHtmlEscaped(w, "&&"))("&amp;&amp;");

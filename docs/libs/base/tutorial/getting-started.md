@@ -1,7 +1,7 @@
 # Getting started with `sparkles:base`
 
 This tutorial builds one tiny program that uses the most common `base`
-building blocks: `SmallBuffer`, the `@nogc` text writers, styled IES
+building blocks: `SharedBuffer`, the `@nogc` text writers, styled IES
 rendering, and `CoreLogger`.
 
 ## What you need
@@ -25,15 +25,15 @@ Everything below goes into the same file.
 
 ## Step 2 — write text without the GC
 
-`SmallBuffer` is an output range with inline storage. The text writers
+`SharedBuffer` is an output range with inline storage. The text writers
 write directly into it:
 
 ```d
 import core.time : dur;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.writers : writeDuration, writeIntegerPadded;
 
-SmallBuffer!(char, 64) line;
+SharedBuffer!(char, 64) line;
 writeIntegerPadded(line, 7, 3);
 line ~= ' ';
 writeDuration(line, dur!"msecs"(1_500));
@@ -76,13 +76,13 @@ import core.time : dur;
 import std.stdio : writeln;
 
 import sparkles.base.logger : LogLevel, initLogger;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : plainText;
 import sparkles.base.text.writers : writeDuration, writeIntegerPadded;
 
 void main()
 {
-    SmallBuffer!(char, 64) line;
+    SharedBuffer!(char, 64) line;
     writeIntegerPadded(line, 7, 3);
     line ~= ' ';
     writeDuration(line, dur!"msecs"(1_500));

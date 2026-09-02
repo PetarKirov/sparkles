@@ -30,7 +30,7 @@
  */
 module sparkles.test_runner.extract;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.scan : isIdentChar, lineOffset, matchingBrace,
     putQuotedStringLiteral, skipComment, skipDelimitedString, skipString;
 import sparkles.test_runner.attributes : betterC, wasm;
@@ -45,7 +45,7 @@ import sparkles.test_runner.model : Test;
 /// the only place the branch pays for a GC copy.
 private string quotedStringLiteral(scope const(char)[] value) @safe pure nothrow
 {
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     buf.putQuotedStringLiteral(value);
     return buf[].idup;
 }
@@ -154,7 +154,7 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Derives the source root of a module from its file path and dotted name:
-/// `("libs/base/src/sparkles/base/smallbuffer.d", "sparkles.base.smallbuffer")`
+/// `("libs/base/src/sparkles/base/buffer.d", "sparkles.base.buffer")`
 /// yields `"libs/base/src"`. Returns `null` when the path does not end with
 /// the module path.
 string sourceRootOf(string file, string moduleName) @safe pure nothrow
@@ -175,8 +175,8 @@ string sourceRootOf(string file, string moduleName) @safe pure nothrow
 @safe pure
 unittest
 {
-    assert(sourceRootOf("libs/base/src/sparkles/base/smallbuffer.d",
-        "sparkles.base.smallbuffer") == "libs/base/src");
+    assert(sourceRootOf("libs/base/src/sparkles/base/buffer.d",
+        "sparkles.base.buffer") == "libs/base/src");
     assert(sourceRootOf("src/sparkles/base/text/package.d",
         "sparkles.base.text") == "src");
     assert(sourceRootOf("unrelated.d", "sparkles.base") is null);

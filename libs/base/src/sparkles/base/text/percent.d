@@ -319,7 +319,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     checkWriter!((ref b) => encodePercentComponent(b, ""))("");
     checkWriter!((ref b) => encodePercentComponent(b, "Man"))("Man");
@@ -341,7 +341,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // The same input under four sets — the only thing that varies is which
     // bytes are safe.
@@ -361,7 +361,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.base.text.base_codecs : encodeBase16;
 
     // An escaped byte is definitionally '%' followed by its base16 encoding —
@@ -373,10 +373,10 @@ unittest
         if (safe[i])
             continue;
 
-        SmallBuffer!(char, 8) viaPercent;
+        SharedBuffer!(char, 8) viaPercent;
         encodePercentComponent(viaPercent, src[]);
 
-        SmallBuffer!(char, 8) expected;
+        SharedBuffer!(char, 8) expected;
         expected ~= '%';
         char[2] hex = void;
         encodeBase16(src, hex);
@@ -390,12 +390,12 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static void checkDecode(alias dec)(
         scope const(char)[] text, scope const(char)[] expected)
     {
-        SmallBuffer!(ubyte, 64) buf;
+        SharedBuffer!(ubyte, 64) buf;
         auto r = dec(buf, text);
         assert(r.hasValue);
         assert(r.value == expected.length);
@@ -426,9 +426,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodePercentComponent(buf, "%");
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.unexpectedEnd);
@@ -445,9 +445,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodePercentComponent(buf, "%ZZ");
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.unexpectedCharacter);
@@ -472,7 +472,7 @@ unittest
 unittest
 {
     import std.meta : AliasSeq;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static void roundTrip(PercentSet s)()
     {
@@ -481,11 +481,11 @@ unittest
         foreach (i, ref b; all)
             b = cast(ubyte) i;
 
-        SmallBuffer!(char, 1024) enc;
+        SharedBuffer!(char, 1024) enc;
         encodePercent!s(enc, all[]);
         assert(enc[].length == percentEncodedLength!s(all[]));
 
-        SmallBuffer!(ubyte, 512) dec;
+        SharedBuffer!(ubyte, 512) dec;
         auto r = decodePercent!s(dec, enc[]);
         assert(r.hasValue);
         assert(r.value == all.length);
@@ -532,7 +532,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // An anonymous PercentSet binds like a preset — nothing is hardcoded.
     enum PercentSet strict = PercentSet(extraUnreserved: "");

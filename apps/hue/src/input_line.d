@@ -13,7 +13,7 @@ the matcher is necessary and not sufficient, so the INPUT is shared too.
 */
 module input_line;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.input.frame : InputFrame;
 import sparkles.ui.state : CaptureState;
 
@@ -34,7 +34,7 @@ enum Mode
 struct InputState
 {
     Mode mode = Mode.normal;
-    SmallBuffer!(char, 256) query;
+    SharedBuffer!(char, 256) query;
     CaptureState capture;
     InputFrame fin;
 

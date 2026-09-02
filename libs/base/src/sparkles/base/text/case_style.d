@@ -292,12 +292,12 @@ static assert(convertCase!(CaseStyle.original)("already_snake") == "already_snak
     assert(convertCase!(CaseStyle.snakeCase)("version2") == "version2");
 }
 
-@("text.case_style.writeConvertedCase.nogcIntoSmallBuffer")
+@("text.case_style.writeConvertedCase.nogcIntoBuffer")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeConvertedCase!(CaseStyle.snakeCase)(buf, "fromXMLToJSON");
     buf ~= ' ';
     writeConvertedCase!(CaseStyle.pascalCase)(buf, "parsedJSON");
@@ -307,14 +307,14 @@ static assert(convertCase!(CaseStyle.original)("already_snake") == "already_snak
 @("text.case_style.writeConvertedCase.matchesConvertCase")
 @safe pure unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     static foreach (style; [
         CaseStyle.original, CaseStyle.camelCase, CaseStyle.pascalCase,
         CaseStyle.snakeCase, CaseStyle.kebabCase, CaseStyle.screamingSnakeCase])
         static foreach (id; ["fromXMLToJSON", "JSONValue", "fastPath", "html5Parser"])
         {{
-            SmallBuffer!(char, 64) buf;
+            SharedBuffer!(char, 64) buf;
             writeConvertedCase!style(buf, id);
             assert(buf[] == convertCase!style(id));
         }}
@@ -323,10 +323,10 @@ static assert(convertCase!(CaseStyle.original)("already_snake") == "already_snak
 @("text.case_style.writeConvertedCase.constCharSlice")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     const(char)[] id = "fromXMLToJSON";
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeConvertedCase!(CaseStyle.kebabCase)(buf, id);
     assert(buf[] == "from-xml-to-json");
 }

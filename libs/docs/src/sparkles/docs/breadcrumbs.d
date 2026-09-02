@@ -3,7 +3,7 @@ Path breadcrumbs for a generated page (`GAL14`).
 
 A mirrored gallery (`GAL12`) puts pages at arbitrary depth, and the header's
 `all` link only reaches the directory index beside the page — from
-`libs/base/src/sparkles/base/smallbuffer.d.html` there is no way back to
+`libs/base/src/sparkles/base/buffer.d.html` there is no way back to
 `libs/base` short of the browser's back button. Breadcrumbs are the way up.
 
 $(B Why this is D and not a Vue component.) The VitePress prototype rendered

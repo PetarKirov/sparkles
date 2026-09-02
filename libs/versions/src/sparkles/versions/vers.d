@@ -879,9 +879,9 @@ unittest
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     auto r = Ranges!SemVer.between(sv("1.2.0"), sv("2.0.0"));
     toVersConstraint!SemVer(buf, r);
     assert(buf[] == ">=1.2.0|<2.0.0");

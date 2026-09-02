@@ -313,7 +313,7 @@ void paintFull(Writer)(ref Writer w, in Grid g,
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind, count;
 
@@ -325,7 +325,7 @@ unittest
 
     const(char)[][] links = ["http://x"];
 
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     paintRow(buf, g, 0, ColorDepth.trueColor, links);
     const s = buf[];
     assert(s.canFind("\x1b]8;;http://x\x1b\\"), s);
@@ -335,7 +335,7 @@ unittest
     assert(s.canFind("\x1b]8;;http://x\x1b\\here"), s);
 
     // Without a table the channel is inert.
-    SmallBuffer!char plain;
+    SharedBuffer!char plain;
     paintRow(plain, g, 0);
     assert(!plain[].canFind("\x1b]8;;"), plain[]);
 }
@@ -346,7 +346,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind, count;
 
@@ -368,14 +368,14 @@ unittest
     g.putText(0, 0, "abcdefgh", CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char first;
+    SharedBuffer!char first;
     const(char)[][] links = ["http://x"];
     scr.render(g, first, links);
 
     // Two separated cells change; only the first is linked.
     g[1, 0].setCodepoint('X', 1, CellStyle.init, 1);
     g[6, 0].setCodepoint('Y', 1, CellStyle.init, 0);
-    SmallBuffer!char diff;
+    SharedBuffer!char diff;
     scr.render(g, diff, links);
     const s = diff[];
 
@@ -392,7 +392,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind;
 
@@ -401,13 +401,13 @@ unittest
     g.putText(0, 0, "ab", CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char first;
+    SharedBuffer!char first;
     const(char)[][] links = ["http://x"];
     scr.render(g, first, links);
 
     // Same glyph, same style — only the link differs.
     g[0, 0].setCodepoint('a', 1, CellStyle.init, 1);
-    SmallBuffer!char diff;
+    SharedBuffer!char diff;
     scr.render(g, diff, links);
     assert(diff[].canFind("\x1b]8;;http://x\x1b\\"), diff[]);
 }
@@ -418,7 +418,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind;
 
@@ -427,7 +427,7 @@ unittest
     g.putText(0, 0, "ab", CellStyle.init);
     g[0, 0].linkId = 7; // out of range
 
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     paintRow(buf, g, 0, ColorDepth.trueColor, ["http://x"]);
     assert(!buf[].canFind("http://x"), buf[]);
 }
@@ -436,7 +436,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : Cell, CellStyle;
     import std.algorithm.searching : canFind, count;
 
@@ -445,7 +445,7 @@ unittest
     g.putText(0, 0, "ab", CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char first;
+    SharedBuffer!char first;
     scr.render(g, first);
     // First frame repaints in full — positions both rows.
     assert(first[].canFind("ab"), first[]);
@@ -454,7 +454,7 @@ unittest
 
     // Change a single cell; the diff must emit only that cell + one cursor move.
     g[1, 0].setCodepoint('X', 1, CellStyle.init);
-    SmallBuffer!char diff;
+    SharedBuffer!char diff;
     scr.render(g, diff);
     assert(diff[].canFind("X"), diff[]);
     assert(diff[].canFind("\x1b[1;2H"), diff[]); // moved to the changed column
@@ -467,7 +467,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
 
     Grid g;
@@ -475,9 +475,9 @@ unittest
     g.putText(0, 0, "hi", CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char a;
+    SharedBuffer!char a;
     scr.render(g, a);
-    SmallBuffer!char b;
+    SharedBuffer!char b;
     scr.render(g, b); // identical frame → no output
     assert(b[].length == 0, b[]);
 }
@@ -486,7 +486,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind;
 
@@ -497,7 +497,7 @@ unittest
         g.putText(0, y, labels[y], CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char full;
+    SharedBuffer!char full;
     scr.render(g, full); // first frame — full paint
 
     // Scroll the whole grid up by 2 and expose two new rows at the bottom.
@@ -505,7 +505,7 @@ unittest
     g.putText(0, 6, "nA", CellStyle.init);
     g.putText(0, 7, "nB", CellStyle.init);
 
-    SmallBuffer!char diff;
+    SharedBuffer!char diff;
     scr.render(g, diff);
     const s = diff[];
     assert(s.canFind("\x1b[1;8r"), s);            // DECSTBM region rows 1..8
@@ -518,7 +518,7 @@ unittest
 @safe nothrow
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.tui.cell : CellStyle;
     import std.algorithm.searching : canFind;
 
@@ -529,7 +529,7 @@ unittest
         g.putText(0, y, labels[y], CellStyle.init);
 
     Screen scr;
-    SmallBuffer!char full;
+    SharedBuffer!char full;
     scr.render(g, full); // first frame — full paint
 
     // Scroll the whole grid down by 2 (the viewer scrolling up) and expose
@@ -538,7 +538,7 @@ unittest
     g.putText(0, 0, "nA", CellStyle.init);
     g.putText(0, 1, "nB", CellStyle.init);
 
-    SmallBuffer!char diff;
+    SharedBuffer!char diff;
     scr.render(g, diff);
     const s = diff[];
     // Downward must be IL at the region top, NEVER SD (`CSI n T`): zellij

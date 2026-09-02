@@ -852,7 +852,7 @@ enum myLayout = layout([
 CTFE could also pre-compute fixed layouts for known terminal sizes, useful for
 size-constrained embedded terminals.
 
-### Buffer Abstraction -> D Output Ranges and @nogc SmallBuffer
+### Buffer Abstraction -> D Output Ranges and @nogc SharedBuffer
 
 Ratatui's `Buffer` is a flat `Vec<Cell>` indexed by `(x, y)`. In D, this maps naturally to
 a `@nogc`-compatible buffer:
@@ -861,13 +861,13 @@ a `@nogc`-compatible buffer:
 @safe pure nothrow @nogc:
 
 struct Cell {
-    dchar grapheme;  // or SmallBuffer!(char, 8) for multi-codepoint graphemes
+    dchar grapheme;  // or SharedBuffer!(char, 8) for multi-codepoint graphemes
     Style style;
 }
 
 struct Buffer {
     Rect area;
-    SmallBuffer!(Cell, 4096) content;  // stack-allocated for typical terminal sizes
+    SharedBuffer!(Cell, 4096) content;  // stack-allocated for typical terminal sizes
 
     ref Cell opIndex(ushort x, ushort y) return {
         return content[(y - area.y) * area.width + (x - area.x)];
@@ -878,7 +878,7 @@ struct Buffer {
 }
 ```
 
-The `SmallBuffer` from sparkles/core-cli avoids GC allocation for buffers that fit in the
+The `SharedBuffer` from sparkles/core-cli avoids GC allocation for buffers that fit in the
 inline capacity, falling back to `pureMalloc` for larger terminals.
 
 ### Style Builder -> UFCS Chains in D

@@ -7,7 +7,7 @@
 /// instead of looping in-process.
 module app;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import std.stdio : stderr, writeln;
 
@@ -418,7 +418,7 @@ private int verifyPayload(P)(in CliParams cli, string samplePath, string outPath
     // silently reformatted every fixture (`e630631d`) without failing. Now the
     // layout is pinned, so the text is the contract too.
     declareDPayload(payload);
-    SmallBuffer!(char, 8192) fresh;
+    SharedBuffer!(char, 8192) fresh;
     auto enc = writeJSON!twoslashPayloadLayout(payload, fresh);
     if (enc.hasError)
     {

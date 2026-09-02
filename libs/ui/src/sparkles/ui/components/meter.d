@@ -3,7 +3,7 @@ Proportional meters/bars with eighth-cell precision (`█▉▊▋▌▍▎▏`)
 `done/total` $(LREF ProgressBar) composing one with a counter — the determinate
 counterpart of `ui/progress.d`'s spinner line.
 
-Pure producers into any output range (`@nogc` with a `SmallBuffer`); an ASCII
+Pure producers into any output range (`@nogc` with a `SharedBuffer`); an ASCII
 fallback charset is provided for non-UTF-8 terminals (`TermCaps.unicode`).
 +/
 module sparkles.ui.components.meter;
@@ -97,16 +97,16 @@ struct ProgressBar
     void toString(Writer)(ref Writer w) const
     {
         import std.range.primitives : put;
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer, checkToString;
         import sparkles.base.text.width : Align, alignField;
         import sparkles.base.text.writers : writeInteger;
 
         writeMeter(w, done, total, barWidth, glyphs);
         put(w, ' ');
 
-        SmallBuffer!(char, 20) doneBuf;
+        SharedBuffer!(char, 20) doneBuf;
         writeInteger(doneBuf, done);
-        SmallBuffer!(char, 20) totalBuf;
+        SharedBuffer!(char, 20) totalBuf;
         writeInteger(totalBuf, total);
         alignField(w, doneBuf[], totalBuf.length, Align.right);
         put(w, '/');
@@ -149,7 +149,7 @@ struct ProgressBar
 @("meter.progressBar")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
 
     checkToString(ProgressBar(done: 5, total: 40, barWidth: 8), "█         5/40");
     checkToString(ProgressBar(done: 40, total: 40, barWidth: 8), "████████ 40/40");

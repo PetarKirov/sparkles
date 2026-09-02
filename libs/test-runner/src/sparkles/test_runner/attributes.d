@@ -6,7 +6,7 @@
  * ---
  * import sparkles.test_runner.attributes : benchmark, betterC, ctfe;
  *
- * @("SmallBuffer.append")
+ * @("SharedBuffer.append")
  * @betterC @safe pure nothrow @nogc
  * unittest { /+ also compiled & run with -betterC via `--better-c` +/ }
  *
@@ -14,7 +14,7 @@
  * @ctfe @safe pure nothrow
  * unittest { /+ evaluated during compilation, not at runtime +/ }
  *
- * @("SmallBuffer.append.bench")
+ * @("SharedBuffer.append.bench")
  * @benchmark @safe
  * unittest { /+ timed with auto-scaling iterations via `--bench` +/ }
  * ---

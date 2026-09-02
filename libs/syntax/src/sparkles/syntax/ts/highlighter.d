@@ -36,7 +36,7 @@ import core.lifetime : move;
 import core.time : Duration, msecs;
 import std.range.primitives : put;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.syntax.event : HighlightEvent, LabelId;
 import sparkles.syntax.ts.config : TsHighlightConfig;
@@ -130,7 +130,7 @@ in (tree.valid, "highlightTree needs a valid tree")
         cursor.exec(config.query, tree.rootNode);
 
     size_t byteOffset = 0;
-    SmallBuffer!(size_t, 64) endStack;
+    SharedBuffer!(size_t, 64) endStack;
     size_t iterations = 0;
 
     // Everything a capture contributes, copied out eagerly: TSQueryMatch's
@@ -260,7 +260,7 @@ private struct Layer
     TsQueryCursor cursor;                /// the highlights capture stream
     const(TsHighlightConfig)* config;    /// the language config
     size_t depth;                        /// injection nesting depth (root = 0)
-    SmallBuffer!(size_t, 16) endStack;   /// pending highlight-end byte offsets (LIFO)
+    SharedBuffer!(size_t, 16) endStack;   /// pending highlight-end byte offsets (LIFO)
     bool havePeeked;                     /// `peeked` holds the next highlights capture
     LayerCapture peeked;                 /// predicate-filtered lookahead
 
@@ -873,7 +873,7 @@ unittest
     auto events = eventsForTest(config, source);
 
     const resolved = resolveTheme(builtinDark, LabelSet.standard());
-    SmallBuffer!(char, 512) html;
+    SharedBuffer!(char, 512) html;
     renderHtml(source, events, resolved, html,
         HtmlOptions(mode: HtmlMode.cssClasses));
     assert(html[].canFind(`<span class="syn-constant-numeric">1</span>`), html[]);
@@ -886,7 +886,7 @@ unittest
 {
     auto config = jsonConfigForTest();
     const(char)[] fake = (cast(const(char)*) null)[0 .. 600UL << 20];
-    SmallBuffer!HighlightEvent sink;
+    SharedBuffer!HighlightEvent sink;
     auto result = highlight(config, fake, sink);
     assert(result.hasError);
     assert(result.error.code == TsErrorCode.sourceTooLarge);
@@ -1093,12 +1093,12 @@ unittest
     // rendering change wearing a performance change's clothes.
     const source = "# Title\n\n```d\nvoid main() { int x = 1; }\n```\n";
 
-    SmallBuffer!HighlightEvent fresh;
+    SharedBuffer!HighlightEvent fresh;
     ParsedLayer*[] layers;
     assert(!highlightInjected(cache, "markdown", source, fresh, layers).hasError);
     assert(layers.length >= 2);
 
-    SmallBuffer!HighlightEvent reused;
+    SharedBuffer!HighlightEvent reused;
     assert(!highlightParsed(cache, layers, source, reused).hasError);
     assert(reused[] == fresh[], "a retained parse re-colors identically");
 }

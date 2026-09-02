@@ -518,7 +518,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     import sparkles.ui.style : BorderStyle, Decoration, defaultTwoslashPalette,
         FontRole, TextStyle;
     import std.algorithm.searching : canFind;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.widget : Builder;
 
     // A popup surface (border + radius + shadow + arrow) over a docs run (sans, 0.8em).
@@ -531,7 +531,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
             borderRadius: 4, shadow: true, arrow: true, arrowOffset: 1)));
     auto tree = b.finish(popup);
 
-    SmallBuffer!(char, 2048) w;
+    SharedBuffer!(char, 2048) w;
     renderWidgetHtml(w, tree, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
     const s = w[];
@@ -556,7 +556,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     import sparkles.ui.style : BorderStyle, Decoration, defaultTwoslashPalette;
     import sparkles.ui.widget : Builder;
     import std.algorithm.searching : canFind;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The `.twoslash-hover` token: a bottom-only dotted border → a dotted bottom edge.
     auto b = Builder();
@@ -565,7 +565,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
             borderStyle: BorderStyle.dotted, borderSlot: Slot.code)));
     auto tree = b.finish(tok);
 
-    SmallBuffer!(char, 4096) w;
+    SharedBuffer!(char, 4096) w;
     writeWidgetHtmlPage(w, tree, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff), "hover");
     const s = w[];
@@ -578,7 +578,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 @("ui.interp.html.richRowIsOneItemInAColumn")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.widget : Builder;
     import sparkles.ui.wrap : TextSpan;
@@ -598,7 +598,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     const r1 = b.add(Widget(kind: WidgetKind.rich, spans: second));
     auto tree = b.finish(b.container(WidgetKind.column, [r0, r1]));
 
-    SmallBuffer!(char, 4096) w;
+    SharedBuffer!(char, 4096) w;
     writeWidgetHtmlPage(w, tree, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff), "rows");
     const s = w[];
@@ -616,7 +616,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 @("ui.interp.html.backgroundCostsNoAdvance")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.widget : Builder;
     import sparkles.ui.wrap : TextSpan;
@@ -638,7 +638,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 
     // The fragment, not the page: the page wrapper carries its own
     // `padding:24px` on <body>, which says nothing about a span's advance.
-    SmallBuffer!(char, 4096) w;
+    SharedBuffer!(char, 4096) w;
     renderWidgetHtml(w, tree, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
     const s = w[];

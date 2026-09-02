@@ -612,7 +612,7 @@ layout-equivalent named wrapper exposing the same `Expected` operations). A
 successful parse owns all decoded strings/binary data and does not borrow
 `text`; this lets callers release the input while retaining the document.
 
-`SdlString` is `SmallBuffer!(char, 256)`. Writer templates infer safety and
+`SdlString` is `SharedBuffer!(char, 256)`. Writer templates infer safety and
 allocation attributes from the supplied writer. The default allocator path for
 the document engine is `@safe pure nothrow @nogc` after allocation is expressed
 through the allocator protocol; file helpers necessarily perform I/O and are

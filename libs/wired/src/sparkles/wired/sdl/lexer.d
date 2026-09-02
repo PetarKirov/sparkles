@@ -4,7 +4,7 @@ module sparkles.wired.sdl.lexer;
 import core.time : Duration, hnsecs, hours, minutes;
 import std.datetime.date : Date;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, Storage;
 import sparkles.wired.sdl.config;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
@@ -58,8 +58,8 @@ destruction. Scalar kinds without byte payloads do not use it.
 */
 struct SdlScalarStorage
 {
-    SmallBuffer!(char, 256) text;
-    SmallBuffer!(ubyte, 256) bytes;
+    SharedBuffer!(char, 256) text;
+    SharedBuffer!(ubyte, 256) bytes;
 
     /// Discards the previous decoded payload while retaining capacity.
     void clear() @safe pure nothrow @nogc
@@ -1147,7 +1147,7 @@ private SdlExpected!double decodeFloating(SdlParserConfig config)(
     import sparkles.base.text.float_conv : readDecimalFloat;
     import std.math : isFinite;
 
-    SmallBuffer!(char, 64) normalized;
+    SharedBuffer!(char, 64) normalized;
     auto body = raw[0 .. raw.length - suffixLength];
     if (body.length && body[0] == '.') normalized ~= '0';
     else if (body.length > 1 && body[0 .. 2] == "-.")
@@ -1222,7 +1222,7 @@ private SdlExpected!Date decodeDatePart(SdlParserConfig config)(
 private SdlExpected!SdlDateTime decodeDateTimePart(SdlParserConfig config)(
     scope const(char)[] raw, in SdlToken token) @safe pure nothrow
 {
-    SmallBuffer!(char, 128) normalized;
+    SharedBuffer!(char, 128) normalized;
     const firstSlash = indexOf(raw, '/');
     if (firstSlash == raw.length)
         return sdlErr!SdlDateTime(decodeError(SdlErrorCode.invalidDateTime,

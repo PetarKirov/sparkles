@@ -6,7 +6,7 @@ tables next to plain text, ANSI styling and all.
 +/
 module sparkles.ui.components.layout;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// Join `blocks` (each a rendered multi-line string) side by side with `gap`
 /// spaces between columns. Blocks are top-aligned; a block shorter than the
@@ -39,7 +39,7 @@ string hjoin(const(string)[] blocks, size_t gap = 2) @safe
     auto out_ = appender!string;
     foreach (row; 0 .. height)
     {
-        SmallBuffer!(char, 256) line;
+        SharedBuffer!(char, 256) line;
         foreach (c, col; columns)
         {
             if (c)

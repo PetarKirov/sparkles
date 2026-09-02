@@ -9,7 +9,7 @@ change — the golden-frame screenshots are the oracle.
 */
 module gui_state;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 // The line-input bar moved to its own module so the terminal can drive the
 // same one (`UIA13`); re-exported here because every GUI call site names it
 // through `gui_state`.

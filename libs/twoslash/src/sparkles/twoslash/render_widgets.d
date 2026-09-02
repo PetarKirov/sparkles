@@ -103,12 +103,12 @@ TextSpan[] signatureSpans(ref TsConfigCache cache, scope const(char)[] language,
     scope const(ResolvedTheme)* theme, RgbColor pageFg,
     const(char)[] sig) @system
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.syntax.event : byStyledSpan;
 
     if (!sig.length)
         return null;
-    SmallBuffer!HighlightEvent ev;
+    SharedBuffer!HighlightEvent ev;
     highlightSignature(cache, language, sig, ev);
     TextSpan[] spans;
     foreach (sp; byStyledSpan(ev[]))

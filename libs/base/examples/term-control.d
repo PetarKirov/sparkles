@@ -26,7 +26,7 @@ import core.thread : Thread;
 import core.time : msecs;
 import std.stdio : stdout, write, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_control : CtlSeq, writeCursorUp;
 
 void main()
@@ -53,7 +53,7 @@ void main()
     writeln("detail: -");
     foreach (step; 0 .. 4)
     {
-        SmallBuffer!(char, 64) up;
+        SharedBuffer!(char, 64) up;
         writeCursorUp(up, 2);
 
         write(CtlSeq.syncBegin);

@@ -590,7 +590,7 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
     // rather than inheriting it: a failed `assert` goes to the C library's,
     // which prints the message and aborts. `-betterC` already implies this
     // (verified: identical output with and without the flag), but the helpers
-    // in `sparkles.base.smallbuffer` reach for `assert(false, msg)` precisely
+    // in `sparkles.base.buffer` reach for `assert(false, msg)` precisely
     // *because* `throw` is illegal here, so the pairing should be visible at
     // the compile site instead of resting on another switch's default.
     const compile = run(
