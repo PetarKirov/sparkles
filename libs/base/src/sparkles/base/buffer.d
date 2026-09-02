@@ -283,7 +283,10 @@ enum Storage : ubyte
  * Note: with both storage bits, location is tied to length (data is inline
  * whenever `length <= N`), so `reserve` pre-grows only once on the heap,
  * and `clear`/`popBack` that drop the length back to `<= N` revert
- * to inline storage.
+ * to inline storage. A policy with `Storage.heap` alone has nothing to revert
+ * to, so it keeps its block across every shrink — `popBack`, `length`, `clear` —
+ * and releases it only in the destructor (or transfers it via `toShared`):
+ * `reserve` once, then reuse.
  *
  * Params:
  *   T = Element type
@@ -489,7 +492,12 @@ pure nothrow @nogc:
             if (rhs.onHeap)
             {
                 _block = rhs._block;
-                rhs._length = 0; // rhs no longer owns the heap block
+                // Both discriminants: a policy with inline storage derives
+                // `onHeap` from the length, a heap-only one from the block.
+                // Zeroing only the length left the latter's destructor freeing
+                // the block this buffer had just taken.
+                rhs._block = null;
+                rhs._length = 0;
                 return this;
             }
         }
@@ -503,7 +511,9 @@ pure nothrow @nogc:
 
     static if (hasHeap)
         /// Destructor: drop this owner's reference; dispose heap memory at zero.
-        ~this() @safe { clear(); }
+        // `releaseStorage` directly, not `clear`: for a heap-only policy `clear`
+        // deliberately keeps the block, and this is the one place it must go.
+        ~this() @safe { releaseStorage(); }
 
     // ─────────────────────────────────────────────────────────────────────────
     // element access — const path shares; mutable path clones if shared
@@ -750,7 +760,12 @@ pure nothrow @nogc:
                 const oldLen = _length;
                 const newLen = oldLen + n;
 
-                if (oldLen <= N && newLen > N)
+                // `!onHeap`, not `oldLen <= N`: the two agree wherever there is
+                // inline storage, but for a heap-only policy the length test
+                // reads "empty", which is also what a freshly reserved buffer
+                // looks like — and this path allocates a new block without
+                // releasing the one already held.
+                if (!onHeap && newLen > N)
                 {
                     // inline -> heap transition: to prevent range elements that alias
                     // our inline storage from reading corrupted data, we must allocate
@@ -804,18 +819,22 @@ pure nothrow @nogc:
                 _length = newLength;
                 return;
             }
-            if (_length > N && newLength <= N)
+            static if (hasInline)
             {
-                // Crossing heap -> inline: copy survivors out first to keep the
-                // invariant `length <= N  <=>  inline`.
-                T[] b = _block;
-                T[N] tmp = void;
-                copyElements(tmp[0 .. newLength], b[0 .. newLength]);
-                releaseStorage();
-                copyElements(_inline[0 .. newLength], tmp[0 .. newLength]);
-                _length = newLength;
-                return;
+                if (_length > N && newLength <= N)
+                {
+                    // Crossing heap -> inline: copy survivors out first to keep the
+                    // invariant `length <= N  <=>  inline`.
+                    T[] b = _block;
+                    T[N] tmp = void;
+                    copyElements(tmp[0 .. newLength], b[0 .. newLength]);
+                    releaseStorage();
+                    copyElements(_inline[0 .. newLength], tmp[0 .. newLength]);
+                    _length = newLength;
+                    return;
+                }
             }
+            // A heap-only policy has nothing to revert to: the block stays.
             _length = newLength;
         }
 
@@ -823,39 +842,36 @@ pure nothrow @nogc:
         void popBack() @trusted
         in (_length > 0, "Cannot pop from empty buffer")
         {
-            if (_length == N + 1)
+            static if (hasInline)
             {
-                // Crossing N+1 -> N: data must move back inline to keep the
-                // invariant `length <= N  <=>  inline`. Copy survivors out first.
-                T[] b = _block;
-                T[N] tmp = void;
-                copyElements(tmp[], b[0 .. N]);
-                releaseStorage();
-                copyElements(_inline[0 .. N], tmp[]);
-                _length = N;
-                return;
+                if (_length == N + 1)
+                {
+                    // Crossing N+1 -> N: data must move back inline to keep the
+                    // invariant `length <= N  <=>  inline`. Copy survivors out first.
+                    T[] b = _block;
+                    T[N] tmp = void;
+                    copyElements(tmp[], b[0 .. N]);
+                    releaseStorage();
+                    copyElements(_inline[0 .. N], tmp[]);
+                    _length = N;
+                    return;
+                }
             }
+            // A heap-only policy has nothing to revert to: the block stays.
             --_length;
         }
 
-        /// Removes all elements; releases heap storage and reverts to inline.
+        /// Removes all elements. With inline storage this releases the heap
+        /// block and reverts to inline; a heap-only policy keeps its block
+        /// (there is nothing to revert to), so `reserve` once and `clear`
+        /// between uses is allocation-free. The destructor releases it.
         void clear() @safe
         {
-            releaseStorage();
+            static if (hasInline)
+                releaseStorage();
             _length = 0;
         }
 
-        /**
-         * Ensures the buffer has at least `newCapacity` slots.
-         *
-         * $(B Limitation:) storage location is tied to length here — data is inline
-         * whenever `length <= N` — so `reserve` can only pre-grow a buffer that is
-         * $(I already) on the heap; on an inline (including empty) buffer it is a
-         * no-op, and the next inline→heap transition reallocates from scratch. This
-         * is a consequence of deriving `onHeap` from `length`; decoupling the storage
-         * discriminant (so an empty buffer can hold a reserved heap block) is a
-         * planned policy knob.
-         */
     }
 
     static if (!hasHeap)
@@ -863,24 +879,38 @@ pure nothrow @nogc:
         /**
          * Appends whatever `fn` writes, or nothing at all.
          *
-         * The transactional counterpart to the free $(LREF tryWrite): on
-         * overflow `length` is restored, and a buffer's value is
-         * `[0 .. length]`, so a write that did not fit leaves the buffer
-         * exactly as it was. Returns `false` in that case.
+         * The transactional counterpart to the free $(LREF tryWrite): the sink
+         * writes into the slots $(I past) `length`, and `length` advances only
+         * when everything fit. A buffer's value is `[0 .. length]`, so a write
+         * that did not fit leaves the buffer exactly as it was. Returns `false`
+         * in that case.
          *
          * This is the only way to write into a policy without `Storage.heap`,
          * which has no `put` because it cannot honour one.
+         *
+         * Two overloads, as for the free function: this one fixes the
+         * delegate's attributes so a capturing callback stays `@nogc`; the
+         * deduced one below accepts a callback that is not `@safe` and infers
+         * its own safety from it. (`pure nothrow @nogc` are the buffer's own
+         * attributes, so a callback must still be all three.)
          */
         bool tryWrite(scope void delegate(scope ref BoundedSink!T)
-            @safe pure nothrow @nogc fn) @trusted
+            @safe pure nothrow @nogc fn) @safe
         {
-            const mark = _length;
             auto written = _inline[_length .. N].tryWrite(fn);
             if (written is null)
-            {
-                _length = mark;
                 return false;
-            }
+            _length += written.length;
+            return true;
+        }
+
+        /// ditto
+        bool tryWrite(Dg)(scope Dg fn)
+        if (!is(Dg : void delegate(scope ref BoundedSink!T) @safe pure nothrow @nogc))
+        {
+            auto written = _inline[_length .. N].tryWrite(fn);
+            if (written is null)
+                return false;
             _length += written.length;
             return true;
         }
@@ -933,6 +963,20 @@ pure nothrow @nogc:
     /// ditto
     bool opEquals(scope const(T)[] rhs) const @safe => this[] == rhs;
 
+    /**
+     * Ensures the buffer has at least `newCapacity` slots.
+     *
+     * With inline storage, location is tied to length — data is inline whenever
+     * `length <= N` — so `reserve` can only pre-grow a buffer that is
+     * $(I already) on the heap; on an inline (including empty) buffer it is a
+     * no-op, and the next inline→heap transition allocates from scratch.
+     *
+     * For a heap-only policy this is how the buffer is sized before use: there
+     * is no `N` to raise, and the block persists across `popBack`, `length` and
+     * `clear` until the destructor, so one `reserve` serves every reuse.
+     *
+     * Without `Storage.heap` there is nowhere to grow to, and this is a no-op.
+     */
     void reserve(size_t newCapacity) @safe
     {
         static if (!hasHeap)
@@ -1004,11 +1048,18 @@ pure nothrow @nogc:
         {
             Shared result;
             result._length = _length;
-            if (onHeap)
-                result._block = _block; // transfer ownership (refCount already 1)
-            else
-                copyElements(result._inline[0 .. _length], _inline[0 .. _length]);
-            _block = null; // relinquish: our destructor must not free the block
+            static if (hasHeap)
+            {
+                if (onHeap)
+                {
+                    result._block = _block; // transfer ownership (refCount already 1)
+                    _block = null; // relinquish: our destructor must not free the block
+                    _length = 0;
+                    return result;
+                }
+            }
+            // Inline elements are copied; there is no block to hand over.
+            copyElements(result._inline[0 .. _length], _inline[0 .. _length]);
             _length = 0;
             return result;
         }
@@ -1104,8 +1155,10 @@ pure nothrow @nogc:
             else
             {
                 // `N` is 0, so the test above would swallow every call — and a
-                // policy with no inline storage has nothing to fit into.
-                if (newLen == 0 && minCapacity == 0)
+                // policy with no inline storage has nothing to fit into. With a
+                // block already held, fall through even for a zero-length
+                // request: a shared block still has to be cloned (`toOwned`).
+                if (newLen == 0 && minCapacity == 0 && !onHeap)
                     return null;
             }
 
@@ -2738,8 +2791,11 @@ given, and this cannot. Write into it with $(LREF tryWrite).
 Pass `Storage.unique` as `extra` for the move-only form, which is what prevents
 an accidental copy of a large one.
 */
-alias InlineBuffer(T, size_t N, Storage extra = Storage.none) =
-    Buffer!(T, N, cast(Storage)(Storage.inline | extra));
+template InlineBuffer(T, size_t N, Storage extra = Storage.none)
+if (!(extra & ~Storage.unique)) // `extra` is the ownership axis only
+{
+    alias InlineBuffer = Buffer!(T, N, cast(Storage)(Storage.inline | extra));
+}
 
 /**
 A buffer with no inline array: the elements always live on the heap.
@@ -2748,8 +2804,11 @@ For a sequence whose typical size makes an inline array dead weight — the stru
 costs one slice regardless of how much it holds. Size it up front with `reserve`;
 there is no `N` to raise.
 */
-alias HeapBuffer(T, Storage extra = Storage.none) =
-    Buffer!(T, 0, cast(Storage)(Storage.heap | extra));
+template HeapBuffer(T, Storage extra = Storage.none)
+if (!(extra & ~Storage.unique)) // `extra` is the ownership axis only
+{
+    alias HeapBuffer = Buffer!(T, 0, cast(Storage)(Storage.heap | extra));
+}
 
 /**
 Small-buffer optimization with shared heap storage: inline while the elements
@@ -2805,8 +2864,16 @@ struct BoundedSink(T)
     /// ditto
     void put(scope const(T)[] elements) @safe pure nothrow @nogc
     {
-        foreach (e; elements)
-            put(e);
+        // One bounds check and one bulk copy; nothing is written unless the
+        // whole slice fits, so overflow never leaves a partial tail behind.
+        const end = _length + elements.length;
+        if (end > _dest.length)
+        {
+            _overflowed = true;
+            return;
+        }
+        copyElements(_dest[_length .. end], elements);
+        _length = end;
     }
 }
 
@@ -2996,7 +3063,7 @@ unittest
 }
 
 @("buffer.opEquals.comparesContentsNotStorage")
-@safe pure nothrow
+@safe pure nothrow @nogc
 unittest
 {
     // BUF10: capacity beyond `length` never participates, so policies with
@@ -3014,7 +3081,7 @@ unittest
 }
 
 @("buffer.HeapBuffer.reserveSizesItBeforeUse")
-@safe pure nothrow
+@safe pure nothrow @nogc
 unittest
 {
     // BUF11: a heap-only buffer has no `N` to raise, so `reserve` is the only
@@ -3028,4 +3095,205 @@ unittest
         b ~= i;
     assert(b.length == 64);
     assert(b[][63] == 63);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Heap-only and inline-unique: the two policies with no small-buffer union.
+// ─────────────────────────────────────────────────────────────────────────────
+
+@("buffer.HeapBuffer.moveAssignTransfersBlock")
+@safe pure nothrow @nogc
+unittest
+{
+    // `onHeap` is the block for a heap-only policy, so the moved-from rvalue
+    // must be stripped of it — zeroing its length alone left its destructor
+    // freeing the block the assignee had just taken.
+    static HeapBuffer!int make() @safe pure nothrow @nogc
+    {
+        HeapBuffer!int r;
+        r ~= [1, 2, 3];
+        return r;
+    }
+
+    HeapBuffer!int a;
+    a = make();
+    assert(a.onHeap && a.refCount == 1);
+
+    // A fresh same-sized allocation must not land on `a`'s block.
+    HeapBuffer!int other;
+    other ~= [7, 7, 7];
+    assert(a[] == [1, 2, 3]);
+    assert((() @trusted => a._block.ptr !is other._block.ptr)());
+
+    import std.algorithm.mutation : move;
+    HeapBuffer!(int, Storage.unique) u;
+    u ~= iota(5);
+    HeapBuffer!(int, Storage.unique) v;
+    v = move(u);
+    assert(u.length == 0 && !u.onHeap);
+    HeapBuffer!(int, Storage.unique) w;
+    w ~= iota(5);
+    assert(v[] == [0, 1, 2, 3, 4]);
+    assert((() @trusted => v._block.ptr !is w._block.ptr)());
+}
+
+@("buffer.HeapBuffer.copyOnWrite")
+@safe pure nothrow @nogc
+unittest
+{
+    HeapBuffer!int a;
+    a ~= [1, 2, 3];
+    auto b = a;                          // shares the block
+    assert(a.refCount == 2 && b.refCount == 2);
+
+    b ~= 4;                              // clones
+    assert(a.refCount == 1 && b.refCount == 1);
+    assert(a[] == [1, 2, 3] && b[] == [1, 2, 3, 4]);
+
+    const reader = a.borrow;
+    assert(a.refCount == 2 && reader[] == [1, 2, 3]);
+}
+
+@("buffer.HeapBuffer.putRangeReusesReservedBlock")
+@safe pure nothrow @nogc
+unittest
+{
+    // The known-length range path used to take the inline->heap transition on
+    // "empty", allocating a second block over the reserved one.
+    HeapBuffer!int b;
+    b.reserve(64);
+    const p = (() @trusted => b._block.ptr)();
+    b ~= iota(5);
+    assert(b.capacity >= 64);
+    assert((() @trusted => b._block.ptr is p)());
+    assert(b[] == [0, 1, 2, 3, 4]);
+}
+
+@("buffer.HeapBuffer.shrinkKeepsBlock")
+@safe pure nothrow @nogc
+unittest
+{
+    // A heap-only policy has nothing to revert to, so every shrink keeps the
+    // block: one `reserve` serves a buffer that is drained and refilled.
+    HeapBuffer!int b;
+    b.reserve(64);
+    const cap = b.capacity;
+    const p = (() @trusted => b._block.ptr)();
+
+    b ~= 1;
+    b.popBack();
+    assert(b.empty && b.onHeap && b.capacity == cap);
+
+    b ~= [1, 2, 3];
+    b.length = 0;
+    assert(b.empty && b.onHeap && b.capacity == cap);
+
+    b ~= [1, 2, 3];
+    b.clear();
+    assert(b.empty && b.onHeap && b.capacity == cap);
+
+    foreach (i; 0 .. 64)
+        b ~= i;
+    assert(b.capacity == cap);
+    assert((() @trusted => b._block.ptr is p)());
+}
+
+@("buffer.HeapBuffer.toOwnedDetachesWhenEmpty")
+@safe pure nothrow @nogc
+unittest
+{
+    HeapBuffer!int a;
+    a.reserve(8);
+    auto b = a;
+    assert(a.refCount == 2);
+
+    auto owned = b.toOwned();
+    assert(owned.refCount == 1);
+    assert(a.refCount == 2);
+    assert(owned.capacity == a.capacity);
+}
+
+@("buffer.HeapBuffer.uniqueToShared")
+@safe pure nothrow @nogc
+unittest
+{
+    HeapBuffer!(int, Storage.unique) u;
+    u ~= iota(5);
+    const cap = u.capacity;
+
+    auto sh = u.toShared();
+    static assert(is(typeof(sh) == HeapBuffer!int));
+    assert(u.length == 0 && !u.onHeap);
+    assert(sh.onHeap && sh.capacity == cap && sh.refCount == 1);
+    assert(sh[] == [0, 1, 2, 3, 4]);
+}
+
+@("buffer.inline.uniqueIsMoveOnlyAndPromotes")
+@safe pure nothrow @nogc
+unittest
+{
+    // BUF7 for `inline | unique`: the policy instantiates, cannot be copied,
+    // and promotes to the copyable inline policy by copying its elements.
+    alias U = InlineBuffer!(char, 8, Storage.unique);
+    static assert(!__traits(isCopyable, U));
+    static assert(__traits(isCopyable, InlineBuffer!(char, 8)));
+
+    U u;
+    assert(u.tryWrite((scope ref BoundedSink!char w) { w.put("abc"); }));
+    assert(u[] == "abc");
+
+    auto sh = u.toShared();
+    static assert(is(typeof(sh) == InlineBuffer!(char, 8)));
+    assert(u.length == 0);
+    assert(sh[] == "abc");
+    auto copy = sh;
+    assert(copy[] == "abc");
+}
+
+@("buffer.inline.tryWriteAcceptsSystemCallback")
+@system pure nothrow @nogc
+unittest
+{
+    // WRT6 on the member: a callback that is not `@safe` takes the deduced
+    // overload. (`pure nothrow @nogc` are the buffer's own attributes and
+    // still apply — the struct is declared under them.)
+    int seen;
+    InlineBuffer!(char, 8) b;
+    assert(b.tryWrite((scope ref BoundedSink!char w) @system {
+        seen = 1;
+        w.put("sys");
+    }));
+    assert(b[] == "sys" && seen == 1);
+}
+
+@("buffer.inline.tryWriteOverflowKeepsExistingValue")
+@safe pure nothrow @nogc
+unittest
+{
+    InlineBuffer!(char, 8) b;
+    assert(b.tryWrite((scope ref BoundedSink!char w) { w.put("abc"); }));
+
+    // Six more do not fit after three; the value must be exactly what it was.
+    assert(!b.tryWrite((scope ref BoundedSink!char w) { w.put("defghi"); }));
+    assert(b[] == "abc");
+
+    // Five do.
+    assert(b.tryWrite((scope ref BoundedSink!char w) { w.put("defgh"); }));
+    assert(b[] == "abcdefgh");
+
+    // Full: an empty write still succeeds, one element does not.
+    assert(b.tryWrite((scope ref BoundedSink!char w) {}));
+    assert(!b.tryWrite((scope ref BoundedSink!char w) { w.put('x'); }));
+    assert(b[] == "abcdefgh");
+}
+
+@("buffer.aliases.rejectStorageBitsInExtra")
+unittest
+{
+    // `extra` is the ownership axis; a residency bit there would silently
+    // turn one alias into another policy.
+    static assert(!__traits(compiles, InlineBuffer!(char, 8, Storage.heap)));
+    static assert(!__traits(compiles, HeapBuffer!(char, Storage.inline)));
+    static assert(__traits(compiles, InlineBuffer!(char, 8, Storage.unique)));
+    static assert(__traits(compiles, HeapBuffer!(char, Storage.unique)));
 }
