@@ -100,6 +100,7 @@ values. This is unlike `shared_ptr`, where a mutation propagates.
 | `BUF10` | `opEquals` must compare `this[]` against `rhs[]`, so equality is content equality across every policy and never reads capacity beyond `length`.                                                                                                 | full    |
 | `BUF11` | `reserve` must allocate on a buffer that is not yet on the heap, since that is the only way to size a `HeapBuffer` before use.                                                                                                                  | full    |
 | `BUF12` | The four aliases must be the documented entry points; the raw `Buffer!(T, N, flags)` form is for generic code and the two policies without an alias.                                                                                            | decided |
+| `BUF13` | A policy without `Storage.inline` must keep its heap block across `popBack`, a shrinking `length`, and `clear`; the block is released only by the destructor or transferred by `toShared`, so one `reserve` serves every reuse.                 | full    |
 
 ## 4. Bounded writing (`WRT`)
 
