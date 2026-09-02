@@ -5,14 +5,14 @@ The public symbols of `sparkles:base`, by module.
 ## `sparkles.base`
 
 Package module re-exporting `lifetime`, `logger`, `prettyprint`,
-`smallbuffer`, `source_uri`, `styled_template`, `term_color`, `term_style`,
+`buffer`, `source_uri`, `styled_template`, `term_color`, `term_style`,
 `text`, and `unique`.
 
-## `sparkles.base.smallbuffer`
+## `sparkles.base.buffer`
 
 | Symbol                          | Description                                                       |
 | ------------------------------- | ----------------------------------------------------------------- |
-| `SmallBuffer!(T, N)`            | Stack-first append buffer that grows with `pureMalloc` if needed. |
+| `SharedBuffer!(T, N)`           | Stack-first append buffer that grows with `pureMalloc` if needed. |
 | `checkToString` / `checkWriter` | `@nogc` unit-test helpers for output-range rendering assertions.  |
 
 ## `sparkles.base.unique`

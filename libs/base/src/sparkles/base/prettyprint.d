@@ -566,22 +566,22 @@ version (unittest)
     import core.exception : AssertError;
     import std.typecons : tuple;
 
-    /// @nogc-compatible check helper using SmallBuffer
+    /// @nogc-compatible check helper using SharedBuffer
     void check(T, Hook = void)(in T value, const(char)[] expected,
             in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(colored: false),
             string file = __FILE__, size_t line = __LINE__) @trusted
     {
         import sparkles.base.lifetime : recycledErrorInstance;
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
-        SmallBuffer!(char, 16 * 1024) buf;
+        SharedBuffer!(char, 16 * 1024) buf;
         writePretty(buf, value, opts);
         const(char)[] actual = buf[];
 
         if (actual != expected)
         {
             // Build error message in a separate buffer
-            SmallBuffer!(char, 4 * 1024) errBuf;
+            SharedBuffer!(char, 4 * 1024) errBuf;
             errBuf.put("prettyPrint mismatch:\nExpected:\n");
             errBuf.put(expected);
             errBuf.put("\nActual:\n");

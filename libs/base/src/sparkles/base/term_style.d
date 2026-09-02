@@ -351,7 +351,7 @@ void writeStyleTransition(Writer, bool shapedUnderline = true)(
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : Storage, checkWriter;
 
     checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init, TermStyle.init, ColorDepth.trueColor))("");
     checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init, TermStyle(attrs: TextAttr.bold), ColorDepth.trueColor))("\x1b[1m");
@@ -370,7 +370,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : Storage, checkWriter;
 
     checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
         TermStyle(underline: UnderlineStyle.single), ColorDepth.trueColor))("\x1b[4m");
@@ -450,7 +450,7 @@ private void writeStyleColorAbsolute(Writer)(ref Writer w, uint packedWord,
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : Storage, checkWriter;
 
     // Empty style → bare reset.
     checkWriter!((ref w) => writeStyle(w, CompactTermStyle.init, ColorDepth.trueColor))("\x1b[0m");

@@ -41,7 +41,7 @@ instantiated and evaluated during CTFE (§5).
 any forward range of character elements (a `string` and `const(char)[]` both
 qualify) and writes the recased result into the output range `w` element by
 element, allocating nothing of its own — suitable for `@nogc` paths that emit
-directly into a `SmallBuffer` or a serializer's writer (§7).
+directly into a `SharedBuffer` or a serializer's writer (§7).
 
 `convertCase` is the allocating convenience wrapper: it builds the recased
 identifier into a fresh `string` and returns it, except for `CaseStyle.original`,
@@ -155,7 +155,7 @@ fromXMLToJSON -> original:fromXMLToJSON camel:fromXmlToJson
 
 `writeConvertedCase` recases directly into an output range without allocating an
 intermediate `string`, so it composes with the `@nogc` writers of
-`sparkles.base.text` and with a `SmallBuffer` sink. The recasing call itself is
+`sparkles.base.text` and with a `SharedBuffer` sink. The recasing call itself is
 `@safe pure nothrow @nogc`:
 
 ```d
@@ -165,12 +165,12 @@ intermediate `string`, so it composes with the `@nogc` writers of
     dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.case_style : CaseStyle, writeConvertedCase;
 
 void main()
 {
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeConvertedCase!(CaseStyle.snakeCase)(buf, "fromXMLToJSON");
     buf ~= ' ';
     writeConvertedCase!(CaseStyle.pascalCase)(buf, "parsedJSON");

@@ -13,7 +13,7 @@ version (linux)  :  // rides the linux event-horizon Sched
 
 import core.lifetime : move;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.errors : IoResult, ioErr, ioOk, OpKind, IoErrorStage;
 import sparkles.event_horizon.io : Listener, Stream, accept, recv, send;
 import sparkles.event_horizon.scope_ : Scope;
@@ -76,7 +76,7 @@ void serveConnection(Stream stream, Handler handler) @safe
     scope (exit) stream.close();
 
     // A per-connection receive buffer; grows to hold one request head.
-    SmallBuffer!(ubyte, 4096) rx;
+    SharedBuffer!(ubyte, 4096) rx;
     size_t filled;
 
     for (;;)
@@ -85,7 +85,7 @@ void serveConnection(Stream stream, Handler handler) @safe
         if (rx.length < filled + 2048)
             rx.length = filled + 2048;
         auto slice = () @trusted {
-            SmallBuffer!(ubyte, 2048) chunk;
+            SharedBuffer!(ubyte, 2048) chunk;
             chunk.length = 2048;
             return chunk;
         }();
@@ -129,7 +129,7 @@ IoResult!void writeResponse(ref Stream stream, in Response resp) @safe
 {
     import sparkles.base.text.writers : writeInteger;
 
-    SmallBuffer!(char, 512) head;
+    SharedBuffer!(char, 512) head;
     head ~= "HTTP/1.1 ";
     writeInteger(head, resp.status);
     head ~= ' ';
@@ -156,7 +156,7 @@ private IoResult!void sendAll(ref Stream stream, scope const(ubyte)[] bytes) @sa
     size_t sent;
     while (sent < bytes.length)
     {
-        SmallBuffer!(ubyte, 512) chunk;
+        SharedBuffer!(ubyte, 512) chunk;
         const n = bytes.length - sent < 512 ? bytes.length - sent : 512;
         chunk ~= bytes[sent .. sent + n];
         auto w = send(stream, move(chunk));
@@ -178,7 +178,7 @@ unittest
     Response resp = Response.ok("hi");
     resp.keepAlive = true;
 
-    SmallBuffer!(char, 512) head;
+    SharedBuffer!(char, 512) head;
     head ~= "HTTP/1.1 ";
     writeInteger(head, resp.status);
     head ~= ' ';

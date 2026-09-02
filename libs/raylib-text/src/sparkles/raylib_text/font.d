@@ -8,7 +8,7 @@ module sparkles.raylib_text.font;
 
 import raylib;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 
 /// A loaded raylib font plus the sorted codepoints it has a glyph for. A
 /// NUL-terminated `pathZ` lets the core loop reload the face on a size change /
@@ -16,8 +16,8 @@ import sparkles.base.smallbuffer : SmallBuffer;
 struct LoadedFont
 {
     Font font;
-    SmallBuffer!(int, 256, true) glyphValues;  /// ascending codepoint values present
-    SmallBuffer!(int, 256, true) glyphIndices; /// font.glyphs index aligned with glyphValues
+    UniqueBuffer!(int, 256) glyphValues;  /// ascending codepoint values present
+    UniqueBuffer!(int, 256) glyphIndices; /// font.glyphs index aligned with glyphValues
     int fallbackIndex;   /// index of the '?' glyph (value 63), or 0
     Rectangle whiteSrc;  /// a solid-white texel in the atlas (U+2588 centre)
     bool hasWhite;       /// whether whiteSrc is valid (full-block glyph present)

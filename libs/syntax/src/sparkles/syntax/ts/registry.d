@@ -525,7 +525,7 @@ unittest
     // a well-formed event stream. Unsupported dialect predicates may disable
     // individual patterns (warnings), but never the language.
     import std.process : environment;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.test_runner.skip : skipTest;
     import sparkles.syntax.event : HighlightEvent;
     import sparkles.syntax.label : LabelSet;
@@ -582,7 +582,7 @@ unittest
         assert(!error, lang);
         config.configure(labels);
 
-        SmallBuffer!HighlightEvent sink;
+        SharedBuffer!HighlightEvent sink;
         auto result = highlight(config, source, sink);
         assert(!result.hasError, lang);
 

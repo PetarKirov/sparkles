@@ -387,7 +387,7 @@ private int tokenInt(in char[] tok) @safe pure nothrow @nogc
 @("ansi.SgrState.basicReEmit")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     SgrState st;
     st.apply("\x1b[1m");
@@ -408,7 +408,7 @@ private int tokenInt(in char[] tok) @safe pure nothrow @nogc
 @("ansi.SgrState.truecolorVerbatim")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     SgrState st;
     st.apply("\x1b[38;2;10;20;30m");
@@ -504,7 +504,7 @@ struct OscLinkState
 @("ansi.OscLinkState.reopenVerbatim")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     OscLinkState st;
     st.apply("\x1b]8;id=x;https://example.com\x1b\\");

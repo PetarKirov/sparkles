@@ -176,7 +176,7 @@ renderer draws as a whole-block change.
 private Span[] wordEmphasis(in MdBlock before, scope const(char)[] oldSrc,
     in MdBlock after, scope const(char)[] newSrc) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.diff : DiffOptions, refinePairTokens, refineTokenize, Row,
         RowKind, Span_ = Span;
 
@@ -199,7 +199,7 @@ private Span[] wordEmphasis(in MdBlock before, scope const(char)[] oldSrc,
 
     Row oldRow = Row(RowKind.removed);
     Row newRow = Row(RowKind.added);
-    SmallBuffer!Span_ arena;
+    SharedBuffer!Span_ arena;
     refinePairTokens(oldRow, a, refineTokenize(a), newRow, b,
         refineTokenize(b), arena, DiffOptions.init);
 

@@ -75,10 +75,10 @@ package string render(Args...)(
 /// A duration rendered with `sparkles.base.text.writers` (`1.5ms`, `12ms`, …).
 string formatDuration(Duration duration) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeDuration;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     buf.writeDuration(duration);
     return buf[].idup;
 }
@@ -2143,7 +2143,7 @@ package struct BenchProgress
 
         static if (hasUiComponents)
         {
-            import sparkles.base.smallbuffer : SmallBuffer;
+            import sparkles.base.buffer : SharedBuffer;
             import sparkles.base.term_control : CtlSeq;
             import sparkles.base.text.width : truncateField;
             import sparkles.ui.components.progress : ProgressLine;
@@ -2158,7 +2158,7 @@ package struct BenchProgress
             // that wraps a narrow terminal and leaves a ghost row the
             // CR+eraseLine (one physical line) can't erase. width==0
             // (unknown/piped) keeps the old fixed cap, so nothing changes there.
-            SmallBuffer!(char, 64) plainPrefix;
+            SharedBuffer!(char, 64) plainPrefix;
             ProgressLine(frame, done, shown, false, elapsed).toString(plainPrefix);
             const prefixCells = visibleWidth(plainPrefix[]);
             const budget = width == 0
@@ -2169,7 +2169,7 @@ package struct BenchProgress
             // (the same trick as core-cli's LiveRegion), so a repaint lands as
             // one frame — no flicker mid-erase. Unsupporting terminals ignore
             // the private mode.
-            SmallBuffer!(char, 256) buf;
+            SharedBuffer!(char, 256) buf;
             buf ~= cast(string) CtlSeq.syncBegin;
             buf ~= cast(string) CtlSeq.carriageReturn;
             buf ~= cast(string) CtlSeq.eraseLine;
@@ -2179,7 +2179,7 @@ package struct BenchProgress
                 buf ~= ' ';
                 // base's truncateField: cell-measured, never splits a cluster,
                 // `…`-marks an overlong case name (attributes infer, so the
-                // SmallBuffer keeps this seam `@safe nothrow @nogc`).
+                // SharedBuffer keeps this seam `@safe nothrow @nogc`).
                 buf.truncateField(name, budget);
             }
             buf ~= cast(string) CtlSeq.syncEnd;

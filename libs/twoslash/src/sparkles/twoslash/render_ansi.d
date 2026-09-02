@@ -19,7 +19,7 @@ module sparkles.twoslash.render_ansi;
 
 import std.range.primitives : put;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.syntax.color : ColorDepth;
 import sparkles.syntax.event : byStyledLine, HighlightEvent, LabelId, StyledLineSpan;
@@ -57,7 +57,7 @@ private enum sgrUnderlineOff = "\x1b[24m";
 
 /// Builds the `ESC[…m` foreground sequence selecting `slot` from `pal` at
 /// `depth`, into `buf` (returns its slice — valid until `buf` is next reused).
-private const(char)[] slotFgSeq(ref SmallBuffer!(char, 32) buf, in Palette pal,
+private const(char)[] slotFgSeq(ref SharedBuffer!(char, 32) buf, in Palette pal,
     Slot slot, ColorDepth depth) @safe
 {
     buf.clear();
@@ -89,7 +89,7 @@ ref Writer renderTwoslashAnsi(Writer)(
     const pal = defaultTwoslashPalette();
 
     // Materialize per-line styled runs (absolute byte offsets, clipped to line).
-    SmallBuffer!StyledLineSpan lineRuns;
+    SharedBuffer!StyledLineSpan lineRuns;
     foreach (ls; byStyledLine(code, events))
         lineRuns ~= ls;
 
@@ -101,7 +101,7 @@ ref Writer renderTwoslashAnsi(Writer)(
     {
         if (p >= q)
             return;
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         size_t cur = p;
         foreach (ref const ls; lineRuns[])
         {
@@ -175,7 +175,7 @@ private void renderCodeLine(Writer)(ref Writer w, scope const(char)[] code,
     bool styled, scope void delegate(size_t, size_t) @system renderSlice) @system
 {
     // Cut points: line bounds plus every decoration edge inside the line.
-    SmallBuffer!size_t cuts;
+    SharedBuffer!size_t cuts;
     cuts ~= lineStart;
     foreach (ref const d; decos)
     {
@@ -225,7 +225,7 @@ private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfi
     scope const(char)[] language, in Palette pal, in Node node, bool styled,
     in TwoslashAnsiOptions options) @system
 {
-    SmallBuffer!(char, 32) seqBuf;
+    SharedBuffer!(char, 32) seqBuf;
     final switch (node.type)
     {
         case NodeType.error:
@@ -241,7 +241,7 @@ private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfi
                 styled ? slotFgSeq(seqBuf, pal, Slot.info, options.depth) : "", styled, "^?");
             // Re-highlight the query type signature, indented under the caret.
             writeSpaces(w, node.character);
-            SmallBuffer!HighlightEvent sig;
+            SharedBuffer!HighlightEvent sig;
             highlightSignature(cache, language, node.text, sig);
             renderAnsi(node.text, sig[], theme, w,
                 AnsiOptions(depth: styled ? options.depth : ColorDepth.none,
@@ -296,7 +296,7 @@ private void writeHover(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConf
     put(w, "↳ "); // ↳
     if (styled)
         put(w, sgrReset);
-    SmallBuffer!HighlightEvent sig;
+    SharedBuffer!HighlightEvent sig;
     highlightSignature(cache, language, node.text, sig);
     renderAnsi(node.text, sig[], theme, w,
         AnsiOptions(depth: styled ? ColorDepth.ansi256 : ColorDepth.none));
@@ -340,7 +340,7 @@ private void writeSpaces(Writer)(ref Writer w, size_t n) @safe
 }
 
 /// In-place insertion sort + dedup of a small offset buffer.
-private void sortUnique(ref SmallBuffer!size_t buf) @safe
+private void sortUnique(ref SharedBuffer!size_t buf) @safe
 {
     foreach (i; 1 .. buf.length)
     {
@@ -376,7 +376,7 @@ version (unittest)
     {
         auto registry = GrammarRegistry.fromDirs([]); // no grammars → plain-text sigs
         auto cache = TsConfigCache.create(&registry, LabelSet.standard());
-        SmallBuffer!(char, 1024) buf;
+        SharedBuffer!(char, 1024) buf;
         renderTwoslashAnsi(tw, events, emptyTheme(), cache, buf, opts);
         return buf[].idup;
     }

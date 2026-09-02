@@ -315,7 +315,7 @@ Three properties compound:
 2. **Every problem is anchored to a path** — `array_of_ints[1]`, built from `PathElemKey`/`PathElemIndex` rather than reconstructed from a cursor log.
 3. **A usable partial value comes back with the errors.** `Result a Problems` gives you an `a`: touching a field that failed throws, but every field that parsed is available. That is the difference between "your document is invalid" and "your document is invalid _here_, and here is everything else it said".
 
-**D verdict: [(a)][tags] for the model, [(b)][tags] for making the paths free.** `Result a Problems` is a `SmallBuffer!(Anchored, N)` plus a `PathElem[]` breadcrumb threaded through a generated walk — no allocation, and the accumulation hazard structurally cannot arise because a generated `static foreach` always visits every branch. The path itself should be better than any library here: it is the **schema path**, known at compile time and sliceable as a static string, so it is emitted unconditionally rather than being an annotation the author of a hand-written parser can forget to attach.
+**D verdict: [(a)][tags] for the model, [(b)][tags] for making the paths free.** `Result a Problems` is a `SharedBuffer!(Anchored, N)` plus a `PathElem[]` breadcrumb threaded through a generated walk — no allocation, and the accumulation hazard structurally cannot arise because a generated `static foreach` always visits every branch. The path itself should be better than any library here: it is the **schema path**, known at compile time and sliceable as a static string, so it is emitted unconditionally rather than being an annotation the author of a hand-written parser can forget to attach.
 
 ---
 

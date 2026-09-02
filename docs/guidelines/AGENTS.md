@@ -20,11 +20,11 @@ library backing `sparkles:test-runner` — see the runner integration notes belo
 | `twoslash-extract`              | `apps/twoslash-extract`     | Batch D twoslash extractor: runs the `sparkles:twoslash-d` pipeline over an annotated D sample (or a directory, one child process per file) and writes the `.twoslash.json` payload `hue --twoslash` renders; `--verify` guards the golden fixtures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `ui-gallery`                    | `apps/ui-gallery`           | A browsable catalog of the `sparkles:ui` toolkit — widget kinds, layout, the 36 themes, the component set and the interaction machines — written as a `sparkles:ui-app` component, so one `view` serves both the terminal and the window. Also the host contract's first real consumer, and `sparkles:terminal-view`'s embedding proof (`TVW7`): the Terminal page runs real shells in VSCode-style tabs, terminal-in-terminal included. `--render`/`--render-plain` paint one frame with no backend at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `diagram`                       | `apps/diagram`              | A draw.io-style diagram board on `sparkles:ui-app` — an infinite world with a camera, a dense entity store, orthogonal connectors, groups, labels and a configurable Cartesian grid backdrop (`--config-file`, plus a modal `PropertyTree` settings pane over the live config — `,` or the context menu). It exists to stress the host abstraction from a direction hue and terminal cannot: neither has a camera, a world coordinate space, or a surface larger than its viewport. Its central claim is checkable by grep — no backend name appears anywhere under `apps/diagram/` (`DIA1`/`DIA2`), and `--tui` and `--gui` are the same `view`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `sparkles:base`                 | `libs/base`                 | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, terminal capability probing (`term_caps` — size/tty/colors/unicode, the single place that decision is made), hardware parallelism (`hw_caps` — CPU quota/affinity plus memory/load/swap so a pool is not wider than the host can usefully run), styled IES, and logging                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `sparkles:base`                 | `libs/base`                 | Allocation-conscious foundation utilities: `SharedBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, terminal capability probing (`term_caps` — size/tty/colors/unicode, the single place that decision is made), hardware parallelism (`hw_caps` — CPU quota/affinity plus memory/load/swap so a pool is not wider than the host can usefully run), styled IES, and logging                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `sparkles:build-primitives`     | `libs/build-primitives`     | Build-system and VCS primitives: `.gitignore` parsing/matching (nested + ancestor scopes) and a DbI-hook directory walker (`walkGitRepository`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `sparkles:code-instrumentation` | `libs/code-instrumentation` | Code coverage ingestion library: universal coverage data model (`LineCoverage`, `FileCoverage`, `CoverageReport`), multi-format parsers over a shared record scanner (DMD `.lst`, GCC `gcov`, LCOV `.info`, V8 AST byte-range blocks, llvm-cov JSON) reporting failures as `ParseExpected`, anchored format auto-detection, and overlay planning (`CoveragePlan`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `sparkles:core-cli`             | `libs/core-cli`             | CLI argument parsing, help formatting, interactive prompts, process utilities, ANSI unstyle helpers. The UI components moved to `sparkles:ui` (`sparkles.ui.components.*`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `sparkles:diff`                 | `libs/diff`                 | Text diff engine behind hue's diff & PR viewer ([spec](../specs/hue/diff-view.md) `DVM*`): a backend-neutral diff document model (files → hunks → rows with pairing + intra-line emphasis), Myers line diff with scale guards, similarity alignment pairing (linematch-style DP), guarded word-level refinement (over its own token classes, or over boundaries a caller supplies via `refinePairTokens` — which is how hue's grammar-aware structural view reuses the LCS without the engine learning about tree-sitter), and a unified-patch parser/emitter (`ParseExpected` errors, output-range emit). `@safe pure nothrow @nogc` throughout: a flat arena of plain-data elements owned by `SmallBuffer` (CoW), texts borrowed as spans. Tree-sitter-free by design — `sparkles:base` is its only dependency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `sparkles:diff`                 | `libs/diff`                 | Text diff engine behind hue's diff & PR viewer ([spec](../specs/hue/diff-view.md) `DVM*`): a backend-neutral diff document model (files → hunks → rows with pairing + intra-line emphasis), Myers line diff with scale guards, similarity alignment pairing (linematch-style DP), guarded word-level refinement (over its own token classes, or over boundaries a caller supplies via `refinePairTokens` — which is how hue's grammar-aware structural view reuses the LCS without the engine learning about tree-sitter), and a unified-patch parser/emitter (`ParseExpected` errors, output-range emit). `@safe pure nothrow @nogc` throughout: a flat arena of plain-data elements owned by `SharedBuffer` (CoW), texts borrowed as spans. Tree-sitter-free by design — `sparkles:base` is its only dependency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `sparkles:dmd-fmt`              | `libs/dmd-fmt`              | D formatter being built on the DMD-lexer token spine per `docs/research/code-formatting/dmd-fmt-proposal.md` (M0–M8 delivered — decisions, spike evidence and milestone table in `docs/specs/dmd-fmt/`; v1 policy: author's-breaks + structural reindent, magic trailing comma, `.editorconfig`/dfmt-key discovery, `dmd-fmt` CLI via the `cli` dub configuration): `spine.d` lexes with `commentToken`+`whitespaceToken`, records exact byte spans, surfaces silently-consumed bytes (`#line`, shebang) as explicit directive entries, and proves byte-for-byte reconstruction plus token-equality against a plain lex and doc-lex offset correspondence; `oracle.d` reduces a parse-only AST walk to sorted offset arrays (dfmt's `ASTInformation` shape); `groups.d` proves S2 — nested group trees reconstructed from the spine plus those arrays alone (bracket matching + markers + bounded lookahead), degrading to bracket-only structure on unparseable input; `cases.d` is the markdown case runner (a fixture is a documentation page: a `::: code-group` under an `<!-- fmt id=P19 -->` directive, first fence in / later fences out, `SPARKLES_UPDATE_GOLDENS=1` to bless — see `docs/specs/dmd-fmt/testing.md`); `verify.d` is the M1 verifier — `verifyFormat` (tier-3 token equality modulo whitespace + the separate DDoc-attachment check via the doc-lex, catching whitespace-only trailing-`///` reattachment) and `checkConvergence` (bounded idempotence harness with per-step verification). DMD's frontend globals are not thread-safe, so all lexing/parsing serializes on a module lock |
 | `sparkles:dmd-lsp`              | `libs/dmd-lsp`              | DMD-frontend-as-a-library semantic core (ported from VisualD `dmdserver`, Boost-1.0): one-pass in-memory analysis with structured diagnostics, the `semvisitor` type oracle (`tipAt` resolved types + ddoc, `identifierSpans` classification, `definitionAt`), on the pinned `dmdserver-dub` LanguageServer fork (dub git dep; runtime sources via `$SPARKLES_DMD_IMPORT_PATH`) — see `docs/specs/dmd-lsp/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sparkles:docs`                 | `libs/docs`                 | Markdown-based static documentation-site (SSG) library, extracted from hue's gallery: the content-fragment builders (plain + twoslash, over `sparkles:syntax`/`sparkles:twoslash`), the page shell with theme-derived chrome, appearance toggle and breadcrumbs, the mirrored site tree with per-directory indexes, shared stylesheet assets, the recursive document set (over `sparkles:build-primitives`' glob walk), and the docs-site sidebar/`srcExclude` data schema (`sparkles:wired`) that `ci --check-docs-sidebar` / `--audit-fences` consume. hue's `gallery` subcommand is its first consumer; the planned `hue site` + API doc generator build on it (spec: `docs/specs/hue/gallery.md` `GAL*`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -139,7 +139,7 @@ sparkles/
 │   │   ├── lifetime.d              # recycledInstance / recycledErrorInstance (@nogc throwing)
 │   │   ├── logger.d                # CoreLogger, DeltaTimeLogger, Sparkles logging wrappers
 │   │   ├── prettyprint.d           # Colorized pretty-printing
-│   │   ├── smallbuffer.d           # @nogc dynamic buffer + checkToString/checkWriter test helpers
+│   │   ├── buffer.d           # @nogc dynamic buffer + checkToString/checkWriter test helpers
 │   │   ├── source_uri.d            # OSC 8 source-URI hooks (editor links)
 │   │   ├── styled_template.d       # IES-based styled text processing
 │   │   ├── term_caps.d             # Terminal capability probing (size, tty, colors, unicode)
@@ -232,7 +232,7 @@ dub test  :core-cli
 dub test  :versions
 
 # Run tests matching / excluding a pattern (sparkles:test-runner; see below)
-dub test :base -- -i "SmallBuffer"
+dub test :base -- -i "Buffer"
 dub test :core-cli -- -e "slow"
 dub test :core-cli -- -v            # verbose: full stack traces + durations
 dub test :core-cli -- -t 1          # single-threaded
@@ -624,7 +624,7 @@ guide (transform/chain/flatten patterns, Rust ↔ D comparisons, and a cheat she
 
 ### `@nogc` primitives (and what breaks `@nogc`/`nothrow`)
 
-- `SmallBuffer!(T, N)` — dynamic array with small-buffer optimization; works as an
+- `SharedBuffer!(T, N)` — dynamic array with small-buffer optimization; works as an
   output range. Use it instead of `appender` in `@nogc` code.
 - `sparkles.base.text.writers` / `.readers` — `@nogc` integer/float/duration
   formatting and parsing. Prefer these over `.text` / `std.conv` (which GC-allocate)
@@ -640,7 +640,7 @@ guide (transform/chain/flatten patterns, Rust ↔ D comparisons, and a cheat she
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     buf ~= "Hello";
     buf ~= ' ';
     buf ~= "World";
@@ -736,11 +736,11 @@ Always give unittests explicit safety attributes:
 - Add `pure`, `nothrow`, `@nogc` whenever possible.
 
 ```d
-@("SmallBuffer.basic.creation")
+@("SharedBuffer.basic.creation")
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) buf;
+    SharedBuffer!(int, 4) buf;
     assert(buf.length == 0);
     assert(buf.empty);
 }
@@ -749,7 +749,7 @@ unittest
 ### `@nogc nothrow` testing
 
 - `recycledErrorInstance!T("msg")` throws without GC allocation.
-- `SmallBuffer` as an output range instead of `appender`.
+- `SharedBuffer` as an output range instead of `appender`.
 
 ```d
 @("prettyPrint.integers")
@@ -757,9 +757,9 @@ unittest
 unittest
 {
     import sparkles.base.lifetime : recycledErrorInstance;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : Buffer, checkToString, checkWriter, SharedBuffer;
 
-    SmallBuffer!(char, 1024) buf;
+    SharedBuffer!(char, 1024) buf;
     prettyPrint(42, buf);
 
     if (buf[] != "42")
@@ -771,8 +771,8 @@ unittest
 
 Prefer the project's helpers over hand-rolled assertions:
 
-- **`checkToString` / `checkWriter`** (`sparkles.base.smallbuffer`) — for types
-  exposing `void toString(Writer)(ref Writer w)`. They render into a `SmallBuffer`
+- **`checkToString` / `checkWriter`** (`sparkles.base.buffer`) — for types
+  exposing `void toString(Writer)(ref Writer w)`. They render into a `SharedBuffer`
   (so the test stays `@safe pure nothrow @nogc`) and report an expected/actual diff
   via a recycled `AssertError` on mismatch.
 - **`checkRoundTrip` / `checkRejects` / `checkAscending`** (`sparkles.versions.testing`)
@@ -783,7 +783,7 @@ Prefer the project's helpers over hand-rolled assertions:
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
     checkToString(MyType(42), "MyType(42)");
 }
 ```
@@ -975,7 +975,7 @@ looks at the _type_ (plus `!` or `BREAKING` footer).
 | -------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `docs(research/{topic})`         | `docs(research/window-system-integration): add Android/NDK OS-API example` | Research catalog topic                                                    |
 | `docs(guidelines/{area})`        | `docs(guidelines): ...` or `docs(guidelines/code-style): ...`              | Guideline changes                                                         |
-| `{lib/app}.module` (or `sub`)    | `fix(base.smallbuffer): saturate grownCapacity on overflow`                | D module or leaf file                                                     |
+| `{lib/app}.module` (or `sub`)    | `fix(base.buffer): saturate grownCapacity on overflow`                     | D module or leaf file                                                     |
 | `{pkg}/subdir` or `{pkg}.subdir` | `feat(core-cli/examples): add animated streaming drawTable demo`           | Examples or nested area                                                   |
 | `pkg.sub.module` (D style)       | `feat(core_cli.ui.table): Use unstyledLength for precise column width`     | Internal module path                                                      |
 | short whole-package name         | `feat(terminal): implement text selection`                                 | Acceptable when the package is small / single-file / cohesive at the time |
@@ -985,18 +985,18 @@ Bare top-level scopes (`base`, `core-cli`, `docs`, `research`, `tui`, `wired`, .
 
 - **Type** — one of the following (one example each):
 
-| Type       | Use for                                  | Example                                                                  |
-| ---------- | ---------------------------------------- | ------------------------------------------------------------------------ |
-| `feat`     | new user-facing capability               | `feat(base.smallbuffer): add SmallBuffer with small-buffer optimization` |
-| `fix`      | bug fix                                  | `fix(core-cli): handle empty arrays in prettyPrint`                      |
-| `refactor` | behavior-preserving restructuring        | `refactor(ci): extract dub dependency helpers into a testable module`    |
-| `docs`     | documentation only                       | `docs(guidelines): document the ansi example-output convention`          |
-| `build`    | build system / dependencies              | `build(dub): add expected as a runtime dependency of versions`           |
-| `ci`       | CI/CD pipelines & tooling                | `ci(gh-actions): add DC (D compiler) dimension to the test matrix`       |
-| `test`     | tests only                               | `test(base): add checkWriter for testing writer functions`               |
-| `style`    | formatting / renames, no behavior change | `style(core-cli): use kebab-case names for example files`                |
-| `chore`    | maintenance (lockfiles, file modes, …)   | `chore(flake.lock): update all flake inputs`                             |
-| `config`   | config-file changes                      | `config(editorconfig): disable indent checking for markdown`             |
+| Type       | Use for                                  | Example                                                               |
+| ---------- | ---------------------------------------- | --------------------------------------------------------------------- |
+| `feat`     | new user-facing capability               | `feat(base.buffer): add SharedBuffer with small-buffer optimization`  |
+| `fix`      | bug fix                                  | `fix(core-cli): handle empty arrays in prettyPrint`                   |
+| `refactor` | behavior-preserving restructuring        | `refactor(ci): extract dub dependency helpers into a testable module` |
+| `docs`     | documentation only                       | `docs(guidelines): document the ansi example-output convention`       |
+| `build`    | build system / dependencies              | `build(dub): add expected as a runtime dependency of versions`        |
+| `ci`       | CI/CD pipelines & tooling                | `ci(gh-actions): add DC (D compiler) dimension to the test matrix`    |
+| `test`     | tests only                               | `test(base): add checkWriter for testing writer functions`            |
+| `style`    | formatting / renames, no behavior change | `style(core-cli): use kebab-case names for example files`             |
+| `chore`    | maintenance (lockfiles, file modes, …)   | `chore(flake.lock): update all flake inputs`                          |
+| `config`   | config-file changes                      | `config(editorconfig): disable indent checking for markdown`          |
 
 Append `!` after the scope for a breaking change (e.g. `feat(ci)!: …`).
 
@@ -1090,7 +1090,7 @@ Hooks run on commit and will modify or block your changes:
 - **detailed-scope** (runs at `commit-msg` stage) checks for obviously useless
   scopes (`wip`, `misc`, `update`, …) and suggests more specific scopes for
   localized changes inside large packages (e.g. bare `base` when only
-  `base/smallbuffer.d` changed). It is intentionally _not_ a strict enum. See
+  `base/buffer.d` changed). It is intentionally _not_ a strict enum. See
   the "Commit messages" section above for the intended style. Bypass with
   `SKIP=detailed-scope git commit …` or `git commit --no-verify`.
 - **check-vcs-urls** scans staged markdown files for `github.com`/

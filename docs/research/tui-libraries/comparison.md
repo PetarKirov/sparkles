@@ -35,7 +35,7 @@ The thirteen libraries span five rendering paradigms: immediate mode, retained m
 - No mechanism to skip unchanged subtrees without manual optimization
 - Bubble Tea's string-based approach loses spatial structure, making hit-testing and partial updates expensive
 
-**D suitability:** Excellent. Widgets as stack-allocated `struct` values, consumed within a single `draw` call, align perfectly with `@nogc` and output range patterns. Ratatui's `Buffer`-based approach maps directly to `SmallBuffer!(Cell, N)`. libvaxis's explicit allocator passing maps to D's `@nogc` attribute, which provides the same guarantee (no hidden allocation) enforced at compile time rather than by convention.
+**D suitability:** Excellent. Widgets as stack-allocated `struct` values, consumed within a single `draw` call, align perfectly with `@nogc` and output range patterns. Ratatui's `Buffer`-based approach maps directly to `SharedBuffer!(Cell, N)`. libvaxis's explicit allocator passing maps to D's `@nogc` attribute, which provides the same guarantee (no hidden allocation) enforced at compile time rather than by convention.
 
 ### Retained Mode
 
@@ -93,7 +93,7 @@ The pipe operator (`|`) enables decorator chaining: `text("hello") | bold | colo
 - No built-in async/concurrency model
 - No theming system
 
-**D suitability:** Excellent conceptual fit. FTXUI's pipe operator maps directly to D's UFCS -- `text("hello").bold.color(Color.red).border` -- as a built-in language feature with zero operator overloading. Elements can be `@nogc` struct values in `SmallBuffer`-backed trees instead of `shared_ptr` nodes. The dual dom/component architecture maps to `@nogc` pure element types + DbI-detected component capabilities.
+**D suitability:** Excellent conceptual fit. FTXUI's pipe operator maps directly to D's UFCS -- `text("hello").bold.color(Color.red).border` -- as a built-in language feature with zero operator overloading. Elements can be `@nogc` struct values in `SharedBuffer`-backed trees instead of `shared_ptr` nodes. The dual dom/component architecture maps to `@nogc` pure element types + DbI-detected component capabilities.
 
 ### Compose / Reactive Recomposition (Mosaic)
 
@@ -194,7 +194,7 @@ The application draws to `ncplane` surfaces (retained cell grids). On render, `n
 - No automatic layout engine
 - Manual memory management for planes and cells
 
-**D suitability:** The plane compositor model maps well to D. Planes as `@nogc` structs with RAII cleanup via `~this()`, channel-based coloring via bitwise operations, and compositor output to `SmallBuffer` -- all align naturally.
+**D suitability:** The plane compositor model maps well to D. Planes as `@nogc` structs with RAII cleanup via `~this()`, channel-based coloring via bitwise operations, and compositor output to `SharedBuffer` -- all align naturally.
 
 ### Declarative Rebuild (Brick)
 
@@ -249,7 +249,7 @@ Textual mirrors web development: a DOM-like widget tree, TCSS stylesheets with s
 
 FTXUI's two-tier architecture separates pure functional rendering from stateful interaction. The dom layer builds Element trees from function calls. The component layer wraps Elements with event handling and mutable state. The pipe operator (`|`) enables decorator chaining.
 
-**D alignment:** Excellent. FTXUI's architecture maps remarkably well to D. The pipe operator IS D's UFCS -- `text("hello").bold.color(Color.blue).border` -- with zero operator overloading needed. The dual dom/component layers map to `@nogc` pure element types + DbI-detected component capabilities. FTXUI's `FlexboxConfig` struct maps to named-argument D structs with CTFE validation. The key improvement D offers: elements as `@nogc` value-type structs in `SmallBuffer` instead of `shared_ptr` heap nodes.
+**D alignment:** Excellent. FTXUI's architecture maps remarkably well to D. The pipe operator IS D's UFCS -- `text("hello").bold.color(Color.blue).border` -- with zero operator overloading needed. The dual dom/component layers map to `@nogc` pure element types + DbI-detected component capabilities. FTXUI's `FlexboxConfig` struct maps to named-argument D structs with CTFE validation. The key improvement D offers: elements as `@nogc` value-type structs in `SharedBuffer` instead of `shared_ptr` heap nodes.
 
 ### Callback-Based Retained Mode (Cursive, tview)
 
@@ -354,7 +354,7 @@ static assert(layout.constraints.length == 3);
 auto areas = layout.split(frame.area);  // typeof(areas) == Rect[3]
 ```
 
-**@nogc constraint solving:** A Cassowary solver operating on `SmallBuffer`-backed vectors could solve layout constraints without GC allocation, making the entire render path `@nogc`.
+**@nogc constraint solving:** A Cassowary solver operating on `SharedBuffer`-backed vectors could solve layout constraints without GC allocation, making the entire render path `@nogc`.
 
 **UFCS combinator chains:** Brick's combinator style maps directly to D UFCS, providing a fluent layout API with zero runtime overhead:
 
@@ -660,11 +660,11 @@ Event handleEvent(Event)(RawEvent raw) {
 
 **libvaxis's allocator-aware pattern** is the most relevant for D. Every allocation site accepts a `std.mem.Allocator` parameter. The vxfw framework uses per-frame arena allocation for temporaries (formatted text, layout scratch), freed automatically at frame end. D's `@nogc` attribute provides the same guarantee at the type level -- the compiler ensures no hidden GC allocation rather than relying on the programmer to thread allocators correctly.
 
-**FTXUI's value-based elements** create `shared_ptr<Node>` for every element every frame. In D, elements as `@nogc` struct values stored in `SmallBuffer` eliminate this heap allocation entirely. For small-to-medium UIs (the common case in CLI tools), the entire Element tree fits in a `SmallBuffer` with no heap allocation at all.
+**FTXUI's value-based elements** create `shared_ptr<Node>` for every element every frame. In D, elements as `@nogc` struct values stored in `SharedBuffer` eliminate this heap allocation entirely. For small-to-medium UIs (the common case in CLI tools), the entire Element tree fits in a `SharedBuffer` with no heap allocation at all.
 
 **ImTui's zero-widget-state** approach is the most allocation-friendly. The `TScreen` is a flat array of packed 32-bit `TCell` values (character + colors), reused across frames. There are no widget objects to allocate. The entire render path is just function calls writing to a fixed-size buffer. This is the theoretical minimum for allocation in a TUI framework.
 
-**Nottui's incremental computation** avoids the allocation problem differently: the reactive DAG is allocated once and reused. Updates touch only damaged nodes, so neither allocation nor computation scales with total UI size. The `Lwd_table` reactive collection tracks insertions/deletions incrementally. For D, a pre-allocated `DependencyGraph` with `SmallBuffer`-backed node arrays achieves the same pattern `@nogc`.
+**Nottui's incremental computation** avoids the allocation problem differently: the reactive DAG is allocated once and reused. Updates touch only damaged nodes, so neither allocation nor computation scales with total UI size. The `Lwd_table` reactive collection tracks insertions/deletions incrementally. For D, a pre-allocated `DependencyGraph` with `SharedBuffer`-backed node arrays achieves the same pattern `@nogc`.
 
 **Mosaic's slot table** is a flat, gap-buffer-style array that stores composition state. While not zero-allocation (JVM/native GC manages the slot table), the design minimizes allocation by reusing slots across recompositions. For D, the lesson is that a flat, reusable buffer for composition state is more efficient than per-frame tree construction.
 
@@ -674,12 +674,12 @@ Event handleEvent(Event)(RawEvent raw) {
 | ------------------------------------- | ----------------- | --------------------------------------------------------------------- |
 | **ImTui-style pure immediate**        | **Highest**       | Zero widget objects, flat buffer, function calls only                 |
 | **libvaxis-style explicit allocator** | **High**          | Arena per frame, explicit control at every site                       |
-| **Ratatui-style cell buffer**         | **High**          | `SmallBuffer!(Cell, N)` for typical screens                           |
+| **Ratatui-style cell buffer**         | **High**          | `SharedBuffer!(Cell, N)` for typical screens                          |
 | **Notcurses-style planes**            | **High**          | Manual alloc with RAII; cell packing is naturally @nogc               |
 | **FTXUI-style functional DOM**        | **High in D**     | `shared_ptr` in C++, but elements as @nogc structs in D               |
 | **Nottui-style incremental DAG**      | **High**          | Pre-allocated graph, no per-frame allocation                          |
 | **Brick-style pure rebuild**          | **Moderate**      | Compatible if output goes to cell buffer                              |
-| **Bubble Tea-style string render**    | **Moderate**      | `SmallBuffer!(char, N)` instead of heap string                        |
+| **Bubble Tea-style string render**    | **Moderate**      | `SharedBuffer!(char, N)` instead of heap string                       |
 | **Cursive-style retained view tree**  | **Low-Moderate**  | View tree requires allocation; `pureMalloc`-based allocators possible |
 | **tview-style retained widget tree**  | **Low-Moderate**  | Go GC manages widgets; D would need manual allocation                 |
 | **Textual-style retained DOM**        | **Low**           | Persistent object tree with dynamic dispatch                          |
@@ -708,8 +708,8 @@ Event handleEvent(Event)(RawEvent raw) {
 
 1. **ImTui-style flat buffer** -- Zero allocation, function calls to fixed buffer, cell-level diff. Theoretical minimum overhead.
 2. **Notcurses/libvaxis-style packed cells** -- Zero allocation in common path, cell-level diff, explicit memory control. Highest raw performance with retained planes.
-3. **Ratatui-style cell buffer** -- Near-zero allocation with `SmallBuffer`, cell-level diff, immediate-mode simplicity. Best balance of performance and ergonomics.
-4. **FTXUI-style functional DOM (in D)** -- Elements as `@nogc` structs in `SmallBuffer` instead of `shared_ptr`. Combines compositional elegance with zero allocation.
+3. **Ratatui-style cell buffer** -- Near-zero allocation with `SharedBuffer`, cell-level diff, immediate-mode simplicity. Best balance of performance and ergonomics.
+4. **FTXUI-style functional DOM (in D)** -- Elements as `@nogc` structs in `SharedBuffer` instead of `shared_ptr`. Combines compositional elegance with zero allocation.
 5. **Nottui-style incremental DAG** -- Pre-allocated graph, O(k) updates for sparse changes. Best asymptotic performance for large, mostly-static UIs.
 6. **Brick-style pure rebuild** -- Compatible with `@nogc` if output goes to cell buffer.
 7. **Retained-mode (Cursive/tview adapted)** -- Requires allocation management but provides framework-level focus/layout.
@@ -726,7 +726,7 @@ The rationale:
 
 1. **Ratatui's approach is the most natural fit for D.** Widgets as value-type structs, rendered into a cell buffer via template-constrained `render` methods, consumed by value -- this maps directly to `@nogc` D idioms with zero virtual dispatch overhead. The library does not own the event loop, respecting the application's control.
 
-2. **FTXUI's functional DOM composition translates beautifully to D UFCS.** Where FTXUI writes `text("hello") | bold | color(Color::Red) | border`, D writes `text("hello").bold.color(Color.red).border`. No special pipe operator needed -- UFCS is built-in, works at compile time, and composes with any free function. Elements as `@nogc` struct values in `SmallBuffer` instead of `shared_ptr` nodes eliminate FTXUI's per-node heap allocation. This is arguably the single most important lesson: FTXUI proved the functional DOM pattern works for terminals; D's UFCS makes it even more natural.
+2. **FTXUI's functional DOM composition translates beautifully to D UFCS.** Where FTXUI writes `text("hello") | bold | color(Color::Red) | border`, D writes `text("hello").bold.color(Color.red).border`. No special pipe operator needed -- UFCS is built-in, works at compile time, and composes with any free function. Elements as `@nogc` struct values in `SharedBuffer` instead of `shared_ptr` nodes eliminate FTXUI's per-node heap allocation. This is arguably the single most important lesson: FTXUI proved the functional DOM pattern works for terminals; D's UFCS makes it even more natural.
 
 3. **Brick's combinators provide the layout vocabulary.** `items.vBox.hLimit(25).padAll(1).borderWithLabel("Files")` -- same composability as Haskell, better readability, zero runtime overhead.
 
@@ -811,7 +811,7 @@ auto [header, body, footer] = Layout.vertical([
 
 /// A single terminal cell.
 struct Cell {
-    SmallBuffer!(char, 8) grapheme;  // inline for ASCII/BMP, spills for long EGCs
+    SharedBuffer!(char, 8) grapheme;  // inline for ASCII/BMP, spills for long EGCs
     StyleFlags style;                // bold, italic, underline, etc.
     Color fg = Color.default_;
     Color bg = Color.default_;
@@ -820,7 +820,7 @@ struct Cell {
 /// A rectangular grid of cells.
 struct Buffer {
     Rect area;
-    Cell[] cells;  // or SmallBuffer!(Cell, 80 * 24) for typical terminals
+    Cell[] cells;  // or SharedBuffer!(Cell, 80 * 24) for typical terminals
 
     /// Write a styled string at position.
     void setString(ushort x, ushort y, scope const(char)[] text, Style style) { ... }
@@ -949,7 +949,7 @@ void propagateChanges(DependencyGraph* graph) {
 
 **Goal:** Establish the foundational rendering primitives.
 
-- `Cell` struct: grapheme (SmallBuffer-based) + style + fg/bg color
+- `Cell` struct: grapheme (SharedBuffer-based) + style + fg/bg color
 - `Buffer` struct: `Rect` + flat cell array with `setString`, `setCell`, `diff`
 - `Color` type: ANSI 16, 256, and RGB support
 - `CellStyle` struct: fg, bg, modifiers with incremental patching
@@ -958,7 +958,7 @@ void propagateChanges(DependencyGraph* graph) {
 - `TestBackend`: in-memory backend for deterministic testing
 - `Terminal(B)` struct: double-buffering, diffing, draw function
 
-This phase builds on the existing `term_style` module (extending it) and `SmallBuffer` (for cell graphemes and buffer storage).
+This phase builds on the existing `term_style` module (extending it) and `SharedBuffer` (for cell graphemes and buffer storage).
 
 #### Phase 2: Layout Engine
 
@@ -1034,7 +1034,7 @@ Rationale:
 
 - **Dependency cost.** Notcurses has a non-trivial build chain. Building from scratch in D keeps the dependency graph minimal.
 
-- **Selective borrowing.** Specific innovations should be adopted: inline glyph cluster packing (via `SmallBuffer!(char, 8)`), packed cell representation, Kitty keyboard protocol support, and synchronized output. These can be implemented natively in D.
+- **Selective borrowing.** Specific innovations should be adopted: inline glyph cluster packing (via `SharedBuffer!(char, 8)`), packed cell representation, Kitty keyboard protocol support, and synchronized output. These can be implemented natively in D.
 
 ---
 

@@ -609,7 +609,7 @@ Follow the project's [Design by Introspection guidelines][dbi-guidelines]: use o
 
 ### 7. Output range rendering
 
-Follow the project's [functional/declarative guidelines][functional-guidelines]: the tree renderer writes to any output range, not just stdout. This enables rendering to `SmallBuffer`, `appender!string`, or a terminal buffer.
+Follow the project's [functional/declarative guidelines][functional-guidelines]: the tree renderer writes to any output range, not just stdout. This enables rendering to `SharedBuffer`, `appender!string`, or a terminal buffer.
 
 ### 8. Value semantics
 
@@ -617,7 +617,7 @@ Follow ratatui + [Sean Parent's value semantics][sean-parent-vs]: the entire tre
 
 ### 9. `@nogc` path
 
-Follow the project guidelines: tree traversal and rendering should work with `SmallBuffer` and avoid GC allocation. The flat storage model (contiguous `Node[]`) is naturally `@nogc`-friendly — no recursive heap allocation needed during traversal.
+Follow the project guidelines: tree traversal and rendering should work with `SharedBuffer` and avoid GC allocation. The flat storage model (contiguous `Node[]`) is naturally `@nogc`-friendly — no recursive heap allocation needed during traversal.
 
 ### 10. Lazy children
 

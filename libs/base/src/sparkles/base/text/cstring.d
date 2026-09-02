@@ -6,7 +6,7 @@ on:
 
 $(UL
 $(LI $(LREF writeStringz) appends to an output range the caller already owns —
-    a `SmallBuffer`, or a scratch buffer reused across frames. It grows.)
+    a `SharedBuffer`, or a scratch buffer reused across frames. It grows.)
 $(LI $(LREF CString) is a fixed `char[N]` that owns its bytes, built by
     $(LREF toCString) when the input is known to fit and by
     $(LREF tryToCString) when it is not.)
@@ -33,7 +33,7 @@ is inside it, and $(LREF CString.ptr) never returns `null`.
 
 It lives in `sparkles:base` because it is the bottom of the C-interop stack and
 cannot live any higher — `sparkles.base.hw_caps` open-codes it already. It lives
-under `text/` rather than beside `SmallBuffer` because it is a text-encoding
+under `text/` rather than beside `SharedBuffer` because it is a text-encoding
 concern that merely $(I uses) a buffer, like the `readers`/`writers` beside it.
 
 This module does $(B not) own:
@@ -59,7 +59,7 @@ import sparkles.test_runner.attributes : betterC;
 
 // The runner extracts a `@betterC` test body and compiles it standalone against
 // the module's public API, so a test is marked only when it needs neither
-// `SmallBuffer` (which would drag `std.experimental.allocator` in) nor a
+// `SharedBuffer` (which would drag `std.experimental.allocator` in) nor a
 // private symbol. That excludes the `writeStringz` trio and the `cStringBytes`
 // test; everything reaching `CString` qualifies, since it is a plain `char[N]`.
 // Everything here copies element-wise rather than by slice assignment for the
@@ -96,9 +96,9 @@ void writeStringz(Writer)(ref Writer w, in char[] s)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     buf.writeStringz("abc");
     assert(buf[] == "abc\0");
 }
@@ -107,9 +107,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 8) buf;
+    SharedBuffer!(char, 8) buf;
     buf.writeStringz("");
     assert(buf[] == "\0");
 }
@@ -118,11 +118,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The borrowed-scratch sites reuse one buffer, so the writer must append
     // rather than assume it starts empty.
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     buf ~= "keep";
     buf.writeStringz("more");
     assert(buf[] == "keepmore\0");
@@ -166,7 +166,7 @@ plain `char[N]`, so a borrow out of it is a reference to the enclosing frame,
 and returning one from a `@safe` function is a compile error — checked against
 LDC 1.41 for the slice, the pointer, and the pointer off an rvalue.
 
-That is why the storage is a fixed array rather than a `SmallBuffer`. A borrow
+That is why the storage is a fixed array rather than a `SharedBuffer`. A borrow
 out of a small buffer addresses whatever its heap block points at, which the
 compiler cannot prove is the frame, so it must permit the escape; recovering the
 check would mean every caller remembering to write `scope`. Here it holds with
@@ -398,7 +398,7 @@ unittest
 unittest
 {
     // The payoff for a fixed `char[N]`: `-dip1000` rejects every route out of a
-    // dead local, with no `scope` written at the call site. A SmallBuffer-backed
+    // dead local, with no `scope` written at the call site. A SharedBuffer-backed
     // version could only manage this if every caller remembered `scope`, because
     // a borrow out of it is not provably a reference to the frame.
     static assert(!__traits(compiles, {
@@ -432,7 +432,7 @@ unittest
     }), "dip1000 should reject escaping out of tryToCString's destination");
 
     // Contrast, so the test says what the guarantee is worth: dip1000 catches
-    // the same shape on a bare static array, and does not on a SmallBuffer.
+    // the same shape on a bare static array, and does not on a SharedBuffer.
     static assert(!__traits(compiles, {
         const(char)[] leak() @safe pure nothrow @nogc
         {

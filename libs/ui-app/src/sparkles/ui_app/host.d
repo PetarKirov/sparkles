@@ -32,7 +32,7 @@ module sparkles.ui_app.host;
 import core.stdc.stdarg : va_list;
 import core.time : Duration;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, Mods;
 import sparkles.ui.arena : FrameArena;

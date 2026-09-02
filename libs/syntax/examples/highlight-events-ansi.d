@@ -64,9 +64,9 @@ void main()
 
     const theme = resolveTheme(builtinDark, labels);
 
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 1024) ansi;
+    SharedBuffer!(char, 1024) ansi;
     renderAnsi(source, events, theme, ansi,
         AnsiOptions(depth: detectColorDepth()));
     writeln(ansi[]);

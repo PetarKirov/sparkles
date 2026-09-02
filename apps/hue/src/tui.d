@@ -11,7 +11,7 @@ module tui;
 
 version (Posix):
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : mix;
 import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.diff.model : DiffDoc;
@@ -198,7 +198,7 @@ struct PreviewTui
     // grid can reach it.
     private RgbColor matchBg;
     private RgbColor curMatchBg;
-    private SmallBuffer!char clip;
+    private SharedBuffer!char clip;
     private bool clipReady;
 
     /// `DST2`/`DST4`: the answer to the reviewer's last write action, shown
@@ -805,7 +805,7 @@ struct PreviewTui
     {
         if (!lantern.shown)
             return;
-        SmallBuffer!(Binding, 128) listed;
+        SharedBuffer!(Binding, 128) listed;
         bindingsAt(listed, keyContext(), lantern.pending[]);
         if (listed.length == 0)
             return;

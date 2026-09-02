@@ -64,10 +64,10 @@ void writeApiVersion(Writer)(ref Writer w, uint packed)
 /// ditto, as a `string`, for a caller that is not holding a buffer.
 string formatApiVersion(uint packed) @safe pure nothrow
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // 7-, 10- and 12-bit fields: `127.1023.4095` is the longest possible.
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeApiVersion(buf, packed);
     return buf[].idup;
 }
@@ -77,14 +77,14 @@ string formatApiVersion(uint packed) @safe pure nothrow
 {
     // The reason for the writer form: rendering a version must not force an
     // allocation on a caller that already has a buffer.
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     buf.writeApiVersion(makeApiVersion(0, 1, 3, 290));
     assert(buf[] == "1.3.290");
 
     // The widest each field can be: 7, 10 and 12 bits.
-    SmallBuffer!(char, 16) widest;
+    SharedBuffer!(char, 16) widest;
     widest.writeApiVersion(makeApiVersion(0, 127, 1023, 4095));
     assert(widest[] == "127.1023.4095");
 }

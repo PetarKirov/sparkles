@@ -56,7 +56,7 @@ import std.typecons : Nullable, Ternary;
 
 import optional : Optional, some;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.wired.policy : Repr, WireInvalid, WireTarget, convertOf,
@@ -122,7 +122,7 @@ private DRes!T dFail(T)(ref SdlError failure, SdlError e)
 /// Composed SDL role path shared across one decode walk (SPEC §7).
 private struct WalkPath
 {
-    SmallBuffer!(char, 96) text;
+    SharedBuffer!(char, 96) text;
 }
 
 private void popSegment(ref WalkPath p, size_t mark) @safe
@@ -697,7 +697,7 @@ private bool decodeSingular(alias Parent, size_t i, V, alias Conv = void)(
 /// Matching direct children in source order, by full qualified identity.
 private size_t collectChildren(scope const ref SdlNode node,
     scope const(char)[] ns, scope const(char)[] local,
-    ref SmallBuffer!(SdlNode, 4) matches) @safe
+    ref SharedBuffer!(SdlNode, 4) matches) @safe
 {
     matches.clear();
     foreach (child; node.byChild)
@@ -768,7 +768,7 @@ private void assignField(T)(ref T slot, T value) @trusted
 
 private size_t collectAttributes(scope const ref SdlNode node,
     scope const(char)[] ns, scope const(char)[] local,
-    ref SmallBuffer!(SdlAttributeView, 4) matches) @safe
+    ref SharedBuffer!(SdlAttributeView, 4) matches) @safe
 {
     matches.clear();
     foreach (attribute; node.byAttribute)
@@ -1154,7 +1154,7 @@ if (is(T == struct))
 
         static if (R.role == SdlRoleKind.child)
         {
-            SmallBuffer!(SdlNode, 4) matches;
+            SharedBuffer!(SdlNode, 4) matches;
             const count = collectChildren(node, R.namespace_, R.localName,
                 matches);
 
@@ -1318,7 +1318,7 @@ if (is(T == struct))
                     return r;
                 }();
 
-                SmallBuffer!(SdlNode, 4) aaMatches;
+                SharedBuffer!(SdlNode, 4) aaMatches;
                 foreach (child; node.byChild)
                 {
                     if (child.qualifiedName.namespace_ != R.namespace_)
@@ -1383,7 +1383,7 @@ if (is(T == struct))
         }
         else static if (R.role == SdlRoleKind.attribute)
         {
-            SmallBuffer!(SdlAttributeView, 4) attrs;
+            SharedBuffer!(SdlAttributeView, 4) attrs;
             const acount = collectAttributes(node, R.namespace_, R.localName,
                 attrs);
 
@@ -3581,7 +3581,7 @@ version (unittest)
     value.ok.s = "fine";
     value.bad.s = "has\u2028separator"; // no canonical SDL spelling
 
-    SmallBuffer!(char, 128) sink;
+    SharedBuffer!(char, 128) sink;
     sink ~= "PRE|";
     const streamed = writeSDL(value, sink);
     assert(streamed.hasError);
@@ -3608,13 +3608,13 @@ version (unittest)
     doc.config.bounds = [1, 2];
     doc.config.verbose = true;
 
-    SmallBuffer!(char, 256) viaSmallBuffer;
-    assert(!writeSDL(doc, viaSmallBuffer).hasError);
+    SharedBuffer!(char, 256) viaBuffer;
+    assert(!writeSDL(doc, viaBuffer).hasError);
 
     auto viaAppender = appender!string;
     assert(!writeSDL(doc, viaAppender).hasError);
 
-    assert(viaSmallBuffer[] == viaAppender[]);
+    assert(viaBuffer[] == viaAppender[]);
 
     // Empty sequences emit no occurrence; the zero-init dynamic identity
     // fields fall back to the declared `config` name; the declared singular
@@ -3622,7 +3622,7 @@ version (unittest)
     enum expectedFull = `config "w" 1 2 verbose=true {` ~ "\n"
         ~ `    dep id=""` ~ "\n"
         ~ "}" ~ "\n";
-    assert(viaSmallBuffer[] == expectedFull, viaSmallBuffer[].idup);
+    assert(viaBuffer[] == expectedFull, viaBuffer[].idup);
 }
 
 // Deterministic AA emission across hash randomization: identical bytes for

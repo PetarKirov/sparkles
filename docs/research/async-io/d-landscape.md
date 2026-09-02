@@ -312,7 +312,7 @@ It is GC-coupled (messages are heap values) and thread-oriented, so it is not a 
 
 ### The `@nogc` / `@safe` / `-betterC` constraints
 
-Sparkles (per the repo guidelines) targets **maximum safety attributes**, `@nogc`/`nothrow` hot paths, `-preview=in` and `-preview=dip1000` scope semantics, and `SmallBuffer`-style allocation avoidance. That constraint set rules the existing frameworks out as foundations:
+Sparkles (per the repo guidelines) targets **maximum safety attributes**, `@nogc`/`nothrow` hot paths, `-preview=in` and `-preview=dip1000` scope semantics, and `SharedBuffer`-style allocation avoidance. That constraint set rules the existing frameworks out as foundations:
 
 | Constraint               | vibe-core                       | Photon            | during                              | Implication                          |
 | ------------------------ | ------------------------------- | ----------------- | ----------------------------------- | ------------------------------------ |

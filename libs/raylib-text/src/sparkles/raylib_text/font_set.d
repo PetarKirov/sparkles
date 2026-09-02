@@ -4,7 +4,7 @@
 /// regular Unicode fallback, a Nerd-Font fallback, and up to 8 per-codepoint-map
 /// faces; a base atlas grown lazily as new codepoints appear; and per-face
 /// O(log n) glyph maps. All loading needs an active raylib GL context (call after
-/// `InitWindow`). Holds move-only `SmallBuffer`s, so it is non-copyable — declare
+/// `InitWindow`). Holds move-only `SharedBuffer`s, so it is non-copyable — declare
 /// one instance and pass it by `ref`.
 ///
 /// Face $(I resolution) (name → file path) has two strategies, selected by
@@ -26,7 +26,7 @@ import std.algorithm.searching : canFind, endsWith;
 import std.string : indexOf, strip, split, toLower;
 import std.uni : icmp;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 
 import sparkles.raylib_text.atlas : baseCodepoints;
 import sparkles.raylib_text.font : LoadedFont, loadFontInto, loadVariantFile,
@@ -57,7 +57,7 @@ struct StyledFace
 /// (mirrors Ghostty's font-codepoint-map).
 struct CodepointMap
 {
-    SmallBuffer!(int, 256, true) cps; /// sorted codepoints this entry claims
+    UniqueBuffer!(int, 256) cps; /// sorted codepoints this entry claims
     LoadedFont font;                  /// the mapped face (loaded with exactly `cps`)
 }
 
@@ -67,7 +67,7 @@ enum MAX_CODEPOINT_MAPS = 8;
 /// The multi-face font resource. See the module header.
 struct FontSet
 {
-    @disable this(this); // holds move-only SmallBuffers
+    @disable this(this); // holds move-only UniqueBuffers
 
     // Static base codepoint set (used to reload the fallback fonts).
     private immutable(int)[] codepoints;
@@ -75,18 +75,18 @@ struct FontSet
     // Codepoints requested from the PRIMARY atlas: seeded with the base set and
     // grown on demand as new codepoints appear (e.g. Material Design Icons in the
     // U+F0000+ plane), keeping the atlas bounded to glyphs the session touches.
-    private SmallBuffer!(int, 8192, true) requestedCps;
+    private UniqueBuffer!(int, 8192) requestedCps;
 
     // Sorted codepoint coverage of the primary FACE, parsed from fc-query
     // (ascending lo/hi range bounds). A missing glyph is re-requested from the
     // primary only when the face actually covers it; else it falls through to the
     // fallback chain (and ultimately '?').
-    private SmallBuffer!(int, 256, true) faceLo;
-    private SmallBuffer!(int, 256, true) faceHi;
+    private UniqueBuffer!(int, 256) faceLo;
+    private UniqueBuffer!(int, 256) faceHi;
 
     // Per-frame on-demand request set (owned here so both consumers just call
     // requestGlyph / flushPending; de-duped within a frame).
-    private SmallBuffer!(int, 64, true) pending;
+    private UniqueBuffer!(int, 64) pending;
 
     // The size text is DRAWN at, in the backend's own coordinate units, and so
     // what the cell metrics are expressed in.

@@ -40,7 +40,7 @@ types) and `libs/tree-sitter` (`sparkles:tree-sitter`, `sourceLibrary`).
 - `event.d`: `LabelId` (ushort + `none` sentinel), `HighlightEvent` (flat POD:
   `kind ∈ {source, push, pop}`, `start`/`end` byte offsets, `label`), the
   `isHighlightEventRange` concept, `byStyledSpan` (lazy innermost-wins flatten to
-  `StyledSpan`), package-internal `HighlightStack` over `SmallBuffer`.
+  `StyledSpan`), package-internal `HighlightStack` over `SharedBuffer`.
 - `label.d`: `standardLabels` (~55 sorted canonical dotted names — union of the
   reference crate's recognized names and Helix's theme scopes), `LabelSet` with `find`
   (exact, binary search) and `resolve` (longest-dot-prefix), `fromNames` for custom

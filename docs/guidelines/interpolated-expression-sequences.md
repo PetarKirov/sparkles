@@ -325,16 +325,16 @@ if (isOutputRange!(Writer, char))
 
 For a production implementation of this pattern, see the [`styled_template` module][styled-template-src], where [`writeStyled()`][styled-template-src] processes IES into styled terminal output via an output range.
 
-#### @nogc with SmallBuffer
+#### @nogc with SharedBuffer
 
-For @nogc contexts, use `SmallBuffer` and avoid `.to!string`:
+For @nogc contexts, use `SharedBuffer` and avoid `.to!string`:
 
 ```d
 import core.interpolation;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 // Usage
-SmallBuffer!(char, 256) buf;
+SharedBuffer!(char, 256) buf;
 // Custom @nogc IES processing with integer-to-string conversion
 // that doesn't allocate...
 ```

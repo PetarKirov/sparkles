@@ -32,7 +32,7 @@ case rather than re-cutting the value.
 module sparkles.ui.components.dock;
 
 import core.time : Duration, msecs;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.capability : InputCapabilities;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,
@@ -1500,7 +1500,7 @@ struct DockContainer
         // The order is derived per call, from the frames, so it cannot
         // describe an arrangement that is no longer on screen. A stack
         // buffer keeps that free of the heap at any sane pane count.
-        SmallBuffer!(size_t, 32) order;
+        SharedBuffer!(size_t, 32) order;
         foreach (ref f; paneFrames)
             order ~= cast(size_t) f.pane;
         focus = step >= 0 ? focus.next(order[]) : focus.previous(order[]);

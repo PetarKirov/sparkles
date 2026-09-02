@@ -106,17 +106,17 @@ and its fix stays owned by the input adapter.
 
 `buildDisplayList` returns a GC array today, so every consumer's slice stays alive
 for as long as it is referenced and no lifetime question arises. `NFR2` replaces
-that with a `SmallBuffer` the caller supplies — which turns the returned operations
+that with a `SharedBuffer` the caller supplies — which turns the returned operations
 into a **borrow**: the buffer must outlive every painter that walks it, and a slice
 that currently outlives its producer does so only because the collector kept it
 alive.
 
-**The `sparkles:base` prerequisite is met** (`350ba75d`): `SmallBuffer` registers
+**The `sparkles:base` prerequisite is met** (`350ba75d`): `SharedBuffer` registers
 its heap block as a GC root and initializes its inline slots for an element type
 carrying references, so a `DrawOp` buffer is safe to hold.
 
 **The path exists** (`eea336c3`): `buildDisplayListInto` walks into any sink taking
-`~= DrawOp`, and with a `SmallBuffer` the walk is `@nogc` — asserted at compile
+`~= DrawOp`, and with a `SharedBuffer` the walk is `@nogc` — asserted at compile
 time. `buildDisplayList` is unchanged and now wraps it.
 
 What is left is the ownership, and the audit is what showed it is not mechanical:

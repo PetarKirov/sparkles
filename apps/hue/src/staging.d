@@ -15,7 +15,7 @@ module staging;
 
 import expected : err, Expected;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.diff : DiffDoc, emitSelectionPatch, FileEntry;
 
 /// What a staging operation can report. Text for the human; the operation is
@@ -45,7 +45,7 @@ enum StageAction : ubyte
 /// The patch for a selection, or empty when nothing was selected.
 string selectionPatch(in DiffDoc doc, scope const(bool)[] selected) @safe
 {
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     foreach (fi; 0 .. doc.files.length)
         emitSelectionPatch(doc, doc.files[fi], selected, buf);
     return buf[].idup;

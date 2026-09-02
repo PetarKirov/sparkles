@@ -1019,7 +1019,7 @@ unittest
 /// A percentage of `total`, rendered with one decimal.
 private string fmtPercent(size_t part, size_t total) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeFixedPoint;
 
     if (total == 0)
@@ -1028,7 +1028,7 @@ private string fmtPercent(size_t part, size_t total) @safe
     // Scaled fixed-point (tenths of a percent) so the rendering never goes
     // through a float formatter.
     const scaled = (part * 1000 + total / 2) / total;
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeFixedPoint(buf, scaled, 1);
     return buf[].idup ~ "%";
 }

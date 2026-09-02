@@ -3,11 +3,11 @@
 /// the document's `emph` arena. Guarded (`DVM6` / the survey's unanimous
 /// finding that refinement needs guards or it produces confetti): a token
 /// cap, and a changed-ratio gate above which the pair renders as whole-row
-/// emphasis. `@nogc` (`DVM8`): `SmallBuffer` token lists and a flat LCS
+/// emphasis. `@nogc` (`DVM8`): `SharedBuffer` token lists and a flat LCS
 /// table.
 module sparkles.diff.refine;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.diff.model : DiffOptions, Row, RowKind, Span;
 import sparkles.diff.table : cellsEqual, cellSpans, isSeparatorRow;
@@ -23,14 +23,14 @@ struct Token
 
 /// Tokenize a row: identifier runs (`[A-Za-z0-9_]+`), whitespace runs, and
 /// single other bytes (a multi-byte UTF-8 sequence stays one token).
-SmallBuffer!Token tokenize(scope const(char)[] text) @safe pure nothrow @nogc
+SharedBuffer!Token tokenize(scope const(char)[] text) @safe pure nothrow @nogc
 {
     static bool isWordByte(char c) @safe pure nothrow @nogc
         => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
         || (c >= '0' && c <= '9') || c == '_';
     static bool isSpaceByte(char c) @safe pure nothrow @nogc => c == ' ' || c == '\t';
 
-    SmallBuffer!Token tokens;
+    SharedBuffer!Token tokens;
     size_t i = 0;
     while (i < text.length)
     {
@@ -65,7 +65,7 @@ SmallBuffer!Token tokenize(scope const(char)[] text) @safe pure nothrow @nogc
 /// the changed-ratio gate). `aText`/`bText` are the rows' resolved texts.
 void refinePair(ref Row oldRow, scope const(char)[] aText,
     ref Row newRow, scope const(char)[] bText,
-    ref SmallBuffer!Span emphArena, in DiffOptions opt) @safe pure nothrow @nogc
+    ref SharedBuffer!Span emphArena, in DiffOptions opt) @safe pure nothrow @nogc
 {
     // `DVN4`: when both sides are pipe-table rows with the same shape, the
     // meaningful unit is the CELL, not the word. Word refinement would light
@@ -96,8 +96,8 @@ not tokenize) simply carry no emphasis, so a row that only moved sideways
 lights up nothing.
 */
 void refinePairTokens(ref Row oldRow, scope const(char)[] aText,
-    in SmallBuffer!Token ta, ref Row newRow, scope const(char)[] bText,
-    in SmallBuffer!Token tb, ref SmallBuffer!Span emphArena,
+    in SharedBuffer!Token ta, ref Row newRow, scope const(char)[] bText,
+    in SharedBuffer!Token tb, ref SharedBuffer!Span emphArena,
     in DiffOptions opt) @safe pure nothrow @nogc
 {
     if (ta.length > opt.maxRefineTokens || tb.length > opt.maxRefineTokens)
@@ -148,9 +148,9 @@ would beg the question of which fragment.
 */
 private bool refineTableRow(ref Row oldRow, scope const(char)[] aText,
     ref Row newRow, scope const(char)[] bText,
-    ref SmallBuffer!Span emphArena) @safe pure nothrow @nogc
+    ref SharedBuffer!Span emphArena) @safe pure nothrow @nogc
 {
-    SmallBuffer!Span ca, cb;
+    SharedBuffer!Span ca, cb;
     const na = cellSpans(aText, ca);
     const nb = cellSpans(bText, cb);
     if (na == 0 || na != nb)
@@ -200,7 +200,7 @@ private bool refineTableRow(ref Row oldRow, scope const(char)[] aText,
 /// this slice, as `pairChangeBlocks` leaves them). `oldText`/`newText` back
 /// the rows' `src` spans per side; spans land in `emphArena`.
 void refineRows(scope Row[] rows, scope const(char)[] oldText,
-    scope const(char)[] newText, ref SmallBuffer!Span emphArena,
+    scope const(char)[] newText, ref SharedBuffer!Span emphArena,
     in DiffOptions opt) @safe pure nothrow @nogc
 {
     foreach (idx, ref row; rows)
@@ -213,24 +213,24 @@ void refineRows(scope Row[] rows, scope const(char)[] oldText,
         }
 }
 
-private SmallBuffer!bool falses(size_t n) @safe pure nothrow @nogc
+private SharedBuffer!bool falses(size_t n) @safe pure nothrow @nogc
 {
-    SmallBuffer!bool b;
+    SharedBuffer!bool b;
     b.reserve(n);
     foreach (_; 0 .. n)
         b ~= false;
     return b;
 }
 
-private void tokenLcs(scope const(char)[] aText, in SmallBuffer!Token ta,
-    scope const(char)[] bText, in SmallBuffer!Token tb,
-    ref SmallBuffer!bool inLcsA, ref SmallBuffer!bool inLcsB) @safe pure nothrow @nogc
+private void tokenLcs(scope const(char)[] aText, in SharedBuffer!Token ta,
+    scope const(char)[] bText, in SharedBuffer!Token tb,
+    ref SharedBuffer!bool inLcsA, ref SharedBuffer!bool inLcsB) @safe pure nothrow @nogc
 {
     // Classic O(n·m) LCS table with backtrack, flat; sizes are capped by the
     // caller (`maxRefineTokens`).
     immutable n = ta.length, m = tb.length;
     immutable w = m + 1;
-    SmallBuffer!uint tableBuf;
+    SharedBuffer!uint tableBuf;
     tableBuf.reserve((n + 1) * w);
     foreach (_; 0 .. (n + 1) * w)
         tableBuf ~= 0u;
@@ -268,8 +268,8 @@ private void tokenLcs(scope const(char)[] aText, in SmallBuffer!Token ta,
     }
 }
 
-private void appendChangedSpans(ref Row row, in SmallBuffer!Token tokens,
-    in SmallBuffer!bool inLcs, ref SmallBuffer!Span emphArena) @safe pure nothrow @nogc
+private void appendChangedSpans(ref Row row, in SharedBuffer!Token tokens,
+    in SharedBuffer!bool inLcs, ref SharedBuffer!Span emphArena) @safe pure nothrow @nogc
 {
     row.emphStart = cast(uint) emphArena.length;
     size_t idx = 0;
@@ -323,7 +323,7 @@ unittest
     enum bText = "int total = compute(a, c);";
     auto o = Row(RowKind.removed, 1, 0, Span(0, aText.length), 1);
     auto n = Row(RowKind.added, 0, 1, Span(0, bText.length), 0);
-    SmallBuffer!Span arena;
+    SharedBuffer!Span arena;
     refinePair(o, aText, n, bText, arena, DiffOptions());
     assert(o.emphCount == 1);
     const so = arena[o.emphStart];
@@ -341,7 +341,7 @@ unittest
     enum bText = "delta epsilon zeta eta";
     auto o = Row(RowKind.removed, 1, 0, Span(0, aText.length), 1);
     auto n = Row(RowKind.added, 0, 1, Span(0, bText.length), 0);
-    SmallBuffer!Span arena;
+    SharedBuffer!Span arena;
     refinePair(o, aText, n, bText, arena, DiffOptions());
     assert(o.emphCount == 1 && arena[o.emphStart] == Span(0, aText.length));
     assert(n.emphCount == 1 && arena[n.emphStart] == Span(0, bText.length));
@@ -360,7 +360,7 @@ unittest
     enum bText = "| foo    | baz |";
     auto o = Row(RowKind.removed, 1, 0, Span(0, aText.length), 1);
     auto n = Row(RowKind.added, 0, 1, Span(0, bText.length), 0);
-    SmallBuffer!Span arena;
+    SharedBuffer!Span arena;
     refinePair(o, aText, n, bText, arena, DiffOptions());
 
     assert(o.emphCount == 1, "one cell differs, so one span");
@@ -379,7 +379,7 @@ unittest
     enum wb = "int a = compute(x, z);";
     auto wo = Row(RowKind.removed, 1, 0, Span(0, wa.length), 1);
     auto wn = Row(RowKind.added, 0, 1, Span(0, wb.length), 0);
-    SmallBuffer!Span warena;
+    SharedBuffer!Span warena;
     refinePair(wo, wa, wn, wb, warena, DiffOptions());
     bool marksY;
     foreach (i; 0 .. wo.emphCount)

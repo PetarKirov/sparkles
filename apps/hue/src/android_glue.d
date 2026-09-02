@@ -27,7 +27,7 @@ import std.string : fromStringz, splitLines, strip, toStringz;
 
 import sparkles.base.logger : CoreLogEntry, CoreLogger, LogLevel, sharedCoreLog,
     warning;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.writers : writeInteger;
 
 import android_paths;
@@ -160,7 +160,7 @@ private final class LogcatLogger : CoreLogger
 
         // logcat wants one NUL-terminated line; file:line preserves the
         // DeltaTimeLogger's most useful context.
-        SmallBuffer!(char, 512) buf;
+        SharedBuffer!(char, 512) buf;
         buf ~= entry.file;
         buf ~= ':';
         writeInteger(buf, entry.line);

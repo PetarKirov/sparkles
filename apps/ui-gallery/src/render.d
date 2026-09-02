@@ -51,13 +51,13 @@ struct RenderRequest
 /// would emit for a full repaint.
 string renderAnsi(in RenderRequest req)
 {
-    // A `SmallBuffer!char`, not an `appender!string`: the terminal writers put
+    // A `SharedBuffer!char`, not an `appender!string`: the terminal writers put
     // `const(char)[]` control sequences, which an immutable-element appender
     // refuses. This is the buffer the real render loop uses too.
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     auto grid = renderGrid(req);
-    SmallBuffer!(char, 1 << 16) buf;
+    SharedBuffer!(char, 1 << 16) buf;
     paintFull(buf, grid);
     return buf[].idup;
 }

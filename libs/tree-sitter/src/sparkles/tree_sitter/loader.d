@@ -13,7 +13,7 @@ highlights (the same lifetime policy Helix uses).
 */
 module sparkles.tree_sitter.loader;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.cstring : toCString;
 
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
@@ -50,7 +50,7 @@ TsExpected!Grammar loadGrammar(scope const(char)[] soPath, scope const(char)[] s
         if (handle is null)
             return tsErr!Grammar(TsErrorCode.dlopenFailed);
 
-        SmallBuffer!(char, 128) symbolZ;
+        SharedBuffer!(char, 128) symbolZ;
         symbolZ ~= "tree_sitter_";
         foreach (char c; symbolName)
             symbolZ ~= c == '-' ? '_' : c;

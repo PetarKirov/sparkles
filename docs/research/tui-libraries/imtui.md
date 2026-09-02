@@ -1071,7 +1071,7 @@ allocate. Each frame:
 4. Write changed cells to the terminal (`@nogc` or `@trusted` for syscalls)
 
 There is no `new`, no GC array append, no class instantiation anywhere in the hot path.
-This makes immediate-mode a natural fit for Sparkles' `@nogc` philosophy and `SmallBuffer`
+This makes immediate-mode a natural fit for Sparkles' `@nogc` philosophy and `SharedBuffer`
 infrastructure.
 
 ### ImGui ID System via D's `__LINE__` and `__FILE__`

@@ -18,7 +18,7 @@ import std.path : baseName, extension;
 import std.string : chompPrefix;
 
 import sparkles.base.logger : info, warning;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import diff_session : buildDiffSession, DiffSession;
 import diff_commutative : CommutativeKind, defaultCommutativeKinds;
 import diff_structural : StructuralPolicy;
@@ -1050,7 +1050,7 @@ struct DocumentPipeline
         };
         classifyStructural(doc);
         attachSession(doc);
-        SmallBuffer!char patchBuf;
+        SharedBuffer!char patchBuf;
         emitPatch(doc.diffDoc, patchBuf);
         doc.source = patchBuf[].idup;
         doc.events = highlight(doc.lang, doc.source, quietFallback: true);
@@ -1194,7 +1194,7 @@ struct DocumentPipeline
     private HighlightEvent[] highlight(string lang, scope const(char)[] source,
         bool quietFallback = false)
     {
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         if (cache is null || highlightInjected(*cache, lang, source, ev).hasError)
         {
             // A synthesized language (the diff documents' "diff") degrades

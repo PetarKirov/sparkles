@@ -17,7 +17,7 @@ so a thrown exception never leaves the cursor hidden.
 +/
 module sparkles.ui.components.live;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_control : CtlSeq, writeCursorUp;
 
 /// See the module documentation. Not copyable — the region owns cursor state.
@@ -127,9 +127,9 @@ struct LiveRegion
 
     private void moveToFrameTop()
     {
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
-        SmallBuffer!(char, 16) b;
+        SharedBuffer!(char, 16) b;
         writeCursorUp(b, cast(uint) _prevRows);
         if (b.length)
             _sink(b[]);
@@ -145,7 +145,7 @@ struct LiveRegion
         {
             if (w > 0)
             {
-                SmallBuffer!(char, 256) clamped;
+                SharedBuffer!(char, 256) clamped;
                 truncateField(clamped, line, w);
                 _sink(clamped[]);
             }

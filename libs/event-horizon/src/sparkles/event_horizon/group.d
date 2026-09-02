@@ -274,7 +274,7 @@ unittest
 {
     import core.lifetime : move;
 
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.event_horizon.io : accept, recv, send;
     import sparkles.event_horizon.net : ipv4;
 
@@ -298,7 +298,7 @@ unittest
                 return;
             auto peer = conn.value;
             scope (exit) peer.close();
-            SmallBuffer!(ubyte, 64) buf;
+            SharedBuffer!(ubyte, 64) buf;
             buf.length = 64;
             auto got = peer.recv(move(buf));
             buf = move(got.buf);
@@ -311,11 +311,11 @@ unittest
 
         auto client = env.net.connect(ipv4("127.0.0.1", port)).value;
         scope (exit) client.close();
-        SmallBuffer!(ubyte, 64) msg;
+        SharedBuffer!(ubyte, 64) msg;
         msg ~= payload[];
         cast(void) client.send(move(msg));
 
-        SmallBuffer!(ubyte, 64) back;
+        SharedBuffer!(ubyte, 64) back;
         back.length = 64;
         auto echoed = client.recv(move(back));
         if (!echoed.res.hasError)

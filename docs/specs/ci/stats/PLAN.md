@@ -39,10 +39,10 @@ Gate:
 - `normalizeRunnerKey` (pure, @nogc).
 - `parseJobDuration` (small boundary).
 - `computeStats`, `aggregateByRunner`, top-N, filters — all expressed with `std.algorithm` / `std.range` (map/filter/fold/reduce/sort/groupBy/take etc.).
-- Duration formatting exclusively via `SmallBuffer` + `writeDuration`.
+- Duration formatting exclusively via `SharedBuffer` + `writeDuration`.
 - All statistical functions are `@safe pure nothrow` (or the maximal safe subset) and have tagged unit tests that use mock data.
 
-Gate: pure tests pass (`dub test :ci` or direct compile with `-unittest`); no hand-rolled accumulation loops remain in the stats path; `checkWriter` / SmallBuffer style used where appropriate.
+Gate: pure tests pass (`dub test :ci` or direct compile with `-unittest`); no hand-rolled accumulation loops remain in the stats path; `checkWriter` / SharedBuffer style used where appropriate.
 
 ## M4 — Live TUI rendering + integration
 

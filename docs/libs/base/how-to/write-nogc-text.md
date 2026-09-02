@@ -1,11 +1,11 @@
 # Write `@nogc` text
 
-Use `SmallBuffer` plus `sparkles.base.text.writers` when a hot path needs
+Use `SharedBuffer` plus `sparkles.base.text.writers` when a hot path needs
 formatted text but must not allocate through the garbage collector.
 
 ## Format into an output range
 
-The writers accept any output range. `SmallBuffer!(char, N)` is the usual
+The writers accept any output range. `SharedBuffer!(char, N)` is the usual
 choice for short-lived text:
 
 ```d
@@ -17,11 +17,11 @@ choice for short-lived text:
 import core.time : dur;
 import std.stdio : writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.writers : writeBytes, writeDuration, writeIntegerPadded;
 
 @safe nothrow @nogc
-void render(ref SmallBuffer!(char, 128) out_)
+void render(ref SharedBuffer!(char, 128) out_)
 {
     out_ ~= "job=";
     writeIntegerPadded(out_, 42, 4);
@@ -33,7 +33,7 @@ void render(ref SmallBuffer!(char, 128) out_)
 
 void main()
 {
-    SmallBuffer!(char, 128) buf;
+    SharedBuffer!(char, 128) buf;
     render(buf);
     writeln(buf[]);
 }

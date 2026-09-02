@@ -6,7 +6,7 @@ Use allocation-free check helpers to write unit tests for output-range formattin
 
 Normally, testing a custom `toString(Writer)(ref Writer w)` method or a writer function involves allocating a `string` or using `std.array.appender` which GC-allocates and breaks `@nogc` constraints.
 
-`sparkles:base` provides two core check helpers in `sparkles.base.smallbuffer` that operate entirely within `@nogc` buffers and compare output using a recycled exception mechanism on failure:
+`sparkles:base` provides two core check helpers in `sparkles.base.buffer` that operate entirely within `@nogc` buffers and compare output using a recycled exception mechanism on failure:
 
 - **`checkToString(value, expected)`**: Tests any type that implements `void toString(Writer)(ref Writer w)`.
 - **`checkWriter!render(expected)`**: Tests a custom lambda/expression `render(ref Writer)` that writes to an output range.
@@ -19,7 +19,7 @@ Example unit test:
     name "base_test_with_check_helpers"
     dependency "sparkles:base" version="*"
 +/
-import sparkles.base.smallbuffer : checkToString, checkWriter;
+import sparkles.base.buffer : checkToString, checkWriter;
 import sparkles.base.styled_template : writeStyled, styledWriteln;
 import core.exception : AssertError;
 

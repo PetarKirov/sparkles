@@ -6,13 +6,13 @@
 ///
 /// The model is **`@nogc` by construction** (`DSM5`, the `sparkles:diff`
 /// discipline): a flat arena of plain-old-data structs of spans and indices,
-/// owned by `SmallBuffer`; the source text is **borrowed** (it must outlive
+/// owned by `SharedBuffer`; the source text is **borrowed** (it must outlive
 /// the document) and is never copied — resident overhead is proportional to
 /// record count, not content size (`DSN1`). Quoted cells decode lazily
 /// ([decodeCell]); a simple cell's text **is** its raw span ([cellRaw]).
 module sparkles.dsv.model;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// A byte span into the borrowed source.
 struct Span
@@ -117,8 +117,8 @@ struct DsvDoc
 
     Dialect dialect;
 
-    SmallBuffer!DsvRecord records;
-    SmallBuffer!DsvCell cells;
+    SharedBuffer!DsvRecord records;
+    SharedBuffer!DsvCell cells;
 
     /// The widest record's cell count — the grid's column count (`DSM3`:
     /// a long record grows the grid).
@@ -231,7 +231,7 @@ unittest
     DsvDoc doc;
     doc.source = "plain";
     const cell = DsvCell(Span(0, 5));
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     const text = decodeCell(doc, cell, buf);
     assert(text == "plain");
     assert(buf.length == 0); // borrowed, not copied
@@ -244,7 +244,7 @@ unittest
     DsvDoc doc;
     doc.source = `"he said ""hi"", left"`;
     const cell = DsvCell(Span(0, doc.source.length), CellFlags.quoted);
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == `he said "hi", left`);
 }
 
@@ -256,7 +256,7 @@ unittest
     DsvDoc doc;
     doc.source = `"a"b"c"`;
     const cell = DsvCell(Span(0, doc.source.length), CellFlags.quoted);
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == "abc");
 }
 
@@ -470,15 +470,15 @@ void inferColumnTypes(Buf)(in DsvDoc doc, size_t sampleRecords, ref Buf types)
 void inferColumnTypesFrom(Buf)(in DsvDoc doc, size_t firstRecord,
     size_t sampleRecords, ref Buf types)
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // kindCounts[col * kinds + kind]
     enum kinds = 6;
-    SmallBuffer!(uint, 6 * 16) counts;
+    SharedBuffer!(uint, 6 * 16) counts;
     foreach (_; 0 .. doc.columnCount * kinds)
         counts ~= 0u;
 
-    SmallBuffer!(char, 256) decodeBuf;
+    SharedBuffer!(char, 256) decodeBuf;
     const first = firstRecord;
     const last = doc.records.length < first + sampleRecords
         ? doc.records.length : first + sampleRecords;
@@ -539,7 +539,7 @@ unittest
     }
     doc.columnCount = 2;
 
-    SmallBuffer!(ColumnType, 16) types;
+    SharedBuffer!(ColumnType, 16) types;
     inferColumnTypes(doc, 100, types);
     assert(types.length == 2);
     assert(types[0] == ColumnType.text);

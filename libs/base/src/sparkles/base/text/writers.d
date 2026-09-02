@@ -143,7 +143,7 @@ if (__traits(isUnsigned, T) && radix >= 2 && radix <= 36)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter, SharedBuffer;
 
     checkWriter!((ref b) => writeIntegerPadded(b, 7, 3))("007");
 }
@@ -152,7 +152,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeIntegerPadded(b, 1234, 3))("1234");
 }
@@ -161,7 +161,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeIntegerPadded(b, 42u, 0))("42");
 }
@@ -170,7 +170,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeIntegerPadded(b, -5, 3))("-005");
 }
@@ -179,7 +179,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeInteger(b, 42))("42");
 }
@@ -188,7 +188,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     // The branchlut writer switches strategy at 100 / 10^4 / 10^6 / 10^8 /
     // 10^16 — pin one value on each side of every boundary, plus the
@@ -216,13 +216,13 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The CTFE per-digit path and the runtime branchlut path must agree.
     static char[32] render(ulong v)
     {
         char[32] r = 0;
-        SmallBuffer!(char, 24) b;
+        SharedBuffer!(char, 24) b;
         writeInteger(b, v);
         r[0 .. b[].length] = b[];
         return r;
@@ -238,7 +238,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeInteger(b, -123))("-123");
 }
@@ -247,7 +247,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeInteger(b, 0))("0");
 }
@@ -256,7 +256,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeInteger(b, 0uL))("0");
 }
@@ -265,7 +265,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeHex(b, 0xDEADu))("dead");
     checkWriter!((ref b) => writeBinary(b, 0b1011u))("1011");
@@ -281,7 +281,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : checkWriter;
 
     checkWriter!((ref b) => writeIntegerPadded!16(b, 0xABu, 4))("00ab");
     checkWriter!((ref b) => writeIntegerPadded!2(b, 5u, 8))("00000101");
@@ -394,9 +394,9 @@ if (__traits(isFloating, T))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeFloat(buf, 3.14);
     assert(buf[] == "3.14");
 }
@@ -405,9 +405,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
 
     writeFloat(buf, double.nan);
     assert(buf[] == "nan");
@@ -429,9 +429,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
 
     writeFloat(buf, 0.0);
     assert(buf[] == "0");
@@ -445,9 +445,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
 
     writeFloat(buf, 10.0);
     assert(buf[] == "10");
@@ -465,9 +465,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
 
     // Large value should use scientific notation
     writeFloat(buf, 1e30);
@@ -524,9 +524,9 @@ void writeEscapedChar(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEscapedChar(buf, '\n');
     assert(buf[] == `\n`);
 }
@@ -546,9 +546,9 @@ void writeEscapedString(Writer, S)(ref Writer w, S s) if (isSomeString!S)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeEscapedString(buf, "hello\nworld");
     assert(buf[] == `"hello\nworld"`);
 }
@@ -567,9 +567,9 @@ void writeEscapedCharLiteral(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEscapedCharLiteral(buf, '\t');
     assert(buf[] == `'\t'`);
 }
@@ -582,11 +582,11 @@ unittest
 /// i.g. `void toString(W)(ref W writer)`.
 template hasOutputRangeToString(T)
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum hasOutputRangeToString = __traits(compiles, () {
         T t = T.init;
-        SmallBuffer!(char, 128) buf;
+        SharedBuffer!(char, 128) buf;
         t.toString(buf);
     }());
 }
@@ -595,11 +595,11 @@ template hasOutputRangeToString(T)
 /// output range writer.
 template hasNogcOutputRangeToString(T)
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum hasNogcOutputRangeToString = __traits(compiles, () @nogc {
         T t = T.init;
-        SmallBuffer!(char, 128) buf;
+        SharedBuffer!(char, 128) buf;
         t.toString(buf);
     }());
 }
@@ -756,9 +756,9 @@ void writeValue(Writer, T)(ref Writer w, auto ref const T val)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeValue(buf, true);
     assert(buf[] == "true");
 
@@ -771,9 +771,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeValue(buf, 42);
     assert(buf[] == "42");
 
@@ -786,9 +786,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeValue(buf, 3.14);
     assert(buf[] == "3.14");
 }
@@ -797,9 +797,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeValue(buf, 'A');
     assert(buf[] == "A");
 }
@@ -808,9 +808,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeValue(buf, "hello world");
     assert(buf[] == "hello world");
 }
@@ -819,9 +819,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeValue(buf, NogcOutputRangeType(42));
     assert(buf[] == "NogcOR");
 }
@@ -844,9 +844,9 @@ void writeEscapeSeq(Writer)(ref Writer w, uint code)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEscapeSeq(buf, 34);
     assert(buf[] == "\x1b[34m");
 }
@@ -872,9 +872,9 @@ void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool r
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStylized(buf, "hello", Style.blue);
     assert(buf[] == "\x1b[34mhello\x1b[39m");
 }
@@ -883,9 +883,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStylized(buf, "hello", Style.blue, false);
     assert(buf[] == "\x1b[34mhello");
 }
@@ -894,9 +894,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeStylized(buf, "hello", Style.none);
     assert(buf[] == "hello");
 }
@@ -946,11 +946,11 @@ if (is(E == enum))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum Color { red, green, blue }
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEnumMemberName(buf, Color.green);
     assert(buf[] == "green");
 }
@@ -959,11 +959,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum Mode { fastPath, slowPath }
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEnumMemberName!(CaseStyle.snakeCase)(buf, Mode.fastPath);
     assert(buf[] == "fast_path");
 }
@@ -972,11 +972,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum Flags : ubyte { a = 1, b = 2 }
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEnumMemberName(buf, cast(Flags) 3);
     assert(buf[] == "3");
 }
@@ -985,11 +985,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum Priority { low = 1, high = 5 }
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeEnumValue(buf, Priority.high);
     assert(buf[] == "5");
 }
@@ -1140,11 +1140,11 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct NoHook {}
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, 42, NoHook(), false);
     assert(buf[] == "42");
 
@@ -1158,7 +1158,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct BlueInts
     {
@@ -1171,7 +1171,7 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, 42, BlueInts(), true);
     assert(buf[] == "\x1b[34m42\x1b[39m");
 }
@@ -1181,7 +1181,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct EscStrings
     {
@@ -1192,7 +1192,7 @@ unittest
         enum escapeChars = true;
     }
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, "hi\nthere", EscStrings(), false);
     assert(buf[] == `"hi\nthere"`);
 
@@ -1214,7 +1214,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     enum Dir { north, south, east, west }
 
@@ -1223,7 +1223,7 @@ unittest
         enum enumRender = EnumRender.memberName;
     }
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeStyledValue(buf, Dir.south, EnumHook(), false);
     assert(buf[] == "south");
 }
@@ -1233,14 +1233,14 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct AlwaysBlue
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.blue;
     }
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, 42, AlwaysBlue(), false);
     assert(buf[] == "42");
 }
@@ -1250,14 +1250,14 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct YellowNull
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.yellow;
     }
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, null, YellowNull(), true);
     assert(buf[] == "\x1b[33mnull\x1b[39m");
 }
@@ -1267,7 +1267,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct YellowBool
     {
@@ -1280,7 +1280,7 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, true, YellowBool(), true);
     assert(buf[] == "\x1b[33mtrue\x1b[39m");
 }
@@ -1291,7 +1291,7 @@ unittest
 unittest
 {
     import std.math.traits : isNaN;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     struct FloatHook
     {
@@ -1309,7 +1309,7 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeStyledValue(buf, double.nan, FloatHook(), true);
     assert(buf[] == "\x1b[31mnan\x1b[39m");
 
@@ -1391,9 +1391,9 @@ void writeHexByte(Writer)(ref Writer w, ubyte b)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 8) buf;
+    SharedBuffer!(char, 8) buf;
     void check(ubyte b, string expected)
     {
         buf.clear();
@@ -1411,9 +1411,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     void check(alias call)(string expected)
     {
         buf.clear();
@@ -1616,10 +1616,10 @@ void writeDurationPadded(Writer)(
     ref Writer w, in Duration duration, size_t width,
     DurationPad pad = DurationPad.after)
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import std.range.primitives : put;
 
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeDuration(buf, duration);
     const text = buf[];
     const n = utf8ScalarCount(text);
@@ -1726,9 +1726,9 @@ in (maxUnits >= 1, "maxUnits must be >= 1")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     void check(ulong bytes, string expected)
     {
         buf.clear();
@@ -1754,9 +1754,9 @@ unittest
 unittest
 {
     import core.time : dur;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     void check(Duration d, string expected)
     {
         buf.clear();
@@ -1799,9 +1799,9 @@ unittest
 unittest
 {
     import core.time : dur;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
 
     // `units` is compile-time, `precision` is a runtime argument.
     buf.clear();
@@ -1831,9 +1831,9 @@ unittest
 unittest
 {
     import core.time : dur;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeDurationPadded(buf, dur!"msecs"(1_500), 6);
     assert(buf[] == "1.5s  ");            // default DurationPad.after
     buf.clear();
@@ -1846,9 +1846,9 @@ unittest
 unittest
 {
     import core.time : dur;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     void check(Duration d, string expected, DurationPad pad = DurationPad.after)
     {
         buf.clear();
@@ -1887,9 +1887,9 @@ unittest
 unittest
 {
     import core.time : dur;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     void check(Duration d, uint maxUnits, string expected)
     {
         buf.clear();

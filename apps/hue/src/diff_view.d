@@ -635,12 +635,12 @@ private GutterCell[] unifiedCells(in Row row, int digits) @safe
 /// A line number, or a blank strip when the side has none.
 private GutterCell numberCell(uint line, int digits) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
     if (line == 0)
         return blankCell(digits);
-    SmallBuffer!(char, 16) buf;
+    SharedBuffer!(char, 16) buf;
     writeInteger(buf, line);
     return cellOf(buf[], digits);
 }

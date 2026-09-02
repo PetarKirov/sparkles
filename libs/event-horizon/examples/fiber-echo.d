@@ -51,7 +51,7 @@ import core.sys.posix.netinet.in_ : INADDR_LOOPBACK, sockaddr_in;
 import core.sys.posix.sys.socket;
 
 import sparkles.base.logger : LogLevel, info, initLogger, warning;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.io;
 import sparkles.event_horizon.op : SockAddr;
@@ -69,7 +69,7 @@ static immutable ubyte[] payload = cast(immutable ubyte[]) "event horizon \xF0\x
 void echo(Stream conn)
 {
     scope (exit) conn.close();
-    SmallBuffer!(ubyte, 4096) buf;
+    SharedBuffer!(ubyte, 4096) buf;
     buf.length = 4096;
     for (;;)
     {
@@ -141,12 +141,12 @@ int main()
         const connected = client.connect(addr);
         assert(!connected.hasError);
 
-        SmallBuffer!(ubyte, 4096) msg;
+        SharedBuffer!(ubyte, 4096) msg;
         msg ~= payload[];
         auto sent = client.send(move(msg));
         assert(!sent.res.hasError && sent.res.value == payload.length);
 
-        SmallBuffer!(ubyte, 4096) back;
+        SharedBuffer!(ubyte, 4096) back;
         back.length = 4096;
         auto got = client.recv(move(back));
         assert(!got.res.hasError && got.res.value == payload.length);

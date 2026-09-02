@@ -45,7 +45,7 @@ import sparkles.dsv : applyProjection, ColumnType, detectHeader, Dialect,
     DsvDoc,
     inferColumnTypes, parseDsv, ProjectionSpec, seedForExtension, sniff,
     sniffMaxBytes, sniffMaxRecords, SortKey;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.syntax : HighlightEvent, TsConfigCache;
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchIter, blackBox;
@@ -115,7 +115,7 @@ unittest that built it.
 executes it after the enclosing `unittest` has returned. Anything with a
 destructor that lives in that frame is therefore already destroyed by the
 time the timed body runs. A `DsvDoc` holds its records and cells in
-$(REF SmallBuffer, sparkles,base,smallbuffer)s, whose destructor releases the
+$(REF SharedBuffer, sparkles,base,buffer)s, whose destructor releases the
 storage and zeroes the length, so a `DsvDoc` local reads back **empty** inside
 the body and the leg silently times nothing at all. (Plain scalars survive —
 freed stack memory keeps its bytes — which is what makes the failure look
@@ -130,7 +130,7 @@ private final class ModelFixture
     string src;
     typeof(parseDsv("", Dialect.init)) parsed;
     DsvDoc doc;
-    SmallBuffer!(ColumnType, 16) types;
+    SharedBuffer!(ColumnType, 16) types;
 
     this() @safe
     {
@@ -143,7 +143,7 @@ private final class ModelFixture
 
     size_t project(in ProjectionSpec spec) @safe
     {
-        SmallBuffer!(uint, 64) perm;
+        SharedBuffer!(uint, 64) perm;
         applyProjection(doc, types[], spec, perm);
         return perm.length;
     }
@@ -201,7 +201,7 @@ private final class ModelFixture
 {
     auto fx = new ModelFixture;
     benchIter({
-        SmallBuffer!(ColumnType, 16) t;
+        SharedBuffer!(ColumnType, 16) t;
         inferColumnTypes(fx.doc, sniffMaxRecords, t);
         blackBox(t.length);
     }, ["phase": "infer-types", "scope": "100-record-sample", "rows": "3012"]);

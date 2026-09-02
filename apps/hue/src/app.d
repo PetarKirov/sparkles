@@ -40,7 +40,7 @@ import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark, builtinThemes;
 
 import sparkles.base.logger : trace, traceSpan, warning;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
 import ansi_model : BackgroundMode, backgroundOptions;
@@ -623,7 +623,7 @@ int executeGallery(in HueCli root, in Gallery gallery)
 
     string renderOne(in SourceEntry e)
     {
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         if (twoslash)
         {
             const tw = twoslashPayloadFor(e, payloads);
@@ -810,7 +810,7 @@ int executeSite(in HueCli root, in Site cmd)
     bool[string] written;
     string renderOne(in SourceEntry e)
     {
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         string html;
         if (twoslash && (isTwoslashPayload(e.path) || (e.path in payloads) !is null))
         {
@@ -1075,7 +1075,7 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
 
     string renderOne(in SourceEntry e)
     {
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         if (twoslash)
         {
             const tw = twoslashPayloadFor(e, payloads);
@@ -1266,7 +1266,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
     if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
         return 0;
 
-    SmallBuffer!char output;
+    SharedBuffer!char output;
     const depth = detectColorDepth();
     const bgMode = parseBackgroundMode(opt.background);
     final switch (doc.kind) with (ContentKind)
@@ -1550,7 +1550,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
                 }
                 copt.wrap = TextWrap.none;   // a document, not a pane
 
-                SmallBuffer!char htmlOut;
+                SharedBuffer!char htmlOut;
                 auto b = Builder();
                 const docRoot = viewCodeDocumentInto(b, doc.source, doc.events,
                     (() @trusted => &theme)(), pageFg, copt);
@@ -1572,7 +1572,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             import sparkles.syntax.md.render_html : renderMarkdownHtml;
 
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            SmallBuffer!char output;
+            SharedBuffer!char output;
             output ~= "<style>\n";
             writeThemeStylesheet(theme, output);
             output ~= markdownPreviewCss;
@@ -1596,7 +1596,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            SmallBuffer!char htmlOut;
+            SharedBuffer!char htmlOut;
             writeWidgetHtmlPage(htmlOut,
                 viewDiffDoc(doc.diffDoc,
                     htmlDiffOptions(diffLayout, diffShowFormatting, diffChrome),
@@ -1977,19 +1977,19 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
     // instead of rendering as plain escaped text.
     const(char)[] highlightFence(const(char)[] infoLang, const(char)[] code)
     {
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         const canon = canonicalLanguage(infoLang);
         auto r = highlightInjected(cache, canon, code, ev);
         if (r.hasError)
             ev ~= HighlightEvent.sourceSpan(0, code.length);
-        SmallBuffer!char b;
+        SharedBuffer!char b;
         b ~= `<pre class="syn-root code-fence"><code>`;
         renderHtml(code, ev[], theme, b, HtmlOptions(mode: HtmlMode.cssClasses));
         b ~= "</code></pre>";
         return b[].idup;
     }
 
-    SmallBuffer!char output;
+    SharedBuffer!char output;
     {
         output ~= "<style>\n";
         writeThemeStylesheet(theme, output);

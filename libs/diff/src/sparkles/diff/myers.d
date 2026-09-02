@@ -4,7 +4,7 @@
 /// emission (all removals, then all additions), and hunk extraction.
 ///
 /// Everything here is `@nogc` (`DVM8`): lines are `Span`s into the input,
-/// working storage is `SmallBuffer` (interning is sort-based, not an AA),
+/// working storage is `SharedBuffer` (interning is sort-based, not an AA),
 /// hunks are index ranges into the one row arena, and hot loops index
 /// through once-taken slices so the copy-on-write uniqueness check runs per
 /// pass, not per element.
@@ -12,13 +12,13 @@ module sparkles.diff.myers;
 
 import std.algorithm.sorting : sort;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.diff.model : Degradation, DiffOptions, Hunk, Row, RowKind, Span;
 import sparkles.diff.normalize : compareLines, linesEqual, WhitespaceMode;
 
 /// The line list of one side — spans into that side's text.
-alias LineSpans = SmallBuffer!Span;
+alias LineSpans = SharedBuffer!Span;
 
 /// Split `text` into line spans without their trailing newline.
 /// `missingNewline` reports whether the last line lacked one (the
@@ -71,7 +71,7 @@ unittest
 private void internLinePair(
     scope const(char)[] oldText, in LineSpans oldLines,
     scope const(char)[] newText, in LineSpans newLines,
-    ref SmallBuffer!uint oldIds, ref SmallBuffer!uint newIds,
+    ref SharedBuffer!uint oldIds, ref SharedBuffer!uint newIds,
     WhitespaceMode ws = WhitespaceMode.exact) @safe pure nothrow @nogc
 {
     static struct Key
@@ -81,7 +81,7 @@ private void internLinePair(
     }
 
     const total = oldLines.length + newLines.length;
-    SmallBuffer!Key keys;
+    SharedBuffer!Key keys;
     keys.reserve(total);
     foreach (i; 0 .. oldLines.length)
         keys ~= Key(oldLines[i], i);
@@ -125,14 +125,14 @@ private void internLinePair(
 /// new lines are inserted, plus whether the search was capped.
 struct LineDiff
 {
-    SmallBuffer!bool oldRemoved;
-    SmallBuffer!bool newInserted;
+    SharedBuffer!bool oldRemoved;
+    SharedBuffer!bool newInserted;
     Degradation degraded;
 }
 
-private SmallBuffer!bool falses(size_t n) @safe pure nothrow @nogc
+private SharedBuffer!bool falses(size_t n) @safe pure nothrow @nogc
 {
-    SmallBuffer!bool b;
+    SharedBuffer!bool b;
     b.reserve(n);
     foreach (_; 0 .. n)
         b ~= false;
@@ -188,14 +188,14 @@ LineDiff diffLineIds(scope const(uint)[] a, scope const(uint)[] b,
     immutable off = maxD;
     immutable stride = 2 * maxD + 1;
 
-    SmallBuffer!ptrdiff_t vBuf;
+    SharedBuffer!ptrdiff_t vBuf;
     vBuf.reserve(stride);
     foreach (_; 0 .. stride)
         vBuf ~= 0;
     scope v = vBuf[];
 
     // The per-d V snapshots, flattened (`trace[d * stride + off + k]`).
-    SmallBuffer!ptrdiff_t trace;
+    SharedBuffer!ptrdiff_t trace;
     ptrdiff_t dFound = -1;
 
     outer: foreach (d; 0 .. maxD + 1)
@@ -260,10 +260,10 @@ LineDiff diffLineIds(scope const(uint)[] a, scope const(uint)[] b,
 /// Emit the full row stream git-style: within a change block, all removed
 /// rows precede all added rows; line numbers are 1-based per side. Row `src`
 /// spans reference each side's own text (the `Row.src` convention).
-SmallBuffer!Row buildRows(in LineSpans oldLines, in LineSpans newLines, in LineDiff d)
+SharedBuffer!Row buildRows(in LineSpans oldLines, in LineSpans newLines, in LineDiff d)
     @safe pure nothrow @nogc
 {
-    SmallBuffer!Row rows;
+    SharedBuffer!Row rows;
     rows.reserve(oldLines.length + newLines.length);
     scope oldRemoved = d.oldRemoved[];
     scope newInserted = d.newInserted[];
@@ -298,14 +298,14 @@ SmallBuffer!Row buildRows(in LineSpans oldLines, in LineSpans newLines, in LineD
 /// Group a full row stream into hunks with `context` context lines; change
 /// blocks closer than `2 * context` merge into one hunk. Hunks are index
 /// ranges into `rows` — no row is copied.
-SmallBuffer!Hunk buildHunks(in SmallBuffer!Row rows, uint context) @safe pure nothrow @nogc
+SharedBuffer!Hunk buildHunks(in SharedBuffer!Row rows, uint context) @safe pure nothrow @nogc
 {
     // Indices of non-context rows.
-    SmallBuffer!size_t changed;
+    SharedBuffer!size_t changed;
     foreach (idx; 0 .. rows.length)
         if (rows[idx].kind != RowKind.context)
             changed ~= idx;
-    SmallBuffer!Hunk hunks;
+    SharedBuffer!Hunk hunks;
     if (changed.length == 0)
         return hunks;
 
@@ -354,7 +354,7 @@ SmallBuffer!Hunk buildHunks(in SmallBuffer!Row rows, uint context) @safe pure no
     return hunks;
 }
 
-private uint firstNeighborLine(in SmallBuffer!Row rows, size_t firstIdx, bool oldSide)
+private uint firstNeighborLine(in SharedBuffer!Row rows, size_t firstIdx, bool oldSide)
     @safe pure nothrow @nogc
 {
     // The last line number of the given side at or before the hunk start.
@@ -374,7 +374,7 @@ LineDiff diffLines(
     uint maxEditDistance, WhitespaceMode ws = WhitespaceMode.exact)
     @safe pure nothrow @nogc
 {
-    SmallBuffer!uint oldIds, newIds;
+    SharedBuffer!uint oldIds, newIds;
     internLinePair(oldText, oldLines, newText, newLines, oldIds, newIds, ws);
     return diffLineIds(oldIds[], newIds[], maxEditDistance);
 }
@@ -491,7 +491,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!Row rows;
+    SharedBuffer!Row rows;
     foreach (i; 0 .. 5)
         rows ~= Row(RowKind.context, cast(uint)(i + 1), cast(uint)(i + 1), Span(0, 1));
     rows ~= Row(RowKind.removed, 6, 0, Span(0, 3));

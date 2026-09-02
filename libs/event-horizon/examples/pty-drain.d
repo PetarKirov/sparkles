@@ -35,7 +35,7 @@ module event_horizon_pty_drain;
 import core.lifetime : move;
 import std.stdio : writefln, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.io : read;
 import sparkles.event_horizon.live : spawnPty, wait;
 import sparkles.event_horizon.sched : Sched;
@@ -50,7 +50,7 @@ int main()
     }
     scope (exit) sched.destroy();
 
-    SmallBuffer!(char, 256) captured;
+    SharedBuffer!(char, 256) captured;
     bool cleanExit;
     bool skipped;
     auto r = sched.run(() {
@@ -68,7 +68,7 @@ int main()
         // (the master reports EIO once the slave side is gone).
         for (;;)
         {
-            SmallBuffer!(ubyte, 128) buf;
+            SharedBuffer!(ubyte, 128) buf;
             buf.length = 128;
             auto got = read(child.ptyMaster, move(buf));
             buf = move(got.buf);

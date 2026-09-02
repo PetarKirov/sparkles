@@ -570,7 +570,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import std.string : representation;
 
     // RFC 4648 §10 test vectors, exercised through the named aliases.
@@ -611,7 +611,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import std.string : representation;
 
     checkWriter!((ref b) => encodeBase64(b, "M".representation))("TQ==");
@@ -635,13 +635,13 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import std.string : representation;
 
     static void checkDecode(alias dec)(
         scope const(char)[] text, scope const(ubyte)[] expected)
     {
-        SmallBuffer!(ubyte, 64) buf;
+        SharedBuffer!(ubyte, 64) buf;
         auto r = dec(buf, text);
         assert(r.hasValue);
         assert(r.value == expected.length);
@@ -670,7 +670,7 @@ unittest
 unittest
 {
     import std.meta : AliasSeq;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static void roundTrip(Alphabet a)()
     {
@@ -685,11 +685,11 @@ unittest
                 data[j] = cast(ubyte)(x >> 24);
             }
 
-            SmallBuffer!(char, 256) enc;
+            SharedBuffer!(char, 256) enc;
             encodeBase!a(enc, data[0 .. n]);
             assert(enc[].length == encodedLen(a, n));
 
-            SmallBuffer!(ubyte, 128) dec;
+            SharedBuffer!(ubyte, 128) dec;
             auto r = decodeBase!a(dec, enc[]);
             assert(r.hasValue);
             assert(r.value == n);
@@ -705,9 +705,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodeBase64(buf, "Zm9$");
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.unexpectedCharacter);
@@ -725,9 +725,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodeBase64(buf, "TQ==TWFu");
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.unexpectedCharacter);
@@ -739,10 +739,10 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // A single base64 char holds 6 bits — no complete byte: check (1).
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodeBase64(buf, "Z");
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.unexpectedEnd);
@@ -766,10 +766,10 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // "TQ==" is canonical; "TR==" leaves non-zero unused bits: check (2).
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodeBase64(buf, "TR==");
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.nonCanonicalTrailing);
@@ -786,9 +786,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
-    SmallBuffer!(ubyte, 16) buf;
+    SharedBuffer!(ubyte, 16) buf;
     auto r = decodeBase64(buf, "TQ="); // needs two pads
     assert(!r.hasValue);
     assert(r.error.code == ParseErrorCode.paddingMismatch);
@@ -835,7 +835,7 @@ unittest
 unittest
 {
     import std.meta : AliasSeq;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static void check(Alphabet a, size_t N)()
     {
@@ -850,7 +850,7 @@ unittest
         char[encodedLen(a, N)] dst = void;
         encodeBase!a(src, dst);
 
-        SmallBuffer!(char, 128) reference;
+        SharedBuffer!(char, 128) reference;
         encodeBase!a(reference, src[]);
         assert(dst[] == reference[]); // byte-identical to streaming
 
@@ -919,7 +919,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.base.text.writers : writeHexByte;
 
     // writeHexByte is definitionally the one-byte fixed-length encode over
@@ -931,7 +931,7 @@ unittest
         char[2] viaCodec = void;
         encodeBase!base16lower(src, viaCodec);
 
-        SmallBuffer!(char, 4) viaWriter;
+        SharedBuffer!(char, 4) viaWriter;
         writeHexByte(viaWriter, cast(ubyte) b);
         assert(viaWriter[] == viaCodec[]);
     }
@@ -1006,16 +1006,16 @@ in (width > 0, "line-wrap width must be positive")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import std.string : representation;
 
-    SmallBuffer!(char, 128) buf;
+    SharedBuffer!(char, 128) buf;
     auto lw = lineWrapWriter(buf, 4);
     encodeBase64(lw, "foobarbaz".representation);
     assert(buf[] == "Zm9v\nYmFy\nYmF6"); // no trailing newline
 
     // A width no line exceeds leaves the output untouched.
-    SmallBuffer!(char, 128) wide;
+    SharedBuffer!(char, 128) wide;
     auto lww = lineWrapWriter(wide, 80);
     encodeBase64(lww, "foobarbaz".representation);
     assert(wide[] == "Zm9vYmFyYmF6");
@@ -1025,7 +1025,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // The bulk overload must be indistinguishable from feeding the same
     // characters one at a time — including when a run straddles the wrap
@@ -1034,7 +1034,7 @@ unittest
     foreach (width; 1 .. 12)
         foreach (chunk; 1 .. 15)
         {
-            SmallBuffer!(char, 128) bulk;
+            SharedBuffer!(char, 128) bulk;
             auto bw = lineWrapWriter(bulk, width);
             for (size_t i = 0; i < payload.length; i += chunk)
             {
@@ -1042,7 +1042,7 @@ unittest
                 bw.put(payload[i .. end]);
             }
 
-            SmallBuffer!(char, 128) charwise;
+            SharedBuffer!(char, 128) charwise;
             auto cw = lineWrapWriter(charwise, width);
             foreach (c; payload)
                 cw.put(c);
@@ -1055,11 +1055,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // 60 zero bytes encode to 80 'A's; MIME wraps at 76 with CRLF.
     ubyte[60] data = 0;
-    SmallBuffer!(char, 128) buf;
+    SharedBuffer!(char, 128) buf;
     auto lw = lineWrapWriter(buf, 76, "\r\n");
     encodeBase64(lw, data[]);
 

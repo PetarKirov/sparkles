@@ -131,7 +131,7 @@ import sparkles.core_cli.process_utils :
     ChildStdin, executeMonitored, executeMonitoredLines,
     MonitoredLineRange, MonitoredResult, ResourceUsage,
     sampleThisProcessTree, selfAndChildrenCpuUsage, selfRssBytes, timedOutStatus;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.base.text.writers : writeDuration;
 import sparkles.core_cli.term_unstyle : unstyle;
@@ -773,7 +773,7 @@ private int runCheckCommitScope(string msgSource)
         stderr.writeln("Use a descriptive scope that helps `git log` readers locate the change.\n");
         stderr.writeln("Preferred patterns (examples):");
         stderr.writeln("  docs(research/window-system-integration)");
-        stderr.writeln("  fix(base.smallbuffer)");
+        stderr.writeln("  fix(base.buffer)");
         stderr.writeln("  feat(core-cli.ui.table)");
         stderr.writeln("  feat(core-cli/examples)");
         stderr.writeln("  feat(terminal)            # short is ok for small/cohesive packages");
@@ -817,7 +817,7 @@ private int runCheckCommitScope(string msgSource)
 }
 
 /// Given a list of staged paths (from git diff --cached --name-only), returns
-/// a suggested more-detailed scope string (e.g. "base.smallbuffer" or
+/// a suggested more-detailed scope string (e.g. "base.buffer" or
 /// "docs(research/foo)") or empty if no good suggestion.
 private string computeDetailedScopeSuggestion(string[] changed)
 {
@@ -1280,15 +1280,15 @@ private void applyLogLevel(LogLevel level) @safe
 /// whether the runner was already tight on RAM/CPUs before any work started.
 private void logHostResources()
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeBytes, writeFixedPoint;
 
-    SmallBuffer!(char, 24) total, avail, swap;
+    SharedBuffer!(char, 24) total, avail, swap;
     writeBytes(total, hwMemoryBytes());
     writeBytes(avail, hwAvailableMemoryBytes());
     writeBytes(swap, hwSwapUsedBytes());
 
-    SmallBuffer!(char, 16) loadBuf;
+    SharedBuffer!(char, 16) loadBuf;
     const load = hwLoadAverageCenti();
     if (load == hwLoadUnknown)
         loadBuf ~= "?";
@@ -1384,7 +1384,7 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
 
         if (region.interactive)
         {
-            SmallBuffer!(char, 128) bar;
+            SharedBuffer!(char, 128) bar;
             ProgressBar(done: completed, total: examples.length).toString(bar);
             string[] frame = ["building examples " ~ bar[].idup];
             enum size_t maxShown = 4;
@@ -2090,7 +2090,7 @@ private MonitoredResult noteIfTimedOut(MonitoredResult result, Duration timeout)
     if (!result.timedOut)
         return result;
 
-    SmallBuffer!(char, 32) budget;
+    SharedBuffer!(char, 32) budget;
     writeDuration(budget, timeout);
     result.output ~= i"\n[ci] no output — killed after $(budget[]) (timeout)\n".text;
     return result;
@@ -2102,7 +2102,7 @@ private MonitoredResult executeLogged(
 {
     import std.array : join;
     import std.logger : globalLogLevel;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeBytes, writeDuration;
 
     const cmd = args.join(" ");
@@ -2118,7 +2118,7 @@ private MonitoredResult executeLogged(
         if (!tracing || u.peakRssBytes < lastLogged + logStep)
             return;
         lastLogged = u.peakRssBytes;
-        SmallBuffer!(char, 24) rss, cpu;
+        SharedBuffer!(char, 24) rss, cpu;
         writeBytes(rss, u.peakRssBytes);
         writeDuration(cpu, u.cpuTime);
         trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
@@ -2129,7 +2129,7 @@ private MonitoredResult executeLogged(
         auto stats = formatResourceStats(res.usage);
         if (res.usage.sampled)
         {
-            SmallBuffer!(char, 24) ciRss;
+            SharedBuffer!(char, 24) ciRss;
             writeBytes(ciRss, selfRssBytes());
             trace(i"{dim ◂ $(label):} $(stats) exit=$(res.status) (ci_rss=$(ciRss[]))");
         }
@@ -4155,13 +4155,13 @@ unittest
 /// Empty when there is nothing to show.
 private string formatResourceStats(in ResourceUsage u, bool includeWall = true) @safe
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeBytes, writeDuration;
 
     if ((!includeWall || u.wallTime <= Duration.zero) && !u.sampled)
         return null;
 
-    SmallBuffer!(char, 96) buf;
+    SharedBuffer!(char, 96) buf;
     if (includeWall && u.wallTime > Duration.zero)
         writeDuration(buf, u.wallTime);
     if (u.sampled)
@@ -4217,7 +4217,7 @@ private string resultVerdict(bool success) @safe
 /// Dim `Δt … | Δtᵢ …`, matching the log prefix columns.
 private string formatLogDelta(in LogDelta delta) @safe
 {
-    SmallBuffer!(char, 48) stamp;
+    SharedBuffer!(char, 48) stamp;
     writeLogDelta(stamp, delta);
     return styledText(i"{dim $(stamp[])}");
 }
@@ -4225,7 +4225,7 @@ private string formatLogDelta(in LogDelta delta) @safe
 /// Right-side result footer: `Δt … | Δtᵢ … (usr …/sys …) | RSS`.
 private string resultFooterRight(in ResourceUsage usage, in LogDelta delta) @safe
 {
-    SmallBuffer!(char, 96) buf;
+    SharedBuffer!(char, 96) buf;
     writeLogDelta(buf, delta);
     const stats = formatResourceStats(usage, includeWall: false);
     if (stats.length)
@@ -4401,7 +4401,7 @@ private string formatRunTitleRight(in TestRunStats s, in LogDelta delta) @safe
 {
     import sparkles.base.text.writers : writeFixedPoint, writeInteger;
 
-    SmallBuffer!(char, 96) buf;
+    SharedBuffer!(char, 96) buf;
     writeLogDelta(buf, delta);
     buf ~= " | workers=";
     writeInteger(buf, s.workers);
@@ -4421,7 +4421,7 @@ private string formatRunFooterRight(in TestRunStats s) @safe
     import sparkles.base.text.writers : writeBytes, writeDuration, writeFixedPoint,
         writeInteger;
 
-    SmallBuffer!(char, 96) buf;
+    SharedBuffer!(char, 96) buf;
     const cpu = s.cpu.sampled ? s.cpu : s.tree;
     if (cpu.sampled)
     {

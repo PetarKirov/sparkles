@@ -6,7 +6,7 @@
 /// The model is a chunk/row stream in the Gerrit/`gr-diff` shape — and it is
 /// **`@nogc` by construction** (`DVM8`): a **flat arena** design where every
 /// element type is a plain-old-data struct of indices and spans, owned by
-/// `SmallBuffer` (the vector-with-SBO, copy-on-write container from
+/// `SharedBuffer` (the vector-with-SBO, copy-on-write container from
 /// `sparkles:base`), the same discipline as `sparkles:ui`'s widget arena.
 /// Rows and paths reference text by `Span`; the `DiffDoc` accessors resolve
 /// them. The backing texts are **borrowed** (`oldText`/`newText` must outlive
@@ -15,7 +15,7 @@ module sparkles.diff.model;
 
 import sparkles.diff.normalize : WhitespaceMode;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 /// The kind of one display row.
 enum RowKind : ubyte
@@ -143,12 +143,12 @@ struct DiffDoc
     const(char)[] newText;
 
     /// Owned path bytes (`FileEntry.oldPath`/`.newPath` span this arena).
-    SmallBuffer!char paths;
-    SmallBuffer!FileEntry files;
-    SmallBuffer!Hunk hunks;
-    SmallBuffer!Row rows;
+    SharedBuffer!char paths;
+    SharedBuffer!FileEntry files;
+    SharedBuffer!Hunk hunks;
+    SharedBuffer!Row rows;
     /// The emphasis-span arena (`Row.emphStart`/`.emphCount`).
-    SmallBuffer!Span emph;
+    SharedBuffer!Span emph;
 
 @safe pure nothrow @nogc:
 

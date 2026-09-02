@@ -12,7 +12,7 @@ module sparkles.diff.patch;
 
 import std.range.primitives : put;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr, parseOk;
 import sparkles.base.text.writers : writeInteger;
 
@@ -321,7 +321,7 @@ private void pairAndRefine(ref DiffDoc doc, in Hunk hunk, in DiffOptions opt)
 
 /**
 Emit a `DiffDoc` as a canonical git-style unified patch into any `char`
-output range (`SmallBuffer!char`, a file writer, …). `emit(parse(p))`
+output range (`SharedBuffer!char`, a file writer, …). `emit(parse(p))`
 preserves the model exactly (byte-exactness is only guaranteed for emitter
 output, not arbitrary input formats). Attributes infer from the writer.
 */
@@ -553,12 +553,12 @@ unittest
         ~ "+2\n"
         ~ " three\n";
     const doc1 = parsePatch(sample).value;
-    SmallBuffer!char emitted;
+    SharedBuffer!char emitted;
     emitPatch(doc1, emitted);
     const doc2 = parsePatch(emitted[]).value;
     assert(sameDoc(doc1, doc2));
     // Emitter output is a fixed point.
-    SmallBuffer!char emitted2;
+    SharedBuffer!char emitted2;
     emitPatch(doc2, emitted2);
     assert(emitted2[] == emitted[]);
 }

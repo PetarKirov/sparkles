@@ -379,9 +379,9 @@ ParseExpected!size_t readQuotedString(Writer)(ref scope const(char)[] s, ref Wri
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!char buf;
+    SharedBuffer!char buf;
     const(char)[] s1 = "`hello world` rest";
     auto r1 = readQuotedString(s1, buf);
     assert(r1.hasValue && r1.value == 11);

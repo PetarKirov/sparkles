@@ -963,7 +963,7 @@ flex.add(widget, fixed: 0, proportion: 1);
 flex.add(header, fixed: 3, proportion: 0);
 ```
 
-The proportional size algorithm (linear distribution of remaining space by weight) is simple enough to implement `@nogc` with a fixed-size scratch buffer for tracking item sizes. A `SmallBuffer!(FlexItem, 16)` would handle typical layout trees without allocation.
+The proportional size algorithm (linear distribution of remaining space by weight) is simple enough to implement `@nogc` with a fixed-size scratch buffer for tracking item sizes. A `SharedBuffer!(FlexItem, 16)` would handle typical layout trees without allocation.
 
 ### Grid with Responsive Breakpoints
 

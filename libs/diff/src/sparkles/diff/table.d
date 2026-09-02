@@ -31,7 +31,7 @@ reviewer a dimmed row they can expand, not a missed edit.
 */
 module sparkles.diff.table;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.diff.model : Span;
 import sparkles.diff.normalize : isSpace, withoutTrailingSpace;
 
@@ -81,7 +81,7 @@ what a renderer must emphasize; comparison trims (see $(LREF cellsEqual)).
 The outer pipes' empty edge cells are dropped: `| a | b |` has two cells, not
 four.
 */
-size_t cellSpans(scope const(char)[] line, ref SmallBuffer!Span cells)
+size_t cellSpans(scope const(char)[] line, ref SharedBuffer!Span cells)
     @safe pure nothrow @nogc
 {
     if (!isTableRow(line))
@@ -138,7 +138,7 @@ differ has no way to forgive — its dashes are content.
 */
 bool isSeparatorRow(scope const(char)[] line) @safe pure nothrow @nogc
 {
-    SmallBuffer!Span cells;
+    SharedBuffer!Span cells;
     const n = cellSpans(line, cells);
     if (n == 0)
         return false;
@@ -178,7 +178,7 @@ re-drawn. That is the case `DVN1` structurally cannot reach.
 bool rowsEquivalent(scope const(char)[] a, scope const(char)[] b)
     @safe pure nothrow @nogc
 {
-    SmallBuffer!Span ca, cb;
+    SharedBuffer!Span ca, cb;
     const na = cellSpans(a, ca);
     const nb = cellSpans(b, cb);
     if (na == 0 || na != nb)
@@ -247,7 +247,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!Span cells;
+    SharedBuffer!Span cells;
     enum row = "| ann | dev |";
     assert(cellSpans(row, cells) == 2, "two cells, not four");
     assert(row[cells[0].start .. cells[0].end] == " ann ");

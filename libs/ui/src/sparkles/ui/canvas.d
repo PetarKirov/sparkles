@@ -277,7 +277,7 @@ $(UL
     another alternative carries indirections, because overwriting a variant
     while a reference into it is outstanding reads the new bytes through the
     old type. Ours do (a slice, a pointer), so a plain `DrawOp[]` or
-    `SmallBuffer!DrawOp` would be unusable from `@safe` code — including the
+    `SharedBuffer!DrawOp` would be unusable from `@safe` code — including the
     display-list walk, which is `@safe pure nothrow @nogc` on purpose. The
     assignment below is the `@trusted` island that answers it, and the
     guarantee it rests on is stated there.)

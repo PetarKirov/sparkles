@@ -5,7 +5,7 @@
 /// borrowed source (the identity channel), and sampled typed columns.
 ///
 /// The whole library is `@safe pure nothrow @nogc` (`DSM5`, the
-/// `sparkles:diff` discipline): flat `SmallBuffer` arenas of plain-data
+/// `sparkles:diff` discipline): flat `SharedBuffer` arenas of plain-data
 /// structs, the source borrowed and never copied (`DSN1`), errors as
 /// `ParseExpected`.
 ///

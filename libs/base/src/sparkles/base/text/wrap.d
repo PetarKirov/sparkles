@@ -20,7 +20,7 @@ import std.range.primitives : ElementType, isInputRange, put;
 import std.traits : isSomeChar;
 import std.uni : unicode;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.base.text.ansi : OscLinkState, SgrState, writeSgrReset;
 import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure;
 
@@ -113,7 +113,7 @@ private struct StyleSnapshot
 /// Writer-first, `void`; attributes infer (do not force `@safe` on the template).
 /// `text` is range-polymorphic (selected with `static if`): a `string`/`char[]`, a
 /// range of `const(char)[]` chunks, or a range of `char`/`dchar`. A non-contiguous
-/// range is gathered into a `SmallBuffer` first (so the engine still sees one
+/// range is gathered into a `SharedBuffer` first (so the engine still sees one
 /// contiguous buffer); the chunks are treated as a single logical text (include any
 /// `'\n'` separators yourself). The contiguous engine is `writeWrappedImpl`.
 void writeWrappedText(Writer, Text)(ref Writer w, Text text, in WrapOptions opt = WrapOptions.init)
@@ -122,7 +122,7 @@ void writeWrappedText(Writer, Text)(ref Writer w, Text text, in WrapOptions opt 
         writeWrappedImpl(w, text, opt);
     else static if (isInputRange!Text && is(ElementType!Text : const(char)[]))
     {
-        SmallBuffer!(char, 256) buf;
+        SharedBuffer!(char, 256) buf;
         foreach (chunk; text)
             buf.put(chunk);
         writeWrappedImpl(w, buf[], opt);
@@ -131,7 +131,7 @@ void writeWrappedText(Writer, Text)(ref Writer w, Text text, in WrapOptions opt 
     {
         import std.utf : encode;
 
-        SmallBuffer!(char, 256) buf;
+        SharedBuffer!(char, 256) buf;
         foreach (c; text)
         {
             static if (is(typeof(c) : char))
@@ -381,13 +381,13 @@ string wrapText(in char[] text, in WrapOptions opt = WrapOptions.init) @safe
 /// follow) without materialising a `string[]`. Construct it with $(LREF byWrappedLine).
 ///
 /// The wrapped output is built once (via `writeWrappedText`) into an owned
-/// copy-on-write `SmallBuffer`, so saving/copying the range shares that buffer.
+/// copy-on-write `SharedBuffer`, so saving/copying the range shares that buffer.
 /// `front` is **borrowed** — a slice into that buffer, valid only while this range
 /// (or a copy sharing its buffer) is alive; to keep a line past then, `.idup` it
 /// (the `File.byLine` contract). Line boundaries are walked lazily.
 struct WrappedLines(size_t bufferSize = 256)
 {
-    private SmallBuffer!(char, bufferSize) _buf;
+    private SharedBuffer!(char, bufferSize) _buf;
     private size_t _total, _start, _end;
 
     // Set the cursor on the first line after `_buf` has been filled.
@@ -471,7 +471,7 @@ WrappedLines!bufferSize byWrappedLine(size_t bufferSize = 256, Text)(
 /// escape-only and per-chunk pacing stays even.
 ///
 /// Like $(LREF WrappedLines) the output is built once (via `writeWrappedText`) into
-/// an owned copy-on-write `SmallBuffer`, so saving/copying the range shares that
+/// an owned copy-on-write `SharedBuffer`, so saving/copying the range shares that
 /// buffer. `front` is **borrowed** — a slice into the buffer, valid only while this
 /// range (or a copy) is alive; `.idup` it to keep a chunk past then (the
 /// `File.byLine` contract). Construct it with $(LREF byWrappedChunk).
@@ -479,7 +479,7 @@ struct WrappedChunks(bool lineBuffered = true, size_t bufferSize = 256)
 {
     import sparkles.base.text.grapheme : byGraphemeCluster;
 
-    private SmallBuffer!(char, bufferSize) _buf;
+    private SharedBuffer!(char, bufferSize) _buf;
     private size_t _total, _start, _end;
 
     // Set the cursor on the first chunk after `_buf` has been filled.
@@ -681,7 +681,7 @@ WrappedChunks!(lineBuffered, bufferSize) byWrappedChunk(
 @("wrap.writer.isNogc")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     checkWriter!((ref b) => writeWrappedText(b, "the quick brown",
         WrapOptions(width: 9, whitespace: WhitespaceMode.collapse)))("the quick\nbrown");

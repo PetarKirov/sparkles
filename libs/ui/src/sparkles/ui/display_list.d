@@ -40,9 +40,9 @@ Builds the display list into a caller-supplied sink — the `@nogc` path
 ([`NFR2`](../../../../docs/specs/ui/feature-requirements.md)).
 
 `Sink` is anything that accepts `~= DrawOp`, so a
-$(REF SmallBuffer, sparkles,base,smallbuffer) the caller reuses across frames
+$(REF SharedBuffer, sparkles,base,buffer) the caller reuses across frames
 works, and a plain `DrawOp[]` still works. Attributes are $(B inferred) from the
-sink: with a `SmallBuffer` this whole path is `@nogc`, which a function
+sink: with a `SharedBuffer` this whole path is `@nogc`, which a function
 returning an array can never be.
 
 $(B The operations live in `ops`.) The sink owns them; each `textRun` $(I copies)
@@ -450,7 +450,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.geometry : Insets;
     import sparkles.ui.layout : layout;
     import sparkles.ui.style : defaultTwoslashPalette, Slot;

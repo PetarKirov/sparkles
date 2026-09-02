@@ -42,7 +42,7 @@ import std.string : endsWith;
 
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.syntax;
 import sparkles.twoslash;
@@ -108,7 +108,7 @@ int main(string[] args) @system
 
         // One highlight pass feeds all three renderers, so a difference between
         // them is a renderer difference and never an input difference.
-        SmallBuffer!HighlightEvent events;
+        SharedBuffer!HighlightEvent events;
         if (highlightInjected(cache, "typescript", tw.code, events).hasError)
             events ~= HighlightEvent.sourceSpan(0, tw.code.length);
 
@@ -127,7 +127,7 @@ int main(string[] args) @system
 private string renderHtml(in TwoslashReturn tw, in HighlightEvent[] events,
     in ResolvedTheme theme, ref TsConfigCache cache) @system
 {
-    SmallBuffer!char out_;
+    SharedBuffer!char out_;
     out_ ~= "<style>\n";
     writeThemeStylesheet(theme, out_);
     writeTwoslashStyles(out_);
@@ -142,7 +142,7 @@ private string renderHtml(in TwoslashReturn tw, in HighlightEvent[] events,
 private string renderAnsi(in TwoslashReturn tw, in HighlightEvent[] events,
     in ResolvedTheme theme, ref TsConfigCache cache) @system
 {
-    SmallBuffer!char out_;
+    SharedBuffer!char out_;
     renderTwoslashAnsi(tw, events, theme, cache, out_);
     return out_[].idup;
 }

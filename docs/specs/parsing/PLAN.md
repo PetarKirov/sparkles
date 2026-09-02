@@ -48,7 +48,7 @@ small, under `libs/base/src/sparkles/base/text/` beside the readers it extends �
 - `seq(p...)`, `alt(p...)` / `choice` (first-match [PEG][peg] ordered choice), `many`/`many1`,
   `opt`, `sepBy`/`sepBy1`, `map`/`mapErr`, `peek`, `notFollowedBy`. Let attributes **infer**
   (do not force `@safe`/`@nogc` on the templates — see [AGENTS § safety attributes](../../guidelines/AGENTS.md#safety-attributes--annotate-non-templates-infer-on-templates)).
-- Accumulate into `SmallBuffer`, never `appender`; **no memoization**.
+- Accumulate into `SharedBuffer`, never `appender`; **no memoization**.
 - Verify a `()`-returning validator allocates nothing (a `@nogc` unittest is the proof).
 
 ### M2 — Pratt engine + first real client

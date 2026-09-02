@@ -24,12 +24,12 @@ bool matchesFilter(in Test test, string include, string exclude) @safe
 @("matchesFilter.basic") @safe
 unittest
 {
-    const t = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "SmallBuffer.append");
+    const t = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "SharedBuffer.append");
     assert(t.matchesFilter(null, null));
-    assert(t.matchesFilter("SmallBuffer", null));
-    assert(!t.matchesFilter(null, "SmallBuffer"));
+    assert(t.matchesFilter("SharedBuffer", null));
+    assert(!t.matchesFilter(null, "SharedBuffer"));
     // Include and exclude combine: matches include but excluded → skipped.
-    assert(!t.matchesFilter("SmallBuffer", "append"));
+    assert(!t.matchesFilter("SharedBuffer", "append"));
     // Matches include and not excluded → run.
-    assert(t.matchesFilter("SmallBuffer", "Buffer.remove"));
+    assert(t.matchesFilter("SharedBuffer", "Buffer.remove"));
 }

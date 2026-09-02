@@ -26,7 +26,7 @@ import std.algorithm.searching : canFind, endsWith;
 import std.string : indexOf, strip, split, toLower;
 import std.uni : icmp;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 
 /**
 Where face resolution looks for font files.
@@ -378,7 +378,7 @@ package void fontVariantPaths(string primaryPath,
 /// `<font>.charset` sidecar format) into the sorted lo/hi bound buffers.
 /// Malformed tokens are skipped, the rest kept.
 package void parseCharsetTokens(const(char)[] text,
-    ref SmallBuffer!(int, 256, true) lo, ref SmallBuffer!(int, 256, true) hi) @safe
+    ref UniqueBuffer!(int, 256) lo, ref UniqueBuffer!(int, 256) hi) @safe
 {
     import std.conv : to;
 
@@ -408,12 +408,12 @@ package void parseCharsetTokens(const(char)[] text,
 @("parseCharsetTokens.rangesSingletonsMalformed")
 @safe unittest
 {
-    SmallBuffer!(int, 256, true) lo, hi;
+    UniqueBuffer!(int, 256) lo, hi;
     parseCharsetTokens("20-7e a0 100-17f zz 1f600-1f64f", lo, hi);
     assert(lo[] == [0x20, 0xa0, 0x100, 0x1f600]);
     assert(hi[] == [0x7e, 0xa0, 0x17f, 0x1f64f]);
 
-    SmallBuffer!(int, 256, true) lo2, hi2;
+    UniqueBuffer!(int, 256) lo2, hi2;
     parseCharsetTokens("", lo2, hi2);
     assert(lo2.length == 0 && hi2.length == 0);
 }

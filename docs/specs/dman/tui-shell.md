@@ -34,8 +34,8 @@ one-shot `drawTree`/`drawTable`/`wrap` are adapted to target a cell `Buffer`
 instead of a string — a `view` is their natural home).
 
 ```d
-struct Cell   { SmallBuffer!(char, 8) grapheme; CellStyle style; Color fg, bg; }
-struct Buffer { Cell[] cells; ushort cols, rows; }        // flat grid, SmallBuffer-backed
+struct Cell   { SharedBuffer!(char, 8) grapheme; CellStyle style; Color fg, bg; }
+struct Buffer { Cell[] cells; ushort cols, rows; }        // flat grid, SharedBuffer-backed
 
 struct Terminal(Backend) {                                // Backend = ANSI writer / test sink
     Buffer current, previous;

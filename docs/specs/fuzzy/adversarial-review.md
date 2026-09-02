@@ -355,7 +355,7 @@ concrete failure scenarios needed to reproduce or reason about the defect.
 
 40. **Allocation failure is absent from the supposedly exhaustive error and
     outcome model.** **Document/section:** context fact 2; A sections 1, 4.3,
-    and 10. **Scenario:** matrix construction or `SmallBuffer` growth can fail,
+    and 10. **Scenario:** matrix construction or `SharedBuffer` growth can fail,
     but no constructor returns `Expected` and no `MatchKind` names allocation
     failure; throwing contradicts `nothrow`, null threatens `@safe`, and process
     termination contradicts the explicit-outcome invariant. **Severity:**

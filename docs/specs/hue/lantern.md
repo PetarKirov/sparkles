@@ -73,7 +73,7 @@ it cannot tell the guide _which_ prefix is pending, and its clock does not exist
 in a terminal.
 
 `LanternState` holds the pending path instead — at most `maxPathLength` chords in
-a `SmallBuffer` — and `step` is a pure function over it.
+a `SharedBuffer` — and `step` is a pure function over it.
 
 **The delay is measured in time, not frames.** This is what lets the terminal use
 `untilShown` as its poll timeout: a terminal has no frames to count, and its loop

@@ -512,11 +512,11 @@ IoResult!void resizePty(ref ChildProcess child, ushort cols, ushort rows)
 /// The run-to-completion outcome of `capture` (SPEC §13.2).
 struct CapturedOutput
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     ExitStatus status;
-    SmallBuffer!(ubyte, 256) stdout_; /// empty unless stdoutSpec piped
-    SmallBuffer!(ubyte, 256) stderr_; /// empty unless stderrSpec piped
+    SharedBuffer!(ubyte, 256) stdout_; /// empty unless stdoutSpec piped
+    SharedBuffer!(ubyte, 256) stderr_; /// empty unless stderrSpec piped
 }
 
 static if (canSubmitOp!(DefaultBackend, OpWaitid))
@@ -537,7 +537,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
     {
         import core.lifetime : move;
 
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
         import sparkles.event_horizon.io : read, write;
         import sparkles.event_horizon.scope_ : withScope;
 
@@ -553,7 +553,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         // Fibers capture plain locals, never `ref`/`scope` parameters (a
         // captured parameter slot outlives nothing — the tui-loop lesson).
         CapturedOutput out_;
-        SmallBuffer!(ubyte, 256) stdinCopy;
+        SharedBuffer!(ubyte, 256) stdinCopy;
         if (stdinBytes !is null)
             stdinCopy ~= stdinBytes;
         auto childP = &child;
@@ -561,11 +561,11 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         auto stdinP = &stdinCopy;
         const feedStdin = stdinBytes !is null && child.stdinW.fd >= 0;
 
-        static void drain(FileHandle from, SmallBuffer!(ubyte, 256)* into)
+        static void drain(FileHandle from, SharedBuffer!(ubyte, 256)* into)
         {
             for (;;)
             {
-                SmallBuffer!(ubyte, 512) chunk;
+                SharedBuffer!(ubyte, 512) chunk;
                 chunk.length = 512;
                 auto got = read(from, move(chunk));
                 chunk = move(got.buf);
@@ -777,15 +777,15 @@ version (unittest)
 {
     import core.lifetime : move;
 
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.event_horizon.io : read, write;
     import sparkles.event_horizon.sched : schedOrSkip;
 
     /// Ring-reads `f` to EOF (or EIO — a drained PTY master) into `into`.
     private void drainInto(ref Sched s, FileHandle f,
-        ref SmallBuffer!(ubyte, 512) into) @safe
+        ref SharedBuffer!(ubyte, 512) into) @safe
     {
-        SmallBuffer!(ubyte, 128) buf;
+        SharedBuffer!(ubyte, 128) buf;
         for (;;)
         {
             buf.length = 128;
@@ -820,7 +820,7 @@ unittest
         assert(child.stdinW.fd < 0 && child.stderrR.fd < 0,
             "only stdout is piped by default");
 
-        SmallBuffer!(ubyte, 512) collected;
+        SharedBuffer!(ubyte, 512) collected;
         drainInto(s, child.stdoutR, collected);
         assert(collected[] == cast(const(ubyte)[]) "event horizon\n");
 
@@ -874,13 +874,13 @@ unittest
         auto child = spawned.value;
         assert(child.stdinW.fd >= 0, "stdin piped on request");
 
-        SmallBuffer!(ubyte, 64) ping;
+        SharedBuffer!(ubyte, 64) ping;
         ping ~= cast(const(ubyte)[]) "ping through the ring";
         auto sent = write(child.stdinW, move(ping));
         assert(!sent.res.hasError);
         child.stdinW.close(); // EOF: cat exits after echoing
 
-        SmallBuffer!(ubyte, 512) back;
+        SharedBuffer!(ubyte, 512) back;
         drainInto(s, child.stdoutR, back);
         assert(back[] == cast(const(ubyte)[]) "ping through the ring");
 
@@ -924,7 +924,7 @@ unittest
         auto child = spawned.value;
         assert(child.stdoutR.fd < 0 && child.stderrR.fd >= 0);
 
-        SmallBuffer!(ubyte, 512) err;
+        SharedBuffer!(ubyte, 512) err;
         drainInto(s, child.stderrR, err);
         // `pwd` reports the PHYSICAL directory, and the requested cwd need not
         // be one: /tmp is a symlink to /private/tmp on macOS. Resolving the
@@ -957,7 +957,7 @@ unittest
         assert(spawned.hasValue);
         auto child = spawned.value;
 
-        SmallBuffer!(ubyte, 512) out_;
+        SharedBuffer!(ubyte, 512) out_;
         drainInto(s, child.stdoutR, out_);
         assert(out_[] == cast(const(ubyte)[]) "42\n");
 
@@ -1081,7 +1081,7 @@ unittest
             auto child = spawned.value;
             assert(child.ptyMaster.fd >= 0);
 
-            SmallBuffer!(ubyte, 512) out_;
+            SharedBuffer!(ubyte, 512) out_;
             drainInto(s, child.ptyMaster, out_);
             assert(out_[] == cast(const(ubyte)[]) "24 80\r\n",
                 "the child ran on the slave with the preset winsize");

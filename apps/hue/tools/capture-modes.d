@@ -40,7 +40,7 @@ import std.string : split, strip;
 
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.syntax;
 import sparkles.twoslash;
 
@@ -183,12 +183,12 @@ private string renderTwoslashPage(string fixture, string themeName) @system
 
     auto registry = GrammarRegistry.fromEnvironment();
     auto cache = TsConfigCache.create(&registry, labels);
-    SmallBuffer!HighlightEvent events;
+    SharedBuffer!HighlightEvent events;
     auto res = highlightInjected(cache, "typescript", tw.code, events);
     if (res.hasError)
         events ~= HighlightEvent.sourceSpan(0, tw.code.length);
 
-    SmallBuffer!char output;
+    SharedBuffer!char output;
     output ~= "<style>\n";
     writeThemeStylesheet(theme, output);
     writeTwoslashStyles(output);
@@ -249,7 +249,7 @@ private int captureWidgetsHtml(string fixture, string outDir, string stem, int h
     else
         tree = viewTwoslash(tw);
 
-    SmallBuffer!(char, 8192) w;
+    SharedBuffer!(char, 8192) w;
     writeWidgetHtmlPage(w, tree, pal, pageFg, pageBg, stem);
     const htmlPath = buildPath(outDir, stem ~ ".widgets.html");
     write(htmlPath, w[]);

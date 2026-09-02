@@ -17,7 +17,7 @@ module sparkles.ui_raylib.raylib_canvas;
 import raylib;
 
 import sparkles.raylib_text : TextStyle, FontSet, drawText;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
@@ -160,7 +160,7 @@ attribute-by-canvas design the concept exists for.
 struct RaylibCanvas
 {
     FontSet* fonts;            /// the glyph atlas + metrics (borrowed)
-    SmallBuffer!(char, 4096)* buf; /// scratch for NUL-terminated draw strings
+    SharedBuffer!(char, 4096)* buf; /// scratch for NUL-terminated draw strings
     int cellW;                 /// one cell's pixel width
     int cellH;                 /// one cell's pixel height
     float originX = 0;         /// pixel x of cell column 0

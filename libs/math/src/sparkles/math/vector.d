@@ -339,7 +339,7 @@ unittest
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
 
     checkToString(Vec3f(1, 2, 3), "(x: 1, y: 2, z: 3)");
 }

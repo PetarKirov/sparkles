@@ -22,13 +22,13 @@ builds on it with pretty-printing, UI components, CLI helpers, and process utili
 - [Interactive Prompts](#interactive-prompts)
 - [Terminal Capabilities & Themes](#terminal-capabilities--themes)
 - [Logger](#logger)
-- [SmallBuffer (@nogc)](#smallbuffer-nogc)
+- [SharedBuffer (@nogc)](#sharedbuffer-nogc)
 - [Running Examples](#running-examples)
 
 ## Installation
 
 Add the package you need as a dependency. Use `sparkles:base` for styling,
-logging, `SmallBuffer`, lifetime helpers, and text readers/writers. Use
+logging, `SharedBuffer`, lifetime helpers, and text readers/writers. Use
 `sparkles:core-cli` when you also need pretty-printing, UI components, CLI
 argument parsing, or process utilities.
 
@@ -707,23 +707,23 @@ void main()
 | `initLogger(level)`   | Install `DeltaTimeLogger` for both Phobos and Sparkles globals  |
 | `writeLogPrefix(...)` | Write prefix to an output range (zero-allocation)               |
 
-## SmallBuffer (@nogc)
+## SharedBuffer (@nogc)
 
 A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
 
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "smallbufferdemo"
+    name "bufferdemo"
     dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : Buffer, SharedBuffer;
 
 void main()
 {
     // 64 chars inline, heap if exceeded
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
 
     buf ~= "Hello";
     buf ~= ' ';

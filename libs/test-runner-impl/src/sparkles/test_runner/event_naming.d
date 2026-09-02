@@ -262,10 +262,10 @@ version (linux)
             if (pfmStrerror !is null)
                 if (auto p = pfmStrerror(rc))
                     return p[0 .. strlen(p)].idup;
-            import sparkles.base.smallbuffer : SmallBuffer;
+            import sparkles.base.buffer : SharedBuffer;
             import sparkles.base.text.writers : writeInteger;
 
-            SmallBuffer!(char, 32) buf;
+            SharedBuffer!(char, 32) buf;
             buf ~= "pfm error ";
             writeInteger(buf, rc);
             return buf[].idup;

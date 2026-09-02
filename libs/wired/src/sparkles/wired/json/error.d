@@ -4,7 +4,7 @@ The structured error type of the native JSON codec (SPEC §9, §11.6).
 `JsonError` replaces `Exception` as the error payload of every wired
 result: a plain value type carrying the failing stage, the value path,
 the target type, and the reason — built only on the error path, with no
-GC allocation (`SmallBuffer` storage). `toString(Writer)` renders the
+GC allocation (`SharedBuffer` storage). `toString(Writer)` renders the
 SPEC §9 message contract; the message text is derived, the struct is the
 contract.
 
@@ -15,7 +15,7 @@ each frame $(I prepends) its segment, so only failing branches pay.
 */
 module sparkles.wired.json.error;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.base.text.errors : ParseError, ParseErrorCode;
 import sparkles.wired.json.document : JsonKind;
 
@@ -31,7 +31,7 @@ enum JsonStage : ubyte
 
 /**
 A wired JSON failure. Copyable value type; construction never allocates
-from the GC (path/summary/file storage is `SmallBuffer`-backed, filled
+from the GC (path/summary/file storage is `SharedBuffer`-backed, filled
 only on the error path).
 */
 struct JsonError
@@ -51,7 +51,7 @@ struct JsonError
 
     /// The value path from the root to the failing location (`$…`,
     /// SPEC §9). Empty means the root itself.
-    SmallBuffer!(char, 48) path;
+    SharedBuffer!(char, 48) path;
 
     /// The D type being decoded into / encoded from (a compile-time
     /// literal from the walk).
@@ -66,10 +66,10 @@ struct JsonError
 
     /// Decode stage: compact summary of the offending value (token text
     /// or string prefix), when cheaply available.
-    SmallBuffer!(char, 32) valueSummary;
+    SharedBuffer!(char, 32) valueSummary;
 
     /// File stages: the path of the file involved.
-    SmallBuffer!(char, 40) filePath;
+    SharedBuffer!(char, 40) filePath;
 
     /// File stages: errno-style cause (0 = none).
     int cause;
@@ -97,13 +97,13 @@ struct JsonError
     {
         if (isIdentifierSafe(key))
         {
-            SmallBuffer!(char, 48) seg;
+            SharedBuffer!(char, 48) seg;
             seg ~= '.';
             seg ~= key;
             prependRaw(seg[]);
             return;
         }
-        SmallBuffer!(char, 48) seg;
+        SharedBuffer!(char, 48) seg;
         seg ~= `["`;
         foreach (c; key)
         {
@@ -133,7 +133,7 @@ struct JsonError
     private void prependRaw(scope const(char)[] segment) @safe pure nothrow @nogc
     {
         // Error path only: rebuild rather than shift in place.
-        SmallBuffer!(char, 48) next;
+        SharedBuffer!(char, 48) next;
         next ~= segment;
         next ~= path[];
         path = next;
@@ -364,7 +364,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     JsonError e;
     e.stage = JsonStage.decode;
@@ -383,7 +383,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     JsonError e;
     e.stage = JsonStage.decode;
@@ -401,7 +401,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.base.text.errors : ParseError;
 
     const text = "{\n  \"a\": 01\n}";
@@ -418,7 +418,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     JsonError e;
     e.stage = JsonStage.encode;

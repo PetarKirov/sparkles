@@ -539,12 +539,12 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
     auto registry = GrammarRegistry.fromEnvironment();
     auto doc = extractMarkdown(registry, "```d\nvoid main() {}\n```\n");
-    SmallBuffer!(char, 512) buf;
+    SharedBuffer!(char, 512) buf;
     // A hook that wraps the body in its own element replaces the default fence.
     renderMarkdownHtml(doc, buf, MarkdownHtmlOptions(),
         (const(char)[] lang, const(char)[] code) => cast(const(char)[])(

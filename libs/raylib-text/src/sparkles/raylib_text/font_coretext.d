@@ -33,7 +33,7 @@ module sparkles.raylib_text.font_coretext;
 
 version (OSX):
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.cstring : toCString;
 
 // ── ASCII text helpers ───────────────────────────────────────────────────────
@@ -786,8 +786,8 @@ primary only when the face actually covers it).
 Returns `false` when CoreText has no answer, leaving the buffers untouched;
 growth is then simply disabled, exactly as a missing `.charset` sidecar does.
 */
-bool charsetRanges(string path, ref SmallBuffer!(int, 256, true) lo,
-    ref SmallBuffer!(int, 256, true) hi) @trusted nothrow
+bool charsetRanges(string path, ref UniqueBuffer!(int, 256) lo,
+    ref UniqueBuffer!(int, 256) hi) @trusted nothrow
 {
     if (!ct.ok || path.length == 0)
         return false;
@@ -850,7 +850,7 @@ Split out and `pure` because it is the only part of the charset path with
 logic worth testing — everything around it is CoreFoundation calls.
 */
 package void bitmapToRanges(scope const(ubyte)[] bytes,
-    ref SmallBuffer!(int, 256, true) lo, ref SmallBuffer!(int, 256, true) hi)
+    ref UniqueBuffer!(int, 256) lo, ref UniqueBuffer!(int, 256) hi)
     @safe pure nothrow
 {
     void emitPlane(scope const(ubyte)[] plane, int base) @safe pure nothrow
@@ -902,7 +902,7 @@ unittest
     foreach (c; 0x100 .. 0x180)
         set(c);
 
-    SmallBuffer!(int, 256, true) lo, hi;
+    UniqueBuffer!(int, 256) lo, hi;
     bitmapToRanges(bmp[], lo, hi);
 
     assert(lo[] == [0x41, 0x7E, 0x100]);
@@ -923,7 +923,7 @@ unittest
     foreach (c; 0xF600 .. 0xF605) // U+1F600..U+1F604 within plane 1
         p1[c >> 3] |= cast(ubyte)(1 << (c & 7));
 
-    SmallBuffer!(int, 256, true) lo, hi;
+    UniqueBuffer!(int, 256) lo, hi;
     bitmapToRanges(data, lo, hi);
 
     assert(lo[] == [0x20, 0x1F600]);
@@ -937,12 +937,12 @@ unittest
     // A run reaching the last bit must still be closed.
     ubyte[planeBytes] bmp;
     bmp[$ - 1] = 0x80;
-    SmallBuffer!(int, 256, true) lo, hi;
+    UniqueBuffer!(int, 256) lo, hi;
     bitmapToRanges(bmp[], lo, hi);
     assert(lo[] == [0xFFFF] && hi[] == [0xFFFF]);
 
     // Truncated input is ignored rather than read out of bounds.
-    SmallBuffer!(int, 256, true) lo2, hi2;
+    UniqueBuffer!(int, 256) lo2, hi2;
     bitmapToRanges(new ubyte[10], lo2, hi2);
     assert(lo2.length == 0 && hi2.length == 0);
 }
@@ -1105,7 +1105,7 @@ unittest
     if (path.length == 0)
         skipTest("no monospace face on this host");
 
-    SmallBuffer!(int, 256, true) lo, hi;
+    UniqueBuffer!(int, 256) lo, hi;
     if (!charsetRanges(path, lo, hi))
         skipTest("CoreText reported no character set for " ~ path);
 

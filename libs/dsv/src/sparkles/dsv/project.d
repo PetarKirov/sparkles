@@ -15,7 +15,7 @@
 /// case-insensitive (full Unicode folding stays with the fuzzy engine).
 module sparkles.dsv.project;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.dsv.model : ColumnType, decodeCell, DsvDoc, satisfies,
     classifyValue, ValueKind;
 
@@ -73,9 +73,9 @@ void applyProjection(Buf)(in DsvDoc doc, in ColumnType[] types,
     const first = doc.hasHeader ? 1 : 0;
     const total = doc.records.length - (doc.records.length ? first : 0);
 
-    SmallBuffer!(char, 256) bufA, bufB;
+    SharedBuffer!(char, 256) bufA, bufB;
 
-    const(char)[] cellText(size_t dataIdx, size_t col, ref SmallBuffer!(char, 256) buf)
+    const(char)[] cellText(size_t dataIdx, size_t col, ref SharedBuffer!(char, 256) buf)
     {
         const rec = doc.records[first + dataIdx];
         if (col >= rec.cellCount)
@@ -283,7 +283,7 @@ version (unittest)
 
     private ColumnType[] fixtureTypes(in DsvDoc doc) @safe
     {
-        SmallBuffer!(ColumnType, 16) t;
+        SharedBuffer!(ColumnType, 16) t;
         inferColumnTypes(doc, 100, t);
         return t[].dup;
     }
@@ -291,7 +291,7 @@ version (unittest)
     private uint[] project(in DsvDoc doc, in ColumnType[] types,
         in ProjectionSpec spec) @safe
     {
-        SmallBuffer!(uint, 32) idx;
+        SharedBuffer!(uint, 32) idx;
         applyProjection(doc, types, spec, idx);
         return idx[].dup;
     }

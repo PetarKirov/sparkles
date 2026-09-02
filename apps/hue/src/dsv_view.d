@@ -17,7 +17,7 @@ module dsv_view;
 import std.array : appender;
 import std.conv : text;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.width : CellAlign = Align;
 import sparkles.source_view.markdown : MdTableExtras;
 import table_select : serializeTable, TableCopyFormat, TableRegion;
@@ -126,7 +126,7 @@ final class DsvModel
     private DsvInfo base_;
     private DsvDoc doc_;
     private bool usable_;
-    private SmallBuffer!(ColumnType, 16) types_;
+    private SharedBuffer!(ColumnType, 16) types_;
     private string[] headerNames_;
 
     // The memoized projection (`DSN7`): the permutation, and the projection it
@@ -208,7 +208,7 @@ final class DsvModel
         );
 
         m.headerNames_ = new string[](m.doc_.columnCount);
-        SmallBuffer!(char, 256) nameBuf;
+        SharedBuffer!(char, 256) nameBuf;
         const hasNames = hasHeader && m.doc_.records.length;
         foreach (col; 0 .. m.doc_.columnCount)
             m.headerNames_[col] = hasNames && col < m.doc_.records[0].cellCount
@@ -256,7 +256,7 @@ final class DsvModel
             && permMask_ == proj.rowMask)
             return perm_;
 
-        SmallBuffer!(uint, 64) perm;
+        SharedBuffer!(uint, 64) perm;
         applyProjection(doc_, types_[], proj.spec, perm);
         if (proj.rowMask !is null)
             maskPermutation(perm, proj.rowMask);
@@ -345,7 +345,7 @@ enum size_t dsvSortBadgeCells = 2;
 enum size_t dsvColumnCapCells = 64;
 
 /// Drops permutation entries the fuzzy mask rejects, in place (`DSF3`).
-private void maskPermutation(ref SmallBuffer!(uint, 64) perm,
+private void maskPermutation(ref SharedBuffer!(uint, 64) perm,
     scope const(bool)[] mask) @safe pure nothrow @nogc
 {
     size_t w = 0;
@@ -463,7 +463,7 @@ private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
     import sparkles.ui.geometry : cellsOf;
 
     auto widths = new size_t[](visCols.length + 1);
-    SmallBuffer!(char, 256) cellBuf;
+    SharedBuffer!(char, 256) cellBuf;
 
     size_t digits = 1;
     for (uint n = info.visibleRows; n >= 10; n /= 10)
@@ -531,7 +531,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
 {
     const cols = visCols.length;
     auto buf = appender!string;
-    SmallBuffer!(char, 256) cellBuf;
+    SharedBuffer!(char, 256) cellBuf;
 
     MdBlock table = { kind: MdBlockKind.table };
 

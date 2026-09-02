@@ -3,7 +3,7 @@ Live progress rendering: a spinner frame set and a one-line
 `spinner [done/total] (elapsed)` component.
 
 Everything here is a pure producer — `ProgressLine` renders into any output
-range (so a `@nogc` `SmallBuffer` works and the result is unit-testable).
+range (so a `@nogc` `SharedBuffer` works and the result is unit-testable).
 Doing the actual terminal write, tty gating, and redraw cadence is left to the
 caller: frame a `ProgressLine` with `CtlSeq.carriageReturn` +
 `CtlSeq.eraseLine` from `sparkles.base.term_control` (the former `AnsiControl`
@@ -34,7 +34,7 @@ unittest
 /// A single progress line: `⠹ 12/40` — a spinner frame, then `done`
 /// right-justified in `total`'s digit width over `/total`, plus a trailing
 /// ` (elapsed)` when `elapsed > 0`. Dim-styled when `colored`. Renders into any
-/// output range via `toString`, so it stays `@nogc` for a `SmallBuffer` writer
+/// output range via `toString`, so it stays `@nogc` for a `SharedBuffer` writer
 /// and is unit-testable without a terminal. The caller supplies any trailing
 /// label and the carriage-return / erase-line framing.
 struct ProgressLine
@@ -48,7 +48,7 @@ struct ProgressLine
     void toString(Writer)(ref Writer w) const
     {
         import std.range.primitives : put;
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer, checkToString;
         import sparkles.base.term_style : Style;
         import sparkles.base.text.width : Align, alignField;
         import sparkles.base.text.writers : writeDuration, writeEscapeSeq, writeInteger;
@@ -59,10 +59,10 @@ struct ProgressLine
         put(w, spinnerFrame(frame));
         put(w, ' ');
 
-        SmallBuffer!(char, 20) doneBuf;
+        SharedBuffer!(char, 20) doneBuf;
         writeInteger(doneBuf, done);
 
-        SmallBuffer!(char, 20) totalBuf;
+        SharedBuffer!(char, 20) totalBuf;
         writeInteger(totalBuf, total);
 
         alignField(w, doneBuf[], totalBuf.length, Align.right);
@@ -85,7 +85,7 @@ struct ProgressLine
 @("progress.ProgressLine.plain")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
 
     checkToString(ProgressLine(2, 12, 40), "⠹ 12/40");
 }
@@ -94,7 +94,7 @@ struct ProgressLine
 @("progress.ProgressLine.rightJustified")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
 
     checkToString(ProgressLine(0, 5, 40), "⠋  5/40");
 }
@@ -104,14 +104,14 @@ struct ProgressLine
 @safe unittest
 {
     import core.time : msecs;
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
     import sparkles.base.term_style : Style;
     import sparkles.base.text.writers : writeEscapeSeq;
 
     checkToString(ProgressLine(0, 1, 2, false, 1500.msecs), "⠋ 1/2 (1.5s)");
 
-    import sparkles.base.smallbuffer : SmallBuffer;
-    SmallBuffer!(char, 32) on, off;
+    import sparkles.base.buffer : SharedBuffer, checkToString;
+    SharedBuffer!(char, 32) on, off;
     writeEscapeSeq(on, Style.dim[0]);
     writeEscapeSeq(off, Style.dim[1]);
     checkToString(ProgressLine(2, 12, 40, true), on[] ~ "⠹ 12/40" ~ off[]);

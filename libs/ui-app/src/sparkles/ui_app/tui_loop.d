@@ -138,9 +138,9 @@ struct TuiHost
     void clipboard(scope const(char)[] text) @system
     {
         import std.base64 : Base64;
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
-        SmallBuffer!(char, 512) buf;
+        SharedBuffer!(char, 512) buf;
         buf ~= "\x1b]52;c;";
         Base64.encode(cast(const(ubyte)[]) text, buf);
         buf ~= "\x07";
@@ -151,9 +151,9 @@ struct TuiHost
     /// window name; one that does not simply ignores the sequence.
     void title(scope const(char)[] t) @system
     {
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
-        SmallBuffer!(char, 256) buf;
+        SharedBuffer!(char, 256) buf;
         buf ~= "\x1b]2;";
         buf ~= t;
         buf ~= "\x07";

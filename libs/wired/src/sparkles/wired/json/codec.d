@@ -42,7 +42,7 @@ alias JsonResult(T) = Expected!(T, JsonError);
 
 /// The text type `toJSON` returns: small documents stay in the inline
 /// buffer, larger ones spill to `pureMalloc` — no GC either way.
-alias JsonString = SmallBuffer!(char, 256);
+alias JsonString = SharedBuffer!(char, 256);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Encoding
@@ -111,7 +111,7 @@ Expected!(void, JsonError) writeJSONFile(
 
     // Staged whole, then written in one go — the buffer dies with the call,
     // so it spills to its own heap block rather than the GC.
-    SmallBuffer!(char, 4096) buf;
+    SharedBuffer!(char, 4096) buf;
     auto enc = writeJSON!(opts, keyLess)(value, buf);
     if (enc.hasError)
     {
@@ -296,7 +296,7 @@ if (is(E == enum))
 // a flat result channel (no per-node `Expected`) while node dispatch, child
 // traversal, and policy lookup come from the reified schema cursor.
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.error : JsonError, JsonStage, kindText,
     parseStageError;
@@ -2180,7 +2180,7 @@ version (unittest)
     const source = NServer("localhost", 8080, ["web", "edge"], NMode.fastPath,
         Nullable!int(30), 3);
 
-    SmallBuffer!(char, 512) w;
+    SharedBuffer!(char, 512) w;
     assert(!writeJSON(source, w).hasError);
     assert(w[] == `{"host":"localhost","port":8080,"tags":["web","edge"],`
             ~ `"mode":"fastPath","timeout":30,"retries":3}`);
@@ -2193,7 +2193,7 @@ version (unittest)
 @("wired.native.fromJSON.missingAndUnknownKeys")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // Unknown keys skip; missing null-aware/optional fields default.
     auto ok_ = fromJSON!NServer(
@@ -2212,7 +2212,7 @@ version (unittest)
 @("wired.native.fromJSON.nestedPathDiagnostics")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static struct Inner
     {
@@ -2243,7 +2243,7 @@ version (unittest)
 @("wired.native.fromJSON.enumTokenDiagnostics")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     auto bad = fromJSON!NMode(`"sideways"`);
     assert(bad.hasError);
@@ -2255,7 +2255,7 @@ version (unittest)
 @("wired.native.fromJSON.parseStageLineColumn")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     auto bad = fromJSON!int("{\n  \"a\": 01\n}");
     assert(bad.hasError);
@@ -2314,7 +2314,7 @@ version (unittest)
     m.counts = ["zulu": 26, "alpha": 1];
     m.flag = Ternary.unknown;
 
-    SmallBuffer!(char, 512) w;
+    SharedBuffer!(char, 512) w;
     assert(!writeJSON(m, w).hasError);
     assert(w[] == `{"counts":{"alpha":1,"zulu":26},"flag":null,"note":null}`);
 }
@@ -2322,14 +2322,14 @@ version (unittest)
 @("wired.native.writeJSON.nanErrorWithPath")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static struct Stats
     {
         double ratio;
     }
 
-    SmallBuffer!(char, 256) w;
+    SharedBuffer!(char, 256) w;
     auto r = writeJSON(Stats(double.nan), w);
     assert(r.hasError);
     checkWriter!((ref b) => r.error.toString(b))(
@@ -2345,11 +2345,11 @@ version (unittest)
     auto sub = fromJSON!JSONValue(`{"z": 1, "a": [true, "x"]}`);
     assert(sub.hasValue);
 
-    SmallBuffer!(char, 256) w;
+    SharedBuffer!(char, 256) w;
     assert(!writeJSON(sub.value, w).hasError);
     assert(w[] == `{"a":[true,"x"],"z":1}`);
 
-    SmallBuffer!(char, 256) bad;
+    SharedBuffer!(char, 256) bad;
     auto nanned = JSONValue(["k": JSONValue(double.nan)]);
     assert(writeJSON(nanned, bad).hasError);
 }

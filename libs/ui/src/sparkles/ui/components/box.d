@@ -7,7 +7,7 @@ import std.range : walkLength, repeat;
 import std.range.primitives : ElementType, empty, front, isInputRange, popFront;
 import std.format : format;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 
 import sparkles.base.text.grapheme : visibleWidth;
 
@@ -371,7 +371,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
 
     // Derive the pre-rendered top region string from the items (render each at its
     // natural width). `drawBoxLines` / `string drawBox` keep consuming this unchanged.
-    SmallBuffer!(char, 512) topApp;
+    SharedBuffer!(char, 512) topApp;
     foreach (it; topItems)
         topApp ~= it.lead ~ it.text ~ renderClose(it.close, it.text.visibleWidth);
 

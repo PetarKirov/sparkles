@@ -267,10 +267,10 @@ struct TermsState
 
 private size_t labelOf(scope char[] buf, string prefix, uint n) @safe pure nothrow @nogc
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
-    SmallBuffer!(char, 24) w;
+    SharedBuffer!(char, 24) w;
     w ~= prefix;
     writeInteger(w, n);
     const len = w[].length < buf.length ? w[].length : buf.length;

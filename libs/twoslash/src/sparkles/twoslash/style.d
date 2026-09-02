@@ -31,10 +31,10 @@ ref Writer writeTwoslashStyles(Writer)(return ref Writer w)
 @("style.writeTwoslashStyles.sentinels")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import std.algorithm.searching : canFind;
 
-    SmallBuffer!(char, 8192) buf;
+    SharedBuffer!(char, 8192) buf;
     writeTwoslashStyles(buf);
     const css = buf[];
 
@@ -127,7 +127,7 @@ spellings (`#8888` vs `#88888888`) don't matter.
 @("style.twoslashCss.paletteLockstep")
 @safe unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, writeTwoslashVars;
     import std.string : indexOf;
 
@@ -141,7 +141,7 @@ spellings (`#8888` vs `#88888888`) don't matter.
     auto cssVars = cssColorVars(css[open + 1 .. close]);
 
     // Generate the same vars from the D palette and parse them back.
-    SmallBuffer!(char, 2048) buf;
+    SharedBuffer!(char, 2048) buf;
     writeTwoslashVars(buf, defaultTwoslashPalette());
     auto genVars = cssColorVars(buf[]);
 
@@ -163,7 +163,7 @@ spellings (`#8888` vs `#88888888`) don't matter.
     auto darkCss = cssColorVars(css[dOpen + 1 .. dClose]);
     assert(darkCss.length >= 2);
 
-    SmallBuffer!(char, 2048) dbuf;
+    SharedBuffer!(char, 2048) dbuf;
     writeTwoslashVars(dbuf, defaultTwoslashPalette(ColorScheme.dark));
     auto darkGen = cssColorVars(dbuf[]);
     foreach (name, expected; darkCss)

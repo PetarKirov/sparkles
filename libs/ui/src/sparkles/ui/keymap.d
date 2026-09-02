@@ -502,7 +502,7 @@ given key is the one that would actually fire — a shadowed duplicate (the
 same key bound in two scopes) is dropped rather than listed twice.
 
 `sink` must accept `~=` and be sliceable with `[]` — a
-$(REF SmallBuffer, sparkles,base,smallbuffer) is the intended argument, and
+$(REF SharedBuffer, sparkles,base,buffer) is the intended argument, and
 the whole walk allocates nothing.
 */
 void bindingsAt(Sink, B, Ctx)(ref Sink sink, scope const(B)[] table,
@@ -748,7 +748,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The property that makes the table worth having: whatever `bindingsAt`
     // lists, `resolve` actually does — checked at every level, over every
@@ -756,7 +756,7 @@ unittest
     static void checkLevel(scope const Chord[] prefix, in TestContext ctx,
         int depthLeft)
     {
-        SmallBuffer!(TestBinding, 32) listed;
+        SharedBuffer!(TestBinding, 32) listed;
         bindingsAt(listed, testBindings, ctx, prefix);
 
         foreach (ref b; listed[])
@@ -808,11 +808,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // While a line editor owns the keyboard, nothing below the input scope
     // is reachable, so nothing below it may be listed.
-    SmallBuffer!(TestBinding, 32) listed;
+    SharedBuffer!(TestBinding, 32) listed;
     bindingsAt(listed, testBindings, TestContext(typing: true));
     foreach (ref b; listed[])
         assert(b.scope_ == TestScope.always || b.scope_ == TestScope.input,

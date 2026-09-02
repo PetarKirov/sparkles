@@ -16,7 +16,7 @@ back toward one. `boxesFillTheWidth` pins the arithmetic.
 
 $(B Text is borrowed, never built.) A `Widget`'s text must outlive the tree, and
 this module allocates nothing, so labels are written into a caller-owned arena
-$(I first) and sliced $(I after) — never interleaved. A `SmallBuffer` can move
+$(I first) and sliced $(I after) — never interleaved. A `SharedBuffer` can move
 when it grows, so a slice taken before a later append is a dangling one; the
 two-pass shape is what makes that impossible rather than merely unlikely, and it
 is the same span-into-an-arena discipline $(MREF sparkles,diff) uses.
@@ -28,7 +28,7 @@ without caring which command or scope enums parameterise it.
 */
 module sparkles.ui.components.lantern_view;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.input.events : altModifierName, Key, namedKeyLabel, superModifierName;
 public import sparkles.input.events : formatKbdChord, formatSymbolChord;
 import sparkles.ui.geometry : Insets, SizeSpec;
@@ -70,7 +70,7 @@ struct LanternStyle
 
 /// The arena panel labels are written into. Owned by the caller and reused
 /// across frames, so a redraw allocates nothing.
-alias LabelArena = SmallBuffer!(char, 2048);
+alias LabelArena = SharedBuffer!(char, 2048);
 
 /// A label's position in a $(LREF LabelArena). Recorded rather than sliced
 /// because the arena may move while it is still being filled.
@@ -280,7 +280,7 @@ uint viewLantern(B)(ref Builder b, ref LabelArena arena,
     if (first < 0)
         first = 0;
 
-    SmallBuffer!(Span, 64) keys, descs;
+    SharedBuffer!(Span, 64) keys, descs;
     foreach (ref item; items)
     {
         keys ~= writeKeyLabel(arena, item.path[depth]);
@@ -294,10 +294,10 @@ uint viewLantern(B)(ref Builder b, ref LabelArena arena,
     // ── pass 2: the tree, slicing an arena that no longer moves ──────────
     const(char)[] label(in Span s) => arena[][s.start .. s.start + s.length];
 
-    SmallBuffer!(uint, 32) rows;
+    SharedBuffer!(uint, 32) rows;
     foreach (r; 0 .. layout.rows)
     {
-        SmallBuffer!(uint, 8) cells;
+        SharedBuffer!(uint, 8) cells;
         foreach (col; 0 .. layout.boxes)
         {
             const i = first + col * layout.rows + r;
@@ -478,7 +478,7 @@ unittest
 @safe
 unittest
 {
-    // The property the two-pass shape exists for. A `SmallBuffer` moves when
+    // The property the two-pass shape exists for. A `SharedBuffer` moves when
     // it outgrows its inline storage, so a slice taken before a later append
     // dangles — and the failure is SILENT: the tree renders another item's
     // text, or mojibake, with nothing to assert against. Building the labels

@@ -870,7 +870,7 @@ enum generateDispatch(Handlers...) = {
 mixin(generateDispatch!(onKeyPress, onMouse, onResize));
 ```
 
-### Explicit Allocators -> D's @nogc + SmallBuffer
+### Explicit Allocators -> D's @nogc + SharedBuffer
 
 Zig passes allocators explicitly to every function that allocates:
 
@@ -886,7 +886,7 @@ D achieves similar control through a combination of mechanisms:
    This is arguably more ergonomic than explicit allocator passing because it is checked by
    the compiler rather than by convention.
 
-2. **`SmallBuffer`** -- Sparkles' existing `SmallBuffer` provides inline allocation with
+2. **`SharedBuffer`** -- Sparkles' existing `SharedBuffer` provides inline allocation with
    heap fallback, similar to Zig's `std.ArrayList` but with a small-buffer optimization
    that avoids allocation entirely for typical sizes.
 
@@ -896,10 +896,10 @@ D achieves similar control through a combination of mechanisms:
 ```d
 @safe pure nothrow @nogc:
 
-/// Arena-style per-frame allocation using SmallBuffer.
+/// Arena-style per-frame allocation using SharedBuffer.
 struct FrameArena
 {
-    SmallBuffer!(ubyte, 4096) storage;
+    SharedBuffer!(ubyte, 4096) storage;
 
     T[] alloc(T)(size_t count) return
     {
@@ -1028,7 +1028,7 @@ default branch). D's `match!` uses lambdas, which is slightly more verbose but c
 well with UFCS chains. D also allows pattern matching with `static if` and `is()` checks
 for more complex dispatch logic.
 
-### Cell Struct -> D Struct with SmallBuffer
+### Cell Struct -> D Struct with SharedBuffer
 
 Zig's `Cell` with its `Character` containing a `[]const u8` grapheme maps directly to D:
 
@@ -1037,7 +1037,7 @@ Zig's `Cell` with its `Character` containing a `[]const u8` grapheme maps direct
 
 struct Character
 {
-    SmallBuffer!(char, 16) grapheme;  // inline storage for typical graphemes
+    SharedBuffer!(char, 16) grapheme;  // inline storage for typical graphemes
     ubyte width = 1;                  // East Asian display width
 
     this(string s, ubyte w = 1)
@@ -1064,7 +1064,7 @@ struct Cell
 }
 ```
 
-The `SmallBuffer!(char, 16)` stores most grapheme clusters (even complex emoji sequences
+The `SharedBuffer!(char, 16)` stores most grapheme clusters (even complex emoji sequences
 like family emoji are under 16 bytes of UTF-8) inline without heap allocation. This mirrors
 Zig's approach where the grapheme is a byte slice, but with D's small-buffer optimization
 to avoid the need for an external allocator for typical cases.

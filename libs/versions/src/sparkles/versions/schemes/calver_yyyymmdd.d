@@ -99,7 +99,7 @@ static assert(!supportsPrerelease!CalVerYYYYMMDD);
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkToString;
+    import sparkles.base.buffer : checkToString;
     import sparkles.versions.testing : checkParse, checkRejects;
 
     auto v = checkParse!CalVerYYYYMMDD("2024.05.01");

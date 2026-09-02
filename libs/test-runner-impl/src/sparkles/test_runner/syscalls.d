@@ -419,10 +419,10 @@ else
 /// reason strings (`perf_event_paranoid=2`).
 private string longToString(long v) @safe pure nothrow
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeInteger;
 
-    SmallBuffer!(char, 24) buf;
+    SharedBuffer!(char, 24) buf;
     writeInteger(buf, v);
     return buf[].idup;
 }

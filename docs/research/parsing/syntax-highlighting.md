@@ -396,7 +396,7 @@ The [D landscape][d-landscape] page maps the local ground: `d_tree_sitter`
 provides FFI bindings to the tree-sitter C runtime (the precise-mode entry
 point); `libdparse` offers a ready-made D tokenizer should a hand-written
 D-language fast path ever be wanted; and the in-tree baseline —
-`sparkles.base.text`'s `@nogc` zero-copy readers/writers, `SmallBuffer`,
+`sparkles.base.text`'s `@nogc` zero-copy readers/writers, `SharedBuffer`,
 `Expected`-based error handling, and `sparkles:ghostty`'s VT layer — is exactly
 the allocation-conscious substrate a per-line tokenizer and an SGR/HTML fold
 want to sit on. The fast-mode engine itself (a `.sublime-syntax` /

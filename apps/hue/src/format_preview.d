@@ -30,7 +30,7 @@ import core.lifetime : move;
 
 import expected : Expected, err, ok;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.syntax : HighlightEvent;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 version (unittest) import sparkles.ui.themes : builtinDark;
@@ -83,7 +83,7 @@ struct FormatError
 /// file, so inline capacity can never win, and 1 rides free inside the heap
 /// descriptor's union — the type stays 3 words instead of pages (large value
 /// types have blown macOS's 512 KiB test-thread stacks before).
-alias FormatBuffer = SmallBuffer!(char, 1);
+alias FormatBuffer = SharedBuffer!(char, 1);
 
 /// The provider outcome: the formatted bytes, or why not.
 alias FormatResult = Expected!(FormatBuffer, FormatError);
@@ -1269,9 +1269,9 @@ final class FormatPreviewSession
         ref ViewerModel vm, string source, out ParsedLayer*[] layers) @system
     {
         import sparkles.syntax : highlightInjected;
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         if (vm.cache is null || vm.lang.length == 0
             || highlightInjected(*vm.cache, vm.lang, source, ev, layers).hasError)
         {

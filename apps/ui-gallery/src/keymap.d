@@ -623,7 +623,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.input.events : Mods;
     import std.traits : EnumMembers;
 
@@ -631,7 +631,7 @@ unittest
     // for every page scope, both regions, and under the modal.
     static void check(in GalleryContext ctx)
     {
-        SmallBuffer!(Binding, 128) listed;
+        SharedBuffer!(Binding, 128) listed;
         bindingsAt(listed, ctx);
         foreach (ref b; listed[])
         {

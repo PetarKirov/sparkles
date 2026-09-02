@@ -157,7 +157,7 @@ unittest
     // A package owns its own tree and nothing else — a run's listings include
     // every dependency it compiled.
     assert("libs/input/src/sparkles/input/tier.d".ownedBy("libs/input"));
-    assert(!"libs/base/src/sparkles/base/smallbuffer.d".ownedBy("libs/input"));
+    assert(!"libs/base/src/sparkles/base/buffer.d".ownedBy("libs/input"));
 
     // A prefix that is not a path component must not match: `libs/ui` does not
     // own `libs/ui-tui`, which is a different sub-package.

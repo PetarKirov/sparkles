@@ -15,7 +15,7 @@
 /// source (`DSN1`).
 module sparkles.dsv.parse;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr, parseOk;
 import sparkles.dsv.model : CellFlags, Dialect, DsvCell, DsvDoc, DsvRecord,
     Span, Terminator;
@@ -158,7 +158,7 @@ private void finishCounts(ref DsvDoc doc) @safe pure nothrow @nogc
     if (doc.records.length == 0)
         return;
 
-    SmallBuffer!(uint, 64) hist;
+    SharedBuffer!(uint, 64) hist;
     foreach (_; 0 .. maxCols + 1)
         hist ~= 0u;
     foreach (r; 0 .. doc.records.length)
@@ -187,7 +187,7 @@ version (unittest)
     /// Test helper: the decoded text of cell `(row, col)`. (A template so
     /// dip1000 attributes infer; `doc` is a plain ref — the result borrows
     /// from it or from `buf`.)
-    private const(char)[] cellAt()(ref SmallBuffer!(char, 256) buf,
+    private const(char)[] cellAt()(ref SharedBuffer!(char, 256) buf,
         ref const DsvDoc doc, size_t row, size_t col)
     {
         const rec = doc.records[row];
@@ -205,7 +205,7 @@ unittest
     assert(doc.modalColumnCount == 3);
     assert(doc.raggedCount == 0);
     assert(!doc.unterminatedQuote);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a");
     assert(cellAt(buf, doc, 1, 2) == "3");
     assert(doc.records[0].terminator == Terminator.lf);
@@ -227,7 +227,7 @@ unittest
     const doc = parseDsv("\"a,b\",\"l1\nl2\"\nx,y\n", Dialect(',')).value;
     assert(doc.records.length == 2);
     assert(doc.records[0].cellCount == 2);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a,b");
     assert(cellAt(buf, doc, 0, 1) == "l1\nl2");
     // The identity channel spans the raw bytes, quotes included (DSM2).
@@ -239,7 +239,7 @@ unittest
 unittest
 {
     const doc = parseDsv("\"he said \"\"hi\"\"\",b\n", Dialect(',')).value;
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "he said \"hi\"");
     assert(cellAt(buf, doc, 0, 1) == "b");
 }
@@ -250,7 +250,7 @@ unittest
 {
     const doc = parseDsv("a\"b,c\n", Dialect(',')).value;
     assert(doc.records[0].cellCount == 2);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a\"b");
     assert(!doc.cells[0].needsDecode);
 }
@@ -263,7 +263,7 @@ unittest
     // comma is content again (the Excel behavior, DSM1).
     const doc = parseDsv("\"a\"b\"c,d\",e\n", Dialect(',')).value;
     assert(doc.records[0].cellCount == 2);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "abc,d");
     assert(cellAt(buf, doc, 0, 1) == "e");
 }
@@ -276,7 +276,7 @@ unittest
     assert(doc.unterminatedQuote);
     assert(doc.records.length == 1);
     assert(doc.records[0].cellCount == 2);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 1) == "open\nstill open");
     assert(doc.records[0].terminator == Terminator.none);
 }
@@ -300,7 +300,7 @@ unittest
 {
     const doc = parseDsv("a\rb,c\n", Dialect(',')).value;
     assert(doc.records.length == 1);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a\rb");
 }
 
@@ -311,7 +311,7 @@ unittest
     const doc = parseDsv("\xEF\xBB\xBFa,b\n", Dialect(',')).value;
     assert(doc.bomLength == 3);
     assert(doc.records.length == 1);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a");
     assert(doc.cells[0].raw.start == 3);
 }
@@ -346,7 +346,7 @@ unittest
     const doc = parseDsv("a,b\n\nc,d\n", Dialect(',')).value;
     assert(doc.records.length == 3);
     assert(doc.records[1].cellCount == 1);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 1, 0) == "");
 }
 
@@ -356,7 +356,7 @@ unittest
 {
     const doc = parseDsv("a,b,\n", Dialect(',')).value;
     assert(doc.records[0].cellCount == 3);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 2) == "");
 }
 
@@ -364,7 +364,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     const tsv = parseDsv("a\tb\nc\td\n", Dialect('\t')).value;
     assert(tsv.columnCount == 2);
     assert(cellAt(buf, tsv, 1, 1) == "d");
@@ -383,7 +383,7 @@ unittest
 {
     const doc = parseDsv("'a,b',c\n", Dialect(',', '\'')).value;
     assert(doc.records[0].cellCount == 2);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a,b");
 }
 
@@ -391,7 +391,7 @@ unittest
 @safe unittest
 {
     import std.array : appender;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.dsv.model : ColumnType, inferColumnTypes;
 
     // Columns: text · integer-with-1/20-outlier (95%, passes) ·
@@ -415,7 +415,7 @@ unittest
         a ~= ",2026-08-18\n";
     }
     const doc = parseDsv(a[], Dialect(',')).value;
-    SmallBuffer!(ColumnType, 16) types;
+    SharedBuffer!(ColumnType, 16) types;
     inferColumnTypes(doc, 100, types);
     assert(types[0] == ColumnType.text);
     assert(types[1] == ColumnType.integer); // 19/20 = 95% — passes
@@ -440,7 +440,7 @@ unittest
     const doc = parseDsv(a[], Dialect(',')).value;
     assert(doc.records.length == 3);
     assert(doc.records[1].cellCount == 2);
-    SmallBuffer!(char, 256) buf;
+    SharedBuffer!(char, 256) buf;
     const decoded = decodeCell(doc, doc.cells[doc.records[1].cellsStart + 1], buf);
     assert(decoded.length == chunk.length - 500 * 2); // each "" collapses
     assert(cellAt(buf, doc, 2, 1) == "tail");

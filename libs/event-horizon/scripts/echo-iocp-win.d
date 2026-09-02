@@ -8,7 +8,7 @@ module echo_iocp_async;
 import core.lifetime : move;
 import std.stdio : writefln, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import core.time : msecs;
 import sparkles.event_horizon.io : Listener, Stream, accept, connect, recv, send, sleep;
 import sparkles.event_horizon.net : SockAddr;
@@ -34,7 +34,7 @@ static immutable payload = cast(immutable ubyte[]) "hello, iocp async";
 void echo(Stream conn)
 {
     scope (exit) conn.close();
-    SmallBuffer!(ubyte, 64) buf;
+    SharedBuffer!(ubyte, 64) buf;
     buf.length = 64;
     auto r = conn.recv(move(buf));
     buf = move(r.buf);
@@ -87,11 +87,11 @@ int main()
         scope (exit) client.close();
         if (client.connect(addr).hasError)
             return;
-        SmallBuffer!(ubyte, 64) msg;
+        SharedBuffer!(ubyte, 64) msg;
         msg ~= payload[];
         auto sent = client.send(move(msg));
         assert(!sent.res.hasError);
-        SmallBuffer!(ubyte, 64) back;
+        SharedBuffer!(ubyte, 64) back;
         back.length = 64;
         auto echoed = client.recv(move(back));
         if (!echoed.res.hasError)

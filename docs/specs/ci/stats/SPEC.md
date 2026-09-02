@@ -153,7 +153,7 @@ The two axes are not interchangeable:
 **Human (default):**
 
 - Header via `drawHeader`.
-- Overall `JobStats` summary (durations via `writeDuration` into `SmallBuffer`).
+- Overall `JobStats` summary (durations via `writeDuration` into `SharedBuffer`).
 - Table of runner aggregates (runner type, jobs, total, avg, min, max, minutes).
 - Optional "Top slow jobs" table.
 - Live progress during fetch using `TaskReporter` + detail lines; optional live-updating aggregate table via `drawTableLines` + `LiveRegion.update`.

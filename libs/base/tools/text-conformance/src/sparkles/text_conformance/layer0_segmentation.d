@@ -13,7 +13,7 @@
  */
 module sparkles.text_conformance.layer0_segmentation;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import std.range.primitives : put;
 
 import std.array : join;
@@ -82,8 +82,8 @@ LayerResult runLayer0(in Config cfg)
 
         // Build the UTF-8 string the line denotes.
         // `std.range.put` does the UTF-8 encoding a `dchar` needs;
-        // `SmallBuffer.put` only takes its own element type.
-        SmallBuffer!(char, 64) buf;
+        // `SharedBuffer.put` only takes its own element type.
+        SharedBuffer!(char, 64) buf;
         foreach (cp; c.cps)
             put(buf, cp);
 

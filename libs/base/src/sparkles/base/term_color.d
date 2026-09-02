@@ -633,7 +633,7 @@ Color unpackColor(uint w) @safe pure nothrow @nogc
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     // Round-trip every Kind, and confirm packed emit == Color emit byte-for-byte.
     static foreach (c; [
@@ -645,8 +645,8 @@ unittest
         foreach (channel; [ColorChannel.foreground, ColorChannel.background, ColorChannel.underline])
             foreach (depth; [ColorDepth.ansi16, ColorDepth.ansi256, ColorDepth.trueColor])
             {
-                import sparkles.base.smallbuffer : SmallBuffer;
-                SmallBuffer!(char, 32) a, b;
+                import sparkles.base.buffer : SharedBuffer, checkWriter;
+                SharedBuffer!(char, 32) a, b;
                 writeSgrColor(a, c, depth, channel);
                 writeSgrColorPacked(b, packColor(c), depth, channel);
                 assert(a[] == b[]);
@@ -715,7 +715,7 @@ in (channel != ColorChannel.underline, "underline has no classic-16 form")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     checkWriter!((ref w) => writeSgrColor(w, Color.init, ColorDepth.trueColor, ColorChannel.foreground))("39");
     checkWriter!((ref w) => writeSgrColor(w, Color.defaultColor, ColorDepth.trueColor, ColorChannel.background))("49");

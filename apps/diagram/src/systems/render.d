@@ -22,7 +22,7 @@ Connectors (`RND3`) are orthogonal box-drawing routes — never the canvas
 */
 module systems.render;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.writers : writeInteger;

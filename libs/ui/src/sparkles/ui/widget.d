@@ -3,7 +3,7 @@ The widget level (WGT) of $(MREF sparkles,ui): a $(LREF Widget) is currently a
 tagged record in a flat arena, each container referencing its children by an
 explicit index list — not a class hierarchy. `WGT3` / `UI-O2` replace the record
 with the required closed sum. The whole tree is one relocatable buffer
-($(LREF WidgetTree)), cheap to diff and (later) `SmallBuffer`-back for `@nogc`.
+($(LREF WidgetTree)), cheap to diff and (later) `SharedBuffer`-back for `@nogc`.
 
 A widget names a semantic $(REF Slot, sparkles,ui,style), $(B never) a concrete
 color, keeping presentation out of the tree (the palette resolves slots during
@@ -182,7 +182,7 @@ const panel = b.container(WidgetKind.popup, [sig, docs],
 auto tree = b.finish(panel);
 ---
 Uses a GC array in U1 (matching `gui_preview.d`'s `PreviewLine[]`); the node type
-is chosen so a later `SmallBuffer!Widget` swap is non-breaking.
+is chosen so a later `SharedBuffer!Widget` swap is non-breaking.
 */
 struct Builder
 {

@@ -23,7 +23,7 @@
 /// decision before parsing the full document.
 module sparkles.dsv.dialect;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.dsv.model : classifyValue, ColumnType, decodeCell, Dialect,
     DsvDoc, inferColumnTypesFrom, satisfies, ValueKind;
 import sparkles.dsv.parse : parseDsv;
@@ -208,11 +208,11 @@ bool detectHeader(in DsvDoc doc) @safe pure nothrow @nogc
     if (doc.records.length > 1)
     {
         // Body column types: sample from record 1 on.
-        SmallBuffer!(ColumnType, 16) types;
+        SharedBuffer!(ColumnType, 16) types;
         inferColumnTypesFrom(doc, 1, sniffMaxRecords, types);
 
         bool headerVote = false;
-        SmallBuffer!(char, 256) buf;
+        SharedBuffer!(char, 256) buf;
         foreach (col; 0 .. first.cellCount)
         {
             if (col >= types.length || types[col] == ColumnType.text)
@@ -231,7 +231,7 @@ bool detectHeader(in DsvDoc doc) @safe pure nothrow @nogc
     }
 
     // Fallback: unique, non-empty, all-text first row reads as names.
-    SmallBuffer!(char, 256) bufA, bufB;
+    SharedBuffer!(char, 256) bufA, bufB;
     foreach (col; 0 .. first.cellCount)
     {
         const t = decodeCell(doc, doc.cells[first.cellsStart + col], bufA);

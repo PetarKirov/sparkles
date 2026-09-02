@@ -28,7 +28,7 @@ that against a `scope` owner, so `@safe` code can still take a reference and
 outlive it. Treat borrowed references the way you would treat those from any
 container: do not store them past the owner's lifetime.
 
-For a growable sequence use `sparkles.base.smallbuffer.SmallBuffer` (its
+For a growable sequence use `sparkles.base.buffer.SharedBuffer` (its
 `unique` mode is the move-only, sole-owner variant of the same idea); `Unique`
 is for a single value whose address must be stable.
 
@@ -496,7 +496,7 @@ druntime's collector-root entry points, redeclared `pure`.
 
 `core.memory.GC.addRange`/`removeRange` are `nothrow @nogc` but not `pure`,
 while `Unique`'s operations infer `pure` for a `pure` `T` — the same problem
-`sparkles.base.smallbuffer` solves the same way, and for the same reason:
+`sparkles.base.buffer` solves the same way, and for the same reason:
 registering a root changes only whether the collector may reclaim memory,
 which no pure computation observes.
 
@@ -505,7 +505,7 @@ side effect alone may be deleted outright — a strongly-pure `void` call has no
 observable effect by definition, and dmd does elide it. An `extern (C)`
 declaration is emitted as a call.
 
-Unlike smallbuffer's array blocks, a `Unique` block holds exactly one value,
+Unlike the buffer module's array blocks, a `Unique` block holds exactly one value,
 so its `TypeInfo` describes the whole range: `typeid(T)` is passed rather than
 `null`, which a precise collector can use.
 */
@@ -637,7 +637,7 @@ extern (C) private pure nothrow @nogc @system
     // Distinct heap-allocated contents, then real churn: a dangling pointer
     // into intact memory would compare equal and let the bug pass, which is
     // why the payload is rebuilt and compared by content (the shape
-    // `SmallBuffer.indirections.heapElementsSurviveCollection` uses).
+    // `SharedBuffer.indirections.heapElementsSurviveCollection` uses).
     static struct Held
     {
         string[] items;

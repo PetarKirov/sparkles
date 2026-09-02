@@ -88,7 +88,7 @@ Plain length: 13
 
 ## Format into custom buffers
 
-For memory-conscious or `@nogc` formatting, use `writeStyled` to write formatted, styled templates into any `Writer` (such as a `SmallBuffer`):
+For memory-conscious or `@nogc` formatting, use `writeStyled` to write formatted, styled templates into any `Writer` (such as a `SharedBuffer`):
 
 ```d
 #!/usr/bin/env dub
@@ -97,12 +97,12 @@ For memory-conscious or `@nogc` formatting, use `writeStyled` to write formatted
     dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : writeStyled;
 
 void main()
 {
-    SmallBuffer!(char, 128) buf;
+    SharedBuffer!(char, 128) buf;
     writeStyled(buf, i"Level: {magenta debug}");
 
     writeln(buf[]);

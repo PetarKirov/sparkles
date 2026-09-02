@@ -683,14 +683,14 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     const pal = defaultTwoslashPalette();
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     writeSlotSgr(buf, pal, Slot.error, ColorChannel.foreground, ColorDepth.trueColor);
     assert(buf[] == "38;2;212;86;86"); // 0xd4 0x56 0x56
 
-    SmallBuffer!(char, 64) buf2;
+    SharedBuffer!(char, 64) buf2;
     writeSlotSgr(buf2, pal, Slot.code, ColorChannel.foreground, ColorDepth.trueColor);
     assert(buf2[] == "39"); // unset ⇒ default-foreground reset
 }
@@ -699,11 +699,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import std.algorithm.searching : canFind;
 
     const pal = defaultTwoslashPalette();
-    SmallBuffer!(char, 1024) buf;
+    SharedBuffer!(char, 1024) buf;
     writeTwoslashVars(buf, pal);
     const s = buf[];
 

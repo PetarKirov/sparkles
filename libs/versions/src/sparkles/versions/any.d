@@ -189,10 +189,10 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.base.smallbuffer : assertRendered, SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, assertRendered;
 
     auto v = AnyVersion(SemVer.parse("1.2.3-rc.1").value);
-    SmallBuffer!(char, 64) w;
+    SharedBuffer!(char, 64) w;
     toString(v, w);
     assertRendered("AnyVersion.toString", w[], "1.2.3-rc.1");
 }
@@ -201,11 +201,11 @@ unittest
 @safe
 unittest
 {
-    import sparkles.base.smallbuffer : assertRendered, SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, assertRendered;
 
     auto range = SemVer.parseNativeRange("^1.2.0").value;
     auto r = AnyRange(range);
-    SmallBuffer!(char, 64) w;
+    SharedBuffer!(char, 64) w;
     toString(r, w);
     assertRendered("AnyRange.toString", w[], ">=1.2.0|<2.0.0");
 }

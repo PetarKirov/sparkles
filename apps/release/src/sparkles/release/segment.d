@@ -453,9 +453,9 @@ private uint[] distinctPrs(const(SegmentInput)[] rows) @safe pure nothrow
 /// `SemVer` → `"X.Y.Z"` (no `v` prefix). Shared with the prompt builders.
 package string verString(in SemVer v) @safe pure
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) buf;
+    SharedBuffer!(char, 64) buf;
     v.toString(buf);
     return buf[].idup;
 }

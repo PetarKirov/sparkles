@@ -216,9 +216,9 @@ void writePointerShape(Writer)(ref Writer w, scope const(char)[] shape)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 64) b;
+    SharedBuffer!(char, 64) b;
     writeCursorUp(b, 3);
     assert(b[] == "\x1b[3A");
 
@@ -239,9 +239,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 16) b;
+    SharedBuffer!(char, 16) b;
     writeCursorUp(b, 0);
     writeCursorDown(b, 0);
     assert(b[].length == 0);
@@ -251,10 +251,10 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The pre-rendered CtlSeq spellings and the DecMode writers must agree.
-    SmallBuffer!(char, 32) b;
+    SharedBuffer!(char, 32) b;
     writeModeSet(b, DecMode.syncOutput);
     assert(b[] == CtlSeq.syncBegin);
 
@@ -275,9 +275,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
-    SmallBuffer!(char, 32) b;
+    SharedBuffer!(char, 32) b;
     // Fixed CtlSeq → its literal in one put.
     writeEscapeSeq!(CtlSeq.hideCursor)(b);
     assert(b[] == "\x1b[?25l");

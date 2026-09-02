@@ -1,7 +1,7 @@
 module sparkles.dql.engine;
 
 import expected : Expected, err, ok;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.text.span : TextSpan;
 import sparkles.dql.ast;
 import sparkles.fuzzy.glob : GlobMatchWorkspace, GlobProgram;
@@ -21,10 +21,10 @@ struct DqlParseError
 /// Execution engine owning the interned string pool, compiled matchers, and reusable evaluation workspaces.
 struct DqlEngine
 {
-    SmallBuffer!(char, 64, true) stringPool;
-    SmallBuffer!(GlobProgram!(), 2, true) globPrograms;
-    SmallBuffer!(QueryStorage!(), 2, true) fuzzyQueries;
-    SmallBuffer!(RegexHolder, 2, true) regexHolders;
+    UniqueBuffer!(char, 64) stringPool;
+    UniqueBuffer!(GlobProgram!(), 2) globPrograms;
+    UniqueBuffer!(QueryStorage!(), 2) fuzzyQueries;
+    UniqueBuffer!(RegexHolder, 2) regexHolders;
     GlobMatchWorkspace!() globWorkspace;
     MatcherWorkspace!() matcherWorkspace;
 

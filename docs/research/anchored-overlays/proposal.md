@@ -442,7 +442,7 @@ struct OverlayRecord
 
 struct AnchoredOverlayController
 {
-    SmallBuffer!(OverlayRecord, 8) open;  /// index order == paint order == reverse hit order
+    SharedBuffer!(OverlayRecord, 8) open;  /// index order == paint order == reverse hit order
     uint   nextGen = 1;
     int    warmUntilMs;   /// the shared cool-down arbiter, ONE integer
     size_t pressAnchor;   /// the two-phase outside test's armed group
@@ -699,7 +699,7 @@ Attack these first.
   overlay pays for every policy's fields. A split into `{geometry, behaviour}` sub-structs is
   plausible and untested here.
 - **`plan`/`apply` returns `AnchoredOverlayController` by value.** With
-  `SmallBuffer!(OverlayRecord, 8)` and `OverlayRecord` this wide, the copy is not free. The
+  `SharedBuffer!(OverlayRecord, 8)` and `OverlayRecord` this wide, the copy is not free. The
   alternative — `apply` taking `ref` — costs the "assertable without being applied" property
   that motivated the split.
 - **`HoverPolicy` mixes a capability bit (`hoverable`), geometry (`gapCells`) and timing
@@ -1212,7 +1212,7 @@ Judged on **UX impact × implementation cost × how many of our five targets can
   layer manager; Flutter forces a submenu to inherit its root anchor's choice. The forcing rule
   is needed either way.
 - **How deep may nesting go, and is the cap a static array bound (keeping the arena `@nogc` and
-  `SmallBuffer`-sized) or a runtime assert?** GPUI asserts depth < 10; Qt bounds its close loop
+  `SharedBuffer`-sized) or a runtime assert?** GPUI asserts depth < 10; Qt bounds its close loop
   at 1024.
 - **Does the recording canvas need to observe the arena, or only the emitted display list?** If
   assertions want "this overlay is a child of that one", the arena must be reachable from the

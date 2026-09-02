@@ -9,10 +9,10 @@ Use it when a package needs low-level building blocks without depending on
 the higher-level `sparkles:core-cli` UI and argument-parsing modules.
 
 ```d
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.writers : writeIntegerPadded;
 
-SmallBuffer!(char, 16) buf;
+SharedBuffer!(char, 16) buf;
 writeIntegerPadded(buf, 7, 3);
 assert(buf[] == "007");
 ```

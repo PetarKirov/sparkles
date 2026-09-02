@@ -1001,7 +1001,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     // The property that makes the table worth having: whatever `bindingsAt`
     // lists, `resolve` actually does. Anything weaker and the guide is a
@@ -1013,7 +1013,7 @@ unittest
     static void checkLevel(scope const Chord[] prefix, in KeyContext ctx,
         int depthLeft)
     {
-        SmallBuffer!(Binding, 128) listed;
+        SharedBuffer!(Binding, 128) listed;
         ui_keymap.bindingsAt(listed, hueBindings, ctx, prefix);
 
         foreach (ref b; listed[])

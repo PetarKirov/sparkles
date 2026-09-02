@@ -20,7 +20,7 @@ version (HueDmdFmt):
 
 import std.process : environment;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.syntax : GrammarRegistry, HighlightEvent,
     highlightInjected, LabelSet, TsConfigCache;
 import sparkles.ui.themes : builtinDark;
@@ -144,7 +144,7 @@ private final class BenchFixture
     {
         foreach (t; texts)
         {
-            SmallBuffer!HighlightEvent ev;
+            SharedBuffer!HighlightEvent ev;
             ParsedLayer*[] ls;
             cast(void) highlightInjected(cache, "d", t, ev, ls).hasError;
             events ~= ev[].dup;
@@ -156,7 +156,7 @@ private final class BenchFixture
     /// keeping the layers, which is what spares the rebuild a second parse.
     HighlightEvent[] highlight(string text, out ParsedLayer*[] layers) @system
     {
-        SmallBuffer!HighlightEvent ev;
+        SharedBuffer!HighlightEvent ev;
         if (highlightInjected(cache, "d", text, ev, layers).hasError)
         {
             layers = null;

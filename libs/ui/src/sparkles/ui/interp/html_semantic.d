@@ -272,10 +272,10 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 @safe unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.style : defaultTwoslashPalette;
 
-    SmallBuffer!(char, 4096) w;
+    SharedBuffer!(char, 4096) w;
     writeSlotStylesheet(w, defaultTwoslashPalette(),
         RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
     const css = w[];
@@ -291,7 +291,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 @safe unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.ui.widget : Builder, TextSpan;
 
     auto b = Builder();
@@ -302,7 +302,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(popup);
 
-    SmallBuffer!(char, 1024) w;
+    SharedBuffer!(char, 1024) w;
     renderWidgetHtmlClasses(w, tree);
     const html = w[];
 

@@ -12,7 +12,7 @@
  */
 module sparkles.text_conformance.layer2_emoji;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import std.range.primitives : put;
 
 import std.array : array, join;
@@ -55,8 +55,8 @@ LayerResult runLayer2(in Config cfg)
             continue;
 
         // `std.range.put` does the UTF-8 encoding a `dchar` needs;
-        // `SmallBuffer.put` only takes its own element type.
-        SmallBuffer!(char, 64) buf;
+        // `SharedBuffer.put` only takes its own element type.
+        SharedBuffer!(char, 64) buf;
         foreach (cp; cps)
             put(buf, cp);
 

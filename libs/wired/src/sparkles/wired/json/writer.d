@@ -581,7 +581,7 @@ in (value == value, "NaN is not representable in JSON")
 
 version (unittest)
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.wired.json.reader : parseJsonDocument;
 
     /// parse → minify; asserts the parse succeeded.
@@ -600,7 +600,7 @@ unittest
 {
     static void check(string text, string expected)
     {
-        import sparkles.base.smallbuffer : checkWriter;
+        import sparkles.base.buffer : SharedBuffer, checkWriter;
 
         checkWriter!((ref b) => minifyInto(text, b))(expected);
     }
@@ -632,7 +632,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static void checkPretty(string text, string expected)
     {
@@ -655,7 +655,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
 
     static void check(JsonWriteOptions opts)(string text, string expected)
     {
@@ -733,7 +733,7 @@ version (unittest)
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.smallbuffer : checkWriter;
+    import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.wired.json.reader : JsonReadOptions;
 
     checkWriter!((ref b) {
@@ -771,7 +771,7 @@ unittest
         {
             auto r = parseJsonDocument(doc);
             assert(r.hasValue);
-            SmallBuffer!(char, 1024) generic;
+            SharedBuffer!(char, 1024) generic;
             writeJson!opts(r.document.root, generic);
             JsonSink sink;
             writeJson!opts(r.document.root, sink);
@@ -830,22 +830,22 @@ unittest
         auto first = parseJsonDocument(doc);
         assert(first.hasValue);
 
-        SmallBuffer!(char, 1024) minified;
+        SharedBuffer!(char, 1024) minified;
         writeJson(first.document.root, minified);
         auto second = parseJsonDocument(minified[]);
         assert(second.hasValue, minified[]);
 
-        SmallBuffer!(char, 1024) again;
+        SharedBuffer!(char, 1024) again;
         writeJson(second.document.root, again);
         assert(minified[] == again[]); // minified form is a fixed point
 
         enum opts = JsonWriteOptions(pretty: true);
-        SmallBuffer!(char, 1024) pretty;
+        SharedBuffer!(char, 1024) pretty;
         writeJson!opts(second.document.root, pretty);
         auto third = parseJsonDocument(pretty[]);
         assert(third.hasValue, pretty[]);
 
-        SmallBuffer!(char, 1024) fromPretty;
+        SharedBuffer!(char, 1024) fromPretty;
         writeJson(third.document.root, fromPretty);
         assert(minified[] == fromPretty[]);
     }

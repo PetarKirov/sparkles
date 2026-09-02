@@ -3,7 +3,7 @@ module sparkles.wired.sdl.reader;
 
 import std.experimental.allocator.common : stateSize;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.wired.sdl.config;
@@ -698,7 +698,7 @@ private void finalizeChildren(Allocator)(ref SdlDocument!Allocator document)
             && document.nodes[i].depth > deepest)
             deepest = document.nodes[i].depth;
 
-    auto lastAtDepth = SmallBuffer!(size_t, 32)();
+    auto lastAtDepth = SharedBuffer!(size_t, 32)();
     foreach (_; 0 .. cast(size_t) deepest + 1)
         lastAtDepth ~= 0;
 

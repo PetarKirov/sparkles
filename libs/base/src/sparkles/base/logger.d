@@ -265,13 +265,13 @@ class DeltaTimeLogger : CoreLogger
         scope const(char)[] message,
     ) @safe nothrow @nogc
     {
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
         import sparkles.base.styled_template : writeStyled;
         import std.range.primitives : put;
 
         auto prev = atomicExchange!(MemoryOrder.raw)(&prevTicks, entry.monotonicTicks);
 
-        SmallBuffer!(char, 8) timeBuf;
+        SharedBuffer!(char, 8) timeBuf;
         writeTimeHms(timeBuf, entry.hour, entry.minute, entry.second);
 
         CFileWriter w = CFileWriter.stderr();
@@ -404,13 +404,13 @@ void log(Args...)(
     string moduleName = __MODULE__,
 ) @safe nothrow @nogc
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.styled_template : writeStyled;
 
     if (level != LogLevel.fatal && !coreLogEnabled(level))
         return;
 
-    SmallBuffer!(char, 4 * 1024) message;
+    SharedBuffer!(char, 4 * 1024) message;
     writeStyled(message, header, args, footer);
 
     auto entry = makeCoreLogEntry(level, line, file, funcName, prettyFuncName, moduleName);
@@ -707,10 +707,10 @@ private void logSpanClose(string name)(
     string moduleName,
 ) @safe nothrow @nogc
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeDuration;
 
-    SmallBuffer!(char, 24) durBuf;
+    SharedBuffer!(char, 24) durBuf;
     writeDuration(durBuf, durationFromTicks(MonoTime.currTime.ticks - startTicks));
     const loc = SourceLocation(line, file, funcName, prettyFuncName, moduleName);
     trace(loc, i"<< $(name) $(durBuf[])");
@@ -886,15 +886,15 @@ void writeLogPrefix(bool colored = false, Writer)(
     int line,
 )
 {
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.styled_template : writeStyled;
     import sparkles.base.term_color : ColorDepth;
     import sparkles.base.text.writers : DurationPad, writeDurationPadded;
 
     enum depth = colored ? ColorDepth.trueColor : ColorDepth.none;
-    SmallBuffer!(char, 16) startBuf;
+    SharedBuffer!(char, 16) startBuf;
     writeDurationPadded(startBuf, sinceStart, 5, DurationPad.before);
-    SmallBuffer!(char, 16) prevBuf;
+    SharedBuffer!(char, 16) prevBuf;
     writeDurationPadded(prevBuf, sincePrev, 5, DurationPad.before);
     auto loc = baseNameSlice(file);
 
@@ -1151,7 +1151,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
 
     lockLoggerGlobalTests();
     auto oldLogger = sharedCoreLog;
@@ -1174,7 +1174,7 @@ unittest
     // The second mark's Δtᵢ is from the first mark, not from construction.
     assert(b.sincePrev <= b.sinceStart);
 
-    SmallBuffer!(char, 32) buf;
+    SharedBuffer!(char, 32) buf;
     writeLogDelta(buf, b);
     assert(buf[].canFind("Δt "));
     assert(buf[].canFind("Δtᵢ "));

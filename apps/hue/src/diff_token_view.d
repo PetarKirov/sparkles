@@ -15,7 +15,7 @@
 // and merely stops assuming it knows where tokens begin.
 module diff_token_view;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.diff : DiffDoc, DiffOptions, FileEntry, RefineToken, Row,
     RowKind, refinePairTokens;
 
@@ -64,7 +64,7 @@ size_t applyTokenEmphasis(ref DiffDoc doc, in FileEntry file,
                 || a != doc.rowText(row) || b != doc.rowText(mate))
                 continue;
 
-            SmallBuffer!RefineToken ta, tb;
+            SharedBuffer!RefineToken ta, tb;
             tokensOnLine(oldTokens, oldSide, oldLines, row.oldLine, ta);
             tokensOnLine(newTokens, newSide, newLines, mate.newLine, tb);
 
@@ -87,7 +87,7 @@ size_t applyTokenEmphasis(ref DiffDoc doc, in FileEntry file,
 /// The tokens overlapping 1-based `line`, clipped to it and rebased to
 /// line-relative offsets — the coordinates `Row` emphasis spans use.
 private void tokensOnLine(scope const(Token)[] toks, scope const(char)[] source,
-    scope const(size_t)[] starts, uint line, ref SmallBuffer!RefineToken sink)
+    scope const(size_t)[] starts, uint line, ref SharedBuffer!RefineToken sink)
     @safe
 {
     if (line == 0 || line > starts.length)

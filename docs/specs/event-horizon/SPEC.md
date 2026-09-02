@@ -41,7 +41,7 @@ over the live capability row (`env.net`) and a structured scope:
 +/
 import core.lifetime : move;
 import std.stdio : writeln;
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon;
 
 void main()
@@ -66,11 +66,11 @@ void main()
         // The client: connect, send, receive the echo, verify.
         auto client = env.net.connect(ipv4("127.0.0.1", port)).value;
         scope (exit) client.close();
-        SmallBuffer!(ubyte, 64) msg;
+        SharedBuffer!(ubyte, 64) msg;
         msg ~= cast(const(ubyte)[]) "hello, event horizon";
         client = client.sendAll(move(msg));
 
-        SmallBuffer!(ubyte, 64) back;
+        SharedBuffer!(ubyte, 64) back;
         back.length = 64;
         auto got = client.recv(move(back));       // parks until the echo
         echoed = !got.res.hasError && got.res.value == 20;
@@ -85,7 +85,7 @@ void main()
 void echo(Stream conn)
 {
     scope (exit) conn.close();                    // runs even on Interrupt
-    SmallBuffer!(ubyte, 4096) buf;
+    SharedBuffer!(ubyte, 4096) buf;
     buf.length = 4096;                            // grow-with-default (base helper)
     auto r = conn.recv(move(buf));                // buffer moves in …
     buf = move(r.buf);                            // … and comes back
@@ -161,7 +161,7 @@ _Loop-side_ modules may import anything.
 | `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
 | `package`                | —            | public re-exports                                                                                                                    |
 
-**Foundation:** `sparkles:base` supplies `SmallBuffer` (staging buffers, test
+**Foundation:** `sparkles:base` supplies `SharedBuffer` (staging buffers, test
 helpers) and `recycledErrorInstance`; the `expected` package (`~>0.4.1`)
 supplies `Expected`. `during` (`~>0.5.0`) is the Linux substrate and is not
 re-exported — user code never sees an SQE.
@@ -625,10 +625,10 @@ struct Buf
 ```
 
 > [!IMPORTANT]
-> `SmallBuffer` is **not** a valid tier-A transfer currency: its small-buffer
+> `SharedBuffer` is **not** a valid tier-A transfer currency: its small-buffer
 > optimization stores the payload inline, so moving the struct relocates the
 > bytes — under a kernel-held pointer that is a silent use-after-move.
-> `SmallBuffer` remains the staging/assembly type at the edges; `Buf` (pool,
+> `SharedBuffer` remains the staging/assembly type at the edges; `Buf` (pool,
 > registered slot, ring lease, or pinned foreign memory) is what crosses the
 > submission boundary at tier A.
 
@@ -687,7 +687,7 @@ enum bool isOwnedIoBuf(Buf) = /* exact-expression checks */;
 At tier B the moved-in buffer lives in the suspended verb's stack frame, and
 the fiber resumes **only at the terminal completion** (§8.5) — so the frame,
 and therefore the buffer, provably outlives kernel use. This is why
-inline-storage types (`SmallBuffer!ubyte`) are sound as tier-B transfer
+inline-storage types (`SharedBuffer!ubyte`) are sound as tier-B transfer
 buffers even though they are banned at tier A, and why borrowed-slice
 convenience overloads (`readInto(fd, scope ubyte[])`) are sound at tier B. A
 future "kill a fiber without resumption" feature would break exactly this
@@ -1546,8 +1546,8 @@ around), reap:
 struct CapturedOutput
 {
     ExitStatus status;
-    SmallBuffer!(ubyte, 256) stdout_;  /// empty unless stdoutSpec piped
-    SmallBuffer!(ubyte, 256) stderr_;  /// empty unless stderrSpec piped
+    SharedBuffer!(ubyte, 256) stdout_;  /// empty unless stdoutSpec piped
+    SharedBuffer!(ubyte, 256) stderr_;  /// empty unless stderrSpec piped
 }
 
 IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
@@ -1650,8 +1650,8 @@ struct SupervisedProcessResult
     ProcessEnd end;
     ExitStatus status;             /// valid once a child existed and was reaped
     ProcessResourceUsage usage;
-    SmallBuffer!(ubyte, 256) stdout_;
-    SmallBuffer!(ubyte, 256) stderr_;
+    SharedBuffer!(ubyte, 256) stdout_;
+    SharedBuffer!(ubyte, 256) stderr_;
     IoError spawnError;             /// valid only for spawnFailed
 }
 

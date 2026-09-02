@@ -191,18 +191,18 @@ struct TaskReporter
     /// You can call `.put` or `.writeStyled(i"...")` on it.
     /// On destruction it flushes the accumulated content via the normal output path.
     ///
-    /// Example (reduces SmallBuffer boilerplate):
+    /// Example (reduces SharedBuffer boilerplate):
     ///   tasks.output(jobsId).writeStyled(i"$(i + 1) / $(runs.length) runs");
     auto output(this This)(size_t id)
     in (id < _items.length)
     {
-        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.buffer : SharedBuffer;
 
         static struct OutputWriter
         {
             This* r;
             size_t id;
-            SmallBuffer!(char, 256) b;
+            SharedBuffer!(char, 256) b;
 
             // The dtor flushes the accumulated buffer, so a copy would flush twice.
             // The proxy is meant to be used as a short-lived temporary/local (moved,

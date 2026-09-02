@@ -46,7 +46,7 @@ module anchored_overlays_dismissal_policy;
 
 import std.stdio : writefln, writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.input.events : Key, KeyAction, KeyEvent, isDismiss;
 import sparkles.ui.geometry : cellsOf, Point, Rect;
 
@@ -529,7 +529,7 @@ void main() @safe
 
     foreach (p; presets)
     {
-        SmallBuffer!(char, 256) buf;
+        SharedBuffer!(char, 256) buf;
         writeFlags(p.policy.on, buf);
         writefln!"  %-9s group %d  on = %s"(p.name, p.policy.group, buf[]);
     }
@@ -565,7 +565,7 @@ void main() @safe
     const frame = DismissEvent(cause: DismissOn.nothing, frame: 42);
 
     {
-        SmallBuffer!(char, 256) head;
+        SharedBuffer!(char, 256) head;
         head ~= "  ";
         head.writeCell("policy", 9, true);
         foreach (c; causes)
@@ -575,7 +575,7 @@ void main() @safe
 
     foreach (p; presets)
     {
-        SmallBuffer!(char, 256) row;
+        SharedBuffer!(char, 256) row;
         row ~= "  ";
         row.writeCell(p.name, 9, true);
         foreach (c; causes)
@@ -657,7 +657,7 @@ void main() @safe
 
         const touchHit = hitFor(surface, anchor, touchPopoverDismiss, pr.release, pr.press, 0);
 
-        SmallBuffer!(char, 128) row;
+        SharedBuffer!(char, 128) row;
         row ~= "  ";
         row.writeCell(pt(pr.press), 11, true);
         row.writeCell(pt(pr.release), 14, true);
@@ -696,7 +696,7 @@ void main() @safe
     writeln("that same press. Two shapes of the bug, with the guard on and off:");
     writeln();
     {
-        SmallBuffer!(char, 128) head;
+        SharedBuffer!(char, 128) head;
         head ~= "  ";
         head.writeCell("case", 50, true);
         head.writeCell("guard on", 11, true);
@@ -708,7 +708,7 @@ void main() @safe
     {
         DismissEvent off = e;
         off.openGuard = false;
-        SmallBuffer!(char, 128) row;
+        SharedBuffer!(char, 128) row;
         row ~= "  ";
         row.writeCell(label, 50, true);
         row.writeCell(shortName(dismissedBy(p, e, h)), 11, true);
@@ -766,7 +766,7 @@ void main() @safe
     void cascadeRow(string label, size_t endpoint, DismissReason cause) @safe
     {
         const closing = truncateTo(chain, endpoint, menuDismiss.group, cause);
-        SmallBuffer!(char, 256) buf;
+        SharedBuffer!(char, 256) buf;
         foreach (k; 0 .. closing.length)
         {
             if (k)

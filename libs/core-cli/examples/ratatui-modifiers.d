@@ -22,7 +22,7 @@ module ratatui_modifiers_example;
 // sparkles has no blink attribute, so ratatui's SlowBlink/RapidBlink are
 // omitted (noted below).
 //
-// Lines are assembled in a reused `SmallBuffer` (via `alignField` rather than
+// Lines are assembled in a reused `SharedBuffer` (via `alignField` rather than
 // GC `format`), so no per-cell strings are allocated.
 //
 //   dub run --single ratatui-modifiers.d
@@ -30,7 +30,7 @@ module ratatui_modifiers_example;
 import std.stdio : writeln;
 import std.traits : EnumMembers;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : Color, ColorDepth;
 import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle, writeStyleTransition;
 import sparkles.base.text.width : Align, alignField;
@@ -38,7 +38,7 @@ import sparkles.base.term_caps : detectTermCaps;
 import sparkles.ui.components.header : drawHeader;
 
 /// One assembled output line; inline, so reuse across rows never allocates.
-alias Line = SmallBuffer!(char, 2048);
+alias Line = SharedBuffer!(char, 2048);
 
 /// The text attributes this demo cycles through, in ratatui's order (minus the
 /// two blink modes, which sparkles' `TextAttr` doesn't model).

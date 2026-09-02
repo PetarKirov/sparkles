@@ -39,7 +39,7 @@ import core.sys.posix.fcntl : O_RDONLY;
 import std.conv : octal;
 import std.stdio : writefln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.fs;
 import sparkles.event_horizon.io : read;
 import sparkles.event_horizon.live : spawnProcess, wait;
@@ -84,7 +84,7 @@ int main()
     const watchAdded = watcher.addWatch(dir, IN_CLOSE_WRITE);
     assert(watchAdded.hasValue);
 
-    SmallBuffer!(char, 256) streamed;
+    SharedBuffer!(char, 256) streamed;
     bool sawEvent;
     int exitCode = -1;
 
@@ -98,7 +98,7 @@ int main()
 
         // Fiber 1: stream the child's stdout through the ring until EOF.
         cast(void) sched.spawn(() {
-            SmallBuffer!(ubyte, 128) buf;
+            SharedBuffer!(ubyte, 128) buf;
             for (;;)
             {
                 buf.length = 128;
@@ -132,7 +132,7 @@ int main()
         Statx st;
         const statted = statxPath(sched, dir ~ "/result.txt", st);
         assert(!statted.hasError);
-        SmallBuffer!(ubyte, 64) content;
+        SharedBuffer!(ubyte, 64) content;
         content.length = 64;
         auto got = read(handle, move(content), 0);
         assert(!got.res.hasError && got.res.value == st.stx_size);

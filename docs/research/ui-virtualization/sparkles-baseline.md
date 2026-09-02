@@ -266,7 +266,7 @@ Two rules follow, and they generalize past this table:
 > Writing this benchmark surfaced a trap worth recording: `benchIter` does not
 > run its body, it _registers_ it, and the runner executes it after the enclosing
 > `unittest` has returned. A fixture that lives in that frame is therefore already
-> destructed by the time it is timed — a `DsvDoc`'s `SmallBuffer` members release
+> destructed by the time it is timed — a `DsvDoc`'s `SharedBuffer` members release
 > their storage and zero their lengths, so the document reads back **empty** and
 > the leg silently measures nothing. Plain scalars survive (freed stack memory
 > keeps its bytes), which is what makes it look like a data bug rather than a

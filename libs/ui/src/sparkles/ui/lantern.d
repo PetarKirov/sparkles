@@ -12,7 +12,7 @@ that is a widget tree built by
 $(REF viewLantern, sparkles,ui,components,lantern_view) from
 $(REF bindingsAt, sparkles,ui,keymap) — and no window, timer or frame loop is
 touched. The whole machine is $(D @safe pure nothrow @nogc) over a
-$(REF SmallBuffer, sparkles,base,smallbuffer) of at most
+$(REF SharedBuffer, sparkles,base,buffer) of at most
 $(REF maxPathLength, sparkles,ui,keymap) chords, so it is checkable in a
 unittest exactly like the keymap it drives.
 
@@ -38,7 +38,7 @@ module sparkles.ui.lantern;
 
 import core.time : Duration, msecs;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.input.events : Key, KeyEvent;
 
 import sparkles.ui.keymap : Chord, KeyCommand, maxPathLength, normalise,
@@ -58,7 +58,7 @@ a test constructs one directly rather than driving a session to reach a state.
 struct LanternState
 {
     /// The chords typed so far. Empty means no sequence is in flight.
-    SmallBuffer!(Chord, maxPathLength) pending;
+    SharedBuffer!(Chord, maxPathLength) pending;
     /// Whether the panel is being shown. Set by $(LREF tick) once
     /// $(LREF LanternState.waited) reaches the delay, or immediately by a
     /// `reveal` row.

@@ -145,7 +145,7 @@ unittest
     import core.sys.posix.fcntl : O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY;
     import std.conv : octal;
 
-    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.buffer : SharedBuffer;
     import sparkles.event_horizon.io : read, write;
 
     Sched s;
@@ -160,7 +160,7 @@ unittest
         assert(created.hasValue);
         auto f = created.value;
 
-        SmallBuffer!(ubyte, 64) out_;
+        SharedBuffer!(ubyte, 64) out_;
         out_ ~= payload[];
         auto wrote = write(f, move(out_), 0);
         assert(!wrote.res.hasError && wrote.res.value == payload.length);
@@ -176,7 +176,7 @@ unittest
         auto opened = openFile(s, path, O_RDONLY);
         assert(opened.hasValue);
         auto rd = opened.value;
-        SmallBuffer!(ubyte, 64) in_;
+        SharedBuffer!(ubyte, 64) in_;
         in_.length = 64;
         auto got = read(rd, move(in_), 0);
         assert(!got.res.hasError && got.res.value == payload.length);

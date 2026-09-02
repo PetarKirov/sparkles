@@ -21,14 +21,14 @@ module ratatui_colors_example;
 // `writeStyleTransition`, passing the terminal's detected `ColorDepth`, so the
 // colors fold automatically: 24-bit → 256 → nearest classic-16 → uncolored.
 //
-// Lines are assembled in a reused `@nogc` `SmallBuffer` (via `alignField` /
+// Lines are assembled in a reused `@nogc` `SharedBuffer` (via `alignField` /
 // `writeInteger` rather than GC `format`), so no per-cell strings are allocated.
 //
 //   dub run --single ratatui-colors.d
 
 import std.stdio : writeln;
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : Color, ColorDepth, RgbColor;
 import sparkles.base.term_style : TermStyle, writeStyleTransition;
 import sparkles.base.text.width : Align, alignField;
@@ -38,7 +38,7 @@ import sparkles.ui.components.header : drawHeader;
 
 /// One assembled output line; ample and inline, so `clear()` (and reuse across
 /// rows) never touches the heap.
-alias Line = SmallBuffer!(char, 4096);
+alias Line = SharedBuffer!(char, 4096);
 
 void main()
 {
@@ -67,7 +67,7 @@ void renderNamed(ColorDepth depth)
 {
     writeln("The 16 named colors".drawHeader);
     Line line;
-    SmallBuffer!(char, 8) num;
+    SharedBuffer!(char, 8) num;
     foreach (i; 0 .. 16)
     {
         const idx = cast(ubyte) i;
@@ -119,7 +119,7 @@ void renderIndexed(ColorDepth depth)
     // A 16×16 grid: every index sits on its own swatch, labelled in a contrasting
     // color so even the darkest and lightest entries stay readable.
     Line line;
-    SmallBuffer!(char, 8) num;
+    SharedBuffer!(char, 8) num;
     foreach (row; 0 .. 16)
     {
         line.clear();
