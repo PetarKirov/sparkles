@@ -2443,6 +2443,23 @@ private SdlScalar encScalar(T)(scope const ref T v, ref EncBuilder b,
             return SdlScalar(cast(long) v);
         }
     }
+    else static if (is(U == real))
+    {
+        // D `real` is always SDL decimal (`BD`), even on targets where
+        // `real` is binary64 and `real.sizeof == double.sizeof`. Discriminating
+        // by size would emit `D` for a `real` field and break the typed
+        // round-trip against a `BD` decode.
+        import std.math : isFinite;
+
+        if (!isFinite(v))
+        {
+            b.failure = attachPath(b.path, encBaseError(
+                SdlErrorCode.valueOutOfRange,
+                "non-finite floats have no SDL literal representation"));
+            return SdlScalar.init;
+        }
+        return SdlScalar.decimal(v);
+    }
     else static if (isFloatingPoint!U && U.sizeof <= 4)
         return encFiniteScalar(cast(float) v, b);
     else static if (isFloatingPoint!U && U.sizeof <= 8)
