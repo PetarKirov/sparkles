@@ -4,10 +4,15 @@ Shared decimal-to-`real` kernel for the SDL `decimal` (`BD`) scalar family.
 Both directions must agree exactly, or SPEC §10 LAW 3 cannot hold for `real`
 fields: the canonical writer picks the shortest decimal spelling whose
 $(I emitted) text parses back to the value it started from, and the lexer
-decodes that spelling with this same routine. Phobos' `std.conv.to!real`
-cannot serve either role — it is not correctly rounded for the x87 80-bit
-format, so a writer using it as its round-trip oracle both rejects values it
-should accept and disagrees with any independent reader.
+decodes that spelling with this same routine.
+
+On targets where `real` is IEEE binary64 (`real.mant_dig == double.mant_dig`)
+this is a grammar adapter over the correctly-rounded
+$(REF readDecimalFloat, sparkles,base,text,float_conv): Phobos' `to!real` is
+already correctly rounded there, so a private rounding kernel would only
+drift. The x87 80-bit path remains because `to!real` is not correctly
+rounded for that format, and a writer using it as its round-trip oracle both
+rejects values it should accept and disagrees with any independent reader.
 
 The grammar accepted here is SDL's, not JSON's: an optional sign, decimal
 digits, and at most one point. There is no exponent — the canonical writer
@@ -119,17 +124,91 @@ private real scaleByPow10(real value, int exponent) @safe pure nothrow @nogc
 
 /** Decodes an SDL decimal significand into `real`.
 
-`text` is the scalar's spelling with any `BD` suffix already removed. The
-significant digits are accumulated into two exact `ulong` chunks and combined
-once, so a spelling of up to 38 significant digits costs at most a couple of
-roundings — close enough to correctly rounded that the canonical writer's
-shortest-spelling search always converges well inside `real`'s digit budget.
+`text` is the scalar's spelling with any `BD` suffix already removed.
+
+On x87 (`real.mant_dig == 64`) the significant digits are accumulated into
+two exact `ulong` chunks and combined once, so a spelling of up to 38
+significant digits costs at most a couple of roundings — close enough to
+correctly rounded that the canonical writer's shortest-spelling search
+always converges well inside `real`'s digit budget. On binary64 the
+correctly-rounded `readDecimalFloat` kernel does the conversion after this
+routine has enforced SDL's exponent-free grammar.
 
 Returns `real.nan` for a spelling the SDL grammar does not accept; callers
 have already validated shape, so this is a defensive result rather than the
 reported error.
 */
 package real parseDecimalReal(scope const(char)[] text)
+    @safe pure nothrow @nogc
+{
+    static if (real.mant_dig == double.mant_dig)
+        return parseDecimalRealBinary64(text);
+    else
+        return parseDecimalRealExtended(text);
+}
+
+/** Binary64 `real`: SDL grammar, then the correctly-rounded IEEE parser. */
+private real parseDecimalRealBinary64(scope const(char)[] text)
+    @safe pure nothrow @nogc
+{
+    import sparkles.base.buffer : UniqueBuffer;
+    import sparkles.base.text.float_conv : readDecimalFloat;
+
+    size_t at;
+    bool negative;
+    if (at < text.length && (text[at] == '+' || text[at] == '-'))
+    {
+        negative = text[at] == '-';
+        at++;
+    }
+    auto rest = text[at .. $];
+    if (rest.length == 0)
+        return real.nan;
+
+    bool sawDot;
+    bool sawDigit;
+    foreach (c; rest)
+    {
+        if (c == '.')
+        {
+            if (sawDot)
+                return real.nan;
+            sawDot = true;
+            continue;
+        }
+        if (cast(uint)(c - '0') > 9)
+            return real.nan;
+        sawDigit = true;
+    }
+    if (!sawDigit)
+        return real.nan;
+
+    // `readDecimalFloat` requires digits after a point; SDL "1." is 1.
+    if (rest[$ - 1] == '.')
+        rest = rest[0 .. $ - 1];
+    if (rest.length == 0)
+        return real.nan;
+
+    UniqueBuffer!(char, 64) owned;
+    scope const(char)[] input;
+    if (rest[0] == '.')
+    {
+        // `readDecimalFloat` also requires a digit before the point.
+        owned ~= '0';
+        owned ~= rest;
+        input = owned[];
+    }
+    else
+        input = rest;
+
+    auto parsed = readDecimalFloat(input);
+    if (parsed.hasError || input.length)
+        return real.nan;
+    return negative ? -parsed.value : parsed.value;
+}
+
+/** x87 80-bit `real`: two-chunk accumulate plus a single 128-bit rounding. */
+private real parseDecimalRealExtended(scope const(char)[] text)
     @safe pure nothrow @nogc
 {
     size_t at;
@@ -305,22 +384,28 @@ unittest
     assert(isNaN(parseDecimalReal("12x")));
 }
 
-// The kernel resolves the exact case Phobos' `to!real` gets wrong: this
-// 22-digit spelling is well inside half an ulp of its `real`, so a correctly
-// rounded parse must return that value.
+// The kernel resolves the exact case Phobos' `to!real` gets wrong on x87:
+// this 22-digit spelling is well inside half an ulp of its 80-bit `real`,
+// so a correctly rounded parse must return that value. On binary64 Phobos
+// is already correctly rounded, so the two agree and the kernel is only a
+// grammar adapter.
 @("sdl.decimal.beatsPhobosToReal")
 @safe unittest
 {
     import std.conv : to;
+    import std.format : format;
 
     enum spelling = "-1.527064050293794113039";
     const kernel = parseDecimalReal(spelling);
     const phobos = spelling.to!real;
-    assert(kernel !is phobos, "the kernel would not be needed if these agreed");
-
-    // The kernel's answer is the one that survives a re-spelling at full
-    // precision; Phobos' is off by at least an ulp.
-    import std.format : format;
-
-    assert(parseDecimalReal(format("%.25g", kernel)) is kernel);
+    static if (real.mant_dig > double.mant_dig)
+    {
+        assert(kernel !is phobos, "the kernel would not be needed if these agreed");
+        assert(parseDecimalReal(format("%.25g", kernel)) is kernel);
+    }
+    else
+    {
+        assert(kernel is phobos);
+        assert(parseDecimalReal(format("%.17g", kernel)) is kernel);
+    }
 }

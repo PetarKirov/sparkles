@@ -1271,13 +1271,24 @@ version (unittest)
     // is "1" at every precision, so no candidate distinguishes it from 1.0.
     // The contract that matters is that this surfaces as a structured encode
     // error rather than silently emitting a spelling for a different value.
+    // On binary64, `1 + real.epsilon` is the next double after 1 and `%g`
+    // distinguishes it, so the same value is required to encode.
     {
-        const unrenderable = SdlScalar.decimal(1.0L + real.epsilon);
+        const edge = SdlScalar.decimal(1.0L + real.epsilon);
         SdlString sink;
-        const written = writeSdlScalar(unrenderable, sink);
-        assert(written.hasError);
-        assert(written.error.code == SdlErrorCode.valueOutOfRange);
-        assert(sink.length == 0);
+        const written = writeSdlScalar(edge, sink);
+        static if (real.mant_dig > double.mant_dig)
+        {
+            assert(written.hasError);
+            assert(written.error.code == SdlErrorCode.valueOutOfRange);
+            assert(sink.length == 0);
+        }
+        else
+        {
+            assert(!written.hasError, written.error.toString);
+            assert(sink.length > 2 && sink[][$ - 2 .. $] == "BD");
+            assert(parseDecimalReal(sink[][0 .. $ - 2]) is edge.decimalValue);
+        }
     }
 
     // A spread of non-dyadic values: the generated law test elsewhere feeds
