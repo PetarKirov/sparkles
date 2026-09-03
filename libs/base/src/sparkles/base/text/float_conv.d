@@ -2810,6 +2810,12 @@ in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits1
     const bool quarterBelow = powerOfTwo && v.exp2 > fmt.minSubnormalExp2;
     const bool inclusive = (v.lo & 1) == 0;
     const e = v.exp2;
+    // A format with neither infinity nor NaN saturates: every decimal past
+    // its largest value reads back as that value, so the interval above it
+    // has no end and a one-digit spelling always exists (`8e0` for 7.5).
+    enum saturates = fmt.specials == BinaryFloatFormat.Specials.none;
+    const bool unboundedAbove = saturates && v.hi == 0
+        && v.lo == fmt.maxFiniteSignificand && v.exp2 == fmt.maxNormalExp2 - (p - 1);
 
     // v = r/s, the interval [v - mMinus/s, v + mPlus/s].
     Big r = Big.from(v.hi, v.lo);
@@ -2853,11 +2859,12 @@ in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits1
     }
 
     // Fixup: the high end of the interval must lie in [10^(k-1), 10^k), so the
-    // first digit is 1..9.
+    // first digit is 1..9 — the value itself when the interval has no end.
     for (;;)
     {
         Big high = r;
-        bigAdd(high, mPlus);
+        if (!unboundedAbove)
+            bigAdd(high, mPlus);
         const c = bigCompare(high, s);
         if (c > 0 || (inclusive && c == 0))
         {
@@ -2899,7 +2906,7 @@ in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits1
         Big high = r;
         bigAdd(high, mPlus);
         const cHigh = bigCompare(high, s);
-        const tc2 = inclusive ? cHigh >= 0 : cHigh > 0;
+        const tc2 = unboundedAbove || (inclusive ? cHigh >= 0 : cHigh > 0);
 
         assert(n < digitBuf.length, "more digits than maxDigits10");
         if (!tc1 && !tc2)
@@ -2916,7 +2923,16 @@ in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits1
             const c2 = bigCompare(twice, s);
             up = c2 > 0 || (c2 == 0 && (d & 1) != 0);
         }
-        assert(!up || d < 9, "a round-up past 9: the previous digit would have stopped");
+        if (up && d == 9)
+        {
+            // Only reachable with no end above, at the first digit (the
+            // unbounded case stops there): 9 rounds up to the next power of
+            // ten, which is one digit at the position above.
+            assert(unboundedAbove && n == 0, "a round-up past 9: the previous digit would have stopped");
+            digitBuf[n++] = '1';
+            k++;
+            break;
+        }
         digitBuf[n++] = cast(char)('0' + d + (up ? 1 : 0));
         break;
     }
@@ -4497,6 +4513,14 @@ version (Posix)
     assert(slowDecode!binary128("1189731495357231765085759326628007", null, 4899) == realMax);
     assert(sd!binary128(DecodedFloat(1UL << 48, 0, -112), e) == "1" && e == 0);
     assert(sd!binary128(DecodedFloat(0, 1, -16494), e) == "6" && e == -4966);
+
+    // A saturating format's largest value has no interval end above it: the
+    // shortest spelling is the shortest decimal that saturates back to it.
+    assert(sd!fp6e2m3(DecodedFloat(0, 15, -1), e) == "8" && e == 0);   // 7.5
+    assert(sd!fp6e3m2(DecodedFloat(0, 7, 2), e) == "3" && e == 1);     // 28
+    assert(sd!fp4e2m1(DecodedFloat(0, 3, 1), e) == "6" && e == 0);     // 6: exact, nearer than 7
+    assert(sd!fp6e2m3(DecodedFloat(0, 14, -1), e) == "7" && e == 0);   // 7, one below max: bounded as ever
+    assert(sd!fp8e4m3(DecodedFloat(0, 14, 5), e) == "45" && e == 1);   // E4M3 overflows to NaN: 448 keeps its half-ulp interval
 
     // Settled at compile time.
     enum ct = () {

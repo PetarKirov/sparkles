@@ -108,6 +108,9 @@ tie exactly halfway past `max` rounds to even like any other tie, which is
 _up_ into the overflow answer for every all-ones format and _down_ to 448
 for `Float8E4M3`, whose largest significand is even. A NaN assigned to a
 format without one is a precondition violation (an assertion), as in Phobos.
+Saturation reaches the writer too: since every decimal past a saturating
+format's `max` reads back as `max`, its shortest spelling is the shortest
+decimal that does — `Float6E2M3.max` prints `8e0`, `Float6E3M2.max` `3e1`.
 
 **Arithmetic type.** `h op x` is computed in `typeof(Native op x)`: two
 `Float16`s in `float`; `Float16 + double` in `double`, so the `double` is not

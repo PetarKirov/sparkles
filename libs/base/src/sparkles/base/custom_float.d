@@ -640,6 +640,9 @@ unittest
     checkToString(-Float16.infinity, "-inf");
     checkToString(Float16.nan, "nan");
     checkToString(Float8E4M3.max, "4.5e2"); // 450 reads back as 448
+    checkToString(Float6E2M3.max, "8e0");   // saturates: 8 reads back as 7.5
+    checkToString(-Float6E2M3.max, "-8e0");
+    checkToString(Float6E3M2.max, "3e1");   // 30 reads back as 28
     checkToString(Float4E2M1(6), "6e0");
     checkToString(Float4E2M1(0.5f), "5e-1");
     checkToString(BFloat16.max, "3.39e38");
@@ -875,6 +878,13 @@ version (unittest)
             v.toString(text);
             const spelled = text[].idup;
             assert(read(spelled).bits == b, spelled ~ " in " ~ T.stringof);
+            // A saturating format's max has no interval end above it, so
+            // its spelling is one digit — nothing shorter exists to check.
+            if (b == top && fmt.specials == BinaryFloatFormat.Specials.none)
+            {
+                assert(spelled.length == 3 && spelled[1] == 'e', spelled); // d e X
+                continue;
+            }
             // Significant digits: everything before 'e' that is a digit.
             size_t nDigits = 0;
             foreach (c; spelled)

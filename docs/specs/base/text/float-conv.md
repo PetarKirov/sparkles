@@ -368,18 +368,24 @@ it, over exact big integers sized by the format:
   sampling: every finite value of every ≤16-bit format round-trips through
   its shortest spelling, and every spelling with fewer significant digits
   inside its rounding interval is read and shown to land elsewhere.
+- **The reader is this module's, saturation included.** A format with
+  neither infinity nor NaN maps every decimal past its largest value back to
+  that value, so that value's rounding interval has no end above it and its
+  shortest spelling is the shortest decimal that saturates to it: `8e0` for
+  `Float6E2M3.max` (7.5), `3e1` for `Float6E3M2.max` (28). E4M3's 448 keeps
+  its half-ulp interval, since past 464 the reader gives NaN.
 
 ### Requirements
 
-| ID     | Requirement                                                                                                                                                   | Status  |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `FMT1` | `formatShortestDouble` must round-trip every finite `double`, `-0.0` and subnormals included, bit for bit, and no spelling with fewer significant digits may. | full    |
-| `FMT2` | `formatShortestDouble` must follow ECMAScript notation except for the signed zero and the trailing `.0`, and render non-finite values as `nan`/`inf`/`-inf`.  | full    |
-| `FMT3` | `shortestDigits!fmt` must produce, for every format, the shortest digits any correctly-rounded reader maps back to the value, consulting no reader.           | full    |
-| `FMT4` | On `double`, `shortestDigits` must agree with Schubfach digit for digit.                                                                                      | full    |
-| `FMT5` | `writeShortest` renders every type in scientific notation; expansion to an exponent-free grammar is the consumer's.                                           | decided |
-| `FMT6` | A result never exceeds `maxDigits10` digits.                                                                                                                  | full    |
-| `FMT7` | Every finite value of every reduced format must round-trip through `writeShortest`, and no spelling with fewer significant digits may read back to it.        | full    |
+| ID     | Requirement                                                                                                                                                                                  | Status  |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `FMT1` | `formatShortestDouble` must round-trip every finite `double`, `-0.0` and subnormals included, bit for bit, and no spelling with fewer significant digits may.                                | full    |
+| `FMT2` | `formatShortestDouble` must follow ECMAScript notation except for the signed zero and the trailing `.0`, and render non-finite values as `nan`/`inf`/`-inf`.                                 | full    |
+| `FMT3` | `shortestDigits!fmt` must produce, for every format, the shortest digits this module's correctly-rounded reader — its overflow rule included — maps back to the value, consulting no reader. | full    |
+| `FMT4` | On `double`, `shortestDigits` must agree with Schubfach digit for digit.                                                                                                                     | full    |
+| `FMT5` | `writeShortest` renders every type in scientific notation; expansion to an exponent-free grammar is the consumer's.                                                                          | decided |
+| `FMT6` | A result never exceeds `maxDigits10` digits.                                                                                                                                                 | full    |
+| `FMT7` | Every finite value of every reduced format must round-trip through `writeShortest`, and no spelling with fewer significant digits may read back to it.                                       | full    |
 
 ## 5. Tables and CTFE (`CTF`)
 
