@@ -72,6 +72,13 @@ jobs:
           - runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
+          # The one host where `real` is binary128 (`real.mant_dig == 113`):
+          # the leg that compiles and runs the wide-format conversion paths
+          # natively. Scoped to `ci --test` for now; the example and OS-API
+          # steps below are keyed to the x86_64 leg until this one is proven.
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+            DC: ldc2
     runs-on: ${{ matrix.runner }}
     # The Linux legs finish in ~4m warm; the macOS leg normally runs ~5m but the
     # hosted Apple-Silicon runner occasionally hangs (a 5m job has stalled for
@@ -90,7 +97,11 @@ jobs:
     # The demos are a research sweep bolted onto the D test gate and now eat a
     # quarter of its budget; moving them to their own parallel job is the better
     # fix, left as follow-up so this stack does not restructure shared CI.
-    timeout-minutes: 30
+    #
+    # 40 since the runner runs every package twice (`-t 1`, then `-t N`) and
+    # `base` carries the format-parameterized float sweeps: macOS measured 25m
+    # before those and crossed 30m with them.
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -126,6 +137,7 @@ jobs:
             ${{ matrix.system }}-dub-
 
       - name: Run flake checks
+        if: matrix.system != 'aarch64-linux'
         run: nix flake check
 
       - name: Build and test with dub
@@ -137,6 +149,7 @@ jobs:
           DC: ${{ matrix.DC }}
 
       - name: Build and run examples
+        if: matrix.system != 'aarch64-linux'
         run: ci --example-files --fail-fast
 
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
@@ -145,7 +158,7 @@ jobs:
       # real window under xvfb; Wayland has no compositor in CI so it prints SKIP and
       # exits 0. (macOS/iOS/Android are verified out of band — see the surveys.)
       - name: Build & run OS-API windowing examples (X11 + Wayland)
-        if: runner.os == 'Linux' && matrix.DC == 'ldc2'
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
           dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
@@ -160,7 +173,7 @@ jobs:
       # red the build. X11 demos run under Xvfb; Wayland demos under a headless
       # weston instance.
       - name: Build & run OS-API windowing demos (X11 + Wayland)
-        if: runner.os == 'Linux' && matrix.DC == 'ldc2'
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         env:
           WSI_AUTO_EXIT: 1
         run: |
