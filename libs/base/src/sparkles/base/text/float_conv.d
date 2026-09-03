@@ -100,6 +100,37 @@ const @safe pure nothrow @nogc:
     /// tie mis-rounds. With slack, to the next hundred: 200, 800, 11 600 and
     /// 11 600. `binary64`'s 800 is the value the decoder has always used.
     int decimalCapacity() => (maxExactDigits + 33 + 99) / 100 * 100;
+
+    /// Point positions past which a decimal saturates. A decimal with point
+    /// position `P` lies in `[10^(P-1), 10^P)`: at or above the high bound it
+    /// is at or past `2^maxExp` and is infinity — 40, 310, 4 934 and 4 934.
+    /// Both bounds also limit the shifting $(LREF slowDecode) does.
+    int saturateHighExp10()
+        => cast(int)((cast(long) maxExp * 30_103 + 99_999) / 100_000) + 1;
+
+    /// Below this point position a decimal is under half the smallest
+    /// subnormal and rounds to zero — −47, −325, −4 952 and −4 967.
+    int saturateLowExp10()
+    {
+        const scaled = cast(long)(minSubnormalExp2 - 1) * 30_103;
+        long q = scaled / 100_000;
+        if (scaled % 100_000 != 0)
+            q--; // floor, not truncation: the operand is negative
+        return cast(int) q - 1;
+    }
+
+    /// The largest explicit exponent a literal with `digitSpan` digits can
+    /// carry without its value being decided by saturation alone: the
+    /// combined decimal exponent is the explicit one plus an offset of at most
+    /// `digitSpan`, so an explicit exponent clamped to this magnitude
+    /// saturates iff the true one does. A reader clamps here instead of
+    /// accumulating an exponent that could overflow `int`.
+    long explicitExp10Bound(size_t digitSpan)
+    {
+        const high = cast(long) saturateHighExp10;
+        const low = -cast(long) saturateLowExp10;
+        return (high > low ? high : low) + cast(long) digitSpan + 1;
+    }
 }
 
 /// IEEE binary32: `float`.
@@ -835,25 +866,6 @@ struct DecodedFloat
     bool isInf;    /// overflow: the value is `±infinity`
 }
 
-/// Point positions past which a decimal saturates under `fmt`. A decimal
-/// with point position `P` lies in `[10^(P-1), 10^P)`: below the low bound
-/// it is under half the smallest subnormal and rounds to zero, above the
-/// high one it is at or past `2^maxExp` and is infinity. Both also bound
-/// the shifting $(LREF slowDecode) does — 310 for binary64, 4 934 for
-/// binary128.
-private int saturateHighExp10(BinaryFloatFormat fmt) @safe pure nothrow @nogc
-    => cast(int)((cast(long) fmt.maxExp * 30_103 + 99_999) / 100_000) + 1;
-
-/// ditto
-private int saturateLowExp10(BinaryFloatFormat fmt) @safe pure nothrow @nogc
-{
-    const scaled = cast(long)(fmt.minSubnormalExp2 - 1) * 30_103;
-    long q = scaled / 100_000;
-    if (scaled % 100_000 != 0)
-        q--; // floor, not truncation: the operand is negative
-    return cast(int) q - 1;
-}
-
 /**
 Converts a decimal literal to the correctly-rounded nearest value of `fmt`
 exactly, with no fast-path preconditions — the tier that settles every
@@ -876,8 +888,8 @@ DecodedFloat slowDecode(BinaryFloatFormat fmt)(scope const(char)[] intDigits,
     scope const(char)[] fracDigits, int explicitExp10) @safe pure nothrow @nogc
 {
     enum p = fmt.mantDig;
-    enum lowExp10 = saturateLowExp10(fmt);
-    enum highExp10 = saturateHighExp10(fmt);
+    enum lowExp10 = fmt.saturateLowExp10;
+    enum highExp10 = fmt.saturateHighExp10;
 
     DecodedFloat r;
     BigDecimal!(fmt.decimalCapacity()) d;
@@ -2218,8 +2230,19 @@ if (__traits(isFloating, T))
         if (eDigits == 0)
             return parseErr!T(ParseErrorCode.unexpectedCharacter, i);
         i += eDigits;
-        if (e > 400) // any further magnitude saturates identically
-            e = 400;
+        while (i < n && cast(uint)(s[i] - '0') <= 9) // absurd exponents saturate
+            i++;
+        // Clamp to a magnitude past which the value saturates whatever the
+        // digits say: the digit positions move the combined exponent by at
+        // most the digit span, so this keeps the verdict and keeps the sum
+        // inside `int`. (A fixed clamp such as 400 is wrong twice over: a
+        // literal with hundreds of leading zeros needs a larger explicit
+        // exponent to be finite, and the wide `real` formats have finite
+        // values out to 1e4932.)
+        const digitSpan = (intEnd - intStart) + (fracEnd - fracStart);
+        const bound = cast(ulong) formatOf!T.explicitExp10Bound(digitSpan);
+        if (e > bound)
+            e = bound;
         explicitExp = expNeg ? -cast(int) e : cast(int) e;
     }
 
@@ -2343,6 +2366,8 @@ unittest
     static immutable int[4] pow10 = [10, 22, 27, 48];
     static immutable int[4] exact = [112, 767, 11_514, 11_563];
     static immutable int[4] capacity = [200, 800, 11_600, 11_600];
+    static immutable int[4] satHigh = [40, 310, 4934, 4934];
+    static immutable int[4] satLow = [-47, -325, -4952, -4967];
     foreach (i, f; formats)
     {
         assert(f.minNormalExp2 == f.minExp - 1);
@@ -2352,6 +2377,12 @@ unittest
         assert(f.exactPow10Max == pow10[i]);
         assert(f.maxExactDigits == exact[i]);
         assert(f.decimalCapacity == capacity[i]);
+        assert(f.saturateHighExp10 == satHigh[i]);
+        assert(f.saturateLowExp10 == satLow[i]);
+        // The explicit-exponent bound grows with the literal, so a long run
+        // of zeros can always be compensated by the exponent.
+        assert(f.explicitExp10Bound(0) == -satLow[i] + 1);
+        assert(f.explicitExp10Bound(1000) == -satLow[i] + 1001);
     }
     // The subnormal floor and the exact-power bound, checked against the
     // properties they were derived from.
@@ -2686,6 +2717,19 @@ unittest
     assert(read!real("1e-30") == 1e-30L);
     static if (formatOf!real == binary64)
         assert(read!real("0.1") == read!double("0.1"));
+
+    // Exponents past a fixed 400: finite on the wide formats, saturating on
+    // binary64 — either way the exact tier's verdict, not a clamp's.
+    assert(read!real("1e500") is slowFloat!real("1", null, 500));
+    assert(read!real("1e-500") is slowFloat!real("1", null, -500));
+    assert(read!real("1e5000") == real.infinity);
+    assert(read!real("1e-5000") == 0.0L);
+    static if (formatOf!real != binary64)
+    {
+        assert(read!real("1e500") == 1e500L);
+        assert(read!real("1e-500") == 1e-500L);
+        assert(read!real("1e4932") == 1e4932L);
+    }
 }
 
 version (linux)
@@ -3199,6 +3243,18 @@ unittest
     // The canonical halfway literal: the fast tiers punt it, the exact
     // tier settles it (ties to even → the …611392 neighbor).
     assert(doubleToBits(read("1e23")) == 0x44B5_2D02_C7E1_4AF6);
+
+    // A long run of zeros is paid for by the explicit exponent: clamping the
+    // exponent to a fixed magnitude before the digit positions are added
+    // turned these into 1e-101 and 1e100.
+    import std.array : replicate;
+
+    enum zeros = "0".replicate(500);
+    assert(read("0." ~ zeros ~ "1e800") == 1e299);
+    assert(read("1" ~ zeros ~ "e-800") == 1e-300);
+    assert(read("0." ~ zeros ~ "1e-800") is 0.0);
+    assert(read("1" ~ zeros ~ "e800") == double.infinity);
+    assert(read("1e99999999999") == double.infinity); // more than ten digits
 
     const(char)[] s = "1.5rest";
     assert(readDecimalFloat(s).value == 1.5);
