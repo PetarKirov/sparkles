@@ -43,14 +43,20 @@ SDL-only shadow schema is forbidden.
 
 ## 2. Modules and public surface
 
-| Module                        | Contents                                                         |
-| ----------------------------- | ---------------------------------------------------------------- |
-| `sparkles.wired.sdl`          | Public re-exports, `Sdl` marker, typed codec and file helpers    |
-| `sparkles.wired.sdl.policy`   | SDL role UDAs, role resolver, compile-time role/shape validation |
-| `sparkles.wired.sdl.document` | Ordered arena, scalar model, borrowed views and iteration ranges |
-| `sparkles.wired.sdl.reader`   | Lexer/parser, read options and parse result                      |
-| `sparkles.wired.sdl.writer`   | Canonical scalar/document writer and write options               |
-| `sparkles.wired.sdl.error`    | `SdlError`, stages, codes, paths, spans and rendering            |
+| Module                                  | Contents                                                           |
+| --------------------------------------- | ------------------------------------------------------------------ |
+| `sparkles.wired.sdl`                    | Public re-exports, `Sdl` marker, typed codec and file helpers      |
+| `sparkles.wired.sdl.policy`             | SDL role UDAs, role resolver, compile-time role/shape validation   |
+| `sparkles.wired.sdl.document`           | Ordered arena, scalar model, borrowed views and iteration ranges   |
+| `sparkles.wired.sdl.reader`             | Parser over the lexer, read options and parse result               |
+| `sparkles.wired.sdl.lexer`              | Tokenizer and scalar decoding (`decodeSdlScalar`)                  |
+| `sparkles.wired.sdl.decimal`            | The SDL float-grammar adapter over `sparkles.base.text.float_conv` |
+| `sparkles.wired.sdl.writer`             | Canonical scalar/document writer and write options                 |
+| `sparkles.wired.sdl.codec`              | Typed `fromSDL`/`toSDL`/`writeSDL` over the role policy            |
+| `sparkles.wired.sdl.config`             | `SdlParserConfig` and the dialect presets                          |
+| `sparkles.wired.sdl.files`              | File read/write helpers with path-carrying errors                  |
+| `sparkles.wired.sdl.schema_annotations` | The SDL format annotations for the shared schema                   |
+| `sparkles.wired.sdl.error`              | `SdlError`, stages, codes, paths, spans and rendering              |
 
 The package module re-exports this consumer surface:
 
@@ -257,8 +263,13 @@ the following table rather than converting every scalar through text:
 | duration         | `[days"d":]hours:minutes:seconds[.fraction]`, optional leading `-` | `duration` / `Duration`              |
 
 The numeric grammar deliberately follows SDL, not JSON: exponent notation and
-integer digit separators are rejected. A leading zero before the decimal point
-is optional for floating values. Integer and date components are range-checked;
+integer digit separators are rejected, as are an explicit `+` and a trailing
+decimal point (`1.`). A leading zero before the decimal point is optional for
+floating values (`.5`). Every float kind is read at its own width —
+`F` as `float`, `D` as `double`, `BD` as `real` — through
+`sparkles.wired.sdl.decimal`, the grammar adapter over the correctly-rounded
+`readDecimalFloat!T` ([float_conv spec §3](../../base/text/float-conv.md#3-parse-guarantees-prs)),
+never as a narrowed `double`. Integer and date components are range-checked;
 malformed suffixes are errors rather than trailing identifiers.
 
 Regular strings decode `\n`, `\r`, `\t`, `\"`, and `\\`. A backslash followed
@@ -533,8 +544,13 @@ Integers use decimal and `L` for `long`. Finite floats use shortest
 round-tripping decimal text plus `F`, `D`, or `BD` for their kind — shortest for
 that kind's own width, proven against the value's rounding interval rather than
 against any reader, and read back by a reader correctly rounded at every width
-`real` takes (binary64, x87 extended, binary128). Non-finite floating values are
-encode errors because SDL has no portable literal for them.
+`real` takes (binary64, x87 extended, binary128). The kernel renders those
+digits in scientific notation
+([float_conv spec §4](../../base/text/float-conv.md#4-format-guarantees-fmt));
+the writer expands them to SDL's exponent-free notation, so `real.max` is a
+`BD` token of about 4 900 characters on binary128 and the reader's wide fast
+tier is what keeps reading it cheap. Non-finite floating values are encode
+errors because SDL has no portable literal for them.
 Dates, date-times, zones, and durations use fixed-width two-digit clock fields,
 the shortest fractional precision that preserves the stored value, and the
 stored zone spelling (canonical `GMT±HH:MM` when only an offset is available).
