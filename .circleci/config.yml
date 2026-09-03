@@ -172,6 +172,30 @@ commands:
             - ~/.dub
             - ~/.local/share/dub
 
+  # The sanitizer job's own key family. CircleCI caches are write-once per
+  # key: with the shared `dub-v1-*` key, whichever job finished first on a
+  # new digest would pin the cache, and an ASan-only `~/.dub` (dub hashes
+  # `$DFLAGS` into every build id) would leave every plain job rebuilding
+  # from scratch until the next selections change.
+  restore_asan_dub_cache:
+    steps:
+      - run:
+          name: Compute the dub cache key
+          command: ci/dub-cache-key.sh
+      - restore_cache:
+          keys:
+            - dub-asan-v1-{{ arch }}-{{ checksum ".dub-cache-key" }}
+            - dub-asan-v1-{{ arch }}-
+
+  save_asan_dub_cache:
+    steps:
+      - save_cache:
+          when: always
+          key: dub-asan-v1-{{ arch }}-{{ checksum ".dub-cache-key" }}
+          paths:
+            - ~/.dub
+            - ~/.local/share/dub
+
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
@@ -286,6 +310,24 @@ jobs:
           command: ci/run-batch.sh 20m ci --test-extracted --fail-fast
           no_output_timeout: 20m
       - save_dub_cache
+
+  # AddressSanitizer + LDC stack-overflow sanitizer. Linux LDC only (see the
+  # GitHub Actions `sanitize` job). One `-t N` leg on 4 MiB workers.
+  sanitize-tests:
+    executor: linux
+    environment:
+      DC: ldc2
+    steps:
+      - checkout
+      - setup_nix:
+          devshell: ci
+          cache_suffix: devshell-ci
+      - restore_asan_dub_cache
+      - run:
+          name: Run tests under ASan / stackovf
+          command: ci/run-batch.sh 45m ci --test-sanitize --fail-fast
+          no_output_timeout: 45m
+      - save_asan_dub_cache
 
   # The Win32 OS-API example builds against druntime's core.sys.windows — no
   # Nix, no third-party deps — so it runs on a plain Windows runner with LDC.
@@ -474,6 +516,8 @@ workflows:
           context: sparkles-ci
       - extracted-tests:
           context: sparkles-ci
+      - sanitize-tests:
+          context: sparkles-ci
       - win32-example
       - nix-build-linux:
           context: sparkles-ci
@@ -489,6 +533,7 @@ workflows:
             - test-linux-dmd
             - test-macos
             - extracted-tests
+            - sanitize-tests
             - win32-example
             - nix-build-linux
             - nix-build-macos

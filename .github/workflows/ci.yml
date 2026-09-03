@@ -254,6 +254,64 @@ jobs:
         env:
           DC: ldc2
 
+  # AddressSanitizer + LDC stack-overflow sanitizer. Linux LDC only: nixpkgs
+  # LDC links gcc libasan on Linux and has no ASan runtime dylib on Darwin.
+  # No UBSan: LDC rejects `-fsanitize=undefined` for D, and `-Xcc` never
+  # reaches ImportC codegen (docs/research/sanitizers/ubsan.md). One `-t N`
+  # leg on 4 MiB workers (the stack watermark is off under ASan).
+  # 45m: every package is rebuilt with ASan; a 30m cap cancelled mid-package
+  # the same way the test job's old 20m cap did.
+  sanitize:
+    name: Sanitizers (ASan, stackovf)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # No history needed: dub's `git describe` version only names the
+          # in-tree build dir, which never hits the cache across checkouts.
+          fetch-depth: 1
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+          use-nix-cache: true
+          # ubuntu-latest is x86_64-linux; key by system, not runner.os, so a
+          # future arm64 Ubuntu runner cannot share this cache (see the test job).
+          nix-cache-key: nix-v2-x86_64-linux-sanitize-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-v2-x86_64-linux-sanitize-
+            nix-v2-x86_64-linux-
+
+      # Its own key family. dub hashes `$DFLAGS` into every build id, so an
+      # ASan build shares nothing with a plain one; falling back to the test
+      # job's `x86_64-linux-dub-` cache would only restore dead weight, and
+      # saving the union back would let the test job restore ours in turn
+      # (its prefix matches `x86_64-linux-dub-*`) — doubling both caches in
+      # an Actions cache already at its quota. `asan-dub` matches neither.
+      - name: Cache DUB packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub
+            ~/.local/share/dub
+          key: x86_64-linux-asan-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            x86_64-linux-asan-dub-
+
+      - name: Run tests under ASan / stackovf
+        run: ci --test-sanitize --fail-fast
+        env:
+          DC: ldc2
+
   # The Win32 OS-API example builds with druntime's core.sys.windows (no Nix, no
   # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
   win32-example:
@@ -531,6 +589,7 @@ jobs:
     needs:
       - test
       - extracted-tests
+      - sanitize
       - win32-example
       - nix-build
       - nix-build-android

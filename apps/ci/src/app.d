@@ -21,6 +21,7 @@ nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--
 nix run .#ci -- --build [--fail-fast]
 nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- --test-extracted [--fail-fast]
+nix run .#ci -- --test-sanitize [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
@@ -38,6 +39,7 @@ $(LIST
     $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
+    $(ITEM `--test-sanitize` — Linux LDC only (`DC=ldc2`): `dub test -b unittest` with AddressSanitizer and LDC's stack-overflow sanitizer, one `-t N` leg on 4 MiB workers. UBSan is unreachable from D and from ImportC (`-Xcc` only reaches the preprocessor and the linker); see `docs/research/sanitizers/ubsan.md`)
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--exclude-files` — drop matching files from the include set (or from the mode's defaults); same path/glob selectors as `--include-files`)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
@@ -208,6 +210,9 @@ struct CliParams
     @(Option(`test-extracted`, description: "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping."))
     bool testExtracted;
 
+    @(Option(`test-sanitize`, description: "Linux LDC only (DC=ldc2): run each sub-package's tests under AddressSanitizer and LDC --enable-stackovf-sanitizer."))
+    bool testSanitize;
+
     @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
     bool failFast;
 
@@ -335,6 +340,7 @@ enum ProgramMode
     runDubBuild,
     runDubTests,
     runExtractedTests,
+    runSanitizeTests,
     checkReferenceLinks,
     fixReferenceLinks,
     checkCommitScope,
@@ -450,7 +456,15 @@ int ciMain(string[] args)
     }
 
     const mode = resolveProgramMode(cli);
-    info(i"mode {cyan $(programModeName(mode))}{dim , fail-fast=$(cli.failFast), coverage=$(cli.coverage)}");
+    // `--coverage` is on by default, so it cannot be rejected alongside
+    // `--test-sanitize` without making every plain invocation fail; the
+    // sanitizer mode overrides it and says so. ASan and `-cov` both
+    // instrument every function, and the listings would describe an ASan
+    // build nobody ships while overwriting the plain run's `build/coverage`.
+    const coverage = mode == ProgramMode.runSanitizeTests ? false : cli.coverage;
+    info(i"mode {cyan $(programModeName(mode))}{dim , fail-fast=$(cli.failFast), coverage=$(coverage)}");
+    if (mode == ProgramMode.runSanitizeTests && cli.coverage)
+        info(i"coverage is off under --test-sanitize (ASan and -cov instrumentation do not mix)");
 
     if (mode == ProgramMode.checkCommitScope)
     {
@@ -470,7 +484,10 @@ int ciMain(string[] args)
         return runDubBuildMode(cli.failFast);
 
     if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast, cli.coverage);
+        return runDubTestsMode(cli.failFast, coverage);
+
+    if (mode == ProgramMode.runSanitizeTests)
+        return runDubTestsMode(cli.failFast, coverage, sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
         return runExtractedTestsMode(cli.failFast);
@@ -541,14 +558,27 @@ private string validateCliMode(
     if (cli.test && (cli.verify || cli.update))
         return "--test cannot be combined with --verify or --update";
 
+    if (cli.testSanitize && (cli.verify || cli.update))
+        return "--test-sanitize cannot be combined with --verify or --update";
+
+
     if (cli.build && cli.exampleFiles)
         return "--build cannot be combined with --example-files";
 
     if (cli.test && cli.exampleFiles)
         return "--test cannot be combined with --example-files";
 
+    if (cli.testSanitize && cli.exampleFiles)
+        return "--test-sanitize cannot be combined with --example-files";
+
     if (cli.build && cli.test)
         return "--build cannot be combined with --test";
+
+    if (cli.build && cli.testSanitize)
+        return "--build cannot be combined with --test-sanitize";
+
+    if (cli.test && cli.testSanitize)
+        return "--test cannot be combined with --test-sanitize";
 
     if ((cli.verify || cli.update)
         && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
@@ -565,24 +595,31 @@ private string validateCliMode(
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
+    if (cli.testSanitize && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--test-sanitize cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
+
     if (cli.testExtracted && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.dedupReferenceLinks || cli.fixReferenceLinks))
+            || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test-extracted cannot be combined with other modes";
 
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
+    if (cli.testSanitize && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
+            || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--test-sanitize cannot be combined with other modes";
+
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
-    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
+    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
         return "--check-vcs-urls cannot be combined with other modes";
 
-    if (cli.checkBlobPaths && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
+    if (cli.checkBlobPaths && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
         return "--check-blob-paths cannot be combined with other modes";
 
-    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkBlobPaths || cli.ciStats))
+    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkBlobPaths || cli.ciStats))
         return "--check-docs-sidebar cannot be combined with other modes";
 
     if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
+            || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
         return "--ci-stats cannot be combined with other modes";
 
     if (cli.ciStats && cli.limit <= 0)
@@ -631,6 +668,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.testExtracted)
         return ProgramMode.runExtractedTests;
 
+    if (cli.testSanitize)
+        return ProgramMode.runSanitizeTests;
+
     if (cli.test)
         return ProgramMode.runDubTests;
 
@@ -676,6 +716,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.runDubBuild:        return "--build";
         case ProgramMode.runDubTests:        return "--test";
         case ProgramMode.runExtractedTests:  return "--test-extracted";
+        case ProgramMode.runSanitizeTests:   return "--test-sanitize";
         case ProgramMode.checkReferenceLinks: return "--dedup-reference-links";
         case ProgramMode.fixReferenceLinks:  return "--fix-reference-links";
         case ProgramMode.checkCommitScope:   return "--check-commit-scope";
@@ -1168,6 +1209,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.runDubBuild:
             case ProgramMode.runDubTests:
             case ProgramMode.runExtractedTests:
+            case ProgramMode.runSanitizeTests:
                 rc = 1;
                 break;
             case ProgramMode.checkReferenceLinks:
@@ -2678,8 +2720,22 @@ private int runDubBuildMode(bool failFast)
     return failures > 0 ? 1 : 0;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage)
+private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
 {
+    if (sanitize)
+    {
+        if (!compilerIsLdc(environment.get("DC", "")))
+        {
+            error(i"--test-sanitize requires LDC (set DC=ldc2)");
+            return 1;
+        }
+        if (!sanitizePlatformSupported())
+        {
+            error(i"--test-sanitize is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
+            return 1;
+        }
+    }
+
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
@@ -2699,6 +2755,8 @@ private int runDubTestsMode(bool failFast, bool coverage)
     info(i"$(subPackages.length) sub-package(s) to test");
     if (compilerIsLdc(environment.get("DC", "")))
         info(i"ldc codegen threads capped at $(hwParallelism())");
+    if (sanitize)
+        info(i"sanitize: ASan + LDC stackovf; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
 
     if (coverage)
         info(i"preparing coverage (dub describe + listings dir)");
@@ -2727,10 +2785,17 @@ private int runDubTestsMode(bool failFast, bool coverage)
         string label;
         string[] runnerArgs; /// the test binary's, after `--`
     }
-    const TestLeg[2] legs = [
-        TestLeg("-t 1", ["-t", "1"]),
-        TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string]),
-    ];
+    // Sanitize runs the parallel leg only: the watermark the `-t 1` leg
+    // exists to contrast with is off under ASan (see `stack_budget.d`), and
+    // the runner sizes ASan workers at 4 MiB so a body cannot reach a guard
+    // page. One leg also halves a job that rebuilds every package with ASan.
+    const legs = sanitize
+        ? [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string])]
+        : [
+            TestLeg("-t 1", ["-t", "1"]),
+            TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string]),
+        ];
+    const extraEnv = sanitize ? sanitizeChildEnv() : (string[string]).init;
 
     packageLoop: foreach (i, pkg; subPackages)
     {
@@ -2746,7 +2811,7 @@ private int runDubTestsMode(bool failFast, bool coverage)
             // (the dev shell provides both dmd and ldc). Example verification keeps
             // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
             auto testCmd = dubTestCommand(repoRoot, pkgName);
-            auto lines = PackageTestStream(testCmd, leg.runnerArgs, cov, null, 250.msecs, &onSample);
+            auto lines = PackageTestStream(testCmd, leg.runnerArgs, cov, extraEnv, 250.msecs, &onSample);
             streamResultBox(header, lines,
                 () => resultVerdict(lines.result.status == 0),
                 (LogDelta d) => resultFooterRight(lines.result.usage, d));
@@ -4030,18 +4095,177 @@ unittest
         == "--build cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)");
 }
 
+@("ci.validateCliMode.sanitizeExclusions")
+unittest
+{
+    CliParams params;
+    params.testSanitize = true;
+    assert(validateCliMode(params, null) is null);
+    assert(resolveProgramMode(params) == ProgramMode.runSanitizeTests);
+    assert(programModeName(ProgramMode.runSanitizeTests) == "--test-sanitize");
+
+    params.test = true;
+    assert(validateCliMode(params, null) == "--test cannot be combined with --test-sanitize");
+
+    params.test = false;
+    params.build = true;
+    assert(validateCliMode(params, null) == "--build cannot be combined with --test-sanitize");
+
+    params.build = false;
+    params.verify = true;
+    assert(validateCliMode(params, null)
+        == "--test-sanitize cannot be combined with --verify or --update");
+
+    params.verify = false;
+    params.testExtracted = true;
+    assert(validateCliMode(params, null)
+        == "--test-extracted cannot be combined with other modes");
+
+    // `--coverage` defaults to true, so it is overridden (and announced)
+    // rather than rejected: the pair must stay valid.
+    params.testExtracted = false;
+    params.coverage = true;
+    assert(validateCliMode(params, null) is null);
+}
+
+/// Linux is the only host where nixpkgs LDC can link ASan (gcc `libasan`
+/// fallback). Darwin's LDC looks for `libclang_rt.asan_osx_dynamic.dylib`,
+/// which the nix build does not ship.
+bool sanitizePlatformSupported() @safe pure nothrow @nogc
+{
+    version (linux)
+        return true;
+    else
+        return false;
+}
+
+/// Compiler flags for $(LREF runDubTestsMode) `sanitize: true`.
+///
+/// $(LIST
+///     $(ITEM `-fsanitize=address` — LDC IR pass; Linux links gcc `libasan`)
+///     $(ITEM `--enable-stackovf-sanitizer` — LDC's stack-overflow probes, the
+///           D equivalent of clang `-fstack-clash-protection` which LDC
+///           does not accept)
+/// )
+///
+/// There is deliberately no UBSan here. LDC rejects `-fsanitize=undefined`
+/// for D, and `-Xcc=-fsanitize=undefined` does not reach ImportC either:
+/// `-Xcc` goes to the C preprocessor (`cc -E`) and to the link driver, while
+/// the C bodies are code-generated by LDC, which has no UBSan pass. Measured
+/// on a C file with a signed add and a variable shift: 0 `__ubsan_handle_*`
+/// call sites through LDC against 6 through clang. All it did was link
+/// `libubsan` into every test binary — see
+/// `docs/research/sanitizers/ubsan.md`.
+enum string sanitizeCompilerFlags = "-fsanitize=address --enable-stackovf-sanitizer";
+
+/// ASan runtime options.
+///
+/// $(LIST
+///     $(ITEM `detect_leaks=0` — LSan flags druntime's trace-info mallocs)
+///     $(ITEM `halt_on_error=1:abort_on_error=1` — stop on the first finding,
+///           so the package's verdict is the report, not a later cascade)
+///     $(ITEM `detect_stack_use_after_return=0` — the fake stack is off.
+///           LDC 1.42's druntime passes `null` to
+///           `__sanitizer_finish_switch_fiber` when a `Fiber` reaches
+///           `TERM` (`core/thread/fiber/base.d`, `switchIn`), which drops
+///           the thread's fake stack; ASan then lazily creates a new one
+///           that the GC never learns about (`asan_fakestack` is captured
+///           once at thread start), so a GC-owned value referenced only
+///           from an instrumented local can be collected early. Every
+///           terminated fiber — `sparkles:event-horizon` runs them to
+///           `TERM` as its normal path — re-arms that. With the fake
+///           stack off, locals stay on the real stack and the switch hooks
+///           are inert. The price is that stack-use-after-return goes
+///           undetected.)
+/// )
+enum string sanitizeAsanOptions =
+    "detect_leaks=0:halt_on_error=1:abort_on_error=1:detect_stack_use_after_return=0";
+
+string[string] sanitizeChildEnv() @safe
+{
+    string[string] env;
+    env["DFLAGS"] = sanitizeCompilerFlags;
+    env["ASAN_OPTIONS"] = sanitizeAsanOptions;
+    return env;
+}
+
+@("ci.sanitizePlatformSupported.linuxOnly")
+@safe pure nothrow @nogc
+unittest
+{
+    version (linux)
+        assert(sanitizePlatformSupported());
+    else
+        assert(!sanitizePlatformSupported());
+}
+
+@("ci.sanitizeCompilerFlags.coverTheTwoTools")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(sanitizeCompilerFlags.canFind("-fsanitize=address"));
+    assert(sanitizeCompilerFlags.canFind("--enable-stackovf-sanitizer"));
+    // No UBSan: LDC rejects `-fsanitize=undefined` for D, and `-Xcc` never
+    // reaches ImportC codegen, so the flag instruments nothing.
+    assert(!sanitizeCompilerFlags.canFind("undefined"));
+    assert(!sanitizeCompilerFlags.canFind("-Xcc"));
+    assert(!sanitizeCompilerFlags.canFind("-fstack-clash-protection"));
+}
+
+@("ci.sanitizeChildEnv.pinsLeakHaltAndFakeStackPolicy")
+@safe
+unittest
+{
+    const env = sanitizeChildEnv();
+    assert(env["DFLAGS"] == sanitizeCompilerFlags);
+    assert(env["ASAN_OPTIONS"].canFind("detect_leaks=0"));
+    assert(env["ASAN_OPTIONS"].canFind("halt_on_error=1"));
+    assert(env["ASAN_OPTIONS"].canFind("abort_on_error=1"));
+    // The fake stack must stay off until druntime restores it across a
+    // fiber's TERM; see `sanitizeAsanOptions`.
+    assert(env["ASAN_OPTIONS"].canFind("detect_stack_use_after_return=0"));
+    assert("UBSAN_OPTIONS" !in env);
+}
+
+/// A child's `DFLAGS` on top of the ambient `$DFLAGS`, so a mode that adds
+/// flags (`--coverage`, `--test-sanitize`) does not drop the ones the shell
+/// already carries: `--test` keeps them, and the other legs must build the
+/// same code plus their own switches.
+private string[string] withAmbientDflags(const string[string] env, string ambient) @safe
+{
+    string[string] out_;
+    foreach (k, v; env)
+        out_[k] = v;
+    if (ambient.length)
+        if (auto own = "DFLAGS" in out_)
+            out_["DFLAGS"] = ambient ~ " " ~ *own;
+    return out_;
+}
+
+@("ci.withAmbientDflags.prependsTheShellFlags")
+@safe
+unittest
+{
+    assert(withAmbientDflags(["DFLAGS": "-fsanitize=address"], "-L-L/opt/lib")["DFLAGS"]
+        == "-L-L/opt/lib -fsanitize=address");
+    // No ambient flags: the child's are the whole value.
+    assert(withAmbientDflags(["DFLAGS": "-cov"], "")["DFLAGS"] == "-cov");
+    // No child DFLAGS: nothing to merge into; the ambient value is inherited
+    // by the child process on its own.
+    assert("DFLAGS" !in withAmbientDflags(["ASAN_OPTIONS": "x"], "-L-L/opt/lib"));
+}
+
 /// Merge LDC `--threads=N` into a child environment's `DFLAGS`.
 ///
 /// Bound to $(REF hwParallelism, sparkles,base,hw_caps) so an overcommitted
 /// macOS runner does not spawn one LLVM thread per advertised vCPU. DMD
 /// does not understand `--threads`, so this is a no-op unless `$DC` is LDC.
-/// An existing `--threads`/`-j` in `DFLAGS` is left alone.
+/// An existing `--threads`/`-j` in `DFLAGS` is left alone. A `DFLAGS` in
+/// `env` is stacked on the ambient `$DFLAGS` first ($(LREF withAmbientDflags)).
 private string[string] withLdcThreadEnv(const string[string] env)
 {
     const dc = environment.get("DC", "");
-    string[string] out_;
-    foreach (k, v; env)
-        out_[k] = v;
+    auto out_ = withAmbientDflags(env, environment.get("DFLAGS", ""));
     if (!compilerIsLdc(dc))
         return out_;
 
