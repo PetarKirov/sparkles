@@ -1085,21 +1085,37 @@ pure nothrow @nogc:
         //
         // `expandArray` falls through to `reallocate` here (the affix allocator over
         // `Mallocator` has no `expand`), so the block may MOVE — and its length
-        // changes even when it does not. A root registered against the old address
-        // and size would therefore be stale in both directions, so it is dropped and
-        // re-established rather than left alone.
+        // changes even when it does not.
+        //
+        // For a `T` with indirections that is not acceptable: `realloc` moves the
+        // elements into memory the collector does not scan and frees the old block
+        // before the new one could be registered, and any thread's allocation can
+        // turn that window into a collection — the strings a buffer holds vanish
+        // under it. So that case allocates (and registers) the new block first,
+        // copies, and only then drops the old root and frees the old block. A
+        // pointer-free `T` has no root to keep and reallocates in place.
         private void reallocateBlock(size_t capacity) scope @safe
         {
-            const oldPtr = (() @trusted => cast(const(void)*) _block.ptr)();
-            const ok = (() @trusted =>
-                Allocator.instance.expandArray(
-                    _block, capacity - _block.length
-                )
-            )();
-            if (!ok)
-                assert(false, "Buffer: reallocation failed");
-            removeBlockRange(oldPtr);
-            (() @trusted => addBlockRange(_block))();
+            static if (hasIndirections!T)
+            {
+                T[] nb = allocateBlock(capacity);
+                () @trusted {
+                    copyElements(nb[0 .. _length], _block[0 .. _length]);
+                    removeBlockRange(_block.ptr);
+                    dispose(Allocator.instance, _block);
+                    _block = nb;
+                }();
+            }
+            else
+            {
+                const ok = (() @trusted =>
+                    Allocator.instance.expandArray(
+                        _block, capacity - _block.length
+                    )
+                )();
+                if (!ok)
+                    assert(false, "Buffer: reallocation failed");
+            }
         }
 
         /*
