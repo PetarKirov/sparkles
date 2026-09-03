@@ -530,8 +530,11 @@ Strings always use double quotes and escape `\`, `"`, LF, CR, and tab.
 Characters use single quotes and the analogous character escapes. Booleans are
 `true`/`false`; null is `null`; binary is one unbroken standard-Base64 literal.
 Integers use decimal and `L` for `long`. Finite floats use shortest
-round-tripping decimal text plus `F`, `D`, or `BD` for their kind. Non-finite
-floating values are encode errors because SDL has no portable literal for them.
+round-tripping decimal text plus `F`, `D`, or `BD` for their kind — shortest for
+that kind's own width, proven against the value's rounding interval rather than
+against any reader, and read back by a reader correctly rounded at every width
+`real` takes (binary64, x87 extended, binary128). Non-finite floating values are
+encode errors because SDL has no portable literal for them.
 Dates, date-times, zones, and durations use fixed-width two-digit clock fields,
 the shortest fractional precision that preserves the stored value, and the
 stored zone spelling (canonical `GMT±HH:MM` when only an offset is available).
