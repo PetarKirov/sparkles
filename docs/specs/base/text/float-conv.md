@@ -15,7 +15,11 @@ consumers. For the library overview see
 `sparkles.base.text.float_conv` converts between decimal text and IEEE-754
 binary floating point **exactly** in both directions, for every format
 `float`, `double` or `real` takes across this repository's targets (binary32,
-binary64, x87 extended80, binary128) through one format-parameterized kernel:
+binary64, x87 extended80, binary128) and for the reduced-precision formats D
+has no type for — IEEE binary16, bfloat16 and the OCP Microscaling FP8 E5M2 /
+E4M3, FP6 E2M3 / E3M2 and FP4 E2M1 element formats, carried by the storage
+types of [`sparkles.base.custom_float`](../custom-float.md) — through one
+format-parameterized kernel:
 
 - **Parse** — the returned value is always the correctly-rounded
   (round-to-nearest, ties-to-even) value of the full decimal, no matter how
@@ -38,18 +42,27 @@ only on the one that has it.
 
 ```d
 // The target format as data (§3), and a value as integers, for any format:
-struct BinaryFloatFormat { int mantDig, minExp, maxExp; /* + derived: */
+struct BinaryFloatFormat { int mantDig, minExp, maxExp; Specials specials = ieee; /* + derived: */
     int maxDigits10(); int exactPow10Max(); int maxExactDigits(); int decimalCapacity();
-    int saturateHighExp10(); int saturateLowExp10(); long explicitExp10Bound(size_t digitSpan); }
+    int saturateHighExp10(); int saturateLowExp10(); long explicitExp10Bound(size_t digitSpan);
+    int bias(); int expBits(); int mantBits(); int storageBits(); bool hasInfinity(); bool hasNaN();
+    ulong maxFiniteSignificand(); int dig(); int max10Exp(); int min10Exp();
+    enum Specials { ieee, nanOnly, none } }         // how the top exponent field is spent
 enum binary32, binary64, extended80, binary128;   // every format `real` takes here
-template formatOf(T);                             // a float type's own format
-struct DecodedFloat { ulong hi, lo; int exp2; bool negative, isInf; }
+enum binary16, bfloat16, fp8e5m2, fp8e4m3, fp6e2m3, fp6e3m2, fp4e2m1; // the reduced formats
+enum bool isFloatLike(T);                         // native, or `format`/`bits`/`fromBits`-bearing
+template formatOf(T);                             // a float-like type's format
+template BitsOf(BinaryFloatFormat fmt);           // ubyte/ushort/uint/ulong by storageBits
+struct DecodedFloat { ulong hi, lo; int exp2; bool negative, isInf, isNaN; }
 DecodedFloat slowDecode(BinaryFloatFormat fmt)(scope const(char)[] intDigits,
                   scope const(char)[] fracDigits, int explicitExp10);
 size_t       shortestDigits(BinaryFloatFormat fmt)(in DecodedFloat v,
                   scope char[] digitBuf, out int exp10);      // digitBuf ≥ maxDigits10
-DecodedFloat decompose(T)(T value);
-T            compose(T)(in DecodedFloat d);
+DecodedFloat decompose(T)(T value);                            // exact
+T            compose(T)(DecodedFloat d);
+DecodedFloat roundTo(BinaryFloatFormat fmt)(DecodedFloat exact, out bool halfway); // one RNE rounding
+BitsOf!fmt   encode(BinaryFloatFormat fmt)(DecodedFloat d);    // IEEE interchange bits, storage ≤ 64
+DecodedFloat decode(BinaryFloatFormat fmt)(BitsOf!fmt bits);
 
 // Building blocks for fused grammar loops (e.g. a JSON number scanner):
 size_t readDigits(uint maxDigits = 19)(scope const(char)[] s, ref ulong sig);
@@ -60,13 +73,13 @@ double slowDouble(scope const(char)[] intDigits,
 T      slowFloat(T)(scope const(char)[] intDigits,
                   scope const(char)[] fracDigits, int explicitExp10);
 
-// Cursor-style reader for the general decimal-literal grammar:
+// Cursor-style reader for the general decimal-literal grammar, any float-like T:
 ParseExpected!T readDecimalFloat(T = double)(ref scope const(char)[] s);
 
 // Shortest round-trip formatting:
 size_t formatShortestDouble(scope char[] buf, double value); // buf.length ≥ 40
 void   writeShortestDouble(Writer)(ref Writer w, double value);
-size_t shortestDigits(T)(T value, scope char[] digitBuf, out int exp10);
+size_t shortestDigits(T)(T value, scope char[] digitBuf, out int exp10); // any float-like T
 void   writeShortest(T, Writer)(ref Writer w, T value);      // [-]d[.ddd]e[-]x
 
 // IEEE-754 bit access (CTFE-safe both ways):
@@ -85,13 +98,14 @@ literal on success. Its result is decided by tiers, fastest first —
 **every tier is exact**, so callers never observe a tier boundary. Which
 tiers a format has:
 
-| `formatOf!T`                                   | tier 1                          | tier 2                                                       | exact tier              |
-| ---------------------------------------------- | ------------------------------- | ------------------------------------------------------------ | ----------------------- |
-| `binary64` — `double`, and `real` where it is  | Clinger, in `double` arithmetic | Eisel–Lemire, 64 × 128 bits; bracketing past 19 digits       | `slowDouble`            |
-| `binary32` — `float`                           | Clinger, in `float` arithmetic  | —                                                            | `slowDecode!binary32`   |
-| `extended80` — `real` on x86_64                | Clinger, in `real` arithmetic   | wide Eisel–Lemire, 128 × 128 bits; bracketing past 38 digits | `slowDecode!extended80` |
-| `binary128` — `real` on AArch64 Linux, Android | Clinger, in `real` arithmetic   | wide Eisel–Lemire, 128 × 128 bits; bracketing past 38 digits | `slowDecode!binary128`  |
-| double-double (`mant_dig == 106`)              | —                               | —                                                            | `static assert`         |
+| `formatOf!T`                                                                                    | tier 1                          | tier 2                                                       | exact tier              |
+| ----------------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------ | ----------------------- |
+| `binary64` — `double`, and `real` where it is                                                   | Clinger, in `double` arithmetic | Eisel–Lemire, 64 × 128 bits; bracketing past 19 digits       | `slowDouble`            |
+| `binary32` — `float`                                                                            | Clinger, in `float` arithmetic  | narrowing: the `double` result rounded once more             | `slowDecode!binary32`   |
+| `binary16`, `bfloat16`, `fp8e5m2`, `fp8e4m3`, `fp6e2m3`, `fp6e3m2`, `fp4e2m1` — a `CustomFloat` | —                               | narrowing, as for `float`                                    | `slowDecode!fmt`        |
+| `extended80` — `real` on x86_64                                                                 | Clinger, in `real` arithmetic   | wide Eisel–Lemire, 128 × 128 bits; bracketing past 38 digits | `slowDecode!extended80` |
+| `binary128` — `real` on AArch64 Linux, Android                                                  | Clinger, in `real` arithmetic   | wide Eisel–Lemire, 128 × 128 bits; bracketing past 38 digits | `slowDecode!binary128`  |
+| double-double (`mant_dig == 106`)                                                               | —                               | —                                                            | `static assert`         |
 
 1. **Clinger fast path** — when the significand fits the mantissa and the
    power of ten is exactly representable (`|exp10| ≤ exactPow10Max`: 10, 22,
@@ -115,6 +129,21 @@ first decided by _bracketing_: when the truncated significand and its
 successor both round to the same value, that value is proven correct without
 the exact tier.
 
+**The narrowing tier** (every format below 53 bits) takes the
+correctly-rounded `double` of the literal and rounds it once more with
+`roundTo`. Every rounding boundary of such a format — the midpoints between
+neighbours, half the smallest subnormal, the overflow threshold — is itself a
+`double`, and the correctly-rounded `double` lies within half of its own ulp
+of the literal, so the two sit on the same side of every boundary unless the
+`double` _is_ one. `roundTo` reports that case as an exact half, and it takes
+the exact tier: the `double` could be a true tie or the literal a hair to
+either side, and the classic `(float) strtod(s) != strtof(s)` is exactly a
+cast that breaks such a tie without looking. Shortest spellings land on a
+midpoint more often than random input does (Steele–White emits the midpoint
+for an even significand when it is the shortest — about 1.6 % of binary16's
+values, 3 % of E4M3's), and those spellings read correctly through the exact
+tier.
+
 **The explicit exponent is bounded by the literal, not by a constant.** A
 literal's combined decimal exponent is the explicit one plus a digit-position
 offset of at most the digit span, so `readDecimalFloat` clamps the explicit
@@ -123,12 +152,42 @@ whatever the digits say — and never earlier. A fixed clamp (the old 400)
 misread `0.<500 zeros>1e800` as 1e-101 and, on the wide formats, `1e500` as
 1e400.
 
-**Saturation policy** — magnitudes at or above `2^maxExp` become
-`±infinity`; positive magnitudes below half the smallest subnormal become
-`±0`. Subnormals are fully supported (`5e-324` parses to bit pattern `1`).
+**Saturation policy** — magnitudes at or above `2^maxExp` overflow: to
+`±infinity` where the format has one, to its NaN where it has only that
+(E4M3, as PyTorch's `float8_e4m3fn` and `ml_dtypes` do), to the largest
+finite value with the sign where it has neither (FP6, FP4). Positive
+magnitudes below half the smallest subnormal become `±0`. Subnormals are
+fully supported (`5e-324` parses to bit pattern `1`).
 `saturateHighExp10`/`saturateLowExp10` (40/−47, 310/−325, 4934/−4952,
 4934/−4967) are the point positions past which a decimal is decided by
 saturation alone.
+
+### Infinity-less formats
+
+`BinaryFloatFormat.specials` says how the top exponent field is spent: `ieee`
+reserves it (a zero significand is `±infinity`, anything else NaN), `nanOnly`
+keeps it finite except for the all-ones significand, the single NaN, and
+`none` keeps every pattern finite. The layout derivations follow: the bias is
+`2 − minExp`, the exponent field holds `maxExp − minExp + 3` values (`+ 2`
+without the reserved field), and the largest finite significand is all ones,
+or one below that under `nanOnly` — E4M3's top pattern `S.1111.111` is its
+NaN, so a decoded 480 is overflow, not a value, and the tie at 464 rounds
+_down_ to 448 (whose significand is even) where every all-ones format's tie
+past its maximum rounds up. `encode` is where the overflow rule lives; the
+decoders never see it.
+
+| format     | mantDig | minExp | maxExp | specials  | bits | bias | largest finite | smallest subnormal |
+| ---------- | ------- | ------ | ------ | --------- | ---- | ---- | -------------- | ------------------ |
+| `binary16` | 11      | −13    | 16     | `ieee`    | 16   | 15   | 65 504         | 2⁻²⁴               |
+| `bfloat16` | 8       | −125   | 128    | `ieee`    | 16   | 127  | (2 − 2⁻⁷)·2¹²⁷ | 2⁻¹³³              |
+| `fp8e5m2`  | 3       | −13    | 16     | `ieee`    | 8    | 15   | 57 344         | 2⁻¹⁶               |
+| `fp8e4m3`  | 4       | −5     | 9      | `nanOnly` | 8    | 7    | 448            | 2⁻⁹                |
+| `fp6e2m3`  | 4       | 1      | 3      | `none`    | 6    | 1    | 7.5            | 0.125              |
+| `fp6e3m2`  | 3       | −1     | 5      | `none`    | 6    | 3    | 28             | 0.0625             |
+| `fp4e2m1`  | 2       | 1      | 3      | `none`    | 4    | 1    | 6              | 0.5                |
+
+OCP's E8M0 scale type (no sign, no zero, NaN only) is not a
+`1 + expBits + mantBits` layout and is out of scope.
 
 ### The wide tier
 
@@ -187,7 +246,17 @@ saturation alone.
   power-of-two scaling (no bit punning: D has no portable `realToBits`, and
   x87's explicit integer bit makes synthesis format-specific). `decompose!T`
   is the inverse. Both run at CTFE, accept a `const` argument, and use
-  nothing from Phobos.
+  nothing from Phobos. A storage type (`isFloatLike`: `enum format`, `bits`,
+  `static fromBits`) goes through `decode`/`encode` instead — the IEEE
+  interchange layout, which every format whose storage fits 64 bits has.
+- **Between formats, one rounding.** `roundTo!fmt` rounds an exact
+  `DecodedFloat` — up to 113 significand bits, any exponent — to a format
+  with ties to even, the last bit pinned at the format's floor, a carry out
+  of an all-ones significand moving up a binade, overflow as `isInf`, and a
+  value below half the smallest subnormal (however far below) to zero. Over
+  `decompose` it is the one rounding of every native → reduced conversion,
+  where a chain of casts rounds twice; the FPU's own `cast(float)` is the
+  oracle it is pinned against.
 - **Environment.** The fast tier and `compose` are floating-point arithmetic
   and assume round-to-nearest-even with traps masked;
   `std.math.hardware.FloatingPointControl` can change both and this module
@@ -201,20 +270,24 @@ saturation alone.
 
 ### Requirements
 
-| ID      | Requirement                                                                                                                                                                                         | Status  |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `PRS1`  | `readDecimalFloat!T` must return the correctly-rounded (ties-to-even) value of the full literal for `float`, `double` and `real` at binary64, extended80 and binary128, however many digits it has. | full    |
-| `PRS2`  | Every tier must be exact: a fast tier returns a value only when it can prove it is the correctly-rounded one, and punts otherwise.                                                                  | full    |
-| `PRS3`  | The explicit exponent must be bounded by `explicitExp10Bound(digitSpan)` and never by a fixed magnitude; a run of zeros paid for by the exponent decodes to the value it names.                     | full    |
-| `PRS4`  | Magnitudes at or past `2^maxExp` must read as `±infinity`, and positive magnitudes below half the smallest subnormal as `±0`; subnormals must be exact.                                             | full    |
-| `PRS5`  | The wide formats must have a fast tier that decides typical spellings (21 digits at x87, 36 at binary128) without the exact tier, over the whole exponent range they can carry.                     | full    |
-| `PRS6`  | The exact tier must agree with an independent big-integer oracle at 24, 53, 64 and 113 bits, and with libc on hosts that have a correctly-rounded one.                                              | full    |
-| `PRS7`  | `float` must be read at its own width, never as a narrowed `double`.                                                                                                                                | full    |
-| `PRS8`  | `compose ∘ decompose` must be the identity, bit for bit, for every finite value of every type, and `compose` over `slowDecode!binary64` must land on `slowDouble`'s bits.                           | full    |
-| `PRS9`  | Both directions at `real.max`'s magnitude must run on a 32 KiB fiber in the unoptimized test build.                                                                                                 | full    |
-| `PRS10` | Double-double `real` is rejected at compile time rather than mis-decoded.                                                                                                                           | full    |
-| `PRS11` | The fast tier and `compose` assume the default floating-point environment; the module does not defend against `FloatingPointControl`.                                                               | decided |
-| `PRS12` | The subnormal band of the wide formats takes the exact tier; a `p'`-bit variant of the wide tier for it is a follow-up, not a v1 requirement.                                                       | decided |
+| ID      | Requirement                                                                                                                                                                                                 | Status  |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `PRS1`  | `readDecimalFloat!T` must return the correctly-rounded (ties-to-even) value of the full literal for `float`, `double` and `real` at binary64, extended80 and binary128, however many digits it has.         | full    |
+| `PRS2`  | Every tier must be exact: a fast tier returns a value only when it can prove it is the correctly-rounded one, and punts otherwise.                                                                          | full    |
+| `PRS3`  | The explicit exponent must be bounded by `explicitExp10Bound(digitSpan)` and never by a fixed magnitude; a run of zeros paid for by the exponent decodes to the value it names.                             | full    |
+| `PRS4`  | Magnitudes at or past `2^maxExp` must read as `±infinity`, and positive magnitudes below half the smallest subnormal as `±0`; subnormals must be exact.                                                     | full    |
+| `PRS5`  | The wide formats must have a fast tier that decides typical spellings (21 digits at x87, 36 at binary128) without the exact tier, over the whole exponent range they can carry.                             | full    |
+| `PRS6`  | The exact tier must agree with an independent big-integer oracle at 24, 53, 64 and 113 bits, and with libc on hosts that have a correctly-rounded one.                                                      | full    |
+| `PRS7`  | `float` must be read at its own width, never as a narrowed `double`.                                                                                                                                        | full    |
+| `PRS8`  | `compose ∘ decompose` must be the identity, bit for bit, for every finite value of every type, and `compose` over `slowDecode!binary64` must land on `slowDouble`'s bits.                                   | full    |
+| `PRS9`  | Both directions at `real.max`'s magnitude must run on a 32 KiB fiber in the unoptimized test build.                                                                                                         | full    |
+| `PRS10` | Double-double `real` is rejected at compile time rather than mis-decoded.                                                                                                                                   | full    |
+| `PRS11` | The fast tier and `compose` assume the default floating-point environment; the module does not defend against `FloatingPointControl`.                                                                       | decided |
+| `PRS12` | The subnormal band of the wide formats takes the exact tier; a `p'`-bit variant of the wide tier for it is a follow-up, not a v1 requirement.                                                               | decided |
+| `PRS13` | `readDecimalFloat!T` must be correctly rounded for every storage type of every reduced format — binary16, bfloat16, E5M2, E4M3, E2M3, E3M2, E2M1 — however many digits the literal has.                     | full    |
+| `PRS14` | The narrowing tier must decide only when the correctly-rounded `double` is not on a rounding boundary of the target format, and must punt on every exact half.                                              | full    |
+| `PRS15` | Overflow must follow the format's specials: `±infinity` under `ieee`, the NaN under `nanOnly`, the largest finite value under `none`; a `nanOnly` format's all-ones top pattern is overflow, never a value. | decided |
+| `PRS16` | `decode ∘ encode` must be the identity over every pattern of every format whose layout fits 64 bits, and `roundTo ∘ decompose` must agree with the FPU's narrowing cast bit for bit.                        | full    |
 
 ## 4. Format guarantees (`FMT`)
 
@@ -288,8 +361,13 @@ it, over exact big integers sized by the format:
   ([SDL SPEC §9](../../wired/sdl/SPEC.md#9-canonical-semantic-writer)).
   `formatShortestDouble` keeps Schubfach and its own notation for the JSON
   hot path.
-- The result never exceeds `maxDigits10` digits (9 / 17 / 21 / 36), and is
-  often shorter: `real.max` at binary128 is 34 digits.
+- The result never exceeds `maxDigits10` digits (9 / 17 / 21 / 36; 5, 4, 2,
+  3, 3, 2, 2 for the reduced formats), and is often shorter: `real.max` at
+  binary128 is 34 digits.
+- At the reduced widths the guarantee is proven by enumeration rather than
+  sampling: every finite value of every ≤16-bit format round-trips through
+  its shortest spelling, and every spelling with fewer significant digits
+  inside its rounding interval is read and shown to land elsewhere.
 
 ### Requirements
 
@@ -301,6 +379,7 @@ it, over exact big integers sized by the format:
 | `FMT4` | On `double`, `shortestDigits` must agree with Schubfach digit for digit.                                                                                      | full    |
 | `FMT5` | `writeShortest` renders every type in scientific notation; expansion to an exponent-free grammar is the consumer's.                                           | decided |
 | `FMT6` | A result never exceeds `maxDigits10` digits.                                                                                                                  | full    |
+| `FMT7` | Every finite value of every reduced format must round-trip through `writeShortest`, and no spelling with fewer significant digits may read back to it.        | full    |
 
 ## 5. Tables and CTFE (`CTF`)
 
@@ -313,8 +392,8 @@ routines over `5^(324j)` and `5^(−343j)`, with a limb capacity sized for
 is no external generator step to keep in sync.
 
 `readDigits`, `tryFastDouble`, `slowDouble`, `slowDecode`, `slowFloat`,
-`readDecimalFloat`, `decompose`, `compose`, `shortestDigits`, `doubleToBits`,
-and `bitsToDouble` are CTFE-callable; the Clinger tier is skipped at compile
+`readDecimalFloat`, `decompose`, `compose`, `roundTo`, `encode`, `decode`,
+`shortestDigits`, `doubleToBits`, and `bitsToDouble` are CTFE-callable; the Clinger tier is skipped at compile
 time so results flow through the deterministic integer tiers, and tests pin
 CTFE results bit-identical to runtime ones — including a binary128 decode
 through the wide tier and a binary64 shortest rendering settled entirely at
@@ -328,12 +407,13 @@ on an Apple M4 Max, 3.43 s → 3.99 s on an AMD Ryzen 9 7940HX (inside
 
 ### Requirements
 
-| ID     | Requirement                                                                                                                                 | Status  |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `CTF1` | Every power-of-ten entry — fine or anchor — must bracket the true power: `E·2^e ≤ 10^q < (E + width)·2^e`, by exact big-integer arithmetic. | full    |
-| `CTF2` | The functions listed above must be CTFE-callable, with results bit-identical to runtime.                                                    | full    |
-| `CTF3` | The tables are generated at compile time from exact arithmetic; no generated source is checked in.                                          | decided |
-| `CTF4` | The module must stay importable without druntime (`-betterC` consumers of the digit writers).                                               | full    |
+| ID     | Requirement                                                                                                                                                                                                                                                                                                                                | Status  |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `CTF1` | Every power-of-ten entry — fine or anchor — must bracket the true power: `E·2^e ≤ 10^q < (E + width)·2^e`, by exact big-integer arithmetic.                                                                                                                                                                                                | full    |
+| `CTF2` | The functions listed above must be CTFE-callable, with results bit-identical to runtime.                                                                                                                                                                                                                                                   | full    |
+| `CTF3` | The tables are generated at compile time from exact arithmetic; no generated source is checked in.                                                                                                                                                                                                                                         | decided |
+| `CTF4` | The module must stay importable without druntime (`-betterC` consumers of the digit writers).                                                                                                                                                                                                                                              | full    |
+| `CTF5` | `encode`, `decode` and `roundTo` must run at CTFE with results bit-identical to runtime; `compose`, `encode` and `roundTo` take their `DecodedFloat` by value because LDC 1.42's interpreter crashes reading a `bool` field through an `in` reference to a struct another CTFE call returned (in this package's full unittest build only). | decided |
 
 ## 6. Cost
 
@@ -359,9 +439,16 @@ medians per call. Apple M4 Max, LDC 1.42, macOS; and the x86_64 host where
 | binary128  | exact        | 20 digits near 1      | 385 ns |       — |
 | binary128  | exact        | `1.19e4932`           | 4.2 ms |       — |
 | binary128  | Steele–White | `real.max`            | 154 µs |       — |
+| binary32   | narrowing    | `3.14159265358979`    |  33 ns |   43 ns |
+| binary32   | exact        | `3.14159265358979`    | 114 ns |  124 ns |
+| binary16   | narrowing    | `3.14159`             |  23 ns |   51 ns |
+| binary16   | exact        | `3.14159`             |  51 ns |   73 ns |
+| binary16   | Steele–White | `0.1`                 |  28 ns |   33 ns |
+| fp8e4m3    | narrowing    | `3.5`                 |  19 ns |   48 ns |
 
-The exact tier's cost at the exponent extremes is the bound for untrusted
-input: a value the wide tier punts — the subnormal band, or one of the
+The narrowing rows time the whole `readDecimalFloat`, grammar included, and
+the exact rows `slowFloat` on the same digits. The exact tier's cost at the
+exponent extremes is the bound for untrusted input: a value the wide tier punts — the subnormal band, or one of the
 2^-14-scale window cases — costs milliseconds per token there. The typical
 `real` spelling, at any exponent, costs tens of nanoseconds.
 
@@ -403,21 +490,39 @@ Each requirement is pinned by named tests in `float_conv.d`:
 - `PRS9`: `slowDecode.fitsAFiberStack`.
 - `PRS10`: the `static assert` in `compose`; `BinaryFloatFormat.agreesWithPhobos`
   pins the classification against `floatTraits`.
+- `PRS13`/`PRS14`: `readDecimalFloat.floatMidpoints` (3 000 random `float`
+  neighbour pairs: the exact midpoint reads as the even one, one decimal
+  unit either side as the neighbours; the overflow threshold and half the
+  smallest subnormal spelled exactly), `readDecimalFloat.narrowTierCtfeMatchesRuntime`,
+  and in `custom_float.d` `CustomFloat.everyMidpointParses` (every boundary
+  of every reduced format), `CustomFloat.agreesWithBigIntOracle` (4 000
+  decimals of up to 25 digits per format), `CustomFloat.readAndWrite`.
+- `PRS15`: `bits.matchesTheHandAssembly`, `CustomFloat.conversionPins`,
+  `CustomFloat.everyMidpointParses` (the threshold per format).
+- `PRS16`: `bits.roundTripEveryPattern`, `roundTo.pins`,
+  `roundTo.matchesHardwareNarrowing` (400 k doubles against `cast(float)`,
+  and `real` against `cast(double)` on x87), `CustomFloat.matchesNativeBits`,
+  `CustomFloat.widenIsExact`; `BinaryFloatFormat.reducedDerivations` pins
+  every column of the table in §3.
 - `FMT1`/`FMT2`: `formatShortestDouble.pins`, `.roundTripCorpus` (100 k
   random bit patterns), `.shortestVsPrintf`.
 - `FMT3`/`FMT6`: `shortestDigits.pins`,
   `shortestDigits.roundTripsAndIsShortestAtEveryWidth`.
 - `FMT4`: `shortestDigits.agreesWithSchubfach` (100 k values, digit for
   digit).
+- `FMT7`: `CustomFloat.shortestIsShortest`, `CustomFloat.toString`.
 - `FMT5`: `writeShortest.notation`; the SDL writer's `checkFloatingRoundTrip`
   is the consumer-side proof.
 - `CTF1`: `pow10Table.knownEntries`, `pow10Anchors.knownEntries`,
   `pow10Anchors.bracketTruePowers`.
 - `CTF2`: `tryFastDouble.ctfeMatchesRuntime`, `tryFastWide.ctfeMatchesRuntime`,
   `slowDecode.fields`, `shortestDigits.pins` (the `static assert`s).
+- `CTF5`: the `static assert`s of `BinaryFloatFormat.reducedDerivations`,
+  `roundTo.pins`, `CustomFloat.properties` and `CustomFloat.conversionPins`.
 
 ---
 
+→ [`sparkles.base.custom_float`](../custom-float.md) — the storage types over the reduced formats
 → [`sparkles:wired` SPEC §11](../../wired/SPEC.md#11-the-native-json-engine) — the JSON engine consuming these primitives
 → [SDL SPEC §9](../../wired/sdl/SPEC.md#9-canonical-semantic-writer) — the exponent-free consumer of `writeShortest`
 → [case-style](./case-style.md) — sibling text primitive specification

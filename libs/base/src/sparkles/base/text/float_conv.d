@@ -1,8 +1,10 @@
 /**
 Correctly-rounded decimal ⇄ binary floating-point conversion for `float`,
 `double` and `real` at every width `real` takes — binary64, x87 extended80
-and binary128 — over one description of the target format as data
-($(LREF BinaryFloatFormat)).
+and binary128 — and for the reduced-precision formats D has no type for —
+IEEE binary16, bfloat16 and the OCP Microscaling FP8 / FP6 / FP4 element
+formats, through the storage types of `sparkles.base.custom_float` — over
+one description of the target format as data ($(LREF BinaryFloatFormat)).
 
 The parse direction is tiered, fastest first, and every tier is exact —
 a caller never receives a value that differs from the correctly-rounded
@@ -12,13 +14,16 @@ $(LIST
     * Tier 1 — the Clinger fast path, in the target's own arithmetic: when
         the significand fits the mantissa and the power of ten is exactly
         representable, one multiply or divide is correctly rounded by
-        construction.
+        construction. Native types only.
     * Tier 2 — Eisel–Lemire: a wide multiply against a precomputed
         power-of-ten significand table decides almost every remaining case
         in integer arithmetic. `double` takes the 64×128-bit form
         ($(LREF tryFastDouble)); the wide formats take a 128×128-bit form
         over a 38-digit significand, with a few anchors that compose an
-        entry for any exponent they can carry.
+        entry for any exponent they can carry; every format below 53 bits
+        takes the correctly-rounded `double` rounded once more
+        ($(LREF roundTo)), which is exact unless that `double` sits on one
+        of the narrower format's rounding boundaries.
     * Tier 3 — the exact big-decimal fallback ($(LREF slowDecode),
         $(LREF slowDouble)) settles what tier 2 cannot prove: true ties,
         subnormals, and the overflow boundary.
@@ -26,7 +31,9 @@ $(LIST
 
 An explicit exponent is bounded by the format and the literal's digit span,
 never by a fixed magnitude, so a long run of zeros paid for by the exponent
-decodes to the value it names.
+decodes to the value it names. Overflow follows the format's specials:
+`±infinity` where the format has one, its NaN where it has only that
+(E4M3), the largest finite value where it has neither (FP6, FP4).
 
 The format direction renders the shortest decimal that reads back to the
 same value: Schubfach for `double` ($(LREF formatShortestDouble), in the
@@ -34,6 +41,11 @@ notation the JSON writer uses) and Steele–White's free-format algorithm for
 any format ($(LREF shortestDigits), $(LREF writeShortest) — scientific
 notation, which a consumer with an exponent-free grammar such as the SDL
 writer expands).
+
+Between formats, $(LREF decompose) is exact and $(LREF roundTo) rounds
+once, so a `double` narrowed to binary16 through them never rounds through
+`float` on the way; $(LREF encode) and $(LREF decode) are the IEEE
+interchange bits of any format whose layout fits 64 bits.
 
 The primitives are building blocks for fused grammar loops (the JSON
 reader accumulates digits inside its own scanner and calls
