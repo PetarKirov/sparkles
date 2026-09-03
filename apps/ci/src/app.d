@@ -2428,6 +2428,66 @@ private:
     State _s;
 }
 
+// The retry machine, driven end to end with `sh` standing in for dub. The
+// script sees dub's build type as `$1` (`sh -c script -b <type> -- …`), so it
+// can break the coverage attempt and pass the plain one, or fail the way a
+// test does — the difference `testBinaryRan` must see.
+version (Posix)
+@("ci.PackageTestStream.retriesOnlyABrokenBuild")
+@system unittest
+{
+    static PackageRun drive(string script, bool coverage, out string[] lines)
+    {
+        auto cov = CoverageRun(enabled: coverage, dir: "/tmp/cov");
+        auto stream = PackageTestStream(["sh", "-c", script], ["-t", "1"], cov,
+            null, 10.msecs, (in ResourceUsage) @safe {});
+        foreach (line; stream)
+            lines ~= line;
+        return stream.result;
+    }
+
+    static bool retried(const string[] lines)
+        => lines.canFind!(l => l.canFind("retrying without -cov"));
+
+    string[] lines;
+
+    // The coverage build breaks at link time and the plain run passes:
+    // retried, green, and honestly uncovered.
+    auto r = drive(`case "$1" in
+        unittest-cov) echo "Linking x-test-unittest"; echo "ld: error"; exit 1;;
+        *) echo "Running x-test-unittest $3"; exit 0;; esac`, true, lines);
+    assert(r.status == 0);
+    assert(!r.coverageCollected);
+    assert(retried(lines));
+    assert(r.output.canFind("Running x-test-unittest -t"));
+
+    // The coverage build runs and its tests fail: no retry, red, coverage kept.
+    // This is the case that used to launder into a pass.
+    lines = null;
+    r = drive(`echo "Running x-test-unittest"; echo "Error Program exited with code 1"; exit 1`,
+        true, lines);
+    assert(r.status == 1);
+    assert(r.coverageCollected);
+    assert(!retried(lines));
+
+    // Both attempts fail: the plain run's status, never a zero.
+    lines = null;
+    r = drive(`case "$1" in
+        unittest-cov) echo "ld: error"; exit 1;;
+        *) echo "Running x-test-unittest"; exit 3;; esac`, true, lines);
+    assert(r.status == 3);
+    assert(!r.coverageCollected);
+    assert(retried(lines));
+
+    // Coverage off: one attempt, an explicit `-b unittest`, nothing collected.
+    lines = null;
+    r = drive(`echo "bt=$1"; exit 0`, false, lines);
+    assert(r.status == 0);
+    assert(!r.coverageCollected);
+    assert(!retried(lines));
+    assert(r.output.canFind("bt=unittest\n"));
+}
+
 private string[string] mergeEnv(const string[string] a, const(string[string]) b)
 {
     string[string] out_;
