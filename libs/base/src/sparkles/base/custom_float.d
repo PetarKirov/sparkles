@@ -183,10 +183,12 @@ struct CustomFloat(BinaryFloatFormat fmt)
     // ── Conversions out ──────────────────────────────────────────────────
 
     /// The value as `F` — exact when `F` holds the format (every native
-    /// type does for the reduced formats), correctly rounded otherwise.
+    /// type does for the reduced formats), correctly rounded otherwise:
+    /// `roundTo` is the identity on a value the target holds, and one
+    /// rounding of the exact value where it does not — never a cast chain.
     F get(F)() const @safe pure nothrow @nogc
     if (isFloatLike!F)
-        => compose!F(decoded);
+        => compose!F(roundTo!(formatOf!F)(decoded));
 
     /// ditto
     alias opCast = get;
@@ -466,9 +468,20 @@ unittest
     static assert(BFloat16(Float16.max).bits == 0x4780);   // 65504 → 65536 (bfloat16 has 8 bits)
     static assert(Float16(BFloat16.max).bits == 0x7C00);   // way past: inf
 
-    // Out, exactly and rounded.
+    // Out, exactly and rounded — `get` rounds to the destination, so a
+    // `double`-shaped value narrows to `float` the way the FPU does, and a
+    // narrower storage type is reached in one rounding.
     static assert(Float16.fromBits(0x2E66).get!float == 0.0999755859375f);
     static assert(Float16.fromBits(0x2E66).get!double == 0.0999755859375);
+    alias F64 = CustomFloat!(formatOf!double);
+    static assert(F64.fromBits(0x3690_0000_0000_0001).get!float == 0x1p-149f); // 0x1.0000000000001p-150: above half the smallest float subnormal
+    static assert(F64.fromBits(0x3690_0000_0000_0000).get!float == 0.0f);       // exactly half: even, zero
+    static assert(Float16(0.1f).get!Float8E4M3.bits == Float8E4M3(0.1f).bits);
+    static assert(Float16(0.1f).get!Float8E4M3.bits == 0x1D);                  // 0.1 → 0.09375 (1.5 × 2^-4)
+    static assert(BFloat16.max.get!Float16.bits == 0x7C00);                    // past binary16: inf
+    static assert(Float16(7).get!Float4E2M1.bits == 0x7);                       // 7 → the tie → 8 → saturates to 6
+    static assert(Float16(464).get!Float8E4M3.bits == 0x7E && Float16(465).get!Float8E4M3.bits == 0x7F);
+    static assert(Float16(-0.0f).get!Float4E2M1.bits == 0x8 && Float16.nan.get!Float8E4M3.bits == 0x7F);
     assert(CustomFloat!(formatOf!double)(0.1).get!float == 0.1f); // rounds once (runtime: an x87 CTFE carries 0.1 at 64 bits)
     assert(cast(float) Float16(2.5f) == 2.5f);
     assert(cast(real) Float4E2M1(6) == 6.0L);
@@ -531,7 +544,8 @@ unittest
         {
             assert(F64(d).bits == db);
             assert(F64.fromBits(db).get!double is d);
-            assert(F32(d).get!float is cast(float) d); // one rounding, the FPU's
+            assert(F32(d).get!float is cast(float) d);          // one rounding in, the FPU's
+            assert(F64.fromBits(db).get!float is cast(float) d); // one rounding out, likewise
         }
     }
     // …and ±0.
