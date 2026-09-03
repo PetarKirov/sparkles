@@ -166,7 +166,7 @@ its neighbours below are worth ~5 % of retired instructions on a
 float-heavy parse — see
 $(LINK2 ../../../../docs/specs/wired/bench-baseline.md, the wired bench baseline).
 */
-ulong doubleToBits()(double d) @trusted pure nothrow @nogc
+ulong doubleToBits()(double d) @safe pure nothrow @nogc
 {
     if (__ctfe)
     {
@@ -200,12 +200,12 @@ ulong doubleToBits()(double d) @trusted pure nothrow @nogc
         const frac = cast(ulong)((d - 1) * (1UL << 52));
         return sign | (cast(ulong)(exp + 1023) << 52) | frac;
     }
-    return *cast(const ulong*) &d;
+    return (() @trusted => *cast(const ulong*) &d)();
 }
 
 /// The `double` with the IEEE-754 bit pattern `bits` (CTFE-safe).
 /// Templated for caller-side instantiation, as $(LREF doubleToBits).
-double bitsToDouble()(ulong bits) @trusted pure nothrow @nogc
+double bitsToDouble()(ulong bits) @safe pure nothrow @nogc
 {
     if (__ctfe)
     {
@@ -222,7 +222,7 @@ double bitsToDouble()(ulong bits) @trusted pure nothrow @nogc
             magnitude = (1.0 + cast(double) frac / (1UL << 52)) * pow2(expField - 1023);
         return negative ? -magnitude : magnitude;
     }
-    return *cast(const double*) &bits;
+    return (() @trusted => *cast(const double*) &bits)();
 }
 
 /// `2.0 ^^ e` by squaring — exact for `e ≥ -1074` (all powers of two down
@@ -597,7 +597,7 @@ private struct BigUintOf(size_t cap)
     }
 
     /// The significant limbs, little-endian.
-    const(uint)[] opSlice() const @trusted pure nothrow @nogc return scope
+    const(uint)[] opSlice() const @safe pure nothrow @nogc return scope
         => limbs[0 .. length];
 }
 
