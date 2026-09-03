@@ -708,7 +708,10 @@ information. Fixed storage, `@nogc`, CTFE-capable.
 double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
     int explicitExp10) @safe pure nothrow @nogc
 {
-    BigDecimal d;
+    // The storage this decoder has always used, now derived: 767 digits for
+    // the widest exact subnormal expansion, plus the tie and slack.
+    static assert(binary64.decimalCapacity == 800);
+    BigDecimal!(binary64.decimalCapacity()) d;
     d.set(intDigits, fracDigits, explicitExp10);
 
     // Obvious saturation (also bounds the shifting below).
@@ -770,11 +773,15 @@ double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
 /// Arbitrary-precision decimal for the slow path: up to `capacity`
 /// significant digits (beyond that only a sticky "truncated" bit matters
 /// for rounding), a decimal-point position, and exact power-of-two shifts.
-private struct BigDecimal
+///
+/// The capacity is the format's $(LREF BinaryFloatFormat.decimalCapacity):
+/// room for the longest exact expansion the format has, plus the rounding tie
+/// it is compared against. It is the whole of the struct's storage, and the
+/// struct is a stack local of the decoder — 800 bytes for binary64, 11.6 KB
+/// for binary128 — so nothing here allocates, and nothing else grows.
+private struct BigDecimal(int capacity_)
 {
-    // 800 digits cover every exactly-representable double (the longest
-    // exact decimal expansion of a subnormal is 767 significant digits).
-    enum capacity = 800;
+    enum capacity = capacity_;
 
     ubyte[capacity] digits; // values 0..9, most significant first
     int count;              // significant digits stored
@@ -933,38 +940,51 @@ private struct BigDecimal
     {
         if (count == 0)
             return;
-        // Multiply digit string by 2^n, least significant first.
-        // Result grows by at most delta digits: ceil(n·log10(2)) + 1.
+        // Multiply the digit string by 2^n, least significant digit first,
+        // growing by at most delta digits: ceil(n·log10(2)) + 1.
         const delta = cast(int)((cast(long) n * 30_103) / 100_000) + 1;
+        const outLen = count + delta;
 
-        ubyte[capacity + 20] outDigits; // room for the growth before trim
+        // In place: output digit i reads input digit i - delta, and the
+        // descent writes each position only after its last read. The growth
+        // past `capacity` — at most delta digits — lands in `tail`, so the
+        // frame carries no second copy of the digits.
+        ubyte[20] tail = 0;
+        static assert(tail.length > 19, "60 bits grow a decimal by up to 19 digits");
+        ubyte at(size_t i) => i < capacity ? digits[i] : tail[i - capacity];
+
         ulong carry = 0;
-        int outLen = count + delta;
         foreach_reverse (i; 0 .. outLen)
         {
             const srcIdx = i - delta;
             const d = srcIdx >= 0 && srcIdx < count ? digits[srcIdx] : 0;
             const v = (cast(ulong) d << n) + carry;
-            outDigits[i] = cast(ubyte)(v % 10);
+            const outDigit = cast(ubyte)(v % 10);
+            if (i < capacity)
+                digits[i] = outDigit;
+            else
+                tail[i - capacity] = outDigit;
             carry = v / 10;
         }
         assert(carry == 0, "delta bound must absorb the carry");
 
-        // Trim leading zeros (delta may overshoot by one digit).
+        // Trim leading zeros (delta may overshoot by one digit), sliding the
+        // window down — ascending, so every read precedes the write over it.
         int lead = 0;
-        while (lead < outLen && outDigits[lead] == 0)
+        while (lead < outLen && at(lead) == 0)
             lead++;
         int newCount = outLen - lead;
         bool newTruncated = truncated;
         if (newCount > capacity)
         {
             foreach (i; capacity .. newCount)
-                if (outDigits[lead + i] != 0)
+                if (at(lead + i) != 0)
                     newTruncated = true;
             newCount = capacity;
         }
-        foreach (i; 0 .. newCount)
-            digits[i] = outDigits[lead + i];
+        if (lead > 0)
+            foreach (i; 0 .. newCount)
+                digits[i] = at(lead + i);
         // Trailing zeros away.
         while (newCount > 0 && digits[newCount - 1] == 0)
             newCount--;
