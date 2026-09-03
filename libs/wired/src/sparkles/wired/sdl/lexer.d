@@ -1140,48 +1140,33 @@ private SdlExpected!long decodeInteger(SdlParserConfig config)(
     return sdlOk(cast(long) parsed.value);
 }
 
-private SdlExpected!double decodeFloating(SdlParserConfig config)(
+/// Decodes a float token — `raw` less its `suffixLength`-byte kind suffix —
+/// as `T`, through the SDL adapter over the shared kernel: every kind reads
+/// with the same correctly-rounded reader the canonical writer renders
+/// against, so SPEC §10 LAW 3 holds by construction. `float` is read as
+/// `float`, not as a `double` narrowed afterwards, which double-rounds.
+private SdlExpected!T decodeFloat(T, SdlParserConfig config)(
     scope const(char)[] raw,
     size_t suffixLength, in SdlToken token) @safe pure nothrow @nogc
 {
-    import sparkles.base.text.float_conv : readDecimalFloat;
     import std.math : isFinite;
+    import sparkles.wired.sdl.decimal : readSdlDecimalFloat;
 
-    SharedBuffer!(char, 64) normalized;
-    auto body = raw[0 .. raw.length - suffixLength];
-    if (body.length && body[0] == '.') normalized ~= '0';
-    else if (body.length > 1 && body[0 .. 2] == "-.")
-    {
-        normalized ~= "-0";
-        body = body[1 .. $];
-    }
-    normalized ~= body;
-    scope const(char)[] input = normalized[];
-    auto parsed = readDecimalFloat(input);
-    if (parsed.hasError || input.length)
-        return sdlErr!double(decodeError(SdlErrorCode.invalidNumber, token,
+    auto parsed = readSdlDecimalFloat!T(raw[0 .. raw.length - suffixLength]);
+    if (parsed.hasError)
+        return sdlErr!T(decodeError(SdlErrorCode.invalidNumber, token,
             "invalid floating-point scalar"));
     if (!isFinite(parsed.value))
-        return sdlErr!double(decodeError(SdlErrorCode.numberOutOfRange, token,
-            "floating-point scalar is not finite"));
+    {
+        static if (is(T == float))
+            enum message = "float is outside binary32 range";
+        else static if (is(T == real))
+            enum message = "decimal is outside real range";
+        else
+            enum message = "floating-point scalar is not finite";
+        return sdlErr!T(decodeError(SdlErrorCode.numberOutOfRange, token, message));
+    }
     return sdlOk(parsed.value);
-}
-
-private SdlExpected!real decodeDecimal(SdlParserConfig config)(
-    scope const(char)[] raw, in SdlToken token) @safe pure nothrow @nogc
-{
-    import std.math : isFinite;
-
-    import sparkles.wired.sdl.decimal : parseDecimalReal;
-
-    // The shared kernel, not a private accumulator: the canonical writer
-    // picks its shortest spelling by asking this same routine what the text
-    // decodes to, so SPEC §10 LAW 3 holds for `real` by construction.
-    real value = parseDecimalReal(raw[0 .. raw.length - 2]);
-    if (!isFinite(value))
-        return sdlErr!real(decodeError(SdlErrorCode.numberOutOfRange, token,
-            "decimal is outside real range"));
-    return sdlOk(value);
 }
 
 private bool leapYear(SdlParserConfig config)(long year) @safe pure nothrow @nogc
@@ -1597,20 +1582,16 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
     case float_:
         static if (config.scalars.floats)
         {
-            auto value = decodeFloating!config(token.raw, 1, token);
-            if (value.hasError) return sdlErr!SdlScalar(value.error);
-            const narrowed = cast(float) value.value;
-            if (narrowed == float.infinity || narrowed == -float.infinity)
-                return sdlErr!SdlScalar(decodeError(SdlErrorCode.numberOutOfRange,
-                    token, "float is outside binary32 range"));
-            return sdlOk(SdlScalar(narrowed));
+            auto value = decodeFloat!(float, config)(token.raw, 1, token);
+            return value.hasError ? sdlErr!SdlScalar(value.error)
+                : sdlOk(SdlScalar(value.value));
         }
         else break;
     case double_:
         static if (config.scalars.doubles)
         {
             const suffix = token.raw[$ - 1] == 'D' || token.raw[$ - 1] == 'd' ? 1 : 0;
-            auto value = decodeFloating!config(token.raw, suffix, token);
+            auto value = decodeFloat!(double, config)(token.raw, suffix, token);
             return value.hasError ? sdlErr!SdlScalar(value.error)
                 : sdlOk(SdlScalar(value.value));
         }
@@ -1621,7 +1602,7 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
             if (token.raw.length < 3)
                 return sdlErr!SdlScalar(decodeError(SdlErrorCode.invalidNumber,
                     token, "decimal token is missing its payload"));
-            auto value = decodeDecimal!config(token.raw, token);
+            auto value = decodeFloat!(real, config)(token.raw, 2, token);
             return value.hasError ? sdlErr!SdlScalar(value.error)
                 : sdlOk(SdlScalar.decimal(value.value));
         }
