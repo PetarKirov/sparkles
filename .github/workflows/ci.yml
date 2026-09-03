@@ -359,10 +359,16 @@ jobs:
       # summary line says so rather than pretending the check ran.
       - name: Smoke-launch every windowed application
         run: |
+          # The font bundle, so selection does not depend on whether the runner
+          # has fonts installed or fontconfig configured. `.#all-desktop` above
+          # already built it, so this resolves from the store.
+          fonts="$(nix build --no-link --print-out-paths .#sparkles-fonts)/fonts"
           if [ "$RUNNER_OS" = "Linux" ]; then
-            nix develop .#ci -c xvfb-run -a ci --smoke-apps
+            nix develop .#ci -c env SPARKLES_UI_FONT_DIR="$fonts" \
+              xvfb-run -a ci --smoke-apps
           else
-            nix develop .#ci -c ci --smoke-apps
+            nix develop .#ci -c env SPARKLES_UI_FONT_DIR="$fonts" \
+              ci --smoke-apps
           fi
 
   # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
