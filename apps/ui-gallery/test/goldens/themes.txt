@@ -1,0 +1,32 @@
+ sparkles:ui thirty-six built-ins, live                                             tokyo-night
+   Welcome           ▕ Themes · thirty-six built-ins                                           █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ A theme is one runtime-swappable value with four channels: syntax       █
+   Text              ▕ rules, the slot palette, scalar metrics, and glyphs. Press ] and watch  █
+ ▸ Themes            ▕ the whole window follow — nothing here is a preview pane.               █
+   Slots             ▕                                                                         █
+   Decoration        ▕ selected tokyo-night (8 of 36) dark                                     █
+   Grid              ▕                                                                         █
+   Components        ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Tree              ▕ │ the catalog                                                         │ █
+   Property tree     ▕ │   dracula                                                           │ █
+   Table             ▕ │   nord                                                              │ █
+   Scrolling         ▕ │   monokai                                                           │ █
+   State             ▕ │   github-dark                                                       │ █
+   Split             ▕ │   github-light                                                      │ █
+   Dock              ▕ │   github-dark-dimmed                                                │ █
+   Terminal          ▕ │ ▸ tokyo-night                                                       │ █
+                     ▕ │   solarized-dark                                                    │ █
+                     ▕ │   solarized-light                                                   │ █
+                     ▕ │   catppuccin-mocha                                                  │ │
+                     ▕ │   catppuccin-macchiato                                              │ │
+                     ▕ │   catppuccin-frappe                                                 │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ a scene, in this theme                                              │ │
+                     ▕ │ error warn info muted code docs                                     │ │
+                     ▕ │                                                                     │ │
+                     ▕
+ pages                                                                          ? keys   q quit

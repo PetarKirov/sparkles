@@ -211,3 +211,85 @@ Grid renderGrid(in RenderRequest req)
     const text = gridText(g);
     assert(text == "日本語ab\n", "the row is neither padded nor truncated");
 }
+
+// ---------------------------------------------------------------------------
+// Golden frames — one per catalog page, driven by the page table itself.
+// ---------------------------------------------------------------------------
+
+/++
+Every page's first frame, committed as text.
+
+$(B Driven by `registry.pages`, not by a list here.) A golden suite whose scope
+is written down separately grows a hole the moment someone adds a page and
+forgets the second edit — and the hole is invisible, because the suite still
+passes. Iterating the catalog makes coverage a property of the table.
+
+Text rather than pixels: a layout regression — a column that moved, a border
+that changed, a line that wrapped — is legible in the diff, whereas an image
+comparison says only that something differs. Colour is deliberately out for the
+same reason $(REF gridText, sparkles,test_utils,goldens) leaves it out: a theme
+change would otherwise rewrite every fixture and bury the one line that moved.
+
+The size is fixed at 96×32 so a golden says the same thing on every machine.
+
+Regenerate after an intended change:
+
+```
+SPARKLES_UPDATE_GOLDENS=1 dub test :ui-gallery -- -i render.golden
+git diff apps/ui-gallery/test/goldens
+```
++/
+version (unittest)
+{
+    private enum goldenWidth = 96;
+    private enum goldenHeight = 32;
+
+    private string goldenDir()
+    {
+        import std.path : buildNormalizedPath, dirName;
+
+        return __FILE_FULL_PATH__.dirName.buildNormalizedPath("../test/goldens");
+    }
+
+    /// A page title as a file name: lowercase, spaces to hyphens.
+    private string goldenSlug(string title) @safe
+    {
+        import std.uni : toLower;
+
+        char[] s;
+        foreach (c; title.toLower)
+            s ~= c == ' ' ? '-' : c;
+        return s.idup;
+    }
+}
+
+@("ui_gallery.render.goldenPerPage")
+@system unittest
+{
+    import std.path : buildPath;
+    import registry : pages;
+    import sparkles.test_utils.goldens : checkGolden;
+
+    foreach (i, ref p; pages)
+        checkGolden(
+            renderPlain(RenderRequest(page: i, width: goldenWidth,
+                height: goldenHeight)),
+            goldenDir().buildPath(goldenSlug(p.title) ~ ".txt"),
+            "SPARKLES_UPDATE_GOLDENS=1 dub test :ui-gallery -- -i render.golden");
+}
+
+@("ui_gallery.render.goldenSlugsAreUnique")
+@safe unittest
+{
+    import registry : pages;
+
+    // Two pages sharing a slug would silently share a golden: the second would
+    // overwrite the first on every blessing run, and neither would be checked.
+    bool[string] seen;
+    foreach (ref p; pages)
+    {
+        const slug = goldenSlug(p.title);
+        assert(slug !in seen, "two pages share the golden name " ~ slug);
+        seen[slug] = true;
+    }
+}

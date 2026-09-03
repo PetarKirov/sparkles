@@ -1,0 +1,32 @@
+ sparkles:ui a shell as a widget                                                    tokyo-night
+   Welcome           ▕ Terminal · a shell as a widget
+   Primitives        ▕
+   Layout            ▕
+   Tracks            ▕         + new                ✕ close               hold: fail
+   Text              ▕
+   Themes            ▕ ┌───────────────────────────────────────────────────────────────────┐
+   Slots             ▕ │ no terminal yet                                                   │
+   Decoration        ▕ │ Press n (or + new) to spawn your shell on a pty. The emulator is  │
+   Grid              ▕ │ sparkles:terminal-view — libghostty under a component — and this  │
+   Components        ▕ │ pane is its first embedding: sized by layout, painted through the │
+   Tree              ▕ │ host's draw phase, keyed like any other widget.                   │
+   Property tree     ▕ │                                                                   │
+   Table             ▕ │ The keyboard is complete, including Ctrl chords; the wheel and    │
+   Scrolling         ▕ │ Shift+PgUp/PgDn walk the scrollback. Mouse inside the pane        │
+   State             ▕ │ (selection, links) waits on the mouse-event conversion.           │
+   Split             ▕ └───────────────────────────────────────────────────────────────────┘
+   Dock              ▕
+ ▸ Terminal          ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+ pagesn new shelx close shelh prev tabl next tab e keep exited⏎ focus the shell  ? keys   q quit

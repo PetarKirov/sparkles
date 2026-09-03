@@ -1,0 +1,32 @@
+ sparkles:ui panes as a value                                                       tokyo-night
+   Welcome           ▕ Dock · panes as a value                                                 █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ The arrangement is a flat arena of splits, tabbed groups and pane       █
+   Text              ▕ leaves. Everything below is derived from it: the rects, the tab strips, █
+   Themes            ▕ the reserved header rows, and where a pointer event goes. Nothing here  █
+   Slots             ▕ keeps a second copy of any of that.                                     █
+   Decoration        ▕                                                                         █
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ the arrangement                                                     │ █
+   Tree              ▕ │ explorer          │ document  notes                                 │ █
+   Property tree     ▕ │ 18 cells          │document                                         │ █
+   Table             ▕ │ a file tree, say  │flexes                                           │ █
+   Scrolling         ▕ │                   │the thing being read                             │ █
+   State             ▕ │                   │                                                 │ █
+   Split             ▕ │                   │                                                 │ █
+ ▸ Dock              ▕ │                   │                                                 │ │
+   Terminal          ▕ │                   │                                                 │ │
+                     ▕ │                   │                                                 │ │
+                     ▕ │                   │                                                 │ │
+                     ▕ │                   │                                                 │ │
+                     ▕ │                                                                     │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ the container                                                       │ │
+                     ▕ │ focused          document                                           │ │
+                     ▕ │ panes            2 visible of 3                                     │ │
+                     ▕ │ dividers         1                                                  │ │
+                     ▕
+ pageh narrol wid, prev . next f focus nexw dock e dock n dock ns dock sor reset layo? keys   q

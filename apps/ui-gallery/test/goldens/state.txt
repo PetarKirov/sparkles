@@ -1,0 +1,32 @@
+ sparkles:ui the interaction machines                                               tokyo-night
+   Welcome           ▕ State · the interaction machines                                        █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ Every machine below is a plain value. Nothing here registers a callback █
+   Text              ▕ or mutates a shared flag, which is why a scripted event list replayed   █
+   Themes            ▕ through the headless host reproduces exactly what your keystrokes       █
+   Slots             ▕ produce.                                                                █
+   Decoration        ▕                                                                         █
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ HoverState — topmost wins                                           │ █
+   Tree              ▕ │   one          two          three                                   │ █
+   Property tree     ▕ │ hot            nothing                                              │ █
+   Table             ▕ │ Move the pointer over a tile.                                       │ │
+   Scrolling         ▕ └─────────────────────────────────────────────────────────────────────┘ │
+ ▸ State             ▕                                                                         │
+   Split             ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+   Dock              ▕ │ PressState — arm, then activate on the same target                  │ │
+   Terminal          ▕ │ armed          —                                                    │ │
+                     ▕ │ activated      —                                                    │ │
+                     ▕ │ Press one tile and release over another: nothing fires.             │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ FocusState — deterministic traversal                                │ │
+                     ▕ │ focused        nothing                                              │ │
+                     ▕ │ order one → two → three → (wrap)                                    │ │
+                     ▕ │ Press f to advance, F to go back.                                   │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕
+ pagea anchor selece extend selecf focus nF focus prd toggle foD fold polarp pulse  ? keys   q q

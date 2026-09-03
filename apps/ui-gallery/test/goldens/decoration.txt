@@ -1,0 +1,32 @@
+ sparkles:ui box and text chrome                                                    tokyo-night
+   Welcome           ▕ Decoration · box and text chrome                                        █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ A decoration is slot-referencing and presentation-free: it names which  █
+   Text              ▕ slot the border colour comes from, and the palette resolves it with     █
+   Themes            ▕ everything else.                                                        █
+   Slots             ▕                                                                         █
+ ▸ Decoration        ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Grid              ▕ │ borders                                                             │ █
+   Components        ▕ │ solid          ┌───────────┐                                        │ █
+   Tree              ▕ │                │ content   │                                        │ │
+   Property tree     ▕ │                └───────────┘                                        │ │
+   Table             ▕ │                                                                     │ │
+   Scrolling         ▕ │ rounded        ╭───────────╮                                        │ │
+   State             ▕ │                │ content   │                                        │ │
+   Split             ▕ │                ╰───────────╯                                        │ │
+   Dock              ▕ │                                                                     │ │
+   Terminal          ▕ │ dotted         ┌┈┈┈┈┈┈┈┈┈┈┈┐                                        │ │
+                     ▕ │                ┊ content   ┊                                        │ │
+                     ▕ │                └┈┈┈┈┈┈┈┈┈┈┈┘                                        │ │
+                     ▕ │                                                                     │ │
+                     ▕ │ dashed         ┌╌╌╌╌╌╌╌╌╌╌╌┐                                        │ │
+                     ▕ │                ╎ content   ╎                                        │ │
+                     ▕ │                └╌╌╌╌╌╌╌╌╌╌╌┘                                        │ │
+                     ▕ │                                                                     │ │
+                     ▕ │ bottom only                                                         │ │
+                     ▕ │                  content                                            │ │
+                     ▕ │                                                                     │ │
+                     ▕ │                                                                     │ │
+                     ▕
+ pages                                                                          ? keys   q quit
