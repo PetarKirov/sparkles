@@ -2969,13 +2969,18 @@ For `double`, inputs with more than 19 significant digits are decided by
 bracketing (converting both the truncated significand and its successor —
 when both round to the same `double`, that value is proven correct), and
 everything the fast tiers punt is settled exactly by $(LREF slowDouble).
-Every other format — `float`, and the wide `real`s — takes Clinger's fast
-path in its own arithmetic (an exact significand times an exact power of
-ten, rounded once) and otherwise $(LREF slowFloat). `float` is deliberately
-not the `double` result cast down: a decimal a hair below a `float`
-midpoint rounds onto it as a `double` and the tie then breaks the wrong
-way — the classic `(float) strtod(s) != strtof(s)`. Every well-formed
-literal therefore succeeds with the correctly-rounded value.
+Every other format takes Clinger's fast path in its own arithmetic (an
+exact significand times an exact power of ten, rounded once), then a tier
+of its own — the wide `real`s a 128-bit Eisel–Lemire, and every format
+below 53 bits (`float`, and the reduced-precision storage types of
+`sparkles.base.custom_float`) the correctly-rounded `double` rounded once
+more by $(LREF roundTo), which is exact unless that `double` sits on one
+of the narrower format's rounding boundaries — and otherwise
+$(LREF slowFloat). That boundary check is what separates this from the
+classic `(float) strtod(s) != strtof(s)`: a decimal a hair below a `float`
+midpoint rounds onto it as a `double`, and a plain cast would then break
+the tie the wrong way. Every well-formed literal therefore succeeds with
+the correctly-rounded value.
 
 The fast path and $(LREF compose) are floating-point arithmetic and assume
 the default environment — round-to-nearest-even, traps masked, which
@@ -3134,9 +3139,8 @@ if (__traits(isFloating, T))
         // times an exact power of ten is one correctly rounded operation
         // (skipped at CTFE, as for `double`, so compile-time results flow
         // through the integer tiers). Past it, the wide formats have the
-        // 128-bit Eisel–Lemire tier with the exact tier behind it; `float`
-        // — a truncated significand, an exponent past the exact table, a
-        // significand too wide — goes straight to the exact tier.
+        // 128-bit Eisel–Lemire tier and the formats below 53 bits the
+        // narrowing tier, each with the exact tier behind it.
         enum fmt = formatOf!T;
         enum wide = fmt.mantDig > 53;
         const sigExact = fmt.mantDig >= 64
@@ -3152,8 +3156,38 @@ if (__traits(isFloating, T))
                 value = compose!T(decodeWide!fmt(s[intStart .. intEnd],
                     fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp));
             else
-                value = slowFloat!T(s[intStart .. intEnd],
-                    fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
+            {
+                // The narrowing tier: the correctly-rounded `double` of the
+                // literal, rounded once more to `fmt`. Every rounding boundary
+                // of a format below 53 bits — the midpoints, half the smallest
+                // subnormal, the overflow threshold — is itself a `double`,
+                // and the correctly-rounded `double` lies within half of its
+                // own ulp of the literal, so the two sit on the same side of
+                // every boundary unless the `double` *is* one: the exact half
+                // `roundTo` reports, which could be a true tie or a literal a
+                // hair to either side, and goes to the exact tier.
+                double dv;
+                bool decided;
+                if (!truncated)
+                    decided = tryFastDouble(sig, exp10, dv);
+                else
+                {
+                    double lowV, highV;
+                    decided = tryFastDouble(sig, exp10, lowV)
+                        && tryFastDouble(sig + 1, exp10, highV)
+                        && doubleToBits(lowV) == doubleToBits(highV);
+                    dv = lowV;
+                }
+                bool halfway = true;
+                DecodedFloat r;
+                if (decided)
+                    r = roundTo!fmt(decode!binary64(doubleToBits(dv)), halfway);
+                if (!halfway)
+                    value = compose!T(r);
+                else
+                    value = slowFloat!T(s[intStart .. intEnd],
+                        fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
+            }
         }
     }
 
@@ -4800,6 +4834,87 @@ unittest
     assert(doubleToBits(ctC) == doubleToBits(conv(123_456_789_012_345_678, -30)));
     enum ctD = conv(9_007_199_254_740_993, 0); // true tie via slowDouble
     assert(ctD == 9_007_199_254_740_992.0);
+}
+
+// The narrowing tier at CTFE (Clinger is skipped there) agrees with the
+// runtime path, which took Clinger.
+@("float_conv.readDecimalFloat.narrowTierCtfeMatchesRuntime")
+@safe pure nothrow @nogc
+unittest
+{
+    static float read(string text)
+    {
+        const(char)[] s = text;
+        return readDecimalFloat!float(s).value;
+    }
+
+    enum ctA = read("3.14159");
+    assert(ctA is read("3.14159"));
+    enum ctB = read("1.00000017881393432617187499"); // the strtof trap
+    assert(decompose(ctB) == decompose(read("1.00000017881393432617187499")));
+    assert(decompose(ctB) == decompose(1.0000001f));
+    enum ctC = read("16777217"); // a true tie: punts to the exact tier
+    assert(ctC is 16_777_216.0f);
+    enum ctD = read("1e-46"); // below half the smallest subnormal
+    assert(ctD is 0.0f);
+    enum ctE = read("3.4028236e38"); // past the overflow threshold
+    assert(ctE is float.infinity);
+}
+
+// Every rounding boundary of `float` is where the narrowing tier must punt:
+// the exact midpoint between two neighbours reads as the even one, and the
+// spellings one unit either side in the last decimal digit as the neighbours.
+@("float_conv.readDecimalFloat.floatMidpoints")
+@system unittest
+{
+    import std.bigint : BigInt;
+    import std.conv : to;
+
+    static float read(string text)
+    {
+        const(char)[] s = text;
+        const r = readDecimalFloat!float(s);
+        assert(r.hasValue && s.length == 0);
+        return r.value;
+    }
+
+    ulong state = 0x1234_5678_9ABC_DEF1;
+    foreach (i; 0 .. 3000)
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        // A random finite positive float and its successor, subnormals and
+        // the top binade included.
+        const uint lowBits = cast(uint)(state >> 32) & 0x7FFF_FFFF;
+        const uint bits = i % 8 == 0 ? lowBits % (1u << 23) : lowBits % 0x7F80_0000;
+        const float f = compose!float(decode!binary32(bits));
+        const float g = compose!float(decode!binary32(bits + 1));
+        const df = decompose(f), dg = decompose(g);
+        // m = (f + g) / 2 as N × 2^e, e ≤ 0 here: N × 5^-e / 10^-e.
+        int e = (df.exp2 < dg.exp2 ? df.exp2 : dg.exp2) - 1;
+        BigInt n = (BigInt(df.lo) << (df.exp2 - e - 1)) + (BigInt(dg.lo) << (dg.exp2 - e - 1));
+        if (e > 0)
+        {
+            n <<= e;
+            e = 0;
+        }
+        foreach (_; 0 .. -e)
+            n *= 5;
+        const string suffix = "e" ~ to!string(e);
+        const even = (df.lo & 1) == 0 ? f : g;
+        assert(read(n.to!string ~ suffix) is even);
+        assert(read((n - 1).to!string ~ suffix) is f);
+        assert(read((n + 1).to!string ~ suffix) is g);
+    }
+    // The overflow threshold (2 - 2^-24) × 2^127 and half the smallest
+    // subnormal, 2^-150 = 5^150 × 10^-150, exactly: ties, to even.
+    const threshold = (BigInt(1) << 128) - (BigInt(1) << 103);
+    assert(read(threshold.to!string) is float.infinity);
+    assert(read((threshold - 1).to!string) is float.max);
+    const halfSub = BigInt(5) ^^ 150;
+    assert(read(halfSub.to!string ~ "e-150") is 0.0f);
+    assert(read((halfSub + 1).to!string ~ "e-150") is float.min_normal * float.epsilon);
 }
 
 @("float_conv.readDecimalFloat.grammar")
