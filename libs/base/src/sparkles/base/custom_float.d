@@ -670,3 +670,266 @@ unittest
     int exp10;
     assert(shortestDigits!Float16(Float16(0.1f), digits[], exp10) == 1 && digits[0] == '1' && exp10 == -1);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exhaustive proofs over the reduced formats, with `std.bigint` as the
+// exact arithmetic
+// ─────────────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    import std.bigint : BigInt;
+
+    private alias Reduced = imported!"std.meta".AliasSeq!(Float16, BFloat16, Float8E5M2,
+        Float8E4M3, Float6E2M3, Float6E3M2, Float4E2M1);
+
+    /// `n × 2^e` as decimal text `digits e exp10` — exact.
+    private string dyadicText(BigInt n, int e)
+    {
+        import std.conv : to;
+
+        if (e >= 0)
+            return (n << e).to!string;
+        foreach (_; 0 .. -e)
+            n *= 5;
+        return n.to!string ~ "e" ~ e.to!string;
+    }
+
+    /// The largest finite pattern of `T` — the positive patterns below it are
+    /// every finite positive value, in order.
+    private enum maxFiniteBits(T) = T.max.bits;
+
+    /// Exact round-to-nearest-even of `num / den` (both positive) in `fmt`.
+    private DecodedFloat oracleRound(BinaryFloatFormat fmt)(BigInt num, BigInt den)
+    {
+        enum p = fmt.mantDig;
+        // e = floor(log2(num / den)).
+        int e = cast(int)(num.uintLength * 32) - cast(int)(den.uintLength * 32);
+        while ((e >= 0 ? den << e : den) > (e < 0 ? num << -e : num))
+            e--;
+        while ((e + 1 >= 0 ? den << (e + 1) : den) <= (e + 1 < 0 ? num << -(e + 1) : num))
+            e++;
+        int lsb = e - (p - 1);
+        if (lsb < fmt.minSubnormalExp2)
+            lsb = fmt.minSubnormalExp2;
+        // q = floor(x / 2^lsb), r = the rest, compared with a half.
+        const scaledNum = lsb < 0 ? num << -lsb : num;
+        const scaledDen = lsb > 0 ? den << lsb : den;
+        BigInt q = scaledNum / scaledDen;
+        const rest = scaledNum - q * scaledDen;
+        const twice = rest * 2;
+        if (twice > scaledDen || (twice == scaledDen && (q & 1) == 1))
+            q++;
+        if (q == BigInt(1) << p)
+        {
+            q = BigInt(1) << (p - 1);
+            lsb++;
+        }
+        DecodedFloat r;
+        if (q == 0)
+            return r;
+        r.lo = cast(ulong) q.toLong;
+        r.exp2 = lsb;
+        if (lsb + imported!"core.bitop".bsr(r.lo) > fmt.maxNormalExp2)
+            r.isInf = true;
+        return r;
+    }
+}
+
+// Every rounding boundary of every reduced format: the exact midpoint between
+// two neighbouring values reads as the even one, the spellings one decimal
+// unit either side as the neighbours; the overflow threshold takes the
+// format's overflow rule and half the smallest subnormal reads as zero.
+@("CustomFloat.everyMidpointParses")
+@system unittest
+{
+    static foreach (T; Reduced)
+    {{
+        static T read(string text)
+        {
+            const(char)[] s = text;
+            const r = imported!"sparkles.base.text.float_conv".readDecimalFloat!T(s);
+            assert(r.hasValue && s.length == 0, text);
+            return r.value;
+        }
+
+        enum top = maxFiniteBits!T;
+        foreach (uint b; 0 .. top)
+        {
+            const lo = T.fromBits(cast(T.Bits) b).decoded, hi = T.fromBits(cast(T.Bits)(b + 1)).decoded;
+            // m = (lo + hi) / 2 as n × 2^e.
+            const e = (lo.exp2 < hi.exp2 ? lo.exp2 : hi.exp2) - 1;
+            const n = (BigInt(lo.lo) << (lo.exp2 - e - 1)) + (BigInt(hi.lo) << (hi.exp2 - e - 1));
+            const even = (b & 1) == 0 ? b : b + 1;
+            assert(read(dyadicText(n, e)).bits == even, T.stringof);
+            assert(read(dyadicText(n - 1, e)).bits == b, T.stringof);
+            assert(read(dyadicText(n + 1, e)).bits == b + 1, T.stringof);
+            assert(read("-" ~ dyadicText(n, e)).bits == (even | T.signBit), T.stringof);
+        }
+        // max + half an ulp: the tie past the largest finite value goes to
+        // even — up, into the overflow rule's answer, where max's significand
+        // is odd (every all-ones format), down to max where it is even (E4M3,
+        // whose all-ones pattern is the NaN).
+        const maxD = T.max.decoded;
+        const threshold = (BigInt(maxD.lo) << 1) + 1;
+        const overflow = T.fromDecoded(DecodedFloat(0, 0, 0, false, true)).bits;
+        const tie = (maxD.lo & 1) ? overflow : T.max.bits;
+        assert(read(dyadicText(threshold, maxD.exp2 - 1)).bits == tie, T.stringof);
+        assert(read(dyadicText(threshold - 1, maxD.exp2 - 1)).bits == T.max.bits, T.stringof);
+        assert(read(dyadicText(threshold + 1, maxD.exp2 - 1)).bits == overflow, T.stringof);
+        // Half the smallest subnormal: a tie with zero, which is even.
+        assert(read(dyadicText(BigInt(1), T.format.minSubnormalExp2 - 1)).bits == 0, T.stringof);
+        assert(read(dyadicText(BigInt(3), T.format.minSubnormalExp2 - 2)).bits == 1, T.stringof);
+    }}
+}
+
+// Random decimals of up to 25 digits across each format's exponent range,
+// against an independent exact rounding in `std.bigint`.
+@("CustomFloat.agreesWithBigIntOracle")
+@system unittest
+{
+    import std.conv : to;
+
+    ulong state = 0xB1A5_ED12_3456_789F;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    static foreach (T; Reduced)
+    {{
+        enum fmt = T.format;
+        enum span = fmt.saturateHighExp10 - fmt.saturateLowExp10 + 12;
+        foreach (i; 0 .. 4000)
+        {
+            // 1 .. 25 significant digits, an exponent that puts the value
+            // anywhere from below zero's threshold to past overflow.
+            const nd = 1 + next(state) % 25;
+            char[25] digits;
+            foreach (k; 0 .. nd)
+                digits[k] = cast(char)('0' + next(state) % 10);
+            if (digits[0] == '0')
+                digits[0] = '1';
+            const exp10 = cast(int)(next(state) % span) + fmt.saturateLowExp10 - 6 - cast(int) nd;
+            const text = digits[0 .. nd].idup ~ "e" ~ exp10.to!string;
+            const(char)[] s = text;
+            const ours = imported!"sparkles.base.text.float_conv".readDecimalFloat!T(s);
+            assert(ours.hasValue && s.length == 0);
+
+            BigInt num = BigInt(digits[0 .. nd]);
+            BigInt den = 1;
+            if (exp10 >= 0)
+                num *= BigInt(10) ^^ exp10;
+            else
+                den = BigInt(10) ^^ (-exp10);
+            const expected = T.fromDecoded(oracleRound!fmt(num, den));
+            assert(ours.value.bits == expected.bits, text ~ " in " ~ T.stringof);
+        }
+    }}
+}
+
+// Every finite value of every reduced format round-trips through its
+// shortest spelling, and no spelling with fewer significant digits reads
+// back to it: the candidates with fewer digits inside the value's rounding
+// interval are enumerated exactly and each is read.
+@("CustomFloat.shortestIsShortest")
+@system unittest
+{
+    import std.conv : to;
+    import std.math : floor, log10;
+    import sparkles.base.buffer : UniqueBuffer;
+
+    static foreach (T; Reduced)
+    {{
+        enum fmt = T.format;
+        static T read(string text)
+        {
+            const(char)[] s = text;
+            const r = imported!"sparkles.base.text.float_conv".readDecimalFloat!T(s);
+            assert(r.hasValue && s.length == 0, text);
+            return r.value;
+        }
+
+        enum top = maxFiniteBits!T;
+        foreach (uint b; 1 .. top + 1)
+        {
+            const v = T.fromBits(cast(T.Bits) b);
+            UniqueBuffer!(char, 32) text;
+            v.toString(text);
+            const spelled = text[].idup;
+            assert(read(spelled).bits == b, spelled ~ " in " ~ T.stringof);
+            // Significant digits: everything before 'e' that is a digit.
+            size_t nDigits = 0;
+            foreach (c; spelled)
+            {
+                if (c == 'e')
+                    break;
+                if (c >= '0' && c <= '9')
+                    nDigits++;
+            }
+            if (spelled.length > 1 && spelled[0] == '0')
+                nDigits--; // never happens for a nonzero value, but be exact
+
+            // The rounding interval [lo, hi] as rationals over 2^-(k):
+            // lo = (v + prev) / 2, hi = (v + next) / 2 — next past max is
+            // the overflow threshold, prev below the smallest is v / 2.
+            const d = v.decoded;
+            const prev = T.fromBits(cast(T.Bits)(b - 1)).decoded;
+            const nextD = b == top ? DecodedFloat(0, d.lo * 2 + 1, d.exp2 - 1) // max + ½ulp, as 2·max + 1 at exp - 1
+                : T.fromBits(cast(T.Bits)(b + 1)).decoded;
+            // Everything is a multiple of 2^-k; twice the endpoints at that
+            // scale keeps the halves exact: a bound is n / den2.
+            const int k = -(fmt.minSubnormalExp2 - 3);
+            static BigInt scaled(in DecodedFloat x, int k) => BigInt(x.lo) << (x.exp2 + k);
+            const lo2 = scaled(prev, k) + scaled(d, k);
+            const hi2 = scaled(d, k) + scaled(nextD, k);
+            const den2 = BigInt(1) << (k + 1);
+            const inclusive = (b & 1) == 0;
+
+            // For every shorter digit count, every candidate m × 10^q inside
+            // [lo, hi] must fail to read back as v.
+            foreach (int fewer; 1 .. cast(int) nDigits)
+            {
+                // m × 10^q ∈ [lo, hi] with m of `fewer` digits pins q to
+                // floor(log10 v) - fewer + 1, give or take one at the ends of
+                // the interval; the m bounds below empty every other q.
+                const int qMid = cast(int) floor(log10(v.get!double)) - fewer + 1;
+                foreach (int q; qMid - 2 .. qMid + 2)
+                {
+                    // bounds of m: ceil(lo2 / (den2 · 10^q)) .. floor(hi2 / (den2 · 10^q))
+                    BigInt scale = den2;
+                    BigInt numLo = lo2, numHi = hi2;
+                    if (q >= 0)
+                        scale *= BigInt(10) ^^ q;
+                    else
+                    {
+                        numLo *= BigInt(10) ^^ (-q);
+                        numHi *= BigInt(10) ^^ (-q);
+                    }
+                    BigInt mLo = numLo / scale;
+                    if (mLo * scale < numLo)
+                        mLo++;
+                    if (!inclusive && mLo * scale == numLo)
+                        mLo++;
+                    BigInt mHi = numHi / scale;
+                    if (!inclusive && mHi * scale == numHi)
+                        mHi--;
+                    const BigInt digitsLo = BigInt(10) ^^ (fewer - 1), digitsHi = BigInt(10) ^^ fewer - 1;
+                    if (mLo < digitsLo)
+                        mLo = digitsLo;
+                    if (mHi > digitsHi)
+                        mHi = digitsHi;
+                    for (BigInt m = mLo; m <= mHi; m++)
+                    {
+                        const candidate = m.to!string ~ "e" ~ q.to!string;
+                        assert(read(candidate).bits != b,
+                            candidate ~ " is a shorter spelling of " ~ spelled ~ " in " ~ T.stringof);
+                    }
+                }
+            }
+        }
+    }}
+}

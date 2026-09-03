@@ -4385,6 +4385,35 @@ unittest
             blackBox(shortestDigits!fmt(blackBox(realMax), digits[], exp10));
         }, ["format": name, "tier": "steele-white", "input": "real.max"]);
     }}
+
+    // Below 53 bits: the narrowing tier against the exact tier, for `float`
+    // and two storage types, and the writer at binary16.
+    import sparkles.base.custom_float : Float16, Float8E4M3;
+
+    static T read(T)(string text)
+    {
+        const(char)[] s = text;
+        return readDecimalFloat!T(s).value;
+    }
+
+    benchIter({
+        blackBox(read!float(blackBox("3.14159265358979")));
+    }, ["format": "binary32", "tier": "narrow", "input": "3.14159265358979"]);
+    benchIter({
+        blackBox(slowFloat!float(blackBox("3"), blackBox("14159265358979"), 0));
+    }, ["format": "binary32", "tier": "exact", "input": "3.14159265358979"]);
+    benchIter({
+        blackBox(read!Float16(blackBox("3.14159")));
+    }, ["format": "binary16", "tier": "narrow", "input": "3.14159"]);
+    benchIter({
+        blackBox(slowFloat!Float16(blackBox("3"), blackBox("14159"), 0));
+    }, ["format": "binary16", "tier": "exact", "input": "3.14159"]);
+    benchIter({
+        blackBox(read!Float8E4M3(blackBox("3.5")));
+    }, ["format": "fp8e4m3", "tier": "narrow", "input": "3.5"]);
+    benchIter({
+        blackBox(shortestDigits!binary16(DecodedFloat(0, blackBox(0x266UL | 1024), -14), digits[], exp10));
+    }, ["format": "binary16", "tier": "steele-white", "input": "0.1"]);
 }
 
 version (Posix)
