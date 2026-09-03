@@ -349,6 +349,26 @@ private static immutable double[23] exactPow10 = () {
     return t;
 }();
 
+/// Exactly representable powers of ten in `T`: `10^0 .. 10^exactPow10Max`,
+/// each one exact multiplication from the last. Never literals, which a
+/// compiler rounds at its own `real`'s width rather than the target's — and
+/// pinned against `5^k × 2^k` composed exactly, at every width.
+template exactPow10Of(T)
+if (__traits(isFloating, T))
+{
+    private enum count = formatOf!T.exactPow10Max + 1;
+    static immutable T[count] exactPow10Of = () {
+        T[count] t;
+        T v = 1;
+        foreach (i; 0 .. count)
+        {
+            t[i] = v;
+            v *= 10;
+        }
+        return t;
+    }();
+}
+
 /// Exponent bounds of the power-of-ten table (shared by the reader and
 /// the Schubfach writer, which needs the wider positive range).
 private enum int tableMinExp10 = -343;
@@ -1791,20 +1811,32 @@ void writeShortestDouble(Writer)(ref Writer w, double value)
 /**
 Reads a decimal floating-point literal —
 `[-]digits[.digits][(e|E)[±]digits]` — from the front of `s`, advancing
-past it on success.
+past it on success, correctly rounded to `T` (`double` unless asked).
 
-Inputs with more than 19 significant digits are decided by bracketing
-(converting both the truncated significand and its successor — when both
-round to the same `double`, that value is proven correct); everything the
-fast tiers punt is settled exactly by $(LREF slowDouble). Every
-well-formed literal therefore succeeds with the correctly-rounded value.
+For `double`, inputs with more than 19 significant digits are decided by
+bracketing (converting both the truncated significand and its successor —
+when both round to the same `double`, that value is proven correct), and
+everything the fast tiers punt is settled exactly by $(LREF slowDouble).
+Every other format — `float`, and the wide `real`s — takes Clinger's fast
+path in its own arithmetic (an exact significand times an exact power of
+ten, rounded once) and otherwise $(LREF slowFloat). `float` is deliberately
+not the `double` result cast down: a decimal a hair below a `float`
+midpoint rounds onto it as a `double` and the tie then breaks the wrong
+way — the classic `(float) strtod(s) != strtof(s)`. Every well-formed
+literal therefore succeeds with the correctly-rounded value.
+
+The fast path and $(LREF compose) are floating-point arithmetic and assume
+the default environment — round-to-nearest-even, traps masked, which
+`std.math.hardware.FloatingPointControl` can change and this module does
+not defend against. The exact tier is integer arithmetic and does not care.
 */
-ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
+ParseExpected!T readDecimalFloat(T = double)(ref scope const(char)[] s)
     @safe pure nothrow @nogc
+if (__traits(isFloating, T))
 {
     const n = s.length;
     if (n == 0)
-        return parseErr!double(ParseErrorCode.emptyInput, 0);
+        return parseErr!T(ParseErrorCode.emptyInput, 0);
 
     size_t i = 0;
     bool negative = false;
@@ -1820,7 +1852,7 @@ ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
         i++;
     const intEnd = i;
     if (intEnd == intStart)
-        return parseErr!double(ParseErrorCode.unexpectedCharacter, i);
+        return parseErr!T(ParseErrorCode.unexpectedCharacter, i);
 
     // Fraction digits.
     size_t fracStart = 0, fracEnd = 0;
@@ -1832,7 +1864,7 @@ ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
             i++;
         fracEnd = i;
         if (fracEnd == fracStart)
-            return parseErr!double(ParseErrorCode.unexpectedCharacter, i);
+            return parseErr!T(ParseErrorCode.unexpectedCharacter, i);
     }
 
     // Explicit exponent.
@@ -1849,7 +1881,7 @@ ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
         ulong e = 0;
         const eDigits = readDigits!10(s[i .. $], e);
         if (eDigits == 0)
-            return parseErr!double(ParseErrorCode.unexpectedCharacter, i);
+            return parseErr!T(ParseErrorCode.unexpectedCharacter, i);
         i += eDigits;
         if (e > 400) // any further magnitude saturates identically
             e = 400;
@@ -1911,23 +1943,47 @@ ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
             exp10 += cast(int)(intEnd - 1 - lastIdx);
     }
 
-    double value;
-    bool decided;
-    if (!truncated)
-        decided = tryFastDouble(sig, exp10, value);
+    T value;
+    static if (formatOf!T == binary64)
+    {
+        double dv;
+        bool decided;
+        if (!truncated)
+            decided = tryFastDouble(sig, exp10, dv);
+        else
+        {
+            // Bracket the truncation: if sig and sig+1 round identically, the
+            // in-between true value must round there too.
+            double lowV, highV;
+            decided = tryFastDouble(sig, exp10, lowV)
+                && tryFastDouble(sig + 1, exp10, highV)
+                && doubleToBits(lowV) == doubleToBits(highV);
+            dv = lowV;
+        }
+        if (!decided) // tier 3: exact, no preconditions
+            dv = slowDouble(s[intStart .. intEnd],
+                fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
+        value = dv;
+    }
     else
     {
-        // Bracket the truncation: if sig and sig+1 round identically, the
-        // in-between true value must round there too.
-        double lowV, highV;
-        decided = tryFastDouble(sig, exp10, lowV)
-            && tryFastDouble(sig + 1, exp10, highV)
-            && doubleToBits(lowV) == doubleToBits(highV);
-        value = lowV;
+        // Clinger's fast path in T's own arithmetic: an exact significand
+        // times an exact power of ten is one correctly rounded operation.
+        // Anything else — a truncated significand, an exponent past the
+        // exact table, a significand too wide for `float` — is the exact
+        // tier's, with no fast tier in between.
+        enum fmt = formatOf!T;
+        const sigExact = fmt.mantDig >= 64
+            || (sig >> (fmt.mantDig >= 64 ? 0 : fmt.mantDig)) == 0;
+        if (!truncated && sigExact && exp10 >= -fmt.exactPow10Max
+            && exp10 <= fmt.exactPow10Max)
+            value = exp10 >= 0
+                ? cast(T) sig * exactPow10Of!T[exp10]
+                : cast(T) sig / exactPow10Of!T[-exp10];
+        else
+            value = slowFloat!T(s[intStart .. intEnd],
+                fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
     }
-    if (!decided) // tier 3: exact, no preconditions
-        value = slowDouble(s[intStart .. intEnd],
-            fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
 
     s = s[i .. $];
     return parseOk(negative ? -value : value);
@@ -2230,6 +2286,103 @@ unittest
     same("9999999999999999999", null, 0);
     assert(slowFloat!float("16777217", null, 0) == 16_777_216.0f);
     assert(slowFloat!real("1", null, 0) == 1.0L);
+}
+
+@("float_conv.exactPow10Of.exactAtEveryWidth")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.meta : AliasSeq;
+
+    static foreach (T; AliasSeq!(float, double, real))
+    {{
+        // 10^k = 5^k × 2^k: build 5^k in 128 bits and compose it exactly.
+        ulong hi = 0, lo = 1;
+        foreach (k; 0 .. formatOf!T.exactPow10Max + 1)
+        {
+            assert(exactPow10Of!T[k] == compose!T(DecodedFloat(hi, lo, k)));
+            const p = mul64x64(lo, 5);
+            hi = hi * 5 + p.hi;
+            lo = p.lo;
+        }
+    }}
+    static assert(exactPow10Of!double.length == 23);
+    static assert(exactPow10Of!double[22] == 1e22);
+}
+
+@("float_conv.readDecimalFloat.typed")
+@safe pure nothrow @nogc
+unittest
+{
+    static T read(T)(string text)
+    {
+        const(char)[] s = text;
+        auto r = readDecimalFloat!T(s);
+        assert(r.hasValue && s.length == 0);
+        return r.value;
+    }
+
+    // The default is still `double`.
+    const(char)[] s = "1.5";
+    static assert(is(typeof(readDecimalFloat(s).value) == double));
+    assert(readDecimalFloat(s).value == 1.5);
+
+    // float: ties, the fast path, and both saturations.
+    assert(read!float("16777217") == 16_777_216.0f); // 2^24 + 1 ties to even
+    assert(read!float("0.1") == 0.1f);
+    assert(read!float("3.4028235e38") == float.max);
+    assert(read!float("3.5e38") == float.infinity);
+    assert(read!float("1e-45") == float.min_normal * float.epsilon);
+    assert(read!float("7e-46") == 0.0f); // under half the smallest subnormal
+    assert(read!float("-2.5") == -2.5f);
+
+    // Not the double result cast down. This decimal sits a hair below the
+    // midpoint between 1+2^-23 and 1+2^-22; as a double it rounds onto the
+    // midpoint exactly, and the tie then breaks to the even float — the
+    // wrong one.
+    enum trap = "1.00000017881393432617187499";
+    assert(read!float(trap) == 1.00000011920928955078125f);
+    assert(cast(float) read!double(trap) != read!float(trap));
+
+    // real, at whatever width this host has.
+    assert(read!real("0.1") == 0.1L);
+    assert(read!real("-2.5") == -2.5L);
+    assert(read!real("123456789012345678901234567890") == 123456789012345678901234567890.0L);
+    assert(read!real("1e-30") == 1e-30L);
+    static if (formatOf!real == binary64)
+        assert(read!real("0.1") == read!double("0.1"));
+}
+
+version (linux)
+@("float_conv.readDecimalFloat.floatDifferentialVsStrtof")
+@system unittest
+{
+    import core.stdc.stdlib : strtof;
+    import core.stdc.stdio : snprintf;
+
+    ulong state = 0x9E37_79B9_7F4A_7C15;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    char[64] buf;
+    foreach (iter; 0 .. 20_000)
+    {
+        const sig = next(state) >> (next(state) % 40);
+        const exp = cast(int)(next(state) % 121) - 60;
+        const len = snprintf(buf.ptr, buf.length, "%llue%d", sig, exp);
+        const(char)[] text = buf[0 .. len];
+
+        auto ours = readDecimalFloat!float(text);
+        assert(ours.hasValue);
+        const float mine = ours.value;
+        const float oracle = strtof(buf.ptr, null);
+        assert(*cast(const uint*) &mine == *cast(const uint*) &oracle);
+    }
 }
 
 // Exact correctly-rounded decoding by big-integer division: a second,
