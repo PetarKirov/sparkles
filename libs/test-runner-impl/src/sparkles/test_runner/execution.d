@@ -27,7 +27,7 @@ TestResult executeTest(Test test)
     {
         scope (exit)
             result.duration = MonoTime.currTime - started;
-        runWithStackBudget({ test.ptr(); });
+        runWithStackBudget({ test.ptr(); }, test.fullName);
         result.succeeded = true;
     }
     catch (TestSkipped s)

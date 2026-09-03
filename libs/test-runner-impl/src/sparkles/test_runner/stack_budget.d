@@ -56,10 +56,10 @@ Runs `dg` with the unused stack below the 384 KiB watermark marked
 $(LREF StackBudgetExceeded). Nested calls (the runner's own
 `executeTest` unittests) reuse the outer watermark.
 */
-void runWithStackBudget(scope void delegate() dg)
+void runWithStackBudget(scope void delegate() dg, string label = null)
 {
     version (Posix)
-        runArmed(dg);
+        runArmed(dg, label);
     else
         dg();
 }
@@ -76,7 +76,8 @@ size_t currentThreadStackBytes() @trusted nothrow @nogc
 version (Posix):
 
 import core.atomic : cas;
-import core.stdc.stdlib : abort;
+import core.sys.posix.sys.types : pid_t;
+import core.sys.posix.unistd : getpid;
 import core.sys.posix.pthread : pthread_self, pthread_t;
 import core.sys.posix.signal : SA_ONSTACK, SA_RESTART, SA_SIGINFO, SIGBUS,
     SIGSEGV, SIG_DFL, SIG_IGN, sigaction, sigaction_t, sigemptyset, siginfo_t,
@@ -137,12 +138,14 @@ private struct Guard
     void* usableLow;
     int nesting;
     bool altStackReady;
+    string label; /// the running test, for a fault the budget did not cause
 }
 
 private Guard tlsGuard;
 private shared bool handlerInstalled;
 private sigaction_t oldSegv;
 private sigaction_t oldBus;
+private pid_t installedPid; /// the process the handler was installed in
 
 private struct StackRegion
 {
@@ -232,13 +235,67 @@ private void installHandlerOnce() @trusted
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, &oldSegv);
     sigaction(SIGBUS, &sa, &oldBus);
+    installedPid = getpid();
 }
 
 private void chainPrevious(int sig, siginfo_t* info, void* ctx) @trusted nothrow
 {
-    // Non-budget faults stay fatal; chaining druntime's unittest SEGV
-    // handler is not `nothrow`, and it aborts anyway.
-    abort();
+    // Not the budget's fault. Hand it back: restore the disposition this
+    // handler replaced and return, so the faulting instruction re-executes
+    // and the signal is delivered as if the runner had never been here —
+    // the process dies of SIGSEGV, not of an abort that hides which. A
+    // forked child (a test's own `fork`, the forkserver) inherits the
+    // handler and gets the same treatment without the diagnostic: its
+    // stderr is its parent's to read.
+    import core.sys.posix.unistd : getpid, write;
+
+    sigaction(sig, sig == SIGBUS ? &oldBus : &oldSegv, null);
+    if (getpid() != installedPid)
+        return;
+
+    // Say what faulted — the signal, the address, the guard's state and the
+    // test — with nothing but `write(2)`, which is async-signal-safe.
+    char[320] line = void;
+    size_t n;
+    void putText(scope const(char)[] s) nothrow @nogc
+    {
+        foreach (c; s)
+            if (n < line.length)
+                line[n++] = c;
+    }
+
+    void putHex(size_t v) nothrow @nogc
+    {
+        char[16] hex = void;
+        size_t i = hex.length;
+        do
+        {
+            const d = v & 15;
+            hex[--i] = cast(char)(d < 10 ? '0' + d : 'a' + d - 10);
+            v >>= 4;
+        }
+        while (v);
+        putText("0x");
+        putText(hex[i .. $]);
+    }
+
+    putText("stack_budget: fatal signal ");
+    putHex(sig);
+    putText(" at ");
+    putHex(info is null ? 0 : cast(size_t) info.si_addr);
+    putText(tlsGuard.protectLen ? ", armed (watermark " : ", unarmed (watermark ");
+    putHex(cast(size_t) tlsGuard.usableLow);
+    putText(", stack low ");
+    putHex(cast(size_t) tlsGuard.stackLow);
+    putText("), nesting ");
+    putHex(cast(size_t) tlsGuard.nesting);
+    if (tlsGuard.label.length)
+    {
+        putText(", in ");
+        putText(tlsGuard.label);
+    }
+    putText("\n");
+    write(2, line.ptr, n);
 }
 
 extern (C) private void onFault(int sig, siginfo_t* info, void* ctx) nothrow
@@ -305,13 +362,16 @@ private bool arm() @trusted
     return true;
 }
 
-private void runArmed(scope void delegate() dg)
+private void runArmed(scope void delegate() dg, string label)
 {
     if (tlsGuard.nesting > 0)
     {
         dg();
         return;
     }
+    tlsGuard.label = label;
+    scope (exit)
+        tlsGuard.label = null;
     if (sigsetjmp(tlsGuard.jmp, 1) != 0)
     {
         disarm();
