@@ -692,9 +692,48 @@ private Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] generatePow10Table()
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
-Converts a decimal literal to the correctly-rounded nearest `double`
+A finite binary floating-point value as integers, for any
+$(LREF BinaryFloatFormat): `(-1)^negative × (hi·2^64 + lo) × 2^exp2`, the
+significand holding at most `mantDig` bits and `exp2` being the exponent of
+its last bit. A zero significand is zero, with `exp2` zero; `isInf` is the
+overflow verdict, which no significand can carry.
+
+The shape is the point: a value at 113 bits is still three integers, which
+a test on a 53-bit host can assert on. $(LREF slowDecode) produces it; the
+typed decoders turn it into a `float`, `double` or `real`.
+*/
+struct DecodedFloat
+{
+    ulong hi;      /// significand bits 64 and up
+    ulong lo;      /// significand bits 0 .. 63
+    int exp2;      /// exponent of the significand's last bit
+    bool negative; /// the sign, which the digits never carry
+    bool isInf;    /// overflow: the value is `±infinity`
+}
+
+/// Point positions past which a decimal saturates under `fmt`. A decimal
+/// with point position `P` lies in `[10^(P-1), 10^P)`: below the low bound
+/// it is under half the smallest subnormal and rounds to zero, above the
+/// high one it is at or past `2^maxExp` and is infinity. Both also bound
+/// the shifting $(LREF slowDecode) does — 310 for binary64, 4 934 for
+/// binary128.
+private int saturateHighExp10(BinaryFloatFormat fmt) @safe pure nothrow @nogc
+    => cast(int)((cast(long) fmt.maxExp * 30_103 + 99_999) / 100_000) + 1;
+
+/// ditto
+private int saturateLowExp10(BinaryFloatFormat fmt) @safe pure nothrow @nogc
+{
+    const scaled = cast(long)(fmt.minSubnormalExp2 - 1) * 30_103;
+    long q = scaled / 100_000;
+    if (scaled % 100_000 != 0)
+        q--; // floor, not truncation: the operand is negative
+    return cast(int) q - 1;
+}
+
+/**
+Converts a decimal literal to the correctly-rounded nearest value of `fmt`
 exactly, with no fast-path preconditions — the tier that settles every
-input `tryFastDouble` punts (true ties, subnormals, overflow boundaries,
+input the fast tiers punt (true ties, subnormals, overflow boundaries,
 >19-digit truncations).
 
 `intDigits`/`fracDigits` are the digit runs on either side of the decimal
@@ -702,23 +741,32 @@ point (either may be empty, both may carry leading zeros);
 `explicitExp10` is the literal's exponent part. The algorithm is the
 classic arbitrary-precision decimal-shift fallback (Go `strconv`,
 originally David Gay): scale the decimal by powers of two until it sits
-in `[1, 2)`, then read off the 53-bit mantissa with exact rounding
-information. Fixed storage, `@nogc`, CTFE-capable.
+in `[1, 2)`, then read off the `mantDig`-bit significand with exact
+rounding information. Fixed storage sized by the format, `@nogc`,
+CTFE-capable.
+
+The sign is the caller's: the digits never carry one, and `negative` comes
+back clear.
 */
-double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
-    int explicitExp10) @safe pure nothrow @nogc
+DecodedFloat slowDecode(BinaryFloatFormat fmt)(scope const(char)[] intDigits,
+    scope const(char)[] fracDigits, int explicitExp10) @safe pure nothrow @nogc
 {
-    // The storage this decoder has always used, now derived: 767 digits for
-    // the widest exact subnormal expansion, plus the tie and slack.
-    static assert(binary64.decimalCapacity == 800);
-    BigDecimal!(binary64.decimalCapacity()) d;
+    enum p = fmt.mantDig;
+    enum lowExp10 = saturateLowExp10(fmt);
+    enum highExp10 = saturateHighExp10(fmt);
+
+    DecodedFloat r;
+    BigDecimal!(fmt.decimalCapacity()) d;
     d.set(intDigits, fracDigits, explicitExp10);
 
     // Obvious saturation (also bounds the shifting below).
-    if (d.count == 0 || d.pointPos < -330)
-        return 0.0;
-    if (d.pointPos > 310)
-        return double.infinity;
+    if (d.count == 0 || d.pointPos < lowExp10)
+        return r;
+    if (d.pointPos > highExp10)
+    {
+        r.isInf = true;
+        return r;
+    }
 
     // Bits contributed by shifting by 10^k: powtab[k] = floor(k·log2(10)).
     static immutable int[9] powtab = [1, 3, 6, 9, 13, 16, 19, 23, 26];
@@ -743,31 +791,68 @@ double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
     }
     exp2--; // [0.5, 1) → [1, 2)
 
-    // Clamp into the subnormal range when below the smallest normal exponent.
-    enum minNormalExp2 = -1022;
+    // Clamp into the subnormal range when below the smallest normal exponent:
+    // the significand then holds fewer than `p` bits, and its last bit sits
+    // at the format's floor.
+    enum minNormalExp2 = fmt.minNormalExp2;
+    enum maxNormalExp2 = fmt.maxNormalExp2;
     if (exp2 < minNormalExp2)
     {
         const n = minNormalExp2 - exp2;
         d.shiftRight(n);
         exp2 += n;
     }
-    if (exp2 > 1023)
-        return double.infinity;
-
-    // Extract mantissa: shift the value into [2^52, 2^53) and round.
-    d.shiftLeft(53);
-    ulong mantissa = d.roundedInteger();
-    if (mantissa >= (1UL << 53)) // rounding carried
+    if (exp2 > maxNormalExp2)
     {
-        mantissa >>= 1;
-        exp2++;
-        if (exp2 > 1023)
-            return double.infinity;
+        r.isInf = true;
+        return r;
     }
-    if (mantissa < (1UL << 52)) // subnormal (leading bit not reached)
-        return bitsToDouble(mantissa); // exponent field 0
-    return bitsToDouble((cast(ulong)(exp2 + 1023) << 52)
-        | (mantissa & ((1UL << 52) - 1)));
+
+    // Extract the significand: shift the value into [2^(p-1), 2^p) and round.
+    d.shiftLeft(p);
+    ulong hi, lo;
+    d.roundedInteger(hi, lo);
+    if (bitSet(hi, lo, p)) // rounding carried into bit p
+    {
+        lo = (lo >> 1) | (hi << 63);
+        hi >>= 1;
+        exp2++;
+        if (exp2 > maxNormalExp2)
+        {
+            r.isInf = true;
+            return r;
+        }
+    }
+    if (hi == 0 && lo == 0)
+        return r; // rounded away, below half the smallest subnormal
+    r.hi = hi;
+    r.lo = lo;
+    r.exp2 = exp2 - (p - 1);
+    return r;
+}
+
+/// Whether bit `bit` of the 128-bit `hi:lo` is set.
+private bool bitSet(ulong hi, ulong lo, int bit) @safe pure nothrow @nogc
+    => bit < 64 ? ((lo >> bit) & 1) != 0 : ((hi >> (bit - 64)) & 1) != 0;
+
+/**
+Converts a decimal literal to the correctly-rounded nearest `double`
+exactly: $(LREF slowDecode) at $(LREF binary64), assembled into the IEEE
+bit pattern. See there for the arguments.
+*/
+double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
+    int explicitExp10) @safe pure nothrow @nogc
+{
+    const r = slowDecode!binary64(intDigits, fracDigits, explicitExp10);
+    if (r.isInf)
+        return double.infinity;
+    // The 53-bit significand is in `lo`. Below 2^52 it is a subnormal (or
+    // zero), whose exponent field is 0; otherwise the field is the biased
+    // exponent of the leading bit, `exp2 + 52`.
+    if (r.lo < (1UL << 52))
+        return bitsToDouble(r.lo);
+    return bitsToDouble((cast(ulong)(r.exp2 + 52 + 1023) << 52)
+        | (r.lo & ((1UL << 52) - 1)));
 }
 
 /// Arbitrary-precision decimal for the slow path: up to `capacity`
@@ -995,13 +1080,20 @@ private struct BigDecimal(int capacity_)
 
     /// The integer part rounded to nearest, ties to even — exact, because
     /// the fraction digits (plus the sticky truncation bit) are available.
-    ulong roundedInteger() const @safe pure nothrow @nogc
+    /// 128 bits wide: a binary128 significand and its carry need 114.
+    void roundedInteger(out ulong hi, out ulong lo) const @safe pure nothrow @nogc
     {
         if (pointPos < 0)
-            return 0; // below 0.1 — strictly under one half
-        ulong value = 0;
+            return; // below 0.1 — strictly under one half
         foreach (i; 0 .. pointPos)
-            value = value * 10 + digit(i);
+        {
+            // value = value × 10 + digit, in 128 bits
+            const product = mul64x64(lo, 10);
+            hi = hi * 10 + product.hi;
+            lo = product.lo + digit(i);
+            if (lo < product.lo)
+                hi++;
+        }
 
         // Decide the fraction: > ½ rounds up, < ½ down, exactly ½ to even.
         bool roundUp = false;
@@ -1018,9 +1110,10 @@ private struct BigDecimal(int capacity_)
                         exactlyHalf = false;
                         break;
                     }
-            roundUp = exactlyHalf ? (value & 1) != 0 : true;
+            roundUp = exactlyHalf ? (lo & 1) != 0 : true;
         }
-        return value + (roundUp ? 1 : 0);
+        if (roundUp && ++lo == 0)
+            hi++;
     }
 }
 
@@ -1909,6 +2002,201 @@ unittest
     // Long exact expansions (the 767-digit case is what capacity covers):
     assert(slowDouble("1", null, 0) == 1.0);
     assert(slowDouble(null, "1", 0) == 0.1);
+}
+
+@("float_conv.slowDecode.fields")
+@safe pure nothrow @nogc
+unittest
+{
+    // 1 is 2^52 × 2^-52 at binary64 and 2^112 × 2^-112 at binary128 — the
+    // latter settled at compile time, on any host.
+    const one64 = slowDecode!binary64("1", null, 0);
+    assert(one64.hi == 0 && one64.lo == 1UL << 52 && one64.exp2 == -52);
+    enum one128 = slowDecode!binary128("1", null, 0);
+    static assert(one128.hi == 1UL << 48 && one128.lo == 0 && one128.exp2 == -112);
+
+    // The smallest binary64 subnormal: significand 1 at the floor.
+    const tiny = slowDecode!binary64("5", null, -324);
+    assert(tiny.hi == 0 && tiny.lo == 1 && tiny.exp2 == -1074);
+
+    // Saturation at each end, per format.
+    assert(slowDecode!binary64("2", null, 308).isInf);
+    assert(slowDecode!binary64("2", null, -324) == DecodedFloat.init);
+    assert(slowDecode!binary32("4", null, 38).isInf);
+    assert(!slowDecode!binary128("4", null, 38).isInf);
+    assert(slowDecode!binary128("119", null, 4930).isInf);
+    // 2^-16494 ≈ 6.475e-4966: 6e-4966 is 0.93 of it and rounds to it,
+    // 3e-4966 is 0.46 and rounds away.
+    assert(slowDecode!binary128("6", null, -4966).lo == 1);
+    assert(slowDecode!binary128("6", null, -4966).exp2 == -16494);
+    assert(slowDecode!binary128("3", null, -4966) == DecodedFloat.init);
+}
+
+// Exact correctly-rounded decoding by big-integer division: a second,
+// independent method against which the decimal-shift kernel is checked at
+// every width — including the 113 bits no CI host has natively yet.
+private DecodedFloat oracleDecode(BinaryFloatFormat fmt)(string digits, int exp10)
+{
+    import std.bigint : BigInt;
+
+    enum p = fmt.mantDig;
+    DecodedFloat r;
+    BigInt num = BigInt(digits);
+    if (num == 0)
+        return r;
+    BigInt den = 1;
+    if (exp10 >= 0)
+        num *= BigInt(10) ^^ exp10;
+    else
+        den = BigInt(10) ^^ (-exp10);
+
+    // The leading bit's exponent E: 2^E ≤ num/den < 2^(E+1). Start from the
+    // limb lengths and correct by comparison, scaling whichever side keeps
+    // the shift count non-negative — a negative one does not shift.
+    static bool atLeast(BigInt num, BigInt den, long e)
+        => e >= 0 ? num >= (den << e) : (num << -e) >= den;
+    long e = (cast(long) num.ulongLength - cast(long) den.ulongLength) * 64;
+    while (atLeast(num, den, e + 1))
+        e++;
+    while (!atLeast(num, den, e))
+        e--;
+
+    // The last bit's exponent, floored at the subnormal range; then the
+    // significand as a rounded quotient, ties to even.
+    long lsb = e - (p - 1);
+    if (lsb < fmt.minSubnormalExp2)
+        lsb = fmt.minSubnormalExp2;
+    const scaledNum = lsb < 0 ? num << -lsb : num;
+    const scaledDen = lsb > 0 ? den << lsb : den;
+    BigInt q = scaledNum / scaledDen;
+    const rem = scaledNum % scaledDen;
+    const twice = rem * 2;
+    if (twice > scaledDen || (twice == scaledDen && q % 2 == 1))
+        q++;
+    if (q == 0)
+        return r;
+    if (q == BigInt(1) << p) // the rounding carried
+    {
+        q = BigInt(1) << (p - 1);
+        lsb++;
+    }
+    if (lsb + (p - 1) > fmt.maxNormalExp2 && q >= (BigInt(1) << (p - 1)))
+    {
+        r.isInf = true;
+        return r;
+    }
+    r.lo = cast(ulong)(q % (BigInt(1) << 64));
+    r.hi = cast(ulong)(q >> 64);
+    r.exp2 = cast(int) lsb;
+    return r;
+}
+
+@("float_conv.slowDecode.agreesWithBigIntOracle")
+@system unittest
+{
+    import std.conv : text;
+    import std.format : format;
+
+    static struct Case
+    {
+        string digits;
+        int exp10;
+    }
+
+    // Ties at every width (2^p + 1), the classic double edges, and the far
+    // ends of binary128's range.
+    static immutable Case[] hard = [
+        Case("16777217", 0), Case("9007199254740993", 0),
+        Case("18446744073709551617", 0),
+        Case("10384593717069655257060992658440193", 0),
+        Case("9007199254740995", 0), Case("5", -324), Case("2", -324),
+        Case("3", -324), Case("22250738585072011", -324),
+        Case("17976931348623157", 292), Case("17976931348623159", 292),
+        Case("1", -4966), Case("6", -4966), Case("3", -4966), Case("1", 4933),
+        Case("118973149535723176508575932662800702", 4897),
+        Case("118973149535723176508575932662800703", 4897),
+        Case("1", -16445), Case("340282366920938463463374607431768211455", 0),
+    ];
+
+    static void check(BinaryFloatFormat fmt)(string digits, int exp10)
+    {
+        const ours = slowDecode!fmt(digits, null, exp10);
+        const oracle = oracleDecode!fmt(digits, exp10);
+        assert(ours == oracle, format("%se%d at %d bits: %s vs oracle %s",
+            digits, exp10, fmt.mantDig, ours, oracle));
+    }
+
+    static void checkAll(string digits, int exp10)
+    {
+        check!binary32(digits, exp10);
+        check!binary64(digits, exp10);
+        check!extended80(digits, exp10);
+        check!binary128(digits, exp10);
+    }
+
+    foreach (c; hard)
+        checkAll(c.digits, c.exp10);
+
+    // A deterministic xorshift corpus: significands of varying length, up
+    // to 38 digits, with exponents across binary64's whole range and into
+    // the wide formats' (a slice of it — the oracle's big integers grow with
+    // the exponent).
+    ulong state = 0x9E37_79B9_7F4A_7C15;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    foreach (iter; 0 .. 1500)
+    {
+        string digits = text(next(state) >> (next(state) % 40));
+        if (iter % 4 == 0)
+            digits ~= text(next(state)); // 20 - 38 digits: past any fast tier
+        const exp10 = cast(int)(next(state) % 801) - 400;
+        checkAll(digits, exp10);
+    }
+}
+
+version (linux)
+@("float_conv.slowDecode.binary32DifferentialVsStrtof")
+@system unittest
+{
+    import core.stdc.stdlib : strtof;
+    import core.stdc.stdio : snprintf;
+
+    static uint floatBits(in DecodedFloat r)
+    {
+        if (r.isInf)
+            return 0x7F80_0000;
+        if (r.lo < (1u << 23))
+            return cast(uint) r.lo; // subnormal or zero: exponent field 0
+        return (cast(uint)(r.exp2 + 23 + 127) << 23) | (cast(uint) r.lo & ((1u << 23) - 1));
+    }
+
+    ulong state = 0x2545_F491_4F6C_DD1D;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    char[64] buf;
+    foreach (iter; 0 .. 20_000)
+    {
+        const sig = next(state) >> (next(state) % 40);
+        const exp = cast(int)(next(state) % 121) - 60; // hits both saturations
+        const len = snprintf(buf.ptr, buf.length, "%llu", sig);
+        const ours = slowDecode!binary32(buf[0 .. len], null, exp);
+        snprintf(buf.ptr, buf.length, "%llue%d", sig, exp);
+        const float oracle = strtof(buf.ptr, null);
+        const oracleBits = *cast(const uint*)&oracle;
+        assert(floatBits(ours) == oracleBits);
+    }
 }
 
 @("float_conv.tryFastDouble.ctfeMatchesRuntime")
