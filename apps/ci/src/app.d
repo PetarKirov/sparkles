@@ -2273,9 +2273,20 @@ private struct PackageRun
     ResourceUsage usage;
 }
 
-/// Live line stream of one package's `dub test`, with the coverage-retry
-/// policy of $(LREF runPackageTests). Copies share a class payload so a
-/// streaming box can pull the same child the footer later reads.
+/**
+Live line stream of one package's `dub test`, retrying without coverage if
+that is what broke.
+
+`-cov` changes how a package links, and some cannot take it: under DMD the
+`sparkles:dmd-lsp` family fails to resolve `dmd.backend.*` in a coverage build
+while linking and passing perfectly without one. That is a build incompatibility,
+not a failing test, and `--test`'s job is to report whether the tests pass — so a
+package that only fails *with* coverage is run again without it and reported on
+its own merits, with its absence from the table noted rather than hidden.
+
+Every attempt states its build type (see $(LREF testBuildType)). Copies share a
+class payload so a streaming box can pull the same child the footer later reads.
+*/
 private struct PackageTestStream
 {
     this(
@@ -2342,7 +2353,7 @@ private:
                 notePending = true;
                 note = styledText(i"{dim coverage build failed; retrying without -cov}");
                 inner = executeMonitoredLines(
-                    withTestArgs(baseCmd, null, runnerArgs),
+                    withTestArgs(baseCmd, testBuildType(false), runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
                     withLdcThreadEnv(extraEnv));
                 return false;
@@ -2374,12 +2385,12 @@ private:
             started = true;
             if (cov.enabled)
                 inner = executeMonitoredLines(
-                    withTestArgs(baseCmd, cov.dubArgs, cov.runtimeArgs ~ runnerArgs),
+                    withTestArgs(baseCmd, testBuildType(true), cov.runtimeArgs ~ runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
                     withLdcThreadEnv(mergeEnv(extraEnv, cov.env)));
             else
                 inner = executeMonitoredLines(
-                    withTestArgs(baseCmd, null, runnerArgs),
+                    withTestArgs(baseCmd, testBuildType(false), runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
                     withLdcThreadEnv(extraEnv));
         }
@@ -2434,48 +2445,10 @@ private string[string] mergeEnv(const string[string] a, const(string[string]) b)
 }
 
 /**
-Runs one package's tests, retrying without coverage if that is what broke.
-
-`-cov` changes how a package links, and some cannot take it: under DMD the
-`sparkles:dmd-lsp` family fails to resolve `dmd.backend.*` in a coverage build
-while linking and passing perfectly without one. That is a build incompatibility,
-not a failing test, and `--test`'s job is to report whether the tests pass — so a
-package that only fails *with* coverage is run again without it and reported on
-its own merits, with its absence from the table noted rather than hidden.
-
-Params:
-    baseCmd = the `dub test` invocation, without coverage arguments
-    cov = the run's coverage settings
-    exec = runs a command with an environment and reports status plus output
-
-Returns: the outcome, with `coverageCollected` false when the fallback was used.
-*/
-private PackageRun runPackageTests(const(string)[] baseCmd, in CoverageRun cov,
-    scope PackageRun delegate(const(string)[] cmd, const string[string] env) exec)
-{
-    if (!cov.enabled)
-        return exec(baseCmd, null);
-
-    auto result = exec(withTestArgs(baseCmd, cov.dubArgs, cov.runtimeArgs), cov.env);
-    if (result.status == 0)
-    {
-        result.coverageCollected = true;
-        return result;
-    }
-
-    auto plain = exec(baseCmd, null);
-    plain.coverageCollected = false;
-    // Only the coverage build was at fault if the plain one passes; otherwise
-    // report the original failure, which is the one the reader needs to see.
-    return plain.status == 0 ? plain : result;
-}
-
-/**
 How a test run collects coverage, or that it does not.
 
 `-cov` is not free — every counted line becomes an atomic increment — so this
-is one value threaded through both test paths rather than a flag each of them
-re-interprets.
+is one value the test stream carries rather than a flag it re-interprets.
 
 The listings all land in **one** directory and are merged (`merge:1`), which is
 what makes them usable afterwards. A run scoped to a single package also emits
@@ -2489,10 +2462,6 @@ private struct CoverageRun
     bool enabled;
     string dir;       /// merged destination, `build/coverage`
     string dflags;    /// extra `$DFLAGS` for the child, empty when none apply
-
-    /// The `dub test` arguments that turn coverage on.
-    string[] dubArgs() const @safe pure nothrow
-        => enabled ? ["-b", "unittest-cov"] : null;
 
     /// The runtime arguments — the test binary's, so they belong after `--`.
     string[] runtimeArgs() const @safe pure nothrow
@@ -3007,7 +2976,7 @@ private int runExtractedTestsMode(bool failFast)
         // `--self-test` also covers the runner's own extracted tests, which are
         // the ones exercising the `selfContained` opt-out.
         auto cmd = dubTestCommand(
-            repoRoot, job.packageName, null,
+            repoRoot, job.packageName, testBuildType(false),
             [job.flag, "--self-test", "--require-toolchain"]);
 
         auto lines = executeMonitoredLines(
@@ -3803,11 +3772,13 @@ private bool isSourceLibrary(string repoRoot, string packagePath)
     return sdl.readText.canFind("sourceLibrary");
 }
 
-/// `dub build :pkg` argv, honouring `$DC`. LDC codegen threads are bounded
-/// separately via $(LREF withLdcThreadEnv).
+/// `dub build :pkg` argv, honouring `$DC` and stating dub's default `debug`
+/// build type — implicit, `$DFLAGS` would replace it (see
+/// $(LREF testBuildType)). LDC codegen threads are bounded separately via
+/// $(LREF withLdcThreadEnv).
 private string[] dubBuildCommand(string repoRoot, string packagePath, string pkgName, string[] extra = null)
 {
-    auto cmd = ["dub", "--root", repoRoot, "build", ":" ~ pkgName];
+    auto cmd = ["dub", "--root", repoRoot, "build", ":" ~ pkgName, "-b", "debug"];
     if (isSourceLibrary(repoRoot, packagePath))
         cmd ~= "--config=unittest";
     const dc = environment.get("DC", "");
@@ -3843,6 +3814,26 @@ private string[] dubTestCommand(string repoRoot, string pkgName,
     if (dc.length)
         cmd ~= "--compiler=" ~ dc;
     return withTestArgs(cmd, dubArgs, runnerArgs);
+}
+
+/// The build type every `dub test` states explicitly: dub's own `unittest`,
+/// or `unittest-cov` when coverage is on.
+///
+/// Stating it is the point. dub documents that "setting the DFLAGS
+/// environment variable will override the build type", and `$DFLAGS` is
+/// always set under LDC here (see $(LREF withLdcThreadEnv)) — so a `dub test`
+/// without `-b` performs a `$DFLAGS` build that carries no `-unittest`. The
+/// binary then holds zero tests, prints "All unit tests have been run
+/// successfully." and exits 0: a package whose tests fail reports green.
+private string[] testBuildType(bool coverage) @safe pure nothrow
+    => ["-b", coverage ? "unittest-cov" : "unittest"];
+
+@("ci.testBuildType.alwaysExplicit")
+@safe pure nothrow
+unittest
+{
+    assert(testBuildType(false) == ["-b", "unittest"]);
+    assert(testBuildType(true) == ["-b", "unittest-cov"]);
 }
 
 /// `baseCmd` plus `dubArgs` for dub and `runtimeArgs` for the test binary.
@@ -3899,6 +3890,7 @@ unittest
     const cmd = dubBuildCommand("/repo", "libs/base", "base");
     assert(cmd[0 .. 4] == ["dub", "--root", "/repo", "build"]);
     assert(cmd[4] == ":base");
+    assert(cmd[5 .. 7] == ["-b", "debug"]);
 }
 
 @("ci.dubTestCommand.forwardsRunnerArgs")
@@ -3987,7 +3979,10 @@ in (action == "run" || action == "build", "action must be dub run or dub build")
     // `libs/base/build/libsparkles_base.a`, …) on every build — so two builds
     // running at once race to remove/rewrite the same file ("No such file or
     // directory"). The cache reuses already-built deps, so this stays fast.
-    auto command = ["dub", action, "--quiet", "--color=always", "--temp-build"];
+    // `--build=debug` is dub's default for `run`, stated because `$DFLAGS`
+    // would otherwise replace it (see `testBuildType`).
+    auto command = ["dub", action, "--quiet", "--color=always", "--temp-build",
+        "--build=debug"];
 
     if (repoRoot !is null)
         command ~= ["--root", repoRoot];
@@ -4147,6 +4142,8 @@ private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 {
     // No arguments: the command ends at the file, with no stray `--`.
     assert(dubSingleFileCommand("run", "e.d", null)[$ - 2 .. $] == ["--single", "e.d"]);
+    // The build type is always stated; `$DFLAGS` must not pick it.
+    assert(dubSingleFileCommand("run", "e.d", null).canFind("--build=debug"));
 
     // With arguments, `--` separates them — everything after it is the
     // program's, not dub's.
