@@ -123,8 +123,14 @@ list ("FiraCode Nerd Font Mono,JetBrains Mono,monospace") — against plain
 directories of font files, without fontconfig. For each name in order, the
 candidates are files whose normalized basename contains the normalized name;
 among them the best-ranked wins ($(LREF faceRank)). Returns the first name's
-winner, or `""` when nothing matches (generic aliases like "monospace" match
-no file and simply fall through to the next name).
+winner, or `""` when nothing matches.
+
+`monospace` is handled last and separately: it is fontconfig's generic family
+rather than a real one, and a scan has no fontconfig to expand it, so a list
+ending in it (or consisting of it, as `apps/terminal`'s default does) resolves
+to the best monospaced face present. Only after every explicit name has failed,
+and only for a face that says `mono` in its own name — this never substitutes a
+proportional font for one that was asked for.
 
 Ties keep the earlier candidate, so the caller's directory order is the
 tie-breaker — `fontFilesInDirs` yields earlier directories first, which is
@@ -162,7 +168,47 @@ string resolveFontInDirs(const(char)[] nameOrList, const(string)[] dirs) @safe
         if (best.length != 0)
             return best;
     }
+
+    // Generic families are fontconfig's job, and a scan has no fontconfig. A
+    // request for `monospace` means "whatever monospaced face this machine
+    // has" — the only way to ask without naming one — so answering "nothing"
+    // makes the generic name useless in exactly the deployments the scan
+    // exists for (Android, a portable build, a CI runner with a font bundle).
+    // `apps/terminal` defaults to precisely that name.
+    //
+    // Only after every explicit name has failed, and only for a face that
+    // announces itself as monospaced, so this can never quietly substitute a
+    // proportional font for one that was named.
+    foreach (rawName; nameOrList.split(','))
+        if (normalizeFontName(rawName.strip) == "monospace")
+            return firstMonospaced(files);
     return "";
+}
+
+// The best monospaced candidate among `files`: an undecorated stem beats a
+// styled sibling, so `DejaVuSansMono.ttf` wins over `DejaVuSansMono-Bold.ttf`
+// and the style variants are then found from it as usual.
+private string firstMonospaced(const(string)[] files) @safe
+{
+    import std.path : baseName, stripExtension;
+
+    string best;
+    int bestRank = int.max;
+    foreach (path; files)
+    {
+        const stem = normalizeFontName(path.baseName.stripExtension);
+        if (!stem.canFind("mono"))
+            continue;
+        // Same shape as `faceRank`'s undecorated tier: a stem with no `-`
+        // suffix is the regular face.
+        const rank = path.baseName.stripExtension.canFind('-') ? 1 : 0;
+        if (rank < bestRank)
+        {
+            best = path;
+            bestRank = rank;
+        }
+    }
+    return best;
 }
 
 /// How well the font file at `path` answers to the normalized family
@@ -242,20 +288,53 @@ private string uniqueTestDir(string stem) @safe
         write(buildPath(dir, f), "x");
 
     // Preference list: first resolvable name wins; the -Regular face beats
-    // the styled siblings; generic "monospace" matches nothing and falls
-    // through.
+    // the styled siblings. Generic "monospace" is considered last however
+    // early it appears, so a real family named after it still wins.
     assert(resolveFontInDirs("monospace,FiraCode Nerd Font Mono", [dir])
         == buildPath(dir, "FiraCodeNerdFontMono-Regular.ttf"));
     // Exact stem match (no -Regular suffix on the file).
     assert(resolveFontInDirs("DejaVu Sans Mono", [dir])
         == buildPath(dir, "DejaVuSansMono.ttf"));
-    // Unresolvable everything → "".
-    assert(resolveFontInDirs("Comic Sans,monospace", [dir]) == "");
+    // Nothing named, nothing generic → "".
+    assert(resolveFontInDirs("Comic Sans", [dir]) == "");
     // Non-font files are never candidates.
     assert(resolveFontInDirs("notafont", [dir]) == "");
     // Missing dirs are skipped, not errors.
     assert(resolveFontInDirs("DejaVu Sans Mono", [buildPath(dir, "absent"), dir])
         == buildPath(dir, "DejaVuSansMono.ttf"));
+}
+
+@("resolveFontInDirs.monospaceIsTheGenericFontconfigWouldExpand")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    const dir = uniqueTestDir("sparkles-font-generic-test");
+    mkdirRecurse(dir);
+    scope (exit) rmdirRecurse(dir);
+    foreach (f; ["DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf",
+        "MapleMono-NF-CN-Regular.ttf", "SomeSerif.ttf"])
+        write(buildPath(dir, f), "x");
+
+    // `apps/terminal`'s default is this bare generic. A scan has no fontconfig
+    // to expand it, and answering "nothing" made the only way to say "whatever
+    // this machine has" useless in exactly the deployments a scan is for.
+    // Undecorated stem beats the styled sibling, as everywhere else.
+    assert(resolveFontInDirs("monospace", [dir])
+        == buildPath(dir, "DejaVuSansMono.ttf"));
+
+    // Last resort, not first: a name that resolves always wins, wherever the
+    // generic sits in the list.
+    assert(resolveFontInDirs("monospace,Maple Mono NF CN", [dir])
+        == buildPath(dir, "MapleMono-NF-CN-Regular.ttf"));
+
+    // Never a proportional face: the candidate has to say so in its own name.
+    const only = uniqueTestDir("sparkles-font-generic-none");
+    mkdirRecurse(only);
+    scope (exit) rmdirRecurse(only);
+    write(buildPath(only, "SomeSerif.ttf"), "x");
+    assert(resolveFontInDirs("monospace", [only]) == "");
 }
 
 @("resolveFontInDirs.dirPrecedenceBeatsPathOrder")
