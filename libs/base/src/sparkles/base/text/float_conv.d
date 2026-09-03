@@ -2424,6 +2424,7 @@ unittest
 }
 
 @("float_conv.mul64x64.knownProducts")
+@safe pure nothrow @nogc
 unittest
 {
     const p = mul64x64(ulong.max, ulong.max);
@@ -2437,11 +2438,13 @@ unittest
 }
 
 @("float_conv.doubleBits.roundTrip")
+@safe pure nothrow @nogc
 unittest
 {
-    foreach (d; [0.0, -0.0, 1.0, -1.5, 3.141592653589793, double.infinity,
-            -double.infinity, double.min_normal, double.max,
-            double.min_normal / 4]) // subnormal
+    static immutable double[10] samples = [0.0, -0.0, 1.0, -1.5, 3.141592653589793,
+        double.infinity, -double.infinity, double.min_normal, double.max,
+        double.min_normal / 4]; // subnormal
+    foreach (d; samples)
         assert(bitsToDouble(doubleToBits(d)) is d);
 
     static assert(doubleToBits(1.5) == 0x3FF8_0000_0000_0000);
@@ -2451,6 +2454,7 @@ unittest
 }
 
 @("float_conv.pow10Table.knownEntries")
+@safe pure nothrow @nogc
 unittest
 {
     // 10^0 → 5^0 = 1 normalized: 2^127.
@@ -2467,6 +2471,7 @@ unittest
 }
 
 @("float_conv.readDigits.unrolledRuns")
+@safe pure nothrow @nogc
 unittest
 {
     ulong sig = 0;
@@ -2491,6 +2496,7 @@ unittest
 }
 
 @("float_conv.tryFastDouble.pins")
+@safe pure nothrow @nogc
 unittest
 {
     static double conv(ulong sig, int exp)
@@ -2522,6 +2528,7 @@ unittest
 }
 
 @("float_conv.slowDouble.exactPins")
+@safe pure nothrow @nogc
 unittest
 {
     // The smallest subnormal, exactly (5e-324 ≈ 2^-1074).
@@ -2732,7 +2739,7 @@ unittest
     }
 }
 
-version (linux)
+version (Posix)
 @("float_conv.readDecimalFloat.floatDifferentialVsStrtof")
 @system unittest
 {
@@ -3146,7 +3153,7 @@ private DecodedFloat oracleDecode(BinaryFloatFormat fmt)(string digits, int exp1
     }
 }
 
-version (linux)
+version (Posix)
 @("float_conv.slowDecode.binary32DifferentialVsStrtof")
 @system unittest
 {
@@ -3186,6 +3193,7 @@ version (linux)
 }
 
 @("float_conv.tryFastDouble.ctfeMatchesRuntime")
+@safe pure nothrow @nogc
 unittest
 {
     // The full tier chain runs at CTFE (tier 1 is skipped there, so the
@@ -3215,6 +3223,7 @@ unittest
 }
 
 @("float_conv.readDecimalFloat.grammar")
+@safe pure nothrow @nogc
 unittest
 {
     static double read(string text)
@@ -3250,10 +3259,14 @@ unittest
     import std.array : replicate;
 
     enum zeros = "0".replicate(500);
-    assert(read("0." ~ zeros ~ "1e800") == 1e299);
-    assert(read("1" ~ zeros ~ "e-800") == 1e-300);
-    assert(read("0." ~ zeros ~ "1e-800") is 0.0);
-    assert(read("1" ~ zeros ~ "e800") == double.infinity);
+    enum tinyFrac = "0." ~ zeros ~ "1e800";
+    enum hugeInt = "1" ~ zeros ~ "e-800";
+    assert(read(tinyFrac) == 1e299);
+    assert(read(hugeInt) == 1e-300);
+    enum tinyFracUnder = "0." ~ zeros ~ "1e-800";
+    enum hugeIntOver = "1" ~ zeros ~ "e800";
+    assert(read(tinyFracUnder) is 0.0);
+    assert(read(hugeIntOver) == double.infinity);
     assert(read("1e99999999999") == double.infinity); // more than ten digits
 
     const(char)[] s = "1.5rest";
@@ -3348,7 +3361,7 @@ unittest
     }
 }
 
-version (linux)
+version (Posix)
 @("float_conv.formatShortestDouble.shortestVsPrintf")
 @system unittest
 {
@@ -3407,7 +3420,7 @@ version (linux)
     }
 }
 
-version (linux)
+version (Posix)
 @("float_conv.readDecimalFloat.differentialVsStrtod")
 @system unittest
 {
@@ -3425,16 +3438,33 @@ version (linux)
         return s;
     }
 
-    char[64] buf;
+    // Every fifth literal carries a run of up to 600 zeros — before the
+    // first significant digit or after the last — paid for by an exponent
+    // out to ±1000, the shape a fixed exponent clamp misreads.
+    static immutable char[600] zeroRun = '0';
+    char[720] buf;
     foreach (iter; 0 .. 20_000)
     {
         const sig = next(state) >> (next(state) % 40); // vary digit counts
-        const exp = cast(int)(next(state) % 691) - 345; // hits both saturations
-        const len = snprintf(buf.ptr, buf.length, "%llue%d", sig, exp);
+        int len;
+        if (iter % 5 == 4)
+        {
+            const zeros = cast(int)(next(state) % 601);
+            const exp = cast(int)(next(state) % 2001) - 1000;
+            len = iter % 10 == 4
+                ? snprintf(buf.ptr, buf.length, "0.%.*s%llue%d", zeros, zeroRun.ptr, sig, exp)
+                : snprintf(buf.ptr, buf.length, "%llu%.*se%d", sig, zeros, zeroRun.ptr, exp);
+        }
+        else
+        {
+            const exp = cast(int)(next(state) % 691) - 345; // hits both saturations
+            len = snprintf(buf.ptr, buf.length, "%llue%d", sig, exp);
+        }
         const(char)[] text = buf[0 .. len];
 
         auto ours = readDecimalFloat(text);
         assert(ours.hasValue); // with tier 3, every literal resolves
+        assert(text.length == 0);
         const oracle = strtod(buf.ptr, null);
         assert(doubleToBits(ours.value) == doubleToBits(oracle));
     }
