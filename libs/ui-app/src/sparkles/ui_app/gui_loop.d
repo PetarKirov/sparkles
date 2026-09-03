@@ -32,8 +32,9 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
-    PointerUnit, RunConfig, withRealSize;
+import sparkles.ui_app.host : FrameBudget, FrameOps, HostState, isHost, noDraw,
+    noSetup, PointerUnit, reportFrames, resolveFrameBudget, RunConfig,
+    withRealSize;
 import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
 import sparkles.ui_raylib.window : Window;
@@ -182,6 +183,10 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     RaylibEvents events;
     events.capabilities = host.capabilities;
 
+    // `HST21`: a bounded run for a smoke check; unbounded for everyone else.
+    auto budget = FrameBudget(resolveFrameBudget(cfg.frameBudget));
+    scope (exit) reportFrames(budget, "gui");
+
     // One frame: sample input, present, swap unless declined (`HST6`).
     void oneFrame()
     {
@@ -212,6 +217,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         if (host.quitRequested)
             return;
 
+        budget.noteAttempt();
         host.beginFrameState();
         present(host);
 
@@ -231,6 +237,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         paint(canvas, host.ops()[]);
         draw(host); // `HST13`: the application's own renderer, inside the bracket
         session.window.endFrame();
+        budget.notePainted();
     }
 
     // The event-horizon arm (its SPEC §15.3, the GUI shape): the Ticker owns
@@ -271,7 +278,8 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
                 scope (exit) host._spawnDaemon = null;
 
                 auto ticker = Ticker.start(sched, (1_000_000 / fps).usecs);
-                while (!session.window.shouldClose && !host.quitRequested)
+                while (!session.window.shouldClose && !host.quitRequested
+                    && !budget.exhausted)
                 {
                     // Park in the ring until the frame is due: async work
                     // runs here, costing no frames and dropping no input
@@ -285,7 +293,8 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     }
 
     // The raylib-paced fallback arm: endFrame sleeps to targetFps.
-    while (!session.window.shouldClose && !host.quitRequested)
+    while (!session.window.shouldClose && !host.quitRequested
+        && !budget.exhausted)
         oneFrame();
     return true;
 }

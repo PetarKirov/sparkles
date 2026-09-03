@@ -130,6 +130,212 @@ struct RunConfig
     cannot be a `setup` errand: by then it is too late.
     */
     BackendTraceSink traceSink;
+
+    /**
+    Stop after this many frame passes; `0` (the default) runs until the
+    application quits or the platform closes it (`HST21`).
+
+    What makes an application launchable without a person in front of it. No
+    check in this repository has ever $(I run) hue, terminal, ui-gallery or
+    diagram — `nix build .#all-desktop` compiles them — which is how a window
+    that aborted on macOS before it appeared reached `main`. `ci --smoke-apps`
+    launches each with a small budget and asserts a clean exit.
+
+    Frames rather than seconds, because a loaded CI runner would otherwise fail
+    a healthy application. Frame $(I passes) rather than painted frames, so an
+    application that declines every frame (`HST6`) still terminates; how many
+    it actually painted is reported separately, and is the number that says
+    whether anything was drawn at all.
+
+    A terminal arm with a budget does not block for input, since a run nobody
+    is typing into would otherwise sit at its first park until the budget was
+    never reached.
+    */
+    int frameBudget;
+}
+
+/**
+Bounds a run to `RunConfig.frameBudget` passes and records what happened
+(`HST21`).
+
+Split out of the two arms because the arms are the one part of this package
+that cannot be tested without a window or a tty, and the counting rule — a
+declined frame spends the budget but is not a painted frame — is exactly the
+part worth pinning.
+*/
+struct FrameBudget
+{
+@safe pure nothrow @nogc:
+
+    private int limit_;
+    private ulong attempted_;
+    private ulong painted_;
+
+    ///
+    this(int limit)
+    {
+        limit_ = limit > 0 ? limit : 0;
+    }
+
+    /// Is there a limit at all? `false` for an ordinary interactive run.
+    bool bounded() const => limit_ > 0;
+
+    /// Has the run used up its budget? Always `false` when unbounded.
+    bool exhausted() const => limit_ > 0 && attempted_ >= limit_;
+
+    /// One more pass through the loop, painted or declined.
+    void noteAttempt() { ++attempted_; }
+
+    /// ...and that pass reached the backend.
+    void notePainted() { ++painted_; }
+
+    /// Passes made.
+    ulong attempted() const => attempted_;
+
+    /// Of those, the ones that actually drew.
+    ulong painted() const => painted_;
+}
+
+@("ui_app.host.frameBudgetCountsPassesAndPaints")
+@safe pure nothrow @nogc
+unittest
+{
+    // Unbounded is the default and never ends a loop.
+    FrameBudget open;
+    assert(!open.bounded && !open.exhausted);
+    foreach (_; 0 .. 1000)
+        open.noteAttempt();
+    assert(!open.exhausted);
+
+    auto b = FrameBudget(3);
+    assert(b.bounded && !b.exhausted);
+    b.noteAttempt(); b.notePainted();
+    b.noteAttempt();                   // declined: spends the budget, paints nothing
+    assert(!b.exhausted);
+    b.noteAttempt(); b.notePainted();
+    assert(b.exhausted);
+    assert(b.attempted == 3 && b.painted == 2);
+
+    // A non-positive limit is no limit, so a caller need not special-case it.
+    assert(!FrameBudget(0).bounded && !FrameBudget(-1).bounded);
+}
+
+/// The variable $(LREF resolveFrameBudget) reads.
+enum frameBudgetEnvVar = "SPARKLES_UI_FRAMES";
+
+/**
+The frame budget actually in force, honouring `SPARKLES_UI_FRAMES` (`HST21`).
+
+An application's own `RunConfig.frameBudget` wins; the variable answers for the
+ones that never asked, which is every application in this repository. That is
+the reason it is an environment variable and not a flag: `ci --smoke-apps` has
+to bound four applications with four different argument parsers, and a harness
+needing each of them to cooperate is a harness that silently skips the one
+nobody has taught yet — the exact failure mode it exists to remove.
+
+A value that is not a positive integer is reported and ignored, rather than
+quietly treated as no budget: a typo would otherwise turn a bounded smoke run
+back into an unbounded one, and the resulting hang would be blamed on the
+application.
+
+$(LREF runRecorded) deliberately does not consult this. A recorded test asserts
+on exact frame counts; one whose answer moved with the environment would be
+worse than no test at all.
+*/
+int resolveFrameBudget(int fromConfig) nothrow
+{
+    import std.conv : ConvException, to;
+    import std.process : environment;
+    import std.stdio : stderr;
+
+    if (fromConfig > 0)
+        return fromConfig;
+
+    string raw;
+    try
+        raw = environment.get(frameBudgetEnvVar, "");
+    catch (Exception)
+        return 0;
+    if (raw.length == 0)
+        return 0;
+
+    try
+    {
+        const n = raw.to!int;
+        if (n > 0)
+            return n;
+    }
+    catch (ConvException)
+    {
+    }
+    catch (Exception)
+    {
+    }
+
+    try
+    {
+        stderr.writefln("sparkles-ui-app: ignoring %s=%s (want a positive integer)",
+            frameBudgetEnvVar, raw);
+    }
+    catch (Exception)
+    {
+    }
+    return 0;
+}
+
+@("ui_app.host.frameBudgetEnvOnlyAnswersForAnApplicationThatDidNotAsk")
+@system
+unittest
+{
+    import std.process : environment;
+
+    const had = environment.get(frameBudgetEnvVar, null);
+    scope (exit)
+    {
+        if (had is null)
+            environment.remove(frameBudgetEnvVar);
+        else
+            environment[frameBudgetEnvVar] = had;
+    }
+
+    environment.remove(frameBudgetEnvVar);
+    assert(resolveFrameBudget(0) == 0);
+    assert(resolveFrameBudget(7) == 7);
+
+    environment[frameBudgetEnvVar] = "12";
+    assert(resolveFrameBudget(0) == 12);
+    assert(resolveFrameBudget(7) == 7, "the application's own value wins");
+
+    // Not a budget, and not an excuse to crash: reported, then ignored.
+    environment[frameBudgetEnvVar] = "soon";
+    assert(resolveFrameBudget(0) == 0);
+    environment[frameBudgetEnvVar] = "0";
+    assert(resolveFrameBudget(0) == 0);
+    environment[frameBudgetEnvVar] = "-3";
+    assert(resolveFrameBudget(0) == 0);
+}
+
+/**
+The one line a bounded run prints when it ends, on stderr (`HST21`).
+
+stderr because a terminal application owns stdout — its escape stream goes
+there — and a diagnostic that interleaved with it would corrupt the display it
+is reporting on.
+
+The shape is the contract `ci --smoke-apps` parses, so it is stated here rather
+than formatted at each arm:
+
+$(D_CODE sparkles-ui-app: frames=3 painted=2 backend=gui)
+*/
+void reportFrames(in FrameBudget budget, string backend)
+{
+    import std.stdio : stderr;
+
+    if (!budget.bounded)
+        return;
+    stderr.writefln("sparkles-ui-app: frames=%s painted=%s backend=%s",
+        budget.attempted, budget.painted, backend);
+    stderr.flush();
 }
 
 /**
