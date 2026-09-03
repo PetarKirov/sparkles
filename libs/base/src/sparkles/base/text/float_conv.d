@@ -290,7 +290,8 @@ Such a type is decomposed with $(LREF decode) and composed with
 $(LREF encode), so its format's layout must fit 64 bits.
 */
 enum bool isFloatLike(T) = __traits(isFloating, T)
-    || is(typeof(T.format) : BinaryFloatFormat);
+    || (is(typeof(T.format) : BinaryFloatFormat) && __traits(hasMember, T, "bits")
+        && is(typeof(T.fromBits(BitsOf!(T.format).init)) : T));
 
 /// The format of a floating-point type: read off a native type's own
 /// properties, or declared by a `format`-bearing storage type.
@@ -3155,7 +3156,13 @@ if (isFloatLike!T)
             exp10 += cast(int)(intEnd - 1 - lastIdx);
     }
 
-    T value;
+    // A native type is built in its own arithmetic and signed by negation;
+    // a storage type — `format`, `bits`, `fromBits` and nothing else — gets
+    // a signed `DecodedFloat` and `compose`, which needs no operator of it.
+    static if (__traits(isFloating, T))
+        T value;
+    else
+        DecodedFloat r;
     static if (formatOf!T == binary64)
     {
         double dv;
@@ -3175,7 +3182,10 @@ if (isFloatLike!T)
         if (!decided) // tier 3: exact, no preconditions
             dv = slowDouble(s[intStart .. intEnd],
                 fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
-        value = dv;
+        static if (__traits(isFloating, T))
+            value = dv;
+        else
+            r = decode!binary64(doubleToBits(dv));
     }
     else
     {
@@ -3232,20 +3242,27 @@ if (isFloatLike!T)
                     dv = lowV;
                 }
                 bool halfway = true;
-                DecodedFloat r;
+                static if (__traits(isFloating, T))
+                    DecodedFloat r;
                 if (decided)
                     r = roundTo!fmt(decode!binary64(doubleToBits(dv)), halfway);
-                if (!halfway)
-                    value = compose!T(r);
-                else
-                    value = slowFloat!T(s[intStart .. intEnd],
+                if (halfway)
+                    r = slowDecode!fmt(s[intStart .. intEnd],
                         fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
+                static if (__traits(isFloating, T))
+                    value = compose!T(r);
             }
         }
     }
 
     s = s[i .. $];
-    return parseOk(negative ? -value : value);
+    static if (__traits(isFloating, T))
+        return parseOk(negative ? -value : value);
+    else
+    {
+        r.negative = negative;
+        return parseOk(compose!T(r));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4949,6 +4966,75 @@ unittest
     assert(ctD is 0.0f);
     enum ctE = read("3.4028236e38"); // past the overflow threshold
     assert(ctE is float.infinity);
+}
+
+// The documented storage protocol — `format`, `bits`, `fromBits` — and
+// nothing else is what the reader, the writers and the composers need.
+@("float_conv.readDecimalFloat.minimalStorageType")
+@safe pure nothrow @nogc
+unittest
+{
+    static struct Storage16
+    {
+        enum BinaryFloatFormat format = binary16;
+        ushort bits;
+        static Storage16 fromBits(ushort b) => Storage16(b);
+    }
+
+    static struct Storage64
+    {
+        enum BinaryFloatFormat format = formatOf!double;
+        ulong bits;
+        static Storage64 fromBits(ulong b) => Storage64(b);
+    }
+
+    static struct FormatOnly
+    {
+        enum BinaryFloatFormat format = binary16;
+    }
+
+    static assert(isFloatLike!Storage16 && isFloatLike!Storage64 && !isFloatLike!FormatOnly);
+    static assert(formatOf!Storage16 == binary16 && formatOf!Storage64 == binary64);
+
+    static T read(T)(string text)
+    {
+        const(char)[] s = text;
+        const r = readDecimalFloat!T(s);
+        assert(r.hasValue && s.length == 0);
+        return r.value;
+    }
+
+    assert(read!Storage16("1.5").bits == 0x3E00);
+    assert(read!Storage16("-1.5").bits == 0xBE00);
+    assert(read!Storage16("-0").bits == 0x8000 && read!Storage16("0").bits == 0);
+    assert(read!Storage16("65520").bits == 0x7C00 && read!Storage16("-65520").bits == 0xFC00);
+    assert(read!Storage16("1e-9").bits == 0 && read!Storage16("-1e-9").bits == 0x8000);
+    assert(read!Storage16("2049").bits == 0x6800);                 // the tie, through the exact tier
+    assert(read!Storage16("0.1").bits == 0x2E66);
+    assert(read!Storage64("0.1").bits == doubleToBits(0.1));      // the binary64 branch
+    assert(read!Storage64("-2.4e-324").bits == 0x8000_0000_0000_0000); // below half the smallest subnormal: -0
+    assert(read!Storage64("5e-324").bits == 1);
+    assert(read!Storage64("-1e400").bits == 0xFFF0_0000_0000_0000);
+    static assert(read!Storage16("3.140625").bits == 0x4248);      // at CTFE
+
+    assert(slowFloat!Storage16("1", null, 0).bits == 0x3C00);
+    assert(decompose(Storage16(0xBE00)) == DecodedFloat(0, 1536, -10, true));
+    assert(compose!Storage16(DecodedFloat(0, 1536, -10, true)).bits == 0xBE00);
+    char[8] digits;
+    int exp10;
+    assert(shortestDigits!Storage16(Storage16(0x2E66), digits[], exp10) == 1 && digits[0] == '1');
+
+    import sparkles.base.buffer : UniqueBuffer;
+
+    UniqueBuffer!(char, 32) text;
+    writeShortest(text, Storage16(0xBE00));
+    assert(text[] == "-1.5e0");
+    text.clear();
+    writeShortest(text, Storage16(0x7C00));
+    assert(text[] == "inf");
+    text.clear();
+    writeShortest(text, Storage64(0x8000_0000_0000_0000));
+    assert(text[] == "-0e0");
 }
 
 // Every rounding boundary of `float` is where the narrowing tier must punt:
