@@ -855,6 +855,127 @@ double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
         | (r.lo & ((1UL << 52) - 1)));
 }
 
+/**
+`value` as a $(LREF DecodedFloat) in `formatOf!T` — by arithmetic alone.
+
+D has no portable `realToBits`, and x87's explicit integer bit makes bit
+synthesis format-specific; scaling by a power of two is exact in every
+format, needs nothing from Phobos, and runs at CTFE. A subnormal comes out
+canonical: its last bit at the format's floor, fewer than `mantDig` bits
+above it. NaN has no decomposition and is a precondition.
+
+At CTFE, decompose only a value that is exact in `T`: D lets CTFE carry a
+`double` at the host `real`'s precision, and on an x87 host `0.1` arrives
+with 64 significant bits — which is then, faithfully, what comes out.
+*/
+DecodedFloat decompose(T)(T value) @safe pure nothrow @nogc
+if (__traits(isFloating, T))
+in (value == value, "NaN has no decomposition")
+{
+    enum fmt = formatOf!T;
+    enum p = fmt.mantDig;
+
+    DecodedFloat r;
+    r.negative = value < 0 || (value == 0 && 1 / value < 0);
+    T m = r.negative ? -value : value;
+    if (m == 0)
+        return r;
+    if (m == T.infinity)
+    {
+        r.isInf = true;
+        return r;
+    }
+
+    // Bring the magnitude into [1, 2), tracking its leading bit's exponent.
+    // Steps of 2^64 are exact: dividing keeps a normal result, and a
+    // subnormal times 2^64 gains only exponent.
+    int e = 0;
+    while (m >= 0x1p64)
+    {
+        m *= 0x1p-64;
+        e += 64;
+    }
+    while (m < 1)
+    {
+        m *= 0x1p64;
+        e -= 64;
+    }
+    while (m >= 2)
+    {
+        m *= 0.5;
+        e++;
+    }
+
+    // Widen to an integer significand. Below the normal range the last bit
+    // is pinned at the floor, so fewer bits are lifted — exactly the ones a
+    // subnormal has.
+    int lsb = e - (p - 1);
+    int lift = p - 1;
+    if (lsb < fmt.minSubnormalExp2)
+    {
+        lift -= fmt.minSubnormalExp2 - lsb;
+        lsb = fmt.minSubnormalExp2;
+    }
+    foreach (_; 0 .. lift)
+        m *= 2;
+
+    // Split the (at most 113-bit) integer: the top part by an exact scale
+    // and a truncating cast, the rest by an exact subtraction.
+    const ulong hi = cast(ulong)(m * 0x1p-64);
+    r.hi = hi;
+    r.lo = cast(ulong)(m - cast(T) hi * 0x1p64);
+    r.exp2 = lsb;
+    return r;
+}
+
+/**
+The `T` a $(LREF DecodedFloat) in `formatOf!T` denotes — the inverse of
+$(LREF decompose), by the same exact arithmetic: the significand is
+assembled as an integer, then scaled by powers of two in steps that never
+overflow, and never lose a bit because every intermediate lies between the
+integer and the representable result.
+*/
+T compose(T)(in DecodedFloat d) @safe pure nothrow @nogc
+if (__traits(isFloating, T))
+{
+    static assert(formatOf!T.mantDig <= 113, "the significand is 128 bits wide");
+    if (d.isInf)
+        return d.negative ? -T.infinity : T.infinity;
+    T m = cast(T) d.hi * 0x1p64 + cast(T) d.lo;
+    int e = d.exp2;
+    while (e >= 64)
+    {
+        m *= 0x1p64;
+        e -= 64;
+    }
+    while (e <= -64)
+    {
+        m *= 0x1p-64;
+        e += 64;
+    }
+    while (e > 0)
+    {
+        m *= 2;
+        e--;
+    }
+    while (e < 0)
+    {
+        m *= 0.5;
+        e++;
+    }
+    return d.negative ? -m : m;
+}
+
+/**
+Converts a decimal literal to the correctly-rounded nearest `T` exactly —
+$(LREF slowDecode) at `formatOf!T`, then $(LREF compose). See there for the
+arguments; the sign is the caller's.
+*/
+T slowFloat(T)(scope const(char)[] intDigits, scope const(char)[] fracDigits,
+    int explicitExp10) @safe pure nothrow @nogc
+if (__traits(isFloating, T))
+    => compose!T(slowDecode!(formatOf!T)(intDigits, fracDigits, explicitExp10));
+
 /// Arbitrary-precision decimal for the slow path: up to `capacity`
 /// significant digits (beyond that only a sticky "truncated" bit matters
 /// for rounding), a decimal-point position, and exact power-of-two shifts.
@@ -2030,6 +2151,85 @@ unittest
     assert(slowDecode!binary128("6", null, -4966).lo == 1);
     assert(slowDecode!binary128("6", null, -4966).exp2 == -16494);
     assert(slowDecode!binary128("3", null, -4966) == DecodedFloat.init);
+}
+
+@("float_conv.decompose.canonicalFields")
+@safe pure nothrow @nogc
+unittest
+{
+    // Pinned against the IEEE layout: 1 is 2^52 × 2^-52.
+    assert(decompose!double(1.0) == DecodedFloat(0, 1UL << 52, -52));
+    // At CTFE the value must be exact in `double`: on an x87 host CTFE keeps
+    // a `double` at 80 bits (D permits it; even `cast(double)` does not
+    // round there), and 0.1 would decompose to its 64-bit self.
+    enum ctfe = decompose!double(0.75);
+    static assert(ctfe == DecodedFloat(0, 3UL << 51, -53));
+    // The smallest subnormals: significand 1 at the floor.
+    assert(decompose!float(float.min_normal * float.epsilon) == DecodedFloat(0, 1, -149));
+    assert(decompose!double(double.min_normal * double.epsilon) == DecodedFloat(0, 1, -1074));
+    assert(decompose!real(real.min_normal * real.epsilon)
+        == DecodedFloat(0, 1, formatOf!real.minSubnormalExp2));
+    // Signs and the non-finite.
+    assert(decompose!double(-0.0) == DecodedFloat(0, 0, 0, true));
+    assert(decompose!double(-2.0) == DecodedFloat(0, 1UL << 52, -51, true));
+    assert(decompose!double(double.infinity).isInf);
+    assert(decompose!double(-double.infinity) == DecodedFloat(0, 0, 0, true, true));
+}
+
+@("float_conv.compose.invertsDecompose")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.meta : AliasSeq;
+
+    static foreach (T; AliasSeq!(float, double, real))
+    {{
+        static immutable T[] corners = [
+            0, -0.0, 1, -1, 2, 0.5, 0.1, T.epsilon, 1 + T.epsilon, T.max, -T.max,
+            T.min_normal, T.min_normal * T.epsilon, T.min_normal * (1 - T.epsilon),
+            T.infinity, -T.infinity, 3.14159, 1e-10, 123456.789,
+        ];
+        foreach (x; corners)
+            assert(compose!T(decompose!T(x)) is x);
+    }}
+
+    // A deterministic sweep over random double bit patterns, every one of
+    // which must come back bit-identical.
+    ulong state = 0x1234_5678_9ABC_DEF1;
+    foreach (iter; 0 .. 5000)
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        const x = bitsToDouble(state);
+        if (x != x)
+            continue; // NaN has no decomposition
+        assert(compose!double(decompose!double(x)) is x);
+    }
+}
+
+@("float_conv.compose.matchesTheBitAssembly")
+@safe pure nothrow @nogc
+unittest
+{
+    // `compose!double` over `slowDecode!binary64` must land on the very bits
+    // `slowDouble` assembles — including the subnormal and carried cases.
+    static void same(string i, string f, int e)
+    {
+        assert(doubleToBits(slowFloat!double(i, f, e)) == doubleToBits(slowDouble(i, f, e)));
+    }
+
+    same("5", null, -324);
+    same("3", null, -324);
+    same("9007199254740993", null, 0);
+    same("2", "2250738585072011", -308);
+    same("17976931348623157", null, 292);
+    same("17976931348623159", null, 292);
+    same("1", null, 0);
+    same(null, "1", 0);
+    same("9999999999999999999", null, 0);
+    assert(slowFloat!float("16777217", null, 0) == 16_777_216.0f);
+    assert(slowFloat!real("1", null, 0) == 1.0L);
 }
 
 // Exact correctly-rounded decoding by big-integer division: a second,
