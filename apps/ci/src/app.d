@@ -2345,11 +2345,14 @@ private:
             startFirst();
             if (!inner.empty)
                 return false;
-            auto first = inner.result;
-            if (cov.enabled && first.status != 0 && !retried)
+            auto attempt = inner.result;
+            // Retry only a build that broke. Once the binary ran, a nonzero
+            // status is the tests' verdict, and a run without coverage could
+            // only launder it — see `testBinaryRan`.
+            if (cov.enabled && attempt.status != 0 && !retried
+                && !testBinaryRan(attempt.output))
             {
                 retried = true;
-                firstResult = first;
                 notePending = true;
                 note = styledText(i"{dim coverage build failed; retrying without -cov}");
                 inner = executeMonitoredLines(
@@ -2358,7 +2361,7 @@ private:
                     withLdcThreadEnv(extraEnv));
                 return false;
             }
-            finishWith(retried ? firstResult : first);
+            finishWith(attempt);
             return true;
         }
 
@@ -2395,25 +2398,17 @@ private:
                     withLdcThreadEnv(extraEnv));
         }
 
-        void finishWith(MonitoredResult last)
+        /// The verdict is the last attempt's: the first one, or — after a
+        /// coverage build that never ran the binary — the plain run, the only
+        /// attempt that tested anything. Coverage came with it exactly when it
+        /// was asked for and not retried away.
+        void finishWith(MonitoredResult attempt)
         {
             if (finished)
                 return;
             finished = true;
-            if (!cov.enabled)
-            {
-                result = PackageRun(last.status, last.output, true, last.usage);
-                return;
-            }
-            if (!retried)
-            {
-                result = PackageRun(last.status, last.output, true, last.usage);
-                return;
-            }
-            auto plain = inner.result;
-            result = plain.status == 0
-                ? PackageRun(0, plain.output, false, plain.usage)
-                : PackageRun(last.status, last.output, false, last.usage);
+            result = PackageRun(attempt.status, attempt.output,
+                cov.enabled && !retried, attempt.usage);
         }
 
         const(string)[] baseCmd;
@@ -2423,7 +2418,6 @@ private:
         Duration interval;
         void delegate(in ResourceUsage sample) @safe onSample;
         MonitoredLineRange inner;
-        MonitoredResult firstResult;
         string note;
         bool started;
         bool retried;
@@ -3834,6 +3828,54 @@ unittest
 {
     assert(testBuildType(false) == ["-b", "unittest"]);
     assert(testBuildType(true) == ["-b", "unittest-cov"]);
+}
+
+/// Whether dub got as far as executing the test binary — decided from the
+/// child's output, since a status alone cannot tell a failed link from a
+/// failed test.
+///
+/// dub announces the run as `Running <target> …`, and a `dub test` target is
+/// named `<package>-test-<config>`; a nonzero exit is then reported as
+/// `Program exited with code N`. Either line means the build succeeded, so a
+/// failure after it is the tests' verdict and must never trigger the
+/// without-coverage retry.
+private bool testBinaryRan(scope const(char)[] output) @safe pure nothrow @nogc
+{
+    import std.string : indexOf;
+
+    if (output.indexOf("Program exited with code") >= 0)
+        return true;
+    // Line by line over bytes: `\n` never occurs inside a UTF-8 sequence.
+    while (output.length)
+    {
+        const nl = output.indexOf('\n');
+        auto line = nl < 0 ? output : output[0 .. nl];
+        output = nl < 0 ? null : output[nl + 1 .. $];
+        size_t i;
+        while (i < line.length && (line[i] == ' ' || line[i] == '\t'))
+            i++;
+        line = line[i .. $];
+        if (line.length > 8 && line[0 .. 8] == "Running " && line.indexOf("-test-") >= 0)
+            return true;
+    }
+    return false;
+}
+
+@("ci.testBinaryRan.buildFailureVersusTestFailure")
+@safe pure nothrow @nogc
+unittest
+{
+    // A link failure: dub never reached the run.
+    assert(!testBinaryRan("Linking sparkles-wired-test-unittest\n"
+        ~ "ld: symbol(s) not found\nError ldc2 failed with exit code 1."));
+    // The binary ran and its tests failed — the shapes from the real log.
+    assert(testBinaryRan("     Running libs/wired/build/sparkles-wired-test-unittest -t 1\n"
+        ~ "✗ sdl.decimal.beatsPhobosToReal\nError Program exited with code 1"));
+    assert(testBinaryRan("     Running libs/wired/build/sparkles-wired-test-unittest\n"));
+    assert(testBinaryRan("Error Program exited with code -11"));
+    // dub's own pre-build chatter is not the binary.
+    assert(!testBinaryRan("Running pre-build commands...\nError ldc2 failed with exit code 1."));
+    assert(!testBinaryRan(""));
 }
 
 /// `baseCmd` plus `dubArgs` for dub and `runtimeArgs` for the test binary.
