@@ -87,7 +87,12 @@ private string[] preprocessorArgv(string path) @system
     foreach (sw; global.params.cppswitches)
         if (sw && *sw)
             argv ~= (() @trusted => sw.fromStringz.idup)();
-    argv ~= target.isX86_64 ? "-m64" : "-m32";
+    // `-m64`/`-m32` are x86 switches: GCC's `cpp` on AArch64 rejects them
+    // outright, and there the target's word size is simply the host's.
+    version (X86_64)
+        argv ~= target.isX86_64 ? "-m64" : "-m32";
+    else version (X86)
+        argv ~= target.isX86_64 ? "-m64" : "-m32";
     argv ~= ["-dD", "-Wno-builtin-macro-redefined"];
 
     // Order matters, and differs: Apple's clang is switch-order dependent, and
