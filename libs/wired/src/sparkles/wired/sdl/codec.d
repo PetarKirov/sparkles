@@ -3162,8 +3162,10 @@ if (is(T == struct))
                 }
                 else
                 {
-                    auto wire = encConverted!(FC3, EncPayload!(V))(
-                        encPayload(value.tupleof[i]), b,
+                    // An lvalue: `encConverted` borrows the payload by `ref`,
+                    // and a plain scalar's payload is the scalar itself.
+                    auto payload = encPayload(value.tupleof[i]);
+                    auto wire = encConverted!(FC3, EncPayload!(V))(payload, b,
                         "." ~ local ~ "[0]");
                     if (wire.failed)
                         return;
