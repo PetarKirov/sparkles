@@ -93,6 +93,7 @@ struct SmokeResult
 {
     SmokeVerdict verdict;
     string reason;  /// why, for a skip or a failure; empty on a pass
+    string detail;  /// the child's own last words, for a skip or a failure
     ulong frames;   /// passes the run reported
     ulong painted;  /// of those, the ones that drew
 }
@@ -465,10 +466,14 @@ int runSmokeApps(in SmokeOptions opt)
                 case SmokeVerdict.skipped:
                     ++skips;
                     writefln("  ⊘ %-22s %s", label, r.reason);
+                    if (r.detail.length)
+                        writefln("      %s", r.detail);
                     break;
                 case SmokeVerdict.failed:
                     ++failures;
                     writefln("  ✗ %-22s %s", label, r.reason);
+                    if (r.detail.length)
+                        writefln("      %s", r.detail);
                     break;
             }
         }
@@ -542,13 +547,39 @@ private SmokeResult launch(string binary, in SmokeRun spec, in SmokeOptions opt)
             ~ "s — the frame budget did not end it";
         return r;
     }
-    return judgeSmokeRun(run.status, run.stderrText, opt.frames);
+
+    auto r = judgeSmokeRun(run.status, run.stderrText, opt.frames);
+    // A skip nobody can act on is barely better than no check. "no backend on
+    // this machine" covers a headless runner, a build without the arm, and a
+    // window that opened with no font — three different things to do about it,
+    // so the application's own last words come along.
+    if (r.verdict != SmokeVerdict.passed)
+        r.detail = lastLines(run.stderrText.length != 0
+            ? run.stderrText : run.stdoutText, 3);
+    return r;
+}
+
+/// The last `n` non-blank lines of `text`, joined — a child's parting words.
+string lastLines(const(char)[] text, size_t n) @safe
+{
+    import std.algorithm : filter, joiner, map;
+    import std.array : array, join;
+    import std.string : lineSplitter, strip;
+
+    auto lines = text.lineSplitter
+        .map!(l => l.strip.idup)
+        .filter!(l => l.length != 0 && !l.startsWith(smokeLinePrefix))
+        .array;
+    if (lines.length > n)
+        lines = lines[$ - n .. $];
+    return lines.join(" · ");
 }
 
 private struct RunOutput
 {
     int status;
     string stderrText;
+    string stdoutText; /// raylib and GLFW report on stdout, not stderr
     bool timedOut;
 }
 
@@ -589,6 +620,7 @@ private RunOutput runPlain(string binary, in SmokeRun spec, in SmokeOptions opt)
     outFile.close();
     errFile.close();
     r.stderrText = readTextOrEmpty(errPath);
+    r.stdoutText = readTextOrEmpty(outPath);
     return r;
 }
 
