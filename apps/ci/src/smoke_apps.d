@@ -602,8 +602,17 @@ private SmokeResult launch(string binary, in SmokeRun spec, in SmokeOptions opt)
     // window that opened with no font — three different things to do about it,
     // so the application's own last words come along.
     if (r.verdict != SmokeVerdict.passed)
-        r.detail = lastLines(run.stderrText.length != 0
-            ? run.stderrText : run.stdoutText, 3);
+    {
+        // Both streams, not the first non-empty one: the application writes its
+        // own message to stderr, and raylib/GLFW write theirs to stdout
+        // ("WARNING: SYSTEM: Failed to initialize platform"). Taking stderr
+        // alone hid the half that says what the platform actually refused.
+        const app = lastLines(run.stderrText, 2);
+        const platform = lastLines(run.stdoutText, 2);
+        r.detail = app.length && platform.length
+            ? app ~ " · " ~ platform
+            : (app.length ? app : platform);
+    }
     return r;
 }
 
@@ -614,9 +623,14 @@ string lastLines(const(char)[] text, size_t n) @safe
     import std.array : array, join;
     import std.string : lineSplitter, strip;
 
+    // raylib narrates its whole startup on stdout; the lines worth reporting
+    // are the ones that say something went wrong, so the routine INFO banner
+    // does not push them out of the window.
     auto lines = text.lineSplitter
         .map!(l => l.strip.idup)
-        .filter!(l => l.length != 0 && !l.startsWith(smokeLinePrefix))
+        .filter!(l => l.length != 0
+            && !l.startsWith(smokeLinePrefix)
+            && !l.startsWith("INFO:"))
         .array;
     if (lines.length > n)
         lines = lines[$ - n .. $];
