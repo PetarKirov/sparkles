@@ -73,7 +73,90 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
         escapeInto(w, opt.stylesheetHref);
         w ~= "\">\n";
     }
-    w ~= "<style>\n";
+    if (opt.shellCssHref.length)
+    {
+        w ~= "<link rel=\"stylesheet\" href=\"";
+        escapeInto(w, opt.shellCssHref);
+        w ~= "\">\n";
+    }
+    else
+    {
+        w ~= "<style>\n";
+        w ~= shellCss(opt, sidebar, crumbs.length != 0);
+    }
+    w ~= opt.shellCssHref.length ? "</head><body>\n<header>" : "</style></head><body>\n<header>";
+    navLink(w, prev, "← prev", "prev");
+    w ~= "<b>";
+    escapeInto(w, name);
+    w ~= "</b><span class=\"kinds\">";
+    escapeInto(w, summary);
+    w ~= "</span><span class=\"spacer\"></span><a href=\"index.html\">all</a>";
+    navLink(w, next, "next →", "next");
+    if (opt.hasDarkChrome)
+        w ~= themeToggleButton;
+    w ~= "</header>\n";
+    if (sidebar)
+    {
+        w ~= "<div class=\"shell\">\n";
+        w ~= opt.sidebarHtml;
+        w ~= "\n<div class=\"content\">\n";
+    }
+    if (crumbs.length)
+    {
+        w ~= "<div class=\"crumbs\">";
+        renderBreadcrumbs(w, crumbs);
+        w ~= "</div>\n";
+    }
+    w ~= text("<main style=\"--gutter:", gutter, "ch\">");
+    w ~= body_;
+    w ~= "</main>\n";
+    if (sidebar)
+        w ~= "</div></div>\n";
+    // Confine each drag to the domain it started in: mark the annotation the
+    // mousedown landed in (if any) and flag the body so the CSS above restricts the
+    // other domain. Runs before the drag extends, so the restriction applies to the
+    // selection this mousedown begins.
+    if (opt.shellScriptHref.length)
+    {
+        w ~= "<script src=\"";
+        escapeInto(w, opt.shellScriptHref);
+        w ~= "\" defer></script>\n";
+    }
+    else
+    {
+        w ~= "<script>\n";
+        w ~= shellScript(opt, crumbs.length != 0);
+    }
+    if (!opt.shellScriptHref.length)
+        w ~= "</script>\n";
+    // A module, and last: it only touches the aside, so it must never delay
+    // the content (`DOC12`).
+    if (opt.explorerScriptHref.length)
+    {
+        w ~= "<script type=\"module\" src=\"";
+        escapeInto(w, opt.explorerScriptHref);
+        w ~= "\"></script>\n";
+    }
+    w ~= "</body></html>\n";
+    return w[];
+}
+
+/++
+The page shell's own CSS — everything but the syntax theme (that is
+`opt.stylesheetHref`'s job) and the per-page gutter width, which rides on the
+`--gutter` custom property so one stylesheet serves pages of every width
+(`DOC12`).
+
+Emitted inline by a self-contained `--html` document and written once as a
+content-addressed asset by a site build; `sidebar` and `crumbs` are `true`
+there for both, since one asset serves pages with and without either.
++/
+string shellCss(in GalleryOptions opt, bool sidebar, bool crumbs) @safe pure
+{
+    import sparkles.docs.breadcrumbs : breadcrumbCss;
+
+    const c = opt.chrome;
+    auto w = appender!string;
     w ~= "  html, body { height: 100%; }\n";
     w ~= text("  body { margin: 0; background: ", c.background, "; color: ", c.text, ";\n");
     w ~= "         font: 14px/1.5 system-ui, sans-serif;\n";
@@ -131,13 +214,14 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     // line's number is generated content (never selected/copied). Below-line
     // annotations aren't `.ln`, so they carry no number and don't advance it.
     w ~= "  main pre.syn-root > code { display: block; counter-reset: lineno;\n";
-    w ~= text("                             padding-left: ", gutter, "ch; }\n");
+    w ~= "                             padding-left: var(--gutter); }\n";
     // `.ln` is INLINE — the physical `\n` after each span (kept by relayoutGutter)
     // draws the line breaks under `white-space: pre` and gives blank lines their
     // height, and a copied selection keeps every line.
     w ~= "  .ln { position: relative; counter-increment: lineno; }\n";
     w ~= "  .ln::before { content: counter(lineno); position: absolute;\n";
-    w ~= text("                left: -", gutter, "ch; width: ", gutter - 1, "ch; text-align: right;\n");
+    w ~= "                left: calc(-1 * var(--gutter));\n";
+    w ~= "                width: calc(var(--gutter) - 1ch); text-align: right;\n";
     w ~= text("                color: ", c.faint,
         "; -webkit-user-select: none; user-select: none; }\n");
     // Selection domains (VSCode-like). The shipped twoslash.css sets the below-line
@@ -156,44 +240,24 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "    -webkit-user-select: none; user-select: none; }\n";
     w ~= "  body.sel-anno .sel-active, body.sel-anno .sel-active * {\n";
     w ~= "    -webkit-user-select: text; user-select: text; }\n";
-    if (crumbs.length)
+    if (crumbs)
     {
         w ~= "  .crumbs { flex: none; padding: 0.55em 1em 0; }\n";
         w ~= breadcrumbCss(c, opt.hasDarkChrome ? opt.darkChrome : ChromePalette.init);
     }
-    w ~= "</style></head><body>\n<header>";
-    navLink(w, prev, "← prev", "prev");
-    w ~= "<b>";
-    escapeInto(w, name);
-    w ~= "</b><span class=\"kinds\">";
-    escapeInto(w, summary);
-    w ~= "</span><span class=\"spacer\"></span><a href=\"index.html\">all</a>";
-    navLink(w, next, "next →", "next");
-    if (opt.hasDarkChrome)
-        w ~= themeToggleButton;
-    w ~= "</header>\n";
-    if (sidebar)
-    {
-        w ~= "<div class=\"shell\">\n";
-        w ~= opt.sidebarHtml;
-        w ~= "\n<div class=\"content\">\n";
-    }
-    if (crumbs.length)
-    {
-        w ~= "<div class=\"crumbs\">";
-        renderBreadcrumbs(w, crumbs);
-        w ~= "</div>\n";
-    }
-    w ~= "<main>";
-    w ~= body_;
-    w ~= "</main>\n";
-    if (sidebar)
-        w ~= "</div></div>\n";
-    // Confine each drag to the domain it started in: mark the annotation the
-    // mousedown landed in (if any) and flag the body so the CSS above restricts the
-    // other domain. Runs before the drag extends, so the restriction applies to the
-    // selection this mousedown begins.
-    w ~= "<script>\n";
+    return w[];
+}
+
+/++
+The page shell's own behaviour: selection domains (`GAL7`), the appearance
+toggle, and the breadcrumb overflow measurement. Inline in a self-contained
+document, a content-addressed asset in a site build.
++/
+string shellScript(in GalleryOptions opt, bool crumbs) @safe pure
+{
+    import sparkles.docs.breadcrumbs : breadcrumbScript;
+
+    auto w = appender!string;
     w ~= "const A = '.twoslash-meta-line,.twoslash-completion-list,.twoslash-tag-line';\n";
     w ~= "addEventListener('mousedown', e => {\n";
     w ~= "  document.querySelectorAll('.sel-active').forEach(el => el.classList.remove('sel-active'));\n";
@@ -204,9 +268,8 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     w ~= "});\n";
     if (opt.hasDarkChrome)
         w ~= themeToggleScript;
-    if (crumbs.length)
+    if (crumbs)
         w ~= breadcrumbScript;
-    w ~= "</script>\n</body></html>\n";
     return w[];
 }
 
@@ -258,15 +321,25 @@ private enum themeToggleButton =
 
 /// Flips the class and stores the choice under `appearanceKey`.
 private enum themeToggleScript =
-    "const T = document.getElementById('hue-appearance');
+    // Delegated, not bound to the button: a soft navigation (`DOC13`) swaps
+    // the header out, and a listener held by the old one would go with it.
+    "const sync = () => {
 " ~
-    "const sync = () => T.setAttribute('aria-pressed',
+    "  const t = document.getElementById('hue-appearance');
 " ~
-    "  String(document.documentElement.classList.contains('dark')));
+    "  if (t) t.setAttribute('aria-pressed',
+" ~
+    "    String(document.documentElement.classList.contains('dark')));
+" ~
+    "};
 " ~
     "sync();
 " ~
-    "T.addEventListener('click', () => {
+    "addEventListener('hue:navigate', sync);
+" ~
+    "document.addEventListener('click', e => {
+" ~
+    "  if (!e.target.closest('#hue-appearance')) return;
 " ~
     "  const dark = document.documentElement.classList.toggle('dark');
 " ~
@@ -390,194 +463,6 @@ private const(char)[][] segments(const(char)[] path) @safe pure nothrow
 }
 
 // ── the explorer sidebar + directory pages (DOC11) ─────────────────────────
-
-/**
-The site's own file tree as the sidebar aside, built $(B per page): every
-directory a `<details>` (open along the current page's path), its name a link
-to that directory's page inside the `<summary>` (the marker toggles, the name
-navigates), every page a link $(B relative to the current page) — the
-`file://` discipline of `GAL12`/`GAL14` — with the current one highlighted.
-
-The `docs/` node is special: when `docsNav` (the $(B augmented) sidebar tree,
-`sidebar.SidebarItem[]`) is supplied, its groups render $(B inline) as the
-node's children — no wrapper, and no parallel copy of `docs/`' raw file
-subtree, whose listing directories already sit inside their owning nav groups
-(`DSC7`). A nav entry that is a listing-directory route renders as the actual
-$(B file subtree) of that directory — a `<details>` of page-relative links,
-exactly like the rest of the explorer — never as a site-absolute link, which
-would 404 anywhere but the deployed site root. Ordinary page routes resolve
-against `siteBase`, as the docs nav always has.
-
-`currentOut` is the current page's output path (`a/b/c.d.html`, or a
-directory's `a/b/index.html`); `entries` are the pages that exist — pass what
-was actually written, so the explorer never links a hole.
-*/
-string explorerNav(scope const SourceEntry[] entries, const(char)[] currentOut,
-    scope const SidebarItem[] docsNav = null,
-    scope const(char)[] siteBase = null) @safe pure
-{
-    import std.algorithm.searching : startsWith;
-    import std.string : endsWith, lastIndexOf;
-
-    import sparkles.docs.site : siteRoutePrefix;
-    import sparkles.docs.site_tree : buildSiteTree;
-
-    auto tree = buildSiteTree(entries);
-    size_t[string] at;
-    foreach (idx, ref const n; tree.nodes)
-        at[n.relPath] = idx;
-
-    // The directory chain the current page sits in — every node on it renders
-    // open, so the tree is already unfolded to where the reader is.
-    const currentDir = currentOut.length
-        ? currentOut[0 .. currentOut.length - baseNameLength(currentOut)] : null;
-
-    auto w = appender!string;
-    w ~= "<aside class=\"site-sidebar site-explorer\"><nav aria-label=\"Files\">\n";
-
-    // `walk` and the nav renderer are mutually recursive (a nav entry can
-    // open a file subtree); local functions cannot forward-reference, so the
-    // later one is reached through this delegate.
-    void delegate(ref const DirNode) @safe pure walkFn;
-
-    void dirDetails(string childRel, scope const(char)[] label) @safe pure
-    {
-        const childOut = childRel ~ "/index.html";
-        const open = currentDir.startsWith(childRel ~ "/");
-        const active = childOut == currentOut;
-        w ~= "<details class=\"sb-group\"";
-        if (open)
-            w ~= " open";
-        w ~= "><summary><a class=\"sb-link sb-dir";
-        if (active)
-            w ~= " active";
-        w ~= "\" href=\"";
-        escapeInto(w, pageHref(currentOut, childOut));
-        w ~= "\"";
-        if (active)
-            w ~= " aria-current=\"page\"";
-        w ~= ">";
-        escapeInto(w, label);
-        w ~= "</a></summary><div class=\"sb-items\">\n";
-        if (auto idx = childRel in at)
-            walkFn(tree.nodes[*idx]);
-        w ~= "</div></details>\n";
-    }
-
-    // The route of a listing directory this site holds, or null — the shape
-    // `augmentWithListingDirs` emits: `/src/<dir>/index.html`.
-    string listingDirOf(scope const(char)[] link) @safe pure
-    {
-        if (!link.startsWith(siteRoutePrefix) || !link.endsWith("/index.html"))
-            return null;
-        const rel = link[siteRoutePrefix.length .. $ - "/index.html".length].idup;
-        return rel in at ? rel : null;
-    }
-
-    // `true` iff the current page lives inside a listing subtree somewhere
-    // below `items` — the chain of nav groups above the reader must render
-    // open, exactly as the file tree opens along the current path.
-    bool navContainsCurrent(scope const SidebarItem[] items) @safe pure
-    {
-        foreach (ref const it; items)
-        {
-            if (it.items.length && navContainsCurrent(it.items))
-                return true;
-            if (const dirRel = listingDirOf(it.link))
-                if (currentDir.startsWith(dirRel ~ "/")
-                    || currentOut == dirRel ~ "/index.html")
-                    return true;
-        }
-        return false;
-    }
-
-    void renderNav(scope const SidebarItem[] items) @safe pure
-    {
-        foreach (ref const it; items)
-        {
-            if (it.items.length)
-            {
-                w ~= "<details class=\"sb-group\"";
-                if (!it.collapsed || navContainsCurrent(it.items))
-                    w ~= " open";
-                w ~= "><summary>";
-                escapeInto(w, it.text);
-                w ~= "</summary><div class=\"sb-items\">\n";
-                renderNav(it.items);
-                w ~= "</div></details>\n";
-                continue;
-            }
-            if (const dirRel = listingDirOf(it.link))
-            {
-                // A listing directory renders as its real file subtree, its
-                // label the directory's own name — never a "(source)" link.
-                const slash = dirRel.lastIndexOf('/');
-                dirDetails(dirRel,
-                    dirRel[slash < 0 ? 0 : cast(size_t) slash + 1 .. $] ~ "/");
-                continue;
-            }
-            if (it.link.length)
-            {
-                w ~= "<a class=\"sb-link\" href=\"";
-                if (!it.link.startsWith("http://", "https://") && siteBase.length)
-                    escapeInto(w, siteBase);
-                escapeInto(w, it.link);
-                w ~= "\">";
-                escapeInto(w, it.text);
-                w ~= "</a>\n";
-            }
-            else
-            {
-                w ~= "<span class=\"sb-text\">";
-                escapeInto(w, it.text);
-                w ~= "</span>\n";
-            }
-        }
-    }
-
-    // Explicit `@safe`: a self-recursive nested function gets no inference.
-    void walk(ref const DirNode node) @safe pure
-    {
-        // The docs node IS the docs nav (`DSC7`/`DOC11`): its groups inline,
-        // its raw directory children suppressed — their listing subtrees
-        // already sit inside the owning groups. Loose files directly under
-        // docs/ (rare) still render below.
-        const navHere = node.relPath == "docs" && docsNav.length != 0;
-        if (navHere)
-            renderNav(docsNav);
-        if (!navHere)
-            foreach (ref const d; node.dirs)
-            {
-                const bare = d.label[0 .. $ - 1]; // "name/" → "name"
-                const childRel = node.relPath.length
-                    ? node.relPath ~ "/" ~ bare : bare.idup;
-                dirDetails(childRel, d.label);
-            }
-        foreach (ref const f; node.files)
-        {
-            const fileOut = node.relPath.length
-                ? node.relPath ~ "/" ~ f.href : f.href;
-            const active = fileOut == currentOut;
-            w ~= "<a class=\"sb-link";
-            if (active)
-                w ~= " active";
-            w ~= "\" href=\"";
-            escapeInto(w, pageHref(currentOut, fileOut));
-            w ~= "\"";
-            if (active)
-                w ~= " aria-current=\"page\"";
-            w ~= ">";
-            escapeInto(w, f.label);
-            w ~= "</a>\n";
-        }
-    }
-
-    walkFn = &walk;
-    if (auto root = "" in at)
-        walk(tree.nodes[*root]);
-    w ~= "</nav></aside>";
-    return w[];
-}
 
 /// The length of `outPath`'s base name (the part after the last `/`; the
 /// whole path when it has none).
@@ -715,6 +600,9 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
     import std.path : buildPath, dirName;
     import std.stdio : stderr;
 
+    import sparkles.docs.assets : writeContentAddressedAsset;
+    import sparkles.docs.explorer : explorerJson, explorerPlaceholder,
+        rootPrefix, siteScript;
     import sparkles.docs.site_tree : buildSiteTree;
 
     static struct Rendered
@@ -747,6 +635,31 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
         written ~= r.entry;
     auto tree = buildSiteTree(written);
 
+    // The four things every page used to carry inline, written once under
+    // content-addressed names (`DOC12`). The tree dominates — the explorer was
+    // 70% of a site's bytes when each page held a copy.
+    const treeHref = writeContentAddressedAsset(outDir, "tree", "json",
+        explorerJson(tree, docsNav, opt.siteBase));
+    const explorerHref = writeContentAddressedAsset(outDir, "site", "js",
+        siteScript);
+    const cssHref = writeContentAddressedAsset(outDir, "shell", "css",
+        shellCss(opt, true, true));
+    const behaviourHref = writeContentAddressedAsset(outDir, "page", "js",
+        shellScript(opt, true));
+
+    // Per page: only the three hrefs and the placeholder's own coordinates.
+    const string styleHref = opt.stylesheetHref.idup;
+    void useAssets(ref GalleryOptions o, scope const(char)[] outPath) @safe
+    {
+        const depth = pageDepth(outPath);
+        o.stylesheetHref = depthAdjustedHref(styleHref, depth);
+        o.shellCssHref = depthAdjustedHref(cssHref, depth);
+        o.shellScriptHref = depthAdjustedHref(behaviourHref, depth);
+        o.explorerScriptHref = depthAdjustedHref(explorerHref, depth);
+        o.sidebarHtml = explorerPlaceholder(depthAdjustedHref(treeHref, depth),
+            rootPrefix(depth), outPath);
+    }
+
     foreach (i, ref r; ok)
     {
         const e = r.entry;
@@ -755,8 +668,7 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
             ? pageHref(e.outPath, ok[i + 1].entry.outPath) : "";
 
         GalleryOptions pageOpt = opt;
-        pageOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(e.outPath));
-        pageOpt.sidebarHtml = explorerNav(written, e.outPath, docsNav, opt.siteBase);
+        useAssets(pageOpt, e.outPath);
 
         const dest = buildPath(outDir, e.outPath);
         const destDir = dest.dirName;
@@ -778,8 +690,7 @@ private size_t writeExplorerGallery(in SourceSet set, string outDir,
         const dirOut = node.relPath.length
             ? node.relPath ~ "/index.html" : "index.html";
         GalleryOptions dirOpt = opt;
-        dirOpt.stylesheetHref = depthAdjustedHref(opt.stylesheetHref, pageDepth(dirOut));
-        dirOpt.sidebarHtml = explorerNav(written, dirOut, docsNav, opt.siteBase);
+        useAssets(dirOpt, dirOut);
 
         const dest = buildPath(outDir, dirOut);
         mkdirRecurse(dest.dirName);
@@ -1131,66 +1042,6 @@ unittest
     assert(!plain.canFind(".content"), plain);
 }
 
-@("page_shell.explorerNav.treeRelativeHrefsActiveAndDocsNesting")
-@safe pure
-unittest
-{
-    import std.algorithm.searching : canFind;
-
-    const entries = [
-        SourceEntry(name: "x.d", relPath: "libs/a/x.d", outPath: "libs/a/x.d.html"),
-        SourceEntry(name: "y.d", relPath: "libs/b/y.d", outPath: "libs/b/y.d.html"),
-        SourceEntry(name: "e.d", relPath: "docs/ex/e.d", outPath: "docs/ex/e.d.html"),
-    ];
-
-    const docsNav = [
-        SidebarItem(text: "Overview", link: "/overview"),
-        SidebarItem(text: "Research", collapsed: true, items: [
-            SidebarItem(text: "ex/ (source)", link: "/src/docs/ex/index.html"),
-        ]),
-    ];
-
-    // Seen from libs/a/x.d.html: its own chain is open, the sibling closed,
-    // every href page-relative, and the current page highlighted.
-    const fromX = explorerNav(entries, "libs/a/x.d.html", docsNav, "https://docs.example");
-    assert(fromX.canFind(`<a class="sb-link active" href="x.d.html" aria-current="page">x.d</a>`), fromX);
-    assert(fromX.canFind(`href="../b/y.d.html"`), fromX);
-    // Open along the current path only — `libs/` and `a/` open, `b/` closed —
-    // with each directory's name a link to ITS index inside the summary (the
-    // page sits in `a/`, so `a/`'s index is right beside it).
-    assert(fromX.canFind(`<details class="sb-group" open><summary><a class="sb-link sb-dir" href="../index.html">libs/</a>`), fromX);
-    assert(fromX.canFind(`<details class="sb-group" open><summary><a class="sb-link sb-dir" href="index.html">a/</a>`), fromX);
-    assert(fromX.canFind(`<details class="sb-group"><summary><a class="sb-link sb-dir" href="../b/index.html">b/</a>`), fromX);
-
-    // The docs/ node IS the docs nav: its groups inline — no "site pages"
-    // wrapper — page routes resolved against the base, and the listing entry
-    // rendered as the real file subtree with RELATIVE hrefs and no
-    // "(source)" suffix (a site-absolute link 404s anywhere but the site).
-    assert(!fromX.canFind("site pages"), fromX);
-    assert(fromX.canFind(`<a class="sb-link" href="https://docs.example/overview">Overview</a>`), fromX);
-    assert(fromX.canFind(`<summary><a class="sb-link sb-dir" href="../../docs/ex/index.html">ex/</a></summary>`), fromX);
-    assert(fromX.canFind(`href="../../docs/ex/e.d.html"`), fromX);
-    assert(!fromX.canFind("(source)"), fromX);
-    assert(!fromX.canFind(`href="/src/`), fromX);
-    // …and docs/' raw directory children are suppressed: `ex/` appears once,
-    // inside the nav, not again as a parallel file-tree node.
-    import std.algorithm.searching : count;
-
-    assert(fromX.count(">ex/</a>") == 1, fromX);
-
-    // On a page inside a listing subtree, the whole nav chain above it opens
-    // — collapsed groups included — exactly like the file tree does; on an
-    // unrelated page the same groups honor their collapsed flag.
-    const fromE = explorerNav(entries, "docs/ex/e.d.html", docsNav, "https://docs.example");
-    assert(fromE.canFind(`<details class="sb-group" open><summary>Research</summary>`), fromE);
-    assert(fromE.canFind(`aria-current="page">e.d</a>`), fromE);
-    assert(fromX.canFind(`<details class="sb-group"><summary>Research</summary>`), fromX);
-
-    // A directory page is the active node of its own explorer.
-    const fromDir = explorerNav(entries, "libs/a/index.html");
-    assert(fromDir.canFind(`<a class="sb-link sb-dir active" href="index.html" aria-current="page">a/</a>`), fromDir);
-}
-
 @("page_shell.directoryPage.sameShellEmptyPane")
 @safe pure
 unittest
@@ -1249,10 +1100,14 @@ unittest
         (in SourceEntry e) => "<pre class=\"syn-root\"><code>x</code></pre>");
     assert(n == 2);
 
-    // Every page carries its own explorer with itself highlighted…
+    // Every page carries the explorer placeholder pointing at the shared
+    // assets (`DOC12`) — its own coordinates, not a copy of the tree.
     const px = readText(buildPath(outDir, "a", "x.d.html"));
-    assert(px.canFind("site-explorer"), px);
-    assert(px.canFind(`aria-current="page">x.d</a>`), px);
+    assert(px.canFind(`id="site-explorer"`), px);
+    assert(px.canFind(`data-root="../" data-current="a/x.d.html"`), px);
+    assert(px.canFind(`<script type="module" src="../assets/site-`), px);
+    assert(px.canFind(`<link rel="stylesheet" href="../assets/shell-`), px);
+    assert(!px.canFind("<details"), px);  // no per-page tree at all
     // …and the directory pages are shell pages, not the legacy list.
     const ia = readText(buildPath(outDir, "a", "index.html"));
     assert(ia.canFind("site-explorer"), ia);
@@ -1260,6 +1115,18 @@ unittest
     assert(!ia.canFind("<ul>"), ia);
     const root = readText(buildPath(outDir, "index.html"));
     assert(root.canFind("site-explorer"), root);
+    assert(root.canFind(`data-root="" data-current="index.html"`), root);
+
+    // The tree is one asset, named by its content, holding what every page
+    // would otherwise have repeated.
+    import std.algorithm.iteration : filter;
+    import std.file : dirEntries, SpanMode;
+    import std.string : startsWith;
+
+    auto trees = dirEntries(buildPath(outDir, "assets"), "tree-*.json", SpanMode.shallow);
+    const treePath = trees.front.name;
+    const tree = readText(treePath);
+    assert(tree.canFind(`"path":"a"`) && tree.canFind(`"label":"y.d"`), tree);
 }
 
 @("gallery.escaping.namesAndSummaries")

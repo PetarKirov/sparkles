@@ -633,6 +633,10 @@
         "collapsed": true,
         "items": [
           {
+            "text": "HTML templating design",
+            "link": "/specs/base/html-template"
+          },
+          {
             "text": "Text",
             "collapsed": true,
             "items": [

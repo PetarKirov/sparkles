@@ -899,6 +899,13 @@ int executeSite(in HueCli root, in Site cmd)
 
     stderr.writeln("hue: wrote ", n, " page(s), ", dirs.length,
         " index(es) + manifest.json to ", outDir);
+    // The explorer is hydrated from a shared JSON asset (`DOC12`), and
+    // `file://` cannot fetch a sibling file in any current browser. Content,
+    // breadcrumbs and the directory indexes work either way — say so, rather
+    // than let a local reviewer read an absent sidebar as a bug.
+    stderr.writeln("hue: the explorer sidebar needs a server "
+        ~ "(`python3 -m http.server` in the output dir); over file:// the "
+        ~ "pages render without it");
     return 0;
 }
 
