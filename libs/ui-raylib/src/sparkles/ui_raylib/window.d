@@ -103,6 +103,31 @@ struct Window
 
     @disable this(this);
 
+    /// The variable $(LREF headlessRequested) reads.
+    enum headlessEnvVar = "SPARKLES_UI_HEADLESS";
+
+    /**
+    Should a window be created without being shown?
+
+    An environment variable rather than a field on `WindowRequest`, for the same
+    reason `SPARKLES_UI_FRAMES` is one: the launcher that wants this — a smoke
+    check, a golden capture — starts applications it did not write and cannot
+    add a flag to.
+
+    It is a $(B request), not a mode: raylib is asked for a hidden window and
+    the rest of the program is unchanged, so what runs is the real path with
+    the real backend rather than a headless imitation of it.
+    */
+    static bool headlessRequested() @system
+    {
+        import std.process : environment;
+
+        try
+            return environment.get(headlessEnvVar, "") == "1";
+        catch (Exception)
+            return false;
+    }
+
     /// Opens the window and installs the requested policy.
     static Window open(in WindowRequest r) @system
     {
@@ -123,6 +148,16 @@ struct Window
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
         SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
+        if (headlessRequested)
+            // `HIDDEN` because a run nobody is watching should not steal focus
+            // or flash a window across a developer's screen, and because a
+            // window that is never mapped asks far less of the platform — which
+            // is what a CI runner has to give. `ALWAYS_RUN` because raylib
+            // otherwise stops updating a window it considers minimised, and a
+            // hidden window is exactly that: the frame loop would pace forever
+            // without ever drawing.
+            SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIDDEN
+                | ConfigFlags.FLAG_WINDOW_ALWAYS_RUN);
         // Unbounded on purpose: a `hue --diff` of two paths builds a title in
         // the hundreds of bytes, so any cap here would silently lose one.
         InitWindow(r.width, r.height, r.title.toTempStringz.ptr);
