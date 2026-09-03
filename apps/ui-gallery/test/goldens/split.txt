@@ -1,0 +1,32 @@
+ sparkles:ui a divider between two panes                                            tokyo-night
+   Welcome           ▕ Split · a divider between two panes                                     █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ The pane resizes by the pointer's delta since the grab, so the divider  █
+   Text              ▕ does not jump when you take hold of it away from its centre. Units are  █
+   Themes            ▕ the caller's — cells here, pixels in a window.                          █
+   Slots             ▕                                                                         █
+   Decoration        ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Grid              ▕ │ the panes                                                           │ █
+   Components        ▕ │ leading                 │trailing                                   │ █
+   Tree              ▕ │ 24 cells                │46 cells                                   │ █
+   Property tree     ▕ │ a file tree, say        │…and the document beside it                │ █
+   Table             ▕ │                         │                                           │ █
+   Scrolling         ▕ │                         │                                           │ █
+   State             ▕ └─────────────────────────────────────────────────────────────────────┘ █
+ ▸ Split             ▕                                                                         █
+   Dock              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Terminal          ▕ │ the machine                                                         │ █
+                     ▕ │ size             24                                                 │ █
+                     ▕ │ dragging         no                                                 │ █
+                     ▕ │ bounds           10 … 60                                            │ █
+                     ▕ │ pointer shape    default_                                           │ █
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ █
+                     ▕                                                                         █
+                     ▕ The wanted shape is one decision, asked of the machine: hovering the    │
+                     ▕ divider asks for a resize cursor, and a drag keeps asking for it even   │
+                     ▕ after the pointer has left the divider — otherwise the cursor flickers  │
+                     ▕ back to an arrow the instant you move.                                  │
+                     ▕                                                                         │
+                     ▕
+ pages ← narrower → wider                                                       ? keys   q quit

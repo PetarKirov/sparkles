@@ -1,0 +1,32 @@
+ sparkles:ui data, interaction, view                                                tokyo-night
+   Welcome           ▕ Tree · data, interaction, view                                          █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ The data layer is a flat arena with index links and no interaction      █
+   Text              ▕ state. The opened set and the selection live beside it, keyed by node   █
+   Themes            ▕ identity. flatten turns the two into visible rows and precomputes the   █
+   Slots             ▕ guide rails, so no renderer re-derives them.                            █
+   Decoration        ▕                                                                         █
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ your view                                                           │ █
+ ▸ Tree              ▕ │ ├─ ▸ src/                                                           │ █
+   Property tree     ▕ │ ├─ ▸ docs/                                                          │ █
+   Table             ▕ │ └─ ▪ README.md                                                      │ █
+   Scrolling         ▕ └─────────────────────────────────────────────────────────────────────┘ █
+   State             ▕                                                                         █
+   Split             ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Dock              ▕ │ the same data, everything open                                      │ │
+   Terminal          ▕ │ ├─ ▾ src/                                                           │ │
+                     ▕ │ │  ├─ ▾ sparkles/                                                   │ │
+                     ▕ │ │  │  ├─ ◆ widget.d                                                 │ │
+                     ▕ │ │  │  ├─ ◆ layout.d                                                 │ │
+                     ▕ │ │  │  └─ ◆ theme.d                                                  │ │
+                     ▕ │ │  ├─ ▫ dub.sdl                                                     │ │
+                     ▕ │ │  └─ ▾ components/                                                 │ │
+                     ▕ │ │     ├─ ◆ chrome.d                                                 │ │
+                     ▕ │ │     └─ ◆ tree_widget.d                                            │ │
+                     ▕ │ ├─ ▾ docs/                                                          │ │
+                     ▕ │ │  ├─ ▪ index.md                                                    │ │
+                     ▕ │ │  └─ ▪ layout.md                                                   │ │
+                     ▕
+ pages ↓ down ↑ up → expand ← collapse / up ⏎ toggle O open all C close all     ? keys   q quit

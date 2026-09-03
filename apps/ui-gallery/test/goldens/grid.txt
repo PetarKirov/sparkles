@@ -1,0 +1,32 @@
+ sparkles:ui Cartesian backdrop, lines and dots                                     tokyo-night
+   Welcome           ▕ Grid · a Cartesian backdrop                                             █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ Major and minor lattice layers, stripe bands, and a mark kind that is   █
+   Text              ▕ either continuous lines or dots at intersections. The same config       █
+   Themes            ▕ paints the diagram board and this page — a widget preview here, DrawOps █
+   Slots             ▕ on the infinite canvas.                                                 █
+   Decoration        ▕                                                                         █
+ ▸ Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ Default (RND4)                                                      │ █
+   Tree              ▕ │ ┌────────────────────────────────────────┐                          │ █
+   Property tree     ▕ │ │                                        │                          │ │
+   Table             ▕ │ │                                        │                          │ │
+   Scrolling         ▕ │ │                                        │                          │ │
+   State             ▕ │ │                                        │                          │ │
+   Split             ▕ │ │                                        │                          │ │
+   Dock              ▕ │ │                                        │                          │ │
+   Terminal          ▕ │ │                                        │                          │ │
+                     ▕ │ │                                        │                          │ │
+                     ▕ │ │                                        │                          │ │
+                     ▕ │ │                                        │                          │ │
+                     ▕ │ └────────────────────────────────────────┘                          │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ Stripe bands                                                        │ │
+                     ▕ │ ┌────────────────────────────────────────┐                          │ │
+                     ▕ │ │                                        │                          │ │
+                     ▕ │ │                                        │                          │ │
+                     ▕ │ │                                        │                          │ │
+                     ▕
+ pages p next preset                                                            ? keys   q quit
