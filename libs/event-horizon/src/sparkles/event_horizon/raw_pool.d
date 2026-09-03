@@ -476,8 +476,18 @@ unittest
         == RawPoolResult.accepted);
     assert(pool.submit(RawJob(&noop, null, null, 3))
         == RawPoolResult.queueFull);
+    // Cancel the queue before job 1 may finish, or the worker can take job 2
+    // and run it instead: shut down from a helper while job 1 still blocks,
+    // release job 1 only once the pool is cancelling with an empty queue,
+    // then join. `shutdown` publishes the cancellation under the mutex and
+    // joins the worker, which finishes job 1 and publishes its completion.
+    auto stopper = new Thread({ assert(pool.shutdown(false) == RawPoolResult.accepted); });
+    stopper.start();
+    while (atomicLoad(*cast(shared(typeof(pool._state))*) &pool._state) != RawPoolState.cancelling
+        || atomicLoad(*cast(shared(typeof(pool._jobCount))*) &pool._jobCount) != 0)
+        Thread.yield();
     atomicStore(context.release, true);
-    assert(pool.shutdown(false) == RawPoolResult.accepted);
+    stopper.join();
 
     RawCompletion completion;
     bool sawRun;
