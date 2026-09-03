@@ -31,6 +31,94 @@ import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
     parseOk;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The target format as data
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+The parameters of an IEEE-754-style binary floating-point format, as data
+rather than as a D type.
+
+$(LREF formatOf) describes `float`, `double` and `real`; the constants
+$(LREF binary32), $(LREF binary64), $(LREF extended80) and $(LREF binary128)
+name every format `real` takes across this repository's targets — x87 on
+x86_64 Linux, binary64 on AArch64 Darwin and Windows, binary128 on AArch64
+Linux and Android. Being data is the point: a kernel parameterized by a
+format can be exercised at 113 bits on a host whose `real` has 53, which is
+how the binary128 path is tested on every machine rather than only on the
+one that has it.
+
+The three fields are D's own `T.mant_dig`, `T.min_exp` and `T.max_exp`; the
+rest is derived, and each derivation is pinned by a test.
+*/
+struct BinaryFloatFormat
+{
+    int mantDig; /// significand bits including the leading one: `T.mant_dig`
+    int minExp;  /// `T.min_exp`: the smallest normal is `2^(minExp - 1)`
+    int maxExp;  /// `T.max_exp`: every finite value is below `2^maxExp`
+
+const @safe pure nothrow @nogc:
+
+    /// Exponent of the smallest normal's leading bit.
+    int minNormalExp2() => minExp - 1;
+
+    /// Exponent of the largest finite value's leading bit.
+    int maxNormalExp2() => maxExp - 1;
+
+    /// Exponent of the smallest subnormal — one unit in the last place of
+    /// the smallest normal.
+    int minSubnormalExp2() => minExp - mantDig;
+
+    /// Decimal digits that tell every value apart: `ceil(mantDig·log10 2) + 1`
+    /// — 9, 17, 21 and 36.
+    int maxDigits10()
+        => cast(int)((cast(long) mantDig * 30_103 + 99_999) / 100_000) + 1;
+
+    /// Largest `k` with `10^k` exact in the significand, i.e. `5^k < 2^mantDig`
+    /// (the factor of two costs no bits) — 10, 22, 27 and 48.
+    int exactPow10Max()
+    {
+        // k·log2(5) < mantDig, at nine decimals; the margin to the next
+        // integer is above 0.2 for every width in use.
+        int k = 0;
+        while ((k + 1) * 2_321_928_095L < cast(long) mantDig * 1_000_000_000L)
+            k++;
+        return k;
+    }
+
+    /// Digits in the longest exact decimal expansion of a finite value: the
+    /// largest significand at the smallest exponent, whose expansion runs to
+    /// `mantDig·log10 2 + |minSubnormalExp2|·log10 5` digits — 112, 767,
+    /// 11 514 and 11 563.
+    int maxExactDigits()
+        => cast(int)((cast(long) mantDig * 30_102_999_566L
+            + cast(long)(-minSubnormalExp2) * 69_897_000_434L) / 100_000_000_000L) + 1;
+
+    /// Significant digits the exact decoder must keep. Decimal truncation is
+    /// order-preserving, so a value is decided correctly once the rounding
+    /// tie it is compared against — one bit past `maxExactDigits` — expands
+    /// completely inside the buffer; below that a value within a hair of the
+    /// tie mis-rounds. With slack, to the next hundred: 200, 800, 11 600 and
+    /// 11 600. `binary64`'s 800 is the value the decoder has always used.
+    int decimalCapacity() => (maxExactDigits + 33 + 99) / 100 * 100;
+}
+
+/// IEEE binary32: `float`.
+enum BinaryFloatFormat binary32 = BinaryFloatFormat(24, -125, 128);
+/// IEEE binary64: `double`, and `real` on AArch64 Darwin and Windows.
+enum BinaryFloatFormat binary64 = BinaryFloatFormat(53, -1021, 1024);
+/// x87 80-bit extended: `real` on x86 and x86_64.
+enum BinaryFloatFormat extended80 = BinaryFloatFormat(64, -16381, 16384);
+/// IEEE binary128: `real` on AArch64 Linux and Android, and on RISC-V.
+enum BinaryFloatFormat binary128 = BinaryFloatFormat(113, -16381, 16384);
+
+/// The format of a floating-point type, read off its own properties.
+template formatOf(T)
+if (__traits(isFloating, T))
+{
+    enum BinaryFloatFormat formatOf = BinaryFloatFormat(T.mant_dig, T.min_exp, T.max_exp);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Bit and wide-multiply kernels
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1614,6 +1702,70 @@ ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
+
+@("float_conv.BinaryFloatFormat.derivations")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(formatOf!float == binary32);
+    static assert(formatOf!double == binary64);
+    static assert(formatOf!real == binary64 || formatOf!real == extended80
+        || formatOf!real == binary128, "an undescribed real format");
+
+    static immutable BinaryFloatFormat[4] formats = [binary32, binary64, extended80, binary128];
+    static immutable int[4] minSubnormal = [-149, -1074, -16445, -16494];
+    static immutable int[4] digits10 = [9, 17, 21, 36];
+    static immutable int[4] pow10 = [10, 22, 27, 48];
+    static immutable int[4] exact = [112, 767, 11_514, 11_563];
+    static immutable int[4] capacity = [200, 800, 11_600, 11_600];
+    foreach (i, f; formats)
+    {
+        assert(f.minNormalExp2 == f.minExp - 1);
+        assert(f.maxNormalExp2 == f.maxExp - 1);
+        assert(f.minSubnormalExp2 == minSubnormal[i]);
+        assert(f.maxDigits10 == digits10[i]);
+        assert(f.exactPow10Max == pow10[i]);
+        assert(f.maxExactDigits == exact[i]);
+        assert(f.decimalCapacity == capacity[i]);
+    }
+    // The subnormal floor and the exact-power bound, checked against the
+    // properties they were derived from.
+    static assert(binary64.minSubnormalExp2 == -1074); // double.min_normal * double.epsilon
+    static assert(binary64.exactPow10Max == 22);       // 5^22 < 2^53 < 5^23
+    static assert(binary64.decimalCapacity == 800);    // the decoder's historic storage
+}
+
+// Our classification of a host's floating-point types must agree with
+// Phobos'. `floatTraits` needs a type, which is why it cannot replace
+// `BinaryFloatFormat` — there is no type with 113 bits on a 53-bit host —
+// but it is the right oracle for the types a host does have.
+@("float_conv.BinaryFloatFormat.agreesWithPhobos")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.math.traits : floatTraits, RealFormat;
+
+    static BinaryFloatFormat described(RealFormat f)
+    {
+        final switch (f) with (RealFormat)
+        {
+        case ieeeSingle:
+            return binary32;
+        case ieeeDouble:
+            return binary64;
+        case ieeeExtended:
+            return extended80;
+        case ieeeQuadruple:
+            return binary128;
+        case ieeeHalf, ieeeExtended53, ibmExtended:
+            assert(0, "a real format this module does not describe");
+        }
+    }
+
+    static assert(described(floatTraits!float.realFormat) == formatOf!float);
+    static assert(described(floatTraits!double.realFormat) == formatOf!double);
+    static assert(described(floatTraits!real.realFormat) == formatOf!real);
+}
 
 @("float_conv.mul64x64.knownProducts")
 unittest
