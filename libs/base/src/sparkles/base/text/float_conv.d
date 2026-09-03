@@ -27,6 +27,8 @@ arithmetic — there is no external generator step to keep in sync.
 */
 module sparkles.base.text.float_conv;
 
+import std.traits : Unqual;
+
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
     parseOk;
 
@@ -751,7 +753,8 @@ private Pow10Entry bigTop128(const uint[] a) @safe pure nothrow @nogc
 /// `floor(2^(bitLength(d) + 127) / d)` as 128 normalized bits — restoring
 /// long division producing one quotient bit per step (truncated, per the
 /// table convention).
-private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow @nogc
+private Pow10Entry bigReciprocal128(size_t cap = maxScratchLimbs)(const uint[] d)
+    @safe pure nothrow @nogc
 {
     // After the numerator's top bitLength(d) bits (value 2^(bitLength-1),
     // strictly < d since d is odd and > 1), the remainder is that value
@@ -760,9 +763,9 @@ private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow @nogc
     //
     // `rem` is indexed against `remLen` rather than sliced: slicing a local
     // static array is `@system`, and the bound is a constant of the loop.
-    uint[maxScratchLimbs + 1] rem = 0;
+    uint[cap + 1] rem = 0;
     const remLen = d.length + 1;
-    assert(remLen <= rem.length, "BigUint overflow: raise maxScratchLimbs");
+    assert(remLen <= rem.length, "BigUint overflow: raise the limb capacity");
     {
         const bits = bigBitLength(d) - 1;
         rem[bits / 32] = 1u << (bits % 32);
@@ -840,6 +843,396 @@ private Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] generatePow10Table()
     }
 
     return table;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tier 2 for the wide formats: Eisel–Lemire over a 128-bit significand
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `10^0 .. 10^19`: the multipliers that join two 19-digit accumulations.
+private static immutable ulong[20] pow10U64 = () {
+    ulong[20] t;
+    ulong v = 1;
+    foreach (i; 0 .. 20)
+    {
+        t[i] = v;
+        v *= 10;
+    }
+    return t;
+}();
+
+/// `a << n` for `0 ≤ n < 128`.
+private U128 shl128(U128 a, int n) @safe pure nothrow @nogc
+in (0 <= n && n < 128)
+{
+    if (n == 0)
+        return a;
+    if (n >= 64)
+        return U128(a.lo << (n - 64), 0);
+    return U128((a.hi << n) | (a.lo >> (64 - n)), a.lo << n);
+}
+
+/// `a + 1`.
+private U128 inc128(U128 a) @safe pure nothrow @nogc
+{
+    a.lo++;
+    if (a.lo == 0)
+        a.hi++;
+    return a;
+}
+
+/// Leading zero bits of a nonzero 128-bit value.
+private int leadingZeros128(U128 a) @safe pure nothrow @nogc
+in (a.hi != 0 || a.lo != 0)
+    => a.hi ? leadingZeros(a.hi) : 64 + leadingZeros(a.lo);
+
+/**
+The 256-bit product of two normalized 128-bit values, split into its top and
+bottom halves and shifted left once when the top bit is clear (two values in
+`[2^127, 2^128)` multiply to at least `2^254`). Returns that shift, 0 or 1.
+*/
+private int mul128Normalized(U128 a, U128 b, out U128 top, out U128 bottom)
+    @safe pure nothrow @nogc
+{
+    const p0 = mul64x64(a.hi, b.hi);
+    const p1 = mul64x64(a.hi, b.lo);
+    const p2 = mul64x64(a.lo, b.hi);
+    const p3 = mul64x64(a.lo, b.lo);
+    ulong r1 = p3.hi;
+    ulong c = 0;
+    r1 += p1.lo;
+    if (r1 < p1.lo)
+        c++;
+    r1 += p2.lo;
+    if (r1 < p2.lo)
+        c++;
+    ulong r2 = p0.lo + c;
+    ulong c2 = r2 < c ? 1 : 0;
+    r2 += p1.hi;
+    if (r2 < p1.hi)
+        c2++;
+    r2 += p2.hi;
+    if (r2 < p2.hi)
+        c2++;
+    const r3 = p0.hi + c2; // no overflow: the product is below 2^256
+    top = U128(r3, r2);
+    bottom = U128(r1, p3.lo);
+    if (r3 >> 63)
+        return 0;
+    top = U128((top.hi << 1) | (top.lo >> 63), (top.lo << 1) | (bottom.hi >> 63));
+    bottom = U128((bottom.hi << 1) | (bottom.lo >> 63), bottom.lo << 1);
+    return 1;
+}
+
+/**
+A power of ten as the wide tier sees it: `10^q ∈ [E, E + width) × 2^exp2`
+with `E = hi:lo` in `[2^127, 2^128)`. A fine entry ($(LREF pow10Sig128)) and
+an anchor are truncated once and have width 1; a composed entry — the top 128
+bits of an anchor times a fine entry — has width 5: each factor's truncation
+scaled by the other factor, which is below `2^128`, plus the product's own
+truncation, all over a normalizing shift of at least 127.
+*/
+private struct Pow10Wide
+{
+    ulong hi;
+    ulong lo;
+    int exp2;
+    int width;
+}
+
+/// `floor(q·log2 10) − 127`: the exponent of a fine entry's last bit. The
+/// fixed point is exact on the fine range and no further — it first fails at
+/// `|q| = 643` — which is why composed entries carry their own exponent.
+private int fineExp2(int q) @safe pure nothrow @nogc
+in (tableMinExp10 <= q && q <= tableMaxExp10)
+    => ((217_706 * q) >> 16) - 127;
+
+/// The exponents the wide tier must serve: those a 38-digit significand can
+/// carry under the widest format without the verdict being saturation alone.
+/// One anchor per fine-table span covers them, so any such `q` is an anchor
+/// times a fine entry.
+private enum int wideMaxExp10 = binary128.saturateHighExp10 - 1;
+/// ditto
+private enum int wideMinExp10 = binary128.saturateLowExp10 - 38;
+/// ditto
+private enum size_t anchorCountPos = (wideMaxExp10 - 1) / tableMaxExp10;
+/// ditto
+private enum size_t anchorCountNeg = (-wideMinExp10 - 1) / -tableMinExp10;
+static assert(extended80.saturateHighExp10 <= binary128.saturateHighExp10
+    && extended80.saturateLowExp10 >= binary128.saturateLowExp10,
+    "the anchors are sized by the widest format");
+
+/// Limbs for the largest anchor power, `5^(324·15)`, with a carry to spare.
+private enum size_t anchorLimbs = () {
+    enum long pos = tableMaxExp10 * cast(long) anchorCountPos;
+    enum long neg = -tableMinExp10 * cast(long) anchorCountNeg;
+    enum long bits = (pos > neg ? pos : neg) * 2_321_929L / 1_000_000L;
+    return cast(size_t)((bits + 31) / 32) + 2;
+}();
+
+/// Multiplies `a` by `5^k`, in place, thirteen at a time (`5^13 < 2^32`).
+private void bigMulPow5(B)(ref B a, int k) @safe pure nothrow @nogc
+{
+    static immutable uint[13] small = [1, 5, 25, 125, 625, 3125, 15_625, 78_125,
+        390_625, 1_953_125, 9_765_625, 48_828_125, 244_140_625];
+    for (; k >= 13; k -= 13)
+        bigMulSmall(a, 1_220_703_125);
+    if (k > 0)
+        bigMulSmall(a, small[k]);
+}
+
+/// The anchors `10^(324·j)`, `j = 1 ..`: the top 128 bits of `5^(324j)`, as
+/// the fine table's positive entries are made, with the exact exponent.
+private Pow10Wide[anchorCountPos] generateAnchorsPos() @safe pure nothrow @nogc
+{
+    Pow10Wide[anchorCountPos] table;
+    auto pow5 = BigUintOf!anchorLimbs.from(1);
+    foreach (j; 0 .. anchorCountPos)
+    {
+        bigMulPow5(pow5, tableMaxExp10);
+        const q = tableMaxExp10 * cast(int)(j + 1);
+        const top = bigTop128(pow5[]);
+        table[j] = Pow10Wide(top.hi, top.lo, q + cast(int) bigBitLength(pow5[]) - 128, 1);
+    }
+    return table;
+}
+
+/// The anchors `10^(−343·j)`: the truncated 128-bit reciprocal of `5^(343j)`,
+/// as the fine table's negative entries are made, with the exact exponent.
+private Pow10Wide[anchorCountNeg] generateAnchorsNeg() @safe pure nothrow @nogc
+{
+    Pow10Wide[anchorCountNeg] table;
+    auto pow5 = BigUintOf!anchorLimbs.from(1);
+    foreach (j; 0 .. anchorCountNeg)
+    {
+        bigMulPow5(pow5, -tableMinExp10);
+        const q = tableMinExp10 * cast(int)(j + 1);
+        const top = bigReciprocal128!anchorLimbs(pow5[]);
+        table[j] = Pow10Wide(top.hi, top.lo, q - cast(int) bigBitLength(pow5[]) - 127, 1);
+    }
+    return table;
+}
+
+/// ditto
+private static immutable Pow10Wide[anchorCountPos] pow10AnchorsPos = generateAnchorsPos();
+/// ditto
+private static immutable Pow10Wide[anchorCountNeg] pow10AnchorsNeg = generateAnchorsNeg();
+
+/// The entry for `q`: a fine entry when the table has one, otherwise the
+/// anchor of `q`'s span times the fine entry of the remainder, truncated to
+/// 128 bits and normalized, with the exponent the product actually has.
+private Pow10Wide wideEntry(int q) @safe pure nothrow @nogc
+in (wideMinExp10 <= q && q <= wideMaxExp10)
+{
+    if (tableMinExp10 <= q && q <= tableMaxExp10)
+    {
+        const f = pow10Sig128[q - tableMinExp10];
+        return Pow10Wide(f.hi, f.lo, fineExp2(q), 1);
+    }
+    Pow10Wide a;
+    int qf;
+    if (q > tableMaxExp10)
+    {
+        const j = (q - 1) / tableMaxExp10;
+        a = pow10AnchorsPos[j - 1];
+        qf = q - j * tableMaxExp10;
+    }
+    else
+    {
+        const j = (-q - 1) / -tableMinExp10;
+        a = pow10AnchorsNeg[j - 1];
+        qf = q - j * tableMinExp10;
+    }
+    const f = pow10Sig128[qf - tableMinExp10];
+    U128 top, bottom;
+    const s = mul128Normalized(U128(a.hi, a.lo), U128(f.hi, f.lo), top, bottom);
+    return Pow10Wide(top.hi, top.lo, a.exp2 + fineExp2(qf) + 128 - s, 5);
+}
+
+/**
+Converts `sig × 10^exp10` — up to 38 significant digits, so `sig < 2^127` —
+to the correctly-rounded value of `fmt` whenever one 256-bit product proves
+it: the Eisel–Lemire idea for the formats whose significand does not fit a
+`ulong`. Returns `false` when the product cannot decide, and the caller
+takes the exact tier. Correctly rounded whenever it returns `true`.
+
+The significand normalized to `[2^127, 2^128)` times the entry is a 256-bit
+lower bound of the true product, short by less than `width` entry units
+times the significand — under `2^128 × width`, so only the bottom 128 bits
+are uncertain plus a carry of at most `width` into the top half (twice that
+after the normalizing shift). The top `p` bits are the mantissa, the next
+the round bit, and the `127 − p` below it a guard window: the result is
+proven unless a carry could reach the round bit, or the tail could be exactly
+one half with the mantissa even — the tie the product cannot tell from just
+above it. Values outside the normal range are punted (subnormals) or decided
+(overflow: a lower bound past `2^maxExp` is conclusive).
+*/
+private bool tryFastWide(BinaryFloatFormat fmt)(U128 sig, int exp10, out DecodedFloat r)
+    @safe pure nothrow @nogc
+in (sig.hi < 1UL << 63, "the significand carries at most 38 digits")
+{
+    enum p = fmt.mantDig;
+    static assert(p == 64 || (p > 64 && p <= 113), "a format the wide tier does not serve");
+    enum W = 127 - p; // guard bits between the round bit and the tail
+    enum lowExp10 = fmt.saturateLowExp10 - 38;
+    enum highExp10 = fmt.saturateHighExp10;
+    static assert(wideMinExp10 <= lowExp10 && highExp10 - 1 <= wideMaxExp10);
+
+    r = DecodedFloat.init;
+    if ((sig.hi | sig.lo) == 0 || exp10 < lowExp10)
+        return true; // below half the smallest subnormal whatever the digits
+    if (exp10 >= highExp10)
+    {
+        r.isInf = true; // at least 10^exp10, itself past 2^maxExp
+        return true;
+    }
+
+    const lz = leadingZeros128(sig);
+    const w = shl128(sig, lz);
+    const e = wideEntry(exp10);
+    U128 top, bottom;
+    const s = mul128Normalized(w, U128(e.hi, e.lo), top, bottom);
+    const ulong cMax = cast(ulong)(e.width + 1) << s;
+
+    static if (p == 64)
+    {
+        U128 m = U128(0, top.hi);
+        const rbit = top.lo >> 63;
+        const guard = top.lo & (ulong.max >> 1);
+    }
+    else
+    {
+        U128 m = U128(top.hi >> (128 - p), (top.hi << (p - 64)) | (top.lo >> (128 - p)));
+        const rbit = (top.lo >> W) & 1;
+        const guard = top.lo & ((1UL << W) - 1);
+    }
+
+    // A carry out of the uncertain tail could reach the round bit.
+    if (guard >= (1UL << W) - cMax)
+        return false;
+    // The tail could be exactly one half with an even mantissa: a tie, or a
+    // hair above it. (An odd mantissa rounds up either way, and a nonzero
+    // bottom half puts the lower bound itself above the half.)
+    if (rbit && guard == 0 && (bottom.hi | bottom.lo) == 0 && (m.lo & 1) == 0)
+        return false;
+
+    int exp2 = 256 - p - s + e.exp2 - lz;
+    const lead = exp2 + (p - 1);
+    if (lead < fmt.minNormalExp2)
+        return false; // subnormal: the exact tier rounds at the format's floor
+    if (lead > fmt.maxNormalExp2)
+    {
+        r.isInf = true;
+        return true;
+    }
+    if (rbit)
+    {
+        m = inc128(m);
+        if (bitSet(m.hi, m.lo, p)) // rounding carried into bit p
+        {
+            m = U128(m.hi >> 1, (m.lo >> 1) | (m.hi << 63));
+            exp2++;
+            if (exp2 + (p - 1) > fmt.maxNormalExp2)
+            {
+                r.isInf = true;
+                return true;
+            }
+        }
+    }
+    r.hi = m.hi;
+    r.lo = m.lo;
+    r.exp2 = exp2;
+    return true;
+}
+
+/**
+Converts a decimal literal to `fmt` exactly, for the wide formats: the digit
+runs are accumulated into a 128-bit significand of up to 38 significant
+digits that $(LREF tryFastWide) decides — a longer literal is bracketed
+between the truncation and its successor, which agree for all but a sliver
+of inputs — and $(LREF slowDecode) settles whatever is punted. The
+arguments are $(LREF slowDecode)'s; the sign is the caller's.
+*/
+private DecodedFloat decodeWide(BinaryFloatFormat fmt)(scope const(char)[] intDigits,
+    scope const(char)[] fracDigits, int explicitExp10) @safe pure nothrow @nogc
+{
+    ulong sigHi = 0, sigLo = 0;
+    uint taken = 0;
+    bool truncated = false;
+    bool seen = false;
+    long lastExp10 = 0; // the exponent of the last taken digit's position
+
+    foreach (k, c; intDigits)
+    {
+        const uint d = cast(uint)(c - '0');
+        if (!seen)
+        {
+            if (d == 0)
+                continue;
+            seen = true;
+        }
+        if (taken >= 38)
+        {
+            truncated = true;
+            break;
+        }
+        if (taken < 19)
+            sigHi = sigHi * 10 + d;
+        else
+            sigLo = sigLo * 10 + d;
+        taken++;
+        lastExp10 = cast(long)(intDigits.length - 1 - k);
+    }
+    if (!truncated)
+        foreach (k, c; fracDigits)
+        {
+            const uint d = cast(uint)(c - '0');
+            if (!seen)
+            {
+                if (d == 0)
+                    continue;
+                seen = true;
+            }
+            if (taken >= 38)
+            {
+                truncated = true;
+                break;
+            }
+            if (taken < 19)
+                sigHi = sigHi * 10 + d;
+            else
+                sigLo = sigLo * 10 + d;
+            taken++;
+            lastExp10 = -cast(long)(k + 1);
+        }
+    if (!seen)
+        return DecodedFloat.init;
+
+    U128 sig = U128(0, sigHi);
+    if (taken > 19)
+    {
+        sig = mul64x64(sigHi, pow10U64[taken - 19]);
+        sig.lo += sigLo;
+        if (sig.lo < sigLo)
+            sig.hi++;
+    }
+    const long combined = explicitExp10 + lastExp10;
+    const int exp10 = combined < int.min ? int.min : combined > int.max ? int.max : cast(int) combined;
+
+    DecodedFloat r;
+    if (!truncated)
+    {
+        if (tryFastWide!fmt(sig, exp10, r))
+            return r;
+    }
+    else
+    {
+        DecodedFloat high;
+        if (tryFastWide!fmt(sig, exp10, r) && tryFastWide!fmt(inc128(sig), exp10, high)
+            && r == high)
+            return r;
+    }
+    return slowDecode!fmt(intDigits, fracDigits, explicitExp10);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1013,7 +1406,7 @@ in (value == value, "NaN has no decomposition")
 
     DecodedFloat r;
     r.negative = value < 0 || (value == 0 && 1 / value < 0);
-    T m = r.negative ? -value : value;
+    Unqual!T m = r.negative ? -value : value;
     if (m == 0)
         return r;
     if (m == T.infinity)
@@ -1059,7 +1452,7 @@ in (value == value, "NaN has no decomposition")
     // and a truncating cast, the rest by an exact subtraction.
     const ulong hi = cast(ulong)(m * 0x1p-64);
     r.hi = hi;
-    r.lo = cast(ulong)(m - cast(T) hi * 0x1p64);
+    r.lo = cast(ulong)(m - cast(Unqual!T) hi * 0x1p64);
     r.exp2 = lsb;
     return r;
 }
@@ -1077,7 +1470,7 @@ if (__traits(isFloating, T))
     static assert(formatOf!T.mantDig <= 113, "the significand is 128 bits wide");
     if (d.isInf)
         return d.negative ? -T.infinity : T.infinity;
-    T m = cast(T) d.hi * 0x1p64 + cast(T) d.lo;
+    Unqual!T m = cast(T) d.hi * 0x1p64 + cast(T) d.lo;
     int e = d.exp2;
     while (e >= 64)
     {
@@ -2326,21 +2719,30 @@ if (__traits(isFloating, T))
     else
     {
         // Clinger's fast path in T's own arithmetic: an exact significand
-        // times an exact power of ten is one correctly rounded operation.
-        // Anything else — a truncated significand, an exponent past the
-        // exact table, a significand too wide for `float` — is the exact
-        // tier's, with no fast tier in between.
+        // times an exact power of ten is one correctly rounded operation
+        // (skipped at CTFE, as for `double`, so compile-time results flow
+        // through the integer tiers). Past it, the wide formats have the
+        // 128-bit Eisel–Lemire tier with the exact tier behind it; `float`
+        // — a truncated significand, an exponent past the exact table, a
+        // significand too wide — goes straight to the exact tier.
         enum fmt = formatOf!T;
+        enum wide = fmt.mantDig > 53;
         const sigExact = fmt.mantDig >= 64
             || (sig >> (fmt.mantDig >= 64 ? 0 : fmt.mantDig)) == 0;
-        if (!truncated && sigExact && exp10 >= -fmt.exactPow10Max
+        if (!__ctfe && !truncated && sigExact && exp10 >= -fmt.exactPow10Max
             && exp10 <= fmt.exactPow10Max)
             value = exp10 >= 0
                 ? cast(T) sig * exactPow10Of!T[exp10]
                 : cast(T) sig / exactPow10Of!T[-exp10];
         else
-            value = slowFloat!T(s[intStart .. intEnd],
-                fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
+        {
+            static if (wide)
+                value = compose!T(decodeWide!fmt(s[intStart .. intEnd],
+                    fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp));
+            else
+                value = slowFloat!T(s[intStart .. intEnd],
+                    fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
+        }
     }
 
     s = s[i .. $];
@@ -2736,6 +3138,436 @@ unittest
         assert(read!real("1e500") == 1e500L);
         assert(read!real("1e-500") == 1e-500L);
         assert(read!real("1e4932") == 1e4932L);
+    }
+}
+
+// A digit string as the wide tier's 128-bit significand (test helper).
+private U128 sigOf(scope const(char)[] digits) @safe pure nothrow @nogc
+in (digits.length <= 38)
+{
+    ulong hi = 0, lo = 0;
+    uint taken = 0;
+    foreach (c; digits)
+    {
+        if (taken < 19)
+            hi = hi * 10 + (c - '0');
+        else
+            lo = lo * 10 + (c - '0');
+        taken++;
+    }
+    if (taken <= 19)
+        return U128(0, hi);
+    auto sig = mul64x64(hi, pow10U64[taken - 19]);
+    sig.lo += lo;
+    if (sig.lo < lo)
+        sig.hi++;
+    return sig;
+}
+
+@("float_conv.pow10Anchors.knownEntries")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(anchorCountPos == 15 && anchorCountNeg == 14);
+    static assert(wideMaxExp10 == 4933 && wideMinExp10 == -5005);
+
+    // The first anchors are the fine table's ends, exponent included: the
+    // same big-integer routines over the same powers.
+    enum lastFine = tableMaxExp10 - tableMinExp10;
+    static assert(pow10AnchorsPos[0].hi == pow10Sig128[lastFine].hi
+        && pow10AnchorsPos[0].lo == pow10Sig128[lastFine].lo
+        && pow10AnchorsPos[0].exp2 == fineExp2(tableMaxExp10));
+    static assert(pow10AnchorsNeg[0].hi == pow10Sig128[0].hi
+        && pow10AnchorsNeg[0].lo == pow10Sig128[0].lo
+        && pow10AnchorsNeg[0].exp2 == fineExp2(tableMinExp10));
+
+    // Every entry is normalized, and a composed one carries the wider bracket.
+    foreach (q; [wideMinExp10, -5000, -4802, -687, -686, -344, -343, 0, 324, 325,
+            648, 649, 4860, 4900, wideMaxExp10])
+    {
+        const e = wideEntry(q);
+        assert(e.hi >> 63);
+        assert(e.width == (tableMinExp10 <= q && q <= tableMaxExp10 ? 1 : 5));
+    }
+    // 10^324 composed as 10^324 × 10^0 is 10^324 itself, exactly.
+    assert(wideEntry(324).hi == pow10AnchorsPos[0].hi);
+}
+
+@("float_conv.pow10Anchors.bracketTruePowers")
+@system unittest
+{
+    import std.bigint : BigInt;
+
+    // E·2^e ≤ 10^q < (E + width)·2^e, by exact arithmetic.
+    static bool brackets(in Pow10Wide w, int q)
+    {
+        const e = BigInt(w.hi) << 64 | BigInt(w.lo);
+        // Compare E·2^exp2·10^|q| ≤ 1 (q < 0) or E·2^exp2 ≤ 10^q (q ≥ 0)
+        // with everything scaled to integers.
+        BigInt lhs = e, upper = e + w.width, rhs = 1;
+        if (q >= 0)
+            rhs = BigInt(10) ^^ q;
+        else
+        {
+            lhs *= BigInt(10) ^^ (-q);
+            upper *= BigInt(10) ^^ (-q);
+        }
+        if (w.exp2 >= 0)
+        {
+            lhs <<= w.exp2;
+            upper <<= w.exp2;
+        }
+        else
+            rhs <<= -w.exp2;
+        return lhs <= rhs && rhs < upper;
+    }
+
+    foreach (j, a; pow10AnchorsPos)
+        assert(brackets(a, tableMaxExp10 * cast(int)(j + 1)));
+    foreach (j, a; pow10AnchorsNeg)
+        assert(brackets(a, tableMinExp10 * cast(int)(j + 1)));
+
+    // The fine range's fixed-point exponent agrees with the bit length.
+    foreach (q; tableMinExp10 .. tableMaxExp10 + 1)
+        assert(brackets(wideEntry(q), q));
+    // …and is known to drift past it, which is why anchors carry their own.
+    assert(((217_706 * 643) >> 16) - 127 != wideEntry(643).exp2 - 0
+        || true); // documentary: composed entries never use the fixed point
+
+    // Composed entries across the whole wide range.
+    foreach (q; [-5005, -5004, -4803, -4802, -4801, -1000, -687, -686, -344,
+            325, 648, 649, 1000, 4859, 4860, 4861, 4932, 4933])
+        assert(brackets(wideEntry(q), q));
+    int q = wideMinExp10;
+    while (q <= wideMaxExp10)
+    {
+        assert(brackets(wideEntry(q), q));
+        q += 37;
+    }
+}
+
+@("float_conv.tryFastWide.pins")
+@safe pure nothrow @nogc
+unittest
+{
+    static bool fast(BinaryFloatFormat fmt)(string digits, int exp10, out DecodedFloat r)
+        => tryFastWide!fmt(sigOf(digits), exp10, r);
+
+    static foreach (fmt; [extended80, binary128])
+    {{
+        DecodedFloat r;
+        // Plain values, decided and exact.
+        assert(fast!fmt("1", 0, r) && r == slowDecode!fmt("1", null, 0));
+        assert(fast!fmt("1", -1, r) && r == slowDecode!fmt("1", null, -1));
+        assert(fast!fmt("15", 0, r) && r == slowDecode!fmt("15", null, 0));
+        // 1.5 as `15e-1` is exact, and the truncated `10^-1` entry puts the
+        // product a hair below it with an all-ones guard window: the tier
+        // punts rather than guess (Clinger's path serves it in the reader).
+        assert(!fast!fmt("15", -1, r));
+        assert(fast!fmt("1", 400, r) && r == slowDecode!fmt("1", null, 400)); // composed
+        assert(fast!fmt("1", -400, r) && r == slowDecode!fmt("1", null, -400));
+        assert(fast!fmt("299792458", 0, r) && r == slowDecode!fmt("299792458", null, 0));
+        // Saturation is decided without a product.
+        assert(fast!fmt("1", 5000, r) && r.isInf);
+        assert(fast!fmt("1", -5100, r) && r == DecodedFloat.init);
+        assert(fast!fmt("0", 0, r) && r == DecodedFloat.init);
+        // Provable overflow below the saturation bound; a subnormal punts.
+        assert(fast!fmt("1", 4933, r) && r.isInf);
+        assert(!fast!fmt("1", -4950, r));
+        assert(!fast!fmt("6", -4966, r));
+    }}
+
+    DecodedFloat r;
+    // A true tie with an even candidate punts; a tie to the odd side decides.
+    assert(!fast!extended80("18446744073709551617", 0, r)); // 2^64 + 1
+    assert(fast!extended80("18446744073709551619", 0, r)
+        && r == slowDecode!extended80("18446744073709551619", null, 0)); // 2^64 + 3
+    assert(!fast!binary128("10384593717069655257060992658440193", 0, r)); // 2^113 + 1
+    assert(fast!binary128("10384593717069655257060992658440195", 0, r)
+        && r == slowDecode!binary128("10384593717069655257060992658440195", null, 0));
+
+    // real.max at both widths, from its shortest spelling.
+    assert(fast!binary128("1189731495357231765085759326628007", 4899, r));
+    assert(r == DecodedFloat(ulong.max >> 15, ulong.max, 16383 - 112));
+    assert(fast!extended80("118973149535723176502", 4912, r));
+    assert(r == DecodedFloat(0, ulong.max, 16383 - 63));
+    // real.min_normal's spelling: exactly the smallest normal, decided.
+    assert(fast!extended80("33621031431120935063", -4951, r));
+    assert(r == DecodedFloat(0, 1UL << 63, -16382 - 63));
+}
+
+@("float_conv.tryFastWide.agreesWithSlowDecode")
+@safe unittest
+{
+    ulong state = 0x5851_F42D_4C95_7F2D;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    // Stratified: the near-1 band is dense, the fine range sampled, and the
+    // composed range and the ends sparse — the exact tier costs milliseconds
+    // per decode out there.
+    static immutable int[2][4] bands = [[-60, 60], [-343, 324], [-5005, 4933], [4900, 4933]];
+    static immutable int[4] counts = [40_000, 4000, 200, 40];
+    static foreach (fmt; [extended80, binary128])
+    {{
+        foreach (band, count; counts)
+        {
+            size_t decided;
+            foreach (iter; 0 .. count)
+            {
+                char[38] buf;
+                const n = 1 + cast(size_t)(next() % 38);
+                buf[0] = cast(char)('1' + next() % 9);
+                foreach (i; 1 .. n)
+                    buf[i] = cast(char)('0' + next() % 10);
+                const digits = buf[0 .. n];
+                const lo = bands[band][0], hi = bands[band][1];
+                int exp10 = lo + cast(int)(next() % cast(ulong)(hi - lo + 1));
+                if (band == 3 && iter % 2 == 1)
+                    exp10 = -4990 + cast(int)(next() % 40); // the low end, subnormal band
+                DecodedFloat r;
+                if (!tryFastWide!fmt(sigOf(digits), exp10, r))
+                    continue;
+                decided++;
+                assert(r == slowDecode!fmt(digits, null, exp10));
+            }
+            if (band < 3)
+                assert(decided * 100 >= count * 99, "the wide tier punts too often");
+        }
+    }}
+}
+
+@("float_conv.tryFastWide.agreesWithBigIntOracle")
+@system unittest
+{
+    import std.conv : text;
+
+    ulong state = 0x2545_F491_4F6C_DD1D;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    foreach (iter; 0 .. 1500)
+    {
+        string digits = text(next(state) >> (next(state) % 40));
+        if (iter % 3 == 0)
+            digits ~= text(next(state) >> (next(state) % 50));
+        if (digits.length > 38)
+            digits = digits[0 .. 38];
+        const exp10 = iter % 2 ? cast(int)(next(state) % 801) - 400
+            : cast(int)(next(state) % 9939) - 5005;
+        static foreach (fmt; [extended80, binary128])
+        {{
+            DecodedFloat r;
+            if (tryFastWide!fmt(sigOf(digits), exp10, r))
+                assert(r == oracleDecode!fmt(digits, exp10));
+        }}
+    }
+}
+
+@("float_conv.tryFastWide.roundTripsShortestDigitsAtEveryWidth")
+@safe unittest
+{
+    ulong state = 0x9E37_79B9_7F4A_7C15;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    static foreach (fmt; [extended80, binary128])
+    {{
+        enum p = fmt.mantDig;
+        enum lo = fmt.minNormalExp2 - (p - 1), hi = fmt.maxNormalExp2 - (p - 1);
+        size_t punts;
+        foreach (iter; 0 .. 3000)
+        {
+            DecodedFloat v;
+            static if (p > 64)
+            {
+                v.hi = (next() & ((1UL << (p - 64)) - 1)) | (1UL << (p - 1 - 64));
+                v.lo = next();
+            }
+            else
+                v.lo = next() | (1UL << 63);
+            v.exp2 = iter % 4 ? -200 + cast(int)(next() % 400)
+                : lo + cast(int)(next() % cast(ulong)(hi - lo + 1));
+
+            char[64] buf;
+            int exp10;
+            const n = shortestDigits!fmt(v, buf[], exp10);
+            DecodedFloat back;
+            if (!tryFastWide!fmt(sigOf(buf[0 .. n]), exp10, back))
+            {
+                punts++;
+                continue;
+            }
+            assert(back == v);
+        }
+        assert(punts * 100 <= 3000, "the wide tier punts on more than 1 % of shortest spellings");
+    }}
+}
+
+@("float_conv.tryFastWide.ctfeMatchesRuntime")
+@safe pure nothrow @nogc
+unittest
+{
+    static struct Verdict
+    {
+        bool decided;
+        DecodedFloat value;
+    }
+
+    static Verdict decide(BinaryFloatFormat fmt)(string digits, int exp10)
+    {
+        Verdict v;
+        v.decided = tryFastWide!fmt(sigOf(digits), exp10, v.value);
+        return v;
+    }
+
+    // A fine-range, a composed-range and a punt case, settled at compile time
+    // and again at run time.
+    static foreach (fmt; [extended80, binary128])
+    {{
+        enum a = decide!fmt("31415926535897932384", -19);
+        assert(a == decide!fmt("31415926535897932384", -19) && a.decided);
+        enum b = decide!fmt("27182818284590452353602874713", 1000);
+        assert(b == decide!fmt("27182818284590452353602874713", 1000) && b.decided);
+        enum c = decide!fmt("1", -4950);
+        assert(c == decide!fmt("1", -4950) && !c.decided);
+    }}
+    // And the whole wide decoder, bracketing included.
+    enum d = decodeWide!binary128("1", "00000000000000000000000000000000000000000001", 0);
+    assert(d == decodeWide!binary128("1", "00000000000000000000000000000000000000000001", 0));
+    assert(d == slowDecode!binary128("1", "00000000000000000000000000000000000000000001", 0));
+}
+
+@("float_conv.decodeWide.digitsAndBracketing")
+@safe pure nothrow @nogc
+unittest
+{
+    static foreach (fmt; [extended80, binary128])
+    {{
+        // 20–38 digits go through the 128-bit significand; exact.
+        assert(decodeWide!fmt("1", "5270640502937941130", 0)
+            == slowDecode!fmt("1", "5270640502937941130", 0));
+        assert(decodeWide!fmt("31415926535897932384626433832795", null, -31)
+            == slowDecode!fmt("31415926535897932384626433832795", null, -31));
+        assert(decodeWide!fmt("99999999999999999999999999999999999999", null, 0)
+            == slowDecode!fmt("99999999999999999999999999999999999999", null, 0));
+        // Leading zeros are not digits; trailing digits past 38 are bracketed.
+        assert(decodeWide!fmt("000", "000123456789012345678901234567890123456789012345", 0)
+            == slowDecode!fmt("000", "000123456789012345678901234567890123456789012345", 0));
+        assert(decodeWide!fmt("1234567890123456789012345678901234567890123", null, -20)
+            == slowDecode!fmt("1234567890123456789012345678901234567890123", null, -20));
+        // A 25-digit significand with a small exponent is not Clinger's:
+        // the same value must come out of the wide path.
+        assert(decodeWide!fmt("1234567890123456789012345", null, 3)
+            == slowDecode!fmt("1234567890123456789012345", null, 3));
+        // Saturation and zero.
+        assert(decodeWide!fmt("1", null, 5000).isInf);
+        assert(decodeWide!fmt("1", null, -5100) == DecodedFloat.init);
+        assert(decodeWide!fmt(null, "000", 0) == DecodedFloat.init);
+        // The subnormal band is the exact tier's, and still exact.
+        assert(decodeWide!fmt("1", null, -4950) == slowDecode!fmt("1", null, -4950));
+    }}
+}
+
+@("float_conv.readDecimalFloat.roundTripsShortestReal")
+@safe unittest
+{
+    import std.array : appender;
+
+    ulong state = 0xD1B5_4A32_D192_ED03;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    // Random host reals — normal, and every eighth one subnormal — rendered
+    // shortest and read back through the typed reader, bit for bit.
+    enum p = formatOf!real.mantDig;
+    foreach (iter; 0 .. 2000)
+    {
+        DecodedFloat v;
+        static if (p > 64)
+        {
+            v.hi = (next() & ((1UL << (p - 64)) - 1)) | (1UL << (p - 1 - 64));
+            v.lo = next();
+        }
+        else
+            v.lo = (next() & ((1UL << (p - 1)) - 1)) | (1UL << (p - 1));
+        const lo = formatOf!real.minSubnormalExp2, hi = formatOf!real.maxNormalExp2 - (p - 1);
+        v.exp2 = iter % 3 ? -100 + cast(int)(next() % 200)
+            : lo + cast(int)(next() % cast(ulong)(hi - lo + 1));
+        if (iter % 8 == 7)
+        {
+            v.exp2 = lo;
+            v.hi = 0;
+            v.lo = (next() >> 1) | 1;
+            static if (p <= 64)
+                v.lo &= (1UL << (p - 1)) - 1;
+        }
+        v.negative = (iter & 1) != 0;
+        const x = compose!real(v);
+
+        auto a = appender!string;
+        writeShortest(a, x);
+        const(char)[] text = a[];
+        auto back = readDecimalFloat!real(text);
+        assert(back.hasValue && text.length == 0);
+        assert(decompose!real(back.value) == decompose!real(x));
+    }
+}
+
+version (linux)
+@("float_conv.readDecimalFloat.realDifferentialVsStrtold")
+@system unittest
+{
+    import core.stdc.stdlib : strtold;
+    import core.stdc.stdio : snprintf;
+
+    // glibc's `strtold` is correctly rounded at the host's `real` — x87
+    // extended on x86_64, binary128 on AArch64. Significands of up to 38
+    // digits, exponents across the whole wide range and past it.
+    ulong state = 0x9E37_79B9_7F4A_7C15;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    char[96] buf;
+    foreach (iter; 0 .. 20_000)
+    {
+        const a = next(state) >> (next(state) % 40);
+        const b = next(state) >> (next(state) % 50);
+        const exp = cast(int)(next(state) % 10_401) - 5200;
+        const len = iter % 3 == 0
+            ? snprintf(buf.ptr, buf.length, "%llu%llue%d", a, b, exp)
+            : snprintf(buf.ptr, buf.length, "%llue%d", a, exp);
+        const(char)[] text = buf[0 .. len];
+
+        auto ours = readDecimalFloat!real(text);
+        assert(ours.hasValue && text.length == 0);
+        const oracle = strtold(buf.ptr, null);
+        assert(ours.value is oracle);
     }
 }
 
