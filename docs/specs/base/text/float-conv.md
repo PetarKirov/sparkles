@@ -2,19 +2,20 @@
 
 _Audience: developers and coding agents building against `sparkles:base`. This
 document is normative and self-contained — it states what the module guarantees
-when converting decimal text to `float`, `double` or `real` and back. It is a format-agnostic text
-primitive with no grammar opinions beyond the decimal literal itself; the
-`sparkles:wired` JSON engine ([SPEC §11](../../wired/SPEC.md#11-the-native-json-engine))
-is one consumer. For the library overview see
+when converting decimal text to `float`, `double` or `real` and back. It is a
+format-agnostic text primitive with no grammar opinions beyond the decimal
+literal itself; the `sparkles:wired` JSON engine
+([SPEC §11](../../wired/SPEC.md#11-the-native-json-engine)) and its SDL codec
+([SDL SPEC §9](../../wired/sdl/SPEC.md#9-canonical-semantic-writer)) are its
+consumers. For the library overview see
 [`sparkles:base`](../../../libs/base/index.md)._
 
 ## 1. Overview
 
 `sparkles.base.text.float_conv` converts between decimal text and IEEE-754
-binary floating point **exactly** in both directions — `double` on the tiers
-it was built around, and every format `float`, `double` or `real` takes across
-this repository's targets (binary32, binary64, x87 extended, binary128) through
-one format-parameterized exact kernel:
+binary floating point **exactly** in both directions, for every format
+`float`, `double` or `real` takes across this repository's targets (binary32,
+binary64, x87 extended80, binary128) through one format-parameterized kernel:
 
 - **Parse** — the returned value is always the correctly-rounded
   (round-to-nearest, ties-to-even) value of the full decimal, no matter how
@@ -22,7 +23,7 @@ one format-parameterized exact kernel:
 - **Format** — the emitted text is the _shortest_ decimal string that
   re-parses to the identical bit pattern.
 
-The format is data, not a type (`BinaryFloatFormat`, §3): a kernel
+The format is data, not a type (`BinaryFloatFormat`, §2): a kernel
 parameterized by it can be exercised at 113 bits on a host whose `real` has
 53, which is how the binary128 path is verified on every machine rather than
 only on the one that has it.
@@ -38,7 +39,8 @@ only on the one that has it.
 ```d
 // The target format as data (§3), and a value as integers, for any format:
 struct BinaryFloatFormat { int mantDig, minExp, maxExp; /* + derived: */
-    int maxDigits10(); int exactPow10Max(); int maxExactDigits(); int decimalCapacity(); … }
+    int maxDigits10(); int exactPow10Max(); int maxExactDigits(); int decimalCapacity();
+    int saturateHighExp10(); int saturateLowExp10(); long explicitExp10Bound(size_t digitSpan); }
 enum binary32, binary64, extended80, binary128;   // every format `real` takes here
 template formatOf(T);                             // a float type's own format
 struct DecodedFloat { ulong hi, lo; int exp2; bool negative, isInf; }
@@ -72,52 +74,100 @@ ulong  doubleToBits(double d);
 double bitsToDouble(ulong bits);
 ```
 
-## 3. Parse guarantees
+The wide formats' fast tier (`decodeWide`, `tryFastWide`, the anchor table)
+is private: `readDecimalFloat!real` is its surface.
+
+## 3. Parse guarantees (`PRS`)
 
 `readDecimalFloat` accepts the grammar
 `[-]digits[.digits][(e|E)[±]digits]` and advances the cursor past the
-literal on success. Its result is decided by three tiers, fastest first —
-**every tier is exact**, so callers never observe a tier boundary:
+literal on success. Its result is decided by tiers, fastest first —
+**every tier is exact**, so callers never observe a tier boundary. Which
+tiers a format has:
 
-1. **Clinger fast path** — when the significand fits the 53-bit mantissa
-   and `|exp10| ≤ 22`, one FP multiply or divide is correctly rounded by
-   construction.
-2. **Eisel–Lemire** — a 128-bit multiply against a precomputed power-of-ten
-   significand table settles almost every remaining case in pure 64-bit
-   integer arithmetic. Cases it cannot _prove_ (true ties, subnormal
-   results, overflow boundaries, table-truncation ambiguity) fall through.
-3. **Exact big-decimal fallback** (`slowDouble`) — an arbitrary-precision
-   decimal (up to 800 significant digits in fixed storage, sticky
-   truncation bit beyond) scaled by exact power-of-two shifts; settles
-   every remaining input with exact ties-to-even information.
+| `formatOf!T`                                   | tier 1                          | tier 2                                                       | exact tier              |
+| ---------------------------------------------- | ------------------------------- | ------------------------------------------------------------ | ----------------------- |
+| `binary64` — `double`, and `real` where it is  | Clinger, in `double` arithmetic | Eisel–Lemire, 64 × 128 bits; bracketing past 19 digits       | `slowDouble`            |
+| `binary32` — `float`                           | Clinger, in `float` arithmetic  | —                                                            | `slowDecode!binary32`   |
+| `extended80` — `real` on x86_64                | Clinger, in `real` arithmetic   | wide Eisel–Lemire, 128 × 128 bits; bracketing past 38 digits | `slowDecode!extended80` |
+| `binary128` — `real` on AArch64 Linux, Android | Clinger, in `real` arithmetic   | wide Eisel–Lemire, 128 × 128 bits; bracketing past 38 digits | `slowDecode!binary128`  |
+| double-double (`mant_dig == 106`)              | —                               | —                                                            | `static assert`         |
 
-Inputs with more than 19 significant digits are first decided by
-_bracketing_: when the truncated 19-digit significand and its successor
-both round to the same `double`, that value is proven correct without the
-exact tier.
+1. **Clinger fast path** — when the significand fits the mantissa and the
+   power of ten is exactly representable (`|exp10| ≤ exactPow10Max`: 10, 22,
+   27, 48), one FP multiply or divide is correctly rounded by construction.
+   Skipped at CTFE for every format, so compile-time results flow through the
+   integer tiers.
+2. **Eisel–Lemire** — a wide multiply against a precomputed power-of-ten
+   significand table settles almost every remaining case in pure integer
+   arithmetic. Cases it cannot _prove_ (true ties, subnormal results,
+   overflow boundaries, table-truncation ambiguity) fall through. For
+   `double` this is the Go `strconv` formulation over a 19-digit `ulong`
+   significand. For the wide formats it is the same idea over a 38-digit
+   128-bit significand and a 256-bit product (below).
+3. **Exact big-decimal fallback** (`slowDecode`) — an arbitrary-precision
+   decimal in fixed storage sized by the format, with a sticky truncation
+   bit, scaled by exact power-of-two shifts; settles every remaining input
+   with exact ties-to-even information.
 
-**Saturation policy** — magnitudes above `double.max` become
-`±double.infinity`; positive magnitudes below half the smallest subnormal
-become `±0`. Subnormals are fully supported (`5e-324` parses to bit
-pattern `1`).
+Inputs with more significant digits than the tier-2 significand holds are
+first decided by _bracketing_: when the truncated significand and its
+successor both round to the same value, that value is proven correct without
+the exact tier.
 
-`fracDigits` passed to `slowDouble` may be empty; both digit runs may
-carry leading zeros. `exp10` passed to `tryFastDouble` is the decimal
-exponent of the significand's **last** digit.
+**The explicit exponent is bounded by the literal, not by a constant.** A
+literal's combined decimal exponent is the explicit one plus a digit-position
+offset of at most the digit span, so `readDecimalFloat` clamps the explicit
+exponent at `explicitExp10Bound(digitSpan)` — past which the value saturates
+whatever the digits say — and never earlier. A fixed clamp (the old 400)
+misread `0.<500 zeros>1e800` as 1e-101 and, on the wide formats, `1e500` as
+1e400.
+
+**Saturation policy** — magnitudes at or above `2^maxExp` become
+`±infinity`; positive magnitudes below half the smallest subnormal become
+`±0`. Subnormals are fully supported (`5e-324` parses to bit pattern `1`).
+`saturateHighExp10`/`saturateLowExp10` (40/−47, 310/−325, 4934/−4952,
+4934/−4967) are the point positions past which a decimal is decided by
+saturation alone.
+
+### The wide tier
+
+`tryFastWide!fmt` decides `sig × 10^q` for a significand of up to 38 digits
+(`sig < 2^127`) with one 256-bit product:
+
+- The significand normalized to `[2^127, 2^128)` times a 128-bit entry
+  `E` with `10^q ∈ [E, E + width) × 2^e` is a **lower bound** of the true
+  product, short by less than `width` entry units times the significand —
+  under `2^128 × width` — so only the bottom 128 bits are uncertain plus a
+  carry of at most `width` into the top half (twice that after the one
+  normalizing shift).
+- The top `p` bits of the top half are the mantissa, the next bit the round
+  bit, and the `127 − p` bits below it (63 at x87, 14 at binary128) a guard
+  window. The case is proven unless a carry could reach the round bit, or
+  the tail could be exactly one half with the mantissa even — the tie the
+  product cannot tell from just above it. Overflow is decided (a lower
+  bound past `2^maxExp` is conclusive); a subnormal result punts, so the
+  exact tier rounds at the format's floor.
+- **Entries.** The fine table covers `q ∈ [−343, 324]` with `width = 1`.
+  The wide formats need `[−5005, 4933]` — every `q` a 38-digit significand
+  can carry without the verdict being saturation alone. Twenty-nine
+  CTFE-generated anchors, `10^(324·j)` for `j = 1..15` and `10^(−343·j)`
+  for `j = 1..14`, each stored with the exact exponent of its big integer,
+  compose with a fine entry into a normalized 128-bit entry of `width = 5`
+  for the rest of the range. The fixed-point exponent formula the fine table
+  uses is exact only on the fine range (it first drifts at `|q| = 643`),
+  which is why composed entries carry the exponent their product actually
+  has.
+- **Punt rate.** Under 1 % of shortest spellings, and about `(width + 1) ·
+2^(p − 127)` of random inputs — 4 in 2^14 at binary128 in the fine range,
+  12 in 2^14 in the composed range — go to the exact tier; the subnormal
+  band (`1e-4932 … 1e-4966`) always does.
+- **Result shape.** The tier returns a `DecodedFloat` — significand `hi:lo`,
+  exponent of its last bit, the overflow verdict — and the existing exact
+  `compose!T` turns it into the native value by power-of-two scaling, so no
+  bit assembly was added.
 
 ### Any format
-
-`readDecimalFloat!T` routes on `formatOf!T` — the full
-`(mant_dig, min_exp, max_exp)` triple, never `mant_dig` alone (x87 with a
-53-bit significand, Phobos' `ieeeExtended53`, has x87's exponent range):
-
-| `formatOf!T`                                   | fast tier                                 | exact tier              |
-| ---------------------------------------------- | ----------------------------------------- | ----------------------- |
-| `binary64` — `double`, and `real` where it is  | Clinger, Eisel–Lemire, bracketing (above) | `slowDouble`            |
-| `binary32` — `float`                           | Clinger, in `float` arithmetic            | `slowDecode!binary32`   |
-| `extended80` — `real` on x86_64                | Clinger, in `real` arithmetic             | `slowDecode!extended80` |
-| `binary128` — `real` on AArch64 Linux, Android | Clinger, in `real` arithmetic             | `slowDecode!binary128`  |
-| double-double (`mant_dig == 106`)              | —                                         | `static assert`         |
 
 - **The exact tier is one kernel.** `slowDecode!fmt` is `slowDouble`'s
   algorithm with its four `double`-specific parts derived from the format —
@@ -128,32 +178,45 @@ exponent of the significand's **last** digit.
   is compared against expands completely inside the buffer, and binary128's
   ties run to 11 564 digits. `decimalCapacity` is 200 / 800 / 11 600 / 11 600
   — 800 being what `slowDouble` always had.
-- **No Eisel–Lemire above 53 bits.** For binary128 its table would be
-  ~9 900 × 256-bit entries (317 KB of rodata) and ~`4.5e8` CTFE limb
-  operations to generate, against §5's two-second rebuild. The exact tier
-  costs on the order of milliseconds at `real.max`'s magnitude; nothing calls
-  it in a loop, and the writer (§4) never parses candidates.
 - **`float` is not the `double` result cast down.** A decimal a hair below
   a `float` midpoint rounds onto it as a `double`, and the tie then breaks to
   even — the classic `(float) strtod(s) != strtof(s)`. Clinger's division
   side runs in `float` for the same reason.
-- **The result is integers first.** `slowDecode` returns a `DecodedFloat` —
-  significand `hi:lo`, the exponent of its last bit, the overflow verdict —
-  and `compose!T` turns it into a native value by exact power-of-two scaling
-  (no bit punning: D has no portable `realToBits`, and x87's explicit integer
-  bit makes synthesis format-specific). `decompose!T` is the inverse. Both
-  run at CTFE and use nothing from Phobos.
+- **The result is integers first.** `slowDecode` and `tryFastWide` return a
+  `DecodedFloat`, and `compose!T` turns it into a native value by exact
+  power-of-two scaling (no bit punning: D has no portable `realToBits`, and
+  x87's explicit integer bit makes synthesis format-specific). `decompose!T`
+  is the inverse. Both run at CTFE, accept a `const` argument, and use
+  nothing from Phobos.
 - **Environment.** The fast tier and `compose` are floating-point arithmetic
-  and assume round-to-nearest-even with traps masked; `std.math.hardware.
-FloatingPointControl` can change both and this module does not defend
-  against it. The exact tier is integer arithmetic and does not care.
-- **Stack.** The decoder's digits live in its frame — 11.6 KB at binary128
-  — and a druntime `Fiber`'s default stack is 16 KiB on 4 KiB-page Linux.
+  and assume round-to-nearest-even with traps masked;
+  `std.math.hardware.FloatingPointControl` can change both and this module
+  does not defend against it. The integer tiers do not care.
+- **Stack.** The decoder's digits live in its frame — 11.6 KB at binary128 —
+  and a druntime `Fiber`'s default stack is 16 KiB on 4 KiB-page Linux.
   Both directions at `real.max`'s magnitude are tested to fit a 32 KiB
   fiber in the unoptimized test build, whose frames are about twice the
-  shipping build's; give a fiber that decodes wide `real`s room.
+  shipping build's; give a fiber that decodes wide `real`s room. The wide
+  tier adds a few hundred bytes.
 
-## 4. Format guarantees
+### Requirements
+
+| ID      | Requirement                                                                                                                                                                                         | Status  |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `PRS1`  | `readDecimalFloat!T` must return the correctly-rounded (ties-to-even) value of the full literal for `float`, `double` and `real` at binary64, extended80 and binary128, however many digits it has. | full    |
+| `PRS2`  | Every tier must be exact: a fast tier returns a value only when it can prove it is the correctly-rounded one, and punts otherwise.                                                                  | full    |
+| `PRS3`  | The explicit exponent must be bounded by `explicitExp10Bound(digitSpan)` and never by a fixed magnitude; a run of zeros paid for by the exponent decodes to the value it names.                     | full    |
+| `PRS4`  | Magnitudes at or past `2^maxExp` must read as `±infinity`, and positive magnitudes below half the smallest subnormal as `±0`; subnormals must be exact.                                             | full    |
+| `PRS5`  | The wide formats must have a fast tier that decides typical spellings (21 digits at x87, 36 at binary128) without the exact tier, over the whole exponent range they can carry.                     | full    |
+| `PRS6`  | The exact tier must agree with an independent big-integer oracle at 24, 53, 64 and 113 bits, and with libc on hosts that have a correctly-rounded one.                                              | full    |
+| `PRS7`  | `float` must be read at its own width, never as a narrowed `double`.                                                                                                                                | full    |
+| `PRS8`  | `compose ∘ decompose` must be the identity, bit for bit, for every finite value of every type, and `compose` over `slowDecode!binary64` must land on `slowDouble`'s bits.                           | full    |
+| `PRS9`  | Both directions at `real.max`'s magnitude must run on a 32 KiB fiber in the unoptimized test build.                                                                                                 | full    |
+| `PRS10` | Double-double `real` is rejected at compile time rather than mis-decoded.                                                                                                                           | full    |
+| `PRS11` | The fast tier and `compose` assume the default floating-point environment; the module does not defend against `FloatingPointControl`.                                                               | decided |
+| `PRS12` | The subnormal band of the wide formats takes the exact tier; a `p'`-bit variant of the wide tier for it is a follow-up, not a v1 requirement.                                                       | decided |
+
+## 4. Format guarantees (`FMT`)
 
 `formatShortestDouble` renders the shortest decimal representation that
 re-parses to the identical bits (Schubfach, with a full-precision fast
@@ -219,59 +282,142 @@ it, over exact big integers sized by the format:
   wins with an exact tie to the even digit — Schubfach's conventions, so on
   `double` the digits agree with `formatShortestDouble` exactly.
 - `shortestDigits!T` decomposes a native value first; `writeShortest`
-  renders any type as `[-]d[.ddd]e[-]x` plus `nan`/`inf`/`-inf`.
+  renders any type as `[-]d[.ddd]e[-]x` plus `nan`/`inf`/`-inf` — **always
+  scientific**. A consumer whose grammar has no exponent expands it: the SDL
+  writer turns `1.189…e4932` into a 4 933-digit token
+  ([SDL SPEC §9](../../wired/sdl/SPEC.md#9-canonical-semantic-writer)).
   `formatShortestDouble` keeps Schubfach and its own notation for the JSON
   hot path.
 - The result never exceeds `maxDigits10` digits (9 / 17 / 21 / 36), and is
   often shorter: `real.max` at binary128 is 34 digits.
 
-## 5. The power-of-ten table
+### Requirements
 
-One CTFE-generated table serves both directions: for each `q` in
+| ID     | Requirement                                                                                                                                                   | Status  |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `FMT1` | `formatShortestDouble` must round-trip every finite `double`, `-0.0` and subnormals included, bit for bit, and no spelling with fewer significant digits may. | full    |
+| `FMT2` | `formatShortestDouble` must follow ECMAScript notation except for the signed zero and the trailing `.0`, and render non-finite values as `nan`/`inf`/`-inf`.  | full    |
+| `FMT3` | `shortestDigits!fmt` must produce, for every format, the shortest digits any correctly-rounded reader maps back to the value, consulting no reader.           | full    |
+| `FMT4` | On `double`, `shortestDigits` must agree with Schubfach digit for digit.                                                                                      | full    |
+| `FMT5` | `writeShortest` renders every type in scientific notation; expansion to an exponent-free grammar is the consumer's.                                           | decided |
+| `FMT6` | A result never exceeds `maxDigits10` digits.                                                                                                                  | full    |
+
+## 5. Tables and CTFE (`CTF`)
+
+One CTFE-generated fine table serves both directions: for each `q` in
 `[-343, 324]`, the top 128 bits of `10^q` normalized to `[2^127, 2^128)`
 and **truncated** (the yyjson convention; the Schubfach writer applies its
-own ceiling adjustment). Generation is exact big-integer arithmetic at
-compile time — there is no external generator step to keep in sync, and a
-full rebuild of `sparkles:base` stays around two seconds.
-
-## 6. CTFE
+own ceiling adjustment). The 29 anchors of the wide tier are the same
+routines over `5^(324j)` and `5^(−343j)`, with a limb capacity sized for
+`5^4860`. Generation is exact big-integer arithmetic at compile time — there
+is no external generator step to keep in sync.
 
 `readDigits`, `tryFastDouble`, `slowDouble`, `slowDecode`, `slowFloat`,
 `readDecimalFloat`, `decompose`, `compose`, `shortestDigits`, `doubleToBits`,
-and `bitsToDouble` are CTFE-callable; at compile time the `double` Clinger
-tier is skipped so results flow through the deterministic integer tiers, and
-tests pin CTFE results bit-identical to runtime ones — including a binary128
-decode and a binary64 shortest rendering settled entirely at compile time.
-`formatShortestDouble` is runtime-only (pointer-based digit rendering).
+and `bitsToDouble` are CTFE-callable; the Clinger tier is skipped at compile
+time so results flow through the deterministic integer tiers, and tests pin
+CTFE results bit-identical to runtime ones — including a binary128 decode
+through the wide tier and a binary64 shortest rendering settled entirely at
+compile time. `formatShortestDouble` is runtime-only (pointer-based digit
+rendering).
+
+The anchors cost a forced debug rebuild of `sparkles:base` about half a
+second, measured with `dub build :base --force` on LDC 1.42: 1.48 s → 1.83 s
+on an Apple M4 Max, 3.43 s → 3.99 s on an AMD Ryzen 9 7940HX (inside
+`nix develop -c`, three runs each).
+
+### Requirements
+
+| ID     | Requirement                                                                                                                                 | Status  |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `CTF1` | Every power-of-ten entry — fine or anchor — must bracket the true power: `E·2^e ≤ 10^q < (E + width)·2^e`, by exact big-integer arithmetic. | full    |
+| `CTF2` | The functions listed above must be CTFE-callable, with results bit-identical to runtime.                                                    | full    |
+| `CTF3` | The tables are generated at compile time from exact arithmetic; no generated source is checked in.                                          | decided |
+| `CTF4` | The module must stay importable without druntime (`-betterC` consumers of the digit writers).                                               | full    |
+
+## 6. Cost
+
+`dub test :base -b bench -- --bench -i float_conv.bench --group-by=format`,
+medians per call. Apple M4 Max, LDC 1.42, macOS; and the x86_64 host where
+`real` is extended80: AMD Ryzen 9 7940HX, the devshell's LDC, Linux.
+
+| format     | tier         | input                 | M4 Max |  7940HX |
+| ---------- | ------------ | --------------------- | -----: | ------: |
+| binary64   | fast         | `2.99792458`          | 1.6 ns |  3.3 ns |
+| binary64   | Schubfach    | `1.5599`              | 8.6 ns | 13.7 ns |
+| binary64   | exact        | 22 digits near 1      | 187 ns |  216 ns |
+| binary64   | exact        | `double.max` spelling |  21 µs |   17 µs |
+| binary64   | Steele–White | near 1.5              | 365 ns |  406 ns |
+| extended80 | fast (wide)  | 20 digits near 1      |  26 ns |   13 ns |
+| extended80 | fast (wide)  | `1.19e4932`, composed |  29 ns |   19 ns |
+| extended80 | exact        | 20 digits near 1      | 342 ns |  354 ns |
+| extended80 | exact        | `1.19e4932`           | 4.3 ms |  2.7 ms |
+| extended80 | exact        | `3.36e-4932`          | 1.9 ms |  2.7 ms |
+| extended80 | Steele–White | `real.max`            | 114 µs |  117 µs |
+| binary128  | fast (wide)  | 20 digits near 1      |  27 ns |       — |
+| binary128  | fast (wide)  | `1.19e4932`, composed |  29 ns |       — |
+| binary128  | exact        | 20 digits near 1      | 385 ns |       — |
+| binary128  | exact        | `1.19e4932`           | 4.2 ms |       — |
+| binary128  | Steele–White | `real.max`            | 154 µs |       — |
+
+The exact tier's cost at the exponent extremes is the bound for untrusted
+input: a value the wide tier punts — the subnormal band, or one of the
+2^-14-scale window cases — costs milliseconds per token there. The typical
+`real` spelling, at any exponent, costs tens of nanoseconds.
 
 ## 7. Verification
 
-- Exactness pins: `1e22`/`1e23` (the canonical halfway literal),
-  `double.max` and its overflowing neighbor, `2^53 ± 1` ties, the largest
-  subnormal (`2.2250738585072011e-308`), `5e-324`, both saturation ends.
-- 20k-case in-tree differential against glibc `strtod` (bit-exact, 100%
-  resolution); a 1M-case sweep validated the table convention change.
-- 100k random-bit-pattern round-trip corpus (format → parse → identical
-  bits) spanning every exponent regime.
-- Shortest-ness differential: for random values, one significant digit
-  fewer (via `%.*g`) never round-trips.
-- **Every width, on every host.** An independent correctly-rounded oracle by
-  `std.bigint` division agrees with `slowDecode` at 24, 53, 64 and 113 bits
-  over ties at each width (`2^p + 1`), the double edges, both ends of
-  binary128's range and a 1 500-input corpus of up to 38 digits; on Linux
-  `binary32` and `readDecimalFloat!float` are also checked against `strtof`,
-  including the decimal on which `(float) strtod` gets it wrong.
-- `shortestDigits!binary64` agrees with `f64ToDecimal` digit for digit over
-  the 100k corpus; at all four widths every result decodes back exactly and
-  neither of the two nearest decimals one digit shorter does.
-- `compose ∘ decompose` is the identity, bit for bit, over the corners of all
-  three types and 5 000 random double patterns, and `compose` over
-  `slowDecode!binary64` lands on the very bits `slowDouble` assembles.
-- Our `formatOf!T` classification agrees with Phobos' `floatTraits!T` for
-  every type the host has; both directions at `real.max`'s magnitude run on
-  a 32 KiB fiber in the unoptimized test build.
+```bash
+dub test :base                                                           # every pin and differential below
+dub test :base -- -t 1                                                   # the 512 KiB worker stack
+dub test :base -b bench -- --bench -i float_conv.bench --group-by=format # §6
+dub test :base -- --better-c                                             # CTF4
+nix run .#ci -- --verify --files docs/specs/base/text/float-conv.md      # the example above
+```
+
+Each requirement is pinned by named tests in `float_conv.d`:
+
+- `PRS1`/`PRS2`: `readDecimalFloat.grammar`, `.typed`, `.wideDigits`,
+  `.roundTripsShortestReal`; the libc differentials
+  `readDecimalFloat.differentialVsStrtod` (20 k literals, zero runs
+  included), `.floatDifferentialVsStrtof`, `slowDecode.binary32DifferentialVsStrtof`
+  on every Posix host, and `readDecimalFloat.realDifferentialVsStrtold` on
+  Linux (glibc, 20 k literals of up to 38 digits, exponents to ±5200);
+  `tryFastWide.agreesWithSlowDecode` (a stratified 44 k-case corpus per
+  width, decision rate ≥ 99 % outside the subnormal band),
+  `tryFastWide.agreesWithBigIntOracle`, `tryFastWide.pins`,
+  `decodeWide.digitsAndBracketing`.
+- `PRS3`: `readDecimalFloat.grammar` (the zero-run literals),
+  `BinaryFloatFormat.derivations` (the bounds); the JSON reader's
+  `reader.numbers.pins` carries the same literals.
+- `PRS4`: `tryFastDouble.pins`, `slowDouble.exactPins`, `slowDecode.fields`,
+  `tryFastWide.pins`.
+- `PRS5`: `tryFastWide.roundTripsShortestDigitsAtEveryWidth` (under 1 %
+  punts), `float_conv.bench.tiers`.
+- `PRS6`: `slowDecode.agreesWithBigIntOracle` (ties at every width, the
+  double edges, both ends of binary128, a 1 500-input corpus of up to 38
+  digits) and the libc differentials.
+- `PRS7`: `readDecimalFloat.typed` (the `(float) strtod` trap).
+- `PRS8`: `compose.invertsDecompose`, `compose.matchesTheBitAssembly`,
+  `decompose.canonicalFields`.
+- `PRS9`: `slowDecode.fitsAFiberStack`.
+- `PRS10`: the `static assert` in `compose`; `BinaryFloatFormat.agreesWithPhobos`
+  pins the classification against `floatTraits`.
+- `FMT1`/`FMT2`: `formatShortestDouble.pins`, `.roundTripCorpus` (100 k
+  random bit patterns), `.shortestVsPrintf`.
+- `FMT3`/`FMT6`: `shortestDigits.pins`,
+  `shortestDigits.roundTripsAndIsShortestAtEveryWidth`.
+- `FMT4`: `shortestDigits.agreesWithSchubfach` (100 k values, digit for
+  digit).
+- `FMT5`: `writeShortest.notation`; the SDL writer's `checkFloatingRoundTrip`
+  is the consumer-side proof.
+- `CTF1`: `pow10Table.knownEntries`, `pow10Anchors.knownEntries`,
+  `pow10Anchors.bracketTruePowers`.
+- `CTF2`: `tryFastDouble.ctfeMatchesRuntime`, `tryFastWide.ctfeMatchesRuntime`,
+  `slowDecode.fields`, `shortestDigits.pins` (the `static assert`s).
 
 ---
 
 → [`sparkles:wired` SPEC §11](../../wired/SPEC.md#11-the-native-json-engine) — the JSON engine consuming these primitives
+→ [SDL SPEC §9](../../wired/sdl/SPEC.md#9-canonical-semantic-writer) — the exponent-free consumer of `writeShortest`
 → [case-style](./case-style.md) — sibling text primitive specification
