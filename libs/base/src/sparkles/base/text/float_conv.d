@@ -68,16 +68,93 @@ format can be exercised at 113 bits on a host whose `real` has 53, which is
 how the binary128 path is tested on every machine rather than only on the
 one that has it.
 
-The three fields are D's own `T.mant_dig`, `T.min_exp` and `T.max_exp`; the
-rest is derived, and each derivation is pinned by a test.
+The reduced-precision formats — IEEE binary16 ($(LREF binary16)), bfloat16
+($(LREF bfloat16)) and the OCP Microscaling element formats ($(LREF fp8e5m2),
+$(LREF fp8e4m3), $(LREF fp6e2m3), $(LREF fp6e3m2), $(LREF fp4e2m1)) — are the
+same data; D has no type for them, so `sparkles.base.custom_float` provides
+one per format over the bit codec here ($(LREF encode), $(LREF decode)).
+
+The first three fields are D's own `T.mant_dig`, `T.min_exp` and `T.max_exp`;
+the fourth says how the top exponent field is spent, which IEEE fixes but the
+OCP formats do not: E4M3 keeps it finite except for a single NaN, and the
+6- and 4-bit formats have neither NaN nor infinity. The rest is derived, and
+each derivation is pinned by a test.
 */
 struct BinaryFloatFormat
 {
+    /// What the top exponent field encodes.
+    enum Specials
+    {
+        ieee,    /// reserved: a zero significand is `±infinity`, any other NaN
+        nanOnly, /// finite, except the all-ones significand — the single NaN
+        none,    /// finite throughout: no infinity and no NaN
+    }
+
     int mantDig; /// significand bits including the leading one: `T.mant_dig`
     int minExp;  /// `T.min_exp`: the smallest normal is `2^(minExp - 1)`
     int maxExp;  /// `T.max_exp`: every finite value is below `2^maxExp`
+    Specials specials = Specials.ieee; /// how the top exponent field is spent
 
 const @safe pure nothrow @nogc:
+
+    /// Whether the format encodes `±infinity` — only under `Specials.ieee`.
+    bool hasInfinity() => specials == Specials.ieee;
+
+    /// Whether the format has a NaN — every kind but `Specials.none`.
+    bool hasNaN() => specials != Specials.none;
+
+    /// The exponent bias: a field value `f` denotes the leading exponent
+    /// `f - bias`, and the smallest normal's field is 1 — 127, 1023, 16 383;
+    /// 15 at binary16, 7 at E4M3, 1 at E2M1.
+    int bias() => 2 - minExp;
+
+    /// Width of the exponent field. The normal leading exponents number
+    /// `maxExp - minExp + 1`; the field spends one value on zero/subnormals
+    /// and, under `Specials.ieee`, one on the specials — so the field holds
+    /// `maxExp - minExp + 3` (or `+ 2`) values, which is a power of two for
+    /// every format described here (8, 11, 15; 5, 8, 5, 4, 2, 3, 2).
+    int expBits()
+    {
+        const values = maxExp - minExp + (specials == Specials.ieee ? 3 : 2);
+        int k = 0;
+        while ((1 << k) < values)
+            k++;
+        assert((1 << k) == values, "the exponent range is not a whole field");
+        return k;
+    }
+
+    /// Stored significand bits: the leading one is implicit — 23, 52, 112.
+    int mantBits() => mantDig - 1;
+
+    /// Bits of the IEEE interchange layout, sign included — 32, 64, 128;
+    /// 16, 16, 8, 8, 6, 6, 4. (x87 extended80 stores its leading bit and
+    /// is not this layout; the codec rejects it.)
+    int storageBits() => 1 + expBits + mantBits;
+
+    /// The largest exponent field value that denotes a finite value: the top
+    /// field under `Specials.ieee` is the specials, otherwise it is finite.
+    int maxFiniteExpField() => (1 << expBits) - (specials == Specials.ieee ? 2 : 1);
+
+    /// The significand of the largest finite value, leading bit included:
+    /// all ones, or one below that under `Specials.nanOnly`, where the
+    /// all-ones pattern at the top field is the NaN — `2^mantDig - 1`, or
+    /// 14 at E4M3 (`448 = 14 × 2^5`). Formats above 64 bits have no `ulong`
+    /// significand and no use for this.
+    ulong maxFiniteSignificand()
+    in (mantDig <= 64, "the significand does not fit a ulong")
+        => (mantDig == 64 ? ulong.max : (1UL << mantDig) - 1)
+            - (specials == Specials.nanOnly ? 1 : 0);
+
+    /// `T.max_10_exp`: the largest `k` with `10^k` below the largest finite
+    /// value, `floor(maxExp·log10 2)` — 38, 308, 4 932; 4 at binary16, 2 at
+    /// E4M3, 0 at E2M1. (E4M3's top binade is short by one step; the floor
+    /// is unaffected at every width in use.)
+    int max10Exp() => cast(int)((cast(long) maxExp * 30_103) / 100_000);
+
+    /// `T.min_10_exp`: the smallest `k` with `10^k` a normal value,
+    /// `ceil((minExp - 1)·log10 2)` — −37, −307, −4 931; −4 at binary16, −1 at
+    /// E4M3, 0 at E2M1 (whose smallest normal is 1).
+    int min10Exp() => -cast(int)((cast(long)(1 - minExp) * 30_103) / 100_000);
 
     /// Exponent of the smallest normal's leading bit.
     int minNormalExp2() => minExp - 1;
@@ -124,7 +201,7 @@ const @safe pure nothrow @nogc:
 
     /// Point positions past which a decimal saturates. A decimal with point
     /// position `P` lies in `[10^(P-1), 10^P)`: at or above the high bound it
-    /// is at or past `2^maxExp` and is infinity — 40, 310, 4 934 and 4 934.
+    /// is at or past `2^maxExp` and overflows — 40, 310, 4 934 and 4 934.
     /// Both bounds also limit the shifting $(LREF slowDecode) does.
     int saturateHighExp10()
         => cast(int)((cast(long) maxExp * 30_103 + 99_999) / 100_000) + 1;
@@ -163,11 +240,64 @@ enum BinaryFloatFormat extended80 = BinaryFloatFormat(64, -16381, 16384);
 /// IEEE binary128: `real` on AArch64 Linux and Android, and on RISC-V.
 enum BinaryFloatFormat binary128 = BinaryFloatFormat(113, -16381, 16384);
 
-/// The format of a floating-point type, read off its own properties.
+/// IEEE binary16, "half": 1 + 5 + 10 bits, bias 15; ±65 504 down to
+/// `2^-24`. Storage only on every host this repository targets.
+enum BinaryFloatFormat binary16 = BinaryFloatFormat(11, -13, 16);
+/// bfloat16: binary32's sign and exponent over an 8-bit significand — the
+/// top half of a `float`, so its range is `float`'s (`2^-133` to
+/// `(2 - 2^-7)·2^127`) at three significant digits.
+enum BinaryFloatFormat bfloat16 = BinaryFloatFormat(8, -125, 128);
+/// OCP Microscaling FP8 E5M2: bias 15, IEEE specials — ±57 344 down to
+/// `2^-16`; `S.11111.00` is infinity, the rest of that field NaN.
+enum BinaryFloatFormat fp8e5m2 = BinaryFloatFormat(3, -13, 16);
+/// OCP Microscaling FP8 E4M3: bias 7, no infinity, one NaN (`S.1111.111`);
+/// the top exponent field is otherwise finite, so the largest value is
+/// `448 = 1.75 × 2^8` (`S.1111.110`), and the smallest subnormal `2^-9`.
+enum BinaryFloatFormat fp8e4m3 = BinaryFloatFormat(4, -5, 9, BinaryFloatFormat.Specials.nanOnly);
+/// OCP Microscaling FP6 E2M3: bias 1, neither infinity nor NaN — 0.125
+/// (`S.00.001`) to 7.5 (`S.11.111`); normals start at 1.
+enum BinaryFloatFormat fp6e2m3 = BinaryFloatFormat(4, 1, 3, BinaryFloatFormat.Specials.none);
+/// OCP Microscaling FP6 E3M2: bias 3, neither infinity nor NaN — 0.0625
+/// (`S.000.01`) to 28 (`S.111.11`); normals start at 0.25.
+enum BinaryFloatFormat fp6e3m2 = BinaryFloatFormat(3, -1, 5, BinaryFloatFormat.Specials.none);
+/// OCP Microscaling FP4 E2M1: bias 1, neither infinity nor NaN — the
+/// sixteen patterns ±{0, 0.5, 1, 1.5, 2, 3, 4, 6}.
+enum BinaryFloatFormat fp4e2m1 = BinaryFloatFormat(2, 1, 3, BinaryFloatFormat.Specials.none);
+
+/**
+Whether `T` is a type this module converts: a native floating-point type,
+or any type that names its format as `enum BinaryFloatFormat format` and
+carries the bits as `bits` — the `sparkles.base.custom_float` storage types,
+or a user's own.
+*/
+enum bool isFloatLike(T) = __traits(isFloating, T)
+    || is(typeof(T.format) : BinaryFloatFormat);
+
+/// The format of a floating-point type: read off a native type's own
+/// properties, or declared by a `format`-bearing storage type.
 template formatOf(T)
-if (__traits(isFloating, T))
+if (isFloatLike!T)
 {
-    enum BinaryFloatFormat formatOf = BinaryFloatFormat(T.mant_dig, T.min_exp, T.max_exp);
+    static if (__traits(isFloating, T))
+        enum BinaryFloatFormat formatOf = BinaryFloatFormat(T.mant_dig, T.min_exp, T.max_exp);
+    else
+        enum BinaryFloatFormat formatOf = T.format;
+}
+
+/// The unsigned integer that holds a format's IEEE interchange bits:
+/// `ubyte` up to 8 bits, `ushort` up to 16, `uint` up to 32, `ulong` up to
+/// 64. Wider formats have no single-integer image.
+template BitsOf(BinaryFloatFormat fmt)
+if (fmt.storageBits <= 64)
+{
+    static if (fmt.storageBits <= 8)
+        alias BitsOf = ubyte;
+    else static if (fmt.storageBits <= 16)
+        alias BitsOf = ushort;
+    else static if (fmt.storageBits <= 32)
+        alias BitsOf = uint;
+    else
+        alias BitsOf = ulong;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -891,6 +1021,28 @@ in (0 <= n && n < 128)
     return U128((a.hi << n) | (a.lo >> (64 - n)), a.lo << n);
 }
 
+/// `a >> n` for `0 ≤ n < 128`.
+private U128 shr128(U128 a, int n) @safe pure nothrow @nogc
+in (0 <= n && n < 128)
+{
+    if (n == 0)
+        return a;
+    if (n >= 64)
+        return U128(0, a.hi >> (n - 64));
+    return U128(a.hi >> n, (a.lo >> n) | (a.hi << (64 - n)));
+}
+
+/// The low `n` bits of `a`, for `0 ≤ n ≤ 128`.
+private U128 lowBits128(U128 a, int n) @safe pure nothrow @nogc
+in (0 <= n && n <= 128)
+{
+    if (n >= 128)
+        return a;
+    if (n >= 64)
+        return U128(a.hi & ((1UL << (n - 64)) - 1), a.lo);
+    return U128(0, a.lo & ((1UL << n) - 1));
+}
+
 /// `a + 1`.
 private U128 inc128(U128 a) @safe pure nothrow @nogc
 {
@@ -1276,6 +1428,7 @@ struct DecodedFloat
     int exp2;      /// exponent of the significand's last bit
     bool negative; /// the sign, which the digits never carry
     bool isInf;    /// overflow: the value is `±infinity`
+    bool isNaN;    /// not a number — only ever decoded from bits, never parsed
 }
 
 /**
@@ -1410,7 +1563,7 @@ D has no portable `realToBits`, and x87's explicit integer bit makes bit
 synthesis format-specific; scaling by a power of two is exact in every
 format, needs nothing from Phobos, and runs at CTFE. A subnormal comes out
 canonical: its last bit at the format's floor, fewer than `mantDig` bits
-above it. NaN has no decomposition and is a precondition.
+above it. NaN comes back as `isNaN`, its payload dropped.
 
 At CTFE, decompose only a value that is exact in `T`: D lets CTFE carry a
 `double` at the host `real`'s precision, and on an x87 host `0.1` arrives
@@ -1418,12 +1571,16 @@ with 64 significant bits — which is then, faithfully, what comes out.
 */
 DecodedFloat decompose(T)(T value) @safe pure nothrow @nogc
 if (__traits(isFloating, T))
-in (value == value, "NaN has no decomposition")
 {
     enum fmt = formatOf!T;
     enum p = fmt.mantDig;
 
     DecodedFloat r;
+    if (value != value)
+    {
+        r.isNaN = true;
+        return r;
+    }
     r.negative = value < 0 || (value == 0 && 1 / value < 0);
     Unqual!T m = r.negative ? -value : value;
     if (m == 0)
@@ -1483,10 +1640,12 @@ assembled as an integer, then scaled by powers of two in steps that never
 overflow, and never lose a bit because every intermediate lies between the
 integer and the representable result.
 */
-T compose(T)(in DecodedFloat d) @safe pure nothrow @nogc
+T compose(T)(DecodedFloat d) @safe pure nothrow @nogc // by value: see roundTo
 if (__traits(isFloating, T))
 {
     static assert(formatOf!T.mantDig <= 113, "the significand is 128 bits wide");
+    if (d.isNaN)
+        return d.negative ? -T.nan : T.nan;
     if (d.isInf)
         return d.negative ? -T.infinity : T.infinity;
     Unqual!T m = cast(T) d.hi * 0x1p64 + cast(T) d.lo;
@@ -1523,6 +1682,239 @@ T slowFloat(T)(scope const(char)[] intDigits, scope const(char)[] fracDigits,
     int explicitExp10) @safe pure nothrow @nogc
 if (__traits(isFloating, T))
     => compose!T(slowDecode!(formatOf!T)(intDigits, fracDigits, explicitExp10));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The IEEE interchange layout, and rounding between formats
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+The IEEE interchange bits — sign, biased exponent, significand without its
+leading bit — of a $(LREF DecodedFloat) already in `fmt`, for any format
+whose layout fits 64 bits (so `binary64` and below; x87 extended80 stores
+its leading bit and is not this layout).
+
+The value must be representable: this rounds nothing. It does accept a
+non-canonical significand — fewer than `mantDig` bits, or trailing zeros
+below the format's floor — and normalises it, so an integer or a wider
+exact value that happens to fit needs no preparation.
+
+Overflow (`isInf`, or a value past the largest finite one) follows the
+format's specials, which is the whole policy for infinity-less formats: an
+IEEE format gives `±infinity`; a `nanOnly` format (E4M3) gives its NaN, as
+PyTorch's `float8_e4m3fn` and `ml_dtypes` do; a format with `none` gives
+the largest finite value with the sign. Under `nanOnly` the all-ones
+significand at the top field is that NaN, so a decoded value landing there
+is overflow too — E4M3's 480 does not exist. A NaN needs a format that has
+one (precondition). CTFE-clean.
+*/
+BitsOf!fmt encode(BinaryFloatFormat fmt)(DecodedFloat d) @safe pure nothrow @nogc
+in (!d.isNaN || fmt.hasNaN, "the format has no NaN")
+{
+    static assert(fmt.storageBits <= 64, "the layout does not fit 64 bits");
+    alias B = BitsOf!fmt;
+    enum p = fmt.mantDig;
+    enum mantBits = fmt.mantBits;
+    enum ulong mantMask = (1UL << mantBits) - 1;
+    enum ulong topField = (1UL << fmt.expBits) - 1;
+    enum ulong signBit = 1UL << (fmt.storageBits - 1);
+    const ulong sign = d.negative ? signBit : 0;
+
+    static ulong nan()
+    {
+        static if (fmt.specials == BinaryFloatFormat.Specials.ieee)
+            return (topField << mantBits) | (1UL << (mantBits - 1)); // quiet
+        else
+            return (topField << mantBits) | mantMask;
+    }
+
+    static ulong overflow()
+    {
+        static if (fmt.specials == BinaryFloatFormat.Specials.ieee)
+            return topField << mantBits;
+        else static if (fmt.specials == BinaryFloatFormat.Specials.nanOnly)
+            return nan();
+        else
+            return (topField << mantBits) | mantMask; // the largest finite
+    }
+
+    if (d.isNaN)
+        return cast(B)(sign | nan());
+    if (d.isInf)
+        return cast(B)(sign | overflow());
+    if (d.hi == 0 && d.lo == 0)
+        return cast(B) sign;
+
+    // Normalise: the significand's last bit belongs at `max(lead - (p - 1),
+    // floor)`; above the floor a shorter significand is widened, and a
+    // longer one must carry only zeros below that position.
+    const U128 sig = U128(d.hi, d.lo);
+    const width = 128 - leadingZeros128(sig);
+    const lead = d.exp2 + width - 1;
+    int lsb = lead - (p - 1);
+    if (lsb < fmt.minSubnormalExp2)
+        lsb = fmt.minSubnormalExp2;
+    const shift = lsb - d.exp2;
+    ulong m;
+    if (shift <= 0)
+        m = shl128(sig, -shift).lo; // at most p ≤ 53 bits: `hi` is zero
+    else
+    {
+        const dropped = lowBits128(sig, shift < width ? shift : width);
+        assert(shift < width && dropped.hi == 0 && dropped.lo == 0,
+            "a value not representable in the format");
+        m = shr128(sig, shift).lo;
+    }
+
+    if (lead > fmt.maxNormalExp2)
+        return cast(B)(sign | overflow());
+    if (lead < fmt.minNormalExp2)
+        return cast(B)(sign | m); // subnormal: field 0, no leading bit
+    const ulong field = cast(ulong)(lead + fmt.bias);
+    static if (fmt.specials == BinaryFloatFormat.Specials.nanOnly)
+        if (field == topField && (m & mantMask) == mantMask)
+            return cast(B)(sign | overflow());
+    return cast(B)(sign | (field << mantBits) | (m & mantMask));
+}
+
+/**
+The value of IEEE interchange bits in `fmt` as a $(LREF DecodedFloat) — the
+inverse of $(LREF encode). A subnormal comes out canonical (its last bit at
+the floor); the specials come out as `isInf`/`isNaN` with their sign; a NaN's
+payload is dropped. CTFE-clean.
+*/
+DecodedFloat decode(BinaryFloatFormat fmt)(BitsOf!fmt bits) @safe pure nothrow @nogc
+{
+    static assert(fmt.storageBits <= 64, "the layout does not fit 64 bits");
+    enum p = fmt.mantDig;
+    enum mantBits = fmt.mantBits;
+    enum ulong mantMask = (1UL << mantBits) - 1;
+    enum ulong topField = (1UL << fmt.expBits) - 1;
+
+    DecodedFloat r;
+    r.negative = ((bits >> (fmt.storageBits - 1)) & 1) != 0;
+    const ulong field = (bits >> mantBits) & topField;
+    const ulong mant = bits & mantMask;
+    static if (fmt.specials == BinaryFloatFormat.Specials.ieee)
+    {
+        if (field == topField)
+        {
+            if (mant == 0)
+                r.isInf = true;
+            else
+                r.isNaN = true;
+            return r;
+        }
+    }
+    else static if (fmt.specials == BinaryFloatFormat.Specials.nanOnly)
+    {
+        if (field == topField && mant == mantMask)
+        {
+            r.isNaN = true;
+            return r;
+        }
+    }
+    if (field == 0)
+    {
+        if (mant == 0)
+            return r; // ±0
+        r.lo = mant;
+        r.exp2 = fmt.minSubnormalExp2;
+        return r;
+    }
+    r.lo = mant | (1UL << mantBits);
+    r.exp2 = cast(int) field - fmt.bias - (p - 1);
+    return r;
+}
+
+/**
+Rounds an exact value — any $(LREF DecodedFloat), up to 113 significand bits
+at any exponent — to the nearest value of `fmt`, ties to even, the way a
+correctly-rounded conversion between native types does: the last bit is
+pinned at the format's floor below the normal range, a carry out of an
+all-ones significand moves up a binade, and a result past the largest
+finite value is `isInf` (which $(LREF encode) then turns into the format's
+overflow answer). `halfway` reports that the discarded part was exactly one
+half unit of the result — the case that was decided by the even rule, and
+the one case a reader that got here through an already-rounded wider value
+cannot trust (see $(LREF readDecimalFloat)). CTFE-clean.
+
+This is the one rounding step of `float`/`double`/`real` → reduced format
+conversion: $(LREF decompose) is exact, so `roundTo` over it rounds once,
+where a chain of native casts would round twice.
+
+The `DecodedFloat` parameters here, in $(LREF compose) and in $(LREF encode)
+are by value (24 bytes) rather than `in`: LDC 1.42's interpreter crashes on
+a `static assert` that reads a `bool` field through an `in` reference to a
+struct another CTFE call returned — only inside this package's full
+unittest build, never in a single-file reproduction.
+*/
+DecodedFloat roundTo(BinaryFloatFormat fmt)(DecodedFloat exact, out bool halfway)
+    @safe pure nothrow @nogc
+{
+    enum p = fmt.mantDig;
+    static assert(p <= 113, "the significand is 128 bits wide");
+
+    DecodedFloat r;
+    r.negative = exact.negative;
+    r.isNaN = exact.isNaN;
+    r.isInf = exact.isInf;
+    if (exact.isNaN || exact.isInf || (exact.hi == 0 && exact.lo == 0))
+        return r;
+
+    const U128 sig = U128(exact.hi, exact.lo);
+    const width = 128 - leadingZeros128(sig);
+    const lead = exact.exp2 + width - 1;
+    int lsb = lead - (p - 1);
+    if (lsb < fmt.minSubnormalExp2)
+        lsb = fmt.minSubnormalExp2;
+    const shift = lsb - exact.exp2;
+
+    U128 kept;
+    if (shift <= 0)
+        kept = shl128(sig, -shift); // exact: the value has at most p bits
+    else if (shift > width)
+        kept = U128(0, 0); // below half a unit: everything rounds away
+    else
+    {
+        // `kept` is the top `width - shift` bits (none when `shift == width`);
+        // the rest is compared against half a unit of the last kept bit.
+        kept = shift < 128 ? shr128(sig, shift) : U128(0, 0);
+        const rest = lowBits128(sig, shift);
+        const half = shl128(U128(0, 1), shift - 1);
+        const cmp = rest.hi != half.hi ? (rest.hi > half.hi ? 1 : -1)
+            : rest.lo != half.lo ? (rest.lo > half.lo ? 1 : -1) : 0;
+        halfway = cmp == 0;
+        if (cmp > 0 || (cmp == 0 && (kept.lo & 1) != 0))
+        {
+            kept = inc128(kept);
+            const carry = shl128(U128(0, 1), p); // an all-ones significand grew
+            if (kept.hi == carry.hi && kept.lo == carry.lo)
+            {
+                kept = shl128(U128(0, 1), p - 1);
+                lsb++;
+            }
+        }
+    }
+
+    if (kept.hi == 0 && kept.lo == 0)
+        return r; // ±0
+    if (lsb + (127 - leadingZeros128(kept)) > fmt.maxNormalExp2)
+    {
+        r.isInf = true;
+        return r;
+    }
+    r.hi = kept.hi;
+    r.lo = kept.lo;
+    r.exp2 = lsb;
+    return r;
+}
+
+/// ditto
+DecodedFloat roundTo(BinaryFloatFormat fmt)(DecodedFloat exact) @safe pure nothrow @nogc
+{
+    bool halfway;
+    return roundTo!fmt(exact, halfway);
+}
 
 /// Arbitrary-precision decimal for the slow path: up to `capacity`
 /// significant digits (beyond that only a sticky "truncated" bit matters
@@ -2366,6 +2758,7 @@ exceeds.
 size_t shortestDigits(BinaryFloatFormat fmt)(in DecodedFloat v, scope char[] digitBuf,
     out int exp10) @safe pure nothrow @nogc
 in (!v.isInf, "infinity has no digits")
+in (!v.isNaN, "NaN has no digits")
 in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits10")
 {
     enum p = fmt.mantDig;
@@ -2842,6 +3235,281 @@ unittest
     static assert(described(floatTraits!float.realFormat) == formatOf!float);
     static assert(described(floatTraits!double.realFormat) == formatOf!double);
     static assert(described(floatTraits!real.realFormat) == formatOf!real);
+}
+
+// The layout derivations, against D's own properties for the native types
+// and against the OCP Microscaling v1.0 / IEEE tables for the rest.
+@("float_conv.BinaryFloatFormat.reducedDerivations")
+@safe pure nothrow @nogc
+unittest
+{
+    alias S = BinaryFloatFormat.Specials;
+
+    static assert(binary32.expBits == 8 && binary32.bias == 127 && binary32.storageBits == 32);
+    static assert(binary64.expBits == 11 && binary64.bias == 1023 && binary64.storageBits == 64);
+    static assert(binary128.expBits == 15 && binary128.bias == 16_383 && binary128.storageBits == 128);
+    static assert(binary32.max10Exp == float.max_10_exp && binary32.min10Exp == float.min_10_exp);
+    static assert(binary64.max10Exp == double.max_10_exp && binary64.min10Exp == double.min_10_exp);
+    static assert(formatOf!real.max10Exp == real.max_10_exp && formatOf!real.min10Exp == real.min_10_exp);
+    static assert(binary64.maxFiniteSignificand == (1UL << 53) - 1);
+    static assert(extended80.maxFiniteSignificand == ulong.max);
+
+    static immutable BinaryFloatFormat[7] formats = [binary16, bfloat16, fp8e5m2, fp8e4m3,
+        fp6e2m3, fp6e3m2, fp4e2m1];
+    static immutable S[7] specials = [S.ieee, S.ieee, S.ieee, S.nanOnly, S.none, S.none, S.none];
+    static immutable int[7] bias = [15, 127, 15, 7, 1, 3, 1];
+    static immutable int[7] expBits = [5, 8, 5, 4, 2, 3, 2];
+    static immutable int[7] storage = [16, 16, 8, 8, 6, 6, 4];
+    static immutable int[7] minNormal = [-14, -126, -14, -6, 0, -2, 0];
+    static immutable int[7] minSubnormal = [-24, -133, -16, -9, -3, -4, -1];
+    static immutable ulong[7] maxSig = [2047, 255, 7, 14, 15, 7, 3];
+    static immutable int[7] maxField = [30, 254, 30, 15, 3, 7, 3];
+    static immutable int[7] digits10 = [5, 4, 2, 3, 3, 2, 2];
+    static immutable int[7] max10 = [4, 38, 4, 2, 0, 1, 0];
+    static immutable int[7] min10 = [-4, -37, -4, -1, 0, 0, 0];
+    static immutable int[7] satHigh = [6, 40, 6, 4, 2, 3, 2];
+    static immutable int[7] satLow = [-9, -42, -7, -5, -3, -3, -2];
+    static immutable int[7] capacity = [100, 200, 100, 100, 100, 100, 100];
+    foreach (i, f; formats)
+    {
+        assert(f.specials == specials[i]);
+        assert(f.hasInfinity == (specials[i] == S.ieee));
+        assert(f.hasNaN == (specials[i] != S.none));
+        assert(f.bias == bias[i]);
+        assert(f.expBits == expBits[i]);
+        assert(f.storageBits == storage[i]);
+        assert(f.minNormalExp2 == minNormal[i]);
+        assert(f.minSubnormalExp2 == minSubnormal[i]);
+        assert(f.maxFiniteSignificand == maxSig[i]);
+        assert(f.maxFiniteExpField == maxField[i]);
+        assert(f.maxDigits10 == digits10[i]);
+        assert(f.max10Exp == max10[i]);
+        assert(f.min10Exp == min10[i]);
+        assert(f.saturateHighExp10 == satHigh[i]);
+        assert(f.saturateLowExp10 == satLow[i]);
+        assert(f.decimalCapacity == capacity[i]);
+    }
+    // The largest finite values, as the OCP tables state them.
+    static assert(compose!float(decode!binary16(0x7BFF)) == 65_504.0f);
+    static assert(compose!float(decode!bfloat16(0x7F7F)) == 0x1.FEp127f);
+    static assert(compose!float(decode!fp8e5m2(0x7B)) == 57_344.0f);
+    static assert(compose!float(decode!fp8e4m3(0x7E)) == 448.0f);
+    static assert(compose!float(decode!fp6e2m3(0x1F)) == 7.5f);
+    static assert(compose!float(decode!fp6e3m2(0x1F)) == 28.0f);
+    static assert(compose!float(decode!fp4e2m1(0x7)) == 6.0f);
+    // …and the smallest subnormals.
+    static assert(compose!float(decode!binary16(1)) == 0x1p-24f);
+    static assert(compose!float(decode!bfloat16(1)) == 0x1p-133f);
+    static assert(compose!float(decode!fp8e5m2(1)) == 0x1p-16f);
+    static assert(compose!float(decode!fp8e4m3(1)) == 0x1p-9f);
+    static assert(compose!float(decode!fp6e2m3(1)) == 0.125f);
+    static assert(compose!float(decode!fp6e3m2(1)) == 0.0625f);
+    static assert(compose!float(decode!fp4e2m1(1)) == 0.5f);
+    static assert(is(BitsOf!binary16 == ushort) && is(BitsOf!fp8e4m3 == ubyte)
+        && is(BitsOf!fp4e2m1 == ubyte) && is(BitsOf!binary32 == uint) && is(BitsOf!binary64 == ulong));
+}
+
+// `decode` and `encode` are inverses over every pattern of every format
+// that has few enough to enumerate; a NaN comes back as the canonical one.
+@("float_conv.bits.roundTripEveryPattern")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.meta : AliasSeq;
+
+    static foreach (fmt; AliasSeq!(binary16, bfloat16, fp8e5m2, fp8e4m3, fp6e2m3, fp6e3m2, fp4e2m1))
+    {{
+        size_t nans = 0, infs = 0;
+        foreach (raw; 0 .. 1u << fmt.storageBits)
+        {
+            const bits = cast(BitsOf!fmt) raw;
+            const d = decode!fmt(bits);
+            if (d.isNaN)
+            {
+                nans++;
+                assert(fmt.hasNaN);
+                const back = encode!fmt(d);
+                assert(decode!fmt(back).isNaN && decode!fmt(back).negative == d.negative);
+                continue;
+            }
+            if (d.isInf)
+            {
+                infs++;
+                assert(fmt.hasInfinity);
+            }
+            else
+            {
+                // Canonical: at most mantDig bits, the last one at or above
+                // the floor, and exactly mantDig bits when normal.
+                assert(d.hi == 0 && d.lo < 1UL << fmt.mantDig);
+                assert(d.lo == 0 || d.exp2 >= fmt.minSubnormalExp2);
+                assert(d.lo == 0 || d.exp2 == fmt.minSubnormalExp2
+                    || d.lo >= 1UL << (fmt.mantDig - 1));
+            }
+            assert(encode!fmt(d) == bits);
+        }
+        assert(infs == (fmt.hasInfinity ? 2 : 0));
+        assert(nans == (fmt.specials == BinaryFloatFormat.Specials.ieee
+            ? 2 * ((1u << fmt.mantBits) - 1) : fmt.hasNaN ? 2 : 0));
+    }}
+
+    // The wide native layouts, sampled, against the double bit access.
+    ulong state = 0x9E37_79B9_7F4A_7C15;
+    foreach (_; 0 .. 20_000)
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        const d = decode!binary64(state);
+        if (d.isNaN)
+            continue;
+        assert(encode!binary64(d) == state);
+        assert(compose!double(d) is bitsToDouble(state));
+        const f = decode!binary32(cast(uint) state);
+        if (!f.isNaN)
+            assert(encode!binary32(f) == cast(uint) state);
+    }
+    // ±0 keep their sign; a NaN wants a format that has one.
+    assert(encode!binary16(DecodedFloat(0, 0, 0, true)) == 0x8000);
+    assert(decode!fp4e2m1(0x8).negative && decode!fp4e2m1(0x8).lo == 0);
+    static assert(decode!binary16(0x3C00).lo == 1024 && decode!binary16(0x3C00).exp2 == -10);
+}
+
+// `encode!binary64` over the exact decoder lands on the bits `slowDouble`
+// assembles by hand, and `encode!binary32` on what the FPU says.
+@("float_conv.bits.matchesTheHandAssembly")
+@safe pure nothrow @nogc
+unittest
+{
+    static void same(string i, string f, int e)
+    {
+        assert(encode!binary64(slowDecode!binary64(i, f, e)) == doubleToBits(slowDouble(i, f, e)));
+    }
+
+    same("5", null, -324);
+    same("3", null, -324);
+    same("2", null, -324);
+    same("9007199254740993", null, 0);
+    same("2", "2250738585072011", -308);
+    same("17976931348623157", null, 292);
+    same("17976931348623159", null, 292);
+    same("1", null, 0);
+    same(null, "1", 0);
+    same("0", null, 0);
+    // A non-canonical significand is normalised: 3 × 2^0 is 1.5 × 2^1.
+    assert(encode!binary32(DecodedFloat(0, 3, 0)) == 0x4040_0000);
+    assert(encode!binary64(DecodedFloat(0, 1UL << 60, -60)) == 0x3FF0_0000_0000_0000);
+    // Overflow follows the specials.
+    assert(encode!binary16(DecodedFloat(0, 1, 16)) == 0x7C00);
+    assert(encode!binary16(DecodedFloat(0, 1, 16, true)) == 0xFC00);
+    assert(encode!fp8e4m3(DecodedFloat(0, 15, 5)) == 0x7F);   // 480: the NaN pattern
+    assert(encode!fp8e4m3(DecodedFloat(0, 1, 9)) == 0x7F);    // 512
+    assert(encode!fp8e4m3(DecodedFloat(0, 14, 5)) == 0x7E);   // 448
+    assert(encode!fp6e2m3(DecodedFloat(0, 1, 3)) == 0x1F);    // 8 → 7.5
+    assert(encode!fp6e2m3(DecodedFloat(0, 1, 3, true)) == 0x3F);
+    assert(encode!fp4e2m1(DecodedFloat(0, 0, 0, false, true)) == 0x7);
+    assert(encode!fp8e5m2(DecodedFloat(0, 0, 0, false, true)) == 0x7C);
+    assert(encode!fp8e5m2(DecodedFloat(0, 0, 0, false, false, true)) == 0x7E);
+    assert(encode!fp8e4m3(DecodedFloat(0, 0, 0, true, false, true)) == 0xFF);
+}
+
+@("float_conv.roundTo.pins")
+@safe pure nothrow @nogc
+unittest
+{
+    bool halfway;
+    // 2^24 + 1 is a binary32 tie → even (2^24); +3 ties up to 2^24 + 4.
+    auto r = roundTo!binary32(DecodedFloat(0, (1UL << 24) + 1, 0), halfway);
+    assert(halfway && r.lo == 1UL << 23 && r.exp2 == 1);
+    r = roundTo!binary32(DecodedFloat(0, (1UL << 24) + 3, 0), halfway);
+    assert(halfway && r.lo == (1UL << 23) + 2 && r.exp2 == 1);
+    // Above a half rounds up; below rounds down; neither is halfway.
+    r = roundTo!binary32(DecodedFloat(0, (1UL << 26) + 5, 0), halfway);
+    assert(!halfway && r.lo == (1UL << 23) + 1 && r.exp2 == 3);
+    r = roundTo!binary32(DecodedFloat(0, (1UL << 26) + 3, 0), halfway);
+    assert(!halfway && r.lo == (1UL << 23) && r.exp2 == 3);
+    // An all-ones significand carries into the next binade.
+    r = roundTo!binary16(DecodedFloat(0, 0xFFF, 0), halfway);
+    assert(halfway && r.lo == 1UL << 10 && r.exp2 == 2);
+    // …and past the largest finite value it overflows: 65 520 is the half
+    // point above 65 504, and rounds (to even, upward) to 2^16.
+    r = roundTo!binary16(DecodedFloat(0, 65_520, 0), halfway);
+    assert(halfway && r.isInf);
+    r = roundTo!binary16(DecodedFloat(0, 65_519, 0), halfway);
+    assert(!halfway && !r.isInf && r.lo == 0x7FF && r.exp2 == 5);
+    // Subnormal: the last bit is pinned at the floor. 2^-25 is half the
+    // smallest binary16 subnormal → 0 by the even rule; a hair above → 2^-24.
+    r = roundTo!binary16(DecodedFloat(0, 1, -25), halfway);
+    assert(halfway && r.hi == 0 && r.lo == 0);
+    r = roundTo!binary16(DecodedFloat(0, 3, -26), halfway);
+    assert(!halfway && r.lo == 1 && r.exp2 == -24);
+    r = roundTo!binary16(DecodedFloat(0, 1, -26), halfway);
+    assert(!halfway && r.lo == 0);
+    // Deep underflow: a shift far past the significand's width.
+    r = roundTo!binary16(DecodedFloat(ulong.max, ulong.max, -1000), halfway);
+    assert(!halfway && r.lo == 0 && r.hi == 0);
+    // A subnormal that rounds up into the smallest normal keeps its floor.
+    r = roundTo!fp8e4m3(DecodedFloat(0, 15, -10), halfway);   // 7.5 × 2^-10 = 0.9375 × 2^-7
+    assert(halfway && r.lo == 8 && r.exp2 == -9);             // → 8 × 2^-9 = 2^-6
+    // Exact values pass through, at any width of their significand.
+    r = roundTo!fp4e2m1(DecodedFloat(0, 3, 0), halfway);
+    assert(!halfway && r.lo == 3 && r.exp2 == 0);
+    r = roundTo!fp4e2m1(DecodedFloat(0, 1UL << 40, -40), halfway);
+    assert(!halfway && r.lo == 2 && r.exp2 == -1);
+    // NaN and infinity pass through, and E4M3's 464 is the tie that saves 448.
+    assert(roundTo!fp8e4m3(DecodedFloat(0, 0, 0, false, false, true)).isNaN);
+    assert(roundTo!fp8e4m3(DecodedFloat(0, 0, 0, true, true)).isInf);
+    r = roundTo!fp8e4m3(DecodedFloat(0, 464, 0), halfway);
+    assert(halfway && r.lo == 14 && r.exp2 == 5);
+    r = roundTo!fp8e4m3(DecodedFloat(0, 465, 0), halfway);
+    assert(!halfway && r.lo == 15 && r.exp2 == 5 && encode!fp8e4m3(r) == 0x7F);
+    // 113-bit input: real.max at binary128 narrowed to double is infinity.
+    r = roundTo!binary64(DecodedFloat((1UL << 49) - 1, ulong.max, 16_384 - 113), halfway);
+    assert(r.isInf);
+    enum ct = roundTo!binary16(DecodedFloat(0, 0xFFF, 0));
+    static assert(ct.lo == 1UL << 10 && ct.exp2 == 2);
+}
+
+// The FPU is the oracle: narrowing through `decompose` → `roundTo` →
+// `compose` must equal the native cast, bit for bit, subnormals and
+// overflow included.
+@("float_conv.roundTo.matchesHardwareNarrowing")
+@safe pure nothrow @nogc
+unittest
+{
+    ulong state = 0x0DDB_A11C_0FFE_E123;
+    static ulong next(ref ulong s)
+    {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return s;
+    }
+
+    foreach (i; 0 .. 400_000)
+    {
+        // Exponents concentrated around float's range, with its subnormal
+        // band and the overflow boundary well represented.
+        ulong bits = next(state);
+        const expField = 1023 + cast(int)(next(state) % 320) - 160;
+        bits = (bits & 0x800F_FFFF_FFFF_FFFF) | (cast(ulong) expField << 52);
+        const double d = bitsToDouble(bits);
+        const float narrowed = compose!float(roundTo!binary32(decompose(d)));
+        assert(narrowed is cast(float) d);
+    }
+    static if (formatOf!real != binary64)
+    {
+        foreach (i; 0 .. 100_000)
+        {
+            // Random reals across double's range: the mantissa from the
+            // generator, the exponent by scaling.
+            real r = cast(real) next(state) / cast(real)(next(state) | 1);
+            const e = cast(int)(next(state) % 2200) - 1100;
+            r = compose!real(DecodedFloat(0, decompose(r).lo, decompose(r).exp2 + e));
+            const double narrowed = compose!double(roundTo!binary64(decompose(r)));
+            assert(narrowed is cast(double) r);
+        }
+    }
 }
 
 @("float_conv.mul64x64.knownProducts")
@@ -4081,15 +4749,6 @@ version (Posix)
     import core.stdc.stdlib : strtof;
     import core.stdc.stdio : snprintf;
 
-    static uint floatBits(in DecodedFloat r)
-    {
-        if (r.isInf)
-            return 0x7F80_0000;
-        if (r.lo < (1u << 23))
-            return cast(uint) r.lo; // subnormal or zero: exponent field 0
-        return (cast(uint)(r.exp2 + 23 + 127) << 23) | (cast(uint) r.lo & ((1u << 23) - 1));
-    }
-
     ulong state = 0x2545_F491_4F6C_DD1D;
     static ulong next(ref ulong s)
     {
@@ -4109,7 +4768,7 @@ version (Posix)
         snprintf(buf.ptr, buf.length, "%llue%d", sig, exp);
         const float oracle = strtof(buf.ptr, null);
         const oracleBits = *cast(const uint*)&oracle;
-        assert(floatBits(ours) == oracleBits);
+        assert(encode!binary32(ours) == oracleBits);
     }
 }
 
