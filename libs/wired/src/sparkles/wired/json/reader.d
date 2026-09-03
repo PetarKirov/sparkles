@@ -19,8 +19,8 @@ import std.experimental.allocator.common : stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.base.text.errors : ParseError, ParseErrorCode;
-import sparkles.base.text.float_conv : bitsToDouble, doubleToBits, readDigits,
-    slowDouble, tryFastDouble;
+import sparkles.base.text.float_conv : binary64, bitsToDouble, doubleToBits,
+    readDigits, slowDouble, tryFastDouble;
 import sparkles.wired.json.document : JsonCell, JsonDocument, JsonKind;
 import sparkles.wired.json.scan : allDigits8, digitRun8, eightDigits, loadWord,
     padDigits8, scanStringBody, skipWs, StringScan;
@@ -541,8 +541,14 @@ intDone:
         }
         while (p[k] >= '0' && p[k] <= '9') // absurd exponents saturate
             k++;
-        if (e > 400)
-            e = 400;
+        // Clamp only past the magnitude at which the value saturates whatever
+        // the digits say — the digit positions can move the combined exponent
+        // by at most the digit span. A fixed 400 misread `0.<500 zeros>1e800`
+        // as 1e-101.
+        const bound = cast(ulong) binary64.explicitExp10Bound(
+            (intEnd - intStart) + (fracEnd - fracStart));
+        if (e > bound)
+            e = bound;
         explicitExp = expNeg ? -cast(int) e : cast(int) e;
     }
 
@@ -1848,6 +1854,16 @@ unittest
     checkF("-1e999", -double.infinity);
     checkF("1e-999", 0.0);
     checkF("18446744073709551616", 18_446_744_073_709_551_616.0); // ulong.max+1
+
+    // A long zero run compensated by the exponent must not be clamped into a
+    // different finite value (a fixed clamp of 400 gave 1e-101 and 1e100).
+    import std.array : replicate;
+
+    enum zeros = "0".replicate(500);
+    checkF("0." ~ zeros ~ "1e800", 1e299);
+    checkF("1" ~ zeros ~ "e-800", 1e-300);
+    checkF("0." ~ zeros ~ "1e-800", 0.0);
+    checkF("1" ~ zeros ~ "e800", double.infinity);
     checkF("-9223372036854775809", -9_223_372_036_854_775_809.0);
     checkF("1e23", bitsToDouble(0x44B5_2D02_C7E1_4AF6)); // exact-tier tie
     checkF("5e-324", bitsToDouble(1)); // smallest subnormal
