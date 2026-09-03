@@ -10,7 +10,16 @@
 module sparkles.test_runner.stack_budget;
 
 /// Darwin's default pthread worker stack — the production constraint.
-enum size_t workerStackBytes = 512 * 1024;
+///
+/// Under AddressSanitizer (`LDC_AddressSanitizer`) the watermark below is
+/// off (ASan owns SIGSEGV) and redzones inflate every frame, so the 384 KiB
+/// budget is neither enforced nor measurable there. Workers get 4 MiB
+/// instead: a body that fits the budget cannot then walk off a guard page
+/// and take the whole process down with it.
+version (LDC_AddressSanitizer)
+    enum size_t workerStackBytes = 4 * 1024 * 1024;
+else
+    enum size_t workerStackBytes = 512 * 1024;
 
 /// A test that grows the stack more than this fails with
 /// $(LREF StackBudgetExceeded) instead of a raw SIGSEGV.
@@ -37,16 +46,22 @@ class StackBudgetExceeded : Exception
 /// calls are no-ops. No-op on non-POSIX hosts.
 void installStackBudgetHandler()
 {
-    version (Posix)
+    // ASan owns SIGSEGV for its shadow map. Stealing the handler makes
+    // both tools lie; workers get $(LREF workerStackBytes) of 4 MiB instead.
+    version (LDC_AddressSanitizer) {}
+    else version (Posix)
         installHandlerOnce();
 }
 
 /// Sets up this thread's sigaltstack so a watermark fault can run the handler
 /// after the main stack is exhausted. Call once per worker (and on the main
-/// thread for `-t 1`). No-op on non-POSIX hosts.
+/// thread for `-t 1`). No-op on non-POSIX hosts, and under ASan, which
+/// installs its own alternate signal stack per thread for its SIGSEGV
+/// reports — replacing it would hand ASan a stack it did not size.
 void prepareCurrentThreadForStackBudget()
 {
-    version (Posix)
+    version (LDC_AddressSanitizer) {}
+    else version (Posix)
         prepareAltStack();
 }
 
@@ -58,7 +73,9 @@ $(LREF StackBudgetExceeded). Nested calls (the runner's own
 */
 void runWithStackBudget(scope void delegate() dg, string label = null)
 {
-    version (Posix)
+    version (LDC_AddressSanitizer)
+        dg();
+    else version (Posix)
         runArmed(dg, label);
     else
         dg();
@@ -401,10 +418,21 @@ unittest
     t.start();
     t.join();
     assert(measured >= workerStackBytes,
-        "worker stack is smaller than the Darwin 512 KiB constraint");
+        "worker stack is smaller than the requested size");
     // glibc adds TLS onto the requested size; allow a page-rounded slack.
     assert(measured <= workerStackBytes + 128 * 1024,
-        "worker stack was not pinned near 512 KiB");
+        "worker stack was not pinned near the requested size");
+}
+
+@("stack_budget.workerStackBytes.asanGetsRoom")
+@safe pure nothrow @nogc
+unittest
+{
+    version (LDC_AddressSanitizer)
+        static assert(workerStackBytes == 4 * 1024 * 1024);
+    else
+        static assert(workerStackBytes == 512 * 1024);
+    static assert(stackBudgetBytes < workerStackBytes);
 }
 
 @("stack_budget.hogFailsWithNamedError")
@@ -412,6 +440,10 @@ unittest
 unittest
 {
     import core.thread : Thread;
+    import sparkles.test_runner.skip : skipTest;
+
+    version (LDC_AddressSanitizer)
+        skipTest("ASan owns SIGSEGV; the mprotect watermark is disabled");
 
     installStackBudgetHandler();
 
