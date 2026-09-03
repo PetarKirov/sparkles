@@ -145,6 +145,11 @@ const @safe pure nothrow @nogc:
         => (mantDig == 64 ? ulong.max : (1UL << mantDig) - 1)
             - (specials == Specials.nanOnly ? 1 : 0);
 
+    /// `T.dig`: decimal digits of precision, `floor(mantBits·log10 2)` — 6,
+    /// 15, 18 / 33; 3 at binary16, 2 at bfloat16, 0 for the 8-bit formats
+    /// and below.
+    int dig() => cast(int)((cast(long) mantBits * 30_103) / 100_000);
+
     /// `T.max_10_exp`: the largest `k` with `10^k` below the largest finite
     /// value, `floor(maxExp·log10 2)` — 38, 308, 4 932; 4 at binary16, 2 at
     /// E4M3, 0 at E2M1. (E4M3's top binade is short by one step; the floor
@@ -266,9 +271,11 @@ enum BinaryFloatFormat fp4e2m1 = BinaryFloatFormat(2, 1, 3, BinaryFloatFormat.Sp
 
 /**
 Whether `T` is a type this module converts: a native floating-point type,
-or any type that names its format as `enum BinaryFloatFormat format` and
-carries the bits as `bits` — the `sparkles.base.custom_float` storage types,
-or a user's own.
+or a storage type that names its format as `enum BinaryFloatFormat format`,
+exposes its interchange bits as `bits` and rebuilds itself from them with
+`static fromBits` — the `sparkles.base.custom_float` types, or a user's own.
+Such a type is decomposed with $(LREF decode) and composed with
+$(LREF encode), so its format's layout must fit 64 bits.
 */
 enum bool isFloatLike(T) = __traits(isFloating, T)
     || is(typeof(T.format) : BinaryFloatFormat);
@@ -1570,11 +1577,15 @@ At CTFE, decompose only a value that is exact in `T`: D lets CTFE carry a
 with 64 significant bits — which is then, faithfully, what comes out.
 */
 DecodedFloat decompose(T)(T value) @safe pure nothrow @nogc
-if (__traits(isFloating, T))
+if (isFloatLike!T)
 {
     enum fmt = formatOf!T;
     enum p = fmt.mantDig;
 
+    static if (!__traits(isFloating, T))
+        return decode!fmt(value.bits);
+    else
+    {
     DecodedFloat r;
     if (value != value)
     {
@@ -1631,6 +1642,7 @@ if (__traits(isFloating, T))
     r.lo = cast(ulong)(m - cast(Unqual!T) hi * 0x1p64);
     r.exp2 = lsb;
     return r;
+    }
 }
 
 /**
@@ -1641,9 +1653,13 @@ overflow, and never lose a bit because every intermediate lies between the
 integer and the representable result.
 */
 T compose(T)(DecodedFloat d) @safe pure nothrow @nogc // by value: see roundTo
-if (__traits(isFloating, T))
+if (isFloatLike!T)
 {
     static assert(formatOf!T.mantDig <= 113, "the significand is 128 bits wide");
+    static if (!__traits(isFloating, T))
+        return T.fromBits(encode!(formatOf!T)(d));
+    else
+    {
     if (d.isNaN)
         return d.negative ? -T.nan : T.nan;
     if (d.isInf)
@@ -1671,6 +1687,7 @@ if (__traits(isFloating, T))
         e++;
     }
     return d.negative ? -m : m;
+    }
 }
 
 /**
@@ -1680,7 +1697,7 @@ arguments; the sign is the caller's.
 */
 T slowFloat(T)(scope const(char)[] intDigits, scope const(char)[] fracDigits,
     int explicitExp10) @safe pure nothrow @nogc
-if (__traits(isFloating, T))
+if (isFloatLike!T)
     => compose!T(slowDecode!(formatOf!T)(intDigits, fracDigits, explicitExp10));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2903,9 +2920,9 @@ in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits1
     return n;
 }
 
-/// $(LREF shortestDigits) for a `float`, `double` or `real` value.
+/// $(LREF shortestDigits) for a value of any type $(LREF isFloatLike) admits.
 size_t shortestDigits(T)(T value, scope char[] digitBuf, out int exp10)
-if (__traits(isFloating, T))
+if (isFloatLike!T)
     => shortestDigits!(formatOf!T)(decompose!T(value), digitBuf, exp10);
 
 /**
@@ -2916,21 +2933,20 @@ $(LREF writeShortestDouble) with its own notation; this one serves every
 type the same way.
 */
 void writeShortest(T, Writer)(ref Writer w, T value)
-if (__traits(isFloating, T))
+if (isFloatLike!T)
 {
     import std.range.primitives : put;
 
-    if (value != value)
+    const d = decompose!T(value);
+    if (d.isNaN)
         return put(w, "nan");
-    if (value == T.infinity)
-        return put(w, "inf");
-    if (value == -T.infinity)
-        return put(w, "-inf");
+    if (d.isInf)
+        return put(w, d.negative ? "-inf" : "inf");
 
     char[formatOf!T.maxDigits10] digits = void;
     int exp10;
-    const n = shortestDigits!T(value, digits[], exp10);
-    if (value < 0 || (value == 0 && 1 / value < 0))
+    const n = shortestDigits!(formatOf!T)(d, digits[], exp10);
+    if (d.negative)
         put(w, '-');
     put(w, digits[0]);
     if (n > 1)
@@ -2989,7 +3005,7 @@ not defend against. The exact tier is integer arithmetic and does not care.
 */
 ParseExpected!T readDecimalFloat(T = double)(ref scope const(char)[] s)
     @safe pure nothrow @nogc
-if (__traits(isFloating, T))
+if (isFloatLike!T)
 {
     const n = s.length;
     if (n == 0)
@@ -3143,13 +3159,22 @@ if (__traits(isFloating, T))
         // narrowing tier, each with the exact tier behind it.
         enum fmt = formatOf!T;
         enum wide = fmt.mantDig > 53;
-        const sigExact = fmt.mantDig >= 64
-            || (sig >> (fmt.mantDig >= 64 ? 0 : fmt.mantDig)) == 0;
-        if (!__ctfe && !truncated && sigExact && exp10 >= -fmt.exactPow10Max
-            && exp10 <= fmt.exactPow10Max)
-            value = exp10 >= 0
-                ? cast(T) sig * exactPow10Of!T[exp10]
-                : cast(T) sig / exactPow10Of!T[-exp10];
+        static if (__traits(isFloating, T))
+        {
+            const sigExact = fmt.mantDig >= 64
+                || (sig >> (fmt.mantDig >= 64 ? 0 : fmt.mantDig)) == 0;
+            const clinger = !__ctfe && !truncated && sigExact
+                && exp10 >= -fmt.exactPow10Max && exp10 <= fmt.exactPow10Max;
+        }
+        else
+            enum clinger = false; // a storage type has no arithmetic of its own
+        if (clinger)
+        {
+            static if (__traits(isFloating, T))
+                value = exp10 >= 0
+                    ? cast(T) sig * exactPow10Of!T[exp10]
+                    : cast(T) sig / exactPow10Of!T[-exp10];
+        }
         else
         {
             static if (wide)
