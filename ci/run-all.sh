@@ -12,11 +12,12 @@
 #   4. Standalone example files (ci --example-files)
 #   5. OS-API windowing examples (X11 + Wayland + cursor-shapes)
 #   6. Extracted test modes (ci --test-extracted: --better-c, --wasm)
-#   7. Nix desktop packages & runnable examples (all-desktop, run-all-examples)
-#   8. Android APK closure (all-android; x86_64-linux only)
-#   9. Lint & local link check (prek run --all-files)
-#  10. Markdown runnable example verification (ci --verify)
-#  11. Documentation site build (npm run docs:build)
+#   7. Sanitizer tests (ci --test-sanitize; Linux LDC only)
+#   8. Nix desktop packages & runnable examples (all-desktop, run-all-examples)
+#   9. Android APK closure (all-android; x86_64-linux only)
+#  10. Lint & local link check (prek run --all-files)
+#  11. Markdown runnable example verification (ci --verify)
+#  12. Documentation site build (npm run docs:build)
 #
 # Usage:
 #   ci/run-all.sh [options]
@@ -274,7 +275,18 @@ if [ "$skip_tests" -eq 0 ]; then
     env DC=ldc2 "${repo_root}/ci/run-batch.sh" 20m ci --test-extracted --fail-fast
 fi
 
-# --- Stage 7: Nix Desktop Build & Runnable Examples ------------------------
+# --- Stage 7: Sanitizer tests (Linux LDC) ----------------------------------
+
+if [ "$skip_tests" -eq 0 ]; then
+  if [ "$(uname -s)" = "Linux" ]; then
+    run_stage "Sanitizer tests (ASan, stackovf)" \
+      env DC=ldc2 "${repo_root}/ci/run-batch.sh" 45m ci --test-sanitize --fail-fast
+  else
+    ci_notice "Skipping --test-sanitize (Linux LDC only: nixpkgs LDC has no ASan runtime on Darwin)"
+  fi
+fi
+
+# --- Stage 8: Nix Desktop Build & Runnable Examples ------------------------
 
 if [ "$skip_nix" -eq 0 ] && ci_have nix; then
   run_stage "Nix desktop packages (all-desktop)" \
@@ -286,7 +298,7 @@ if [ "$skip_nix" -eq 0 ] && ci_have nix; then
   fi
 fi
 
-# --- Stage 8: Nix Android Build --------------------------------------------
+# --- Stage 9: Nix Android Build --------------------------------------------
 
 if [ "$skip_nix" -eq 0 ] && [ "$skip_android" -eq 0 ] && ci_have nix; then
   # Android NDK/SDK in this repo is supported on x86_64-linux.
@@ -296,7 +308,7 @@ if [ "$skip_nix" -eq 0 ] && [ "$skip_android" -eq 0 ] && ci_have nix; then
   fi
 fi
 
-# --- Stage 9: Lint & Pre-Commit Checks -------------------------------------
+# --- Stage 10: Lint & Pre-Commit Checks ------------------------------------
 
 if [ "$skip_lint" -eq 0 ]; then
   if ci_have prek; then
@@ -308,14 +320,14 @@ if [ "$skip_lint" -eq 0 ]; then
   fi
 fi
 
-# --- Stage 10: Markdown Runnable Examples Verification ---------------------
+# --- Stage 11: Markdown Runnable Examples Verification ---------------------
 
 if [ "$skip_examples" -eq 0 ] && ci_have nix; then
   run_stage "Markdown runnable examples verification" \
     "${repo_root}/ci/run-batch.sh" 35m nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 fi
 
-# --- Stage 11: Documentation Site Build ------------------------------------
+# --- Stage 12: Documentation Site Build ------------------------------------
 
 if [ "$skip_docs" -eq 0 ]; then
   if ci_have npm && [ -f "${repo_root}/package.json" ]; then

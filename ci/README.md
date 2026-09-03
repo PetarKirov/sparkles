@@ -77,6 +77,7 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 | `test` (ubuntu × ldc2/dmd)          | `test-linux-ldc2`, `test-linux-dmd`  | Matrix over the `dc` parameter                             |
 | `test` (macos × ldc2)               | `test-macos`                         | Separate job — different executor                          |
 | `extracted-tests`                   | `extracted-tests`                    |                                                            |
+| `sanitize`                          | `sanitize-tests`                     | Linux LDC only: ASan + stackovf; own `asan-dub` cache key  |
 | `win32-example`                     | `win32-example`                      | `setup-dlang` → `install-ldc-windows.sh`                   |
 | `nix-build` (ubuntu, macos)         | `nix-build-linux`, `nix-build-macos` |                                                            |
 | `nix-build-android`                 | `nix-build-android`                  |                                                            |
