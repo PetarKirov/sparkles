@@ -7,7 +7,6 @@ import std.range.primitives : put;
 
 import sparkles.base.buffer : SharedBuffer, checkWriter;
 import sparkles.wired.json.writer : writeJsonDouble, writeJsonLong;
-import sparkles.wired.sdl.decimal : sdlDecimalSignificantDigits;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
 
@@ -319,18 +318,12 @@ if (is(T == float) || is(T == real))
         return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange,
             T.stringof, "NaN and infinity are not representable in SDL"));
 
-    // The search must be able to reach a spelling the *reader's* kernel maps
-    // back onto `value`. For `real` that is the kernel's own resolution:
-    // `parseDecimalReal` is within an ulp rather than correctly rounded, so
-    // the shortest spelling is occasionally a few digits longer than
-    // max_digits10, and past its capture width no spelling can differ.
-    // `float` decodes through the correctly rounded `readDecimalFloat`, where
-    // max_digits10 plus a guard digit for Phobos' `%g` boundary behaviour
-    // near min_normal is enough.
-    static if (is(T == real))
-        enum maxDigits = sdlDecimalSignificantDigits;
-    else
-        enum maxDigits = (T.mant_dig * 30_103 + 99_999) / 100_000 + 2;
+    // The reader is correctly rounded at every width now, so max_digits10
+    // reaches every value; the guard digit is for Phobos' `%g` boundary
+    // behaviour near min_normal.
+    import sparkles.base.text.float_conv : formatOf;
+
+    enum maxDigits = formatOf!T.maxDigits10 + 2;
     try
     {
         foreach (precision; 1 .. maxDigits + 1)
