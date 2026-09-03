@@ -17,11 +17,10 @@ import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
 import core.sys.posix.unistd : posixClose = close;
 import core.time : Duration, msecs;
-import std.math : isFinite;
 import std.traits : Parameters;
 
 import sparkles.base.buffer : InlineBuffer;
-import sparkles.base.text.utf8 : validateUtf8;
+import sparkles.base.text.cstring : toTempStringz;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
@@ -204,24 +203,15 @@ struct WaylandWsi
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "compositor lacks wl_compositor or xdg_wm_base",
                 WsiErrorKind.unavailable);
-        if (config.logicalSize.width <= 0 || config.logicalSize.height <= 0
-            || !config.logicalSize.width.isFinite
-            || !config.logicalSize.height.isFinite
-            || config.logicalSize.width > int.max
-            || config.logicalSize.height > int.max)
+        if (auto fault = config.fault)
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
-                "invalid Wayland logical window size",
-                WsiErrorKind.invalidArgument);
+                fault, WsiErrorKind.invalidArgument);
         if (!config.visible || config.parent.valid || config.transparent
             || config.state == WindowStartupState.minimized
             || config.decorations == DecorationPreference.server)
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "requested Wayland startup configuration is not implemented",
                 WsiErrorKind.unsupported);
-        if (validateUtf8(config.title[]).hasError)
-            return waylandFailure!WindowId(WsiOperation.createWindow, 0,
-                "window title is not valid UTF-8",
-                WsiErrorKind.invalidArgument);
 
         size_t index = size_t.max;
         foreach (i, ref slot; windows_)
@@ -278,10 +268,10 @@ struct WaylandWsi
                 "failed to construct Wayland toplevel object tree");
         }
 
-        char[257] title;
-        title[0 .. config.title.length] = config.title[];
-        title[config.title.length] = '\0';
-        xdg_toplevel_set_title(slot.toplevel, title.ptr);
+        // Terminated at the seam rather than in a fixed array sized one byte
+        // past whatever `WindowConfig.title` happens to hold today.
+        xdg_toplevel_set_title(slot.toplevel,
+            config.title[].toTempStringz.ptr);
         xdg_toplevel_set_app_id(slot.toplevel, "sparkles-wsi");
         if (!config.resizable)
         {

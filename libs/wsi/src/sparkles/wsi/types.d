@@ -11,6 +11,8 @@ import expected : Expected, err, ok;
 import std.math : isFinite;
 
 import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.text.cstring : hasInteriorNul;
+import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.math : ScreenPosition, ScreenSize;
 
 @safe:
@@ -85,9 +87,26 @@ enum BackendPreference : ubyte
     appkit,
 }
 
+/**
+How a process presents itself while it has windows. AppKit only; every other
+backend ignores it, because on those platforms it is the window manager's
+decision rather than the application's.
+*/
+enum ActivationPolicy : ubyte
+{
+    /// A normal application: menu bar, Dock tile, and it may become frontmost.
+    /// The default, because a process that opens a window is one.
+    regular,
+    /// No Dock tile; windows may still take focus. For an accessory to a
+    /// terminal session, where taking over the Dock would be an imposition.
+    accessory,
+}
+
+/// Process-wide WSI options, fixed at `open` and not per window.
 struct WsiConfig
 {
     BackendPreference backend;
+    ActivationPolicy activation;
 }
 
 enum DecorationPreference : ubyte
@@ -116,6 +135,63 @@ struct WindowConfig
     DecorationPreference decorations;
     WindowStartupState state;
     WindowId parent;
+
+    /**
+    Why no backend can realise this configuration, or `null` if one can.
+
+    The backend-independent half of validation, in one place because the
+    backends had drifted apart: AppKit rejected an embedded NUL in the title and
+    Wayland did not, and AppKit accepted a zero logical size that Wayland
+    refused — so the same `WindowConfig` meant different things per platform.
+    What stays with each backend is what only it knows: which
+    `DecorationPreference` and `WindowStartupState` it has implemented.
+
+    The title is text on its way to a C string it is not yet — three of the four
+    platform APIs take one — which makes an embedded NUL a silent truncation
+    rather than a rejection. Hence `hasInteriorNul` and not `isExactStringz`:
+    the terminator is written at the seam, not stored here.
+
+    A query rather than an `invariant`, because a `WindowConfig` is filled in
+    field by field after default construction (`config.title.assign(name)`), so
+    there is no point at which the value is known to be complete.
+
+    Returns a static message, so the slice outlives any caller.
+    */
+    const(char)[] fault() const @safe pure nothrow @nogc
+    {
+        if (!logicalSize.width.isFinite || !logicalSize.height.isFinite
+            || logicalSize.width <= 0 || logicalSize.height <= 0
+            || logicalSize.width > int.max || logicalSize.height > int.max)
+            return "invalid logical window size";
+        if (validateUtf8(title[]).hasError)
+            return "window title is not valid UTF-8";
+        if (hasInteriorNul(title[]))
+            return "window title contains an embedded NUL";
+        return null;
+    }
+}
+
+@("wsi.types.configFaultIsBackendIndependent")
+@safe pure nothrow @nogc
+unittest
+{
+    WindowConfig config;
+    assert(config.fault is null);          // the defaults are realisable
+
+    config.logicalSize = LogicalSize(0, 600);
+    assert(config.fault == "invalid logical window size");
+    config.logicalSize = LogicalSize(800, double.nan);
+    assert(config.fault == "invalid logical window size");
+    config.logicalSize = LogicalSize(800, 600);
+
+    assert(config.title.assign("caf\xC3\xA9"));
+    assert(config.fault is null);
+    assert(config.title.assign("caf\xC3"));       // a truncated sequence
+    assert(config.fault == "window title is not valid UTF-8");
+
+    // A NUL would reach the platform as a shorter title than `.length` claims.
+    assert(config.title.assign("before\0after"));
+    assert(config.fault == "window title contains an embedded NUL");
 }
 
 /// Stable error categories suitable for exhaustive handling.

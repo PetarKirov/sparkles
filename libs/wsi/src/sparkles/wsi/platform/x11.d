@@ -14,7 +14,6 @@ import core.stdc.stdlib : free;
 import core.stdc.string : strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.time : Duration;
-import std.math : isFinite;
 
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
@@ -236,23 +235,21 @@ struct X11Wsi
         if (closed_)
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
                 "WSI is closed", WsiErrorKind.closed);
-        if (config.logicalSize.width < 0 || config.logicalSize.height < 0
-            || !config.logicalSize.width.isFinite
-            || !config.logicalSize.height.isFinite
-            || config.logicalSize.width > ushort.max
+        if (auto fault = config.fault)
+            return x11Failure!WindowId(WsiOperation.createWindow, 0,
+                fault, WsiErrorKind.invalidArgument);
+        // Narrower than the shared bound: X11 geometry requests are CARD16.
+        if (config.logicalSize.width > ushort.max
             || config.logicalSize.height > ushort.max)
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
-                "invalid X11 window size", WsiErrorKind.invalidArgument);
+                "X11 window size exceeds the protocol's 16-bit geometry",
+                WsiErrorKind.invalidArgument);
         if (config.parent.valid || config.transparent || !config.resizable
             || config.decorations == DecorationPreference.none
             || config.state != WindowStartupState.normal)
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
                 "requested X11 startup configuration is not implemented",
                 WsiErrorKind.unsupported);
-        if (validateUtf8(config.title[]).hasError)
-            return x11Failure!WindowId(WsiOperation.createWindow, 0,
-                "window title is not valid UTF-8",
-                WsiErrorKind.invalidArgument);
 
         size_t index = size_t.max;
         foreach (i, ref slot; windows_)

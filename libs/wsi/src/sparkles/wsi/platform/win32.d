@@ -16,7 +16,6 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR,
     ISC_SHOWUICOMPOSITIONWINDOW, WM_IME_CHAR, WM_IME_COMPOSITION,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
-import std.math : isFinite;
 
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
@@ -137,13 +136,9 @@ struct Win32Wsi
         if (closed_)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
                 "WSI is closed", WsiErrorKind.closed);
-        if (config.logicalSize.width < 0 || config.logicalSize.height < 0
-            || !config.logicalSize.width.isFinite
-            || !config.logicalSize.height.isFinite
-            || config.logicalSize.width > int.max
-            || config.logicalSize.height > int.max)
+        if (auto fault = config.fault)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
-                "invalid logical window size", WsiErrorKind.invalidArgument);
+                fault, WsiErrorKind.invalidArgument);
         if (config.transparent
             || config.state == WindowStartupState.fullscreen)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
@@ -165,7 +160,10 @@ struct Win32Wsi
         if (parent.hasError)
             return wsiErr!WindowId(parent.error);
 
-        wchar[257] title;
+        // UTF-8 never expands into UTF-16, so the title's inline capacity plus
+        // a terminator is the exact bound — stated as that, not as a literal
+        // that would silently stop matching if the capacity changed.
+        wchar[typeof(config.title).inlineCapacity + 1] title;
         auto converted = utf8ToUtf16z(config.title[], title[]);
         if (converted.hasError)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
