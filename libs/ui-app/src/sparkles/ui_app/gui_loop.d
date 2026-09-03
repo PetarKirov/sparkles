@@ -31,7 +31,8 @@ import sparkles.input : Event, InputCapabilities, Mods, mousePointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
+import sparkles.ui_app.gui_setup : GuiOpenFailure, GuiRequest, GuiSession,
+    openGuiSession;
 import sparkles.ui_app.host : FrameBudget, FrameOps, HostState, isHost, noDraw,
     noSetup, PointerUnit, reportFrames, resolveFrameBudget, RunConfig,
     withRealSize;
@@ -160,13 +161,14 @@ Returns `false` when the window opened but no font resolved — the caller repor
 which family it asked for, since a window painting without a font is a blank one.
 */
 bool runGui(alias present, alias handle, alias draw = noDraw,
-    alias setup = noSetup)(in RunConfig cfg, in GuiRequest req)
+    alias setup = noSetup)(in RunConfig cfg, in GuiRequest req,
+    out GuiOpenFailure why)
 {
     import sparkles.base.term_color : RgbColor;
     import sparkles.ui.interp.immediate : paint;
 
     GuiSession session;
-    if (!openGuiSession(req, session))
+    if (!openGuiSession(req, session, why))
         return false;
 
     GuiHost host;

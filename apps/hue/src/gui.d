@@ -4014,8 +4014,12 @@ int runGui(GuiArgs guiArgs) @system
         case RunOutcome.ok:
             return 0;
         case RunOutcome.openFailed:
-            stderr.writeln("hue --gui: could not load a font from '", gui.font,
-                "' (is fontconfig available?)");
+            // Both halves, because `openFailed` is both: no display / no GL
+            // context, or a window that opened with no font matching the
+            // request. Naming only the second sent everyone looking at
+            // fontconfig for what was really a headless session.
+            stderr.writeln("hue --gui: could not open a window, or could not ",
+                "load a font from '", gui.font, "'");
             version (Android)
             {
                 import sparkles.base.logger : error;
