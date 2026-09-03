@@ -717,6 +717,10 @@
           {
             "text": "Buffer spec",
             "link": "/specs/base/buffer"
+          },
+          {
+            "text": "CustomFloat spec",
+            "link": "/specs/base/custom-float"
           }
         ]
       },
