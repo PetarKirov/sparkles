@@ -507,7 +507,37 @@ nix run .#ci -- --test-extracted         # --better-c/--wasm for every sub-packa
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
 nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinned GitHub URLs
 nix run .#ci -- --check-docs-sidebar     # sidebar ↔ pages consistency (VitePress)
+nix run .#ci -- --smoke-apps             # launch every windowed app; require a clean exit
 ```
+
+### Smoke-launching the windowed applications
+
+`--smoke-apps` is the only thing in the repository that **runs** hue, terminal,
+ui-gallery and diagram. Everything else compiles them, which is how a window
+that aborted on startup — before it drew a frame — once reached `main`.
+
+It needs the binaries built first, and finds them in `result/<app>/bin/<app>`
+(the `.#all-desktop` link farm CI already produces), `apps/<app>/build/<app>`,
+or `apps/<app>/build/sparkles_<app>` (what an in-tree `dub build :<app>`
+leaves). Each launch is bounded to a few frames through `SPARKLES_UI_FRAMES`
+(`HST21`) and must exit cleanly having painted at least one frame.
+
+```bash
+nix develop -c dub build :hue :terminal :ui-gallery :diagram
+nix run .#ci -- --smoke-apps                      # all of them
+nix run .#ci -- --smoke-apps --files ui-gallery   # one of them
+xvfb-run -a nix run .#ci -- --smoke-apps          # headless Linux
+```
+
+A machine with no window server reports each GUI launch as **skipped**, not
+failed — but the summary says when _nothing_ ran, so a job where every leg
+skipped cannot be mistaken for one where the check passed.
+
+> [!NOTE]
+> An application needs no cooperation: the budget arrives through the
+> environment, because the four have four different argument parsers and a
+> harness that needed each of them to opt in would silently skip whichever had
+> not been taught yet.
 
 One further check exists that CI **cannot** run, because it reads the upstream
 clones under `$REPOS`:

@@ -25,6 +25,7 @@ nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- --smoke-apps [--smoke-frames N] [--smoke-timeout MS] [--smoke-bin-dir DIR] [--include-files APP...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
 
@@ -45,7 +46,7 @@ $(LIST
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
-    $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
+    $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)    $(ITEM `--smoke-apps` — launch every windowed application (hue, terminal, ui-gallery, diagram) in each backend it carries, bounded to a few frames through `SPARKLES_UI_FRAMES`, and require a clean exit having painted at least one frame. Nothing else in this repository runs these binaries — `.#all-desktop` only compiles them — so a crash on startup is otherwise invisible until someone opens the application by hand. A machine with no display reports each run as skipped rather than failed)
 )
 
 The script looks for D code blocks starting with:
@@ -148,6 +149,7 @@ import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
+import smoke_apps : runSmokeApps, SmokeOptions;
 
 // === UI sizing ===
 
@@ -260,6 +262,27 @@ struct CliParams
         ~ "never as a failure."))
     bool checkBlobPaths;
 
+    @(Option(`smoke-apps`,
+        description: "Launch each windowed application (hue, terminal, ui-gallery, diagram) "
+        ~ "in every backend it carries, bounded to a few frames, and require it to exit "
+        ~ "cleanly having painted at least one. Nothing else here runs these binaries. "
+        ~ "A machine with no display reports skips, not failures."))
+    bool smokeApps;
+
+    @(Option(`smoke-frames`,
+        description: "With --smoke-apps: frames to ask each run for (default 3)."))
+    int smokeFrames = 3;
+
+    @(Option(`smoke-timeout`,
+        description: "With --smoke-apps: per-launch wall-clock cap in milliseconds "
+        ~ "(default 60000). A run that outlives it is a failure, not a hung job."))
+    int smokeTimeoutMs = 60_000;
+
+    @(Option(`smoke-bin-dir`,
+        description: "With --smoke-apps: look for the binaries here first. Otherwise "
+        ~ "result/<app>/bin/<app> (the .#all-desktop link farm) then apps/<app>/build/<app>."))
+    string smokeBinDir;
+
     @(Option(`clone-root`,
         description: "Root directory holding the upstream clones --check-blob-paths reads. "
         ~ "Defaults to the REPOS environment variable."))
@@ -343,6 +366,7 @@ enum ProgramMode
     checkBlobPaths,
     ciStats,
     auditFences,
+    smokeApps,
 }
 
 struct Example
@@ -466,6 +490,11 @@ int ciMain(string[] args)
     if (mode == ProgramMode.auditFences)
         return runAuditFencesMode(cli);
 
+    // Resolves its own targets (the application table), so it must not fall
+    // through to the shared "no input files" usage error either.
+    if (mode == ProgramMode.smokeApps)
+        return runSmokeAppsMode(cli);
+
     if (mode == ProgramMode.runDubBuild)
         return runDubBuildMode(cli.failFast);
 
@@ -585,6 +614,15 @@ private string validateCliMode(
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
         return "--ci-stats cannot be combined with other modes";
 
+    if (cli.smokeApps && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
+            || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks
+            || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar
+            || cli.checkBlobPaths || cli.ciStats || cli.auditFences))
+        return "--smoke-apps cannot be combined with other modes";
+
+    if (cli.smokeApps && cli.smokeFrames <= 0)
+        return "--smoke-frames must be a positive number of frames";
+
     if (cli.ciStats && cli.limit <= 0)
         return "--limit must be a positive integer";
 
@@ -618,6 +656,9 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+
+    if (cli.smokeApps)
+        return ProgramMode.smokeApps;
 
     if (cli.auditFences)
         return ProgramMode.auditFences;
@@ -684,6 +725,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.auditFences:        return "--audit-fences";
+        case ProgramMode.smokeApps:          return "--smoke-apps";
     }
 }
 
@@ -1024,6 +1066,19 @@ private string[] trackedFilesMatching(string pattern)
 /// default `docs/**/*.md` + `README.md` set; globs resolve through
 /// `git ls-files` in the current directory, so combine them with `--root` only
 /// when the two agree.
+/// Runs the application smoke check (`--smoke-apps`). `--files` selects a
+/// subset by application name; with none given, every application runs.
+private int runSmokeAppsMode(in CliParams cli)
+{
+    styledWritelnErr(i"{bold Launching every windowed application}");
+    return runSmokeApps(SmokeOptions(
+        frames: cli.smokeFrames,
+        timeoutMs: cli.smokeTimeoutMs,
+        binDir: cli.smokeBinDir,
+        only: cli.files.dup,
+    ));
+}
+
 private int runAuditFencesMode(in CliParams cli)
 {
     string[] selected;
@@ -1180,6 +1235,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 break;
             case ProgramMode.ciStats:
             case ProgramMode.auditFences:
+            case ProgramMode.smokeApps:
                 rc = 1;   // handled earlier in main(); should never reach here
                 break;
         }

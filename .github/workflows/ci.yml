@@ -345,6 +345,26 @@ jobs:
       - name: Run all runnable examples
         run: nix run .#run-all-examples
 
+      # The only step in this workflow that *runs* hue, terminal, ui-gallery
+      # and diagram. Everything else compiles them — which is how a window that
+      # aborted before it appeared reached `main`. `.#all-desktop` above is a
+      # link farm, so `result/<app>/bin/<app>` is where the binaries already
+      # are; `ci --smoke-apps` bounds each run through SPARKLES_UI_FRAMES and
+      # requires a clean exit having painted at least one frame.
+      #
+      # Not a nix derivation: the build sandbox has no window server, which is
+      # precisely why `all-desktop` can only ever compile these. Linux needs
+      # xvfb, already used by the OS-API steps above; macOS runners have a real
+      # session. A leg with no display reports skips and stays green — the
+      # summary line says so rather than pretending the check ran.
+      - name: Smoke-launch every windowed application
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            nix develop .#ci -c xvfb-run -a ci --smoke-apps
+          else
+            nix develop .#ci -c ci --smoke-apps
+          fi
+
   # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
   # — the repo-embedded hue APK, whose dependency chain covers the entire
   # cross closure (dual-ABI druntimes via dlang.nix's ldc-android, the
