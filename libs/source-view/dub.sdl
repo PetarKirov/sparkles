@@ -20,10 +20,20 @@ configuration "library" {
     // signatures), so source-view must compile inside each dependent too — see
     // docs/guidelines/importc-c-libraries.md.
     targetType "sourceLibrary"
+
+    // …which is why the golden fixtures are excluded here. A dependent
+    // compiling this package's sources with `-unittest` would otherwise
+    // compile `goldens.d` too — a module that exists only to check THIS
+    // package's rendering — and would then need `sparkles:test-utils` on its
+    // own unittest configuration to resolve `checkGolden`. That requirement
+    // travels the whole dependency graph (twoslash → docs → ci), for a module
+    // no dependent has any business building.
+    excludedSourceFiles "src/sparkles/source_view/goldens.d"
 }
 
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
