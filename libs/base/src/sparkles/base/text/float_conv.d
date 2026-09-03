@@ -1,29 +1,46 @@
 /**
-Correctly-rounded decimal ⇄ binary floating-point conversion.
+Correctly-rounded decimal ⇄ binary floating-point conversion for `float`,
+`double` and `real` at every width `real` takes — binary64, x87 extended80
+and binary128 — over one description of the target format as data
+($(LREF BinaryFloatFormat)).
 
 The parse direction is tiered, fastest first, and every tier is exact —
 a caller never receives a value that differs from the correctly-rounded
 (round-to-nearest, ties-to-even) result of the full decimal:
 
 $(LIST
-    * Tier 1 — the Clinger fast path: when the significand fits the
-        `double` mantissa and the power of ten is exactly representable,
-        one FP multiply or divide is correctly rounded by construction.
-    * Tier 2 — Eisel–Lemire: a 128-bit multiply against a precomputed
-        power-of-ten significand table decides almost every remaining
-        case, in pure 64-bit integer arithmetic.
-    * Tier 3 — a big-integer comparison (`slowDouble`, next milestone)
-        settles the rare inputs tier 2 cannot prove (including subnormals
-        and overflow-boundary values, which tier 2 deliberately punts).
+    * Tier 1 — the Clinger fast path, in the target's own arithmetic: when
+        the significand fits the mantissa and the power of ten is exactly
+        representable, one multiply or divide is correctly rounded by
+        construction.
+    * Tier 2 — Eisel–Lemire: a wide multiply against a precomputed
+        power-of-ten significand table decides almost every remaining case
+        in integer arithmetic. `double` takes the 64×128-bit form
+        ($(LREF tryFastDouble)); the wide formats take a 128×128-bit form
+        over a 38-digit significand, with a few anchors that compose an
+        entry for any exponent they can carry.
+    * Tier 3 — the exact big-decimal fallback ($(LREF slowDecode),
+        $(LREF slowDouble)) settles what tier 2 cannot prove: true ties,
+        subnormals, and the overflow boundary.
 )
+
+An explicit exponent is bounded by the format and the literal's digit span,
+never by a fixed magnitude, so a long run of zeros paid for by the exponent
+decodes to the value it names.
+
+The format direction renders the shortest decimal that reads back to the
+same value: Schubfach for `double` ($(LREF formatShortestDouble), in the
+notation the JSON writer uses) and Steele–White's free-format algorithm for
+any format ($(LREF shortestDigits), $(LREF writeShortest) — scientific
+notation, which a consumer with an exponent-free grammar such as the SDL
+writer expands).
 
 The primitives are building blocks for fused grammar loops (the JSON
 reader accumulates digits inside its own scanner and calls
 $(LREF tryFastDouble) directly); $(LREF readDecimalFloat) is the plain
-cursor-style reader for everything else.
-
-The power-of-ten table is generated at CTFE from exact big-integer
-arithmetic — there is no external generator step to keep in sync.
+cursor-style reader for everything else. Every power-of-ten table is
+generated at CTFE from exact big-integer arithmetic — there is no external
+generator step to keep in sync.
 */
 module sparkles.base.text.float_conv;
 
