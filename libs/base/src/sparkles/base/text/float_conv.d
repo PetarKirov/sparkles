@@ -29,6 +29,8 @@ module sparkles.base.text.float_conv;
 
 import std.traits : Unqual;
 
+import sparkles.test_runner.attributes : benchmark;
+
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
     parseOk;
 
@@ -3569,6 +3571,76 @@ version (linux)
         const oracle = strtold(buf.ptr, null);
         assert(ours.value is oracle);
     }
+}
+
+/// The cost of every tier at every width, on the inputs the spec cites:
+/// `dub test :base -b bench -- --bench -i float_conv.bench --group-by=format`.
+@("float_conv.bench.tiers")
+@benchmark @safe
+unittest
+{
+    import sparkles.test_runner.bench : benchIter, blackBox;
+
+    // binary64: the fast tiers, the exact tier, and both writers.
+    benchIter({
+        double d;
+        tryFastDouble(blackBox(299_792_458UL), blackBox(-8), d);
+        blackBox(d);
+    }, ["format": "binary64", "tier": "fast", "input": "2.99792458"]);
+    benchIter({
+        blackBox(slowDouble(blackBox("1"), blackBox("527064050293794113039"), 0));
+    }, ["format": "binary64", "tier": "exact", "input": "22 digits near 1"]);
+    benchIter({
+        blackBox(slowDouble(blackBox("17976931348623157"), null, blackBox(292)));
+    }, ["format": "binary64", "tier": "exact", "input": "double.max"]);
+    char[40] buf;
+    benchIter({
+        blackBox(formatShortestDouble(buf[], blackBox(1.5599)));
+    }, ["format": "binary64", "tier": "schubfach", "input": "1.5599"]);
+    char[64] digits;
+    int exp10;
+    benchIter({
+        blackBox(shortestDigits!binary64(DecodedFloat(0, blackBox(0x18F3A2B1C4D5EUL | (1UL << 52)), -52),
+            digits[], exp10));
+    }, ["format": "binary64", "tier": "steele-white", "input": "near 1.5"]);
+
+    // The wide formats: the new tier near 1 and at the far end, the exact
+    // tier on the same inputs, and the writer at real.max.
+    static foreach (fmt; [extended80, binary128])
+    {{
+        enum name = fmt == extended80 ? "extended80" : "binary128";
+        enum DecodedFloat realMax = fmt == extended80
+            ? DecodedFloat(0, ulong.max, 16383 - 63)
+            : DecodedFloat(ulong.max >> 15, ulong.max, 16383 - 112);
+        benchIter({
+            DecodedFloat r;
+            tryFastWide!fmt(sigOf(blackBox("15270640502937941130")), blackBox(-19), r);
+            blackBox(r);
+        }, ["format": name, "tier": "fast", "input": "20 digits near 1"]);
+        benchIter({
+            DecodedFloat r;
+            tryFastWide!fmt(sigOf(blackBox("118973149535723176502")), blackBox(4912), r);
+            blackBox(r);
+        }, ["format": name, "tier": "fast", "input": "1.19e4932 (composed entry)"]);
+        benchIter({
+            blackBox(decodeWide!fmt(blackBox("1"), blackBox("5270640502937941130"), 0));
+        }, ["format": name, "tier": "wide", "input": "20 digits near 1"]);
+        benchIter({
+            blackBox(decodeWide!fmt(blackBox("118973149535723176502"), null, blackBox(4912)));
+        }, ["format": name, "tier": "wide", "input": "1.19e4932"]);
+        benchIter({
+            blackBox(slowDecode!fmt(blackBox("1"), blackBox("5270640502937941130"), 0));
+        }, ["format": name, "tier": "exact", "input": "20 digits near 1"]);
+        benchIter({
+            blackBox(slowDecode!fmt(blackBox("118973149535723176502"), null, blackBox(4912)));
+        }, ["format": name, "tier": "exact", "input": "1.19e4932"]);
+        benchIter({
+            blackBox(slowDecode!fmt(blackBox("3"), blackBox("36210314311209350626"), blackBox(-4932)));
+        }, ["format": name, "tier": "exact", "input": "3.36e-4932"]);
+        benchIter({
+            blackBox(shortestDigits!fmt(blackBox(realMax), digits[], exp10));
+        }, ["format": name, "tier": "steele-white", "input": "real.max"]);
+    }}
 }
 
 version (Posix)
