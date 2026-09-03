@@ -186,6 +186,12 @@ RecordingHost runRecorded(Present, Handle)(
     if (setup !is null)
         setup(h);
 
+    // `HST21`: the same budget the two live arms honour. Here it also bounds
+    // the animation tail below, which an application that asks for a frame
+    // every frame would otherwise never leave.
+    const int limit = cfg.frameBudget;
+    bool exhausted() => limit > 0 && h.frames.length >= limit;
+
     void frame()
     {
         h.beginFrameState();
@@ -202,7 +208,7 @@ RecordingHost runRecorded(Present, Handle)(
 
     foreach (e; script)
     {
-        if (h.quitRequested)
+        if (h.quitRequested || exhausted())
             break;
         // `HST17`: the script is the only evidence a recorder has.
         h.noteModifiers(modsOf(e, h.modifiers));
@@ -212,7 +218,8 @@ RecordingHost runRecorded(Present, Handle)(
 
     // Honour the last frame's request, so an animation's final step is recorded
     // rather than cut off by the script ending.
-    while (!h.quitRequested && h.frames.length && h.frames[$ - 1].requested)
+    while (!h.quitRequested && !exhausted()
+        && h.frames.length && h.frames[$ - 1].requested)
         frame();
 
     return h;
@@ -234,6 +241,43 @@ version (unittest)
     // `@system` too — which then cannot be called from a `@safe` unittest.
     private DrawOp fill(int x) @safe pure nothrow
         => fillRectOp(Rect(x, 0, 1, 1));
+}
+
+@("ui_app.record.frameBudgetBoundsARunThatWouldNeverEnd")
+@safe
+unittest
+{
+    // An application that asks for a frame every frame — a spinner, a cursor
+    // blink — has no natural end. Without a budget the recorder's animation
+    // tail runs forever, which is the same hang `ci --smoke-apps` exists to
+    // catch in a window.
+    RunConfig cfg;
+    cfg.frameBudget = 5;
+
+    auto rec = runRecorded(cfg,
+        (ref RecordingHost h) { h.requestFrame(); h.ops() ~= fill(0); },
+        (ref RecordingHost h, in Event e) {},
+        []);
+
+    assert(rec.frames.length == 5);
+    assert(rec.frames[$ - 1].requested, "it stopped because of the budget");
+}
+
+@("ui_app.record.frameBudgetIsOffByDefault")
+@safe
+unittest
+{
+    // The default must not change a single existing recording: `0` is not a
+    // budget of zero frames.
+    RunConfig cfg;
+    assert(cfg.frameBudget == 0);
+
+    auto rec = runRecorded(cfg,
+        (ref RecordingHost h) { h.ops() ~= fill(0); },
+        (ref RecordingHost h, in Event e) {},
+        [charEvent('a'), charEvent('b')]);
+
+    assert(rec.frames.length == 3);
 }
 
 @("ui_app.record.framesAndOps")
