@@ -312,6 +312,15 @@ pure nothrow @nogc:
     /// Is copying disabled?
     private enum bool unique = (storage & Storage.unique) != 0;
 
+    /**
+    How many elements fit without allocating — `N`, named.
+
+    A compile-time constant, unlike $(LREF Buffer.capacity), so it can size a
+    static array that has to hold this buffer's contents. That is the one place
+    the number would otherwise be repeated as a literal and drift.
+    */
+    enum size_t inlineCapacity = N;
+
     static if (hasInline)
         static assert(N > 0, "N must be greater than 0 for a policy with Storage.inline");
     else
@@ -3037,6 +3046,20 @@ unittest
     static assert(!__traits(compiles, Buffer!(char, 8, Storage.unique)));
     static assert(!__traits(compiles, Buffer!(char, 8, Storage.heap)));
     static assert(__traits(compiles, Buffer!(char, 0, Storage.heap)));
+}
+
+@("buffer.inlineCapacity.isAvailableAtCompileTime")
+@safe pure nothrow @nogc
+unittest
+{
+    // The point of the constant: sizing something else from it. `capacity()` is
+    // a runtime accessor and cannot appear here.
+    InlineBuffer!(char, 96) label;
+    char[typeof(label).inlineCapacity + 1] terminated;
+    assert(terminated.length == 97);
+
+    static assert(HeapBuffer!int.inlineCapacity == 0);
+    static assert(UniqueBuffer!(int, 4).inlineCapacity == 4);
 }
 
 @("buffer.inline.assignReplacesWholeValue")

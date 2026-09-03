@@ -104,6 +104,7 @@ values. This is unlike `shared_ptr`, where a mutation propagates.
 | `BUF11` | `reserve` must allocate on a buffer that is not yet on the heap, since that is the only way to size a `HeapBuffer` before use.                                                                                                                  | full    |
 | `BUF12` | The four aliases must be the documented entry points; the raw `Buffer!(T, N, flags)` form is for generic code and the two policies without an alias.                                                                                            | decided |
 | `BUF13` | A policy without `Storage.inline` must keep its heap block across `popBack`, a shrinking `length`, and `clear`; the block is released only by the destructor or transferred by `toShared`, so one `reserve` serves every reuse.                 | full    |
+| `BUF14` | `inlineCapacity` must expose `N` as a compile-time constant, so a caller can size a static array from a buffer's type rather than repeating the literal.                                                                                        | full    |
 
 ## 4. Bounded writing (`WRT`)
 
@@ -214,6 +215,7 @@ input to accommodate?**
 | `CST4` | `toCString` must treat overflow as a programmer error; `tryToCString` must report it without writing.                                                                                               | full   |
 | `CST5` | `CStr` must be the borrowed form — a pointer and the length before the terminator — and must appear in no D signature as a parameter; D APIs take `string` or `in char[]` and terminate internally. | full   |
 | `CST6` | `stringz` must terminate a buffer that outlives the call and must be idempotent.                                                                                                                    | full   |
+| `CST7` | `hasInteriorNul` must be public: text bound for a C string must be checkable where it is built, not only where it is passed.                                                                        | full   |
 
 ## 7. Mechanism proofs
 

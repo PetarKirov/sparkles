@@ -399,11 +399,24 @@ private size_t cStringBytes(scope const(char)[][] parts)
     return n;
 }
 
-// Does `s` contain a NUL? `memchr` at runtime; a loop under CTFE, where it has
-// no source to interpret and `cstr` needs an answer. `std.algorithm.canFind`
-// would serve both but reaches `std.uni` through `std.array`, and every
-// `CString` test in this module is `@betterC`-marked.
-private bool hasInteriorNul(scope const(char)[] s) @trusted
+/**
+Does `s` contain a NUL anywhere?
+
+The question to ask of text that is about to become a C string but is not one
+yet — a window title, a path, a label. C stops at the first NUL, so a slice
+carrying one arrives at the other side truncated, with the length D reported
+now a lie. Reject it where the value is built rather than where it is passed.
+
+$(LREF isExactStringz) is the neighbouring check, for a slice that already
+carries its own terminator: there the final NUL is required, and only an
+$(I interior) one is a fault.
+
+`memchr` at runtime; a loop under CTFE, where it has no source to interpret and
+`cstr` needs an answer. `std.algorithm.canFind` would serve both but reaches
+`std.uni` through `std.array`, and every `CString` test in this module is
+`@betterC`-marked.
+*/
+bool hasInteriorNul(scope const(char)[] s) @trusted
 {
     if (__ctfe)
     {
@@ -416,6 +429,25 @@ private bool hasInteriorNul(scope const(char)[] s) @trusted
     import core.stdc.string : memchr;
 
     return s.length != 0 && memchr(s.ptr, '\0', s.length) !is null;
+}
+
+///
+@("text.cstring.hasInteriorNul.anyNulAtAll")
+unittest
+{
+    assert(!hasInteriorNul("plain text"));
+    assert(!hasInteriorNul(""));
+
+    assert(hasInteriorNul("a\0b"));
+    assert(hasInteriorNul("\0"));
+
+    // Unlike `isExactStringz`, the terminating position is not special: a
+    // trailing NUL is still a NUL.
+    assert(hasInteriorNul("abc\0"));
+
+    // Both evaluation paths agree: `memchr` at runtime, a loop under CTFE.
+    static assert(!hasInteriorNul("plain text"));
+    static assert(hasInteriorNul("a\0b"));
 }
 
 /**
