@@ -538,16 +538,30 @@ decimal fast path imports `writeU64Digits` from here, so the `new` denied
 build. A static array costs the CTFE interpreter nothing and keeps the module
 importable without druntime.
 */
-private struct BigUint
+private struct BigUintOf(size_t cap)
 {
-    uint[maxScratchLimbs] limbs = 0;
+    uint[cap] limbs = 0;
     size_t length = 1; /// significant limbs; the value is 0 while `limbs[0]` is
 
     /// A single-limb value.
-    static BigUint from(uint value) @safe pure nothrow @nogc
+    static BigUintOf from(uint value) @safe pure nothrow @nogc
     {
-        BigUint b;
+        BigUintOf b;
         b.limbs[0] = value;
+        return b;
+    }
+
+    /// A value of up to 128 bits.
+    static BigUintOf from(ulong hi, ulong lo) @safe pure nothrow @nogc
+    {
+        BigUintOf b;
+        b.limbs[0] = cast(uint) lo;
+        b.limbs[1] = cast(uint)(lo >> 32);
+        b.limbs[2] = cast(uint) hi;
+        b.limbs[3] = cast(uint)(hi >> 32);
+        b.length = 4;
+        while (b.length > 1 && b.limbs[b.length - 1] == 0)
+            b.length--;
         return b;
     }
 
@@ -556,8 +570,11 @@ private struct BigUint
         => limbs[0 .. length];
 }
 
+/// The table generator's scratch; the shortest-digits writer sizes its own.
+private alias BigUint = BigUintOf!maxScratchLimbs;
+
 /// Multiplies `a` by the single limb `m`, in place.
-private void bigMulSmall(ref BigUint a, uint m) @safe pure nothrow @nogc
+private void bigMulSmall(B)(ref B a, uint m) @safe pure nothrow @nogc
 {
     ulong carry = 0;
     foreach (i; 0 .. a.length)
@@ -568,9 +585,96 @@ private void bigMulSmall(ref BigUint a, uint m) @safe pure nothrow @nogc
     }
     if (carry)
     {
-        assert(a.length < maxScratchLimbs, "BigUint overflow: raise maxScratchLimbs");
+        assert(a.length < a.limbs.length, "BigUint overflow: raise the limb count");
         a.limbs[a.length++] = cast(uint) carry;
     }
+    while (a.length > 1 && a.limbs[a.length - 1] == 0)
+        a.length--;
+}
+
+/// Multiplies `a` by `10^k`, in place, nine digits per step.
+private void bigMulPow10(B)(ref B a, int k) @safe pure nothrow @nogc
+{
+    for (; k >= 9; k -= 9)
+        bigMulSmall(a, 1_000_000_000);
+    for (; k > 0; k--)
+        bigMulSmall(a, 10);
+}
+
+/// Multiplies `a` by `2^bits`, in place.
+private void bigShiftLeft(B)(ref B a, int bits) @safe pure nothrow @nogc
+{
+    if (bits <= 0 || (a.length == 1 && a.limbs[0] == 0))
+        return;
+    const limbShift = bits / 32;
+    const bitShift = bits % 32;
+    assert(a.length + limbShift + 1 <= a.limbs.length, "BigUint overflow: raise the limb count");
+    if (limbShift)
+    {
+        foreach_reverse (i; 0 .. a.length)
+            a.limbs[i + limbShift] = a.limbs[i];
+        foreach (i; 0 .. limbShift)
+            a.limbs[i] = 0;
+        a.length += limbShift;
+    }
+    if (bitShift)
+    {
+        uint carry = 0;
+        foreach (i; 0 .. a.length)
+        {
+            const t = (cast(ulong) a.limbs[i] << bitShift) | carry;
+            a.limbs[i] = cast(uint) t;
+            carry = cast(uint)(t >> 32);
+        }
+        if (carry)
+            a.limbs[a.length++] = carry;
+    }
+}
+
+/// Three-way comparison of two normalized values.
+private int bigCompare(B)(in B a, in B b) @safe pure nothrow @nogc
+{
+    if (a.length != b.length)
+        return a.length < b.length ? -1 : 1;
+    foreach_reverse (i; 0 .. a.length)
+        if (a.limbs[i] != b.limbs[i])
+            return a.limbs[i] < b.limbs[i] ? -1 : 1;
+    return 0;
+}
+
+/// `a += b`, in place.
+private void bigAdd(B)(ref B a, in B b) @safe pure nothrow @nogc
+{
+    const n = a.length > b.length ? a.length : b.length;
+    ulong carry = 0;
+    foreach (i; 0 .. n)
+    {
+        const t = cast(ulong)(i < a.length ? a.limbs[i] : 0)
+            + (i < b.length ? b.limbs[i] : 0) + carry;
+        a.limbs[i] = cast(uint) t;
+        carry = t >> 32;
+    }
+    a.length = n;
+    if (carry)
+    {
+        assert(a.length < a.limbs.length, "BigUint overflow: raise the limb count");
+        a.limbs[a.length++] = cast(uint) carry;
+    }
+}
+
+/// `a -= b`, in place; `a >= b` is a precondition.
+private void bigSub(B)(ref B a, in B b) @safe pure nothrow @nogc
+{
+    long borrow = 0;
+    foreach (i; 0 .. a.length)
+    {
+        long t = cast(long) a.limbs[i] - (i < b.length ? b.limbs[i] : 0) - borrow;
+        borrow = t < 0 ? 1 : 0;
+        if (t < 0)
+            t += 0x1_0000_0000L;
+        a.limbs[i] = cast(uint) t;
+    }
+    assert(borrow == 0, "bigSub: a < b");
     while (a.length > 1 && a.limbs[a.length - 1] == 0)
         a.length--;
 }
@@ -1805,6 +1909,237 @@ void writeShortestDouble(Writer)(ref Writer w, double value)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shortest round-trip digits for any format (Steele–White free-format)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+The shortest decimal that reads back as `v` under `fmt`: writes its
+significant digits to `digitBuf` and returns how many, with `exp10` the
+exponent of the last one, so the value is `digits × 10^exp10`. Zero is the
+one digit `0` at exponent 0; the sign is not rendered, and infinity is a
+precondition.
+
+This is the free-format algorithm of Steele & White as Burger & Dybvig
+state it: the value and its rounding interval are exact integers over one
+denominator, digits come off one at a time, and the first prefix whose
+round-down or round-up lands inside the interval is provably the shortest
+decimal any correctly-rounded reader maps back to `v` — so no reader is
+consulted, and the answer does not depend on one. The interval is
+`[v - m⁻, v + m⁺]` with both a half ulp, except that a power-of-two
+significand above the smallest normal has a quarter ulp below; its ends
+are inclusive iff the significand is even, which is what round-half-even
+makes true — and what lets the result agree, digit for digit, with
+Schubfach on `double`. Of two prefixes both inside, the nearer to `v` wins,
+an exact tie going to the even digit.
+
+Integer-only, `@nogc`, CTFE-capable, and sized by the format: the big
+integers hold the far end of the exponent range, which for binary128 is
+about 2 KB each — four of them, on the stack.
+
+`digitBuf.length` must be at least `fmt.maxDigits10`, which no result
+exceeds.
+*/
+size_t shortestDigits(BinaryFloatFormat fmt)(in DecodedFloat v, scope char[] digitBuf,
+    out int exp10) @safe pure nothrow @nogc
+in (!v.isInf, "infinity has no digits")
+in (digitBuf.length >= fmt.maxDigits10, "digitBuf is shorter than fmt.maxDigits10")
+{
+    enum p = fmt.mantDig;
+    if (v.hi == 0 && v.lo == 0)
+    {
+        digitBuf[0] = '0';
+        return 1;
+    }
+
+    // Limbs for the largest scaled value: the far exponent, the significand,
+    // a power-of-ten chunk in flight, and slack.
+    enum farExp = fmt.maxExp > -fmt.minSubnormalExp2 ? fmt.maxExp : -fmt.minSubnormalExp2;
+    enum limbs = farExp / 32 + p / 32 + 8;
+    alias Big = BigUintOf!limbs;
+
+    static if (p > 64)
+        const powerOfTwo = v.hi == 1UL << (p - 1 - 64) && v.lo == 0;
+    else
+        const powerOfTwo = v.hi == 0 && v.lo == 1UL << (p - 1);
+    const bool quarterBelow = powerOfTwo && v.exp2 > fmt.minSubnormalExp2;
+    const bool inclusive = (v.lo & 1) == 0;
+    const e = v.exp2;
+
+    // v = r/s, the interval [v - mMinus/s, v + mPlus/s].
+    Big r = Big.from(v.hi, v.lo);
+    Big s = Big.from(1);
+    Big mPlus = Big.from(1);
+    Big mMinus = Big.from(1);
+    if (e >= 0)
+    {
+        bigShiftLeft(r, e + (quarterBelow ? 2 : 1));
+        s = Big.from(quarterBelow ? 4 : 2);
+        bigShiftLeft(mPlus, e + (quarterBelow ? 1 : 0));
+        bigShiftLeft(mMinus, e);
+    }
+    else
+    {
+        bigShiftLeft(r, quarterBelow ? 2 : 1);
+        bigShiftLeft(s, (quarterBelow ? 2 : 1) - e);
+        if (quarterBelow)
+            mPlus = Big.from(2);
+    }
+
+    // k ≈ ceil(log10 v), from the leading bit's exponent; the fixup below
+    // moves it by one where the estimate is off.
+    int sigBits = 0;
+    for (ulong x = v.hi ? v.hi : v.lo; x; x >>= 1)
+        sigBits++;
+    if (v.hi)
+        sigBits += 64;
+    const long scaledLog = cast(long)(e + sigBits - 1) * 30_103;
+    long k = scaledLog / 100_000;
+    if (scaledLog % 100_000 != 0 && scaledLog < 0)
+        k--;
+    k++;
+    if (k >= 0)
+        bigMulPow10(s, cast(int) k);
+    else
+    {
+        bigMulPow10(r, cast(int) -k);
+        bigMulPow10(mPlus, cast(int) -k);
+        bigMulPow10(mMinus, cast(int) -k);
+    }
+
+    // Fixup: the high end of the interval must lie in [10^(k-1), 10^k), so the
+    // first digit is 1..9.
+    for (;;)
+    {
+        Big high = r;
+        bigAdd(high, mPlus);
+        const c = bigCompare(high, s);
+        if (c > 0 || (inclusive && c == 0))
+        {
+            k++;
+            bigMulSmall(s, 10);
+            continue;
+        }
+        bigMulSmall(high, 10);
+        const c10 = bigCompare(high, s);
+        if (c10 < 0 || (!inclusive && c10 == 0))
+        {
+            k--;
+            bigMulSmall(r, 10);
+            bigMulSmall(mPlus, 10);
+            bigMulSmall(mMinus, 10);
+            continue;
+        }
+        break;
+    }
+
+    // Generate: each digit is r*10 / s; stop as soon as rounding the prefix
+    // down (tc1) or up (tc2) stays inside the interval.
+    size_t n = 0;
+    for (;;)
+    {
+        bigMulSmall(r, 10);
+        bigMulSmall(mPlus, 10);
+        bigMulSmall(mMinus, 10);
+        uint d = 0;
+        while (bigCompare(r, s) >= 0)
+        {
+            bigSub(r, s);
+            d++;
+        }
+        assert(d <= 9, "a digit past 9: the fixup did not hold");
+
+        const cLow = bigCompare(r, mMinus);
+        const tc1 = inclusive ? cLow <= 0 : cLow < 0;
+        Big high = r;
+        bigAdd(high, mPlus);
+        const cHigh = bigCompare(high, s);
+        const tc2 = inclusive ? cHigh >= 0 : cHigh > 0;
+
+        assert(n < digitBuf.length, "more digits than maxDigits10");
+        if (!tc1 && !tc2)
+        {
+            digitBuf[n++] = cast(char)('0' + d);
+            continue;
+        }
+        bool up = tc2;
+        if (tc1 && tc2)
+        {
+            // Both inside: the nearer wins, an exact tie to the even digit.
+            Big twice = r;
+            bigShiftLeft(twice, 1);
+            const c2 = bigCompare(twice, s);
+            up = c2 > 0 || (c2 == 0 && (d & 1) != 0);
+        }
+        assert(!up || d < 9, "a round-up past 9: the previous digit would have stopped");
+        digitBuf[n++] = cast(char)('0' + d + (up ? 1 : 0));
+        break;
+    }
+
+    // The first digit weighs 10^(k-1), the last 10^(k-n); a round-up to a
+    // trailing zero shortens further.
+    exp10 = cast(int) k - cast(int) n;
+    while (n > 1 && digitBuf[n - 1] == '0')
+    {
+        n--;
+        exp10++;
+    }
+    return n;
+}
+
+/// $(LREF shortestDigits) for a `float`, `double` or `real` value.
+size_t shortestDigits(T)(T value, scope char[] digitBuf, out int exp10)
+if (__traits(isFloating, T))
+    => shortestDigits!(formatOf!T)(decompose!T(value), digitBuf, exp10);
+
+/**
+Writes the shortest round-trip representation of `value` to any output
+range, in scientific notation — `[-]d[.ddd]e[-]x`, the exponent that of the
+first digit — plus `nan`, `inf` and `-inf`. `double` has the faster
+$(LREF writeShortestDouble) with its own notation; this one serves every
+type the same way.
+*/
+void writeShortest(T, Writer)(ref Writer w, T value)
+if (__traits(isFloating, T))
+{
+    import std.range.primitives : put;
+
+    if (value != value)
+        return put(w, "nan");
+    if (value == T.infinity)
+        return put(w, "inf");
+    if (value == -T.infinity)
+        return put(w, "-inf");
+
+    char[formatOf!T.maxDigits10] digits = void;
+    int exp10;
+    const n = shortestDigits!T(value, digits[], exp10);
+    if (value < 0 || (value == 0 && 1 / value < 0))
+        put(w, '-');
+    put(w, digits[0]);
+    if (n > 1)
+    {
+        put(w, '.');
+        put(w, digits[1 .. n]);
+    }
+    put(w, 'e');
+    int e = exp10 + cast(int) n - 1;
+    if (e < 0)
+    {
+        put(w, '-');
+        e = -e;
+    }
+    char[8] ebuf = void;
+    size_t at = ebuf.length;
+    do
+    {
+        ebuf[--at] = cast(char)('0' + e % 10);
+        e /= 10;
+    }
+    while (e);
+    put(w, ebuf[at .. $]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cursor reader (general grammar; the JSON reader fuses its own loop)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2383,6 +2718,232 @@ version (linux)
         const float oracle = strtof(buf.ptr, null);
         assert(*cast(const uint*) &mine == *cast(const uint*) &oracle);
     }
+}
+
+@("float_conv.shortestDigits.pins")
+@safe unittest
+{
+    static string sd(BinaryFloatFormat fmt)(DecodedFloat v, out int e)
+    {
+        char[64] buf;
+        const n = shortestDigits!fmt(v, buf[], e);
+        return buf[0 .. n].idup;
+    }
+
+    static string of(T)(T x, out int e)
+        => sd!(formatOf!T)(decompose!T(x), e);
+
+    int e;
+    assert(of(1.0, e) == "1" && e == 0);
+    assert(of(0.1, e) == "1" && e == -1);
+    assert(of(0.0, e) == "0" && e == 0);
+    assert(of(123.456, e) == "123456" && e == -3);
+    assert(of(1e23, e) == "1" && e == 23); // the JavaScript `1e23`, not 9.999…e22
+    assert(of(double.min_normal * double.epsilon, e) == "5" && e == -324);
+    assert(of(double.max, e) == "17976931348623157" && e == 292);
+    assert(of(double.min_normal, e) == "22250738585072014" && e == -324);
+    assert(of(2.0 ^^ 53, e) == "9007199254740992" && e == 0);
+    assert(of(16_777_216.0f, e) == "16777216" && e == 0);
+    assert(of(float.max, e) == "34028235" && e == 31);
+    assert(of(0.1f, e) == "1" && e == -1);
+    assert(of(1.0L, e) == "1" && e == 0);
+
+    // binary128, on any host. real.max there is 1.18973149535723176508575932662
+    // 80070162…e4932 with a half-ulp near 5.7e4897, so 34 digits already land
+    // inside the interval where the 36-digit max_digits10 spelling is the
+    // worst case, not the answer.
+    const realMax = DecodedFloat(ulong.max >> 15, ulong.max, 16383 - 112);
+    assert(sd!binary128(realMax, e) == "1189731495357231765085759326628007" && e == 4899);
+    assert(slowDecode!binary128("1189731495357231765085759326628007", null, 4899) == realMax);
+    assert(sd!binary128(DecodedFloat(1UL << 48, 0, -112), e) == "1" && e == 0);
+    assert(sd!binary128(DecodedFloat(0, 1, -16494), e) == "6" && e == -4966);
+
+    // Settled at compile time.
+    enum ct = () {
+        char[17] buf;
+        int ce;
+        const n = shortestDigits!binary64(decompose!double(1.5), buf[], ce);
+        return buf[0 .. n].idup ~ "@" ~ (ce == -1 ? "-1" : "?");
+    }();
+    static assert(ct == "15@-1");
+}
+
+@("float_conv.shortestDigits.roundTripsAndIsShortestAtEveryWidth")
+@safe unittest
+{
+    import std.meta : AliasSeq;
+
+    ulong state = 0xC0FF_EE12_3456_789A;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    // Increments a decimal digit string in place; a carry out returns true.
+    static bool increment(char[] d)
+    {
+        foreach_reverse (i; 0 .. d.length)
+        {
+            if (d[i] != '9')
+            {
+                d[i]++;
+                return false;
+            }
+            d[i] = '0';
+        }
+        return true;
+    }
+
+    static foreach (fmt; AliasSeq!(binary32, binary64, extended80, binary128))
+    {{
+        enum p = fmt.mantDig;
+        // Exponents: the whole range for the narrow formats, a band plus the
+        // ends for the wide ones — the far ends cost milliseconds each.
+        enum lo = fmt.minSubnormalExp2, hi = fmt.maxNormalExp2 - (p - 1);
+        enum band = p > 53 ? 400 : hi - lo;
+        // The wide formats' far ends cost tens of milliseconds a decode, so
+        // they are sampled sparingly and the sweep is shorter there.
+        enum iterations = p > 53 ? 60 : 150;
+        enum every = p > 53 ? 75 : 5; // one top and one bottom sample when wide
+        foreach (iter; 0 .. iterations)
+        {
+            DecodedFloat v;
+            static if (p > 64)
+            {
+                v.hi = (next() & ((1UL << (p - 64)) - 1)) | (1UL << (p - 1 - 64));
+                v.lo = next();
+            }
+            else static if (p == 64)
+                v.lo = next() | (1UL << 63);
+            else
+                v.lo = (next() & ((1UL << p) - 1)) | (1UL << (p - 1));
+            const span = cast(long) band;
+            long ex = lo + cast(long)(next() % cast(ulong)(span + 1));
+            if (iter % every == 1)
+                ex = hi - cast(long)(next() % 64); // the top end
+            else if (iter % every == 2)
+                ex = lo + cast(long)(next() % 64); // the bottom end
+            if (ex > hi)
+                ex = hi;
+            v.exp2 = cast(int) ex;
+            if (iter % 8 == 3) // a subnormal: fewer bits, at the floor
+            {
+                v.exp2 = lo;
+                v.hi = 0;
+                v.lo = (v.lo >> 1) | 1;
+                static if (p > 64)
+                    v.lo = next() | 1;
+                else
+                    v.lo &= (1UL << (p - 1)) - 1;
+                if (v.lo == 0)
+                    v.lo = 1;
+            }
+
+            char[64] buf;
+            int exp10;
+            const n = shortestDigits!fmt(v, buf[], exp10);
+            assert(n >= 1 && n <= fmt.maxDigits10);
+
+            // Round-trips through the exact reader, exactly.
+            const back = slowDecode!fmt(buf[0 .. n], null, exp10);
+            assert(back == v);
+
+            // And nothing one digit shorter does: the two nearest (n-1)-digit
+            // decimals — the truncation and its successor — both miss. (Every
+            // other value: the exact decodes are what this sweep costs.)
+            if (n > 1 && iter % 2 == 0)
+            {
+                char[65] shorter;
+                shorter[0 .. n - 1] = buf[0 .. n - 1];
+                assert(slowDecode!fmt(shorter[0 .. n - 1], null, exp10 + 1) != v);
+                if (increment(shorter[0 .. n - 1]))
+                {
+                    shorter[0] = '1';
+                    shorter[1 .. n] = '0';
+                    assert(slowDecode!fmt(shorter[0 .. n], null, exp10 + 1) != v);
+                }
+                else
+                    assert(slowDecode!fmt(shorter[0 .. n - 1], null, exp10 + 1) != v);
+            }
+        }
+    }}
+}
+
+@("float_conv.shortestDigits.agreesWithSchubfach")
+@safe unittest
+{
+    // Digit for digit against `f64ToDecimal` — the Schubfach port behind
+    // `formatShortestDouble` — over the same corpus that proves it
+    // round-trips. Agreement here is what the inclusive-iff-even boundary
+    // and the tie-to-even choice buy.
+    ulong state = 0xDEAD_BEEF_CAFE_F00D;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    char[17] ours;
+    char[20] theirs;
+    foreach (i; 0 .. 100_000)
+    {
+        ulong bits = next();
+        if (((bits >> 52) & 0x7FF) == 0x7FF)
+            bits &= ~(0x7FFUL << 52);
+        if (i % 7 == 0)
+            bits &= ~(0x7F0UL << 52);
+        const sigRaw = bits & ((1UL << 52) - 1);
+        const expRaw = cast(uint)(bits >> 52) & 0x7FF;
+        if (sigRaw == 0 && expRaw == 0)
+            continue; // zero has no Schubfach digits
+
+        const sigBin = expRaw ? sigRaw | (1UL << 52) : sigRaw;
+        const expBin = expRaw ? cast(int) expRaw - 1075 : -1074;
+        ulong sigDec;
+        int expDec;
+        f64ToDecimal(sigRaw, expRaw, sigBin, expBin, sigDec, expDec);
+        while (sigDec % 10 == 0)
+        {
+            sigDec /= 10;
+            expDec++;
+        }
+        size_t tn = theirs.length;
+        for (ulong v = sigDec; v; v /= 10)
+            theirs[--tn] = cast(char)('0' + v % 10);
+
+        int exp10;
+        const n = shortestDigits!binary64(DecodedFloat(0, sigBin, expBin), ours[], exp10);
+        assert(ours[0 .. n] == theirs[tn .. $] && exp10 == expDec);
+    }
+}
+
+@("float_conv.writeShortest.notation")
+@safe unittest
+{
+    import std.array : appender;
+
+    static string w(T)(T x)
+    {
+        auto a = appender!string;
+        writeShortest(a, x);
+        return a[];
+    }
+
+    assert(w(1.5) == "1.5e0");
+    assert(w(-0.001) == "-1e-3");
+    assert(w(123456.0f) == "1.23456e5");
+    assert(w(double.min_normal * double.epsilon) == "5e-324");
+    assert(w(0.0) == "0e0");
+    assert(w(-0.0) == "-0e0");
+    assert(w(double.infinity) == "inf");
+    assert(w(-real.infinity) == "-inf");
+    assert(w(float.nan) == "nan");
+    assert(w(2.5L) == "2.5e0");
 }
 
 // Exact correctly-rounded decoding by big-integer division: a second,
