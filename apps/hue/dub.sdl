@@ -175,6 +175,7 @@ configuration "unittest" {
     versions "HueDmdFmt"
 
     dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
 
     sourcePaths "src" "test"
     importPaths "src" "test"
