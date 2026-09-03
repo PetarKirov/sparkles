@@ -278,81 +278,32 @@ private SdlExpected!void writeDouble(Writer)(double value, ref Writer writer)
     return sdlOk();
 }
 
-/** Whether the canonical text `emitted` decodes back to `value` through the
-kernel the SDL reader actually uses.
+/** Writes the shortest decimal that reads back as `value` through the SDL
+adapter, in SDL's exponent-free notation, then `suffix`.
 
-This is the round-trip predicate behind SPEC §10 LAW 3 for `float` and
-`real`: `readDecimalFloat` is the lexer's binary64 path (`float` narrows from
-it), and `parseDecimalReal` is its `decimal` path.
+`shortestDigits` proves its spelling against the value's rounding interval
+rather than asking a reader, so there is no search over precisions, no
+Phobos formatting, and nothing left to fail past the non-finite check —
+which is what makes this `nothrow` and `@nogc` whenever the writer is. The
+digits come out in scientific notation and `writeFixedDecimal` expands
+them, the same path the `double` kind takes.
 */
-private bool roundTripsAsWritten(T)(scope const(char)[] emitted, T value)
-    @safe pure nothrow @nogc
-if (is(T == float) || is(T == real))
-{
-    static if (is(T == float))
-    {
-        import sparkles.base.text.float_conv : readDecimalFloat;
-
-        scope const(char)[] input = emitted;
-        auto parsed = readDecimalFloat(input);
-        if (parsed.hasError || input.length)
-            return false;
-        return cast(float) parsed.value is value;
-    }
-    else
-    {
-        import sparkles.wired.sdl.decimal : parseDecimalReal;
-
-        return parseDecimalReal(emitted) is value;
-    }
-}
-
 private SdlExpected!void writeShortestGeneric(T, Writer)(T value,
     ref Writer writer, string suffix)
 if (is(T == float) || is(T == real))
 {
-    import std.format : formattedWrite;
     import std.math : isFinite;
+    import sparkles.base.text.float_conv : writeShortest;
 
     if (!isFinite(value))
         return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange,
             T.stringof, "NaN and infinity are not representable in SDL"));
 
-    // The reader is correctly rounded at every width now, so max_digits10
-    // reaches every value; the guard digit is for Phobos' `%g` boundary
-    // behaviour near min_normal.
-    import sparkles.base.text.float_conv : formatOf;
-
-    enum maxDigits = formatOf!T.maxDigits10 + 2;
-    try
-    {
-        foreach (precision; 1 .. maxDigits + 1)
-        {
-            SharedBuffer!(char, 128) candidate;
-            formattedWrite(candidate, "%.*g", precision, value);
-
-            // Test the bytes that will actually be emitted, decoded by the
-            // very routine the lexer uses. Asking a third algorithm
-            // (`std.conv.to!real`, which is not correctly rounded for x87
-            // 80-bit) whether a spelling round-trips both rejects reals that
-            // are perfectly representable and lets through spellings this
-            // backend would decode differently.
-            SharedBuffer!(char, 160) emitted;
-            writeFixedDecimal(emitted, candidate[]);
-            if (roundTripsAsWritten!T(emitted[], value))
-            {
-                put(writer, emitted[]);
-                put(writer, suffix);
-                return sdlOk();
-            }
-        }
-    }
-    catch (Exception)
-        return sdlErr!void(encodeError(SdlErrorCode.allocationFailed,
-            T.stringof, "could not format the floating-point value"));
-
-    return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange,
-        T.stringof, "could not find a round-tripping decimal representation"));
+    SharedBuffer!(char, 64) scientific;
+    writeShortest(scientific, value);
+    writeFixedDecimal(writer, scientific[]);
+    put(writer, suffix);
+    return sdlOk();
 }
 
 private void writeDate(Writer)(ref Writer writer, Date value)
@@ -1232,10 +1183,9 @@ version (unittest)
 
 // SPEC §9/§10 for the `decimal` family: every finite `real` has a canonical
 // spelling, and that spelling decodes back to it through the reader's kernel.
-// Both directions go through `parseDecimalReal` on purpose — a writer whose
-// round-trip oracle is a *different* algorithm from the reader's (Phobos'
-// `to!real` was) rejects representable values and lets through spellings the
-// reader decodes to something else.
+// The writer proves its spelling against the rounding interval and consults
+// no reader; the law is that the reader's own adapter, `parseDecimalReal`,
+// maps it back — which is what this test reads through.
 @("sdl.writer.decimalRoundTripProperty")
 @system unittest
 {
@@ -1260,28 +1210,17 @@ version (unittest)
     foreach (value; corners)
         check(value);
 
-    // Phobos cannot render every 80-bit `real`: `%.38g` of `1 + real.epsilon`
-    // is "1" at every precision, so no candidate distinguishes it from 1.0.
-    // The contract that matters is that this surfaces as a structured encode
-    // error rather than silently emitting a spelling for a different value.
-    // On binary64, `1 + real.epsilon` is the next double after 1 and `%g`
-    // distinguishes it, so the same value is required to encode.
+    // `1 + real.epsilon` is the value Phobos' `%g` could not render on x87 —
+    // "1" at every precision — which the old precision search surfaced as an
+    // encode error. The interval method has no such gap: at every width the
+    // value encodes, and reads back.
     {
         const edge = SdlScalar.decimal(1.0L + real.epsilon);
         SdlString sink;
         const written = writeSdlScalar(edge, sink);
-        static if (real.mant_dig > double.mant_dig)
-        {
-            assert(written.hasError);
-            assert(written.error.code == SdlErrorCode.valueOutOfRange);
-            assert(sink.length == 0);
-        }
-        else
-        {
-            assert(!written.hasError, written.error.toString);
-            assert(sink.length > 2 && sink[][$ - 2 .. $] == "BD");
-            assert(parseDecimalReal(sink[][0 .. $ - 2]) is edge.decimalValue);
-        }
+        assert(!written.hasError, written.error.toString);
+        assert(sink.length > 2 && sink[][$ - 2 .. $] == "BD");
+        assert(parseDecimalReal(sink[][0 .. $ - 2]) is edge.decimalValue);
     }
 
     // A spread of non-dyadic values: the generated law test elsewhere feeds
