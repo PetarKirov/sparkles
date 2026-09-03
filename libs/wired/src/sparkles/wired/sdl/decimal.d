@@ -1,12 +1,14 @@
 /**
 The SDL numeric-literal adapter over `sparkles.base.text.float_conv`.
 
-SDL's float grammar is not `readDecimalFloat`'s: an optional sign, decimal
-digits, and at most one point — `.5` and `1.` are legal, and there is no
-exponent (the canonical writer expands one through
+SDL's float grammar is not `readDecimalFloat`'s: an optional `-`, decimal
+digits, and at most one point that must be followed by a digit — `.5` is
+legal, `1.` and `+1` are not — and there is no exponent (the canonical
+writer expands one through
 $(REF writeFixedDecimal, sparkles,wired,sdl,writer) before the text gets
-here). $(LREF readSdlDecimalFloat) enforces that grammar and normalizes the
-spelling to the reader's `[-]digits[.digits]`, then lets
+here). $(LREF readSdlDecimalFloat) enforces that grammar, exactly as the
+lexer's token shape does, and normalizes the spelling to the reader's
+`[-]digits[.digits]`, then lets
 $(REF readDecimalFloat, sparkles,base,text,float_conv) do the conversion —
 correctly rounded at whatever width `T` has: binary64, x87, or binary128.
 
@@ -38,9 +40,9 @@ if (__traits(isFloating, T))
 {
     size_t at;
     bool negative;
-    if (at < text.length && (text[at] == '+' || text[at] == '-'))
+    if (at < text.length && text[at] == '-')
     {
-        negative = text[at] == '-';
+        negative = true;
         at++;
     }
     auto rest = text[at .. $];
@@ -62,11 +64,10 @@ if (__traits(isFloating, T))
     }
     if (!sawDigit)
         return parseErr!T(ParseErrorCode.emptyInput, at);
-
-    // The reader wants a digit on both sides of the point: SDL's `1.` is 1
-    // and its `.5` is 0.5.
     if (rest[$ - 1] == '.')
-        rest = rest[0 .. $ - 1];
+        return parseErr!T(ParseErrorCode.unexpectedCharacter, text.length - 1);
+
+    // The reader wants a digit before the point too: SDL's `.5` is 0.5.
     UniqueBuffer!(char, 64) owned;
     scope const(char)[] input;
     if (rest[0] == '.')
@@ -142,9 +143,13 @@ unittest
 
     // The typed adapter serves the other kinds the same way.
     assert(readSdlDecimalFloat!float("0.1").value is 0.1f);
-    assert(readSdlDecimalFloat!double("1.").value is 1.0);
     assert(readSdlDecimalFloat!double("-.5").value is -0.5);
     assert(readSdlDecimalFloat!double("1e5").hasError);
     assert(readSdlDecimalFloat!double(".").hasError);
     assert(readSdlDecimalFloat!double("").hasError);
+    // Exactly the lexer's shape: no trailing point, no explicit plus.
+    assert(readSdlDecimalFloat!double("1.").hasError);
+    assert(readSdlDecimalFloat!double("1.").error.offset == 1);
+    assert(readSdlDecimalFloat!double("+1").hasError);
+    assert(readSdlDecimalFloat!double("-1.").hasError);
 }
