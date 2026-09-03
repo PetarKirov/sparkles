@@ -3,7 +3,8 @@
  * stack, matching macOS's pthread default. The main thread never runs a
  * test body when more than one worker is requested — that is what made
  * `DqlEngine`-sized stack locals flake (they fit the 8 MiB main stack and
- * SIGSEGV on a worker).
+ * SIGSEGV on a worker). Under ASan the stack is 4 MiB — see
+ * `stack_budget.workerStackBytes`.
  */
 module sparkles.test_runner.workers;
 
