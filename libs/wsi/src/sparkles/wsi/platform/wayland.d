@@ -236,26 +236,32 @@ struct WaylandWsi
         slot.live = true;
         slot.ready = false;
         slot.requestedSize = config.logicalSize;
-        slot.surface = wl_compositor_create_surface(compositor_);
-        if (slot.surface !is null
-            && wl_surface_add_listener(slot.surface,
-                listenerPtr(surfaceListener), &slot) != 0)
+        // Each step returns the moment it fails, so no later call runs against
+        // a null object. They share one cleanup rather than each repeating
+        // `destroyNative` and the re-arm: `destroyNative` frees exactly what
+        // was built, so a partial tree is as safe to hand it as a whole one.
+        bool buildObjectTree()
         {
-            wl_surface_destroy(slot.surface);
-            slot.surface = null;
-        }
-        if (slot.surface !is null)
+            slot.surface = wl_compositor_create_surface(compositor_);
+            if (slot.surface is null)
+                return false;
+            if (wl_surface_add_listener(slot.surface,
+                    listenerPtr(surfaceListener), &slot) != 0)
+                return false;
             slot.xdgSurface = xdg_wm_base_get_xdg_surface(
                 wmBase_, slot.surface);
-        if (slot.xdgSurface !is null)
-            slot.toplevel = xdg_surface_get_toplevel(
-                slot.xdgSurface);
-        if (slot.surface is null || slot.xdgSurface is null
-            || slot.toplevel is null
-            || xdg_surface_add_listener(slot.xdgSurface,
-                listenerPtr(xdgSurfaceListener), &slot) != 0
-            || xdg_toplevel_add_listener(slot.toplevel,
-                listenerPtr(toplevelListener), &slot) != 0)
+            if (slot.xdgSurface is null)
+                return false;
+            slot.toplevel = xdg_surface_get_toplevel(slot.xdgSurface);
+            if (slot.toplevel is null)
+                return false;
+            return xdg_surface_add_listener(slot.xdgSurface,
+                    listenerPtr(xdgSurfaceListener), &slot) == 0
+                && xdg_toplevel_add_listener(slot.toplevel,
+                    listenerPtr(toplevelListener), &slot) == 0;
+        }
+
+        if (!buildObjectTree())
         {
             destroyNative(slot);
             // Re-arm on the failure path; its own error must not shadow the
