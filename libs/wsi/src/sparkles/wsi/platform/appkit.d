@@ -11,9 +11,9 @@ module sparkles.wsi.platform.appkit;
 version (OSX):
 
 import core.attribute : selector;
-import std.math : isFinite;
 
 import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.text.cstring : toTempStringz;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
@@ -235,6 +235,8 @@ private extern class NSWindow : NSResponder
     void setDelegate(NSObject delegate_) @selector("setDelegate:");
     void setReleasedWhenClosed(bool value)
         @selector("setReleasedWhenClosed:");
+    void center()
+        @selector("center");
     void makeKeyAndOrderFront(NSObject sender)
         @selector("makeKeyAndOrderFront:");
     bool makeFirstResponder(NSResponder responder)
@@ -491,6 +493,7 @@ private class SparklesWsiWindow : NSWindow
 
 extern (D):
 
+private enum long NSApplicationActivationPolicyRegular = 0;
 private enum long NSApplicationActivationPolicyAccessory = 1;
 private enum ulong NSWindowStyleMaskTitled = 1;
 private enum ulong NSWindowStyleMaskClosable = 2;
@@ -545,7 +548,8 @@ struct AppKitWsi
     private bool completionReady_;
 
     /** Opens the AppKit adapter on the process main thread. */
-    static WsiResult!void open(out AppKitWsi wsi)
+    static WsiResult!void open(out AppKitWsi wsi,
+        in WsiConfig config = WsiConfig.init)
     {
         if (pthread_main_np() == 0)
             return appKitFailure!void(WsiOperation.open, 0,
@@ -562,8 +566,14 @@ struct AppKitWsi
         if (wsi.application_ is null)
             return appKitFailure!void(WsiOperation.open, 0,
                 "NSApplication.sharedApplication returned nil");
+        // Regular by default: a process that opens a window is an application,
+        // and an accessory one cannot be brought frontmost by the user. A host
+        // that really is an accessory — a panel beside a terminal session —
+        // says so in its `WsiConfig`.
         wsi.application_.setActivationPolicy(
-            NSApplicationActivationPolicyAccessory);
+            config.activation == ActivationPolicy.accessory
+                ? NSApplicationActivationPolicyAccessory
+                : NSApplicationActivationPolicyRegular);
         wsi.runLoop_ = CFRunLoopGetCurrent();
         if (wsi.runLoop_ is null)
             return appKitFailure!void(WsiOperation.open, 0,
@@ -583,12 +593,9 @@ struct AppKitWsi
         if (closed_)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                 "WSI is closed", WsiErrorKind.closed);
-        if (config.logicalSize.width < 0 || config.logicalSize.height < 0
-            || !config.logicalSize.width.isFinite
-            || !config.logicalSize.height.isFinite)
+        if (auto fault = config.fault)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
-                "invalid logical window size",
-                WsiErrorKind.invalidArgument);
+                fault, WsiErrorKind.invalidArgument);
         if (config.transparent
             || config.state != WindowStartupState.normal)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
@@ -598,15 +605,6 @@ struct AppKitWsi
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                 "AppKit parent windows are not implemented",
                 WsiErrorKind.unsupported);
-        if (validateUtf8(config.title[]).hasError)
-            return appKitFailure!WindowId(WsiOperation.createWindow, 0,
-                "window title is not valid UTF-8",
-                WsiErrorKind.invalidArgument);
-        foreach (byte_; config.title[])
-            if (byte_ == 0)
-                return appKitFailure!WindowId(WsiOperation.createWindow, 0,
-                    "window title contains an embedded NUL",
-                    WsiErrorKind.invalidArgument);
 
         size_t index = size_t.max;
         foreach (i, ref slot; windows_)
@@ -627,7 +625,10 @@ struct AppKitWsi
                 | NSWindowStyleMaskMiniaturizable;
         if (config.resizable && config.decorations != DecorationPreference.none)
             style |= NSWindowStyleMaskResizable;
-        const rect = NSRect(NSPoint(120, 120),
+        // The origin is a placeholder: `center` below is what places the
+        // window, so a second one does not land exactly on top of the first and
+        // a screen smaller than 120 points of inset still shows the title bar.
+        const rect = NSRect(NSPoint(0, 0),
             NSSize(config.logicalSize.width, config.logicalSize.height));
 
         auto window = SparklesWsiWindow.alloc();
@@ -658,9 +659,12 @@ struct AppKitWsi
         slot.live = true;
         slot.ready = false;
 
-        char[257] title = 0;
-        title[0 .. config.title.length] = config.title[];
-        auto nativeTitle = NSString.alloc().initWithUTF8String(title.ptr);
+        // Terminated at the seam. The array this used to copy into was one byte
+        // wider than `WindowConfig.title`'s inline capacity — a coincidence, not
+        // a guarantee, and widening the title by one would have had
+        // `initWithUTF8String` read past the end.
+        auto nativeTitle = NSString.alloc()
+            .initWithUTF8String(config.title[].toTempStringz.ptr);
         if (nativeTitle is null)
         {
             destroySlot(index, false);
@@ -669,6 +673,7 @@ struct AppKitWsi
         }
         window.setTitle(nativeTitle);
         nativeTitle.release();
+        window.center();
         window.setReleasedWhenClosed(false);
         window.setContentView(view);
         window.setDelegate(window);
