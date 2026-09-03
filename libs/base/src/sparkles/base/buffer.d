@@ -462,7 +462,7 @@ pure nothrow @nogc:
         /// Copy assignment: release current storage, then share/copy from `rhs`.
         /// Accepts a `const` (e.g. borrowed) source — a heap source is shared (refcount
         /// bumped), an inline source is copied — mirroring the copy constructors.
-        ref Buffer opAssign(ref const Buffer rhs) return @trusted
+        ref Buffer opAssign(ref const Buffer rhs) return scope @trusted
         {
             if (&this is &rhs)
                 return this;
@@ -492,7 +492,7 @@ pure nothrow @nogc:
     /// Move assignment from an rvalue: release current storage, then steal
     /// `rhs`'s storage (no refcount change — ownership transfers). `rhs` is
     /// neutralized so its destructor frees nothing.
-    ref Buffer opAssign(Buffer rhs) return @trusted
+    ref Buffer opAssign(Buffer rhs) return scope @trusted
     {
         static if (hasHeap)
         {
@@ -608,7 +608,7 @@ pure nothrow @nogc:
     // Write into one with `tryWrite`, which reports overflow instead.
     static if (hasHeap)
     {
-        void put(T element) @safe
+        void put(T element) scope @safe
         {
             putOne(element);
         }
@@ -623,7 +623,7 @@ pure nothrow @nogc:
         Such a caller must own what it hands over, which is what taking `T` by value
         says.
         */
-        private void putOne(T element) @safe
+        private void putOne(T element) scope @safe
         {
             // Fast path: while the buffer is inline (`length <= N`) it is always
             // uniquely owned — copy-on-write applies only to shared heap blocks — so
@@ -644,7 +644,7 @@ pure nothrow @nogc:
         }
 
         /// Output range interface: appends elements from a slice.
-        void put(in T[] elements) @trusted
+        void put(in T[] elements) scope @trusted
         {
             const n = elements.length;
             if (n == 0)
@@ -740,13 +740,13 @@ pure nothrow @nogc:
         }
 
         /// Appends a single element using `~=` operator.
-        void opOpAssign(string op : "~")(T element) @safe
+        void opOpAssign(string op : "~")(T element) scope @safe
         {
             put(element);
         }
 
         /// Appends elements from a slice using `~=` operator.
-        void opOpAssign(string op : "~")(in T[] elements) @safe
+        void opOpAssign(string op : "~")(in T[] elements) scope @safe
         {
             put(elements);
         }
@@ -874,7 +874,7 @@ pure nothrow @nogc:
         /// block and reverts to inline; a heap-only policy keeps its block
         /// (there is nothing to revert to), so `reserve` once and `clear`
         /// between uses is allocation-free. The destructor releases it.
-        void clear() @safe
+        void clear() scope @safe
         {
             static if (hasInline)
                 releaseStorage();
@@ -934,7 +934,7 @@ pure nothrow @nogc:
          * default because a fixed buffer usually holds something whose meaning
          * a silent truncation would change (a UTF-8 sequence, a path).
          */
-        bool assign(scope const(T)[] source) @safe
+        bool assign(scope const(T)[] source) scope @safe
         {
             if (source.length > N)
                 return false;
@@ -952,7 +952,7 @@ pure nothrow @nogc:
          * rewritable: `clear` then $(LREF Buffer.tryWrite) builds a new value
          * in pieces, where $(LREF Buffer.assign) takes one already assembled.
          */
-        void clear() @safe
+        void clear() scope @safe
         {
             _length = 0;
         }
@@ -3335,4 +3335,42 @@ unittest
     static assert(!__traits(compiles, HeapBuffer!(char, Storage.inline)));
     static assert(__traits(compiles, InlineBuffer!(char, 8, Storage.unique)));
     static assert(__traits(compiles, HeapBuffer!(char, Storage.unique)));
+}
+
+// A buffer held by a struct whose methods take `this` as `scope` — a lexer
+// storing its error, say — must be writable there: every mutator declares
+// `this` as `scope`, so the enclosing method's `@safe` inference does not
+// hinge on the order in which the compiler analyzed the buffer's members.
+@("Buffer.scope.writableThroughScopeThis")
+@safe pure nothrow @nogc
+unittest
+{
+    static struct Holder
+    {
+        SharedBuffer!(char, 8) note;
+        UniqueBuffer!(int, 4) ints;
+        InlineBuffer!(char, 8) fixed;
+
+        void fill() scope @safe
+        {
+            note ~= "abc";
+            note ~= 'd';
+            note.clear();
+            note ~= "xy";
+            SharedBuffer!(char, 8) other;
+            other ~= "z";
+            note = other;
+            ints.put(1);
+            ints ~= 2;
+            fixed.assign("ok");
+            fixed.clear();
+        }
+    }
+
+    Holder h;
+    h.fill();
+    assert(h.note[] == "z");
+    static immutable int[2] want = [1, 2];
+    assert(h.ints[] == want[]);
+    assert(h.fixed.length == 0);
 }
