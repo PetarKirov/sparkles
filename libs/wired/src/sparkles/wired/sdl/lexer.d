@@ -2132,8 +2132,18 @@ version (unittest)
         assert(decodeSdlScalar!sdlFull(oneToken!sdlFull(source), storage).hasValue);
     foreach (source; ["1L", "1l", "1F", "1f", "1D", "1d"])
         assert(decodeSdlScalar!sdlFull(oneToken!sdlFull(source), storage).hasValue);
-    foreach (source; ["1B", "1BDF", "1.0L", "1.0B", "1e2"])
+    // `1.D` and `1.BD` are malformed, not numbers: the SDL adapter's
+    // trailing-point allowance (`1.` is 1) is defensive and must never widen
+    // what the lexer accepts.
+    foreach (source; ["1B", "1BDF", "1.0L", "1.0B", "1e2", "1.D", "1.BD"])
         assert(oneError!sdlFull(source).code == SdlErrorCode.invalidNumber);
+
+    // `F` is read as `float`, not as a `double` narrowed afterwards: this
+    // decimal sits a hair below a `float` midpoint, where narrowing rounds
+    // twice and lands on the wrong neighbour.
+    auto trap = decodeSdlScalar!sdlFull(
+        oneToken!sdlFull("1.00000017881393432617187499F"), storage);
+    assert(trap.hasValue && trap.value.floatValue is 1.00000011920928955078125f);
 
     const huge = "9".replicate(400) ~ "D";
     auto overflow = decodeSdlScalar!sdlFull(oneToken!sdlFull(huge), storage);

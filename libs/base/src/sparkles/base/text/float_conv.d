@@ -2946,6 +2946,34 @@ version (linux)
     assert(w(2.5L) == "2.5e0");
 }
 
+// The wide formats put their digits on the stack — 11.6 KB of them for the
+// binary128 decoder, four ~2 KB integers for the writer — and a druntime
+// `Fiber`'s default stack is `PAGESIZE * 4`: 16 KiB on 4 KiB-page Linux.
+// Both directions at real.max's magnitude must fit a small fiber.
+@("float_conv.slowDecode.fitsAFiberStack")
+@system unittest
+{
+    import core.thread.fiber : Fiber;
+
+    static bool ran;
+    static void body_()
+    {
+        const decoded = slowDecode!binary128("1189731495357231765085759326628007", null, 4899);
+        char[40] digits;
+        int exp10;
+        const n = shortestDigits!binary128(decoded, digits[], exp10);
+        ran = n == 34 && exp10 == 4899 && decoded.exp2 == 16383 - 112;
+    }
+
+    // 32 KiB: the unoptimized test build (with or without coverage) needs
+    // about twice the frames the shipping build has, and 16 KiB is the
+    // default `Fiber` stack this guards against.
+    auto fiber = new Fiber(&body_, 32 * 1024);
+    fiber.call();
+    assert(fiber.state == Fiber.State.TERM);
+    assert(ran);
+}
+
 // Exact correctly-rounded decoding by big-integer division: a second,
 // independent method against which the decimal-shift kernel is checked at
 // every width — including the 113 bits no CI host has natively yet.

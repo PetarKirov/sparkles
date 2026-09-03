@@ -1162,6 +1162,15 @@ version (unittest)
     checkFloatingRoundTrip(-0.0L);
     checkFloatingRoundTrip(real.min_normal);
     checkFloatingRoundTrip(real.max);
+    // The width-sensitive corners, at whatever width this host's `real` has:
+    // on binary128 these are ~4 900-character `BD` tokens.
+    checkFloatingRoundTrip(-real.max);
+    checkFloatingRoundTrip(real.epsilon);
+    checkFloatingRoundTrip(1.0L + real.epsilon);
+    checkFloatingRoundTrip(real.min_normal * real.epsilon);
+    checkFloatingRoundTrip(real.min_normal * (1 - real.epsilon));
+    checkFloatingRoundTrip(float.min_normal * float.epsilon);
+    checkFloatingRoundTrip(1.00000011920928955078125f);
 
     auto largeValue = SdlScalar(1e30);
     auto large = renderScalar(largeValue);
@@ -1192,8 +1201,9 @@ version (unittest)
     import sparkles.wired.sdl.decimal : parseDecimalReal;
 
     static immutable real[] corners = [
-        0.0L, -0.0L, 1.0L, -1.0L, 0.1L, real.min_normal, real.max,
-        real.epsilon, 9.999999999999999L,
+        0.0L, -0.0L, 1.0L, -1.0L, 0.1L, real.min_normal, real.max, -real.max,
+        real.epsilon, 1.0L + real.epsilon, 9.999999999999999L,
+        real.min_normal * real.epsilon, real.min_normal * (1 - real.epsilon),
     ];
 
     static void check(real value)
