@@ -135,18 +135,33 @@ SmokeResult judgeSmokeRun(int status, const(char)[] stderrText, int requested)
 
         if (rest.startsWith("outcome="))
         {
-            const outcome = rest["outcome=".length .. $].strip;
+            // `outcome=X` or `outcome=X reason=Y`. The reason is what separates
+            // "this runner has no display" from "the window opened and no font
+            // matched" — two skips with entirely different fixes.
+            string outcome, reason;
+            foreach (field; rest.splitOnSpaces)
+            {
+                const eq = field.indexOf('=');
+                if (eq < 0)
+                    continue;
+                if (field[0 .. eq] == "outcome")
+                    outcome = field[eq + 1 .. $].idup;
+                else if (field[0 .. eq] == "reason")
+                    reason = field[eq + 1 .. $].idup;
+            }
+
             // `notInteractive` means the caller asked for `--html`/`--ansi`,
             // which this check never does; treat it as the harness's own bug
             // rather than quietly skipping.
             if (outcome == "noBackend" || outcome == "openFailed")
             {
                 r.verdict = SmokeVerdict.skipped;
-                r.reason = "no backend on this machine (" ~ outcome.idup ~ ")";
+                r.reason = "no backend here — " ~ (reason.length != 0
+                    ? explainReason(reason) : outcome);
                 return r;
             }
             r.verdict = SmokeVerdict.failed;
-            r.reason = "unexpected outcome=" ~ outcome.idup;
+            r.reason = "unexpected outcome=" ~ outcome;
             return r;
         }
 
@@ -195,6 +210,22 @@ SmokeResult judgeSmokeRun(int status, const(char)[] stderrText, int requested)
 
     r.verdict = SmokeVerdict.passed;
     return r;
+}
+
+// The `reason=` vocabulary `sparkles:ui-app` emits, in words that say what to
+// do about it. An unknown value is passed through rather than dropped: this
+// side must not go quiet when the other side learns a new one.
+private string explainReason(string reason) @safe pure nothrow
+{
+    switch (reason)
+    {
+        case "noWindow":
+            return "no display, locked session, or no GL context (noWindow)";
+        case "noFont":
+            return "a window opened but no font matched (noFont)";
+        default:
+            return reason;
+    }
 }
 
 // `std.process.wait` reports a signal as its negation, and a crash arrives as a
@@ -303,6 +334,23 @@ unittest
             ~ "ui-gallery: the backend would not open\n", 3);
         assert(r.verdict == SmokeVerdict.skipped, outcome);
     }
+
+    // …and the reason says which skip it is, because the two have different
+    // fixes: one is the runner, the other is the font bundle.
+    const noWindow = judgeSmokeRun(1,
+        "sparkles-ui-app: outcome=openFailed reason=noWindow\n", 3);
+    assert(noWindow.verdict == SmokeVerdict.skipped);
+    assert(noWindow.reason.canFind("no display"), noWindow.reason);
+
+    const noFont = judgeSmokeRun(1,
+        "sparkles-ui-app: outcome=openFailed reason=noFont\n", 3);
+    assert(noFont.verdict == SmokeVerdict.skipped);
+    assert(noFont.reason.canFind("no font matched"), noFont.reason);
+
+    // A reason this side has not heard of is passed through, not swallowed.
+    const future = judgeSmokeRun(1,
+        "sparkles-ui-app: outcome=openFailed reason=noGpuMemory\n", 3);
+    assert(future.reason.canFind("noGpuMemory"), future.reason);
 }
 
 @("smoke_apps.judge.exitingZeroWithoutPaintingIsAFailure")

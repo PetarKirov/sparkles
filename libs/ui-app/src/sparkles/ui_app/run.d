@@ -109,7 +109,8 @@ and those two are indistinguishable from an exit status alone.
 
 $(D_CODE sparkles-ui-app: outcome=noBackend)
 */
-private RunOutcome reportOutcome(RunOutcome outcome, in RunConfig cfg) nothrow
+private RunOutcome reportOutcome(RunOutcome outcome, in RunConfig cfg,
+    string reason = null) nothrow
 {
     import std.conv : to;
     import std.stdio : stderr;
@@ -118,7 +119,11 @@ private RunOutcome reportOutcome(RunOutcome outcome, in RunConfig cfg) nothrow
         return outcome;
     try
     {
-        stderr.writefln("sparkles-ui-app: outcome=%s", outcome.to!string);
+        if (reason.length != 0)
+            stderr.writefln("sparkles-ui-app: outcome=%s reason=%s",
+                outcome.to!string, reason);
+        else
+            stderr.writefln("sparkles-ui-app: outcome=%s", outcome.to!string);
         stderr.flush();
     }
     catch (Exception)
@@ -178,11 +183,17 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
             {
                 import sparkles.ui_app.gui_loop : runGui;
                 import sparkles.ui_app.gui_setup : GuiRequest;
-                import sparkles.ui_app.gui_options : fontRequestOf, windowCellsOf;
+                import sparkles.ui_app.gui_options : envFontDirs, fontRequestOf,
+                    windowCellsOf;
 
                 GuiRequest req;
                 req.title = cfg.title;
                 req.font = fontRequestOf(cfg.gui);
+                // `CLI3`: the `--font-dir` a launcher cannot pass. Appended to
+                // whatever the application asked for, and — like the flag —
+                // its presence is what turns the system font database off, so
+                // selection is a scan of exactly these directories.
+                req.font.searchDirs ~= envFontDirs();
                 req.cells = windowCellsOf(cfg.gui);
                 req.fontSizePoints = cfg.gui.fontSize;
                 req.targetFps = cfg.targetFps;
@@ -191,9 +202,14 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 req.extraFontSources = cfg.extraFontSources.dup;
                 req.traceSink = cfg.traceSink;
 
+                import sparkles.ui_app.gui_setup : GuiOpenFailure, name;
+
+                GuiOpenFailure why;
+                const opened = runGui!(present, handle, draw, setup)(
+                    cfg, req, why);
                 return reportOutcome(
-                    runGui!(present, handle, draw, setup)(cfg, req)
-                        ? RunOutcome.ok : RunOutcome.openFailed, cfg);
+                    opened ? RunOutcome.ok : RunOutcome.openFailed, cfg,
+                    opened ? null : why.name);
             }
             else
                 return reportOutcome(RunOutcome.noBackend, cfg);
