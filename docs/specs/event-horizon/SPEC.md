@@ -942,6 +942,20 @@ discipline that makes the complete-vs-cancel race impossible by
 construction). Cancellation requests stop work; they do not report errors —
 failures travel via `Scope.fail`.
 
+A scope can also host **shielded children** (package-internal
+`Scope.spawnShielded`): the owner places a protected node beneath the scope's
+node and spawns workers under it, so neither the scope's own sweep (`cancel`,
+`fail`, a defect) nor an enclosing cancellation or deadline reaches them. They
+are ordinary members for the join — the scope cannot exit until they end — and
+only the owner ends them (`cancelTree` on the shield, or a direct interrupt) at
+its terminal boundary. This is the shape supervision needs for workers that must
+outlive the cancellation of the run they serve: a drain whose read must reach
+its terminal completion, a reap that must consume the child. A shielded body
+catches every `Throwable` it can raise; an escaping defect fails the scope
+through the ordinary sweep, which does not reach the shielded siblings, so the
+owner's failure guard must end them. Every exiting child unlinks from the node
+it actually ran under, the scope's own or a shield.
+
 ### 8.3 Deadlines
 
 A deadline **is** a cancel scope (Trio): `withDeadline(exec, timeout, fn)`

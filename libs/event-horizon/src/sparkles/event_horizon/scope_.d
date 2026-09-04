@@ -141,8 +141,35 @@ package:
     }
 
     bool spawnImpl(void delegate() body_, SpawnOptions opts)
+        => attach(&node, body_, opts);
+
+    /**
+    Spawns a child under `shield` — an `isProtected` node the owner has
+    placed beneath this scope's node (SPEC §8.2) — so that neither this
+    scope's own sweep (`cancel`, `fail`, a defect) nor an enclosing
+    cancellation or deadline reaches it. The child is an ordinary member
+    for the join: the scope cannot exit until it ends, and only the
+    $(B owner) can end it (`cancelTree(shield, …)` / `interruptFiber`) at
+    its terminal boundary — the shape a supervision needs for workers that
+    must outlive the cancellation of the run they serve (a drain whose read
+    must reach its terminal completion, a reap that must consume the
+    child). A shielded body must catch every `Throwable` it can raise: an
+    escaping defect fails the scope through the ordinary sweep, which does
+    not reach the shielded siblings — the owner's failure guard has to.
+
+    Package-private: the owner-driven lifetime is a library discipline, not
+    a public API. Returns whether a fiber slot was accepted; a rejection
+    records the scope's ordinary `ENOBUFS` failure.
+    */
+    bool spawnShielded(void delegate() body_, scope CancelContext* shield)
+    in (shield.isProtected, "a shield node is protected")
+    in (shield.parent is &node, "the shield hangs beneath this scope's node")
+        => attach(shield, body_, SpawnOptions(daemon: false));
+
+    bool attach(scope CancelContext* under, void delegate() body_,
+        SpawnOptions opts)
     {
-        auto child = _exec.spawnFiber(&node, opts, body_);
+        auto child = _exec.spawnFiber(under, opts, body_);
         if (child is null)
         {
             fail(Cause!E.fromFailure(E(105 /* ENOBUFS */, OpKind.none,
@@ -158,12 +185,13 @@ package:
     }
 
     /// Runs on each exiting child fiber (SPEC §8.6): accounting, defect
-    /// routing, and the joiner wake.
+    /// routing, and the joiner wake. The fiber leaves whichever node it
+    /// actually ran under — the scope's own, or a shield beneath it.
     static void childExit(void* p, FiberContext* self, Throwable defect) nothrow
     {
         auto sc = (() @trusted => cast(Scope!(X, E)*) p)();
-        if (self.cancelContext is &sc.node)
-            sc.node.removeFiber(self);
+        if (self.cancelContext !is null)
+            self.cancelContext.removeFiber(self);
         --sc._childCount;
         if (self.daemon)
             --sc._childDaemons;
@@ -1133,4 +1161,150 @@ unittest
     });
     assert(!r.hasError);
     assert(i == 2 && order[0] == 2 && order[1] == 1, "LIFO");
+}
+
+// ── shielded children (SPEC §8.2): owner-ended, join-counted ────────────────
+
+@("scope.shielded.scopeCancelDoesNotReachItButTheOwnerEndsIt")
+@system
+unittest
+{
+    import core.time : seconds;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // The shield node lives on the OWNER's frame, outside the scope.
+    CancelContext shield;
+    shield.isProtected = true;
+    FiberContext* worker;
+    int workerErrno = -1;
+    bool sweptBody, sweptWorker;
+    auto r = s.run(() {
+        cast(void) withScope!((ref sc) {
+            sc.node.addChild(&shield);
+            assert(sc.spawnShielded(() {
+                worker = s.currentContext();
+                auto slept = sleep(s, 10.seconds);
+                workerErrno = slept.hasError ? slept.error.errnoValue : 0;
+            }, &shield));
+            s.yieldNow(); // the worker parks on its timer
+            sc.cancel(); // the ordinary sweep: the body, not the shield
+            sweptBody = s.currentContext().interrupted;
+            sweptWorker = worker.interrupted;
+            // The owner ends its workers at its terminal boundary.
+            cancelTree(&shield, Interrupt(InterruptKind.cancelled));
+        })(s);
+    });
+    assert(!r.hasError);
+    assert(sweptBody, "the sweep reached the body as usual");
+    assert(!sweptWorker, "the scope's own sweep stopped at the shield");
+    assert(workerErrno == ECANCELED, "the owner's cancelTree ended the worker");
+    assert(shield.fiberCount == 0 && shield.firstFiber is null,
+        "the worker left the node it actually ran under");
+}
+
+@("scope.shielded.siblingDefectAndOuterDeadlineStopAtTheShield")
+@system
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    CancelContext shield;
+    shield.isProtected = true;
+    bool workerInterruptedBySweep, workerInterruptedByDeadline;
+    int workerErrno = -1;
+    FiberContext* worker;
+    const started = MonoTime.currTime;
+    auto r = s.run(() {
+        auto outcome = withDeadline!((ref sc) {
+            sc.node.addChild(&shield);
+            assert(sc.spawnShielded(() {
+                worker = s.currentContext();
+                auto slept = sleep(s, 10.seconds);
+                workerErrno = slept.hasError ? slept.error.errnoValue : 0;
+            }, &shield));
+            sc.spawn(() { throw new Exception("sibling defect"); });
+            // The defect's sweep lands on the body at this checkpoint …
+            cast(void) sleep(s, 10.seconds);
+            workerInterruptedBySweep = worker.interrupted;
+            // … and the deadline, when it fires, must not reach the worker
+            // either: only the owner ends it.
+            cast(void) sleep(s, 10.seconds); // returns at once: latched
+            workerInterruptedByDeadline = worker.interrupted;
+            cancelTree(&shield, Interrupt(InterruptKind.cancelled));
+        })(s, 50.msecs);
+        assert(outcome.hasError && outcome.error.kind == Cause!IoError.Kind.die,
+            "the sibling's defect is the scope's first cause");
+    });
+    assert(!r.hasError);
+    assert(!workerInterruptedBySweep && !workerInterruptedByDeadline);
+    assert(workerErrno == ECANCELED);
+    assert(MonoTime.currTime - started < 5.seconds,
+        "the owner ended the worker; nothing waited out a timer");
+    assert(shield.fiberCount == 0);
+}
+
+@("scope.shielded.joinWaitsForTheOwnerToEndIt")
+@system
+unittest
+{
+    import core.time : msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // No owner action at all: the shielded worker finishes on its own, and
+    // the join waits for it exactly like any member.
+    CancelContext shield;
+    shield.isProtected = true;
+    bool workerDone;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref sc) {
+            sc.node.addChild(&shield);
+            assert(sc.spawnShielded(() {
+                cast(void) sleep(s, 20.msecs);
+                workerDone = true;
+            }, &shield));
+        })(s);
+        assert(!outcome.hasError);
+        assert(workerDone, "the scope did not exit before its shielded member");
+    });
+    assert(!r.hasError);
+    assert(shield.fiberCount == 0);
+}
+
+@("scope.shielded.admissionFailureRecordsEnobufs")
+@system
+unittest
+{
+    import core.stdc.errno : ENOBUFS;
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    // One fiber slot: the root. A shielded spawn cannot be admitted, and
+    // the scope records the same ENOBUFS failure an ordinary spawn would.
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 1;
+    schedOrSkip(s, opts);
+
+    CancelContext shield;
+    shield.isProtected = true;
+    bool admitted = true;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref sc) {
+            sc.node.addChild(&shield);
+            admitted = sc.spawnShielded(() {}, &shield);
+        })(s);
+        assert(outcome.hasError && outcome.error.kind == Cause!IoError.Kind.fail
+            && outcome.error.failure.errnoValue == ENOBUFS);
+    });
+    assert(!r.hasError);
+    assert(!admitted);
 }
