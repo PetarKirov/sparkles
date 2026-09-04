@@ -20,6 +20,9 @@ would one get at it".
 module picker_grep;
 
 import sparkles.base.text.analysis : AnalysisCase;
+import sparkles.fuzzy : ScoreBreakdown;
+
+import grep_classify : classifyLine, HitKind;
 
 import picker_sources : PickerTarget;
 
@@ -531,6 +534,10 @@ struct GrepHit
     /// Absolute byte offset, so the preview seeks without rescanning
     /// (fff's `GrepMatch` carries the same field for the same reason).
     size_t offset;
+    /// Whether the line DEFINES the matched name (`PKC14`). Classified in
+    /// the scan, where it is nearly free; refined by tree-sitter on the
+    /// selected row only.
+    HitKind kind;
 
     /**
     Identity for the top-K's dedup.
@@ -624,10 +631,12 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
         while (lineEnd < text.length && text[lineEnd] != '\n')
             ++lineEnd;
 
+        const lineText = text[lineStart .. lineEnd];
         hits[found] = GrepHit(doc: doc, line: line,
-            column: cast(uint)(i - lineStart + 1), offset: i);
-        contexts[found] = captureWindow(text[lineStart .. lineEnd],
-            i - lineStart, needle.length);
+            column: cast(uint)(i - lineStart + 1), offset: i,
+            kind: classifyLine(lineText, i - lineStart, needle.length));
+        contexts[found] = captureWindow(lineText, i - lineStart,
+            needle.length);
         ++found;
 
         // Non-overlapping, like the in-document search.
@@ -1090,4 +1099,58 @@ unittest
     scan.begin(0);
     assert(!scan.active, "there is nothing to scan");
     assert(scan.step(8, &scanOne, null) == ScanStep.idle);
+}
+
+// ── ranking a hit (`PKC13`) ────────────────────────────────────────────────
+
+/// What a definition is worth relative to a mention. A nudge, not a filter:
+/// the classifier is a byte heuristic (`PKC14`), so a false positive must
+/// cost a place in the order and never a missing row.
+enum long definitionBonus = 40;
+
+/// Base score every literal hit starts from. A literal match is exact by
+/// construction — there is no match QUALITY to grade, unlike a fuzzy path
+/// score — so the base is flat and the composite terms do the ordering.
+enum long literalBase = 100;
+
+/**
+Score one hit (`PKC13`).
+
+Builds a `ScoreBreakdown` directly rather than calling `rank`, because
+`rank` is wrong for a content line and not merely mistuned:
+`validateCandidate` requires `filenameOffset == 0`, and `rank` pays a
+filename bonus keyed off that offset — so every admitted line would collect
+the bonus and the term would carry no information at all (`PKC1`).
+
+Structural, not statistical (`PKC13`). No term counts occurrences: term
+frequency is an anti-signal in code, where a name repeated twenty times is
+usually a loop body rather than the place you want.
+*/
+ScoreBreakdown grepScore(HitKind kind) @safe pure nothrow @nogc
+{
+    ScoreBreakdown score;
+    score.base = literalBase;
+    score.definition = kind == HitKind.definition ? definitionBonus : 0;
+    score.total = score.base + score.definition;
+    return score;
+}
+
+@("picker_grep.scan.hitsCarryTheirDefinitionKind")
+@safe pure nothrow @nogc
+unittest
+{
+    // The classifier runs in the scan, where it is nearly free (`PKC14`).
+    // Both lines contain `Widget`; only one defines it, and the ranking has
+    // to be able to tell them apart without a parse.
+    static immutable text = "struct Widget\n{\n    Widget other;\n}\n";
+    GrepHit[8] hits;
+    GrepContext[8] ctx;
+    const n = scanText(text, "Widget", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 2);
+
+    assert(hits[0].kind == HitKind.definition, "line 1 declares it");
+    assert(hits[1].kind == HitKind.mention, "line 3 uses it");
+    assert(grepScore(hits[0].kind).total > grepScore(hits[1].kind).total,
+        "so the declaration outranks the use");
 }
