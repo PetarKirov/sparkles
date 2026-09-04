@@ -3138,7 +3138,9 @@ if (is(T == struct))
                 }
             }
             else
-            static if (!isDynamicArray!(Unqual!V)
+            // NOTE: `string` is a dynamic array in D but a scalar child value;
+            // only genuine array types mean "a sequence child".
+            static if ((!isDynamicArray!(Unqual!V) || is(V == string))
                 && !isAssociativeArray!(Unqual!V))
             {
                 // Scalar or aggregate single child.
@@ -3282,6 +3284,9 @@ if (is(T == struct))
                     kidOrder ~= cIdx;
                 }
             }
+            else
+                static assert(false, "wired.sdl: a child field of type `"
+                    ~ V.stringof ~ "` has no encode shape");
         }
     }}
 
@@ -3712,6 +3717,28 @@ version (unittest)
         && back.value.dec is s.dec);
     assert(back.value.label == s.label);
     assert(back.value.narrow == s.narrow && back.value.wide == s.wide);
+}
+
+// A `string` is a dynamic array in D but a scalar child value: it must emit
+// one child with the string as value 0, exactly as decode expects it. It was
+// once neither the scalar nor the sequence branch's, and emitted nothing.
+@("wired.sdl.codec.writeSDL.stringChildIsAScalar")
+@system unittest
+{
+    static struct Doc
+    {
+        string s;
+        @SdlChild() string t;
+        string empty;
+    }
+
+    const doc = Doc("abc", "quote \" and\nnewline", "");
+    auto sdl = toSDL(doc);
+    assert(sdl.hasValue, sdl.error.toString);
+    assert(sdl.value[] == "s \"abc\"\nt \"quote \\\" and\\nnewline\"\nempty \"\"\n", sdl.value[]);
+    auto back = fromSDL!(Doc, sdlFull)(sdl.value[]);
+    assert(back.hasValue, back.error.toString);
+    assert(back.value == doc);
 }
 
 @("wired.sdl.codec.writeSDL.encodeErrorsAndPaths")
