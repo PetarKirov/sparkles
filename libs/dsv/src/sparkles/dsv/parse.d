@@ -50,7 +50,7 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
     // overhead — measurably more than the copy this staging adds. 64 slots
     // keeps all but pathologically wide records inline, so the staging
     // buffer never touches the heap.
-    SmallBuffer!(DsvCell, 64) rowCells;
+    SharedBuffer!(DsvCell, 64) rowCells;
 
     size_t i = 0;
     if (source.length >= 3 && source[0 .. 3] == "\xEF\xBB\xBF")

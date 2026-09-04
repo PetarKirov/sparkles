@@ -144,13 +144,13 @@ private void sortByKeys(Buf)(in DsvDoc doc, in ColumnType[] types,
 
     // The filtered data indexes, copied out so the sort can permute an index
     // array instead of the values the keys are aligned with.
-    SmallBuffer!(uint, 64) src;
+    SharedBuffer!(uint, 64) src;
     foreach (i; 0 .. n)
         src ~= out_[startLen + i];
 
-    SmallBuffer!(SortEntry, 64) keys;
-    SmallBuffer!(char, 256) arena;
-    SmallBuffer!(char, 256) decodeBuf;
+    SharedBuffer!(SortEntry, 64) keys;
+    SharedBuffer!(char, 256) arena;
+    SharedBuffer!(char, 256) decodeBuf;
 
     foreach (pos; 0 .. n)
     {
@@ -188,7 +188,7 @@ private void sortByKeys(Buf)(in DsvDoc doc, in ColumnType[] types,
         }
     }
 
-    SmallBuffer!(uint, 64) order;
+    SharedBuffer!(uint, 64) order;
     foreach (i; 0 .. n)
         order ~= cast(uint) i;
 
@@ -578,7 +578,7 @@ unittest
     auto doc = parsed.value;
     doc.hasHeader = true;
 
-    SmallBuffer!(ColumnType, 16) types;
+    SharedBuffer!(ColumnType, 16) types;
     inferColumnTypes(doc, 100, types);
     // The corpus only tests a type's compare path if the column actually
     // infers to it — a stray non-conforming value drops a column to `text`
@@ -592,9 +592,9 @@ unittest
     {
         import std.algorithm.sorting : sort;
 
-        SmallBuffer!(char, 256) bufA, bufB;
+        SharedBuffer!(char, 256) bufA, bufB;
         const(char)[] cellText(size_t dataIdx, size_t col,
-            ref SmallBuffer!(char, 256) buf) @safe
+            ref SharedBuffer!(char, 256) buf) @safe
         {
             const rec = doc.records[1 + dataIdx];
             if (col >= rec.cellCount)
@@ -625,7 +625,7 @@ unittest
         {
             ProjectionSpec spec;
             spec.sortKeys = [SortKey(column: cast(uint) col, descending: desc)];
-            SmallBuffer!(uint, 64) got;
+            SharedBuffer!(uint, 64) got;
             applyProjection(doc, types[], spec, got);
             assert(got[] == byComparator(spec),
                 "extracted-key order must equal the direct comparator's");
@@ -638,7 +638,7 @@ unittest
         SortKey(column: 4, descending: false), // name (text, has duplicates)
         SortKey(column: 0, descending: true),  // id  (integer)
     ];
-    SmallBuffer!(uint, 64) got;
+    SharedBuffer!(uint, 64) got;
     applyProjection(doc, types[], multi, got);
     assert(got[] == byComparator(multi), "multi-key order must match too");
 }

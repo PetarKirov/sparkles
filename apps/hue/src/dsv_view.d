@@ -183,7 +183,7 @@ final class DsvModel
         }
 
         // Scoped deliberately. `DsvDoc`'s record and cell arenas are
-        // reference-counted copy-on-write `SmallBuffer`s, so while BOTH the
+        // reference-counted copy-on-write `SharedBuffer`s, so while BOTH the
         // `Expected` and the model hold the document its buffers have a
         // refcount of two — and the next mutable access clones all of them.
         // At the `DSN6` target that is a ~100 MB copy nobody asked for. Ending

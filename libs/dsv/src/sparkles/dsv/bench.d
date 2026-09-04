@@ -6,7 +6,7 @@ module sparkles.dsv.bench;
 
 version (unittest)  :
 
-import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.test_runner.attributes : benchmark, workload;
 import sparkles.dsv.dialect : sniff, sniffMaxRecords;
 import sparkles.dsv.model : ColumnType, Dialect, DsvDoc, inferColumnTypes;
@@ -78,7 +78,7 @@ private final class ScaleCorpus
     string src;
     typeof(parseDsv("", Dialect.init)) parsed;
     DsvDoc doc;
-    SmallBuffer!(ColumnType, 16) types;
+    SharedBuffer!(ColumnType, 16) types;
 
     this() @safe
     {
@@ -134,7 +134,7 @@ unittest
 
     auto fx = new ScaleCorpus;
     workloadWindow("project", {
-        SmallBuffer!(uint, 64) perm;
+        SharedBuffer!(uint, 64) perm;
         applyProjection(fx.doc, fx.types[], ProjectionSpec.init, perm);
         assert(perm.length == scaleRows);
     });
@@ -158,7 +158,7 @@ unittest
         ProjectionSpec spec;
         spec.sortKeys = [SortKey(column: k.column)];
         workloadWindow(k.name, {
-            SmallBuffer!(uint, 64) perm;
+            SharedBuffer!(uint, 64) perm;
             applyProjection(fx.doc, fx.types[], spec, perm);
             assert(perm.length == scaleRows);
         });
