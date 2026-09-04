@@ -2865,6 +2865,15 @@ unittest
 
     const probeDir = makeProbeDir("lookup");
     const scriptPath = probeDir ~ "/ehprobe";
+    // Unconditional: a failing assertion below must not strand the probe
+    // script or its directory in the temp dir.
+    scope (exit)
+    {
+        import std.file : remove, rmdir;
+
+        remove(scriptPath);
+        rmdir(probeDir);
+    }
 
     auto r = s.run(() {
         // Control: without the overlay the bare name is not findable.
@@ -2891,10 +2900,6 @@ unittest
         assert(fallback.value.stdout_[] == cast(const(ubyte)[]) "fallback\n");
     });
     assert(!r.hasError);
-
-    import std.file : remove;
-
-    remove(scriptPath);
 }
 
 @("live.env.customPathMissAndChildCwdRelativeLookup")
