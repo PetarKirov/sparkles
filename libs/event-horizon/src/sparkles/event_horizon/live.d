@@ -19,6 +19,7 @@ import core.time : Duration, MonoTime;
 import sparkles.event_horizon.backend.concept : canSubmitOp;
 import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.capability : CtxOf;
+import sparkles.event_horizon.cause : Cause;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
 import sparkles.event_horizon.net : SockAddr;
@@ -855,25 +856,49 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
     The scope join is the lifetime argument: the drain fibers borrow this
     frame's locals and are all joined before it returns.
+
+    No exit leaves a zombie. A drain fiber that cannot be admitted, a read
+    that fails, and a cancellation that interrupts the run each end the
+    child (`SIGKILL`) and reap it — on the shared pool's termination-critical
+    lane, under `protect`, so a latched interrupt is delivered at the
+    caller's next checkpoint and never between the kill and the reap. The
+    error returned is the first cause: the admission error, the read error,
+    or the interrupt as `ECANCELED`. A failed read is never mistaken for EOF.
     */
     IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
         in ProcessConfig cfg = ProcessConfig(),
         scope const(ubyte)[] stdinBytes = null) @trusted
     {
         import core.lifetime : move;
+        import core.stdc.errno : ECHILD;
+        import core.sys.posix.signal : SIGKILL;
 
         import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.blocking_pool : sharedBlockingPool;
+        import sparkles.event_horizon.cause : Cause;
         import sparkles.event_horizon.io : read, write;
-        import sparkles.event_horizon.scope_ : withScope;
+        import sparkles.event_horizon.scope_ : protect, withScope;
 
         scope ProcessConfig effective = cfg;
         if (stdinBytes !is null && effective.stdinSpec.mode == StdioMode.inherit)
             effective.stdinSpec = StdioSpec(StdioMode.pipe);
 
+        // The reap must never depend on a resource acquired after the child
+        // exists (SPEC §13.8): the shared pool and this scheduler's inbox
+        // waker are secured first — either failure means no child was made.
+        auto pool = sharedBlockingPool();
+        if (pool.hasError)
+            return ioErr!CapturedOutput(pool.error);
+        auto prepared = pool.value.prepare(s);
+        if (prepared.hasError)
+            return ioErr!CapturedOutput(prepared.error);
+
         auto spawned = spawnProcess(argv, effective);
         if (spawned.hasError)
             return ioErr!CapturedOutput(spawned.error);
         auto child = spawned.value;
+        version (unittest)
+            testLastCapturePid = child.pid;
         scope (exit)
         {
             child.stdinW.close();
@@ -888,12 +913,15 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         SharedBuffer!(ubyte, 256) stdinCopy;
         if (stdinBytes !is null)
             stdinCopy ~= stdinBytes;
+        CaptureDrainState drainState = {child: &child};
         auto childP = &child;
         auto outP = &out_;
         auto stdinP = &stdinCopy;
+        auto drainP = &drainState;
         const feedStdin = stdinBytes !is null && child.stdinW.fd >= 0;
 
-        static void drain(FileHandle from, SharedBuffer!(ubyte, 256)* into)
+        static void drain(CaptureDrainState* st, FileHandle from,
+            SharedBuffer!(ubyte, 256)* into)
         {
             for (;;)
             {
@@ -901,17 +929,40 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                 chunk.length = 512;
                 auto got = read(from, move(chunk));
                 chunk = move(got.buf);
-                if (got.res.hasError || got.res.value == 0)
-                    return; // EOF or error: the stream is done
+                version (unittest)
+                {
+                    if (testCaptureReadErrno != 0 && !got.res.hasError)
+                        got.res = ioErr!uint(testCaptureReadErrno, OpKind.read,
+                            IoErrorStage.completion, "injected capture read error");
+                }
+                if (got.res.hasError)
+                {
+                    // Not EOF: the output can no longer be complete, so the
+                    // run ends now — a child blocked on this pipe would
+                    // otherwise never let the other stream reach EOF.
+                    if (!st.failed)
+                    {
+                        st.failed = true;
+                        st.error = got.res.error;
+                    }
+                    cast(void) st.child.kill(SIGKILL);
+                    return;
+                }
+                if (got.res.value == 0)
+                    return; // EOF
                 *into ~= chunk[][0 .. got.res.value];
             }
         }
 
         auto joined = withScope!((ref sc) {
-            if (childP.stdoutR.fd >= 0)
-                sc.spawn(() { drain(childP.stdoutR, &outP.stdout_); });
-            if (childP.stderrR.fd >= 0)
-                sc.spawn(() { drain(childP.stderrR, &outP.stderr_); });
+            // A rejected drain is a failed run, not a silently missing
+            // stream: the scope records ENOBUFS and cancels its siblings.
+            if (childP.stdoutR.fd >= 0
+                && !sc.spawn(() { drain(drainP, childP.stdoutR, &outP.stdout_); }))
+                return;
+            if (childP.stderrR.fd >= 0
+                && !sc.spawn(() { drain(drainP, childP.stderrR, &outP.stderr_); }))
+                return;
             // The body is a member fiber: feed stdin concurrently with the
             // drains, then signal EOF.
             if (feedStdin)
@@ -923,14 +974,77 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         child.stdoutR.close();
         child.stderrR.close();
         if (joined.hasError)
-            return ioErr!CapturedOutput(125 /* ECANCELED */, OpKind.none,
-                IoErrorStage.completion, "capture scope interrupted");
+        {
+            // The join proves no read is in flight on this frame's pipes;
+            // the child may be live, blocked, or already a zombie — end it
+            // and consume the reap right before the interrupt is delivered.
+            killAndReapProtected(s, child);
+            if (joined.error.kind == Cause!IoError.Kind.die)
+                throw joined.error.defect;
+            return ioErr!CapturedOutput(captureCauseError(joined.error));
+        }
 
         auto st = wait(s, child);
         if (st.hasError)
+        {
+            // Only ECHILD proves the reap right is gone; anything else
+            // (a cancellation landing on the reap itself) leaves the child
+            // ours to end and consume.
+            if (st.error.errnoValue != ECHILD)
+                killAndReapProtected(s, child);
             return ioErr!CapturedOutput(st.error);
+        }
+        if (drainState.failed)
+            return ioErr!CapturedOutput(drainState.error);
         out_.status = st.value;
         return ioOk(move(out_));
+    }
+
+    /// The drain fibers' shared frame state: the first read failure wins.
+    private struct CaptureDrainState
+    {
+        ChildProcess* child;
+        bool failed;
+        IoError error;
+    }
+
+    /// Maps a capture scope's cause to the error `capture` reports: a
+    /// failure carries its own error (a drain's ENOBUFS admission); an
+    /// interrupt is the cancellation it was.
+    private IoError captureCauseError(Cause!IoError cause)
+        @safe pure nothrow @nogc
+    {
+        import core.stdc.errno : ECANCELED;
+
+        return cause.kind == Cause!IoError.Kind.fail
+            ? cause.failure
+            : IoError(ECANCELED, OpKind.none, IoErrorStage.completion,
+                "capture scope interrupted");
+    }
+
+    /// Ends a still-owned child and consumes its reap right on the shared
+    /// pool's termination-critical lane, under `protect` so that a pending
+    /// interrupt cannot split the kill from the reap. `pid` is nulled once
+    /// the right is consumed — or proven lost to an external reaper.
+    private void killAndReapProtected(ref Sched s, ref ChildProcess child)
+        @trusted
+    {
+        import core.stdc.errno : ECHILD;
+        import core.sys.posix.signal : SIGKILL;
+
+        import sparkles.event_horizon.scope_ : protect;
+
+        if (child.pid <= 0)
+            return;
+        auto childP = &child;
+        auto sP = &s;
+        protect!(() {
+            cast(void) childP.kill(SIGKILL);
+            auto reaped = waitPidAfterKill(*sP, childP.pid);
+            if (!reaped.hasError || reaped.error.errnoValue == ECHILD)
+                childP.pid = -1;
+            return 0;
+        })(s);
     }
 
     /// The live proc capability (SPEC §13.4): `isProc` over the real spawn
@@ -2257,6 +2371,13 @@ version (unittest)
     import core.thread : Thread;
 
     import sparkles.event_horizon.capability : hasCaps;
+
+    /// Fault injection for `capture`'s drains: a non-zero errno replaces the
+    /// result of every successful read while set.
+    package int testCaptureReadErrno;
+    /// The pid of the child the last `capture` spawned — for the
+    /// no-zombie postconditions.
+    package int testLastCapturePid;
     import sparkles.event_horizon.clock : isClock;
     import sparkles.event_horizon.net : isNet;
     import sparkles.event_horizon.proc : isProc;
@@ -2516,6 +2637,102 @@ unittest
         assert(got.value.stdout_[] == cast(const(ubyte)[]) "one\ntwo\nthree\n",
             "stderr rides the stdout pipe, in output order");
         assert(got.value.stderr_.length == 0);
+    });
+    assert(!r.hasError);
+}
+
+version (unittest)
+{
+    /// The no-zombie postcondition: the reap right for `pid` is gone.
+    private bool reapRightConsumed(int pid) @trusted
+    {
+        import core.stdc.errno : ECHILD, errno;
+        import core.sys.posix.sys.wait : WNOHANG, waitpid;
+
+        int raw;
+        return waitpid(pid, &raw, WNOHANG) < 0 && errno == ECHILD;
+    }
+}
+
+@("live.capture.readErrorEndsTheRunAndReaps")
+@system
+unittest
+{
+    import core.stdc.errno : EIO;
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    testCaptureReadErrno = EIO;
+    scope (exit) testCaptureReadErrno = 0;
+    auto r = s.run(() {
+        // A chatty child that would block on its pipe forever once nobody
+        // reads: the failed read must end it, not pose as EOF.
+        const started = MonoTime.currTime;
+        auto got = capture(s, ["sh", "-c", "while :; do echo chatter; done"]);
+        assert(got.hasError && got.error.errnoValue == EIO,
+            "the read error is reported, not truncated output");
+        assert(MonoTime.currTime - started < 10.seconds);
+        assert(reapRightConsumed(testLastCapturePid), "no zombie");
+    });
+    assert(!r.hasError);
+}
+
+@("live.capture.cancellationKillsAndReaps")
+@system
+unittest
+{
+    import core.stdc.errno : ECANCELED;
+    import core.time : MonoTime, msecs, seconds;
+
+    import sparkles.event_horizon.scope_ : withDeadline;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        const started = MonoTime.currTime;
+        int pid;
+        bool sawCancel;
+        auto outcome = withDeadline!((ref sc) {
+            auto got = capture(s, ["sleep", "30"]);
+            sawCancel = got.hasError && got.error.errnoValue == ECANCELED;
+            pid = testLastCapturePid;
+            // The interrupt is delivered here, after the reap.
+            return 0;
+        })(s, 100.msecs);
+        assert(outcome.hasError && outcome.error.isTimeout);
+        assert(sawCancel, "capture reports the cancellation");
+        assert(MonoTime.currTime - started < 10.seconds,
+            "the child was killed, not waited out");
+        assert(reapRightConsumed(pid), "no zombie");
+    });
+    assert(!r.hasError);
+}
+
+@("live.capture.drainAdmissionFailureReapsAndReportsEnobufs")
+@system
+unittest
+{
+    import core.stdc.errno : ENOBUFS;
+
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    // Two fiber slots: the root and one drain. The second drain's admission
+    // fails, so the run fails with ENOBUFS — and still reaps.
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 2;
+    schedOrSkip(s, opts);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+        auto got = capture(s, ["sh", "-c", "while :; do echo chatter; done"], cfg);
+        assert(got.hasError && got.error.errnoValue == ENOBUFS,
+            "the admission failure is the reported error");
+        assert(reapRightConsumed(testLastCapturePid), "no zombie");
     });
     assert(!r.hasError);
 }

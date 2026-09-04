@@ -1594,6 +1594,17 @@ IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
     scope const(ubyte)[] stdinBytes = null);
 ```
 
+No exit of `capture` leaves a zombie. A drain fiber that cannot be admitted, a
+read that fails, and a cancellation that interrupts the run each end the child
+(`SIGKILL`) and consume its reap right on the shared pool's termination-critical
+lane (§13.8) under `protect`, so a latched interrupt is delivered at the
+caller's next checkpoint and never between the kill and the reap. The error
+reported is the first cause — the admission error (`ENOBUFS`), the read error,
+or the interrupt as `ECANCELED`; a failed read is never mistaken for EOF and
+never surfaces as truncated-but-successful output. The shared pool and the
+scheduler's inbox waker are secured before the child is spawned, so the reap
+can never depend on a resource acquired afterwards.
+
 Portability as shipped: io_uring lowers `OpWaitid` to `WAITID`; kqueue lowers
 it to `EVFILT_PROC`/`NOTE_EXIT` and closes the register-vs-exit race with a
 `waitpid(WNOHANG)` back-check. The kqueue lowering is not yet reachable through
