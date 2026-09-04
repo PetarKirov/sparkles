@@ -132,34 +132,35 @@ modules never import ring, loop, or scheduler modules (nor `during`), so a
 future extraction into a standalone `sparkles:effects` package is mechanical.
 _Loop-side_ modules may import anything.
 
-| Module                   | Stratum      | Contents                                                                                                                             |
-| ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `errors`                 | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                 |
-| `cause`                  | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                       |
-| `capability`             | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                           |
-| `scope_`                 | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                              |
-| `schedule`               | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                |
-| `clock`                  | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                      |
-| `net`                    | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                         |
-| `testing`                | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                    |
-| `buffer`                 | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                          |
-| `op`                     | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`    |
-| `handle`                 | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                     |
-| `backend.concept`        | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                 |
-| `backend.probe`          | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                    |
-| `backend.uring`          | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                             |
-| `loop`                   | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                       |
-| `sched`                  | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                             |
-| `io`                     | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3) |
-| `live`                   | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row    |
-| `proc`                   | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                              |
-| `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                               |
-| `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                            |
-| `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
-| `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                |
-| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool      |
-| `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
-| `package`                | —            | public re-exports                                                                                                                    |
+| Module                   | Stratum      | Contents                                                                                                                                                                |
+| ------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `errors`                 | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                                                    |
+| `cause`                  | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                                                          |
+| `capability`             | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                                                              |
+| `scope_`                 | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                                                                 |
+| `schedule`               | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                                                   |
+| `clock`                  | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                                                         |
+| `net`                    | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                                                            |
+| `testing`                | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                                                       |
+| `buffer`                 | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                                                             |
+| `op`                     | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`                                       |
+| `handle`                 | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                                                        |
+| `backend.concept`        | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                                                    |
+| `backend.probe`          | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                                                       |
+| `backend.uring`          | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                                |
+| `loop`                   | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                                                          |
+| `sched`                  | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                                                                |
+| `io`                     | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3)                                    |
+| `live`                   | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
+| `proc`                   | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
+| `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
+| `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                               |
+| `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
+| `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
+| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
+| `cgroup`                 | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
+| `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                                                               |
+| `package`                | —            | public re-exports                                                                                                                                                       |
 
 **Foundation:** `sparkles:base` supplies the `Buffer` family (staging buffers,
 test helpers) and `recycledErrorInstance`; the `expected` package (`~>0.4.1`)
@@ -1819,6 +1820,46 @@ state transition atomically consumes the reap right; a second `wait`, drain, or
 termination request is an idempotent no-op where cleanup calls need it, or
 `ECHILD`/`ESRCH` on the explicit low-level API. PID/handle reuse can never make
 a stale operation target another process.
+
+**Containment tiers (Linux).** A supervised run owns one cgroup v2 directory
+beneath the process's own cgroup, `<own>/eh-run-<pid>-<id>`, and what that
+directory can do decides the tier:
+
+| tier        | means                                                                    | hard kill                  | observation                                          |
+| ----------- | ------------------------------------------------------------------------ | -------------------------- | ---------------------------------------------------- |
+| `none`      | no owned directory (cgroup v1, no delegation, a read-only cgroupfs)      | pgid only                  | `/proc` scan                                         |
+| `owned`     | a directory with `cgroup.kill`, `cgroup.events` and `cgroup.procs`       | pgid **and** `cgroup.kill` | members + `cpu.stat`; peaks from `/proc`             |
+| `accounted` | `owned`, and the memory and pids controllers are enabled for the subtree | as `owned`                 | `memory.peak` / `pids.peak` exact for the run cgroup |
+
+The probe reports what exists: `cgroup.subtree_control` cannot be written on a
+cgroup that has processes (the no-internal-process rule), so a library that
+finds itself in a populated delegated cgroup — the ordinary case — gets
+`owned`, and `accounted` only where the host prepared the controllers. Every
+tier keeps the private process group; the cgroup adds recursion (a `setsid`
+escapee that stayed in the cgroup) and, on every hard kill, `cgroup.kill` is
+written whenever the capability is owned — an empty subtree is an idempotent
+success, never a reason to skip it.
+
+Acquisition is transactional: `dirCreated` is published the moment `mkdir`
+succeeds, and whoever observes it owns the bottom-up cleanup, whatever later
+failure lowered the tier (a failed control-file open, a failed migration). The
+`cgroup.kill` capability is a property of the created directory, retained until
+cleanup — never inferred from a membership snapshot: `cgroup.procs` lists direct
+members only, and a nested cgroup can hold live processes while it reads empty.
+`cgroup.events`' `populated` bit is the only recursive evidence (1 iff the
+cgroup or any descendant has a live process); a failed read is `unknown`, never
+`empty`. Evidence drives the residual policy, telemetry, and cleanup — it never
+gates a requested kill.
+
+Lane assignment (§13.8): the pre-spawn probe and `mkdir` and the post-spawn
+`cgroup.procs` migration run on the public lane, and a refused submission
+degrades the run (the tier, or only that run's sampling) before or without a
+child at risk; `cgroup.kill` and the cleanup run on the termination-critical
+lane. The cleanup waits — deadline-bounded (~2 s), on the `cgroup.events`
+descriptor, never by polling the scheduler — for `populated 0`, then removes
+nested cgroups bottom-up and the run directory; a directory that remained is
+reported as `cgroupCleanupLeaked`, which describes directory removal only,
+never a failed kill. Cleanup completes before the final result is read.
 
 ### 13.8 Resource samples and scheduler-integrated blocking work (target M19)
 
