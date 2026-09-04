@@ -113,7 +113,16 @@ in
           if [ "$tier" = "huge" ]; then
             CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/sparkles/wired-bench-data"
             mkdir -p "$CACHE_DIR"
-            ${hugeFetchScript}
+            is_listing=0
+            for arg in "$@"; do
+              if [ "$arg" = "--list-datasets" ] || [ "$arg" = "--help" ] || [ "$arg" = "-h" ]; then
+                is_listing=1
+                break
+              fi
+            done
+            if [ "$is_listing" -eq 0 ]; then
+              ${hugeFetchScript}
+            fi
             export WIRED_BENCH_EXTERNAL_DATA="$CACHE_DIR"
             export WIRED_BENCH_DATASETS="''${WIRED_BENCH_DATASETS:-${allListStr}}"
             echo "==> Running huge wired benchmark (light + medium + huge datasets)"
