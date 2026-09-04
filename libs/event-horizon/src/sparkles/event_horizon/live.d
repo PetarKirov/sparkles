@@ -24,8 +24,8 @@ import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.op : OpWaitid;
 import sparkles.event_horizon.errors : IoError;
-import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus,
-    ProcessConfig, ProcessEnd, ProcessEvent, ProcessEventKind,
+import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus, LineEmit,
+    LineFramer, ProcessConfig, ProcessEnd, ProcessEvent, ProcessEventKind,
     ProcessEventSink, ProcessLine, ProcessResourceUsage, ProcessStream,
     StdioMode, StdioSpec, SupervisedProcessConfig, SupervisedProcessResult;
 import sparkles.event_horizon.sched : Sched;
@@ -982,6 +982,9 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         ChildProcess* child;
         int processGroup;
         bool collect;
+        size_t collectCap;     /// `maxCapturedBytes`; 0 = unbounded
+        bool stdoutTruncated;  /// raw collection stopped at the cap
+        bool stderrTruncated;
 
         // Single-winner end decision (§13.7): the first timeout / cancel
         // trigger names the reported ProcessEnd; later triggers only
@@ -1072,59 +1075,8 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             IoErrorStage.completion, "waitpid returned no terminal status");
     }
 
-    /// The line-delivery callback shape of $(LREF LineFramer): borrowed
-    /// payload, valid for the call.
-    private alias LineEmit = void delegate(ProcessStream stream,
-        const(ubyte)[] bytes, bool terminated);
-
-    /**
-    Independent incremental LF/CRLF framer for one pipe (SPEC §13.6): LF ends
-    a line, one immediately preceding CR is stripped, embedded NUL and
-    invalid UTF-8 are preserved, empty lines are events, a line may span many
-    reads and a read may hold many lines. EOF flushes one final
-    `terminated == false` event iff bytes remain.
-    */
-    private struct LineFramer
-    {
-        import sparkles.base.buffer : SharedBuffer;
-
-        private SharedBuffer!(ubyte, 256) _pending;
-
-        /// Feeds raw read output, emitting complete lines through `emit`.
-        void push(scope const(ubyte)[] bytes, ProcessStream stream,
-            LineEmit emit)
-        {
-            _pending ~= bytes;
-            size_t lineStart;
-            foreach (i; 0 .. _pending.length)
-            {
-                if (_pending[i] != '\n')
-                    continue;
-                size_t end = i;
-                if (end > lineStart && _pending[end - 1] == '\r')
-                    --end;
-                emit(stream, _pending[lineStart .. end], true);
-                lineStart = i + 1;
-            }
-            if (lineStart > 0)
-            {
-                const remain = _pending.length - lineStart;
-                foreach (j; 0 .. remain)
-                    _pending[j] = _pending[lineStart + j];
-                _pending.length = remain;
-            }
-        }
-
-        /// EOF: one final unterminated fragment iff bytes remain.
-        void flushEof(ProcessStream stream, LineEmit emit)
-        {
-            if (_pending.length)
-            {
-                emit(stream, _pending[], false);
-                _pending.length = 0;
-            }
-        }
-    }
+    // The line framer (`LineFramer`/`LineEmit`) is effects-side in `proc` —
+    // pure and ring-free, so its edge matrix is unit-tested there.
 
     /// Advances the single-winner end decision; later triggers are no-ops.
     private void decideEnd(ref SupervisionState st, ProcessEnd which)
@@ -1629,6 +1581,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         st.child = &child;
         st.processGroup = savedGroup;
         st.collect = cfg.collectOutput;
+        st.collectCap = cfg.maxCapturedBytes;
         st.startedAt = MonoTime.currTime;
         version (unittest)
             st.signalAttempts = signalAttempts;
@@ -1652,6 +1605,8 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         bool resourceExhausted;
         MonoTime graceDeadline;
         LineFramer stdoutFramer, stderrFramer;
+        stdoutFramer.maxLineBytes = cfg.maxLineBytes;
+        stderrFramer.maxLineBytes = cfg.maxLineBytes;
 
         void rememberError(IoError error)
         {
@@ -1883,10 +1838,10 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                 }
             }
 
-            LineEmit emit = (stream, bytes, terminated) {
+            LineEmit emit = (stream, bytes, terminated, truncated) {
                 ProcessEvent ev;
                 ev.kind = ProcessEventKind.line;
-                ev.line = ProcessLine(stream, bytes, terminated);
+                ev.line = ProcessLine(stream, bytes, terminated, truncated);
                 invoke(ev);
             };
 
@@ -1902,8 +1857,23 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                     case RelayKind.bytes:
                         const view = msg.bytes[];
                         if (stP.collect)
-                            (msg.stream == ProcessStream.stdout_
-                                ? stP.stdout_ : stP.stderr_) ~= view;
+                        {
+                            // Raw collection stops at `maxCapturedBytes` and
+                            // says so; framing below is never affected.
+                            const isOut = msg.stream == ProcessStream.stdout_;
+                            auto buf = isOut ? &stP.stdout_ : &stP.stderr_;
+                            auto cut = isOut ? &stP.stdoutTruncated
+                                : &stP.stderrTruncated;
+                            const cap = stP.collectCap;
+                            if (cap == 0 || buf.length + view.length <= cap)
+                                *buf ~= view;
+                            else
+                            {
+                                if (buf.length < cap)
+                                    *buf ~= view[0 .. cap - buf.length];
+                                *cut = true;
+                            }
+                        }
                         (msg.stream == ProcessStream.stdout_
                             ? stdoutFramer : stderrFramer).push(
                                 view, msg.stream, emit);
@@ -2101,6 +2071,10 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         result.usage = st.usage;
         result.stdout_ = move(st.stdout_);
         result.stderr_ = move(st.stderr_);
+        result.truncatedLines = stdoutFramer.truncatedLines
+            + stderrFramer.truncatedLines;
+        result.stdoutTruncated = st.stdoutTruncated;
+        result.stderrTruncated = st.stderrTruncated;
         return ioOk(move(result));
     }
         catch (Throwable defect)
@@ -3286,6 +3260,118 @@ unittest
     assert(!r.hasError);
 }
 
+@("live.supervise.lineCapTruncatesOnceAndReports")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        cfg.maxLineBytes = 8;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = supervise(s, ["sh", "-c",
+            `printf 'short\nthisisaverylongline\nend\n'`], cfg, null, log.sink());
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+
+        size_t lines;
+        foreach (i, ev; log.events)
+            if (ev.kind == ProcessEventKind.line)
+            {
+                final switch (lines++)
+                {
+                    case 0:
+                        assert(log.lineBytes[0] == cast(const(ubyte)[]) "short"
+                            && ev.line.terminated && !ev.line.truncated);
+                        break;
+                    case 1:
+                        // The head goes out once: `terminated` is false (no
+                        // terminator was seen) and `truncated` tells it apart
+                        // from an EOF fragment.
+                        assert(log.lineBytes[1] == cast(const(ubyte)[]) "thisisav"
+                            && !ev.line.terminated && ev.line.truncated);
+                        break;
+                    case 2:
+                        assert(log.lineBytes[2] == cast(const(ubyte)[]) "end"
+                            && ev.line.terminated && !ev.line.truncated);
+                        break;
+                }
+            }
+        assert(lines == 3, "the rest of the over-cap line is discarded");
+        assert(got.value.truncatedLines == 1);
+        // Raw collection is independent of framing: exact bytes, no cut.
+        assert(got.value.stdout_[]
+            == cast(const(ubyte)[]) "short\nthisisaverylongline\nend\n");
+        assert(!got.value.stdoutTruncated);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.captureCapStopsAccumulationAndReports")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        EventLog log;
+        SupervisedProcessConfig cfg;
+        cfg.maxCapturedBytes = 4;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = supervise(s, ["sh", "-c", `printf 'abcdef\n'; printf err >&2`],
+            cfg, null, log.sink());
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "abcd",
+            "collection stops exactly at the cap");
+        assert(got.value.stdoutTruncated);
+        assert(got.value.stderr_[] == cast(const(ubyte)[]) "err"
+            && !got.value.stderrTruncated, "the cap is per stream");
+        // Events are unaffected by the collection cap.
+        assert(log.lineBytes[0] == cast(const(ubyte)[]) "abcdef");
+        assert(got.value.truncatedLines == 0);
+    });
+    assert(!r.hasError);
+}
+
+@("live.supervise.longLineIsLinear")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // 512 KiB of one line, no terminator: the quadratic rescan this
+        // framer replaced took 5.6 s here; linear is tens of milliseconds.
+        // The bound is generous so parallel test load cannot fail it.
+        SupervisedProcessConfig cfg;
+        cfg.sampleInterval = Duration.zero;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        size_t fragments, fragmentBytes;
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sh", "-c",
+            "head -c 524288 /dev/zero | tr '\\0' 'a'"], cfg, null,
+            (in ProcessEvent ev) {
+                if (ev.kind == ProcessEventKind.line)
+                {
+                    ++fragments;
+                    fragmentBytes = ev.line.bytes.length;
+                    assert(!ev.line.terminated && !ev.line.truncated);
+                }
+            });
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(fragments == 1 && fragmentBytes == 524_288);
+        assert(got.value.stdout_.length == 524_288);
+        assert(MonoTime.currTime - before < 3.seconds, "framing must be O(n)");
+    });
+    assert(!r.hasError);
+}
+
 @("live.supervise.streamsAreIndependentMergeIsTotalOrder")
 @safe
 unittest
@@ -3768,8 +3854,9 @@ unittest
 
     LineFramer framer;
     bool emitted;
-    framer.push(cast(const(ubyte)[]) "unterminated",
-        ProcessStream.stdout_, (stream, bytes, terminated) {
+    framer.push(cast(const(ubyte)[]) "unterminated", ProcessStream.stdout_,
+        delegate(ProcessStream stream, const(ubyte)[] bytes, bool terminated,
+            bool truncated) {
             emitted = true;
         });
     assert(!emitted,

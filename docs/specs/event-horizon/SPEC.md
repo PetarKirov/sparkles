@@ -1617,7 +1617,8 @@ struct ProcessLine
 {
     ProcessStream stream;
     const(ubyte)[] bytes; /// callback-borrowed; line terminator excluded
-    bool terminated;      /// false only for the final EOF fragment
+    bool terminated;      /// false for the final EOF fragment and a truncated head
+    bool truncated;       /// the first maxLineBytes payload bytes of an over-cap line
 }
 
 struct ProcessResourceUsage
@@ -1643,6 +1644,8 @@ struct SupervisedProcessConfig
     Duration terminateGrace = 5.seconds;
     Duration sampleInterval = 250.msecs;   /// zero = final accounting only
     bool collectOutput = true;
+    size_t maxLineBytes = 1024 * 1024;     /// framer cap per line; 0 = unbounded
+    size_t maxCapturedBytes = 64 * 1024 * 1024; /// per raw stream; 0 = unbounded
 }
 
 struct SupervisedProcessResult
@@ -1653,6 +1656,9 @@ struct SupervisedProcessResult
     SharedBuffer!(ubyte, 256) stdout_;
     SharedBuffer!(ubyte, 256) stderr_;
     IoError spawnError;             /// valid only for spawnFailed
+    size_t truncatedLines;          /// lines that exceeded maxLineBytes
+    bool stdoutTruncated;           /// raw collection hit maxCapturedBytes
+    bool stderrTruncated;
 }
 
 alias ProcessEventSink = void delegate(in ProcessEvent event);
@@ -1669,7 +1675,9 @@ operation, process wait, timer, sample, or blocking-pool job owned by the run is
 live. Stdout and stderr are separate byte streams even when events interleave;
 `mergeStdout` is the explicit exception and reports all merged lines as
 `stdout_`. `collectOutput` controls accumulation only, never draining or event
-delivery. Spawn failure creates no child, emits no `exited` event, and is
+delivery. Every buffer a run keeps is bounded: `maxLineBytes` caps one framed line
+and `maxCapturedBytes` caps each raw collection; overflow is reported in the events
+and the result (§13.6), never silent. Spawn failure creates no child, emits no `exited` event, and is
 reported as `spawnFailed` plus `spawnError`; non-zero child exit is data, not an
 `IoError`.
 
@@ -1695,10 +1703,18 @@ as line boundaries.
 Order is preserved within each stream. There is no invented total order
 between separate stdout and stderr pipes: events are delivered in completion
 order. Callers requiring one kernel stream and one total order select
-`mergeStdout`. Framing storage grows for a long line subject to the run's
-allocator/OOM policy; it never truncates silently. The final collected buffers
-contain the exact raw bytes, including original terminators, independently of
-the normalized line events.
+`mergeStdout`. Framing storage is bounded by `maxLineBytes` (payload bytes; a CR
+counts only when no LF follows it, so a cap of 3 accepts `"abc\r"` + `"\n"` as the
+untruncated line `abc`). A line longer than the cap is delivered exactly once as
+its first `maxLineBytes` payload bytes with `terminated == false` and
+`truncated == true`; the remainder of that line is discarded through its LF and
+framing resumes on the next line. EOF during that discard emits nothing extra.
+Nothing is ever truncated silently: the result counts `truncatedLines`, and the
+raw collections stop at `maxCapturedBytes` with `stdoutTruncated`/`stderrTruncated`
+set. Framing is linear in the bytes read — a long line arriving in many reads is
+never rescanned. The final collected buffers contain the exact raw bytes, including
+original terminators, independently of the normalized line events, up to the
+collection cap.
 
 ### 13.7 Timeout, cancellation, drain, and reap (target M19)
 
