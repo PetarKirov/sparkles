@@ -422,7 +422,7 @@ pure nothrow @nogc:
          * copy is first written (see `ensureUniqueStorage`). Reaching a copy through
          * `const` (e.g. via `borrow`) is therefore a zero-clone read-only handle.
          */
-        this(ref inout Buffer rhs) inout @trusted
+        this(ref scope inout Buffer rhs) inout scope @trusted
         {
             this._length = rhs._length;
             // `inout` is assignable only inside an `inout` function, and
@@ -444,7 +444,7 @@ pure nothrow @nogc:
         }
 
         /// Build a mutable working copy from a `const` (e.g. borrowed) buffer.
-        this(ref const Buffer rhs) @trusted
+        this(ref scope const Buffer rhs) scope @trusted
         {
             _length = rhs._length;
             static if (hasHeap)
@@ -462,7 +462,7 @@ pure nothrow @nogc:
         /// Copy assignment: release current storage, then share/copy from `rhs`.
         /// Accepts a `const` (e.g. borrowed) source — a heap source is shared (refcount
         /// bumped), an inline source is copied — mirroring the copy constructors.
-        ref Buffer opAssign(ref const Buffer rhs) return scope @trusted
+        ref Buffer opAssign(ref scope const Buffer rhs) return scope @trusted
         {
             if (&this is &rhs)
                 return this;
@@ -492,7 +492,7 @@ pure nothrow @nogc:
     /// Move assignment from an rvalue: release current storage, then steal
     /// `rhs`'s storage (no refcount change — ownership transfers). `rhs` is
     /// neutralized so its destructor frees nothing.
-    ref Buffer opAssign(Buffer rhs) return scope @trusted
+    ref Buffer opAssign(scope Buffer rhs) return scope @trusted
     {
         static if (hasHeap)
         {
@@ -3365,11 +3365,24 @@ unittest
             fixed.assign("ok");
             fixed.clear();
         }
+
+        // A copy taken from a `scope` buffer: the copy constructors declare
+        // their source `scope`, since a shared block is refcounted rather
+        // than borrowed, so the copy is not tied to the source's lifetime.
+        SharedBuffer!(char, 8) copyOfNote() scope @safe => note;
+        SharedBuffer!(char, 8) assignedNote() scope @safe
+        {
+            SharedBuffer!(char, 8) copy;
+            copy = note;
+            return copy;
+        }
     }
 
     Holder h;
     h.fill();
     assert(h.note[] == "z");
+    assert(h.copyOfNote()[] == "z");
+    assert(h.assignedNote()[] == "z");
     static immutable int[2] want = [1, 2];
     assert(h.ints[] == want[]);
     assert(h.fixed.length == 0);
