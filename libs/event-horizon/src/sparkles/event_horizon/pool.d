@@ -162,12 +162,26 @@ struct WorkStealingPool
                 // or shutdown pokes us (O2/O29).
                 for (;;)
                 {
-                    const didWork = workUntilIdle(sched, id);
+                    const drain = workUntilIdle(sched, id);
                     if (atomicLoad(_done))
                         break;
-                    if (didWork)
+                    if (drain == Drain.worked)
                     {
                         cast(void) yieldNow(sched);
+                        continue;
+                    }
+                    if (drain == Drain.slabFull)
+                    {
+                        // Every slot holds a parked fiber waiting on a ring
+                        // completion, and `Sched.tick` reaps completions only
+                        // once no fiber is ready — so neither a yield nor the
+                        // idle recheck below can help: both resume this root
+                        // immediately (its own pushed-back job is "visible"),
+                        // and it spins forever while its fibers' timers are
+                        // never reaped (O31). Park on the ring instead: the
+                        // sleep is a real wait, every completion that arrives
+                        // meanwhile is dispatched, and slots come free.
+                        cast(void) sleep(sched, cpuBackoffBase);
                         continue;
                     }
                     atomicStore!(MemoryOrder.rel)(_idle[id], true);
@@ -251,13 +265,24 @@ private:
             pokeOneIdle(w);
     }
 
+    /// Why a $(LREF workUntilIdle) pass stopped. The root loop parks
+    /// differently for each: `idle` waits for a poke, `worked` yields to the
+    /// fibers it spawned, `slabFull` waits on the ring for them to finish.
+    enum Drain
+    {
+        idle,     /// nothing visible on any deque
+        worked,   /// ran or spawned at least one job this pass
+        slabFull, /// a job is waiting but this worker's fiber slab has no room
+    }
+
     /// Runs jobs — from this worker's own deque first, then stealing from
     /// peers when it is empty. `submitBlocking` jobs run inline (no fiber);
     /// `submit` jobs spawn a fiber (bounded by the slab, so one worker cannot
-    /// overrun it). Returns whether it did anything. An async job that cannot
-    /// be spawned (slab full) is pushed back onto the local deque, never
-    /// dropped.
-    bool workUntilIdle(ref Sched sched, uint id) @trusted
+    /// overrun it). An async job that cannot be spawned (slab full) is pushed
+    /// back onto the local deque, never dropped — and reported as
+    /// `Drain.slabFull` when nothing else was done, because that state only
+    /// clears once the loop waits on the ring (see O31).
+    Drain workUntilIdle(ref Sched sched, uint id) @trusted
     {
         const budget = sched.maxFibers > sched.liveFibers + 8
             ? sched.maxFibers - sched.liveFibers - 8 : 0;
@@ -278,12 +303,12 @@ private:
                 if (did >= budget || !spawnWrapped(sched, job.body_))
                 {
                     _deques[id].push(job); // slab full / budget hit: keep local
-                    break;
+                    return did > 0 ? Drain.worked : Drain.slabFull;
                 }
             }
             ++did;
         }
-        return did > 0;
+        return did > 0 ? Drain.worked : Drain.idle;
     }
 
     /// The CPU-bound worker loop (no `Sched`, no ring, no fibers): drain the
@@ -672,10 +697,11 @@ unittest
     // CPU-starved host the seeding worker can legitimately spawn and drain all
     // 400 before a peer is scheduled. Asserting otherwise asserts a race — it
     // flaked ~1 run in 12 pinned to two CPUs, which is what CI runners are, and
-    // retrying across rounds neither fixed it nor was free (each extra
-    // `pool.run` is another O22 GC/io_uring-enter deadlock exposure: five
-    // rounds hung 6 of 18). What this test owns is the contract: every
-    // submitted task runs exactly once, across workers, through the ring.
+    // retrying across rounds neither fixed it nor was free (five rounds hung
+    // 6 of 18 — the O31 slab-full livelock, then misread as O22, which
+    // `pool.workStealing.fullSlabWaitsOnTheRing` now pins deterministically).
+    // What this test owns is the contract: every submitted task runs exactly
+    // once, across workers, through the ring.
     // Stealing itself is covered deterministically by
     // `pool.workStealing.cpuBoundInlineFanOut`, whose 8191-task fan-out cannot
     // complete without it and whose assertion does not depend on placement.
@@ -692,6 +718,52 @@ unittest
     });
 
     assert(atomicLoad(completed) == tasks, "every submitted task ran to completion");
+}
+
+@("pool.workStealing.fullSlabWaitsOnTheRing")
+@system
+unittest
+{
+    import core.atomic : atomicLoad, atomicOp;
+    import core.time : msecs;
+
+    import sparkles.event_horizon.io : sleep;
+    import sparkles.event_horizon.sched : Sched;
+
+    // Regression for O31. A slab this small (budget = maxFibers − live − 8
+    // ≈ 3) fills on the first pass while the deque still holds jobs. Every
+    // resident fiber is parked on an in-ring timer, and `Sched.tick` reaps
+    // the ring only once no fiber is ready — so a root that reacts to "slab
+    // full" by yielding, or by rechecking `workVisible` (true: its own
+    // pushed-back job), resumes itself at once and spins forever: one worker
+    // at 100% in `popTail`, the peers parked, the timers never dispatched.
+    // Before the fix this hung on every run; the 400-task distribution test
+    // above only hit it when a worker's slab happened to fill first.
+    {
+        Sched probe;
+        schedOrSkip(probe, SchedOptions.init);
+        probe.destroy();
+    }
+
+    WorkStealingPool pool;
+    LoopGroupConfig cfg;
+    cfg.topology = Topology.workStealing;
+    cfg.workers = 2;
+    cfg.maxFibers = 12;
+    if (WorkStealingPool.start(pool, cfg).hasError)
+        skipTest("work-stealing pool unavailable");
+
+    enum tasks = 64;
+    shared uint completed;
+    pool.run((ref WorkStealingPool p) {
+        foreach (_; 0 .. tasks)
+            p.submit(() {
+                cast(void) sleepCurrent(1.msecs);
+                atomicOp!"+="(completed, 1);
+            });
+    });
+
+    assert(atomicLoad(completed) == tasks, "every task ran despite the full slab");
 }
 
 @("pool.workStealing.cpuBoundInlineFanOut")
