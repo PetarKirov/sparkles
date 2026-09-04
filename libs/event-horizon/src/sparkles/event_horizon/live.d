@@ -33,8 +33,6 @@ import sparkles.event_horizon.sched : Sched;
 
 private:
 
-extern (C) int access(const(char)* pathname, int mode) nothrow @nogc;
-
 extern (C) extern __gshared char** environ;
 
 /// The inherited environment as borrowed slices (`environ` itself, never
@@ -71,7 +69,7 @@ $(LREF ProcessConfig.env) when non-null, else the inherited environment;
 An invalid edit (empty name, '=' or NUL anywhere in a name, NUL in a value)
 fails with `EINVAL` $(B before any child exists). The result is null exactly
 when the child should inherit unmodified (no custom base and no overlay);
-otherwise it is the full replacement block handed to `posix_spawnp`.
+otherwise it is the full replacement block handed to `posix_spawn`.
 */
 package IoResult!(const(char)[][]) effectiveEnvironment(
     in ProcessConfig cfg) @safe
@@ -146,20 +144,6 @@ package IoResult!(const(char)[][]) effectiveEnvironment(
     return ioOk(move(entries));
 }
 
-/// Whether `candidate` is an existing regular file this user may execute.
-private bool isExecutableFile(scope const(char)[] candidate) @trusted nothrow
-{
-    import core.sys.posix.sys.stat : S_ISREG, stat, stat_t;
-    import core.sys.posix.unistd : X_OK;
-    import std.string : toStringz;
-
-    auto z = candidate.toStringz;
-    stat_t status;
-    if (stat(z, &status) != 0 || !S_ISREG(status.st_mode))
-        return false;
-    return access(z, X_OK) == 0;
-}
-
 /// The fallback search path for a child whose environment carries no PATH:
 /// what `execvp`-family implementations use (the `_CS_PATH` confstr, which
 /// is `/bin:/usr/bin` wherever that confstr is unavailable to us).
@@ -175,59 +159,112 @@ private string defaultPath() @trusted nothrow
     return buf[0 .. n - 1].idup;
 }
 
-/**
-Resolves `program` against the EFFECTIVE child environment's PATH (SPEC
-§13.1: "PATH lookup uses the resulting environment").
-
-libc implementations differ about whose PATH `posix_spawnp` consults, so
-whenever a custom environment was built we pre-resolve here — first
-executable regular file across the resulting `PATH` (or the `_CS_PATH`
-fallback when it has none), empty components meaning the current directory.
-A program containing '/' is never searched. Resolution failure returns
-`program` unchanged, so `posix_spawnp` produces its usual `ENOENT`.
-*/
-package const(char)[] resolveProgram(const(char)[] program,
-    scope const(char)[][] envEntries, bool customEnv,
-    const(char)[] childCwd = null) @safe
+/// The PATH the child will see (SPEC §13.1: "PATH lookup uses the resulting
+/// environment"): the built entries when a custom environment was made,
+/// the parent's otherwise; unset ⇒ `_CS_PATH`.
+private string childSearchPath(scope const(char)[][] envEntries,
+    bool customEnv) @trusted
 {
+    import core.stdc.stdlib : getenv;
+    import core.stdc.string : strlen;
+
+    if (customEnv)
+    {
+        foreach (entry; envEntries)
+            if (entry.length >= 5 && entry[0 .. 5] == "PATH=")
+                return entry[5 .. $].idup;
+        return defaultPath();
+    }
+    auto inherited = getenv("PATH");
+    return inherited is null ? defaultPath() : inherited[0 .. strlen(inherited)].idup;
+}
+
+/// Whether a candidate might exec: anything but a definite "no such file"
+/// from `stat` is left for the spawn to decide, so this can only skip work,
+/// never change an outcome.
+private bool mightExec(scope const(char)[] probe) @trusted nothrow
+{
+    import core.stdc.errno : ENOENT, ENOTDIR, errno;
+    import core.sys.posix.sys.stat : stat, stat_t;
+    import std.string : toStringz;
+
+    stat_t status;
+    if (stat(probe.toStringz, &status) == 0)
+        return true;
+    return errno != ENOENT && errno != ENOTDIR;
+}
+
+/**
+The child's PATH search (SPEC §13.1), driven by the spawn itself rather than
+by an `access(2)` pre-check: `access` answers for the real uid while exec
+answers for the effective one, and a fabricated `ENOENT` hid every other
+failure. Each candidate is handed to `attempt` — a `posix_spawn` whose exec
+runs in the child's cwd with the child's credentials — under execvp's rules:
+`ENOENT`/`ENOTDIR` move on, `EACCES` is remembered and reported when nothing
+later succeeds, and any other error ends the search. Unlike `posix_spawnp`
+there is no `/bin/sh` retry on `ENOEXEC`. A name containing '/' is spawned as
+spelled; an empty PATH component is the child cwd; a candidate that
+definitely does not exist (in the parent's view of the child cwd) is skipped
+without a spawn — a `stat` is far cheaper than a clone.
+
+Returns the spawn's errno, 0 on success.
+*/
+private int spawnSearchingPath(Attempt)(const(char)[] program,
+    string searchPath, const(char)[] childCwd, scope Attempt attempt)
+{
+    import core.stdc.errno : EACCES, ENOENT, ENOTDIR;
     import std.algorithm.iteration : splitter;
     import std.algorithm.searching : canFind;
+    import std.array : array;
     import std.path : isAbsolute;
 
-    if (!customEnv || program.canFind('/'))
-        return program;
+    if (program.canFind('/'))
+        return attempt(program);
 
-    const(char)[] pathValue;
-    bool hasPath;
-    foreach (entry; envEntries)
-        if (entry.length >= 5 && entry[0 .. 5] == "PATH=")
-        {
-            pathValue = entry[5 .. $];
-            hasPath = true;
-            break;
-        }
-    const searchPath = hasPath ? pathValue.idup : defaultPath();
-
-    if (searchPath.length == 0)
-        // PATH="" is exactly one empty component: exec from the child cwd.
-        // Keep a slash in the returned spelling so no libc PATH search can
-        // substitute the parent's environment if exec later reports ENOENT.
-        return "./" ~ program;
-
-    foreach (segment; searchPath.splitter(':'))
+    // `PATH=` is exactly one empty component — `splitter` would yield none.
+    auto segments = searchPath.length ? searchPath.splitter(':').array : [""];
+    bool sawEacces;
+    foreach (segment; segments)
     {
-        // Search as the child will after its chdir file action. The returned
-        // spelling is relative to that cwd; the probe spelling is relative to
-        // the parent because the child does not exist yet.
+        // Spelled relative to the child's cwd (the exec runs after the
+        // chdir file action); probed relative to the parent's.
         const childDir = segment.length ? segment : ".";
-        const childCandidate = childDir.idup ~ "/" ~ program;
-        const probeCandidate = childCwd !is null && !childDir.isAbsolute
-            ? childCwd.idup ~ "/" ~ childCandidate
-            : childCandidate;
-        if (isExecutableFile(probeCandidate))
-            return childCandidate;
+        const candidate = childDir.idup ~ "/" ~ program;
+        const probe = childCwd !is null && !childDir.isAbsolute
+            ? childCwd.idup ~ "/" ~ candidate
+            : candidate;
+        if (!mightExec(probe))
+            continue;
+        const rc = attempt(candidate);
+        if (rc == 0)
+            return 0;
+        if (rc == EACCES)
+        {
+            sawEacces = true;
+            continue;
+        }
+        if (rc != ENOENT && rc != ENOTDIR)
+            return rc;
     }
-    return program;
+    return sawEacces ? EACCES : ENOENT;
+}
+
+/// Names a failed spawn's cause for the error's context.
+private string spawnFailureContext(int rc) @safe pure nothrow @nogc
+{
+    import core.stdc.errno : EACCES, ENOENT, ENOEXEC;
+
+    switch (rc)
+    {
+    case ENOENT:
+        return "program not found in child PATH";
+    case EACCES:
+        return "program found in child PATH but not executable";
+    case ENOEXEC:
+        return "program is not a recognised executable (no shell fallback)";
+    default:
+        return "posix_spawn failed";
+    }
 }
 
 private IoResult!void validateSpawnStrings(scope const(char[])[] argv,
@@ -406,7 +443,7 @@ struct ChildProcess
 /**
 Spawns `argv` (PATH-searched) per `cfg` (SPEC §13.1–§13.2): per-stream
 pipes / /dev/null / borrowed fds, "KEY=value" environment, working
-directory, and an optional fresh process group. `posix_spawnp`, never
+directory, and an optional fresh process group. `posix_spawn`, never
 `fork` — a fiber stack is the worst possible place for a fork. Spawning is
 a setup-phase operation and may allocate (argv/env staging is heap-built;
 the M7 4 KiB budget and its `E2BIG` are gone).
@@ -422,7 +459,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
         posix_spawn_file_actions_destroy, posix_spawn_file_actions_init,
         posix_spawn_file_actions_t, posix_spawnattr_destroy,
         posix_spawnattr_init, posix_spawnattr_setflags,
-        posix_spawnattr_setpgroup, posix_spawnattr_t, posix_spawnp,
+        posix_spawnattr_setpgroup, posix_spawnattr_t,
         POSIX_SPAWN_SETPGROUP;
     import core.sys.posix.unistd : close;
 
@@ -439,15 +476,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     if (envBuilt.hasError)
         return ioErr!ChildProcess(envBuilt.error);
     const customEnv = cfg.env !is null || cfg.envOverlay.length > 0;
-    const program = resolveProgram(argv[0], envBuilt.value, customEnv, cfg.cwd);
-    if (customEnv)
-    {
-        import std.algorithm.searching : canFind;
-
-        if (!argv[0].canFind('/') && program == argv[0])
-            return ioErr!ChildProcess(2 /* ENOENT */, OpKind.none,
-                IoErrorStage.submit, "program not found in child PATH");
-    }
+    const searchPath = childSearchPath(envBuilt.value, customEnv);
 
     // Parent/child pipe ends per stream; -1 = not piped.
     int[2] inPipe = -1, outPipe = -1, errPipe = -1;
@@ -543,20 +572,17 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     auto cargv = cstrings(argv);
     // Bound to a named local rather than used as a bare `.ptr`: the slice is
     // the only thing keeping the inner `char[]`s reachable, and the child's
-    // environment must survive until posix_spawnp has read it. `cargv` above
+    // environment must survive until posix_spawn has read it. `cargv` above
     // was already rooted this way; `cenv` was the one that was not.
     auto cenvArray = customEnv ? cstrings(envBuilt.value) : null;
     auto cenv = customEnv ? cenvArray.ptr : environ;
-    // Pre-resolved per §13.1 when a custom environment was built; otherwise
-    // the original spelling keeps libc's own PATH search semantics.
-    auto programZ = zstring(program);
 
+    // The child's own PATH search (§13.1): never `posix_spawnp`, whose
+    // search consults the parent's PATH and retries scripts via /bin/sh.
     int pid;
-    // A custom environment has already been searched against its own PATH.
-    // `posix_spawnp` would search the parent's PATH again after a miss.
-    const rc = customEnv
-        ? posix_spawn(&pid, programZ, &actions, &attr, cargv.ptr, cenv)
-        : posix_spawnp(&pid, programZ, &actions, &attr, cargv.ptr, cenv);
+    const rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
+        (const(char)[] candidate) => posix_spawn(&pid, zstring(candidate),
+            &actions, &attr, cargv.ptr, cenv));
 
     // Parent keeps only its own ends; the child-side ends close now.
     closeIf(cfg.stdinSpec, inPipe[0]);
@@ -574,7 +600,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
         closeIf(cfg.stderrSpec, errPipe[0]);
         errPipe[0] = -1;
         return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
-            "posix_spawnp failed");
+            spawnFailureContext(rc));
     }
 
     ChildProcess child;
@@ -716,7 +742,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
         posix_spawn_file_actions_addopen, posix_spawn_file_actions_destroy,
         posix_spawn_file_actions_init, posix_spawn_file_actions_t,
         posix_spawnattr_destroy, posix_spawnattr_init,
-        posix_spawnattr_setflags, posix_spawnattr_t, posix_spawnp;
+        posix_spawnattr_setflags, posix_spawnattr_t;
     import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
     import core.sys.posix.unistd : close;
 
@@ -731,15 +757,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     if (envBuilt.hasError)
         return ioErr!ChildProcess(envBuilt.error);
     const customEnv = cfg.env !is null || cfg.envOverlay.length > 0;
-    const program = resolveProgram(argv[0], envBuilt.value, customEnv, cfg.cwd);
-    if (customEnv)
-    {
-        import std.algorithm.searching : canFind;
-
-        if (!argv[0].canFind('/') && program == argv[0])
-            return ioErr!ChildProcess(2 /* ENOENT */, OpKind.none,
-                IoErrorStage.submit, "program not found in child PATH");
-    }
+    const searchPath = childSearchPath(envBuilt.value, customEnv);
 
     int master = posix_openpt(O_RDWR | O_NOCTTY);
     if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0)
@@ -773,7 +791,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     if (slaveFd < 0)
         return ioErr!ChildProcess(errno ? errno : 5, OpKind.none,
             IoErrorStage.setup, "pty slave open failed");
-    // Closed only after `posix_spawnp` has run the file actions, so the tty
+    // Closed only after `posix_spawn` has run the file actions, so the tty
     // never has zero opens between the preset and the child's own open.
     scope (exit) close(slaveFd);
 
@@ -802,15 +820,14 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     // `spawnProcess`); the overlay-computed block replaces it wholesale.
     auto cenvArray = customEnv ? cstrings(envBuilt.value) : null;
     auto cenv = customEnv ? cenvArray.ptr : environ;
-    auto programZ = zstring(program);
 
     int pid;
-    const rc = customEnv
-        ? posix_spawn(&pid, programZ, &actions, &attr, cargv.ptr, cenv)
-        : posix_spawnp(&pid, programZ, &actions, &attr, cargv.ptr, cenv);
+    const rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
+        (const(char)[] candidate) => posix_spawn(&pid, zstring(candidate),
+            &actions, &attr, cargv.ptr, cenv));
     if (rc != 0)
         return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
-            "posix_spawnp failed");
+            spawnFailureContext(rc));
 
     ChildProcess child;
     child.pid = pid;
@@ -3184,7 +3201,7 @@ unittest
         cwdExcluded.cwd = root;
         auto cwdMiss = capture(s, ["emptyprobe"], cwdExcluded);
         assert(cwdMiss.hasError && cwdMiss.error.errnoValue == 2,
-            "PATH miss is ENOENT before child creation, even when cwd matches");
+            "a PATH miss is ENOENT with no child left behind, even when cwd matches");
 
         ProcessConfig relative;
         relative.env = cast(const(char[])[]) ["PATH=bin"];
@@ -3202,6 +3219,82 @@ unittest
             foundEmpty.hasError ? foundEmpty.error.context : "");
         assert(foundEmpty.value.stdout_[] == cast(const(ubyte)[]) "cwd-empty",
             "an empty PATH component resolves in the configured child cwd");
+    });
+    assert(!r.hasError);
+}
+
+@("live.env.pathSearchStickyEaccesAndNoShellFallback")
+@system
+unittest
+{
+    import core.stdc.errno : EACCES, ENOEXEC, ENOENT;
+    import core.sys.posix.sys.stat : chmod;
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+    import std.file : mkdirRecurse, remove, rmdir, tempDir, write;
+    import std.path : buildPath;
+    import std.string : toStringz;
+
+    Sched s;
+    schedOrSkip(s);
+
+    const root = buildPath(tempDir(), text("eh-path-search-probe-", getpid()));
+    const unexec = buildPath(root, "unexec");
+    const exec = buildPath(root, "exec");
+    const garbage = buildPath(root, "garbage");
+    mkdirRecurse(unexec);
+    mkdirRecurse(exec);
+    mkdirRecurse(garbage);
+    // The same name three ways: not executable, executable, and an
+    // executable that is not an exec format.
+    write(buildPath(unexec, "ehprobe"), "#!/bin/sh\nprintf wrong\n");
+    write(buildPath(exec, "ehprobe"), "#!/bin/sh\nprintf right\n");
+    write(buildPath(garbage, "ehprobe"), "\x00\x01\x02not-an-executable");
+    cast(void) chmod(buildPath(unexec, "ehprobe").toStringz, 420 /* 0o644 */);
+    cast(void) chmod(buildPath(exec, "ehprobe").toStringz, 493 /* 0o755 */);
+    cast(void) chmod(buildPath(garbage, "ehprobe").toStringz, 493 /* 0o755 */);
+    scope (exit)
+    {
+        foreach (dir; [unexec, exec, garbage])
+        {
+            remove(buildPath(dir, "ehprobe"));
+            rmdir(dir);
+        }
+        rmdir(root);
+    }
+
+    auto r = s.run(() {
+        // EACCES is sticky: a later miss does not downgrade it to ENOENT.
+        ProcessConfig sticky;
+        sticky.env = cast(const(char[])[])(
+            ["PATH=" ~ unexec ~ ":/definitely/not/here"]);
+        auto denied = capture(s, ["ehprobe"], sticky);
+        assert(denied.hasError && denied.error.errnoValue == EACCES,
+            "the unexecutable match is reported, not hidden as ENOENT");
+
+        // …but EACCES does not stop the search: a later executable wins.
+        ProcessConfig later;
+        later.env = cast(const(char[])[])(["PATH=" ~ unexec ~ ":" ~ exec]);
+        auto found = capture(s, ["ehprobe"], later);
+        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.value.stdout_[] == cast(const(ubyte)[]) "right");
+
+        // A miss everywhere is ENOENT.
+        ProcessConfig none;
+        none.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
+        auto missing = capture(s, ["ehprobe"], none);
+        assert(missing.hasError && missing.error.errnoValue == ENOENT);
+
+        // No /bin/sh retry: an unrecognised format is ENOEXEC, in a custom
+        // and in the inherited environment alike.
+        ProcessConfig unrecognised;
+        unrecognised.env = cast(const(char[])[])(["PATH=" ~ garbage]);
+        auto format = capture(s, ["ehprobe"], unrecognised);
+        assert(format.hasError && format.error.errnoValue == ENOEXEC,
+            format.hasError ? format.error.context : "spawned garbage");
+        auto direct = capture(s, [buildPath(garbage, "ehprobe")]);
+        assert(direct.hasError && direct.error.errnoValue == ENOEXEC,
+            "a name with a slash is spawned as spelled, still without a shell");
     });
     assert(!r.hasError);
 }

@@ -1524,8 +1524,8 @@ struct EnvironmentChange
 }
 ```
 
-Spawning is `posix_spawnp` (PATH-searched), never `fork` — a fiber stack is
-the worst possible place for a fork. The argv/env staging buffer grows on
+Spawning is `posix_spawn`, never `fork` — a fiber stack is the worst possible
+place for a fork. The argv/env staging buffer grows on
 the heap (the M7 4 KiB static budget and its `E2BIG` are gone); spawn is a
 setup-phase operation and may allocate.
 
@@ -1537,6 +1537,19 @@ Windows. An invalid name/value fails spawn before a child exists. PATH lookup
 uses the resulting environment. This overlay rule is shared by low-level spawn
 and supervised runs; callers do not need to snapshot and rebuild the parent
 environment to set one variable.
+
+The PATH search is driven by the spawn itself, never by an `access(2)`
+pre-check (`access` answers for the real uid while exec answers for the
+effective one, and a fabricated `ENOENT` would hide every other failure) and
+never by `posix_spawnp` (whose search consults the parent's PATH and retries
+scripts through `/bin/sh`). Each candidate is attempted with `posix_spawn`, so
+its exec runs in the child's cwd with the child's credentials, under execvp's
+rules: `ENOENT`/`ENOTDIR` move to the next component; `EACCES` is remembered
+and reported when nothing later succeeds; any other error — `ENOEXEC`
+included, there is no shell fallback — ends the search and is reported as is.
+A name containing `/` is spawned as spelled. An empty PATH component is the
+child cwd; an unset PATH searches `_CS_PATH`. A failed attempt leaves no child
+behind.
 
 ### 13.2 The child handle
 
