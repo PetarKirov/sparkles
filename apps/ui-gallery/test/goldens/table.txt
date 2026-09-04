@@ -1,0 +1,32 @@
+ sparkles:ui one grid, two views                                                    tokyo-night
+   Welcome           ▕ Table · one grid, two views                                             █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ The span-capable table: an HTML-style slot grid (colspan, rowspan,      █
+   Text              ▕ sparse placement), header rows and stub columns with heavy rules,       █
+   Themes            ▕ per-column and per-cell alignment including decimal, VAlign, wrapping   █
+   Slots             ▕ under width caps, and pluggable glyph presets. One layout core decides  █
+   Decoration        ▕ every width, height and junction; the widget view below and the string  █
+   Grid              ▕ view beside it both materialize its answer.                             █
+   Components        ▕                                                                         █
+   Tree              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Property tree     ▕ │ widget view — buildTableWidgets                                     │ █
+ ▸ Table             ▕ │ preset rounded   row rules    stub col                              │ █
+   Scrolling         ▕ │                                                                     │ │
+   State             ▕ │ ╭──────────────────────────────╮                                    │ │
+   Split             ▕ │ │          Q3 restock          │                                    │ │
+   Dock              ▕ │ ├────────┬────────┬────────────┤                                    │ │
+   Terminal          ▕ │ │ item   │  price │ notes      │                                    │ │
+                     ▕ │ ┝━━━━━━━━┿━━━━━━━━┿━━━━━━━━━━━━┥                                    │ │
+                     ▕ │ │ widget │  12.5  │ steady     │                                    │ │
+                     ▕ │ ├────────┼────────┼────────────┤                                    │ │
+                     ▕ │ │ gadget │   3.75 │ bulk order │                                    │ │
+                     ▕ │ ├────────┼────────┤            │                                    │ │
+                     ▕ │ │ gizmo  │ 140    │            │                                    │ │
+                     ▕ │ ╰────────┴────────┴────────────╯                                    │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ string view — drawTable, the same bytes                             │ │
+                     ▕
+ pagesg glyphsr row ruless stub col< cols left> cols righ, rows up . rows down   ? keys   q quit

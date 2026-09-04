@@ -1,0 +1,32 @@
+ sparkles:ui sizing, spacing, alignment                                             tokyo-night
+   Welcome           ▕ Layout · sizing, spacing, alignment                                     █
+   Primitives        ▕                                                                         █
+ ▸ Layout            ▕                                                                         █
+   Tracks            ▕ Four passes, each O(n): natural width up, allocation down,              █
+   Text              ▕ height-for-width up, placement down. Nothing iterates to a fixed point  █
+   Themes            ▕ — the width/height cycle is broken by ordering.                         █
+   Slots             ▕                                                                         █
+   Decoration        ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Grid              ▕ │ the knobs                                                           │ █
+   Components        ▕ │ width  fit   grow   fixed   percent                                 │ █
+   Tree              ▕ │ value 12                                                            │ █
+   Property tree     ▕ │ alignX  start   center   end                                        │ █
+   Table             ▕ │ alignY  start   center   end                                        │ █
+   Scrolling         ▕ │ gap 1 padding 1                                                     │ █
+   State             ▕ │ third band  visible   hidden   collapsed                            │ █
+   Split             ▕ └─────────────────────────────────────────────────────────────────────┘ █
+   Dock              ▕                                                                         █
+   Terminal          ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+                     ▕ │ the row                                                             │ █
+                     ▕ │                                                                     │ █
+                     ▕ │  first   second   third                                             │ │
+                     ▕ │                                                                     │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ what each width means                                               │ │
+                     ▕ │ fit        shrink-wrap the content (the default)                    │ │
+                     ▕ │ grow(n)    take a weighted share of what is left                    │ │
+                     ▕ │ fixed(n)   exactly n cells                                          │ │
+                     ▕
+ pagesw width moa align A align g gapp paddinv third's visibili+ wider- narrower  ? keys   q qui

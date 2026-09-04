@@ -1058,6 +1058,8 @@ string serializeGridCopy(const DsvCopy copy, in TableRegion reg, size_t rows,
 
 version (unittest)
 {
+    import sparkles.test_utils.goldens : checkGolden, gridText;
+
     private enum dsvGoldenWidth = 48;
 
     private string dsvGoldenDir()
@@ -1071,7 +1073,6 @@ version (unittest)
     private string dsvGridText(in DsvAdapted a, int maxLines = 0,
         int scrollX = 0, int scrollY = 0) @system
     {
-        import std.utf : encode;
         import sparkles.base.term_color : RgbColor, toRgb;
         import sparkles.source_view.markdown : MdViewOptions, MdViewTheme,
             viewMarkdown;
@@ -1102,46 +1103,21 @@ version (unittest)
         paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
             pageFg, pageBg));
 
-        string out_;
-        foreach (y; 0 .. grid.height)
-        {
-            size_t lineEnd = out_.length;
-            foreach (x; 0 .. grid.width)
-            {
-                char[4] cbuf;
-                const n = encode(cbuf, grid.cells[y * grid.width + x].glyph);
-                out_ ~= cbuf[0 .. n];
-                if (grid.cells[y * grid.width + x].glyph != ' ')
-                    lineEnd = out_.length;
-            }
-            out_ = out_[0 .. lineEnd];
-            out_ ~= '\n';
-        }
-        return out_;
+        return gridText(grid);
     }
 
     private void checkDsvGolden(string name, in DsvFlags flags = DsvFlags(),
         int maxLines = 0, int scrollX = 0, int scrollY = 0) @system
     {
-        import std.file : exists, readText, write;
+        import std.file : readText;
         import std.path : buildPath;
-        import std.process : environment;
 
         const dir = dsvGoldenDir();
-        const fixture = dir.buildPath(name ~ ".csv");
-        const golden = dir.buildPath(name ~ ".txt");
-        const rendered = dsvGridText(adaptDsv(readText(fixture), "csv", flags),
-            maxLines, scrollX, scrollY);
-        if (environment.get("SPARKLES_UPDATE_GOLDENS", "").length != 0
-            || !golden.exists)
-        {
-            write(golden, rendered);
-            return;
-        }
-        assert(rendered == readText(golden), name ~ ": rendered grid differs "
-            ~ "from " ~ name ~ ".txt — if intended, regenerate with "
-            ~ "SPARKLES_UPDATE_GOLDENS=1 dub test :hue -- -i dsv_view.golden "
-            ~ "and review the diff");
+        checkGolden(
+            dsvGridText(adaptDsv(readText(dir.buildPath(name ~ ".csv")), "csv",
+                flags), maxLines, scrollX, scrollY),
+            dir.buildPath(name ~ ".txt"),
+            "SPARKLES_UPDATE_GOLDENS=1 dub test :hue -- -i dsv_view.golden");
     }
 }
 

@@ -1,0 +1,32 @@
+ sparkles:ui the application chrome                                                 tokyo-night
+   Welcome           ▕ Components · application chrome                                         █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ Every one of these is a pure view: it appends a subtree and returns its █
+   Text              ▕ root. Behaviour lives in the state machines beside them, so the same    █
+   Themes            ▕ component serves a terminal and a window with no second copy.           █
+   Slots             ▕                                                                         █
+   Decoration        ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Grid              ▕ │ headerBar — leading · centre · trailing                             │ █
+ ▸ Components        ▕ │  hue                         file.d                         q quit  │ █
+   Tree              ▕ │                                                                     │ █
+   Property tree     ▕ │  focused pane                                                       │ │
+   Table             ▕ └─────────────────────────────────────────────────────────────────────┘ │
+   Scrolling         ▕                                                                         │
+   State             ▕ The groups are separated by grow spacers — the spelling the layout      │
+   Split             ▕ engine prescribes for distribution, since there is no margin and no     │
+   Dock              ▕ space-between.                                                          │
+   Terminal          ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ tabStrip — one active, the rest idle                                │ │
+                     ▕ │  config.js  config.ts  π.md                                         │ │
+                     ▕ │                                                                     │ │
+                     ▕ │ fitLabels: false — each tab takes an equal share instead            │ │
+                     ▕ │       config.js           config.ts           π.md                  │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ Active and armed are different states, because they mean different      │
+                     ▕ things: this one is showing, this one is being pressed. Conflating them │
+                     ▕ is why a hand-rolled strip flickers the wrong tab mid-drag.             │
+                     ▕
+ pages ← prev tab → next tab 1-4 action row n scroll down p scroll up           ? keys   q quit

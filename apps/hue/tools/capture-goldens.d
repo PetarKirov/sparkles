@@ -31,6 +31,18 @@
 //   diff -ru /tmp/goldens /tmp/after
 //
 // Exits non-zero if any fixture fails to render, so it doubles as a smoke test.
+//
+// This tool writes to a directory you name and diffs two runs by hand — it is
+// for a refactor in flight. The *committed* suites, checked on every `dub test`,
+// are elsewhere and share one helper (`sparkles.test_utils.goldens`):
+//
+//   dub test :ui-gallery  -- -i render.golden    # a frame per catalog page
+//   dub test :source-view -- -i md.goldens       # the markdown grid fixtures
+//   dub test :hue         -- -i dsv_view.golden  # the DSV grids
+//   dub test :dmd-fmt                            # fences inside its case pages
+//
+// All of them bless with `SPARKLES_UPDATE_GOLDENS=1`, and all of them compare
+// text for the reason stated above.
 module capture_goldens;
 
 import std.algorithm : filter, map, sort;

@@ -46,6 +46,16 @@ indent_size = unset
 insert_final_newline = unset
 trim_trailing_whitespace = unset
 
+# The ui-gallery page goldens: a frame photographed as text, so every column is
+# layout rather than indentation and trailing blanks are trimmed by the renderer
+# (apps/ui-gallery/src/render.d, `render.golden`).
+[apps/ui-gallery/test/goldens/**]
+charset = unset
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+
 # Exact upstream DUB recipe snapshot; preserve its original tab indentation.
 [libs/wired/src/sparkles/wired/sdl/fixtures/*.snapshot.sdl]
 indent_style = unset

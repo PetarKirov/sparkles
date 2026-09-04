@@ -1,0 +1,32 @@
+ sparkles:ui the semantic colour vocabulary                                         tokyo-night
+   Welcome           ▕ Slots · the semantic vocabulary                                         █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ Thirty-four roles. A widget names one; the palette turns it into a      █
+   Text              ▕ concrete foreground, background and alpha while the display list is     █
+   Themes            ▕ built. Nothing below hardcodes a colour — press ] and every swatch      █
+ ▸ Slots             ▕ re-resolves.                                                            █
+   Decoration        ▕                                                                         █
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ content                                                             │ │
+   Tree              ▕ │ inherit            Aa 0123    #a9b1d6       —                       │ │
+   Property tree     ▕ │ code               Aa 0123    #a9b1d6       —                       │ │
+   Table             ▕ │ docs               Aa 0123    #a0a0a0       —                       │ │
+   Scrolling         ▕ │ muted              Aa 0123    #777d99       —                       │ │
+   State             ▕ │ matched            Aa 0123    #a9b1d6       —                       │ │
+   Split             ▕ │ unmatched          Aa 0123    #888888       —                       │ │
+   Dock              ▕ └─────────────────────────────────────────────────────────────────────┘ │
+   Terminal          ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ severity                                                            │ │
+                     ▕ │ error              Aa 0123    #d45656       #d45656 12%             │ │
+                     ▕ │ warn               Aa 0123    #c37d0d       #c37d0d 12%             │ │
+                     ▕ │ info               Aa 0123    #3772cf       #3772cf 12%             │ │
+                     ▕ │ annotate           Aa 0123    #1ba673       #1ba673 12%             │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ surfaces                                                            │ │
+                     ▕ │ surface            Aa 0123    #a9b1d6       #252734                 │ │
+                     ▕
+ pages                                                                          ? keys   q quit

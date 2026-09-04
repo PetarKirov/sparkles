@@ -1,0 +1,32 @@
+ sparkles:ui the grid subset, resolved live                                         tokyo-night
+   Welcome           ▕ Tracks · the grid subset
+   Primitives        ▕
+   Layout            ▕
+ ▸ Tracks            ▕ auto sizes to content, fixed(n) takes exactly n, fr(w) shares what is
+   Text              ▕ left by weight, and minmax(a,b) is content clamped to a range. The
+   Themes            ▕ leftover is distributed with integer divmod and an explicit remainder,
+   Slots             ▕ so the parts always sum to exactly the whole.
+   Decoration        ▕
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐
+   Components        ▕ │ resolution                                                          │
+   Tree              ▕ │ template auto auto auto                                             │
+   Property tree     ▕ │ available 48 cells, gap 1                                           │
+   Table             ▕ │ content 8  14  6                                                    │
+   Scrolling         ▕ │ resolved 8  14  6                                                   │
+   State             ▕ │ sum + gaps 30                                                       │
+   Split             ▕ └─────────────────────────────────────────────────────────────────────┘
+   Dock              ▕
+   Terminal          ▕ ┌─────────────────────────────────────────────────────────────────────┐
+                     ▕ │ the tracks                                                          │
+                     ▕ │ auto 8   auto 14        auto 6                                      │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘
+                     ▕
+                     ▕ Press + and - to change the available width. Watch fixed stay put, fr
+                     ▕ take the difference, and minmax give way only down to its floor.
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+                     ▕
+ pages t next preset + wider - narrower                                         ? keys   q quit

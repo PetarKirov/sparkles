@@ -1,0 +1,32 @@
+ sparkles:ui what this build is                                                     tokyo-night
+ ▸ Welcome           ▕ sparkles:ui — the catalog                                               █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ Every page below is built from the same widget tree, laid out by the    █
+   Text              ▕ same engine and painted through the same display list — in a terminal   █
+   Themes            ▕ and in a window. Where the two differ, the difference is the finding.   █
+   Slots             ▕                                                                         █
+   Decoration        ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Grid              ▕ │ this build                                                          │ █
+   Components        ▕ │ backend            tui                                              │ █
+   Tree              ▕ │ surface            96 × 32 cells                                    │ █
+   Property tree     ▕ │ theme              tokyo-night                                      │ █
+   Table             ▕ │ tier served        1 · interactive (keys, pointer, wheel)           │ █
+   Scrolling         ▕ └─────────────────────────────────────────────────────────────────────┘ █
+   State             ▕                                                                         █
+   Split             ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Dock              ▕ │ input capabilities                                                  │ █
+   Terminal          ▕ │ hover               yes                                             │ █
+                     ▕ │ sub-cell pointer    no                                              │ █
+                     ▕ │ key release         no                                              │ █
+                     ▕ │ multi-pointer       no                                              │ █
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ █
+                     ▕                                                                         █
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+                     ▕ │ keys                                                                │ █
+                     ▕ │ ↑ ↓ / j k move within the focused region                            │ │
+                     ▕ │ Tab sidebar ⇄ page                                                  │ │
+                     ▕ │ Enter open the selected page                                        │ │
+                     ▕ │ [ ] previous / next theme                                           │ │
+                     ▕
+ pages                                                                          ? keys   q quit

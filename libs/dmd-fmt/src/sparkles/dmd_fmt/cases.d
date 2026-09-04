@@ -301,6 +301,11 @@ CaseResult[] runCaseFile(string path) @system
                 continue;
             // Only a plain mismatch is blessable; a verifier or convergence
             // failure is a defect, and writing it down would enshrine it.
+            // `sparkles.test_utils.goldens` states the same rule for the
+            // file-based suites and took it from here. This module is not on
+            // that helper: it is compiled into the `library` configuration, so
+            // it cannot reach a unittest-only package, and its goldens are
+            // fences inside a markdown page rather than files.
             if (r.error == "output differs" &&
                 environment.get("SPARKLES_UPDATE_GOLDENS") == "1")
             {
