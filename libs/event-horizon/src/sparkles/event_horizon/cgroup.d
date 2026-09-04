@@ -383,6 +383,32 @@ package void cleanupRun(ref CgroupRun run, Duration populatedDeadline,
         run.dirCreated = false;
 }
 
+/// One bounded evidence wait (public lane): parks the worker on `POLLPRI`
+/// of `cgroup.events` for at most `slice`, then reports what `populated`
+/// reads — `empty` is authoritative at that instant only (SPEC §13.7).
+package TreeEvidence waitEvidence(ref CgroupRun run, Duration slice) @trusted nothrow @nogc
+{
+    if (run.eventsFd < 0)
+        return TreeEvidence.unknown;
+    waitUnpopulated(run.eventsFd, slice);
+    return readPopulated(run);
+}
+
+/// The evidence job's context and body.
+package struct EvidenceJob
+{
+    CgroupRun* run;
+    Duration slice;
+    TreeEvidence evidence;
+}
+
+/// ditto
+package void evidenceCall(void* p) nothrow
+{
+    auto job = cast(EvidenceJob*) p;
+    job.evidence = waitEvidence(*job.run, job.slice);
+}
+
 /// Parks the worker on `POLLPRI` of `cgroup.events` until `populated 0`
 /// or the deadline; a spurious wake re-reads and re-arms.
 private void waitUnpopulated(int eventsFd, Duration deadline) @trusted nothrow @nogc
@@ -691,7 +717,7 @@ unittest
     schedOrSkip(s);
     auto r = s.run(() {
         CgroupRun run;
-        auto pool = createOrSkip(s, run, 1);
+        auto pool = createOrSkip(s, run, 900_001);
         assert(run.dirCreated && run.dirFd >= 0 && run.canKill);
         assert(run.eventsFd >= 0 && run.procsFd >= 0);
         assert(runDirExists(run), "the run directory exists");
@@ -715,7 +741,7 @@ unittest
     schedOrSkip(s);
     auto r = s.run(() {
         CgroupRun run;
-        auto pool = createOrSkip(s, run, 2);
+        auto pool = createOrSkip(s, run, 900_002);
 
         auto spawned = spawnProcess(["sleep", "30"]);
         assert(spawned.hasValue);
@@ -746,7 +772,7 @@ unittest
     schedOrSkip(s);
     auto r = s.run(() {
         CgroupRun run;
-        auto pool = createOrSkip(s, run, 3);
+        auto pool = createOrSkip(s, run, 900_003);
         auto spawned = spawnProcess(["sleep", "30"]);
         assert(spawned.hasValue);
         auto child = spawned.value;
@@ -783,7 +809,7 @@ unittest
     schedOrSkip(s);
     auto r = s.run(() {
         CgroupRun run;
-        auto pool = createOrSkip(s, run, 4);
+        auto pool = createOrSkip(s, run, 900_004);
         // A descendant that made itself a nested cgroup: the run's own
         // procs file lists nothing, populated still says 1.
         assert(mkdirat(run.dirFd, "nested", 493) == 0);
@@ -826,7 +852,7 @@ unittest
         auto pool = sharedBlockingPool();
         assert(!pool.hasError);
         CgroupRun run;
-        assert(!cgroupCreate(s, pool.value, run, 5, true).hasError);
+        assert(!cgroupCreate(s, pool.value, run, 900_005, true).hasError);
         if (!run.dirCreated)
             skipTest("no owned cgroup v2 directory on this host");
         assert(run.tier == CgroupTier.none && !run.canKill,

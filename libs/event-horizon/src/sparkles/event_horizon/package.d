@@ -36,6 +36,7 @@ version (Posix)
 {
     public import sparkles.event_horizon.live;
     public import sparkles.event_horizon.proc;
+    public import sparkles.event_horizon.supervise;
 }
 
 version (OSX)

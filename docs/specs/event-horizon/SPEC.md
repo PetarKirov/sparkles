@@ -160,6 +160,7 @@ _Loop-side_ modules may import anything.
 | `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
 | `cgroup`                 | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
 | `sampling`               | loop-side    | the bounded, tiered, transactional tree sampler (§13.8): fail-closed root anchor, bounded CPU ledger, per-sample work budget; the Darwin stub                           |
+| `supervise`              | loop-side    | supervised runs (§13.5–§13.8): the shielded workers, the one-shot clocks, the sampler handshake, the tree-state machine and the terminal sequence                       |
 | `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                                                               |
 | `package`                | —            | public re-exports                                                                                                                                                       |
 
@@ -1729,7 +1730,8 @@ struct ProcessEvent
     ProcessEventKind kind;
     ProcessLine line;             /// valid for line
     ProcessResourceUsage usage;   /// valid for sample
-    ExitStatus status;            /// valid for exited
+    ExitStatus status;            /// valid for exited ONLY when reap == reaped
+    ReapOutcome reap;             /// valid for exited
     ProcessEnd end;               /// valid for exited
 }
 
@@ -1742,6 +1744,9 @@ struct SupervisedProcessConfig
     bool collectOutput = true;
     size_t maxLineBytes = 1024 * 1024;     /// framer cap per line; 0 = unbounded
     size_t maxCapturedBytes = 64 * 1024 * 1024; /// per raw stream; 0 = unbounded
+    ResidualPolicy residualPolicy = ResidualPolicy.bounded; /// after root exit (§13.7)
+    Duration outputGrace = 5.seconds;     /// bounded (and wait's fallback): output grace
+    Duration killDrainWindow = 1.seconds; /// post-kill / detach drain budget before forced EOF
 }
 
 struct SupervisedProcessResult
@@ -1755,7 +1760,19 @@ struct SupervisedProcessResult
     size_t truncatedLines;          /// lines that exceeded maxLineBytes
     bool stdoutTruncated;           /// raw collection hit maxCapturedBytes
     bool stderrTruncated;
+    bool eofForced;             /// a still-open pipe was forced closed at a drain window
+    bool terminationDegraded;   /// a REQUESTED hard tree kill fell below the tier's promise
+    IoError terminationError;   /// the primary cause (pgid error first, else cgroup)
+    bool residualPolicyDegraded; /// `wait` fell back to `bounded`
+    IoError residualPolicyError;
+    bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    ReapOutcome reap;           /// `status` is valid ONLY when reap == reaped
 }
+
+enum ReapOutcome : ubyte { notApplicable, reaped, lostToExternalReaper }
+enum ResidualPolicy : ubyte { bounded, wait, detach }
+struct KillOutcome { KillResult kind; int errnoValue; }
+enum KillResult : ubyte { notAttempted, delivered, targetAbsent, failed }
 
 alias ProcessEventSink = void delegate(in ProcessEvent event);
 
@@ -1879,6 +1896,111 @@ nested cgroups bottom-up and the run directory; a directory that remained is
 reported as `cgroupCleanupLeaked`, which describes directory removal only,
 never a failed kill. Cleanup completes before the final result is read.
 
+A process the root forks before the post-spawn `cgroup.procs` migration lands
+is outside the run cgroup: the write is issued inline the moment the spawn
+returns (a bounded in-memory kernfs operation, microseconds against the
+hundreds a fresh program needs to reach its first fork), which closes the
+window in practice but not by construction — the private process group still
+covers such a fork for termination; `wait` and the cgroup roster do not see it.
+Containment by construction needs `clone3(CLONE_INTO_CGROUP)`, a planned spawn
+path.
+
+**The control plane.** Every worker of a run — the two drains, the stdin
+feeder, the root observer, the clock, the sampler and (under `wait`) the
+evidence observer — is a shielded child of one scope (§8.2) that only the
+supervising fiber ends. The supervising fiber is the single owner of the
+tree-state machine and of every kill; the root observer performs the one
+non-consuming `WNOWAIT` wait through an explicit lifecycle
+(`notAdmitted → initializing → inFlight → observed | lost | failed`, or
+`laneOwned` when the emergency owner takes the observation over with finite
+`WNOHANG` probes and alarm backoff), so no second wait for the same child can
+ever be submitted; the clock owns six one-shot, ring-free alarms — timeout,
+grace, the descendant output grace, `wait`'s fallback grace, the post-kill
+drain window, the detach drain window — each armed at most once per run.
+Clocks and the sampler never block and never initiate termination: they
+publish level-triggered command bits carrying the epoch they were armed under
+plus one best-effort wake token, and the supervisor drains the bit set after
+every relay message, clearing each bit before acting on it; a command whose
+epoch is stale is discarded.
+
+**The tree-state machine.** One machine drives the natural-root path and every
+requested termination:
+
+```text
+live ─(root observed)─┬─ bounded, streams terminal ───────▶ killQueued
+                      ├─ bounded, streams open ─▶ graceArmed(natural) ─(expiry)─▶ killQueued
+                      ├─ wait ──▶ waitPopulated ─(populated 0)─▶ waited
+                      │                         └─(evidence lost)─▶ graceArmed(fallback)
+                      └─ detach ─▶ detached ─(drain window)─▶ forceEof ─▶ detachedDrained
+graceArmed(natural|fallback) + streams terminal ──▶ killQueued   [the output grace ends with the output]
+graceArmed(requested) + root observed + streams terminal ──▶ killQueued
+requestTermination(any pre-kill state) ───────────▶ graceArmed(requested)  [TERM+CONT once; first trigger wins]
+killQueued ─(pgid SIGKILL, then cgroup.kill)──────▶ killSettled | killFailedAwaitRoot
+killFailedAwaitRoot ─(natural root observation)───▶ killSettled
+killSettled + streams terminal ───────────────────▶ drainDone   [else the drain window forces EOF]
+resolved: waited | detachedDrained | drainDone
+```
+
+`ResidualPolicy` (`SupervisedProcessConfig.residualPolicy`): `bounded` (the
+default) is an **output** grace — after root exit, descendants still holding an
+output pipe get `outputGrace`; once root exit and EOF both hold, the tree is
+killed at once, so a daemon that cleanly closed stdio gets no lifetime grace
+and a trivial run costs one `kill(-pgid, SIGKILL)` against a group holding
+only the zombie. `wait` (owned-cgroup tiers only; `EOPNOTSUPP` after
+negotiation elsewhere) stays until EOF **and** the run cgroup reads
+recursively `populated 0`; it is cgroup-scoped by definition — a descendant
+that left the cgroup while staying in the pgid is neither waited for nor
+killed — and degrades to `bounded` (with `residualPolicyDegraded` and its
+error) when the evidence is persistently unavailable or the migration failed.
+`detach` gives up termination ownership, not promptness: pipes still open at
+`killDrainWindow` after root exit are forced closed (`eofForced`), cleanup
+does not wait for the residual, and `cgroupCleanupLeaked` may say so.
+
+On **every** `killQueued` entry the identity-pinned pgid SIGKILL and, whenever
+the run owns the capability, `cgroup.kill` are both issued unconditionally —
+evidence never suppresses a requested kill. Each action yields a recorded
+`KillOutcome`; the public truth table: pgid delivered + cgroup delivered or
+not owned → not degraded; pgid delivered + cgroup failed → degraded, error =
+cgroup errno; pgid failed (or `ESRCH` under the pinned zombie) → degraded,
+error = pgid errno, whatever the cgroup did. When both mechanisms fail while
+the root is still live, no ownership boundary permits returning: the run
+enters `killFailedAwaitRoot` and stays until the root's natural exit — the one
+state no configured duration bounds. `terminationDegraded`/`terminationError`
+cover every requested hard tree kill (timeout, cancellation, the residual
+policy) that fell below the tier's promise; `cgroupCleanupLeaked` describes
+directory removal only.
+
+**The terminal sequence.** The reap predicate is the terminal predicate —
+streams terminal ∧ root resolved ∧ tree resolved — so the WNOWAIT-observed
+zombie pins the process group for the whole active run and no post-reap group
+signal is possible by construction. Protection is a property of that
+boundary: the supervisor enters `protect` at the terminal decision and stays
+protected through the control freeze, the sampler-finalization handshake
+(§13.8 — the final sample runs before the reap), the reap, and the worker
+stop; it re-enters `protect` for the shared post-join finalization (cgroup
+cleanup on the termination-critical lane, the frozen fields, the exactly-once
+`exited` event), and only then is a latched interrupt resolved: an outer
+cancellation keeps first-trigger precedence and is delivered at the caller's
+next checkpoint; the scope's own admission sweep is consumed. The reap follows
+a result table: an in-ring success consumes the right; `ECHILD` — and only
+`ECHILD` — proves it lost (`ReapOutcome.lostToExternalReaper`; `status`
+invalid, the `exited` event self-described by its `reap` field); transient
+errors retry inside the boundary; any other in-ring error goes to the
+termination-critical `waitpid` fallback while identity is still pinned; a
+fallback that can neither succeed nor prove loss has no ownership boundary and
+ends the process through the loop's fatal hook (§5.2). A defect in the
+supervisor, or a post-spawn admission failure, runs the same sequence as a
+pre-join emergency phase inside the scope body — protected as its first
+statement — so the join never waits on workers only the owner can end.
+
+**Return bounds** (worst-case shapes, not exact paths): the drain boundary
+for `timeout == 0` under `bounded` is `rootExit + outputGrace +
+termination-lane service delay + killDrainWindow`; for a requested
+termination, `timeout + terminateGrace + termination-lane service delay +
+killDrainWindow`; the public return adds the cleanup job's queue delay, the
+populated-wait deadline (~2 s) and the recursive removal work.
+`killFailedAwaitRoot` is exempt.
+
 ### 13.8 Resource samples and scheduler-integrated blocking work (target M19)
 
 Samples cover the supervised process tree, not only the root. They report peak
@@ -1891,7 +2013,14 @@ carry cumulative values. Final usage is always emitted in the result;
 rather than fabricating zero-valued measurements.
 At most one sample operation is in flight per run. If sampling takes longer than
 its interval, missed instants coalesce into the next cumulative sample rather
-than queuing stale tree walks.
+than queuing stale tree walks. The sampler owns all sampling: every sample runs
+on the blocking pool's public lane (a refused submission skips that instant),
+never on the loop thread, and the final sample is a request/ack handshake the
+supervisor completes **before** the reap — the reap deletes `/proc/<pid>`. The
+sampler's lifecycle (`notAdmitted → initializing → running → finalRequested →
+acked → exited`, or `skipped` when the owner decides first) makes
+`running → finalRequested → acked` the only sampled terminal path; anything
+else is a degraded skip, and `samplingDegraded` is monotonic.
 
 **Sources and the metric truth table.** A run's sample source follows its
 containment tier (§13.7): `cgroupFull` (an `accounted` cgroup), `cgroupMembers`

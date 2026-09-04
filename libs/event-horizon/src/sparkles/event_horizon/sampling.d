@@ -58,7 +58,10 @@ package struct SamplerBudget
 {
     uint maxEntries = 4096;        /// proc entries scanned or members probed
     size_t maxBytes = 4 << 20;     /// bytes read from proc/cgroup files
-    Duration maxTime = 25.msecs;   /// cooperative budget of the sampling thread's own CPU time
+    /// The sampling thread's own CPU time per sample: a bound for
+    /// pathological hosts (a full `/proc` scan over ~1300 pids costs
+    /// ~25 ms), never a latency target.
+    Duration maxTime = 200.msecs;
 }
 
 // ── the bounded CPU ledger ──────────────────────────────────────────────────
@@ -242,6 +245,7 @@ version (linux)
         ulong systemTicks;
         ulong startTime;
         ulong rssPages;
+        bool zombie; /// state letter `Z`: exited, membership gone, reparenting done
     }
 
     /// Parses a `/proc/<pid>/stat` line. Fields are numbered as in proc(5);
@@ -276,6 +280,9 @@ version (linux)
             ulong v;
             switch (field)
             {
+            case 3:
+                st.zombie = tok == "Z";
+                break;
             case 4:
                 if (!parseUlong(tok, v) || v > int.max) return false;
                 st.ppid = cast(int) v; ++got; break;
@@ -464,6 +471,7 @@ version (linux)
         private bool _anchored;
         private bool _pidSamplingDisabled;
         private bool _cgroupCpuFailed, _cgroupMemFailed, _cgroupTasksFailed;
+        private bool _rootZombie;
 
         version (unittest)
         {
@@ -554,7 +562,16 @@ version (linux)
                     break;
                 case SampleSource.cgroupMembers:
                 case SampleSource.cgroupFull:
+                    // The roster misses a descendant forked before the
+                    // post-spawn migration landed (SPEC §13.7); the ppid
+                    // tree from the root still finds it while the root
+                    // lives, and once the root is a zombie — reparenting
+                    // done — only the process group can: a bounded scan.
                     discoverByRoster(scratch, spent);
+                    if (_rootZombie)
+                        discoverByScan(scratch, spent);
+                    else
+                        discoverByChildren(scratch, spent);
                     break;
                 case SampleSource.none:
                     break;
@@ -605,7 +622,10 @@ version (linux)
         bool rootStillOriginal(ref Spent spent) @trusted nothrow
         {
             ProcStat st;
-            return readStatUnder(_rootFd, st, spent) && st.startTime == _rootStart;
+            if (!readStatUnder(_rootFd, st, spent) || st.startTime != _rootStart)
+                return false;
+            _rootZombie = st.zombie;
+            return true;
         }
 
         bool discard() @safe nothrow @nogc
@@ -756,6 +776,80 @@ version (linux)
                 if (!s.member || alreadyProbed(scratch, pid))
                     continue;
                 noteDiscovered(scratch, ProcessIdentity(pid, s.st.startTime), s.st);
+            }
+        }
+
+        /// The root's descendants by the ppid tree: `/proc/<pid>/task/<tid>/
+        /// children` per task, breadth-first, bounded by the budget. Cheap
+        /// (no `/proc` walk) and independent of cgroup membership.
+        void discoverByChildren(ref Scratch scratch, ref Spent spent) @trusted nothrow
+        {
+            import core.stdc.stdio : snprintf;
+            import core.stdc.string : strlen;
+            import core.sys.posix.dirent : closedir, dirent, opendir, readdir;
+
+            int[] frontier = [_rootPid];
+            uint visited;
+            while (frontier.length)
+            {
+                const pid = frontier[0];
+                frontier = frontier[1 .. $];
+                if (++visited > budget.maxEntries || spent.exhausted(budget))
+                {
+                    scratch.budgetHit = true;
+                    return;
+                }
+                // Every task of the process may have forked.
+                char[64] taskDir = void;
+                snprintf(taskDir.ptr, taskDir.length, "/proc/%d/task", pid);
+                auto dir = opendir(taskDir.ptr);
+                if (dir is null)
+                    continue;
+                scope (exit) closedir(dir);
+                for (dirent* ent = readdir(dir); ent !is null; ent = readdir(dir))
+                {
+                    const name = ent.d_name.ptr[0 .. strlen(ent.d_name.ptr)];
+                    ulong tid;
+                    if (!parseUlong(name, tid))
+                        continue;
+                    char[96] path = void;
+                    snprintf(path.ptr, path.length, "/proc/%d/task/%.*s/children",
+                        pid, cast(int) name.length, name.ptr);
+                    const fd = open(path.ptr, O_RDONLY | O_CLOEXEC);
+                    if (fd < 0)
+                        continue;
+                    scope (exit) close(fd);
+                    char[4096] buf = void;
+                    const n = pread(fd, buf.ptr, buf.length, 0);
+                    if (n <= 0)
+                        continue;
+                    spent.bytes += n;
+                    // Space-separated pids.
+                    size_t i;
+                    while (i < cast(size_t) n)
+                    {
+                        while (i < n && buf[i] == ' ')
+                            ++i;
+                        const start = i;
+                        while (i < n && buf[i] != ' ' && buf[i] != '\n')
+                            ++i;
+                        ulong childPid;
+                        if (i > start && parseUlong(buf[start .. i], childPid)
+                            && childPid <= int.max)
+                            frontier ~= cast(int) childPid;
+                    }
+                }
+                if (pid == _rootPid || alreadyProbed(scratch, pid))
+                    continue;
+                ++spent.entries;
+                const fd = openProcDir(pid);
+                if (fd < 0)
+                    continue;
+                scope (exit) close(fd);
+                ProcStat st;
+                if (!readStatUnder(fd, st, spent))
+                    continue;
+                noteDiscovered(scratch, ProcessIdentity(pid, st.startTime), st);
             }
         }
 
@@ -1171,7 +1265,7 @@ version (linux)
             migrateInto, cleanupRun, killTree;
 
         CgroupRun run;
-        createRun(run, 77);
+        createRun(run, 900_077);
         if (run.tier == CgroupTier.none)
         {
             bool leaked;

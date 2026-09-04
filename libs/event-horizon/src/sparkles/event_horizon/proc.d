@@ -327,6 +327,49 @@ struct ProcessResourceUsage
     bool samplingDegraded;    /// a sample was skipped, aborted, or refused
 }
 
+/// Whether the supervisor consumed the root's exit status (SPEC §13.7).
+/// `exited` is the terminal-child event, not proof that THIS supervisor
+/// reaped: a concurrent external reaper (a contract violation the run
+/// survives) leaves `status` invalid, self-described by this field.
+enum ReapOutcome : ubyte
+{
+    notApplicable,        /// no child existed (`spawnFailed`)
+    reaped,               /// the status was consumed here; `status` is valid
+    lostToExternalReaper, /// `ECHILD` after observation; `status` is invalid
+}
+
+/// What a residual tree — descendants alive after the root exited — gets
+/// (SPEC §13.7). Every policy still owns the pgid; the cgroup adds recursion.
+enum ResidualPolicy : ubyte
+{
+    /// Output grace: pipe-holding descendants get `outputGrace` after root
+    /// exit; once root exit and EOF both hold, the tree is killed at once.
+    bounded,
+    /// Owned-cgroup tiers only: stay until EOF and the run cgroup reads
+    /// recursively empty; degrades to `bounded` with telemetry.
+    wait,
+    /// No residual kill; pipes still open at `killDrainWindow` are forced
+    /// closed; cleanup may report a leaked cgroup directory.
+    detach,
+}
+
+/// The recorded outcome of one containment action (SPEC §13.7): the errno
+/// travels with the kind, so a failure is never a bare flag.
+struct KillOutcome
+{
+    KillResult kind;
+    int errnoValue;
+}
+
+/// ditto
+enum KillResult : ubyte
+{
+    notAttempted, /// no capability, or the tree was already resolved
+    delivered,    /// the signal / kill write was accepted
+    targetAbsent, /// `ESRCH`: nothing to signal (never treated as success)
+    failed,       /// any other errno
+}
+
 /// One supervision event (SPEC §13.5): exactly one field is meaningful,
 /// selected by `kind`. Delivered synchronously on the original supervising
 /// scheduler fiber; the sink must not retain `line.bytes`.
@@ -335,8 +378,9 @@ struct ProcessEvent
     ProcessEventKind kind;
     ProcessLine line;           /// valid for `ProcessEventKind.line`
     ProcessResourceUsage usage; /// valid for `ProcessEventKind.sample`
-    ExitStatus status;          /// valid for `ProcessEventKind.exited`
+    ExitStatus status;          /// valid for `exited` ONLY when `reap == reaped`
     ProcessEnd end;             /// valid for `ProcessEventKind.exited`
+    ReapOutcome reap;           /// valid for `ProcessEventKind.exited`
 }
 
 /// Knobs of one supervised run (SPEC §13.5). Zero `timeout` means no
@@ -355,6 +399,11 @@ struct SupervisedProcessConfig
     bool collectOutput = true;           /// accumulation only; never draining
     size_t maxLineBytes = 1024 * 1024;   /// framer cap per line; 0 = unbounded
     size_t maxCapturedBytes = 64 * 1024 * 1024; /// per raw stream; 0 = unbounded
+    ResidualPolicy residualPolicy = ResidualPolicy.bounded; /// after root exit (§13.7)
+    /// `bounded` (and `wait`'s fallback): the grace for descendants still
+    /// holding an output pipe after the root exited.
+    Duration outputGrace = 5.seconds;
+    Duration killDrainWindow = 1.seconds; /// post-kill / detach drain budget before forced EOF
 }
 
 /// The outcome of one supervised run (SPEC §13.5). `stdout_`/`stderr_`
@@ -366,7 +415,7 @@ struct SupervisedProcessResult
     import sparkles.base.buffer : SharedBuffer;
 
     ProcessEnd end;
-    ExitStatus status; /// valid once a child existed and was reaped
+    ExitStatus status; /// valid only when `reap == ReapOutcome.reaped`
     ProcessResourceUsage usage;
     SharedBuffer!(ubyte, 256) stdout_;
     SharedBuffer!(ubyte, 256) stderr_;
@@ -374,6 +423,13 @@ struct SupervisedProcessResult
     size_t truncatedLines; /// lines that exceeded `maxLineBytes` (both streams)
     bool stdoutTruncated;  /// raw `stdout_` collection hit `maxCapturedBytes`
     bool stderrTruncated;  /// ditto for `stderr_`
+    bool eofForced;        /// a still-open pipe was forced closed at a drain window
+    bool terminationDegraded;   /// a REQUESTED hard tree kill fell below the tier's promise
+    IoError terminationError;   /// the primary cause (pgid error first, else cgroup)
+    bool residualPolicyDegraded; /// `wait` fell back to `bounded`
+    IoError residualPolicyError; /// why
+    bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    ReapOutcome reap;           /// `status` is valid ONLY when `reap == reaped`
 }
 
 /// The synchronous event callback of $(LREF sparkles.event_horizon.live.supervise)
