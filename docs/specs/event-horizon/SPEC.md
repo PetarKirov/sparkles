@@ -535,6 +535,36 @@ queued and completes with `-errno`, the same shape a bad SQE already has on
 io_uring. The loop's retry path depends on this: a `false` it cannot clear
 by flushing is an infinite retry.
 
+**Cancellation is guaranteed on a driven loop.** `cancel` never fails on
+backpressure: internal cancels serialize through one reserved slot outside the
+user slab budget (index `opSlots`, its own lifecycle and generation, never on
+the user free list), and a request that cannot be submitted right now — the
+reserved slot is busy, or the backend queue is full — moves the target to
+`cancelQueued` on the loop's pending set instead of being refused. The set is
+threaded through dedicated slot links (never the free-list link) and a queued
+target that completes naturally is unlinked _before_ its slot is released and
+its callback runs, so a callback may reuse the index at once; a nonterminal
+multishot completion keeps the links. Repeating a request is idempotent.
+`detach` clears callback ownership only: a queued or submitted cancel for a
+detached op still reaches its terminal completion, so a detached
+non-completing read is still driven to completion and the loop can still
+drain. The guarantee is conditional on the owner continuing to drive the loop
+(§5.4).
+
+**Hard backend failure is process-fatal.** A submission, flush, or wait error
+that is not backpressure (`EAGAIN`/`EBUSY`/`EINTR`/`ENOBUFS`) has no
+recoverable structured-cleanup contract: an accepted, non-completing op can
+never reach a terminal CQE once new submissions (cancels included) are
+rejected, and no userspace-visible backend abort can prove buffer-ownership
+return. The loop therefore invokes `LoopConfig.fatalHook` — a `noreturn`,
+`nothrow @nogc` function pointer defaulting to a raw-`write(2)` diagnostic plus
+`abort()` — **immediately at every detection site** (a public `submit`, a
+`cancel`, the drive, or any of those from inside a completion callback) and
+never returns an `IoError` for it: returning would let destructors, scope
+guards, and callers run against parked fibers, kernel-owned buffers, and
+in-flight pool jobs. The hook must not acquire application locks; embedders
+may install one that logs before `_exit`.
+
 ### 5.3 Timers
 
 Timers are in-ring `TIMEOUT` operations when `hasNativeTimeout!Backend`;
@@ -553,6 +583,15 @@ but must not re-enter `runOnce`** (contract-checked). CQ overflow (`-EBADR`
 under `nodrop`) triggers an internal drain cycle before surfacing an error.
 `run()` loops `runOnce` until `stop()` or until the loop is drained (no live
 ops, no timers). Off-thread stop: set the flag, then `waker().wake()`.
+
+Queued cancellations (§5.2) are retried by the loop itself — not by a
+scheduler above it — at three points: before every wait, after every dispatch
+batch (which frees the reserved slot and backend queue space), and when an
+internal cancel completes. A stopped `runOnce` still performs the one
+nonblocking pre-wait retry before returning `stopped`; `stop()` leaves live and
+cancel-pending operations legal, and `drained` is never reported while a
+queued target or an in-flight internal cancel exists. `destroy` additionally
+requires the pending set empty and the reserved slot idle.
 
 ### 5.5 Type-erased access
 

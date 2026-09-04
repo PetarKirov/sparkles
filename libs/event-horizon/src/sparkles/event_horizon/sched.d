@@ -377,6 +377,14 @@ struct Sched
     package Waker blockingWaker() @safe pure nothrow @nogc
         => _blockingWaker;
 
+    /// The one no-return seam for supervision-level ownership failures
+    /// (SPEC §13.7): a reap that can neither succeed nor prove external
+    /// loss has no ownership boundary to return through, so it ends the
+    /// process through the loop's configured `FatalHook`. Called on the
+    /// scheduler thread by the supervisor fiber — never by a pool worker.
+    package noreturn fatal(in IoError why) @trusted nothrow @nogc
+        => _loop.fatal(why);
+
     /// Fibers spawned and not yet finished.
     uint liveFibers() const @safe pure nothrow @nogc => _liveFibers;
 
@@ -658,7 +666,11 @@ private:
         OpHandle h = {token: task.awaitToken};
         if (h)
         {
+            // Never lost: backpressure queues the request on the loop's
+            // pending set (retried at every drive); the only failure is a
+            // hard backend fault, which does not return.
             auto r = task.owner._loop.cancel(h);
+            assert(!r.hasError, "cancel is infallible on a driven loop");
         }
     }
 

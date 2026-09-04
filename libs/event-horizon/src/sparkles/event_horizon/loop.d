@@ -23,11 +23,66 @@ import sparkles.event_horizon.buffer : Buf;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op;
 
+/**
+The no-return hook for a hard backend failure (SPEC §5.2): a submission or
+flush error that is not backpressure (`EAGAIN`/`EBUSY`/`EINTR`/`ENOBUFS`) is
+an environment catastrophe with no recoverable structured-cleanup contract —
+an accepted, non-completing op (an open-peer read, a multishot registration,
+the persistent waker, a live child's `waitid`) can never reach a terminal
+CQE once new submissions, cancels included, are rejected, and no backend
+abort primitive can prove buffer-ownership return from userspace. So the
+loop invokes this hook $(B immediately, at every detection site) — a public
+`submit`, a `cancel`, the drive itself, or either of those from inside a
+completion callback — and it never returns an `IoResult` for that error:
+returning would let destructors, scope guards, and callers run against
+parked fibers, kernel-owned buffers, and in-flight pool jobs. The process
+end is the one ownership barrier that needs no backend proof.
+
+The hook must be `nothrow @nogc` and must not acquire application locks —
+another thread may hold libc's stderr lock, so the default writes a
+preformatted diagnostic with raw `write(2)` (best effort) and `abort()`s.
+Embedders may install one that logs/flushes their own way before `_exit`.
+*/
+alias FatalHook = noreturn function(in IoError why) nothrow @nogc;
+
+/// The default $(LREF FatalHook): raw `write(2)` of a static message plus the
+/// errno, then `abort()`.
+noreturn defaultFatalHook(in IoError why) nothrow @nogc @trusted
+{
+    import core.stdc.stdlib : abort;
+
+    version (Posix)
+    {
+        import core.sys.posix.unistd : write;
+
+        static immutable prefix = "event-horizon: fatal backend failure, errno ";
+        char[16] digits = void;
+        size_t n;
+        uint v = why.errnoValue < 0 ? -why.errnoValue : why.errnoValue;
+        if (v == 0)
+            digits[n++] = '0';
+        char[16] rev = void;
+        size_t rn;
+        while (v != 0)
+        {
+            rev[rn++] = cast(char) ('0' + v % 10);
+            v /= 10;
+        }
+        while (rn != 0)
+            digits[n++] = rev[--rn];
+        cast(void) write(2, prefix.ptr, prefix.length);
+        cast(void) write(2, digits.ptr, n);
+        cast(void) write(2, "\n".ptr, 1);
+    }
+    abort();
+}
+
 /// Loop-level configuration; embeds the backend's.
 struct LoopConfig
 {
     BackendConfig backend; /// sqEntries / cqEntries / mode / modePolicy
     uint opSlots = 0;      /// op-slot slab capacity; 0 = 2 × cqEntries
+    FatalHook fatalHook = &defaultFatalHook; /// hard backend failure (SPEC §5.2)
 }
 
 /// What ended a `runOnce` iteration.
@@ -67,7 +122,7 @@ if (isCompletionBackend!Backend)
     non-copyable owner by value): backend setup → capability probe (the
     hard-error semantics of SPEC §3.4) → slab allocation. All-or-nothing.
     */
-    static IoResult!void create(out EventLoop loop, in LoopConfig cfg = LoopConfig())
+    static IoResult!void create(out EventLoop loop, in LoopConfig cfg = LoopConfig()) @safe
     {
         auto opened = loop._backend.open(cfg.backend);
         if (opened.hasError)
@@ -83,15 +138,29 @@ if (isCompletionBackend!Backend)
             loop._backend.close();
             return slabbed;
         }
+        // @trusted: a function pointer to a module-level function has no
+        // scoped lifetime for dip1000 to protect, but the checker still
+        // tracks provenance through a pointer-returning helper (`return`
+        // is inferred for nested functions). An integer carries none.
+        static size_t hookBits(in FatalHook f) @trusted
+            => cast(size_t) cast(void*) f;
+        loop._fatalHook = (() @trusted
+            => cast(FatalHook) cast(void*) hookBits(cfg.fatalHook))();
+        if (loop._fatalHook is null)
+            loop._fatalHook = &defaultFatalHook;
         loop._open = true;
         return ioOk();
     }
 
     /// Structured teardown; the scope discipline (M5) guarantees the
     /// precondition at higher tiers. An armed waker (SPEC §5.6) is loop
-    /// infrastructure, not work — destroy disarms it itself.
+    /// infrastructure, not work — destroy disarms it itself. A queued or
+    /// in-flight cancellation is work: its target is live, so the first
+    /// precondition already covers the pending set and the reserved slot.
     void destroy()
     in (_slab.liveCount == (_wakeArmed ? 1 : 0), "destroy with ops in flight")
+    in (_pendHead == uint.max, "destroy with queued cancellations")
+    in (!_slab.reservedActive, "destroy with an internal cancel in flight")
     {
         if (!_open)
             return;
@@ -201,10 +270,33 @@ if (isCompletionBackend!Backend)
     callback later observes `-ECANCELED` (or the real result, if completion
     won the race). The slot and its pinned buffer stay alive until that
     terminal completion, always. Cancelling an already-completed handle is
-    a no-op.
+    a no-op, and so is repeating a request.
+
+    $(B Guaranteed on a driven loop:) a request that cannot be submitted
+    right now (the one reserved internal cancel slot is busy, or the backend
+    queue is full) is $(I queued), not refused — the target enters
+    `cancelQueued` on the loop's pending set and is retried at every drive
+    (before the wait, after each dispatch batch, and when the internal
+    cancel completes). Backpressure is therefore never an error here; the
+    only failure is a hard backend fault, which reaches the fatal hook.
     */
     IoResult!void cancel(OpHandle h)
         => requestCancel(h);
+
+    /// Queued cancellations awaiting a submission opportunity.
+    uint pendingCancels() const @safe pure nothrow @nogc => _pendCount;
+
+    /// The user op-slot budget (the reserved internal cancel slot and an
+    /// armed waker's slot are not part of it).
+    uint capacity() const @safe pure nothrow @nogc => _slab.capacity;
+
+    /// Ends the process through the configured $(LREF FatalHook) — the one
+    /// seam for supervision-level ownership failures too (SPEC §13.7).
+    package noreturn fatal(in IoError why) @trusted nothrow @nogc
+    {
+        auto hook = _fatalHook is null ? &defaultFatalHook : _fatalHook;
+        hook(why);
+    }
 
     static if (hasTerminalCancel!Backend)
     {
@@ -239,37 +331,105 @@ if (isCompletionBackend!Backend)
     {
         auto slot = _slab.resolve(h.token);
         if (slot is null || slot.state != OpState.armed)
-            return ioOk(); // already completed / already cancel-requested
-
-        auto cancelToken = _slab.acquire(OpKind.cancel, OpClass.internal, null, null);
-        if (!cancelToken)
-            return ioErr!void(ENOBUFS, OpKind.cancel, IoErrorStage.cancel,
-                "op slab full");
-        if (!_backend.trySubmitCancel(cancelToken, h.token))
-        {
-            cast(void) _backend.flush();
-            if (!_backend.trySubmitCancel(cancelToken, h.token))
+            return ioOk(); // completed, already queued, or already submitted
+        version (unittest)
+            if (testHoldCancels)
             {
-                _slab.release(cancelToken);
-                return ioErr!void(EAGAIN, OpKind.cancel, IoErrorStage.cancel,
-                    "submission queue full");
+                enqueuePending(h.token.index, *slot);
+                return ioOk();
             }
-        }
-        slot.state = OpState.cancelRequested;
-        slot.provenance = CancelProvenance.explicit_;
-        ++_cancelInFlight;
+        if (!tryIssueCancel(h.token, *slot))
+            enqueuePending(h.token.index, *slot);
         return ioOk();
     }
 
+    /// Submits the internal cancel for `target` through the reserved slot;
+    /// `false` when that slot is busy or the backend cannot take the entry
+    /// even after a flush (the caller queues). A hard flush error is fatal.
+    private bool tryIssueCancel(OpToken target, ref OpSlot slot)
+    {
+        const cancelToken = _slab.acquireCancelSlot();
+        if (!cancelToken)
+            return false;
+        if (!_backend.trySubmitCancel(cancelToken, target))
+        {
+            flushOrDie();
+            if (!_backend.trySubmitCancel(cancelToken, target))
+            {
+                _slab.releaseCancelSlot(cancelToken);
+                return false;
+            }
+        }
+        slot.state = OpState.cancelSubmitted;
+        slot.provenance = CancelProvenance.explicit_;
+        ++_cancelInFlight;
+        return true;
+    }
+
+    /// Appends `index` to the pending-cancel set (state → `cancelQueued`).
+    /// Deduplicated by state: an already-queued target never re-enters.
+    private void enqueuePending(uint index, ref OpSlot slot) @safe nothrow @nogc
+    {
+        slot.state = OpState.cancelQueued;
+        slot.provenance = CancelProvenance.explicit_;
+        slot.pendPrev = _pendTail;
+        slot.pendNext = uint.max;
+        if (_pendTail == uint.max)
+            _pendHead = index;
+        else
+            _slab.slotAt(_pendTail).pendNext = index;
+        _pendTail = index;
+        ++_pendCount;
+    }
+
+    /// Removes `index` from the pending set in O(1) — before `release`, so
+    /// natural completion of a queued target never leaves a stale link.
+    private void unlinkPending(uint index, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (slot.pendPrev != uint.max)
+            _slab.slotAt(slot.pendPrev).pendNext = slot.pendNext;
+        else
+            _pendHead = slot.pendNext;
+        if (slot.pendNext != uint.max)
+            _slab.slotAt(slot.pendNext).pendPrev = slot.pendPrev;
+        else
+            _pendTail = slot.pendPrev;
+        slot.pendPrev = slot.pendNext = uint.max;
+        --_pendCount;
+    }
+
+    /// The retry: submits queued cancellations in FIFO order while the
+    /// reserved slot is free and the backend accepts. Runs at every drive
+    /// point; never blocks, never spins.
+    private void pumpPendingCancels()
+    {
+        version (unittest)
+            if (testHoldCancels)
+                return;
+        while (_pendHead != uint.max && !_slab.reservedActive)
+        {
+            const index = _pendHead;
+            auto slot = _slab.slotAt(index);
+            assert(slot.state == OpState.cancelQueued,
+                "pending set holds a non-queued slot");
+            const target = OpToken.pack(index, slot.generation, slot.cls);
+            if (!tryIssueCancel(target, *slot))
+                return; // backend still full: retried at the next drive
+            unlinkPending(index, *slot);
+        }
+    }
+
     /// Monoio "Ignored": the callback never runs; the slot and buffer are
-    /// recycled silently on the terminal completion (SPEC §4.3).
+    /// recycled silently on the terminal completion (SPEC §4.3). Orthogonal
+    /// to cancellation progress: a queued or submitted cancel for this op
+    /// still runs to its terminal CQE, so a detached non-completing read is
+    /// still driven to completion and the loop can still drain.
     void detach(OpHandle h)
     {
         auto slot = _slab.resolve(h.token);
         if (slot is null)
             return;
-        if (slot.state == OpState.armed || slot.state == OpState.cancelRequested)
-            slot.state = OpState.detached;
+        slot.detached = true;
     }
 
     /**
@@ -280,6 +440,10 @@ if (isCompletionBackend!Backend)
     IoResult!RunStatus runOnce(Duration timeout = Duration.max)
     in (!_dispatching, "runOnce is not reentrant — callbacks must not drive the loop")
     {
+        // Queued cancellations are retried before any wait — a stopped drive
+        // still performs this one nonblocking retry, so `stop()` never
+        // strands a cancel that a later drive would have submitted.
+        pumpPendingCancels();
         if (_stopRequested)
             return ioOk(RunStatus.stopped);
         if (_slab.liveCount == 0)
@@ -296,15 +460,44 @@ if (isCompletionBackend!Backend)
         }
         auto waited = _backend.submitAndWait(1, deadlinePtr);
         // EINTR is a spurious wakeup (a signal — e.g. the GC's suspend —
-        // interrupted the wait), not a failure: drain whatever did arrive
-        // and report the iteration; callers loop anyway.
-        if (waited.hasError && waited.error.errnoValue != EINTR)
-            return ioErr!RunStatus(waited.error);
+        // interrupted the wait), not a failure; EAGAIN/EBUSY are ring
+        // backpressure: drain whatever did arrive and report the iteration;
+        // callers loop anyway. Anything else is a hard backend fault.
+        if (waited.hasError && !isBackpressure(waited.error.errnoValue))
+            fatal(waited.error);
 
-        _dispatching = true;
-        scope (exit) _dispatching = false;
-        const n = _backend.reap((ref const RawCompletion c) { dispatch(c); });
+        uint n;
+        {
+            _dispatching = true;
+            scope (exit) _dispatching = false;
+            n = _backend.reap((ref const RawCompletion c) { dispatch(c); });
+        }
+        // Dispatch freed the reserved slot and backend queue space: retry
+        // before the caller can park again.
+        pumpPendingCancels();
         return ioOk(n > 0 ? RunStatus.dispatched : RunStatus.timedOut);
+    }
+
+    /// Ring/queue backpressure — retried, never fatal.
+    private static bool isBackpressure(int errnoValue) @safe pure nothrow @nogc
+    {
+        import core.stdc.errno : EBUSY;
+
+        return errnoValue == EAGAIN || errnoValue == EBUSY
+            || errnoValue == EINTR || errnoValue == ENOBUFS;
+    }
+
+    /// The implicit retry flush: backpressure is tolerated (the caller's
+    /// retry decides), a hard error reaches the fatal hook at once.
+    private void flushOrDie()
+    {
+        version (unittest)
+            if (testFlushErrno != 0)
+                fatal(IoError(testFlushErrno, OpKind.none, IoErrorStage.submit,
+                    "injected flush failure"));
+        auto flushed = _backend.flush();
+        if (flushed.hasError && !isBackpressure(flushed.error.errnoValue))
+            fatal(flushed.error);
     }
 
     static if (hasNativeHostWait!Backend)
@@ -526,7 +719,7 @@ private:
     {
         if (_backend.trySubmit(op, token, slot))
             return true;
-        cast(void) _backend.flush(); // one implicit retry (SPEC §5.2)
+        flushOrDie(); // one implicit retry (SPEC §5.2); a hard error is fatal
         return _backend.trySubmit(op, token, slot);
     }
 
@@ -561,20 +754,30 @@ private:
             return;
         }
 
-        // Internal completions (cancel bookkeeping) are consumed silently.
+        // The internal cancel completion frees the reserved slot — its own
+        // lifecycle, never the user free list — and lets the next queued
+        // cancellation go out.
         if (slot.cls == OpClass.internal)
         {
             assert(_cancelInFlight != 0,
                 "internal cancellation completion accounting underflow");
             --_cancelInFlight;
-            _slab.release(token);
+            _slab.releaseCancelSlot(token);
+            pumpPendingCancels();
             return;
         }
 
         const flags = _backend.mapFlags(raw.rawFlags);
         const isFinal = (flags & CompletionFlags.more) == 0;
 
-        if (slot.state == OpState.detached)
+        // A terminal completion that wins against a still-queued cancel
+        // leaves the pending set BEFORE the slot is released and before the
+        // callback (which may reuse the index at once). A nonterminal
+        // multishot CQE keeps the links: only the terminal one unlinks.
+        if (isFinal && slot.state == OpState.cancelQueued)
+            unlinkPending(token.index, *slot);
+
+        if (slot.detached)
         {
             if (isFinal)
                 _slab.release(token);
@@ -721,12 +924,26 @@ private:
 
     Backend _backend;
     OpSlab!Allocator _slab;
+    FatalHook _fatalHook;
     bool _open;
     bool _dispatching;
     bool _stopRequested;
     bool _wakeArmed;
     bool _wakeShutdown;
     uint _cancelInFlight;
+    /// The pending-cancel set: a doubly linked list threaded through the
+    /// slots' `pendPrev`/`pendNext` (indices; `uint.max` = none), FIFO.
+    uint _pendHead = uint.max;
+    uint _pendTail = uint.max;
+    uint _pendCount;
+
+    version (unittest)
+    {
+        /// Test seams: hold every cancel on the pending set (queue
+        /// mechanics), and make the next implicit flush fail hard.
+        package bool testHoldCancels;
+        package int testFlushErrno;
+    }
     static if (fdWaker)
     {
         int _wakeReadFd = -1;
@@ -1350,4 +1567,350 @@ unittest
     assert(accepts.count == 2, "one armed accept served both connections");
     assert(accepts.sawMore, "non-final completions carry CQE_F_MORE");
     assert(loop.inFlight == 0);
+}
+
+// ── guaranteed cancellation (SPEC §5.2) ─────────────────────────────────────
+
+version (unittest)
+{
+    /// Cancellation-observing callback shared by the tests below.
+    private struct Seen
+    {
+        int calls;
+        int res;
+    }
+
+    private void onSeen(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto seen = cast(Seen*) ctx;
+        ++seen.calls;
+        seen.res = done.res;
+    }
+
+    private bool openPipe(ref int[2] fds) @trusted nothrow @nogc
+    {
+        import core.sys.posix.unistd : pipe;
+
+        return pipe(fds) == 0;
+    }
+
+    private void closePipe(ref int[2] fds) @trusted nothrow @nogc
+    {
+        import core.sys.posix.unistd : close;
+
+        foreach (fd; fds)
+            if (fd >= 0)
+                close(fd);
+    }
+}
+
+@("loop.cancel.queuedRequestsAreRetriedAndSettle")
+@system nothrow @nogc
+unittest
+{
+    import core.time : minutes;
+
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    Seen a, b;
+    auto ha = loop.submitAfter(1.minutes, &onSeen, &a);
+    auto hb = loop.submitAfter(1.minutes, &onSeen, &b);
+    assert(ha.hasValue && hb.hasValue);
+
+    // Hold: both requests land on the pending set instead of the backend.
+    loop.testHoldCancels = true;
+    assert(!loop.cancel(ha.value).hasError && !loop.cancel(hb.value).hasError);
+    assert(loop.pendingCancels == 2);
+    assert(!loop.cancel(ha.value).hasError, "repeating a request is a no-op");
+    assert(loop.pendingCancels == 2, "…and never re-enters the set");
+
+    // Release: the retry runs at the next drive — through the ONE reserved
+    // slot, serialized — and both targets reach -ECANCELED.
+    loop.testHoldCancels = false;
+    assert(!loop.run().hasError);
+    assert(a.calls == 1 && a.res == -ECANCELED);
+    assert(b.calls == 1 && b.res == -ECANCELED);
+    assert(loop.pendingCancels == 0 && loop.inFlight == 0);
+}
+
+@("loop.cancel.queuedTargetCompletesNaturallyAndTheSlotReusesFreely")
+@system nothrow @nogc
+unittest
+{
+    import core.time : minutes, msecs;
+
+    // Two user slots only: the freed index is the only place a callback's
+    // fresh submission can go, so a stale pending link would corrupt it.
+    LoopConfig cfg;
+    cfg.opSlots = 2;
+    DefaultLoop loop;
+    createOrSkip(loop, cfg);
+    assert(loop.capacity == 2);
+
+    static struct Reuse
+    {
+        DefaultLoop* loop;
+        int firstRes;
+        int reusedRes;
+        uint firstIndex;
+        uint reusedIndex;
+        bool resubmitted;
+    }
+
+    static void onReused(void* ctx, ref Completion done) nothrow @nogc
+    {
+        (cast(Reuse*) ctx).reusedRes = done.res;
+    }
+
+    static void onFirst(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto r = cast(Reuse*) ctx;
+        r.firstRes = done.res;
+        // The natural terminal completion won against the queued cancel: the
+        // index is free again, and a new op plus its cancellation must be
+        // admitted without any pending-set residue.
+        r.loop.testHoldCancels = false;
+        auto again = r.loop.submitAfter(1.minutes, &onReused, r);
+        assert(again.hasValue, "the freed index admits a new op");
+        r.reusedIndex = again.value.token.index;
+        r.resubmitted = true;
+        assert(!r.loop.cancel(again.value).hasError);
+    }
+
+    Reuse r;
+    r.loop = &loop;
+    auto h1 = loop.submitAfter(5.msecs, &onFirst, &r);
+    Seen other;
+    auto h2 = loop.submitAfter(1.minutes, &onSeen, &other);
+    assert(h1.hasValue && h2.hasValue);
+    r.firstIndex = h1.value.token.index;
+
+    loop.testHoldCancels = true;
+    assert(!loop.cancel(h1.value).hasError && !loop.cancel(h2.value).hasError);
+    assert(loop.pendingCancels == 2);
+
+    assert(!loop.run().hasError);
+    assert(r.firstRes == 0, "the short timer completed naturally");
+    assert(r.resubmitted && r.reusedIndex == r.firstIndex);
+    assert(r.reusedRes == -ECANCELED);
+    assert(other.res == -ECANCELED);
+    assert(loop.pendingCancels == 0 && loop.inFlight == 0);
+}
+
+@("loop.detach.whileQueuedStillReachesTerminal")
+@system nothrow @nogc
+unittest
+{
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    // A read whose peer stays open and silent — the op that can only end
+    // by cancellation. Detached while its cancel is still queued, it must
+    // still be driven to a terminal completion (no leaked slot, no pinned
+    // buffer, inFlight back to zero) with its callback never running.
+    int[2] fds;
+    assert(openPipe(fds));
+    scope (exit) closePipe(fds);
+
+    ubyte[16] window;
+    Seen seen;
+    auto h = loop.submit(OpRead(fds[0],
+        Buf.fromForeign(window[], null), ulong.max), &onSeen, &seen);
+    assert(h.hasValue);
+
+    loop.testHoldCancels = true;
+    assert(!loop.cancel(h.value).hasError);
+    loop.detach(h.value);
+    assert(loop.pendingCancels == 1, "detach does not drop a queued cancel");
+    loop.testHoldCancels = false;
+    assert(!loop.run().hasError);
+    assert(seen.calls == 0, "a detached op's callback never runs");
+    assert(loop.pendingCancels == 0 && loop.inFlight == 0);
+
+    // The inverse order: detach an armed op first, then cancel it.
+    Seen again;
+    auto h2 = loop.submit(OpRead(fds[0],
+        Buf.fromForeign(window[], null), ulong.max), &onSeen, &again);
+    assert(h2.hasValue);
+    loop.detach(h2.value);
+    loop.testHoldCancels = true;
+    assert(!loop.cancel(h2.value).hasError);
+    assert(loop.pendingCancels == 1);
+    loop.testHoldCancels = false;
+    assert(!loop.run().hasError);
+    assert(again.calls == 0);
+    assert(loop.pendingCancels == 0 && loop.inFlight == 0);
+}
+
+@("loop.cancel.reservedSlotNeverEntersTheUserFreeList")
+@system nothrow @nogc
+unittest
+{
+    import core.time : minutes;
+
+    LoopConfig cfg;
+    cfg.opSlots = 4;
+    DefaultLoop loop;
+    createOrSkip(loop, cfg);
+
+    // Cycle the reserved slot through hundreds of generations while the
+    // user slab is full every time: no user token may ever carry the
+    // reserved index, and cancellation must always find its slot.
+    foreach (generation; 0 .. 300)
+    {
+        Seen[4] seen;
+        OpHandle[4] hs;
+        foreach (i; 0 .. 4)
+        {
+            auto h = loop.submitAfter(1.minutes, &onSeen, &seen[i]);
+            assert(h.hasValue, "the user budget is intact every generation");
+            assert(h.value.token.index < loop.capacity,
+                "a user token never names the reserved index");
+            hs[i] = h.value;
+        }
+        auto full = loop.submitAfter(1.minutes, &onSeen, &seen[0]);
+        assert(full.hasError && full.error.errnoValue == ENOBUFS);
+        foreach (h; hs)
+            assert(!loop.cancel(h).hasError, "cancel is admitted with a full slab");
+        assert(!loop.run().hasError);
+        foreach (ref s; seen)
+            assert(s.calls == 1 && s.res == -ECANCELED);
+        assert(loop.pendingCancels == 0 && loop.inFlight == 0);
+    }
+}
+
+@("loop.cancel.multishotQueuedKeepsLinksUntilTerminal")
+@system nothrow @nogc
+unittest
+{
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    int[2] fds;
+    assert(openPipe(fds));
+    scope (exit) closePipe(fds);
+
+    static struct Watch
+    {
+        int readFd;
+        int nonterminal;
+        int terminalRes;
+    }
+
+    static void onReady(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto w = cast(Watch*) ctx;
+        if (done.res < 0)
+        {
+            w.terminalRes = done.res;
+            return;
+        }
+        ++w.nonterminal;
+        (() @trusted {
+            import core.sys.posix.unistd : read;
+
+            ubyte[8] sink;
+            cast(void) read(w.readFd, sink.ptr, sink.length);
+        })();
+    }
+
+    Watch w;
+    w.readFd = fds[0];
+    auto h = loop.submit(OpPollAdd(fds[0], PollEvents.readable, true), &onReady, &w);
+    assert(h.hasValue);
+
+    // Queue the cancel, then deliver a nonterminal readiness CQE: the
+    // callback runs (still owned), and the pending link survives it.
+    loop.testHoldCancels = true;
+    assert(!loop.cancel(h.value).hasError);
+    assert(loop.pendingCancels == 1);
+    (() @trusted {
+        import core.sys.posix.unistd : write;
+
+        ubyte one = 1;
+        cast(void) write(fds[1], &one, 1);
+    })();
+    assert(!loop.runOnce().hasError);
+    assert(w.nonterminal >= 1, "the multishot stream delivered");
+    assert(loop.pendingCancels == 1, "a nonterminal CQE keeps the queued cancel");
+
+    // Only the terminal completion unlinks.
+    loop.testHoldCancels = false;
+    assert(!loop.run().hasError);
+    assert(w.terminalRes == -ECANCELED);
+    assert(loop.pendingCancels == 0 && loop.inFlight == 0);
+}
+
+version (unittest)
+{
+    private noreturn exitWith42(in IoError) nothrow @nogc @trusted
+    {
+        import core.sys.posix.unistd : _exit;
+
+        _exit(42);
+        assert(0);
+    }
+
+    private noreturn exitWith43(in IoError) nothrow @nogc @trusted
+    {
+        import core.sys.posix.unistd : _exit;
+
+        _exit(43);
+        assert(0);
+    }
+}
+
+@("loop.fatal.childBody")
+@system
+unittest
+{
+    import core.time : minutes;
+    import std.process : environment;
+
+    // The body of the subprocess tests below: a no-op in the ordinary run,
+    // the fatal path when spawned by them. Nothing here returns on that path.
+    const mode = environment.get("EH_FATAL_CHILD", "");
+    if (mode == "")
+        return;
+
+    LoopConfig cfg;
+    cfg.fatalHook = mode == "hook" ? &exitWith42 : &exitWith43;
+    cfg.backend.sqEntries = 2;
+    DefaultLoop loop;
+    createOrSkip(loop, cfg);
+    if (mode == "hook")
+        loop.fatal(IoError(5, OpKind.none, IoErrorStage.submit, "test"));
+
+    // "flush": the next implicit retry flush fails hard. Two unflushed
+    // submissions fill the tiny SQ; the third takes the retry path.
+    loop.testFlushErrno = 5;
+    Seen seen;
+    foreach (_; 0 .. 8)
+        cast(void) loop.submitAfter(1.minutes, &onSeen, &seen);
+    assert(0, "the fatal hook must not return");
+}
+
+@("loop.fatal.hookEndsTheProcessWithoutReturning")
+@system
+unittest
+{
+    import std.process : Config, spawnProcess, wait;
+    import std.stdio : File;
+
+    // Subprocess, never in-process: the contract is that no destructor or
+    // return path runs, which an in-process test cannot observe.
+    static int runChild(string mode)
+    {
+        auto devnull = File("/dev/null", "w");
+        auto pid = spawnProcess(
+            ["/proc/self/exe", "-i", `loop\.fatal\.childBody`, "-t", "1"],
+            File("/dev/null", "r"), devnull, devnull,
+            ["EH_FATAL_CHILD": mode], Config.none);
+        return wait(pid);
+    }
+
+    assert(runChild("hook") == 42, "a direct fatal() ends through the hook");
+    assert(runChild("flush") == 43,
+        "a hard error on the implicit retry flush ends through the hook");
 }
