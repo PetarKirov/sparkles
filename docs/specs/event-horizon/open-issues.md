@@ -380,6 +380,14 @@ evidence the deadlock is gone; (b) tests should call `pool.run` **once**, which
 is now a stated constraint on writing them. This raises the priority of a
 GC-safe blocking wait from "correctness nicety" to "CI reliability".
 
+**Correction (2026-09-04).** The hangs measured above were not this issue. A
+core dump of a hung run shows no collection in progress and `GC.disable`
+in force; the spinning worker is the slab-full livelock recorded as
+[O31](#o31--work-stealing-worker-livelocks-when-its-fiber-slab-fills-fixed),
+now fixed. The 1-in-40 figure from 2026-07-06 (measured with `GC.disable`
+removed) still stands as evidence that this interaction is real, but the CI
+flake rate was O31's.
+
 **Fix status (2026-08-04), tracked in [#171](https://github.com/PetarKirov/sparkles/issues/171):**
 
 - **(C) mark the thread "in syscall"** so the collector skips signalling it
@@ -765,3 +773,49 @@ capabilities are deliberately left undefined until "generic code dispatches on
 them", because defining them earlier "would leave them untested". The same
 applies to domain vocabulary: name it when a second caller means something
 different by it.
+
+## O31 — Work-stealing worker livelocks when its fiber slab fills (fixed)
+
+**Where:** SPEC §11 (`WorkStealingPool.run`, `workUntilIdle`); `pool.d`.
+
+**Symptom.** `pool.workStealing.distributesTasksAcrossWorkers` hangs: one
+worker thread at 100 % CPU, the others parked in `io_uring_enter`, the run
+never returns. Measured 2026-09-04 on a 32-thread x86_64 host from `main`
+(`4bdc53bfe`): **11 hangs in 20 runs** at `-t 1`, 2 in 40 at `-t 29`, and
+the two x86_64-linux `test` jobs of PR #448 hung three times out of four —
+the "O22 exposure" the test's own comment blamed for its 6-of-18 hang rate.
+
+**Diagnosis** (core dump of a hung run, unwound offline with `eu-stack`; the
+runner's stdout is block-buffered through CI's pipe, so the last `✓` line is
+not the in-flight test — a pty capture was needed to name it):
+
+- Three workers: `Sched.tick → runOnce → io_uring_enter`, parked.
+- One worker: `Deque.popTail ← workUntilIdle ← <root fiber>`, running.
+
+`workUntilIdle` spawns at most `maxFibers − liveFibers − 8` jobs per pass and
+pushes the next one back when that budget is 0, returning "did nothing". The
+root loop treated that as idle: set `_idle`, recheck `workVisible` — **true**,
+the worker's own pushed-back job — and go straight back into
+`workUntilIdle`. It never parks. Meanwhile every slot in the slab is a fiber
+parked on an in-ring `TIMEOUT` (`sleepCurrent(1.msecs)`), and `Sched.tick`
+reaps the ring only when no fiber ran in that iteration — the root fiber is
+always ready, so the timers are never dispatched, no slot ever frees, and
+the root spins on `popTail`/`push` forever. Whether a run hangs is whether one
+worker's slab (256) fills before its peers steal enough of the 400 jobs,
+which is why it tracked host speed and thread count and never reproduced
+under `strace`.
+
+**Not the causes it was mistaken for.** Not O22: `GC.disable` is in force and
+no thread is in a collection (the other 23 threads in the core are the GC's
+parked parallel-mark workers, created on the first collection and kept
+alive between them). Not the fork server: `-i "forkserver|loop\."` hung 0 of
+100 runs; its deliberate grandchild SIGSEGV only prints a backtrace to
+stderr through the inherited unittest handler.
+
+**Fix.** `workUntilIdle` returns a `Drain` (`idle` / `worked` / `slabFull`)
+and the root loop answers `slabFull` with a ring wait
+(`sleep(sched, cpuBackoffBase)`) — a real park, so every completion that
+arrives is dispatched and slots come free. Pinned by
+`pool.workStealing.fullSlabWaitsOnTheRing` (`maxFibers = 12`, 64 sleeping
+tasks): the budget is exhausted on the first pass, so the old loop spun on
+every run and the new one completes.
