@@ -117,6 +117,53 @@
         };
       });
 
+      # The same `ci` binary with nothing on PATH — for the subcommands that
+      # only talk to an HTTP API and never exec a compiler.
+      #
+      # `packages.ci` is 2.4 GiB, and essentially none of it is linked: the
+      # wrapper above puts dmd (487 MiB), a second dmd (525), ldc-binary (543),
+      # lld (629), two llvm-libs (587 + 525), nodejs (253) and gcc+wrapper (645)
+      # on PATH so `--example-files` can compile markdown examples. That is
+      # right for the job that runs examples and wrong for one that files a
+      # check run: `main-checks.yml` sits on the merge path, so a two-gigabyte
+      # substitution there is paid on every merge to buy nothing.
+      #
+      # So: no `postFixup`, and `buildInputs` narrowed to the two genuine
+      # runtime references — libcurl, whose absolute path Phobos bakes into
+      # `std.net.curl`, and tree-sitter, which `--audit-fences` links. Everything
+      # else returns to the scrub set it was exempted from.
+      #
+      # It builds `apps/ci` under its own name, so the three attributes
+      # `buildSparklesApp` derives from `pname` are supplied explicitly: the
+      # source closure, the unpacked directory to build in, and the binary dub
+      # emits (`build/ci`) versus the one installed (`bin/ci-minimal`).
+      packages.ci-minimal = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "ci-minimal";
+        version = "0.1.0";
+
+        sourceDirs = config.legacyPackages.sparklesSources.srcClosure "apps/ci";
+        sourceRoot = "${finalAttrs.src.name}/apps/ci";
+        installPhase = ''
+          install -Dm755 build/ci $out/bin/${finalAttrs.pname}
+        '';
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+
+        buildInputs = [
+          pkgs.curl.out
+          pkgs.tree-sitter
+        ];
+
+        meta = {
+          description = ''
+            Repository CI helper, unwrapped: the API-driven subcommands
+            (--mirror-checks, --report-link-rot, --ci-stats) with no compiler
+            toolchain in its closure
+          '';
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       # `buildSparklesApp` derives the source closure from apps/terminal/dub.sdl
       # (transitively: base, core-cli, ghostty, math, and the test-runner
       # shim+impl) and supplies the shared dub plumbing, so only the raylib +
@@ -198,6 +245,11 @@
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
+      };
+
+      apps.ci-minimal = {
+        type = "app";
+        program = lib.getExe config.packages.ci-minimal;
       };
 
       packages.release = config.legacyPackages.buildSparklesApp (finalAttrs: {

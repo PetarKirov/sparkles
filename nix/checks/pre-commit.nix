@@ -32,6 +32,11 @@ let
     # shape, and the sorter's multiline-array style fights prettier's inline
     # one — the two can never both pass on a short array.
     "docs/hue-site.json"
+    # Same story again, and these are not hand-edited at all: `ci --ci-stats
+    # --merges --badge-dir` regenerates them during the docs deploy. The
+    # committed copies only seed the first one.
+    "docs/public/badges/merged-prs.json"
+    "docs/public/badges/merged-green.json"
   ];
 
   filesToExcludeRegex =
