@@ -22,6 +22,7 @@ import core.thread.fiber : Fiber;
 import core.thread.osthread : Thread;
 import core.time : Duration, MonoTime;
 
+import sparkles.event_horizon.backend.concept : Waker;
 import sparkles.event_horizon.buffer : Buf;
 import sparkles.event_horizon.capability : SpawnOptions;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
@@ -164,6 +165,7 @@ struct Sched
     void destroy() @safe nothrow @nogc
     in (_liveFibers == 0, "destroy with live fibers")
     in (_armedDeadlines is null, "destroy with armed deadlines")
+    in (_armedAlarms is null, "destroy with armed alarms")
     {
         _loop.destroy();
     }
@@ -287,6 +289,94 @@ struct Sched
         node.deadlineArmed = false;
     }
 
+    // ── the wake-only alarm service (SPEC §7.2) ──────────────────────────
+    // A deadline (above) is a CANCELLATION mechanism: expiry runs
+    // `cancelTree`, latches `InterruptKind.deadline`, and leaves the node
+    // non-`on`, so it can neither wake a fiber without interrupting it nor
+    // be re-armed for repeated cycles. An alarm is the other thing a parked
+    // fiber sometimes needs — "resume me at T, nothing else" — ring-free,
+    // reusable, and never a latch: expiry unlinks the entry, marks it fired,
+    // and wakes the waiter; an outer cancellation latch is untouched and
+    // keeps its precedence. The supervised-run backoff loops ride this.
+
+    /**
+    Arms `alarm` to wake the calling fiber after `after`. Infallible
+    (intrusive, unsorted list — a handful at most, like deadlines). The
+    entry must stay address-stable while armed; use an unconditional
+    `scope (exit) disarmAlarm(alarm)` so no early exit leaves a recycled
+    fiber pointer on the list.
+    */
+    void armAlarm(ref Alarm alarm, Duration after) @trusted nothrow @nogc
+    in (!alarm._armed, "alarm already armed")
+    in (_running !is null, "armAlarm outside a scheduler fiber")
+    {
+        const now = MonoTime.currTime;
+        alarm._at = after >= Duration.max / 2 ? MonoTime.max : now + after;
+        alarm._waiter = &_running.ectx;
+        alarm._owner = &this;
+        alarm._fired = false;
+        alarm._prev = null;
+        alarm._next = _armedAlarms;
+        if (_armedAlarms !is null)
+            _armedAlarms._prev = &alarm;
+        _armedAlarms = &alarm;
+        alarm._armed = true;
+    }
+
+    /// Disarms `alarm` — synchronous unlink, idempotent; a no-op for an
+    /// entry that was never armed or already fired. Only the arming
+    /// scheduler may disarm.
+    void disarmAlarm(ref Alarm alarm) @trusted nothrow @nogc
+    in (alarm._owner is null || alarm._owner is &this,
+        "alarm belongs to another scheduler")
+    {
+        if (!alarm._armed)
+            return;
+        if (alarm._prev !is null)
+            alarm._prev._next = alarm._next;
+        else
+            _armedAlarms = alarm._next;
+        if (alarm._next !is null)
+            alarm._next._prev = alarm._prev;
+        alarm._prev = alarm._next = null;
+        alarm._armed = false;
+    }
+
+    // ── the blocking-completion inbox (SPEC §13.8) ───────────────────────
+    // A `BlockingPool` worker finishes a job whose caller fiber is parked
+    // here and posts the job back: an intrusive lock-free push onto this
+    // scheduler's inbox plus one coalescing `Waker.wake()`. The owner thread
+    // drains the inbox at its tick points and wakes each waiter. Sched-owned
+    // by design (no registration, no capacity, no stale callbacks): a
+    // pending job ⇒ its caller is parked ⇒ this Sched cannot be destroyed.
+
+    /**
+    Arms the loop's waker for cross-thread completion delivery (idempotent;
+    consumes one op slot the first time). `BlockingPool.prepare` calls this
+    $(B before) a supervised child is spawned so that later slab saturation
+    cannot block a mandatory reap.
+    */
+    package IoResult!void ensureBlockingInboxWaker() @trusted
+    {
+        if (_blockingWakerArmed)
+            return ioOk();
+        auto w = _loop.waker();
+        if (w.hasError)
+            return ioErr!void(w.error);
+        _blockingWaker = w.value;
+        _blockingWakerArmed = true;
+        return ioOk();
+    }
+
+    /// `true` once `ensureBlockingInboxWaker` succeeded.
+    package bool blockingInboxReady() const @safe pure nothrow @nogc
+        => _blockingWakerArmed;
+
+    /// The armed waker, copied into a job at submission so a worker thread
+    /// never touches scheduler state beyond the shared inbox head.
+    package Waker blockingWaker() @safe pure nothrow @nogc
+        => _blockingWaker;
+
     /// Fibers spawned and not yet finished.
     uint liveFibers() const @safe pure nothrow @nogc => _liveFibers;
 
@@ -307,7 +397,8 @@ struct Sched
         while (_liveFibers > 0 || _loop.inFlight > 0)
         {
             if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0
-                && !_loop.wakerArmed && _armedDeadlines is null)
+                && !_loop.wakerArmed && _armedDeadlines is null
+                && _armedAlarms is null)
                 assert(0, "deadlock: parked fibers with nothing in flight");
             auto r = tick(Duration.max);
             if (r.hasError)
@@ -340,8 +431,11 @@ struct Sched
         // overruns its deadline in CPU work and then yields is re-dequeued
         // within this same budget, so sweeping only at the edges of the
         // loop would let it finish (and disarm) unnoticed. The sweep costs
-        // a null check while nothing is armed.
+        // a null check while nothing is armed. The blocking inbox drains at
+        // the same points: a worker's post may have landed at any time.
         cast(void) sweepDeadlines();
+        cast(void) sweepAlarms();
+        cast(void) drainBlockingInbox();
 
         uint ran;
         while (ran < _opts.resumeBudget)
@@ -352,13 +446,14 @@ struct Sched
             resume(t);
             ++ran;
             cast(void) sweepDeadlines();
+            cast(void) sweepAlarms();
         }
         if (ran > 0 || _readyHead !is null)
             return ioOk(RunStatus.dispatched);
         if (_liveFibers == 0 && _loop.inFlight == 0)
             return ioOk(RunStatus.drained);
 
-        // Clamp the wait to the earliest armed deadline.
+        // Clamp the wait to the earliest armed deadline or alarm.
         Duration eff = timeout;
         const until = untilNextDeadline(MonoTime.currTime);
         if (until < eff)
@@ -390,7 +485,9 @@ struct Sched
         auto r = wait();
         if (r.hasError)
             return r;
-        const swept = sweepDeadlines();
+        bool swept = sweepDeadlines();
+        swept |= sweepAlarms();
+        swept |= drainBlockingInbox();
         // A wake completion is infrastructure — dispatch swallows it and
         // no fiber is enqueued. Resume the idle waiter so it can re-check
         // (pool steal, shutdown). Any other dispatched completion is also
@@ -424,6 +521,8 @@ struct Sched
         in (_running is null, "tickHosted from inside a fiber")
         {
             cast(void) sweepDeadlines(); // see tick()
+            cast(void) sweepAlarms();
+            cast(void) drainBlockingInbox();
 
             uint ran;
             while (ran < _opts.resumeBudget)
@@ -434,14 +533,15 @@ struct Sched
                 resume(t);
                 ++ran;
                 cast(void) sweepDeadlines();
+                cast(void) sweepAlarms();
             }
             if (ran > 0 || _readyHead !is null)
                 return ioOk(RunStatus.dispatched);
             if (_liveFibers == 0 && _loop.inFlight == 0)
                 return ioOk(RunStatus.drained);
 
-            // Clamp to the earliest armed deadline; the hosted wait always
-            // blocks on the host source, so no sleep arm is needed here.
+            // Clamp to the earliest armed deadline or alarm; the hosted wait
+            // always blocks on the host source, so no sleep arm is needed.
             Duration eff = timeout;
             const until = untilNextDeadline(MonoTime.currTime);
             if (until < eff)
@@ -450,7 +550,9 @@ struct Sched
             auto r = _loop.runHostedOnce(host, eff);
             if (r.hasError)
                 return r;
-            const swept = sweepDeadlines();
+            bool swept = sweepDeadlines();
+            swept |= sweepAlarms();
+            swept |= drainBlockingInbox();
             if (_idleWaiter !is null && r.value == RunStatus.dispatched)
             {
                 auto t = _idleWaiter;
@@ -585,10 +687,10 @@ private:
         return swept;
     }
 
-    /// The earliest armed expiry, as a wait bound relative to `now`;
-    /// `Duration.max` when nothing (relevant) is armed. Already-cancelling
-    /// nodes are skipped — their sweep would no-op, so waking early for
-    /// them buys nothing.
+    /// The earliest armed expiry — deadline or alarm — as a wait bound
+    /// relative to `now`; `Duration.max` when nothing (relevant) is armed.
+    /// Already-cancelling nodes are skipped — their sweep would no-op, so
+    /// waking early for them buys nothing.
     Duration untilNextDeadline(MonoTime now) const @safe nothrow @nogc
     {
         Duration best = Duration.max;
@@ -602,7 +704,61 @@ private:
             if (until < best)
                 best = until;
         }
+        for (const(Alarm)* a = _armedAlarms; a !is null; a = a._next)
+        {
+            if (a._at == MonoTime.max)
+                continue;
+            const until = a._at <= now ? Duration.zero : a._at - now;
+            if (until < best)
+                best = until;
+        }
         return best;
+    }
+
+    /// Sweeps expired alarms: unlink first, then mark fired, then wake —
+    /// never an interrupt. Same thread discipline as `sweepDeadlines`.
+    bool sweepAlarms() @trusted nothrow @nogc
+    {
+        if (_armedAlarms is null)
+            return false;
+        const now = MonoTime.currTime;
+        bool swept;
+        auto a = _armedAlarms;
+        while (a !is null)
+        {
+            auto next = a._next;
+            if (a._at <= now)
+            {
+                disarmAlarm(*a);
+                a._fired = true;
+                wake(a._waiter);
+                swept = true;
+            }
+            a = next;
+        }
+        return swept;
+    }
+
+    /// Owner-thread drain of the blocking-completion inbox: every posted
+    /// job is marked done and its parked caller woken. Returns whether any
+    /// job was delivered.
+    bool drainBlockingInbox() @trusted nothrow @nogc
+    {
+        import core.atomic : atomicExchange, atomicStore;
+
+        auto head = cast(BlockingJob*) atomicExchange(&_blockingInbox,
+            cast(shared(BlockingJob*)) null);
+        if (head is null)
+            return false;
+        for (auto job = head; job !is null;)
+        {
+            auto next = job.next;
+            job.next = null;
+            atomicStore(job.done, true);
+            wake(job.waiter);
+            job = next;
+        }
+        return true;
     }
 
     void enqueue(FiberTask t) @safe nothrow @nogc
@@ -662,6 +818,97 @@ private:
     /// Armed deadline scopes (intrusive, unsorted — a handful at most, so
     /// the O(n) sweep/min beats heap bookkeeping; see SPEC §8.3).
     CancelContext* _armedDeadlines;
+    /// Armed wake-only alarms (same shape and discipline).
+    Alarm* _armedAlarms;
+    /// The blocking-completion inbox: an intrusive lock-free stack pushed by
+    /// pool workers, drained by this thread at its tick points.
+    shared(BlockingJob*) _blockingInbox;
+    Waker _blockingWaker;
+    bool _blockingWakerArmed;
+}
+
+/**
+A reusable wake-only timer entry for the calling fiber (see
+`Sched.armAlarm`). Address-pinned while armed; the caller owns it and must
+disarm it before its frame dies. `fired` is level-triggered — check it before
+every park, so a wake that lands before the park is never lost:
+
+---
+Alarm a;
+s.armAlarm(a, 10.msecs);
+scope (exit) s.disarmAlarm(a); // unconditional: no early exit leaves it listed
+while (!a.fired)
+    s.park();
+---
+
+`reset` is legal only while disarmed and readies the entry for another arm.
+*/
+struct Alarm
+{
+    @disable this(this);
+
+    /// `true` once the alarm expired (until `reset`).
+    bool fired() const @safe pure nothrow @nogc => _fired;
+
+    /// `true` while listed on a scheduler.
+    bool armed() const @safe pure nothrow @nogc => _armed;
+
+    /// Clears `fired` so the entry can be armed again.
+    void reset() @safe pure nothrow @nogc
+    in (!_armed, "reset while armed")
+    {
+        _fired = false;
+    }
+
+private:
+    MonoTime _at;
+    FiberContext* _waiter;
+    Sched* _owner;
+    bool _armed;
+    bool _fired;
+    Alarm* _prev;
+    Alarm* _next;
+}
+
+/// The shape of a blocking host call run by a `BlockingPool` worker (SPEC
+/// §13.8): it writes its typed result into caller-owned `context`.
+alias BlockingCall = void function(void* context) nothrow;
+
+/**
+One blocking job, living on the parked caller's frame for its whole life
+(SPEC §13.8 — "the parked frame remains the ordinary lifetime proof"). The
+pool queues it, a worker runs `call(context)` and posts it back through
+$(LREF postBlockingCompletion); the owner scheduler's drain sets `done` and
+wakes `waiter`. A pending job therefore implies a parked (live) caller fiber,
+which is exactly what forbids destroying `owner` meanwhile.
+*/
+package struct BlockingJob
+{
+    BlockingCall call;
+    void* context;
+    Sched* owner;          /// the caller's scheduler; only its inbox is touched
+    FiberContext* waiter;  /// the parked caller
+    Waker waker;           /// `owner`'s armed waker, copied at submission
+    BlockingJob* next;     /// inbox link (worker push → owner drain)
+    shared bool done;      /// set by the owner's drain, read by the caller
+}
+
+/// Worker-thread side: pushes a finished job onto its owner's inbox and
+/// wakes that loop. Touches nothing of the scheduler but the shared inbox
+/// head; the waker is the job's own copy.
+package void postBlockingCompletion(BlockingJob* job) @trusted nothrow @nogc
+{
+    import core.atomic : atomicLoad, cas;
+
+    auto inbox = &job.owner._blockingInbox;
+    for (;;)
+    {
+        auto old = atomicLoad(*inbox);
+        job.next = cast(BlockingJob*) old;
+        if (cas(inbox, old, cast(shared(BlockingJob*)) job))
+            break;
+    }
+    job.waker.wake();
 }
 
 /**
@@ -939,4 +1186,177 @@ version (unittest)
         if (created.hasError)
             skipTest(skipReason(created.error));
     }
+}
+
+@("sched.alarm.wakesOnceIsReusableAndLeavesNoLatch")
+@safe
+unittest
+{
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    uint resumes;
+    bool latched;
+    auto r = s.run(() {
+        Alarm a;
+        foreach (cycle; 0 .. 3)
+        {
+            // The one shape: arm, guard, level-triggered park.
+            s.armAlarm(a, 2.msecs);
+            scope (exit) s.disarmAlarm(a);
+            while (!a.fired)
+                s.park();
+            ++resumes;
+            assert(!a.armed, "expiry unlinks before it wakes");
+            a.reset();
+            assert(!a.fired);
+        }
+        auto ctx = s.currentContext();
+        latched = ctx.interrupted || interruptRequested(*ctx);
+    });
+    assert(!r.hasError);
+    assert(resumes == 3, "one resume per arm, and the entry is reusable");
+    assert(!latched, "an alarm is a wake, never a deadline latch");
+}
+
+@("sched.alarm.keepsOuterInterruptPrecedence")
+@safe
+unittest
+{
+    import core.time : msecs;
+    import sparkles.event_horizon.cause : interruptFiber;
+    import sparkles.event_horizon.scope_ : protect;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // A fiber parked on an alarm under `protect` is interrupted by a
+    // sibling: the alarm still wakes it exactly once, the interrupt stays
+    // latched (delivered at its first checkpoint after the shield), and
+    // nothing about the alarm consumed or replaced that latch.
+    FiberContext* sleeper;
+    bool interruptedAfterShield;
+    uint wakes;
+    auto r = s.run(() {
+        assert(!s.spawn(() {
+            sleeper = s.currentContext();
+            cast(void) protect!(() {
+                Alarm a;
+                s.armAlarm(a, 5.msecs);
+                scope (exit) s.disarmAlarm(a);
+                while (!a.fired)
+                    s.park();
+                ++wakes;
+                return 0;
+            })(s);
+            interruptedAfterShield = interruptRequested(*s.currentContext());
+        }).hasError);
+        assert(!s.spawn(() {
+            // Let the sleeper park first, then interrupt it directly.
+            s.yieldNow();
+            (() @trusted => interruptFiber(sleeper,
+                Interrupt(InterruptKind.cancelled)))();
+        }).hasError);
+    });
+    assert(!r.hasError);
+    assert(wakes == 1);
+    assert(interruptedAfterShield, "the outer interrupt keeps precedence");
+}
+
+@("sched.alarm.rejectsDoubleArm")
+@system
+unittest
+{
+    import core.exception : AssertError;
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    bool rejected;
+    auto r = s.run(() {
+        Alarm a;
+        s.armAlarm(a, 50.msecs);
+        try
+            s.armAlarm(a, 50.msecs);
+        catch (AssertError)
+            rejected = true;
+        s.disarmAlarm(a);
+        s.disarmAlarm(a); // idempotent
+        assert(!a.armed);
+    });
+    assert(!r.hasError);
+    assert(rejected, "an armed entry cannot be armed again");
+}
+
+@("sched.blockingInbox.crossThreadPostWakesTheParkedCaller")
+@system
+unittest
+{
+    import core.atomic : atomicLoad;
+    import core.time : msecs;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // Three jobs on the caller's frame, completed by three foreign threads
+    // in the reverse order, each posting through the Sched-owned inbox: the
+    // parked caller resumes for every one and never sees a torn job.
+    auto r = s.run(() {
+        assert(!s.ensureBlockingInboxWaker().hasError);
+        assert(s.blockingInboxReady);
+
+        // One closure frame per thread: a lambda written inside the loop
+        // body would capture the loop's single `jp` slot for all three
+        // threads and post the last job three times.
+        static Thread poster(BlockingJob* jp, int delayMs)
+        {
+            return new Thread({
+                Thread.sleep(delayMs.msecs);
+                postBlockingCompletion(jp);
+            }).start();
+        }
+
+        BlockingJob[3] jobs;
+        Thread[3] workers;
+        foreach (i, ref job; jobs)
+        {
+            job.owner = &s;
+            job.waiter = s.currentContext();
+            job.waker = s.blockingWaker;
+            workers[i] = poster(&job, (3 - cast(int) i) * 3);
+        }
+        foreach (ref job; jobs)
+            while (!atomicLoad(job.done))
+                s.park();
+        foreach (w; workers)
+            w.join();
+    });
+    assert(!r.hasError);
+}
+
+@("sched.blockingInbox.sameThreadPostDrainsAtTheNextTick")
+@system
+unittest
+{
+    import core.atomic : atomicLoad;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // Posted from the loop thread itself (no worker, no wake needed): the
+    // next tick drains the inbox and the parked caller resumes.
+    auto r = s.run(() {
+        assert(!s.ensureBlockingInboxWaker().hasError);
+        BlockingJob job;
+        job.owner = &s;
+        job.waiter = s.currentContext();
+        job.waker = s.blockingWaker;
+        postBlockingCompletion(&job);
+        while (!atomicLoad(job.done))
+            s.park();
+    });
+    assert(!r.hasError);
 }
