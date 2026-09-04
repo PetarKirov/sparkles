@@ -1053,26 +1053,70 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         @safe pure nothrow @nogc
         => transientProcessError(error) && attempts < 8;
 
-    private IoResult!ExitStatus waitPidAfterKill(int pid) @trusted nothrow
+    /// The blocking `waitpid` fallback's job context and body: runs on the
+    /// shared pool's termination-critical lane, never on the loop thread.
+    private struct WaitPidJob
+    {
+        int pid;
+        bool ok;
+        ExitStatus status;
+        int errnoValue;
+        string context;
+    }
+
+    private void waitPidBlocking(void* p) nothrow
     {
         import core.stdc.errno : EINTR, errno;
         import core.sys.posix.sys.wait : WEXITSTATUS, WIFEXITED, WIFSIGNALED,
             WTERMSIG, waitpid;
 
+        auto job = cast(WaitPidJob*) p;
         int raw;
         int rc;
         do
-            rc = waitpid(pid, &raw, 0);
+            rc = waitpid(job.pid, &raw, 0);
         while (rc < 0 && errno == EINTR);
         if (rc < 0)
-            return ioErr!ExitStatus(errno, OpKind.waitid,
-                IoErrorStage.completion, "waitpid fallback failed");
+        {
+            job.errnoValue = errno;
+            job.context = "waitpid fallback failed";
+            return;
+        }
         if (WIFEXITED(raw))
-            return ioOk(ExitStatus(false, WEXITSTATUS(raw)));
-        if (WIFSIGNALED(raw))
-            return ioOk(ExitStatus(true, WTERMSIG(raw)));
-        return ioErr!ExitStatus(5 /* EIO */, OpKind.waitid,
-            IoErrorStage.completion, "waitpid returned no terminal status");
+        {
+            job.ok = true;
+            job.status = ExitStatus(false, WEXITSTATUS(raw));
+        }
+        else if (WIFSIGNALED(raw))
+        {
+            job.ok = true;
+            job.status = ExitStatus(true, WTERMSIG(raw));
+        }
+        else
+        {
+            job.errnoValue = 5; // EIO
+            job.context = "waitpid returned no terminal status";
+        }
+    }
+
+    /// The consuming `waitpid` fallback, off the scheduler thread (SPEC
+    /// §13.8): a D-state child would otherwise wedge every fiber of this
+    /// loop. Runs on the shared pool's termination-critical lane.
+    private IoResult!ExitStatus waitPidAfterKill(ref Sched s, int pid) @trusted
+    {
+        import sparkles.event_horizon.blocking_pool : sharedBlockingPool;
+
+        auto pool = sharedBlockingPool();
+        if (pool.hasError)
+            return ioErr!ExitStatus(pool.error);
+        WaitPidJob job = {pid: pid};
+        auto ran = pool.value.runMandatory(s, &waitPidBlocking, &job);
+        if (ran.hasError)
+            return ioErr!ExitStatus(ran.error);
+        if (!job.ok)
+            return ioErr!ExitStatus(job.errnoValue, OpKind.waitid,
+                IoErrorStage.completion, job.context);
+        return ioOk(job.status);
     }
 
     // The line framer (`LineFramer`/`LineEmit`) is effects-side in `proc` —
@@ -1204,7 +1248,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                     cast(void) sleep(s, 1.msecs);
                     continue;
                 }
-                auto fallback = waitPidAfterKill(child.pid);
+                auto fallback = waitPidAfterKill(s, child.pid);
                 if (fallback.hasValue || fallback.error.errnoValue == 10)
                     child.pid = -1;
                 break;
@@ -1999,7 +2043,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                         }
                         rememberError(waited.error);
                         sendKill(*stP);
-                        auto fallback = waitPidAfterKill(childP.pid);
+                        auto fallback = waitPidAfterKill(*schedP, childP.pid);
                         if (fallback.hasValue)
                         {
                             stP.status = fallback.value;

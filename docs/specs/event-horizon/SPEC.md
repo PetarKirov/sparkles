@@ -157,7 +157,7 @@ _Loop-side_ modules may import anything.
 | `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                            |
 | `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                     |
 | `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                |
-| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8); target M19                                                |
+| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool      |
 | `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                            |
 | `package`                | —            | public re-exports                                                                                                                    |
 
@@ -1800,14 +1800,27 @@ Operations that cannot be represented by the platform completion backend run
 on `BlockingPool`, a bounded scheduler service distinct from `RawCpuPool` and
 `WorkStealingPool`. Submission parks the calling fiber, a persistent DRuntime
 worker performs the blocking host call, and completion enters the owner loop
-through its thread-safe completed queue plus `Waker`. Queue saturation returns
-`EAGAIN`; it never runs blocking work inline on the loop thread. Cancellation
-detaches policy from execution but does not free the job context: the worker's
-terminal completion is still drained before the scope can exit. Pool shutdown
-rejects new jobs, joins workers, and dispatches every accepted completion
-exactly once. POSIX spawn portability helpers, Darwin sampling calls, and any
-fallback process wait may use this pool; no path introduces `Thread.sleep`, a
-polling wait, or a second application scheduler.
+through the scheduler's own blocking-completion inbox plus `Waker` (the inbox
+is scheduler-owned: no registration, no capacity, no stale callback — a pending
+job implies a parked caller, which is what forbids destroying that scheduler).
+Public queue saturation returns `EAGAIN`; it never runs blocking work inline on
+the loop thread. A package-internal **termination-critical lane** admits reap and
+teardown jobs beyond `queueCapacity`: intrusive and frame-resident, so admission
+needs no queue slot, serviced by one reserved worker that takes nothing else,
+with ordinary workers helping only while the public queue is empty. Its
+guarantee is eventual FIFO service under finite, terminating jobs — no numeric
+bound — and its aggregate size is the sum of the live fiber slabs of every bound
+scheduler. Preparation (`prepare(ref Sched)`, which arms the scheduler's waker
+and consumes one op slot) happens before a supervised child is spawned, so a
+later slab saturation cannot block the reap. Cancellation is the entry
+checkpoint only: an accepted job is uncancellable until its completion is
+delivered, and a latched interrupt is delivered at the caller's next checkpoint
+afterwards. Pool shutdown rejects new jobs, lets workers finish and **post**
+every accepted completion exactly once, then joins them; delivery still
+requires the owning scheduler to tick, which a scheduler with a parked `run`
+caller necessarily does. POSIX spawn portability helpers, Darwin sampling calls,
+and any fallback process wait use this pool; no path introduces `Thread.sleep`,
+a polling wait, or a second application scheduler.
 
 ```d
 alias BlockingCall = void function(void* context) nothrow;
