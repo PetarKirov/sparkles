@@ -20,6 +20,9 @@ nix run .#ci -- [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --build [--fail-fast]
 nix run .#ci -- --test [--fail-fast]
+nix run .#ci -- --test --host-system aarch64-linux [--host-ci-rev REV] [--fail-fast]
+nix run .#ci -- --test --host-system x86_64-linux [--host-ci-rev REV] [--fail-fast]
+nix run .#ci -- --linux-host-probe
 nix run .#ci -- --test-extracted [--fail-fast]
 nix run .#ci -- --test-sanitize [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
@@ -38,6 +41,9 @@ $(LIST
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
     $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread)
+    $(ITEM `--host-system aarch64-linux|x86_64-linux` — on macOS, re-exec the same mode inside an Apple `container` Linux VM, using the matching `packages.<system>.ci` store path bind-mounted from `/nix/store`. The Linux `ci` is realized from a git revision CI has built (`HEAD`, the merge-base with `origin/main`, then `origin/main`), never from the dirty tree; the tests run against the mounted working tree. See `docs/research/linux-on-macos/`)
+    $(ITEM `--host-ci-rev REV` — with `--host-system`: realize the Linux `ci` from this revision instead of the default chain)
+    $(ITEM `--linux-host-probe` — report which Linux-on-macOS backends are available (Determinate native builder, Apple container, nix-darwin linux-builder) and exit)
     $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
     $(ITEM `--test-sanitize` — Linux LDC only (`DC=ldc2`): `dub test -b unittest` with AddressSanitizer and LDC's stack-overflow sanitizer, one `-t N` leg on 4 MiB workers. UBSan is unreachable from D and from ImportC (`-Xcc` only reaches the preprocessor and the linker); see `docs/research/sanitizers/ubsan.md`)
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
@@ -150,6 +156,8 @@ import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
+import linux_host :
+    alreadyOnHostSystem, linuxHostSystems, runLinuxHostProbe, runOnLinuxHost;
 
 // === UI sizing ===
 
@@ -206,6 +214,20 @@ struct CliParams
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
+
+    @(Option(`host-system`,
+        description: "Re-exec this mode on aarch64-linux or x86_64-linux from macOS, "
+            ~ "via Apple container plus the matching packages.<system>.ci store path."))
+    string hostSystem;
+
+    @(Option(`host-ci-rev`,
+        description: "With --host-system: the git revision to realize the Linux ci from "
+            ~ "(default: HEAD, then the merge-base with origin/main, then origin/main)."))
+    string hostCiRev;
+
+    @(Option(`linux-host-probe`,
+        description: "Report which Linux-on-macOS backends are available and exit."))
+    bool linuxHostProbe;
 
     @(Option(`test-extracted`, description: "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping."))
     bool testExtracted;
@@ -349,6 +371,7 @@ enum ProgramMode
     checkBlobPaths,
     ciStats,
     auditFences,
+    linuxHostProbe,
 }
 
 struct Example
@@ -465,6 +488,12 @@ int ciMain(string[] args)
     info(i"mode {cyan $(programModeName(mode))}{dim , fail-fast=$(cli.failFast), coverage=$(coverage)}");
     if (mode == ProgramMode.runSanitizeTests && cli.coverage)
         info(i"coverage is off under --test-sanitize (ASan and -cov instrumentation do not mix)");
+
+    if (mode == ProgramMode.linuxHostProbe)
+        return runLinuxHostProbe();
+
+    if (cli.hostSystem.length && !alreadyOnHostSystem(cli.hostSystem))
+        return runOnLinuxHost(cli.hostSystem, args, cli.hostCiRev);
 
     if (mode == ProgramMode.checkCommitScope)
     {
@@ -622,6 +651,24 @@ private string validateCliMode(
             || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
         return "--ci-stats cannot be combined with other modes";
 
+    if (cli.linuxHostProbe && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
+            || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks
+            || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar
+            || cli.checkBlobPaths || cli.ciStats || cli.auditFences || cli.testSanitize))
+        return "--linux-host-probe cannot be combined with other modes";
+
+    if (cli.hostSystem.length)
+    {
+        bool known;
+        foreach (s; linuxHostSystems)
+            if (cli.hostSystem == s)
+                known = true;
+        if (!known)
+            return "--host-system must be aarch64-linux or x86_64-linux";
+    }
+    if (cli.hostCiRev.length && cli.hostSystem.length == 0)
+        return "--host-ci-rev needs --host-system";
+
     if (cli.ciStats && cli.limit <= 0)
         return "--limit must be a positive integer";
 
@@ -655,6 +702,8 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+    if (cli.linuxHostProbe)
+        return ProgramMode.linuxHostProbe;
 
     if (cli.auditFences)
         return ProgramMode.auditFences;
@@ -725,6 +774,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.auditFences:        return "--audit-fences";
+        case ProgramMode.linuxHostProbe:     return "--linux-host-probe";
     }
 }
 
@@ -958,6 +1008,7 @@ private string[] standaloneExampleGlobs()
         "docs/research/platform-ui-guidelines/terminal/examples/*.d",
         "docs/research/autological-artifacts/cosmopolitan-ape/examples/*.d",
         "docs/research/autological-artifacts/self-selfdb/examples/*.d",
+        "docs/research/linux-on-macos/examples/*.d",
     ];
 }
 
@@ -1222,6 +1273,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 break;
             case ProgramMode.ciStats:
             case ProgramMode.auditFences:
+            case ProgramMode.linuxHostProbe:
                 rc = 1;   // handled earlier in main(); should never reach here
                 break;
         }
@@ -4253,6 +4305,29 @@ unittest
     // No child DFLAGS: nothing to merge into; the ambient value is inherited
     // by the child process on its own.
     assert("DFLAGS" !in withAmbientDflags(["ASAN_OPTIONS": "x"], "-L-L/opt/lib"));
+}
+
+@("ci.validateCliMode.hostSystem")
+unittest
+{
+    CliParams params;
+    params.test = true;
+    params.hostSystem = "aarch64-linux";
+    assert(validateCliMode(params, null) is null);
+
+    params.hostSystem = "aarch64-darwin";
+    assert(validateCliMode(params, null)
+        == "--host-system must be aarch64-linux or x86_64-linux");
+
+    params.hostSystem = "aarch64-linux";
+    params.linuxHostProbe = true;
+    assert(validateCliMode(params, null)
+        == "--linux-host-probe cannot be combined with other modes");
+
+    params.linuxHostProbe = false;
+    params.hostSystem = null;
+    params.hostCiRev = "origin/main";
+    assert(validateCliMode(params, null) == "--host-ci-rev needs --host-system");
 }
 
 /// Merge LDC `--threads=N` into a child environment's `DFLAGS`.
