@@ -992,7 +992,6 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         bool killSent;
         bool reaped;
         ExitStatus status; /// valid only once `reaped`
-        bool published;    /// the exited event went out exactly once
 
         // Raw accumulation: exact bytes including original terminators
         // (§13.6). One writer per field at any time.
@@ -1355,11 +1354,17 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             return pageSizeCache;
         }
 
+        private __gshared long clockTicksCache;
+
+        /// `_SC_CLK_TCK`, queried once: a process-lifetime constant that
+        /// every sample used to re-`sysconf`.
         private long clockTicksPerSecond() @trusted nothrow @nogc
         {
             import core.sys.posix.unistd : _SC_CLK_TCK, sysconf;
 
-            return sysconf(_SC_CLK_TCK);
+            if (clockTicksCache == 0)
+                clockTicksCache = sysconf(_SC_CLK_TCK);
+            return clockTicksCache;
         }
 
         private Duration ticksToDuration(ulong ticks, long hz)
@@ -2070,7 +2075,6 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         st.usage.wallTime = MonoTime.currTime - st.startedAt;
         if (canPublishExited(st, stdoutFinished, stderrFinished))
         {
-            st.published = true;
             if (sink !is null && sinkDefect is null)
             {
                 ProcessEvent exited;
