@@ -16,6 +16,8 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/src" \
   -I"$repo/libs/event-horizon/src" \
   -I"$repo/libs/input/src" \
+  -I"$repo/libs/metadata/src" \
+  -I"$repo/libs/reflection/src" \
   -I"$repo/libs/math/src" \
   -I"$repo/libs/base/src" \
   -I"$repo/libs/test-runner/src" \
