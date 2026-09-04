@@ -254,11 +254,45 @@ struct ProcessLine
     bool truncated;       /// the first `maxLineBytes` payload bytes of an over-cap line
 }
 
-/// Cumulative resource usage of the supervised process tree (SPEC §13.8):
-/// peak summed RSS and peak live-process count over the run, elapsed wall
-/// time, and best-effort user/system CPU. Unsupported counters leave
-/// `sampled == false` rather than fabricating zero-valued measurements;
-/// `wallTime` is always valid.
+/// Where a run's samples came from (SPEC §13.8).
+enum SampleSource : ubyte
+{
+    none,          /// no tree sampler on this host
+    cgroupFull,    /// owned cgroup with controller-backed peaks
+    cgroupMembers, /// owned cgroup: roster + `cpu.stat`, peaks from procfs
+    procScan,      /// `/proc` scan over the descendants and the process group
+}
+
+/// Which subsystem produced a metric.
+enum MetricSource : ubyte
+{
+    none,   /// not measured
+    procfs, /// `/proc/<pid>/stat` (stat, statm, children)
+    cgroup, /// a cgroup v2 counter file
+    rusage, /// the platform's per-process rusage call
+}
+
+/// What a metric's value is the truth about (SPEC §13.8 truth table).
+enum MetricQuality : ubyte
+{
+    unmeasured, /// nothing was observed; the value is zero and meaningless
+    exact,      /// a kernel cumulative counter over an enforced boundary
+    lowerBound, /// sampled, budget-capped, or over an unenforced boundary
+}
+
+/**
+Cumulative resource usage of the supervised process tree (SPEC §13.8):
+peak summed RSS and peak live-process count over the run, elapsed wall time,
+best-effort user/system CPU, and — in the owned cgroup tiers — the run
+cgroup's own counters. Every metric carries its source and its quality, so
+a consumer reads what a number is the truth about rather than guessing:
+sampled peaks are lower bounds by construction; tree CPU is always a lower
+bound while containment is unenforced (a same-uid descendant can leave the
+cgroup unobserved); only the run cgroup's own cumulative counters, read
+successfully at the final sample, are exact. Unsupported counters leave
+`sampled == false` rather than fabricating zero-valued measurements;
+`wallTime` is always valid.
+*/
 struct ProcessResourceUsage
 {
     size_t peakRssBytes;
@@ -268,6 +302,29 @@ struct ProcessResourceUsage
     Duration userTime;
     Duration systemTime;
     bool sampled;
+
+    size_t peakCgroupMemoryBytes; /// `memory.peak` (page cache included)
+    size_t peakTasks;             /// `pids.peak` — tasks, not processes
+    Duration cgroupUserTime;      /// CPU charged to the run cgroup
+    Duration cgroupSystemTime;    /// ditto
+
+    MetricSource memorySource;
+    MetricSource processSource;
+    MetricSource cpuSource;
+    MetricSource cgroupMemorySource;
+    MetricSource tasksSource;
+    MetricSource cgroupCpuSource;
+
+    MetricQuality memoryQuality;
+    MetricQuality processQuality;
+    MetricQuality cpuQuality;
+    MetricQuality cgroupMemoryQuality;
+    MetricQuality tasksQuality;
+    MetricQuality cgroupCpuQuality;
+
+    SampleSource source;
+    bool accountingSaturated; /// a per-sample work budget was hit at least once
+    bool samplingDegraded;    /// a sample was skipped, aborted, or refused
 }
 
 /// One supervision event (SPEC §13.5): exactly one field is meaningful,

@@ -29,6 +29,7 @@ import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus, LineEmit,
     LineFramer, ProcessConfig, ProcessEnd, ProcessEvent, ProcessEventKind,
     ProcessEventSink, ProcessLine, ProcessResourceUsage, ProcessStream,
     StdioMode, StdioSpec, SupervisedProcessConfig, SupervisedProcessResult;
+import sparkles.event_horizon.sampling : TreeSampler;
 import sparkles.event_horizon.sched : Sched;
 
 private:
@@ -1093,18 +1094,6 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
     // ── supervised runs (SPEC §13.5–§13.8) ─────────────────────────────
 
-    private struct ProcessIdentity
-    {
-        int pid;
-        ulong startTime;
-    }
-
-    private struct ProcessCpu
-    {
-        ulong userTicks;
-        ulong systemTicks;
-    }
-
     /** One supervised run's state, mutated only by the supervising fiber. */
     private struct SupervisionState
     {
@@ -1132,9 +1121,8 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         SharedBuffer!(ubyte, 256) stdout_;
         SharedBuffer!(ubyte, 256) stderr_;
 
-        ProcessResourceUsage usage;
+        TreeSampler sampler; /// owns the root anchor and the cumulative usage
         MonoTime startedAt;
-        ProcessCpu[ProcessIdentity] observedCpu;
         version (unittest)
             int* signalAttempts;
     }
@@ -1387,272 +1375,16 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         })(s);
     }
 
-    version (linux)
-    {
-        /// Parses `/proc/<pid>/stat`'s ppid, CPU ticks, and resident pages.
-        private bool parseProcStat(int pid, out int ppid, out int pgrp,
-            out ulong utime, out ulong stime, out ulong startTime,
-            out ulong rssPages) @trusted
-        {
-            import core.stdc.stdio : fclose, fgets, fopen;
-            import core.stdc.string : strlen;
-            import std.array : split;
-            import std.conv : to;
-            import std.format : format;
-            import std.string : toStringz;
-
-            auto file = fopen(format("/proc/%d/stat", pid).toStringz, "r");
-            if (file is null)
-                return false;
-            scope (exit) fclose(file);
-
-            char[2048] lineBuf;
-            if (fgets(lineBuf.ptr, lineBuf.length, file) is null)
-                return false;
-            const text = lineBuf[0 .. strlen(lineBuf.ptr)];
-
-            // comm may contain spaces and parens: split after its last ')'.
-            long close_ = -1;
-            foreach (i, c; text)
-                if (c == ')')
-                    close_ = i;
-            if (close_ < 0)
-                return false;
-            const rest = text[close_ + 1 .. $]; // fields restart at #3
-
-            static long parseField(const(char)[] tok)
-            {
-                import std.conv : ConvException;
-
-                try
-                    return to!long(tok);
-                catch (ConvException _)
-                    // The kernel spells some -1 fields as their unsigned
-                    // wraparound (`18446744073709551615`) — notably on
-                    // zombies.
-                    return cast(long) to!ulong(tok);
-            }
-
-            try
-            {
-                // Token 0 is the state LETTER ("S"/"R"/…); later fields can
-                // be negative (`tpgid = -1` without a controlling tty), so
-                // everything parses signed and widens.
-                long[22] f = void;
-                size_t seen;
-                foreach (tok; rest.split(' '))
-                {
-                    if (tok.length == 0)
-                        continue;
-                    if (seen == 0)
-                    {
-                        ++seen;
-                        continue;
-                    }
-                    if (seen < f.length + 1)
-                        f[seen - 1] = parseField(tok);
-                    ++seen;
-                }
-                if (seen < 22)
-                    return false;
-                // With the state letter skipped, f[j] holds field j+4.
-                ppid = cast(int) f[0]; // field 4
-                pgrp = cast(int) f[1]; // field 5
-                utime = cast(ulong) f[10]; // field 14
-                stime = cast(ulong) f[11]; // field 15
-                startTime = cast(ulong) f[18]; // field 22
-                rssPages = cast(ulong) f[20]; // field 24
-                return true;
-            }
-            catch (Exception _)
-            {
-                return false; // malformed stat line: skip this pid
-            }
-        }
-
-        private __gshared size_t pageSizeCache;
-
-        private size_t pageSize() @trusted nothrow @nogc
-        {
-            import core.sys.posix.unistd : _SC_PAGESIZE, sysconf;
-
-            if (pageSizeCache == 0)
-                pageSizeCache = cast(size_t) sysconf(_SC_PAGESIZE);
-            return pageSizeCache;
-        }
-
-        private __gshared long clockTicksCache;
-
-        /// `_SC_CLK_TCK`, queried once: a process-lifetime constant that
-        /// every sample used to re-`sysconf`.
-        private long clockTicksPerSecond() @trusted nothrow @nogc
-        {
-            import core.sys.posix.unistd : _SC_CLK_TCK, sysconf;
-
-            if (clockTicksCache == 0)
-                clockTicksCache = sysconf(_SC_CLK_TCK);
-            return clockTicksCache;
-        }
-
-        private Duration ticksToDuration(ulong ticks, long hz)
-            @safe pure nothrow @nogc
-        {
-            import core.time : usecs;
-
-            if (hz <= 0)
-                return Duration.zero;
-            return usecs(cast(long) ticks * 1_000_000L / hz);
-        }
-
-        /**
-        Walks `/proc` once and folds the root's whole descendant tree into
-        `usage`: peak summed RSS, peak live-process count, cumulative
-        user/system CPU over live members (best-effort, SPEC §13.8). A walk
-        that cannot see the root leaves the peaks untouched.
-        */
-        package void sampleTreeLinux(int rootPid,
-            ref ProcessResourceUsage usage,
-            ref ProcessCpu[ProcessIdentity] observedCpu) @safe
-        {
-            import core.stdc.string : strlen;
-            import core.sys.posix.dirent : closedir, dirent, opendir,
-                readdir;
-            import std.conv : to;
-
-            // Raw readdir, not std.file.dirEntries: the latter stats every
-            // entry and THROWS when a short-lived process vanishes between
-            // getdents and stat, aborting the walk mid-stream. A vanished
-            // pid here skips one tree member instead.
-            auto procDir = (() @trusted => opendir("/proc"))();
-            if (procDir is null)
-                return;
-            scope (exit) (() @trusted => closedir(procDir))();
-
-            struct Snapshot
-            {
-                int ppid;
-                int pgrp;
-                ulong userTicks;
-                ulong systemTicks;
-                ulong startTime;
-                ulong rssPages;
-            }
-
-            Snapshot[int] processes;
-            for (;;)
-            {
-                auto entry = (() @trusted => readdir(procDir))();
-                if (entry is null)
-                    break;
-                const nameLen = (() @trusted => strlen(entry.d_name.ptr))();
-                const name = entry.d_name[0 .. nameLen];
-                bool numeric = name.length > 0 && name.length <= 7;
-                foreach (c; name)
-                    if (c < '0' || c > '9')
-                    {
-                        numeric = false;
-                        break;
-                    }
-                if (!numeric)
-                    continue;
-                int pid;
-                try
-                    pid = to!int(name.idup);
-                catch (Exception _)
-                    continue;
-                int ppid;
-                int pgrp;
-                ulong u, s2, startTime, rss;
-                if (!parseProcStat(pid, ppid, pgrp, u, s2, startTime, rss))
-                    continue; // vanished or unreadable: skip this member
-                processes[pid] = Snapshot(ppid, pgrp, u, s2, startTime, rss);
-            }
-
-            bool descendedFrom(int pid)
-            {
-                int walker = pid;
-                foreach (_; 0 .. 4096)
-                {
-                    if (walker == rootPid)
-                        return true;
-                    auto next = walker in processes;
-                    if (next is null || walker <= 1)
-                        return false;
-                    walker = next.ppid;
-                }
-                return false;
-            }
-
-            size_t liveCount;
-            ulong rssSum, userTicks, systemTicks;
-            foreach (pid, snapshot; processes)
-            {
-                if (!descendedFrom(pid)
-                    && snapshot.pgrp != rootPid)
-                    continue;
-                ++liveCount;
-                rssSum += snapshot.rssPages * pageSize();
-                // Mutable, not const: DMD deprecates using a const AA key as
-                // the lvalue of an assignment (and the build captures the
-                // diagnostic into example-output verification).
-                auto identity = ProcessIdentity(pid, snapshot.startTime);
-                auto prior = identity in observedCpu;
-                if (prior is null)
-                    observedCpu[identity] = ProcessCpu(
-                        snapshot.userTicks, snapshot.systemTicks);
-                else
-                {
-                    if (snapshot.userTicks > prior.userTicks)
-                        prior.userTicks = snapshot.userTicks;
-                    if (snapshot.systemTicks > prior.systemTicks)
-                        prior.systemTicks = snapshot.systemTicks;
-                }
-            }
-
-            if (liveCount == 0)
-                return; // root not visible: keep prior peaks (§13.8)
-
-            if (rssSum > usage.peakRssBytes)
-                usage.peakRssBytes = rssSum;
-            if (liveCount > usage.peakProcesses)
-                usage.peakProcesses = liveCount;
-            ++usage.sampleCount;
-            usage.sampled = true;
-            foreach (cpu; observedCpu)
-            {
-                userTicks += cpu.userTicks;
-                systemTicks += cpu.systemTicks;
-            }
-            const hz = clockTicksPerSecond();
-            usage.userTime = ticksToDuration(userTicks, hz);
-            usage.systemTime = ticksToDuration(systemTicks, hz);
-        }
-    }
-    else
-    {
-        /**
-        Darwin stub: SPEC §13.8 names `proc_pid_rusage` +
-        `proc_listchildpids` as the eventual source. Until that lands,
-        sampling reports `sampled == false` rather than fabricated numbers;
-        wall time still comes from the run itself.
-        */
-        private void sampleTreeLinux(int, ref ProcessResourceUsage usage,
-            ref ProcessCpu[ProcessIdentity] observedCpu)
-            @safe
-        {
-        }
-    }
-
     /** One tree sample folded into the cumulative usage, with wall time. */
     private bool takeSample(ref SupervisionState st) @safe
     {
-        const before = st.usage.sampleCount;
-        sampleTreeLinux(st.processGroup, st.usage, st.observedCpu);
-        st.usage.wallTime = MonoTime.currTime - st.startedAt;
-        // A walk that could not see the tree (just-exited root mid-teardown,
-        // transient /proc race) changes no cumulative counter; reporting it
-        // would repeat stale values and break cumulative monotonicity.
-        return st.usage.sampleCount != before;
+        const before = st.sampler.usage.sampleCount;
+        cast(void) st.sampler.sample();
+        st.sampler.usage.wallTime = MonoTime.currTime - st.startedAt;
+        // A discarded transaction (root gone, replaced mid-scan) changes no
+        // cumulative counter; reporting it would repeat stale values and
+        // break cumulative monotonicity.
+        return st.sampler.usage.sampleCount != before;
     }
 
     /**
@@ -1760,6 +1492,10 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         st.startedAt = MonoTime.currTime;
         version (unittest)
             st.signalAttempts = signalAttempts;
+        // The root anchor: acquired at this one named point, immediately
+        // after the child exists and before any worker runs (SPEC §13.8).
+        st.sampler.anchor(child.pid, null);
+        scope (exit) st.sampler.finish();
         cast(void) takeSample(st);
 
         SharedBuffer!(ubyte, 256) stdinCopy;
@@ -2105,7 +1841,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                         {
                             ProcessEvent ev;
                             ev.kind = ProcessEventKind.sample;
-                            ev.usage = stP.usage;
+                            ev.usage = stP.sampler.usage;
                             invoke(ev);
                         }
                         break;
@@ -2217,7 +1953,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
         // Scope exit joined timeout/grace/drain/wait workers. The final event
         // therefore cannot race a producer or trigger process termination.
-        st.usage.wallTime = MonoTime.currTime - st.startedAt;
+        st.sampler.usage.wallTime = MonoTime.currTime - st.startedAt;
         if (canPublishExited(st, stdoutFinished, stderrFinished))
         {
             if (sink !is null && sinkDefect is null)
@@ -2243,7 +1979,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                 "supervision worker failed");
         result.end = st.end;
         result.status = st.status;
-        result.usage = st.usage;
+        result.usage = st.sampler.usage;
         result.stdout_ = move(st.stdout_);
         result.stderr_ = move(st.stderr_);
         result.truncatedLines = stdoutFramer.truncatedLines
@@ -4525,6 +4261,7 @@ unittest
 unittest
 {
     import core.time : msecs;
+    import std.conv : text;
 
     Sched s;
     schedOrSkip(s);
@@ -4535,7 +4272,7 @@ unittest
         auto got = supervise(s, ["sh", "-c",
             `{ i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 0.2; } & exit 0`],
             cfg, null, log.sink());
-        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.hasValue, got.hasError ? text(got.error.errnoValue, " ", got.error.context) : "");
 
         Duration lastUser, lastSystem;
         foreach (ev; log.events)

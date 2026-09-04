@@ -159,6 +159,7 @@ _Loop-side_ modules may import anything.
 | `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
 | `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
 | `cgroup`                 | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
+| `sampling`               | loop-side    | the bounded, tiered, transactional tree sampler (§13.8): fail-closed root anchor, bounded CPU ledger, per-sample work budget; the Darwin stub                           |
 | `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                                                               |
 | `package`                | —            | public re-exports                                                                                                                                                       |
 
@@ -1699,11 +1700,28 @@ struct ProcessLine
     bool truncated;       /// the first maxLineBytes payload bytes of an over-cap line
 }
 
+enum SampleSource  : ubyte { none, cgroupFull, cgroupMembers, procScan }
+enum MetricSource  : ubyte { none, procfs, cgroup, rusage }
+enum MetricQuality : ubyte { unmeasured, exact, lowerBound }
+
 struct ProcessResourceUsage
 {
     size_t peakRssBytes, peakProcesses, sampleCount;
     Duration wallTime, userTime, systemTime;
     bool sampled;         /// false when the host has no tree sampler
+
+    size_t peakCgroupMemoryBytes;    /// memory.peak (page cache included)
+    size_t peakTasks;                /// pids.peak — tasks, not processes
+    Duration cgroupUserTime, cgroupSystemTime; /// CPU charged to the run cgroup
+
+    MetricSource memorySource, processSource, cpuSource,
+                 cgroupMemorySource, tasksSource, cgroupCpuSource;
+    MetricQuality memoryQuality, processQuality, cpuQuality,
+                  cgroupMemoryQuality, tasksQuality, cgroupCpuQuality;
+
+    SampleSource source;
+    bool accountingSaturated; /// a per-sample work budget was hit
+    bool samplingDegraded;    /// a sample was skipped, aborted, or refused
 }
 
 struct ProcessEvent
@@ -1874,6 +1892,57 @@ rather than fabricating zero-valued measurements.
 At most one sample operation is in flight per run. If sampling takes longer than
 its interval, missed instants coalesce into the next cumulative sample rather
 than queuing stale tree walks.
+
+**Sources and the metric truth table.** A run's sample source follows its
+containment tier (§13.7): `cgroupFull` (an `accounted` cgroup), `cgroupMembers`
+(an `owned` one: the roster from `cgroup.procs`, `cpu.stat`, peaks from procfs)
+or `procScan` (no cgroup: `/proc` scanned for the root's descendants and its
+process group). Every metric carries its source and its quality — what the
+number is the truth about:
+
+| metric                               | source                     | quality                                                                                                                                                   |
+| ------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `peakRssBytes`, `peakProcesses`      | procfs, every tier         | `lowerBound` (sampled peaks)                                                                                                                              |
+| `userTime`, `systemTime` (tree CPU)  | procfs, or cgroup          | **always** `lowerBound`: containment is unenforced (a same-uid descendant can leave the cgroup unobserved); fed from max(procfs accumulation, cgroup CPU) |
+| `cgroupUserTime`, `cgroupSystemTime` | cgroup `cpu.stat`          | `exact` for the run cgroup while every read succeeds; `lowerBound` after a failed read                                                                    |
+| `peakCgroupMemoryBytes`, `peakTasks` | cgroup peaks (`accounted`) | `exact` while every read succeeds; `lowerBound` after a failed read                                                                                       |
+
+"No migration observed" never upgrades tree CPU to exact.
+
+**Fail-closed root anchor and transactional samples.** The root's `/proc/<pid>`
+directory is held open from one named point — immediately after the child
+exists, before any worker runs — together with its identity (pid + start time
+read through that handle); both live until the reap and are released on every
+path. Acquisition failure disables pid-based sampling for the run (procfs
+metrics stay `unmeasured`, `samplingDegraded`; cgroup counters are unaffected).
+Every proc sample validates the anchor first, collects into sample-local
+scratch, validates again, and only then merges — a disappearance or mismatch
+at either validation discards the whole sample (metrics and ledger changes
+alike): a replacement root and its fresh descendants would otherwise satisfy
+the numeric descent and group tests. Members hold no persistent descriptor:
+each is opened, validated by start time (and, in the cgroup tiers, by its
+`/proc/<pid>/cgroup` line equal to the run path or continuing with `/`, read
+through the same handle), read, and closed within one sample.
+
+**Bounded cumulative CPU ledger.** CPU is a live map with its own capacity
+(1024), a scalar of retired contributions, and a bounded retired-key set
+(4096); the total is `retired + Σ live`, so a sample costs O(live members).
+A newly discovered identity is admitted only while a live slot is free and the
+ledger is not sealed; a present member updates its running maximum; a member
+that disappeared — or whose pid now carries another start time — moves its
+last-known contribution (a lower bound) into the scalar and its key into the
+retired set; a scan omission, read failure, or exhausted budget retains the
+entry unchanged, never as proof of death. Once the retired set is full the
+ledger seals: no admission ever again, and a live entry that dies afterwards
+becomes a tombstone in place (`cpu = 0`, never summed, never re-admitted) in
+the same merge that moves its contribution — the total does not jump. Every
+saturation path degrades to a lower bound, never to an overcount.
+
+**Per-sample work budget.** Entries scanned or members probed, bytes read, and
+a cooperative time slice are bounded per sample; every live entry is re-probed
+from a rotating cursor so an early budget end does not starve the same tail;
+a budget hit sets `accountingSaturated` and keeps the qualities at
+`lowerBound`. The budget is a bound on work, never a reap-latency proof.
 
 Operations that cannot be represented by the platform completion backend run
 on `BlockingPool`, a bounded scheduler service distinct from `RawCpuPool` and
