@@ -206,11 +206,11 @@
     "glfw": {
       "flake": false,
       "locked": {
-        "lastModified": 1786667580,
-        "narHash": "sha256-wTm7e5vr9iE4C+TWUTbEH4NUwDjO7umhiRMEOHH+Ea4=",
+        "lastModified": 1788486193,
+        "narHash": "sha256-sd9Zyo2U4vbIqAB7X+tlDowTvtYZsCj2zIItRAWai/U=",
         "owner": "PetarKirov",
         "repo": "glfw",
-        "rev": "1e59848ba2856c25515a80f52e97c78d5412395e",
+        "rev": "455e47de5391c7a81a8dbc1eb7e0020b1c0dcd9c",
         "type": "github"
       },
       "original": {
