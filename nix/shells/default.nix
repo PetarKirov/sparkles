@@ -167,10 +167,6 @@
         pkgs.wayland
         pkgs.wayland.dev
         pkgs.xvfb-run
-        # Software GL for the headless smoke launch (`ci --smoke-apps` opens a
-        # real window). See the LIBGL/glvnd exports below for why the driver
-        # alone is not enough.
-        pkgs.mesa
 
         # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
         # symbolization/unwind probes link `libs "dw" "elf"` and the
@@ -338,25 +334,25 @@
           export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
           export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-          # Software GL, so `ci --smoke-apps` can open a real window on a
-          # runner with no GPU. Three variables, because `libGL` here is
-          # $(B libglvnd) rather than mesa itself:
+          # Where software GL lives, for a caller that wants it — `ci
+          # --smoke-apps` opening a real window on a runner with no GPU. Two
+          # $(B inert) pointers, deliberately: mesa is NOT put on
+          # `LD_LIBRARY_PATH` here.
           #
-          #   * LIBGL_DRIVERS_PATH — where mesa's own DRI drivers live;
-          #   * LD_LIBRARY_PATH    — where glvnd dlopens `libGLX_mesa.so` from,
-          #     which is the step a first attempt missed: pointing at the
-          #     drivers is useless if the vendor library that loads them is not
-          #     on the loader path, and on a non-NixOS runner nothing else puts
-          #     it there;
-          #   * __GLX_VENDOR_LIBRARY_NAME — so glvnd picks mesa rather than
-          #     probing for a vendor that is not installed.
+          # It was, briefly, and that is a loader path every forked child
+          # inherits — which is how a change aimed at one GUI launch reached
+          # `event-horizon`'s forkserver tests and hung them. A dev shell may
+          # say where a thing is; it must not reorder every process's libraries
+          # to get one of them working.
           #
-          # All defaulted rather than assigned: a developer with a real GPU
-          # keeps theirs, and nothing here forces software rendering — that is
-          # `LIBGL_ALWAYS_SOFTWARE`, which only the CI job sets.
-          export LIBGL_DRIVERS_PATH="''${LIBGL_DRIVERS_PATH:-${pkgs.mesa}/lib/dri}"
-          export __GLX_VENDOR_LIBRARY_NAME="''${__GLX_VENDOR_LIBRARY_NAME:-mesa}"
-          export LD_LIBRARY_PATH="${pkgs.mesa}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          # The composition — `LD_LIBRARY_PATH`, `LIBGL_DRIVERS_PATH`,
+          # `__GLX_VENDOR_LIBRARY_NAME`, `LIBGL_ALWAYS_SOFTWARE` — belongs to
+          # the one command that needs it. `libGL` on this platform is
+          # libglvnd, not mesa, so the vendor library has to be findable by the
+          # loader as well as the drivers by their path: naming only the
+          # drivers is why a first attempt changed nothing.
+          export SPARKLES_SOFTGL_LIB="${pkgs.mesa}/lib"
+          export SPARKLES_SOFTGL_DRIVERS="${pkgs.mesa}/lib/dri"
         ''}
 
         ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''

@@ -364,13 +364,21 @@ jobs:
           # already built it, so this resolves from the store.
           fonts="$(nix build --no-link --print-out-paths .#sparkles-fonts)/fonts"
           if [ "$RUNNER_OS" = "Linux" ]; then
-            # Xvfb has no hardware GL. `LIBGL_ALWAYS_SOFTWARE` routes the
-            # client to llvmpipe rather than letting GLFW fail to find a
-            # context and report "Failed to initialize platform".
-            nix develop .#ci -c env SPARKLES_UI_FONT_DIR="$fonts" \
-              SPARKLES_UI_HEADLESS=1 LIBGL_ALWAYS_SOFTWARE=1 \
-              xvfb-run -a --server-args="-screen 0 1280x1024x24 +extension GLX" \
-              ci --smoke-apps
+            # Xvfb has no hardware GL, so the client is routed to llvmpipe.
+            # `libGL` here is libglvnd rather than mesa, so both halves are
+            # needed: the drivers by their path, and the vendor library that
+            # loads them on the loader path. Composed here rather than exported
+            # by the dev shell — `LD_LIBRARY_PATH` is inherited by every forked
+            # child, and only this one command wants it.
+            nix develop .#ci -c bash -euo pipefail -c '
+              exec env SPARKLES_UI_FONT_DIR="$1" SPARKLES_UI_HEADLESS=1 \
+                LIBGL_ALWAYS_SOFTWARE=1 \
+                LIBGL_DRIVERS_PATH="$SPARKLES_SOFTGL_DRIVERS" \
+                __GLX_VENDOR_LIBRARY_NAME=mesa \
+                LD_LIBRARY_PATH="$SPARKLES_SOFTGL_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+                xvfb-run -a --server-args="-screen 0 1280x1024x24 +extension GLX" \
+                ci --smoke-apps
+            ' _ "$fonts"
           else
             nix develop .#ci -c env SPARKLES_UI_FONT_DIR="$fonts" \
               SPARKLES_UI_HEADLESS=1 \
