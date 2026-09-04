@@ -56,6 +56,7 @@ import std.typecons : Nullable, Ternary;
 
 import optional : Optional, some;
 
+import sparkles.base.text.errors : valueOf;
 import sparkles.base.buffer : SharedBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.text.case_style : CaseStyle;
@@ -3821,7 +3822,7 @@ version (unittest)
         const decoded = fromSDL!(Keep)(node);
         size_t total;
         if (decoded.hasValue)
-            total = decoded.value.extras.length();
+            total = decoded.valueOf.extras.length();
         return total;
     }
     static assert(__traits(compiles, probeUseIt), "A");
@@ -3831,7 +3832,7 @@ version (unittest)
         auto node = document.root.byChild.front;
         const decoded = fromSDL!(Keep)(node);
         if (decoded.hasValue)
-            return decoded.value.extras.length();
+            return decoded.valueOf.extras.length();
         return 0;
     }
 
@@ -4346,7 +4347,7 @@ version (unittest)
         const decoded = fromSDL!(Keep)(node);
         size_t total;
         if (decoded.hasValue)
-            total = decoded.value.extras.length();
+            total = decoded.valueOf.extras.length();
         return total;
     }));
 

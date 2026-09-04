@@ -3,6 +3,7 @@ module sparkles.wired.sdl.reader;
 
 import std.experimental.allocator.common : stateSize;
 
+import sparkles.base.text.errors : valueOf;
 import sparkles.base.buffer : SharedBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 
@@ -129,7 +130,7 @@ private struct TokenCursor(SdlParserConfig config)
         auto item = lexer.front;
         if (item.hasError)
         {
-            error = (() @trusted => item.error)();
+            error = copyError(item.error);
             failed = true;
         }
         else
@@ -228,7 +229,7 @@ private void ensureSourceName(ref SdlError error,
         error.sourceName ~= sourceName;
 }
 
-private SdlError copyError(SdlError source)
+private SdlError copyError(ref scope const SdlError source) @safe pure nothrow @nogc
 {
     SdlError result;
     result.stage = source.stage;
@@ -239,10 +240,13 @@ private SdlError copyError(SdlError source)
     result.hasRelatedSpan = source.hasRelatedSpan;
     result.valuePath ~= source.valuePath[];
     result.rolePath ~= source.rolePath[];
-    result.sourceType = source.sourceType;
-    result.targetType = source.targetType;
-    result.expectedKind = source.expectedKind;
-    result.actualKind = source.actualKind;
+    // The four `string` fields name types and kinds — text the compiler
+    // emitted, never text borrowed from a document — so copying one out of a
+    // `scope` error extends no borrow.
+    result.sourceType = (() @trusted => source.sourceType)();
+    result.targetType = (() @trusted => source.targetType)();
+    result.expectedKind = (() @trusted => source.expectedKind)();
+    result.actualKind = (() @trusted => source.actualKind)();
     result.reason ~= source.reason[];
     result.filePath ~= source.filePath[];
     result.cause = source.cause;
@@ -279,13 +283,15 @@ private SdlSpan unmatchedOpener(SdlParserConfig config)(
         auto item = lexer.front;
         if (item.hasError)
             break;
-        if (item.value.kind == SdlTokenKind.openBrace)
+        // `item` is `scope`: a token borrows the source.
+        const kind = item.valueOf.kind;
+        if (kind == SdlTokenKind.openBrace)
         {
             if (depth == targetDepth)
-                result = item.value.span;
+                result = item.valueOf.span;
             depth++;
         }
-        else if (item.value.kind == SdlTokenKind.closeBrace && depth)
+        else if (kind == SdlTokenKind.closeBrace && depth)
             depth--;
         lexer.popFront();
     }
