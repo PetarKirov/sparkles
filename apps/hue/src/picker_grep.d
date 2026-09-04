@@ -856,3 +856,238 @@ unittest
     assert(poolEligible(GrepMode.fuzzy));
     assert(!poolEligible(GrepMode.regex), "the bounded engine is not written");
 }
+
+// ── the scan schedule (`PKC10`) ─────────────────────────────────────────────
+
+/// What one $(D GrepScan.step) did.
+enum ScanStep : ubyte
+{
+    /// No scan is live.
+    idle,
+    /// Work happened; more remains.
+    progressed,
+    /// The corpus is exhausted for this generation.
+    finished,
+    /// A newer generation superseded this one mid-step.
+    cancelled,
+}
+
+/**
+The grep scan's schedule: one flight, resumable, cancellable per file.
+
+Separate from `PickerScheduler` because that one dispatches `searchChunk`,
+which is pure and clock-free and therefore $(B cannot read a file). Grep's
+work unit is a whole document (`PKC10`), and acquiring its bytes is I/O.
+What is shared is the discipline, not the code: a monotonic generation,
+supersede-don't-queue, and a cursor that resumes.
+
+Written as a shell with hooks so the schedule is testable without touching
+a filesystem — the decisions (what next, when to stop, whether to keep a
+result) are the part worth pinning, and they are pure.
+
+$(B Cancellation is polled every file), not every eighth. fff's interval is
+an artifact of its per-line loop; hue's unit is a file, so the natural place
+to check is between them. And hue deliberately does $(B not) port fff's
+"refuse to abort before two matches" rule: that exists because fff cannot
+publish a partial page, and hue already publishes ranked partials — keeping
+it would make a superseded query outlive its keystroke for no benefit.
+*/
+struct GrepScan
+{
+    private uint generation_;
+    private size_t cursor_;
+    private size_t total_;
+    private size_t admitted_;
+    private bool active_;
+
+    /// The live generation. Bumped by `begin` and by `cancel`.
+    uint generation() const @safe pure nothrow @nogc => generation_;
+    /// How far through the corpus this generation has scanned.
+    size_t cursor() const @safe pure nothrow @nogc => cursor_;
+    /// Documents in the corpus this generation is walking.
+    size_t total() const @safe pure nothrow @nogc => total_;
+    /// Hits admitted so far this generation — the `332/2350` numerator.
+    size_t admitted() const @safe pure nothrow @nogc => admitted_;
+    /// Whether a scan is live.
+    bool active() const @safe pure nothrow @nogc => active_;
+
+    /**
+    Start a generation over `total` documents, superseding any live scan.
+
+    Single-flight: a keystroke does not queue behind the previous query's
+    scan, it replaces it. Queueing would make the list lag by however many
+    queries the user typed while it worked, which is the failure the whole
+    generation discipline exists to prevent.
+    */
+    uint begin(size_t total) @safe pure nothrow @nogc
+    {
+        ++generation_;
+        cursor_ = 0;
+        admitted_ = 0;
+        total_ = total;
+        active_ = total != 0;
+        return generation_;
+    }
+
+    /// Abandon the live scan without starting another. The generation still
+    /// advances, so results already in flight are recognisably stale.
+    void cancel() @safe pure nothrow @nogc
+    {
+        ++generation_;
+        active_ = false;
+        cursor_ = 0;
+        total_ = 0;
+    }
+
+    /**
+    Whether a result stamped `gen` still belongs to the live generation.
+
+    The reason results carry it at all: a worker finishing after the user
+    typed another character must have its page dropped, not merged into the
+    newer query's results.
+    */
+    bool current(uint gen) const @safe pure nothrow @nogc
+        => active_ && gen == generation_;
+
+    /**
+    Scan up to `budget` documents.
+
+    `scanOne` returns how many hits that document admitted; `superseded` is
+    polled $(B before every file) so a newer keystroke stops this scan
+    within one document rather than at the end of the budget.
+    */
+    ScanStep step(size_t budget,
+        scope size_t delegate(size_t) @safe nothrow @nogc scanOne,
+        scope bool delegate() @safe nothrow @nogc superseded)
+        @safe nothrow @nogc
+    {
+        if (!active_)
+            return ScanStep.idle;
+        foreach (_; 0 .. budget)
+        {
+            if (superseded !is null && superseded())
+            {
+                active_ = false;
+                return ScanStep.cancelled;
+            }
+            if (cursor_ >= total_)
+                break;
+            admitted_ += scanOne(cursor_);
+            ++cursor_;
+        }
+        if (cursor_ >= total_)
+        {
+            active_ = false;
+            return ScanStep.finished;
+        }
+        return ScanStep.progressed;
+    }
+}
+
+@("picker_grep.scan.resumesWhereItStopped")
+@safe nothrow @nogc
+unittest
+{
+    // A scan that hits its budget must resume, not restart. Restarting is
+    // the bug that looks like progress: every frame rescans the first N
+    // files, the list keeps showing the same hits, and the scan never
+    // reaches the end of a large tree.
+    size_t[8] seen;
+    size_t seenCount;
+    size_t scanOne(size_t i) @safe nothrow @nogc
+    {
+        if (seenCount < seen.length)
+            seen[seenCount++] = i;
+        return 1;
+    }
+
+    GrepScan scan;
+    scan.begin(5);
+    assert(scan.active && scan.cursor == 0);
+
+    assert(scan.step(2, &scanOne, null) == ScanStep.progressed);
+    assert(scan.cursor == 2 && scan.admitted == 2);
+
+    assert(scan.step(2, &scanOne, null) == ScanStep.progressed);
+    assert(scan.cursor == 4);
+
+    assert(scan.step(2, &scanOne, null) == ScanStep.finished);
+    assert(scan.cursor == 5 && scan.admitted == 5);
+    assert(!scan.active, "a finished scan is not live");
+    assert(scan.step(2, &scanOne, null) == ScanStep.idle);
+
+    // Every document was visited exactly once, in order.
+    assert(seenCount == 5);
+    foreach (i; 0 .. 5)
+        assert(seen[i] == i, "documents must not be rescanned");
+}
+
+@("picker_grep.scan.cancellationIsPolledBeforeEveryFile")
+@safe nothrow @nogc
+unittest
+{
+    // `PKC10`. fff polls every eighth line because its unit is a line;
+    // hue's unit is a file, so between files is the natural place — and it
+    // bounds how long a superseded query keeps working to ONE document.
+    // The flag flips PARTWAY THROUGH a step, which is what a keystroke
+    // actually does. Polling once per step would satisfy a test that set it
+    // beforehand while still scanning the whole budget after a supersede.
+    size_t scanned;
+    size_t scanOne(size_t) @safe nothrow @nogc { ++scanned; return 0; }
+    bool superseded() @safe nothrow @nogc => scanned >= 2;
+
+    GrepScan scan;
+    scan.begin(100);
+    assert(scan.step(50, &scanOne, &superseded) == ScanStep.cancelled,
+        "a superseded scan stops inside the budget, not at its end");
+    assert(scanned == 2,
+        "it must notice between FILES — one more document at most, not 50");
+    assert(!scan.active);
+
+    // And a scan nobody supersedes runs its whole budget.
+    scanned = 0;
+    GrepScan quiet;
+    quiet.begin(100);
+    assert(quiet.step(5, &scanOne, null) == ScanStep.progressed);
+    assert(scanned == 5);
+}
+
+@("picker_grep.scan.aNewGenerationSupersedesRatherThanQueues")
+@safe nothrow @nogc
+unittest
+{
+    // Single flight. Queueing would make the list lag by however many
+    // queries were typed while the first scan worked.
+    size_t scanOne(size_t) @safe nothrow @nogc => 1;
+
+    GrepScan scan;
+    const first = scan.begin(10);
+    cast(void) scan.step(4, &scanOne, null);
+    assert(scan.cursor == 4 && scan.admitted == 4);
+
+    const second = scan.begin(10);
+    assert(second != first, "the generation advances");
+    assert(scan.cursor == 0, "the new query starts from the top");
+    assert(scan.admitted == 0, "and does not inherit the old count");
+
+    // Stale results must be recognisable so a worker finishing late has its
+    // page dropped rather than merged into the newer query's.
+    assert(!scan.current(first), "the superseded generation is not current");
+    assert(scan.current(second));
+
+    // Cancelling also advances, so nothing in flight looks current.
+    scan.cancel();
+    assert(!scan.current(second) && !scan.active);
+}
+
+@("picker_grep.scan.anEmptyCorpusFinishesRatherThanSpinning")
+@safe nothrow @nogc
+unittest
+{
+    size_t scanOne(size_t) @safe nothrow @nogc => 0;
+
+    GrepScan scan;
+    scan.begin(0);
+    assert(!scan.active, "there is nothing to scan");
+    assert(scan.step(8, &scanOne, null) == ScanStep.idle);
+}
