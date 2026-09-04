@@ -5,6 +5,7 @@ import core.time : Duration, hnsecs, hours, minutes;
 import std.datetime.date : Date;
 
 import sparkles.base.buffer : SharedBuffer, Storage;
+import sparkles.base.text.errors : valueOf;
 import sparkles.wired.sdl.config;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
@@ -1849,8 +1850,8 @@ unittest
     char[10] sourceName = "memory.sdl";
     auto lexer = lexSDL!sdlFull(source[], sourceName[]);
     auto item = lexer.front;
-    assert(item.hasValue && item.value.raw == "name");
-    assert(item.value.raw.ptr == source.ptr);
+    assert(item.hasValue && item.valueOf.raw == "name");
+    assert(item.valueOf.raw.ptr == source.ptr);
 }
 
 version (unittest)

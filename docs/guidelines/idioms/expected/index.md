@@ -392,6 +392,7 @@ let message = result.map_or_else(
 1. Use a **custom hook** containing `enableDefaultConstructor = false` to disable the default constructor of [`Expected`][Expected] at compile time (triggering `@disable this()`).
 2. Define a **subsystem-wide template alias** to lock in the error type and custom hook.
 3. Provide **domain-specific helper functions** (e.g. `parseOk` / `parseErr`) that implicitly forward these parameters to clean up syntax.
+4. Give the hook `onAccessEmptyValue` and `onAccessEmptyError`. Without them, `value` on a failed result silently yields `T.init` — and, less obviously, the accessors return **by value**, because their `auto ref` has a `T.init` return path. A by-value read of a copy-on-write payload is a trap: `r.value[]` slices a temporary whose clone is freed at the end of the statement, which `-preview=dip1000` cannot see. With both hooks the accessors return **by reference** into the result's storage, and a misread asserts. A result that borrows (a token over its source, a decode whose extras view the document) is `scope`, and the accessor cannot infer `scope` for it because its misuse path copies the other side; read those through `valueOf` / `errorOf` from `sparkles.base.text.errors`, which borrow via a `return scope` reference.
 
 ::: code-group
 
@@ -417,10 +418,22 @@ struct ParseError
     size_t offset;
 }
 
-// 1. Custom hook to disable default construction in @nogc code
+// 1. Custom hook: no default construction in @nogc code, and reading the
+//    missing side is a bug — which also makes `value`/`error` return by
+//    reference (no `T.init` path is left for `auto ref` to copy through).
 struct NoGcHook
 {
     static immutable bool enableDefaultConstructor = false;
+
+    static void onAccessEmptyValue(E)(E) @safe pure nothrow @nogc
+    {
+        assert(0, "value read from a result that holds an error");
+    }
+
+    static void onAccessEmptyError()() @safe pure nothrow @nogc
+    {
+        assert(0, "error read from a result that holds a value");
+    }
 }
 
 // 2. Subsystem template alias locking in ParseError and NoGcHook
