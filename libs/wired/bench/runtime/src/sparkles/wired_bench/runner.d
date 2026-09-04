@@ -34,7 +34,8 @@ import sparkles.wired_bench.engines;
 import sparkles.wired_bench.fingerprint : diffFingerprints, Fingerprint,
     referenceFingerprint;
 import sparkles.wired_bench.traits;
-import sparkles.wired_bench.twitter : diffTwitterStats, referenceTwitterStats;
+import sparkles.wired_bench.twitter : diffTwitterStats, referenceTwitterStats,
+    TwitterStats;
 
 /// A `B/s` throughput metric for `n` input/output bytes per iteration.
 private Metric bytes(size_t n) @safe pure nothrow
@@ -192,6 +193,66 @@ private enum bool anyDecode = () {
 // picks, so each is self-contained: every case owns a heap engine, and all
 // untimed setup/release lives in `setup`/`teardown`.
 
+/// Lazy reference fingerprint wrapper that evaluates std.json only when verification runs.
+private final class LazyFingerprint
+{
+    private const(char)[] text;
+    private Fingerprint cached;
+    private bool computed;
+
+    this(const(char)[] text) { this.text = text; }
+
+    Fingerprint get()
+    {
+        if (!computed)
+        {
+            cached = referenceFingerprint(text);
+            computed = true;
+        }
+        return cached;
+    }
+}
+
+/// Lazy stream fingerprint wrapper.
+private final class LazyStreamFingerprint
+{
+    private const Dataset ds;
+    private Fingerprint cached;
+    private bool computed;
+
+    this(in Dataset ds) { this.ds = ds; }
+
+    Fingerprint get()
+    {
+        if (!computed)
+        {
+            cached = referenceStream(ds).fingerprint;
+            computed = true;
+        }
+        return cached;
+    }
+}
+
+/// Lazy Twitter stats wrapper.
+private final class LazyTwitterStats
+{
+    private const(char)[] text;
+    private TwitterStats cached;
+    private bool computed;
+
+    this(const(char)[] text) { this.text = text; }
+
+    TwitterStats get()
+    {
+        if (!computed)
+        {
+            cached = referenceTwitterStats(text);
+            computed = true;
+        }
+        return cached;
+    }
+}
+
 @("wired.parse")
 @benchmark
 @system
@@ -200,7 +261,7 @@ unittest
     size_t registered;
     foreach (ref ds; benchDatasets)
     {
-        const reference = referenceFingerprint(ds.text);
+        auto reference = new LazyFingerprint(ds.text);
         static foreach (E; AllEngines)
             static if (isJsonEngine!E)
                 if (engineEnabled(E.name))
@@ -226,7 +287,7 @@ unittest
     foreach (format; [DatasetFormat.ndjson, DatasetFormat.jsonArrayLines])
         foreach (ref ds; benchDatasets(format))
         {
-            const reference = referenceStream(ds);
+            auto reference = new LazyStreamFingerprint(ds);
             static foreach (E; AllEngines)
                 static if (isJsonEngine!E)
                     if (engineEnabled(E.name))
@@ -269,7 +330,7 @@ unittest
     size_t registered;
     foreach (ref ds; benchDatasets)
     {
-        const reference = referenceFingerprint(ds.text);
+        auto reference = new LazyFingerprint(ds.text);
         static foreach (E; AllEngines)
             static if (isJsonEngine!E && hasSerialize!E)
                 if (engineEnabled(E.name))
@@ -292,14 +353,17 @@ unittest
     size_t registered;
     if (datasetEnabled("twitter"))
         foreach (ref ds; loadDatasets(["twitter"], resolveDataDir(null)))
+        {
+            auto expected = new LazyTwitterStats(ds.text);
             static foreach (E; AllEngines)
                 static if (canDecodeTwitter!E)
                     if (engineEnabled(E.name))
                     {
                         isolated(E.name, ds, "decode",
-                            () { registerDecode!E(ds); });
+                            () { registerDecode!E(ds, expected); });
                         registered++;
                     }
+        }
     if (!registered)
         markFilteredOut("decode");
 }
@@ -310,7 +374,7 @@ unittest
 /// parse — the fingerprint check rides the (untimed) `after`, verified once; a
 /// mismatch turns this into an isolated error row. Each timed parse allocates a
 /// document that `after` releases.
-private void registerParse(E)(Dataset ds, Fingerprint reference)
+private void registerParse(E)(Dataset ds, LazyFingerprint reference)
 {
     auto e = new E;
     bool verified;
@@ -323,14 +387,15 @@ private void registerParse(E)(Dataset ds, Fingerprint reference)
             {
                 verified = true;
                 const fp = e.fingerprint();
-                if (!reference.matches(fp))
+                const refFp = reference.get();
+                if (!refFp.matches(fp))
                     error = "fingerprint mismatch vs std.json:"
-                        ~ diffFingerprints(reference, fp);
+                        ~ diffFingerprints(refFp, fp);
             }
             freeDocOf(*e);
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(ds.text.length)],
+        metrics: [bytes(ds.byteSize)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
@@ -339,7 +404,7 @@ private void registerParse(E)(Dataset ds, Fingerprint reference)
 
 /// parse-insitu — verified like `parse`: the in-place parse must still produce
 /// the reference document (a wrong-parsing engine must never "look faster").
-private void registerParseInsitu(E)(Dataset ds, Fingerprint reference)
+private void registerParseInsitu(E)(Dataset ds, LazyFingerprint reference)
 {
     auto e = new E;
     bool verified;
@@ -352,14 +417,15 @@ private void registerParseInsitu(E)(Dataset ds, Fingerprint reference)
             {
                 verified = true;
                 const fp = e.fingerprint();
-                if (!reference.matches(fp))
+                const refFp = reference.get();
+                if (!refFp.matches(fp))
                     error = "in-situ fingerprint mismatch vs std.json:"
-                        ~ diffFingerprints(reference, fp);
+                        ~ diffFingerprints(refFp, fp);
             }
             freeDocOf(*e);
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(ds.text.length)],
+        metrics: [bytes(ds.byteSize)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-insitu"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
@@ -399,7 +465,7 @@ private StreamReference referenceStream(in Dataset ds)
     return result;
 }
 
-private void registerParseStream(E)(Dataset ds, StreamReference reference)
+private void registerParseStream(E)(Dataset ds, LazyStreamFingerprint reference)
 {
     auto e = new E;
     bool verified;
@@ -424,13 +490,14 @@ private void registerParseStream(E)(Dataset ds, StreamReference reference)
                     actual.add(e.fingerprint());
                     freeDocOf(*e);
                 }
-                if (!reference.fingerprint.matches(actual))
+                const refFp = reference.get();
+                if (!refFp.matches(actual))
                     error = "stream fingerprint mismatch vs std.json:"
-                        ~ diffFingerprints(reference.fingerprint, actual);
+                        ~ diffFingerprints(refFp, actual);
             }
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(ds.text.length), documents(reference.records)],
+        metrics: [bytes(ds.byteSize), documents(ds.recordCount)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-stream"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
@@ -459,7 +526,7 @@ private void registerValidate(E)(Dataset ds)
             }
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(ds.text.length)],
+        metrics: [bytes(ds.byteSize)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "validate"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
@@ -469,21 +536,8 @@ private void registerValidate(E)(Dataset ds)
 /// serialize — the output must still fingerprint to the reference document
 /// (structural check via std.json, format-independent); verified once in the
 /// untimed `after`, so a wrong serialization can't post a competitive B/s row.
-private void registerSerialize(E)(Dataset ds, Fingerprint reference)
+private void registerSerialize(E)(Dataset ds, LazyFingerprint reference)
 {
-    // Output size for the metric: parse + serialize once now (untimed, released),
-    // since it is unknown until a document exists.
-    size_t outBytes;
-    {
-        auto probe = new E;
-        static if (hasSetup!E)
-            probe.setup();
-        probe.parse(ds.text);
-        outBytes = probe.serialize().length;
-        freeDocOf(*probe);
-        static if (hasTeardown!E)
-            probe.teardown();
-    }
     auto e = new E;
     bool verified;
     benchCase(
@@ -497,16 +551,17 @@ private void registerSerialize(E)(Dataset ds, Fingerprint reference)
                 try
                 {
                     const fp = referenceFingerprint(e.serialize());
-                    if (!reference.matches(fp))
+                    const refFp = reference.get();
+                    if (!refFp.matches(fp))
                         error = "serialize output mismatch vs std.json:"
-                            ~ diffFingerprints(reference, fp);
+                            ~ diffFingerprints(refFp, fp);
                 }
                 catch (Exception ex)
                     error = "serialize output is not valid JSON: " ~ ex.msg;
             }
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(outBytes)],
+        metrics: [bytes(ds.byteSize)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "serialize"],
         // Hold one parsed document across the whole case (untimed).
         setup: () {
@@ -522,10 +577,9 @@ private void registerSerialize(E)(Dataset ds, Fingerprint reference)
     );
 }
 
-private void registerDecode(E)(Dataset ds)
+private void registerDecode(E)(Dataset ds, LazyTwitterStats expected)
 {
     auto e = new E;
-    const expected = referenceTwitterStats(ds.text);
     bool verified;
     benchCase(
         name: E.name,
@@ -536,13 +590,14 @@ private void registerDecode(E)(Dataset ds)
             {
                 verified = true;
                 const actual = e.twitterStats();
-                if (actual != expected)
+                const exp = expected.get();
+                if (actual != exp)
                     error = "twitter stats mismatch vs std.json:"
-                        ~ diffTwitterStats(expected, actual);
+                        ~ diffTwitterStats(exp, actual);
             }
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(ds.text.length)],
+        metrics: [bytes(ds.byteSize)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "decode"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),

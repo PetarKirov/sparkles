@@ -16,6 +16,7 @@ import std.file : exists, readText;
 import std.mmfile : MmFile;
 import std.path : buildPath;
 import std.process : environment;
+import std.range : walkLength;
 import std.string : strip;
 
 /// How one corpus is divided into JSON documents.
@@ -42,6 +43,8 @@ struct DatasetSource
     DatasetFormat format;
     DatasetTier tier;
     bool bundled;
+    ulong nominalSize = 0;
+    ulong nominalRecords = 0;
 }
 
 /// The normal, reproducible benchmark matrix. External corpora are opt-in.
@@ -52,22 +55,22 @@ immutable string[] defaultDatasetNames =
 /// Every dataset name accepted by `$WIRED_BENCH_DATASETS`.
 immutable DatasetSource[] datasetSources =
 [
-    DatasetSource("twitter", "twitter.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("citm_catalog", "citm_catalog.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("canada", "canada.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("github_events", "github_events.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("mesh", "mesh.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("mesh_pretty", "mesh.pretty.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("wikidata", "wikidata.json", DatasetFormat.jsonArrayLines, DatasetTier.light, true),
-    DatasetSource("osm", "osm.json", DatasetFormat.document, DatasetTier.light, true),
-    DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, DatasetTier.light, true),
-    DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, DatasetTier.light, true),
+    DatasetSource("twitter", "twitter.json", DatasetFormat.document, DatasetTier.light, true, 631_520, 0),
+    DatasetSource("citm_catalog", "citm_catalog.json", DatasetFormat.document, DatasetTier.light, true, 1_727_210, 0),
+    DatasetSource("canada", "canada.json", DatasetFormat.document, DatasetTier.light, true, 2_251_051, 0),
+    DatasetSource("github_events", "github_events.json", DatasetFormat.document, DatasetTier.light, true, 65_142, 0),
+    DatasetSource("mesh", "mesh.json", DatasetFormat.document, DatasetTier.light, true, 723_528, 0),
+    DatasetSource("mesh_pretty", "mesh.pretty.json", DatasetFormat.document, DatasetTier.light, true, 1_575_458, 0),
+    DatasetSource("wikidata", "wikidata.json", DatasetFormat.jsonArrayLines, DatasetTier.light, true, 65_331, 101),
+    DatasetSource("osm", "osm.json", DatasetFormat.document, DatasetTier.light, true, 2_928_647, 0),
+    DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, DatasetTier.light, true, 277_708, 793),
+    DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, DatasetTier.light, true, 277_708, 793),
 
-    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false),
-    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false),
-    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, DatasetTier.huge, false),
-    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, DatasetTier.huge, false),
-    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false),
+    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 1_288_490_188, 2_850_000),
+    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 1_869_151_448, 5_200_000),
+    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, DatasetTier.huge, false, 13_287_234, 0),
+    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, DatasetTier.huge, false, 4_500_000_000, 7_500_000),
+    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 3_815_309_277, 2_400_000),
 ];
 
 /// One loaded benchmark corpus.
@@ -78,6 +81,13 @@ struct Dataset
     DatasetFormat format;   /// document framing
     DatasetTier tier;       /// scale tier
     private MmFile mapping; /// keeps an external corpus's read-only map alive
+    ulong nominalSize;
+    ulong nominalRecords;
+
+    size_t byteSize() const @safe
+    {
+        return text.length ? text.length : cast(size_t) nominalSize;
+    }
 
     /// A lazy range of JSON texts in a line-oriented corpus.
     auto records() const @safe
@@ -87,6 +97,16 @@ struct Dataset
         return text.splitter('\n')
             .map!(line => recordLine(line, framing))
             .filter!(line => line.length);
+    }
+
+    /// Fast line/record count without parsing JSON ASTs.
+    size_t recordCount() const @safe
+    {
+        if (format == DatasetFormat.document)
+            return 0;
+        if (text.length)
+            return records.walkLength;
+        return cast(size_t) nominalRecords;
     }
 }
 
@@ -132,18 +152,23 @@ Dataset[] loadDatasets(const string[] names, string dataDir,
         const root = source.bundled
             ? dataDir
             : resolveExternalDataDir(externalDataDir);
-        if (source.bundled)
-            enforce(root.length, "dataset '" ~ name
-                ~ "' is bundled: export WIRED_BENCH_DATA");
+        const path = root.length ? root.buildPath(source.fileName) : null;
+        if (path.length && path.exists)
+        {
+            result ~= source.bundled
+                ? Dataset(name, readText(path), source.format, source.tier)
+                : mapDataset(name, path, source.format, source.tier);
+        }
+        else if (source.bundled)
+        {
+            enforce(false, "bundled dataset not found: " ~ path);
+        }
         else
-            enforce(root.length, "dataset '" ~ name ~ "' is external: export "
-                ~ "WIRED_BENCH_EXTERNAL_DATA to the directory containing "
-                ~ source.fileName);
-        const path = root.buildPath(source.fileName);
-        enforce(path.exists, "dataset not found: " ~ path);
-        result ~= source.bundled
-            ? Dataset(name, readText(path), source.format, source.tier)
-            : mapDataset(name, path, source.format, source.tier);
+        {
+            // Nominal placeholder for external datasets not yet downloaded
+            result ~= Dataset(name, null, source.format, source.tier, null,
+                source.nominalSize, source.nominalRecords);
+        }
     }
     return result;
 }
