@@ -185,12 +185,14 @@ at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" —
 - **"I care about effects & resumption."** [effects-and-event-loops][effects] → [OCaml Eio backend][eio] → [algebraic-effects corpus][ae-index].
 - **"I care about macOS."** [kqueue, PTYs & signals][kqueue-ptys] → [GCD][gcd] → [libuv][libuv] (the portable reactor over the same interfaces).
 - **"I'm designing the Sparkles loop."** [d-landscape][d-landscape] → [comparison][comparison] → [techniques][techniques] (buffer ownership, cancellation, feature probing).
+- **"I'm supervising subprocesses."** [Process Supervision][process-supervision] → [kqueue, PTYs & signals][kqueue-ptys] → [libuv][libuv] / [Go][go] for the portable shapes → SPEC §13.
 
 ### Concepts
 
 - **[Event-Loop Primitives][primitives]** — the layered checklist (Tier 0 → Tier 3), readiness vs completion mapped per primitive.
 - **[Implementation Techniques][techniques]** — reactor/proactor, ring batching, scheduler topologies, wakers, timer wheels, buffer ownership, cancellation, feature probing.
 - **[kqueue, PTYs & Signals on macOS][kqueue-ptys]** — what kqueue will and will not watch, `EVFILT_SIGNAL` vs `signalfd`, `EVFILT_PROC`, and PTY creation, across ten C/Zig/Rust implementations.
+- **[Process Supervision][process-supervision]** — observing exit without consuming it, concurrent drains, tree containment (pgid / cgroup / job object / namespace), termination policy, blocking-work lanes and honest tree accounting — the survey behind `event-horizon`'s supervised runs.
 - **[Grand Central Dispatch][gcd]** — the same kernel interfaces from above: queues, sources, QoS, and the kernel-owned thread pool macOS actually schedules on.
 - **[Comparison][comparison]** — the head-to-head matrix and design recommendations for Sparkles.
 - **[Effects & Event Loops][effects]** — how completions resume fibers, continuations, and effect handlers.
@@ -249,6 +251,7 @@ this index's classifications are:
 [primitives]: ./primitives.md
 [techniques]: ./techniques.md
 [kqueue-ptys]: ./kqueue-and-ptys.md
+[process-supervision]: ./process-supervision.md
 [comparison]: ./comparison.md
 [effects]: ./effects-and-event-loops.md
 [d-landscape]: ./d-landscape.md

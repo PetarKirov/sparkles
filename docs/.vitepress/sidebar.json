@@ -2397,6 +2397,10 @@
               {
                 "text": "kqueue, PTYs & Signals on macOS",
                 "link": "/research/async-io/kqueue-and-ptys"
+              },
+              {
+                "text": "Process Supervision",
+                "link": "/research/async-io/process-supervision"
               }
             ]
           },
