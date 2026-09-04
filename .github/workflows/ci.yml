@@ -403,6 +403,46 @@ jobs:
       - name: Run all runnable examples
         run: nix run .#run-all-examples
 
+      # The only step in this workflow that *runs* hue, terminal, ui-gallery
+      # and diagram. Everything else compiles them — which is how a window that
+      # aborted before it appeared reached `main`. `.#all-desktop` above is a
+      # link farm, so `result/<app>/bin/<app>` is where the binaries already
+      # are; `ci --smoke-apps` bounds each run through SPARKLES_UI_FRAMES and
+      # requires a clean exit having painted at least one frame.
+      #
+      # Not a nix derivation: the build sandbox has no window server, which is
+      # precisely why `all-desktop` can only ever compile these. Linux needs
+      # xvfb, already used by the OS-API steps above; macOS runners have a real
+      # session. A leg with no display reports skips and stays green — the
+      # summary line says so rather than pretending the check ran.
+      - name: Smoke-launch every windowed application
+        run: |
+          # The font bundle, so selection does not depend on whether the runner
+          # has fonts installed or fontconfig configured. `.#all-desktop` above
+          # already built it, so this resolves from the store.
+          fonts="$(nix build --no-link --print-out-paths .#sparkles-fonts)/fonts"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # Xvfb has no hardware GL, so the client is routed to llvmpipe.
+            # `libGL` here is libglvnd rather than mesa, so both halves are
+            # needed: the drivers by their path, and the vendor library that
+            # loads them on the loader path. Composed here rather than exported
+            # by the dev shell — `LD_LIBRARY_PATH` is inherited by every forked
+            # child, and only this one command wants it.
+            nix develop .#ci -c bash -euo pipefail -c '
+              exec env SPARKLES_UI_FONT_DIR="$1" SPARKLES_UI_HEADLESS=1 \
+                LIBGL_ALWAYS_SOFTWARE=1 \
+                LIBGL_DRIVERS_PATH="$SPARKLES_SOFTGL_DRIVERS" \
+                __GLX_VENDOR_LIBRARY_NAME=mesa \
+                LD_LIBRARY_PATH="$SPARKLES_SOFTGL_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+                xvfb-run -a --server-args="-screen 0 1280x1024x24 +extension GLX" \
+                ci --smoke-apps
+            ' _ "$fonts"
+          else
+            nix develop .#ci -c env SPARKLES_UI_FONT_DIR="$fonts" \
+              SPARKLES_UI_HEADLESS=1 \
+              ci --smoke-apps
+          fi
+
   # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
   # — the repo-embedded hue APK, whose dependency chain covers the entire
   # cross closure (dual-ABI druntimes via dlang.nix's ldc-android, the

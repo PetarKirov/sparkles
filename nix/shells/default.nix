@@ -333,6 +333,26 @@
           # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
           export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
           export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+          # Where software GL lives, for a caller that wants it — `ci
+          # --smoke-apps` opening a real window on a runner with no GPU. Two
+          # $(B inert) pointers, deliberately: mesa is NOT put on
+          # `LD_LIBRARY_PATH` here.
+          #
+          # It was, briefly, and that is a loader path every forked child
+          # inherits — which is how a change aimed at one GUI launch reached
+          # `event-horizon`'s forkserver tests and hung them. A dev shell may
+          # say where a thing is; it must not reorder every process's libraries
+          # to get one of them working.
+          #
+          # The composition — `LD_LIBRARY_PATH`, `LIBGL_DRIVERS_PATH`,
+          # `__GLX_VENDOR_LIBRARY_NAME`, `LIBGL_ALWAYS_SOFTWARE` — belongs to
+          # the one command that needs it. `libGL` on this platform is
+          # libglvnd, not mesa, so the vendor library has to be findable by the
+          # loader as well as the drivers by their path: naming only the
+          # drivers is why a first attempt changed nothing.
+          export SPARKLES_SOFTGL_LIB="${pkgs.mesa}/lib"
+          export SPARKLES_SOFTGL_DRIVERS="${pkgs.mesa}/lib/dri"
         ''}
 
         ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''

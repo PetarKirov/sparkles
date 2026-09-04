@@ -15,7 +15,7 @@ module sparkles.ui_app.run;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
-import sparkles.ui_app.host : noDraw, noSetup, RunConfig;
+import sparkles.ui_app.host : noDraw, noSetup, resolveFrameBudget, RunConfig;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
 enum RunOutcome : ubyte
@@ -98,6 +98,41 @@ Backend resolveArm(Backend wanted, in AvailableArms arms, out RunOutcome outcome
 }
 
 /**
+Says on stderr why a bounded run never got a loop, and hands the outcome back
+(`HST21`).
+
+Only for a run with a frame budget — an ordinary launch reports through the
+application's own message, in the application's own words. But a launcher has no
+application to ask: `ci --smoke-apps` must be able to tell "this build has no GPU
+arm on this runner" (skip) from "the window opened and the process died" (fail),
+and those two are indistinguishable from an exit status alone.
+
+$(D_CODE sparkles-ui-app: outcome=noBackend)
+*/
+private RunOutcome reportOutcome(RunOutcome outcome, in RunConfig cfg,
+    string reason = null) nothrow
+{
+    import std.conv : to;
+    import std.stdio : stderr;
+
+    if (outcome == RunOutcome.ok || resolveFrameBudget(cfg.frameBudget) <= 0)
+        return outcome;
+    try
+    {
+        if (reason.length != 0)
+            stderr.writefln("sparkles-ui-app: outcome=%s reason=%s",
+                outcome.to!string, reason);
+        else
+            stderr.writefln("sparkles-ui-app: outcome=%s", outcome.to!string);
+        stderr.flush();
+    }
+    catch (Exception)
+    {
+    }
+    return outcome;
+}
+
+/**
 Opens a backend and runs the frame loop.
 
 `present` builds each frame and `handle` receives each event; both take
@@ -139,7 +174,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
     RunOutcome outcome;
     const arm = resolveArm(wanted, arms, outcome);
     if (outcome != RunOutcome.ok)
-        return outcome;
+        return reportOutcome(outcome, cfg);
 
     final switch (arm)
     {
@@ -148,11 +183,17 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
             {
                 import sparkles.ui_app.gui_loop : runGui;
                 import sparkles.ui_app.gui_setup : GuiRequest;
-                import sparkles.ui_app.gui_options : fontRequestOf, windowCellsOf;
+                import sparkles.ui_app.gui_options : envFontDirs, fontRequestOf,
+                    windowCellsOf;
 
                 GuiRequest req;
                 req.title = cfg.title;
                 req.font = fontRequestOf(cfg.gui);
+                // `CLI3`: the `--font-dir` a launcher cannot pass. Appended to
+                // whatever the application asked for, and — like the flag —
+                // its presence is what turns the system font database off, so
+                // selection is a scan of exactly these directories.
+                req.font.searchDirs ~= envFontDirs();
                 req.cells = windowCellsOf(cfg.gui);
                 req.fontSizePoints = cfg.gui.fontSize;
                 req.targetFps = cfg.targetFps;
@@ -161,11 +202,17 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 req.extraFontSources = cfg.extraFontSources.dup;
                 req.traceSink = cfg.traceSink;
 
-                return runGui!(present, handle, draw, setup)(cfg, req)
-                    ? RunOutcome.ok : RunOutcome.openFailed;
+                import sparkles.ui_app.gui_setup : GuiOpenFailure, name;
+
+                GuiOpenFailure why;
+                const opened = runGui!(present, handle, draw, setup)(
+                    cfg, req, why);
+                return reportOutcome(
+                    opened ? RunOutcome.ok : RunOutcome.openFailed, cfg,
+                    opened ? null : why.name);
             }
             else
-                return RunOutcome.noBackend;
+                return reportOutcome(RunOutcome.noBackend, cfg);
 
         case Backend.tui:
             static if (__traits(compiles, { import sparkles.ui_app.tui_loop; }))
@@ -175,27 +222,28 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                     version (Posix)
                     {
                         version (Android)
-                            return RunOutcome.noBackend;
+                            return reportOutcome(RunOutcome.noBackend, cfg);
                         else
                         {
                             import sparkles.ui_app.tui_loop : runTui;
 
-                            return runTui!(present, handle, draw, setup)(cfg)
-                                ? RunOutcome.ok : RunOutcome.openFailed;
+                            return reportOutcome(
+                                runTui!(present, handle, draw, setup)(cfg)
+                                    ? RunOutcome.ok : RunOutcome.openFailed, cfg);
                         }
                     }
                     else
-                        return RunOutcome.noBackend;
+                        return reportOutcome(RunOutcome.noBackend, cfg);
                 }
                 else
-                    return RunOutcome.noBackend;
+                    return reportOutcome(RunOutcome.noBackend, cfg);
             }
             else
-                return RunOutcome.noBackend;
+                return reportOutcome(RunOutcome.noBackend, cfg);
 
         case Backend.html:
         case Backend.ansi:
-            return RunOutcome.notInteractive;
+            return reportOutcome(RunOutcome.notInteractive, cfg);
     }
 }
 

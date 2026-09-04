@@ -195,6 +195,36 @@
         };
       });
 
+      # `apps/diagram` had no package at all, so `all-desktop` never built it
+      # and nothing in CI ever compiled — let alone ran — the one application
+      # written to prove the host abstraction holds for a camera and a world
+      # larger than its viewport (DIA1/DIA2). The same closure as ui-gallery:
+      # `ui-app`'s `full` configuration brings the raylib arm.
+      packages.diagram = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "diagram";
+        version = "0.1.0";
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.raylib ];
+
+        env = d-toolchain.env;
+
+        postFixup = ''
+          wrapProgram $out/bin/${finalAttrs.pname} \
+            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+        '';
+
+        meta = {
+          description = "A draw.io-style diagram board on sparkles:ui-app, in a terminal or a window";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
+      apps.diagram = {
+        type = "app";
+        program = lib.getExe config.packages.diagram;
+      };
+
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
