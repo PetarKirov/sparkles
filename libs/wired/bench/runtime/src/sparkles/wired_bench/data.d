@@ -16,7 +16,6 @@ import std.file : exists, readText;
 import std.mmfile : MmFile;
 import std.path : buildPath;
 import std.process : environment;
-import std.range : walkLength;
 import std.string : strip;
 
 /// How one corpus is divided into JSON documents.
@@ -44,7 +43,6 @@ struct DatasetSource
     DatasetTier tier;
     bool bundled;
     ulong nominalSize = 0;
-    ulong nominalRecords = 0;
 }
 
 /// The normal, reproducible benchmark matrix. External corpora are opt-in.
@@ -55,22 +53,22 @@ immutable string[] defaultDatasetNames =
 /// Every dataset name accepted by `$WIRED_BENCH_DATASETS`.
 immutable DatasetSource[] datasetSources =
 [
-    DatasetSource("twitter", "twitter.json", DatasetFormat.document, DatasetTier.light, true, 631_520, 0),
-    DatasetSource("citm_catalog", "citm_catalog.json", DatasetFormat.document, DatasetTier.light, true, 1_727_210, 0),
-    DatasetSource("canada", "canada.json", DatasetFormat.document, DatasetTier.light, true, 2_251_051, 0),
-    DatasetSource("github_events", "github_events.json", DatasetFormat.document, DatasetTier.light, true, 65_142, 0),
-    DatasetSource("mesh", "mesh.json", DatasetFormat.document, DatasetTier.light, true, 723_528, 0),
-    DatasetSource("mesh_pretty", "mesh.pretty.json", DatasetFormat.document, DatasetTier.light, true, 1_575_458, 0),
-    DatasetSource("wikidata", "wikidata.json", DatasetFormat.jsonArrayLines, DatasetTier.light, true, 65_331, 101),
-    DatasetSource("osm", "osm.json", DatasetFormat.document, DatasetTier.light, true, 2_928_647, 0),
-    DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, DatasetTier.light, true, 277_708, 793),
-    DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, DatasetTier.light, true, 277_708, 793),
+    DatasetSource("twitter", "twitter.json", DatasetFormat.document, DatasetTier.light, true, 631_520),
+    DatasetSource("citm_catalog", "citm_catalog.json", DatasetFormat.document, DatasetTier.light, true, 1_727_210),
+    DatasetSource("canada", "canada.json", DatasetFormat.document, DatasetTier.light, true, 2_251_051),
+    DatasetSource("github_events", "github_events.json", DatasetFormat.document, DatasetTier.light, true, 65_142),
+    DatasetSource("mesh", "mesh.json", DatasetFormat.document, DatasetTier.light, true, 723_528),
+    DatasetSource("mesh_pretty", "mesh.pretty.json", DatasetFormat.document, DatasetTier.light, true, 1_575_458),
+    DatasetSource("wikidata", "wikidata.json", DatasetFormat.jsonArrayLines, DatasetTier.light, true, 65_331),
+    DatasetSource("osm", "osm.json", DatasetFormat.document, DatasetTier.light, true, 2_928_647),
+    DatasetSource("cloudtrail", "cloudtrail.ndjson", DatasetFormat.ndjson, DatasetTier.light, true, 277_708),
+    DatasetSource("elasticsearch", "elasticsearch.ndjson", DatasetFormat.ndjson, DatasetTier.light, true, 277_708),
 
-    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 1_288_490_188, 2_850_000),
-    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 1_869_151_448, 5_200_000),
-    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, DatasetTier.huge, false, 13_287_234, 0),
-    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, DatasetTier.huge, false, 4_500_000_000, 7_500_000),
-    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 3_815_309_277, 2_400_000),
+    DatasetSource("gharchive", "gharchive.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 1_288_490_188),
+    DatasetSource("amazon_reviews", "amazon_reviews.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 1_869_151_448),
+    DatasetSource("osm_large", "osm_large.json", DatasetFormat.document, DatasetTier.huge, false, 13_287_234),
+    DatasetSource("wikidata_full", "wikidata_full.json", DatasetFormat.jsonArrayLines, DatasetTier.huge, false, 4_500_000_000),
+    DatasetSource("openalex", "openalex.ndjson", DatasetFormat.ndjson, DatasetTier.huge, false, 3_815_309_277),
 ];
 
 /// One loaded benchmark corpus.
@@ -82,7 +80,6 @@ struct Dataset
     DatasetTier tier;       /// scale tier
     private MmFile mapping; /// keeps an external corpus's read-only map alive
     ulong nominalSize;
-    ulong nominalRecords;
 
     size_t byteSize() const @safe
     {
@@ -97,16 +94,6 @@ struct Dataset
         return text.splitter('\n')
             .map!(line => recordLine(line, framing))
             .filter!(line => line.length);
-    }
-
-    /// Fast line/record count without parsing JSON ASTs.
-    size_t recordCount() const @safe
-    {
-        if (format == DatasetFormat.document)
-            return 0;
-        if (text.length)
-            return records.walkLength;
-        return cast(size_t) nominalRecords;
     }
 }
 
@@ -167,7 +154,7 @@ Dataset[] loadDatasets(const string[] names, string dataDir,
         {
             // Nominal placeholder for external datasets not yet downloaded
             result ~= Dataset(name, null, source.format, source.tier, null,
-                source.nominalSize, source.nominalRecords);
+                source.nominalSize);
         }
     }
     return result;
@@ -207,8 +194,9 @@ private const(char)[] recordLine(return scope const(char)[] raw,
 {
     assert(datasetSource("mesh_pretty").fileName == "mesh.pretty.json");
     assert(datasetSource("wikidata").format == DatasetFormat.jsonArrayLines);
-    assert(datasetSource("wikidata").bundled == false);
-    assert(defaultDatasetNames.length == 6);
+    assert(datasetSource("wikidata").bundled == true);
+    assert(datasetSource("wikidata_full").bundled == false);
+    assert(defaultDatasetNames.length == 10);
 }
 
 @("data.records.ndjsonAndWikidataArray")

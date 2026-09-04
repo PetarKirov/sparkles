@@ -993,13 +993,6 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
                                     if (m.amount > info.byteSize)
                                         info.byteSize = cast(ulong) m.amount;
                                 }
-                                else if (m.unit.symbol == "doc" || m.unit.symbol == "docs"
-                                    || m.unit.symbol == "document" || m.unit.symbol == "record"
-                                    || m.unit.symbol == "records")
-                                {
-                                    if (m.amount > info.records)
-                                        info.records = cast(ulong) m.amount;
-                                }
                             }
                         }
                     }
