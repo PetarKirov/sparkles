@@ -34,6 +34,16 @@ struct ScoreBreakdown
     long pathAlignment;
     long access;
     long modification;
+    /**
+    Content-search only: the row's line DEFINES the matched name rather than
+    mentioning it.
+
+    Zero for a path candidate — a path has no line to classify — so `rank`
+    leaves it alone and only a content source ever sets it. It lives here
+    rather than beside the hit so the debug view (`PKR4`) shows every term
+    in one place, which is the whole point of a breakdown.
+    */
+    long definition;
     long total;
     MatchKind matchKind;
 }
@@ -172,7 +182,8 @@ FuzzyExpected!RankedResult rank(in CandidateView candidate,
     long total;
     foreach (term; [score.base, score.frecency, score.gitModified,
             score.directoryDistance, score.filename,
-            score.currentFilePenalty, score.combo, score.pathAlignment])
+            score.currentFilePenalty, score.combo, score.pathAlignment,
+            score.definition])
     {
         auto sum = checkedAdd(total, term);
         if (sum.hasError)
