@@ -41,9 +41,6 @@ import sparkles.wired_bench.twitter : diffTwitterStats, referenceTwitterStats,
 private Metric bytes(size_t n) @safe pure nothrow
     => Metric(unit: Unit("B"), amount: double(n), mode: Metric.Mode.rate);
 
-/// A documents/s metric for line-oriented corpora.
-private Metric documents(size_t n) @safe pure nothrow
-    => Metric(unit: Unit("doc"), amount: double(n), mode: Metric.Mode.rate);
 
 /// Releases the engine's held document when it exposes the primitive.
 private void freeDocOf(E)(ref E e)
@@ -497,7 +494,7 @@ private void registerParseStream(E)(Dataset ds, LazyStreamFingerprint reference)
             }
             return error.length ? err!bool(error) : ok!string(true);
         },
-        metrics: [bytes(ds.byteSize), documents(ds.recordCount)],
+        metrics: [bytes(ds.byteSize)],
         labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-stream"],
         setup: engineSetup(e),
         teardown: engineTeardown(e),
