@@ -1485,10 +1485,11 @@ by `package`, so consumer spellings do not change).
 Today it is publicly re-exported and tested on Linux; kqueue has a shipped
 `EVFILT_PROC` reap lowering, but the process modules are not yet exported or
 covered by the package test suite on macOS. Windows has no process surface:
-its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.9
-are the approved M19 target needed to move `apps/ci` off
-`sparkles.core_cli.process_utils`; they are normative targets, not claims about
-the current implementation.
+its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.8
+shipped in M19 on Linux (the `supervise`, `sampling`, `cgroup` and
+`blocking_pool` modules); §13.9 and the `apps/ci` port remain M19 targets — see
+[PLAN M19](./PLAN.md#m19--cross-platform-supervised-processes-for-appsci) for
+the delivery status.
 
 The design premise, taken from what `apps/hue`
 actually runs: **background work in this repository is subprocess-shaped**
@@ -1528,7 +1529,7 @@ struct ProcessConfig
     StdioSpec stdoutSpec = StdioSpec(StdioMode.pipe);
     StdioSpec stderrSpec = StdioSpec(StdioMode.inherit);
     const(char[])[] env = null;   /// null = inherit; entries are "KEY=value"
-    const(EnvironmentChange)[] envOverlay; /// target M19: environment edits
+    const(EnvironmentChange)[] envOverlay; /// environment edits (M19)
     const(char)[] cwd = null;     /// null = inherit
     bool newProcessGroup = false; /// setpgid(0, 0) in the child (kill the tree)
 }
@@ -1683,7 +1684,7 @@ double: scripted per-command stdout bytes and exit statuses, with no
 process and no ring — the double that makes an application's "run git,
 parse, decide" path a unit test.
 
-### 13.5 Supervised runs (target M19)
+### 13.5 Supervised runs (M19)
 
 The application-facing operation is one ownership boundary around spawn,
 stdin, output, timeout/cancellation, sampling, drain, and reap:
@@ -1803,7 +1804,7 @@ event/sample path so application policy remains testable without a host process.
 Scope cancellation remains latched on the fiber (§8.4); supervision delays its
 delivery only long enough to complete cleanup and publish the final event.
 
-### 13.6 Line framing and stream ordering (target M19)
+### 13.6 Line framing and stream ordering (M19)
 
 Each pipe has an independent incremental framer over arbitrary bytes. `LF`
 ends a line; one immediately preceding `CR` is removed, so LF and CRLF produce
@@ -1829,7 +1830,7 @@ never rescanned. The final collected buffers contain the exact raw bytes, includ
 original terminators, independently of the normalized line events, up to the
 collection cap.
 
-### 13.7 Timeout, cancellation, drain, and reap (target M19)
+### 13.7 Timeout, cancellation, drain, and reap (M19)
 
 Timeout and scope cancellation use one idempotent state machine:
 
@@ -2001,7 +2002,7 @@ killDrainWindow`; the public return adds the cleanup job's queue delay, the
 populated-wait deadline (~2 s) and the recursive removal work.
 `killFailedAwaitRoot` is exempt.
 
-### 13.8 Resource samples and scheduler-integrated blocking work (target M19)
+### 13.8 Resource samples and scheduler-integrated blocking work (M19)
 
 Samples cover the supervised process tree, not only the root. They report peak
 summed RSS, peak live-process count, elapsed wall time, and best-effort
@@ -2327,22 +2328,22 @@ silent behavioral fork.
 
 Re-exported from `sparkles.event_horizon` (`package.d`):
 
-| Area                     | Symbols                                                                                                                                                                                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Errors                   | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                    |
-| Causes                   | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                  |
-| Tier A                   | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle` |
-| Buffers                  | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                     |
-| Probing                  | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                        |
-| Tier B                   | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                 |
-| Subprocesses             | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                  |
-| Supervision (M19 target) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool`                                           |
-| Channels                 | `Channel`                                                                                                                                                                                                                                                  |
-| Scopes                   | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                            |
-| Capabilities             | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                            |
-| Schedules                | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                |
-| Topology                 | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                       |
-| Veneer (M12)             | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                         |
+| Area              | Symbols                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Errors            | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                                                                                         |
+| Causes            | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                                                                                       |
+| Tier A            | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle`                                                                      |
+| Buffers           | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                                                                                          |
+| Probing           | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                                                                                             |
+| Tier B            | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                                                                                      |
+| Subprocesses      | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                                                                                       |
+| Supervision (M19) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SampleSource`, `MetricSource`, `MetricQuality`, `ResidualPolicy`, `ReapOutcome`, `KillOutcome`, `KillResult`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool` |
+| Channels          | `Channel`                                                                                                                                                                                                                                                                                                                       |
+| Scopes            | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                                                                                                 |
+| Capabilities      | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                                                                                                 |
+| Schedules         | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                                                                                     |
+| Topology          | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                                                                                            |
+| Veneer (M12)      | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                                                                                              |
 
 Memory-management policy (normative): allocating types follow the
 [composable-allocator guidelines](../../guidelines/allocators/index.md) —

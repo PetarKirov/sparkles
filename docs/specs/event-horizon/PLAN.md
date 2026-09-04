@@ -359,3 +359,23 @@ exit-vs-EOF race; exactly one exit event/drain/reap; cumulative samples; blockin
 pool saturation/cancel/shutdown. `apps/ci`'s affected commands pass on all three
 hosts. Linux traces contain `io_uring_enter` and no `epoll_*`; Windows traces
 contain IOCP waits and no pipe/process polling loop.
+
+Status (September 5, 2026): items 2–4 shipped on Linux as SPEC §§13.5–13.8 —
+the environment overlay and spawn-driven PATH search (`live`), the bounded
+`LineFramer` (`proc`), the `BlockingPool` with its termination-critical lane
+(`blocking_pool`), the cgroup v2 containment tiers (`cgroup`), the bounded
+transactional tree sampler (`sampling`), and the supervised run itself
+(`supervise`: shielded workers, one-shot ring-free clocks, the sampler
+handshake before the reap, the tree-state machine with `ResidualPolicy`, the
+protected terminal sequence, and the pre-join emergency phase). The substrate
+they stand on landed in the same series: guaranteed in-flight cancellation
+with a reserved internal slot and a no-return fatal hook (`loop`, SPEC §5.2),
+the scheduler-owned blocking inbox and wake-only `Alarm` (`sched`), and
+package-private shielded scope children (`scope_`, SPEC §8.2). The
+"no polling loop" gate holds: an idle three-second supervised `sleep` makes
+nine `io_uring_enter` calls, no `epoll_*`, and no timer loop
+(`strace -f -c`). Remaining: item 1's macOS export and process tests (the
+Darwin sampler is a `sampled == false` stub), item 5 (Windows, §13.9), item 6
+(the `apps/ci` port), and a `clone3(CLONE_INTO_CGROUP)` spawn path so that a
+child forked before the post-spawn migration lands is contained by
+construction rather than by the process group alone (SPEC §13.7).
