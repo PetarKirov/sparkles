@@ -100,6 +100,10 @@ struct Window
     // A capture requested for the current frame, performed by `endFrame` just
     // before the swap. See $(LREF screenshot).
     private UniqueBuffer!(char, 256) pendingShot;
+    // The off-screen target the armed frame draws into, live only between
+    // `beginFrame` and `endFrame` of that one frame.
+    private RenderTexture2D shotTarget;
+    private bool shotArmed;
 
     @disable this(this);
 
@@ -216,7 +220,21 @@ struct Window
     void resize(int w, int h) @system => SetWindowSize(w, h);
 
     /// Opens the frame. Pair with $(LREF endFrame).
-    void beginFrame() @system => BeginDrawing();
+    void beginFrame() @system
+    {
+        BeginDrawing();
+        // An armed capture redirects the whole frame into an off-screen target
+        // of known size (see `screenshot`). Loaded here rather than kept alive,
+        // because a capture is rare and an idle FBO the size of the window is
+        // not worth the VRAM.
+        if (pendingShot.length != 0)
+        {
+            shotTarget = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+            shotArmed = IsRenderTextureValid(shotTarget);
+            if (shotArmed)
+                BeginTextureMode(shotTarget);
+        }
+    }
 
     /**
     Closes the frame and presents it — capturing first if one was requested.
@@ -229,24 +247,50 @@ struct Window
     {
         if (pendingShot.length != 0)
         {
-            captureNow(pendingShot.stringz.ptr);
+            if (shotArmed)
+            {
+                EndTextureMode();
+                captureTarget(pendingShot.stringz.ptr);
+                // The frame still has to reach the screen: the application
+                // asked for a screenshot, not for a frame it does not get.
+                drawTargetToScreen();
+                UnloadRenderTexture(shotTarget);
+                shotArmed = false;
+            }
             pendingShot.clear();
         }
         EndDrawing();
     }
 
-    // The capture itself: flush, read, write. `rlDrawRenderBatchActive` is not
-    // optional — rlgl buffers draw calls and only submits them at `EndDrawing`,
-    // so without it `glReadPixels` sees a framebuffer the frame's geometry has
-    // not reached yet.
-    private void captureNow(scope const(char)* path) @system
+    // Read the off-screen target and write it out. `rlDrawRenderBatchActive`
+    // is not optional — rlgl buffers draw calls and only submits them at the
+    // end of a mode, so without it the read sees a framebuffer the frame's
+    // geometry has not reached yet.
+    //
+    // The flip is not optional either: a GL framebuffer's origin is bottom-left
+    // and an image file's is top-left, so an unflipped export is upside down.
+    private void captureTarget(scope const(char)* path) @system
     {
         import raylib.rlgl : rlDrawRenderBatchActive;
 
         rlDrawRenderBatchActive();
-        auto img = LoadImageFromScreen();
+        auto img = LoadImageFromTexture(shotTarget.texture);
         scope (exit) UnloadImage(img);
+        ImageFlipVertical(&img);
         ExportImage(img, path);
+    }
+
+    // Blit the captured frame to the window, source-flipped for the same
+    // reason the export is.
+    private void drawTargetToScreen() @system
+    {
+        const w = cast(float) shotTarget.texture.width;
+        const h = cast(float) shotTarget.texture.height;
+        DrawTexturePro(shotTarget.texture,
+            Rectangle(0, 0, w, -h),
+            Rectangle(0, 0, cast(float) GetScreenWidth(),
+                cast(float) GetScreenHeight()),
+            Vector2(0, 0), 0, Colors.WHITE);
     }
 
     /// Polls the platform's input without drawing — what a frame that
@@ -297,6 +341,18 @@ struct Window
     "succeeds" is trusted. On the X11/GLFW arm the post-swap read happened to
     still see the previous frame, so a static scene hid the bug and callers
     papered over it with warm-up frames.
+
+    $(B An off-screen target, not the back buffer.) An armed frame is drawn
+    into a `RenderTexture` of the window's size $(I in points), and that is what
+    is written out; the same texture is then blitted to the window, so the frame
+    still reaches the screen. Reading the back buffer instead — which both
+    `TakeScreenshot` and `LoadImageFromScreen` do — hands back device pixels, so
+    the same capture is 1× on one panel and 2× on a Retina one, with the
+    letterboxing that follows when the two disagree. A capture that changes size
+    with the display it happened to run on cannot be compared against anything.
+
+    An FBO also has one origin: GL's is bottom-left and an image file's is
+    top-left, so both the export and the blit flip.
 
     Unlike raylib's version this one takes `path` verbatim rather than
     resolving it against the working directory, so an absolute path works.
