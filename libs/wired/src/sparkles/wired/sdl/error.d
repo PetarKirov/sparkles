@@ -125,7 +125,7 @@ struct SdlError
     }
 
     /// Allocating convenience rendering for exception and logging boundaries.
-    string toString() const
+    string toString() const @safe
     {
         import std.array : appender;
 

@@ -45,17 +45,15 @@ void main()
     auto sdl = toSDL(original);
     if (sdl.hasError)
         assert(0, sdl.error.toString);
-    // A named `const` copy of the document: `value` hands out the buffer by
-    // value, and a slice taken straight off that temporary would dangle —
-    // the mutable slice of a shared copy-on-write buffer clones the block,
-    // and the clone dies with the temporary at the end of the statement.
-    // real.max at binary128 is a BD token of about 4 900 digits; show the
-    // shape, not the whole thing.
-    const text = sdl.value;
+    // `value` hands the document out by reference, so this slice is of the
+    // result's own buffer and lives as long as `sdl` does. real.max at
+    // binary128 is a BD token of about 4 900 digits; show the shape, not
+    // the whole thing.
+    const text = sdl.value[];
     writefln("%s bytes of SDL, starting: %s", text.length,
-        text.length > 60 ? text[][0 .. 60] ~ "…" : text[]);
+        text.length > 60 ? text[0 .. 60] ~ "…" : text);
 
-    auto back = decode(text[]);
+    auto back = decode(text);
     if (back.hasError)
         assert(0, back.error.toString);
     writefln("float  round-trips: %s", sameBits(back.value.f, original.f));
