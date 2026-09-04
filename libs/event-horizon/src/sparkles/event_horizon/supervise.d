@@ -81,9 +81,10 @@ import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess,
     wait, waitPidOnLane;
 import sparkles.event_horizon.op : OpWaitid;
 import sparkles.event_horizon.proc : ExitStatus, KillOutcome, KillResult,
-    LineFramer, ProcessConfig, ProcessEnd, ProcessEvent, ProcessEventKind,
-    ProcessEventSink, ProcessLine, ProcessResourceUsage, ProcessStream,
-    ReapOutcome, ResidualPolicy, StdioMode, StdioSpec, SupervisedProcessConfig,
+    LineFramer, MetricQuality, MetricSource, ProcessConfig, ProcessEnd,
+    ProcessEvent, ProcessEventKind, ProcessEventSink, ProcessLine,
+    ProcessResourceUsage, ProcessStream, ReapOutcome, ResidualPolicy,
+    SampleSource, StdioMode, StdioSpec, SupervisedProcessConfig,
     SupervisedProcessResult;
 import sparkles.event_horizon.sampling : TreeSampler;
 import sparkles.event_horizon.sched : Alarm, Sched;
@@ -295,6 +296,7 @@ private struct Run
     RootObserverState observer;
     IoError observerError;
     SamplerState samplerState;
+    bool samplerAcked;   /// sticky: the final sample was folded (the state moves on to `exited`)
     FinalSampleMode finalMode;
     uint pending;
     uint[ClockKind.max + 1] pendingEpoch;
@@ -948,7 +950,12 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 rp.tree = TreeState.graceArmed;
                 rp.grace = GraceKind.requested;
                 ++rp.treeEpoch;
-                armClock(ClockKind.grace, config.terminateGrace);
+                // Nothing observable remains once the root is resolved and
+                // the output is over: the requested grace would only idle.
+                if (rp.rootResolved && rp.streamsTerminal)
+                    executeHardKill();
+                else
+                    armClock(ClockKind.grace, config.terminateGrace);
             }
 
             void processPending()
@@ -1113,7 +1120,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 case SamplerState.skipped:
                 case SamplerState.exited:
                 case SamplerState.acked:
-                    rp.sampler.usage.samplingDegraded |= rp.samplerState != SamplerState.acked;
+                    rp.sampler.usage.samplingDegraded |= !rp.samplerAcked;
                     return;
                 case SamplerState.initializing:
                     rp.samplerState = SamplerState.skipped;
@@ -1137,7 +1144,9 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                         break;
                     handle(move(next.value));
                 }
-                if (rp.samplerState != SamplerState.acked)
+                // The sampler's exit follows its ack at once; the ack is
+                // the sticky bit, the state is the lifecycle.
+                if (!rp.samplerAcked)
                     rp.sampler.usage.samplingDegraded = true;
             }
 
@@ -1775,6 +1784,7 @@ private final class SamplerWorker
             // Exactly one final sample, then the ack — the bit before the
             // wake token, so a check-then-park cannot lose it.
             cast(void) protect!(() { cast(void) takeOne(true); return 0; })(*s);
+            rp.samplerAcked = true;
             rp.samplerState = SamplerState.acked;
             rp.pending |= Pending.samplerAck;
             rp.wake();
@@ -3409,4 +3419,228 @@ unittest
         assert(!got.value.terminationDegraded && !got.value.residualPolicyDegraded);
     });
     assert(!r.hasError);
+}
+
+// ── control-plane tests (plan commit 12): clocks, sampler, telemetry ────────
+
+@("supervise.telemetry.killOutcomeTruthTable")
+@safe pure nothrow @nogc
+unittest
+{
+    bool degraded;
+    IoError error;
+    const ok = KillOutcome(KillResult.delivered, 0);
+    const failed = KillOutcome(KillResult.failed, 1 /* EPERM */);
+    const absent = KillOutcome(KillResult.targetAbsent, ESRCH);
+    const none = KillOutcome(KillResult.notAttempted, 0);
+
+    combineKill(ok, ok, true, degraded, error);
+    assert(!degraded, "both delivered");
+    combineKill(ok, none, false, degraded, error);
+    assert(!degraded, "cgroup not owned is not a failure");
+    combineKill(ok, failed, true, degraded, error);
+    assert(degraded && error.errnoValue == 1, "cgroup failure is degradation");
+    combineKill(failed, ok, true, degraded, error);
+    assert(degraded && error.errnoValue == 1, "pgid failure degrades even when cgroup.kill worked");
+    combineKill(absent, none, false, degraded, error);
+    assert(degraded && error.errnoValue == ESRCH, "ESRCH under a pinned zombie is a failure");
+}
+
+@("supervise.sampling.finalSampleBeforeReapSeesTheRootAndItsTier")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        // Final accounting only: the initial fold plus the pre-reap final
+        // sample, taken while the zombie still pins /proc/<pid>.
+        SupervisedProcessConfig cfg;
+        cfg.sampleInterval = Duration.zero;
+        auto got = supervise(s, ["sh", "-c",
+            "i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done"], cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        version (linux)
+        {
+            assert(got.value.usage.sampled && got.value.usage.sampleCount >= 2);
+            assert(got.value.usage.peakProcesses >= 1, "the final sample saw the root");
+            assert(!got.value.usage.samplingDegraded, "no sample was skipped or aborted");
+            assert(got.value.usage.memoryQuality == MetricQuality.lowerBound);
+            assert(got.value.usage.cpuQuality == MetricQuality.lowerBound,
+                "tree CPU is a lower bound under unenforced containment");
+            final switch (got.value.usage.source)
+            {
+            case SampleSource.cgroupFull:
+            case SampleSource.cgroupMembers:
+                assert(got.value.usage.cgroupCpuSource == MetricSource.cgroup
+                    && got.value.usage.cgroupCpuQuality == MetricQuality.exact,
+                    "the run cgroup's own counter is exact");
+                break;
+            case SampleSource.procScan:
+                assert(got.value.usage.cgroupCpuSource == MetricSource.none);
+                break;
+            case SampleSource.none:
+                assert(0, "Linux always has a source");
+            }
+        }
+        else
+            assert(!got.value.usage.sampled);
+    });
+    assert(!r.hasError);
+}
+
+@("supervise.forceEof.isANoopOnceBothStreamsFinished")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        // Streams close at once; the root lingers. Under detach the drain
+        // window arms at root exit, but both streams are already terminal:
+        // nothing is forced, and the run resolves straight away.
+        SupervisedProcessConfig cfg;
+        cfg.residualPolicy = ResidualPolicy.detach;
+        cfg.killDrainWindow = 50.msecs;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = supervise(s, ["sh", "-c", "exec 1>&- 2>&-; sleep 0.2"], cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.end == ProcessEnd.exited && got.value.status.ok);
+        assert(!got.value.eofForced, "no stream was still open to force");
+    });
+    assert(!r.hasError);
+}
+
+@("supervise.residual.requestedTerminationReplacesTheNaturalGrace")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        // Root exits at once; a pipe-holding daemon would get five seconds
+        // of output grace — but the timeout's requested termination
+        // replaces that grace, TERM ends the daemon, and the run returns.
+        SupervisedProcessConfig cfg;
+        cfg.outputGrace = 5.seconds;
+        cfg.timeout = 60.msecs;
+        cfg.terminateGrace = 2.seconds;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sh", "-c", "sleep 30 & exit 0"], cfg);
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(got.value.status.ok, "the root's own status is kept");
+        assert(MonoTime.currTime - before < 1.seconds,
+            "neither the output grace nor terminateGrace was waited out");
+    });
+    assert(!r.hasError);
+}
+
+@("supervise.clock.timeoutAndCancelRaceKeepOneFrozenEnd")
+@safe
+unittest
+{
+    import core.time : msecs;
+    import sparkles.event_horizon.io : sleep;
+    import sparkles.event_horizon.scope_ : JoinHandle, withScope;
+
+    Sched s;
+    schedOrSkip(s);
+    // The two triggers land within the same instant; whichever wins is
+    // the run's end at publication AND at return.
+    foreach (_; 0 .. 3)
+    {
+        ProcessEnd published = ProcessEnd.exited;
+        SupervisedProcessResult got;
+        auto r = s.run(() {
+            auto outcome = withScope!((ref outer) {
+                JoinHandle!void h;
+                outer.fork(h, () {
+                    SupervisedProcessConfig cfg;
+                    cfg.timeout = 30.msecs;
+                    cfg.terminateGrace = 200.msecs;
+                    cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                    auto run = supervise(s, ["sleep", "30"], cfg, null,
+                        (in ProcessEvent ev) {
+                            if (ev.kind == ProcessEventKind.exited)
+                                published = ev.end;
+                        });
+                    assert(run.hasValue, run.hasError ? run.error.context : "");
+                    got = move(run.value);
+                    return ioOk();
+                });
+                cast(void) sleep(s, 30.msecs);
+                outer.cancel();
+                cast(void) h.join(s);
+            })(s);
+            assert(!outcome.hasError);
+        });
+        assert(!r.hasError);
+        assert(got.end == ProcessEnd.timedOut || got.end == ProcessEnd.cancelled);
+        assert(published == got.end, "the published end is the returned end");
+        assert(got.reap == ReapOutcome.reaped && got.status.signaled);
+    }
+}
+
+@("supervise.residual.timeoutOverridesWait")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.residualPolicy = ResidualPolicy.wait;
+        cfg.timeout = 100.msecs;
+        cfg.terminateGrace = 2.seconds;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s,
+            ["sh", "-c", "sleep 0.05; sleep 5 >/dev/null 2>&1 & exit 0"], cfg);
+        if (got.hasError)
+        {
+            assert(got.error.errnoValue == EOPNOTSUPP);
+            return;
+        }
+        assert(got.value.end == ProcessEnd.timedOut, "the timeout overrode the wait");
+        assert(got.value.status.ok);
+        assert(MonoTime.currTime - before < 1.seconds,
+            "TERM ended the daemon; nothing waited for its five seconds");
+        assert(!got.value.residualPolicyDegraded, "an override is not a degradation");
+    });
+    assert(!r.hasError);
+}
+
+@("supervise.emergency.admissionFailureLeavesNoZombie")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 3; // root + observer + one drain: the second drain fails
+    schedOrSkip(s, opts);
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = supervise(s, ["sh", "-c", "echo out; echo err >&2; sleep 30"], cfg);
+        assert(got.hasError && got.error.errnoValue == ENOBUFS);
+        assert(reapRightConsumed(testLastSupervisedPid), "the emergency phase reaped");
+        // The scope's own admission sweep was consumed: the caller's next
+        // cancellable operation is not poisoned.
+        import sparkles.event_horizon.scope_ : checkCancellation;
+        assert(!checkCancellation(s).hasError, "no leaked internal cancel");
+    });
+    assert(!r.hasError);
+    assert(MonoTime.currTime - before < 2.seconds);
 }
