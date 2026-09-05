@@ -61,8 +61,8 @@ import gui_ansi : decodeAnsi;
 import viewer_model : Dims, MdCell, MdFence, ScrollAnchorMode, ViewerModel;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
-    formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
-    formatPreviewRulerPointer, formatPreviewStart, formatPreviewToggle;
+    formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerPointer,
+    formatPreviewRulerShape, formatPreviewStart, formatPreviewToggle;
 
 // The composable markdown view (M10): the preview is one widget tree; the
 
@@ -112,10 +112,9 @@ import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer;
-import sparkles.ui.state : CaptureState, hoverTargets, HoverState, HoverTarget,
-    keyAt, keyTargets, KeyTarget, PressState, ScrollAxis, ScrollbarState,
-    selectionRects, sourceOffsetAt, wantedPointerShape,
-    SplitState, Timeline;
+import sparkles.ui.state : CaptureState, composeShape, hoverTargets, HoverState,
+    HoverTarget, keyAt, keyTargets, KeyTarget, PressState, ScrollAxis,
+    ScrollbarState, selectionRects, sourceOffsetAt, SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.widget : Builder, WidgetTree;
 import sparkles.ui.interp.immediate : paint;
@@ -3320,29 +3319,31 @@ int runGui(GuiArgs guiArgs) @system
         // padding, and the line-number gutter.
         const gutterPx = treePx() + padX + gcols * cellW;
 
-        // The format-preview ruler's shape contribution (`RUL3`): pixel →
-        // fractional document column is the only GUI-side arithmetic; hover
-        // tolerance and drag state are the session's (`RUL8`). Composed into
-        // the frame's ONE pointer-shape call (`DCK9`).
+        // Pixel → fractional document column is the only GUI-side arithmetic
+        // the ruler needs; hover tolerance and drag state are the session's
+        // (`RUL8`).
         double rulerColF() => (cast(double) inp.fin.pos.x - gutterPx) / cellW + dhx;
-        const rulerGrabbing = inp.capture.ownedBy(capFormatRuler)
-            && formatPreviewRulerDragging(vm);
-        const rulerHovering = rulerGrabbing
-            || (inp.capture.isFree && inp.fin.pos.x >= gutterPx
-                && formatPreviewRulerHits(vm, rulerColF()));
 
-        const fenceShape = vm.barShape();
+        // The frame's ONE pointer shape (`DCK15`). Every grab — a divider, a
+        // pane bar, a re-docking tab, the ruler — now records its own shape on
+        // the capture that owns it, so this is no longer a precedence chain
+        // written out by hand. hue keeps a second `CaptureState` for the
+        // affordances it owns outside the container (`DCK8`'s recorded gap), so
+        // it composes over the container's answer; what remains is the list of
+        // things hue paints that the container cannot see, in priority order.
+        //
+        // Through the host, not past it (`HST8`): this used to call
+        // `window.pointerShape` directly.
+        //
         // A link in the rendered preview wants the hand (`MDP25`), resolved
-        // through the identity channel like every other sub-widget hit. It is
-        // the LAST hover contribution: the ruler and the bars are chrome
+        // through the identity channel like every other sub-widget hit — and it
+        // is the LAST claim, because the ruler and the bars are chrome
         // affordances offering an action on the view, and chrome outranks
-        // content (`DCK9`).
-        PointerShape hoverShape()
+        // content (`DCK9`). It stays gated on a free pointer: a claim is not a
+        // declared grab, so `composeShape` would otherwise let the hand appear
+        // mid-drag, which is the one thing this affordance must not do.
+        PointerShape linkClaim()
         {
-            if (rulerHovering)
-                return PointerShape.ewResize;
-            if (fenceShape != PointerShape.default_)
-                return fenceShape;
             if (!vm.showPreview || !inp.capture.isFree
                 || inp.fin.pos.x < gutterPx)
                 return PointerShape.default_;
@@ -3351,14 +3352,13 @@ int runGui(GuiArgs guiArgs) @system
                 cast(int)(vm.top + cast(long)((inp.fin.pos.y - docY0) / cellH))));
         }
 
-        // The settings pane is modal: while it owns the pointer, the frame's
-        // one shape call reports ITS bar machine, not the chrome beneath.
-        window.pointerShape(settingsPane.active
-            ? settingsPane.pointerShape()
-            : pn.dock.shape(
-                rulerGrabbing ? PointerShape.ewResize
-                : vm.barGrabbing ? fenceShape : PointerShape.default_,
-                hoverShape()));
+        h.pointerShape(composeShape(inp.capture, pn.dock.shape(
+            settingsPane.shapeClaim(),
+            inp.fin.pos.x >= gutterPx
+                ? formatPreviewRulerShape(vm, rulerColF())
+                : PointerShape.default_,
+            vm.barShape(),
+            linkClaim())));
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
@@ -3789,7 +3789,10 @@ int runGui(GuiArgs guiArgs) @system
             if (clickPressed() && dockPressPane == docPane && !dockPressConsumed
                 && inp.capture.available(capFormatRuler)
                 && formatPreviewRulerPointer(vm, PointerAction.press, rulerColF()))
-                inp.capture = inp.capture.capturedBy(capFormatRuler);
+                // The grab declares its shape (`DCK15`), so it holds `ew-resize`
+                // wherever the drag strays without the frame re-deriving it.
+                inp.capture = inp.capture.capturedBy(capFormatRuler,
+                    PointerShape.ewResize);
             else if (formatPreviewRulerDragging(vm))
                 formatPreviewRulerPointer(vm,
                     inp.fin.leftReleased ? PointerAction.release : PointerAction.drag,

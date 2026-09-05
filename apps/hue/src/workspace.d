@@ -1213,31 +1213,40 @@ struct WorkspaceTui
         tree.rebuild();
     }
 
-    // The shape a live PANE grab wants (empty when none is grabbing) and
-    // the one a mere hover wants — apart, because the container's
-    // precedence (DCK9) puts every grab above every hover.
-    private PointerShape paneGrabShape() @safe pure nothrow @nogc
-    {
-        if (formatPreviewRulerDragging(viewer.vm))
-            return PointerShape.ewResize; // the ruler grab (`RUL3`)
-        if (viewer.vm.barGrabbing)
-            return viewer.vm.barShape();
-        return PointerShape.default_;
-    }
+    /**
+    The frame's one pointer shape (`DCK15`).
 
-    /// ditto
-    private PointerShape paneHoverShape() @safe pure nothrow @nogc
+    This used to be two methods — the shape a live pane GRAB wants and the one
+    a mere hover wants — held apart only so the container could interleave them
+    at the right precedence. Every grab now records its own shape on the capture
+    that owns it, so the split has nothing left to express and what remains is
+    an ordered list of CLAIMS: the things hue paints that the container cannot
+    see. Each is quiet (`default_`) when it wants nothing, so no caller tests
+    whether a claim counts.
+    */
+    private PointerShape wantedShape() @safe pure nothrow @nogc
+        => dock.shape(
+            settings.shapeClaim(),
+            viewer.rulerHovering ? PointerShape.ewResize   // `RUL3`/`RUL6`
+                : PointerShape.default_,
+            viewer.vm.barShape(),                         // content-level fences
+            // A link in the rendered preview wants the hand (`MDP25`), ranked
+            // last: the ruler and the bars are chrome affordances that offer an
+            // action ON the view, and chrome outranks content (`DCK9`).
+            viewer.linkHovering
+                ? PointerShape.pointer : PointerShape.default_);
+
+    /// Reports $(LREF wantedShape) to the host when it changed — or when a
+    /// live drag makes a terminal likely to have reset it underneath us.
+    private void syncShape(bool reassert) @safe pure nothrow @nogc
     {
-        if (viewer.rulerHovering)
-            return PointerShape.ewResize; // the ruler hover (`RUL3`/`RUL6`)
-        const bar = viewer.vm.barShape();
-        if (bar != PointerShape.default_)
-            return bar;
-        // A link in the rendered preview wants the hand (`MDP25`), ranked
-        // last: the ruler and the bars are chrome affordances that offer an
-        // action ON the view, and chrome outranks content (`DCK9`).
-        return viewer.linkHovering
-            ? PointerShape.pointer : PointerShape.default_;
+        const want = wantedShape();
+        if (want != curShape || reassert)
+        {
+            curShape = want;
+            pendingShape = want;
+            shapePending = true;
+        }
     }
 
     /// Applies one event; returns false to quit.
@@ -1362,16 +1371,9 @@ struct WorkspaceTui
                     PointerEvent local = p;
                     local.pos = Point(p.pos.x - ox, p.pos.y - oy);
                     applySettings(settings.handleOverlay(Event(local), sg));
-                    // The frame's pointer shape while the modal owns the
-                    // pointer: the bar machine's — ns-resize over or
-                    // grabbing the bar, like every other bar in the app.
-                    const want = settings.pointerShape();
-                    if (want != curShape)
-                    {
-                        curShape = want;
-                        pendingShape = want;
-                        shapePending = true;
-                    }
+                    // The modal needs no branch of its own: its claim is
+                    // simply the loudest one while it is open (`MDL1`).
+                    syncShape(false);
                 },
                 (in WheelEvent w) {
                     WheelEvent local = w;
@@ -1505,18 +1507,16 @@ struct WorkspaceTui
         // Routing refreshed both divider and bar hover from the very frames
         // paint consumes. Compose content-level fence chrome after it.
         e.match!((in PointerEvent p) {
-            const grabbed = dock.resizing
-                || dock.scrollOf(treePane).grabbing
-                || dock.scrollOf(docPane).grabbing
-                || dock.scrollOf(inspPane).grabbing
-                || paneGrabShape() != PointerShape.default_;
-            const want = dock.shape(paneGrabShape(), paneHoverShape());
-            if (want != curShape || (grabbed && p.action == PointerAction.drag))
-            {
-                curShape = want;
-                pendingShape = want;
-                shapePending = true;
-            }
+            // A terminal may reset the pointer when a drag starts, so the
+            // shape is re-asserted for as long as one is live (`IXB4`). Asking
+            // the container whether it holds the pointer replaces naming its
+            // three panes and its divider — a list that had already fallen
+            // behind, since it covered neither a tab press nor a re-dock in
+            // flight, both of which are drags that set a shape.
+            const grabbed = dock.grabbing
+                || formatPreviewRulerDragging(viewer.vm)
+                || viewer.vm.barGrabbing;
+            syncShape(grabbed && p.action == PointerAction.drag);
         }, (_) {});
         if (r.kind == RouteKind.container)
         {

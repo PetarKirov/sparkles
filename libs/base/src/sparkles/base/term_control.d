@@ -55,18 +55,60 @@ enum DecMode : ushort
     inBandResize   = 2048, /// In-band resize notifications.
 }
 
-/// Terminal pointer shapes (xterm OSC 22, the CSS `cursor` keywords —
-/// kitty, ghostty, wezterm and foot honor them, others ignore the OSC).
-/// `default_` restores the terminal's own pointer.
-enum PointerShape : string
+/**
+Terminal pointer shapes (xterm OSC 22 — kitty, ghostty, wezterm and foot honor
+them, others ignore the OSC). `default_` restores the terminal's own pointer.
+
+$(B A name, not a string.) The wire spelling is the CSS `cursor` keyword, but it
+belongs to the OSC 22 writer, not to the value: $(LREF cssName) supplies it, and
+every other consumer — the raylib cursor map, a widget declaring what it wants,
+a capture recording its owner's shape — only ever compares members.
+
+The distinction is load-bearing rather than stylistic. `enum PointerShape :
+string` makes every occurrence a 16-byte slice, and this is a value carried
+$(I per element): `sparkles.ui.widget.Widget` is exactly 256 bytes, so a string
+field would spend 16 of them and put the node off that boundary for a property
+almost no node sets. One byte fits in the padding the flags already leave.
+*/
+enum PointerShape : ubyte
 {
-    default_ = "default",   /// the terminal's normal pointer
-    text     = "text",      /// the I-beam over selectable text
-    pointer  = "pointer",   /// the link hand
-    ewResize = "ew-resize", /// horizontal resize (a vertical divider)
-    nsResize = "ns-resize", /// vertical resize (a horizontal divider)
-    grab     = "grab",      /// an open hand (draggable content)
-    grabbing = "grabbing",  /// a closed hand (a drag in progress)
+    default_, /// the terminal's normal pointer
+    text,     /// the I-beam over selectable text
+    pointer,  /// the link hand
+    ewResize, /// horizontal resize (a vertical divider)
+    nsResize, /// vertical resize (a horizontal divider)
+    grab,     /// an open hand (draggable content)
+    grabbing, /// a closed hand (a drag in progress)
+}
+
+/// The CSS `cursor` keyword OSC 22 carries. A `final switch`, so adding a shape
+/// without naming it is a compile error rather than a silently unnamed pointer.
+string cssName(PointerShape s) @safe pure nothrow @nogc
+{
+    final switch (s)
+    {
+        case PointerShape.default_: return "default";
+        case PointerShape.text:     return "text";
+        case PointerShape.pointer:  return "pointer";
+        case PointerShape.ewResize: return "ew-resize";
+        case PointerShape.nsResize: return "ns-resize";
+        case PointerShape.grab:     return "grab";
+        case PointerShape.grabbing: return "grabbing";
+    }
+}
+
+@("term_control.pointerShape.isAByteThatKnowsItsCssName")
+@safe pure nothrow @nogc
+unittest
+{
+    // The whole point of the representation: a shape costs a byte, so an
+    // element may carry one without the arena paying a slice for it.
+    static assert(PointerShape.sizeof == 1);
+    assert(PointerShape.default_.cssName == "default");
+    assert(PointerShape.ewResize.cssName == "ew-resize", "the hyphen is CSS's");
+    // `default_` is the zero value, so a shape nobody set means "leave the
+    // pointer alone" — which is what every composition below relies on.
+    assert(PointerShape.init == PointerShape.default_);
 }
 
 // Every writer below emits nothing for a zero argument: CSI treats a missing/0
@@ -173,7 +215,7 @@ if (modes.length > 0)
 /// `put` (see $(LREF PointerShape); unsupporting terminals ignore the OSC).
 void writeEscapeSeq(PointerShape shape, Writer)(ref Writer w)
 {
-    enum string seq = "\x1b]22;" ~ cast(string) shape ~ "\x1b\\";
+    enum string seq = "\x1b]22;" ~ cssName(shape) ~ "\x1b\\";
     put(w, seq);
 }
 

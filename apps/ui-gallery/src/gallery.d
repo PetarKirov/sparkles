@@ -23,8 +23,7 @@ import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.components.chrome : headerBar, scrollView;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : hoverTargets, keyedRects, ScrollState,
-    wantedPointerShape;
+import sparkles.ui.state : hoverTargets, keyedRects, ScrollState;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
@@ -1117,16 +1116,15 @@ struct Gallery
     */
     private void reportPointerShape(H)(ref H h)
     {
-        // The dock's shape first: a live divider resize (or a hover over
-        // one) wants the resize cursor, and outranks every pane shape.
-        const ds = dock.shape();
-        if (ds != PointerShape.default_)
-            return h.pointerShape(ds);
-
+        // One composition (`DCK15`): the container answers for its own
+        // affordances, and the split-demo page's divider and bars are claims
+        // over it — the shell has no precedence rule of its own to write, and
+        // no "which of these two answers wins" test to get wrong.
         const overDivider = s.pointerAffordances && s.hover.isHot(hitSplit);
-        auto want = wantedPointerShape(s.split, overDivider,
-            s.demoView.v, s.demoView.h);
-        h.pointerShape(want);
+        h.pointerShape(dock.shape(
+            s.split.shape(overDivider),
+            s.demoView.v.shape(),
+            s.demoView.h.shape()));
     }
 
     // ── views ───────────────────────────────────────────────────────────────
