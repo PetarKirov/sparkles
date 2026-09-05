@@ -3,7 +3,7 @@ module sparkles.test_utils.diff_tools;
 enum DiffTools
 {
     deltaUserConfig = "delta --file-style omit --hunk-header-style omit %s %s",
-    deltaPlainConfig = "delta --no-gitconfig --keep-plus-minus-markers --file-style omit --diff-so-fancy --hunk-header-style omit %s %s",
+    deltaPlainConfig = "delta --no-gitconfig --paging=never --keep-plus-minus-markers --file-style omit --diff-so-fancy --hunk-header-style omit %s %s",
     diffSoFancy = "git diff --no-index -- %s %s | diff-so-fancy",
 }
 

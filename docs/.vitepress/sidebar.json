@@ -3963,6 +3963,57 @@
         ]
       },
       {
+        "text": "Linux on macOS",
+        "link": "/research/linux-on-macos/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts",
+            "link": "/research/linux-on-macos/concepts"
+          },
+          {
+            "text": "Backends",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Determinate native Linux builder",
+                "link": "/research/linux-on-macos/determinate-linux-builder"
+              },
+              {
+                "text": "Apple container",
+                "link": "/research/linux-on-macos/apple-container"
+              },
+              {
+                "text": "Apple Containerization",
+                "link": "/research/linux-on-macos/apple-containerization"
+              },
+              {
+                "text": "nix-darwin linux-builder",
+                "link": "/research/linux-on-macos/nix-darwin-linux-builder"
+              }
+            ]
+          },
+          {
+            "text": "Synthesis",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Comparison",
+                "link": "/research/linux-on-macos/comparison"
+              },
+              {
+                "text": "Sparkles Baseline",
+                "link": "/research/linux-on-macos/sparkles-baseline"
+              },
+              {
+                "text": "Recommendations",
+                "link": "/research/linux-on-macos/recommendations"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "TUI Libraries",
         "collapsed": true,
         "items": [
