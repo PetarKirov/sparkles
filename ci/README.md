@@ -67,26 +67,27 @@ PR — which gets no secrets — still run the pipeline.
 | `run-batch.sh`               | Wall-clock `timeout` + non-interactive stdout for the long steps                         |
 | `run-all.sh`                 | Local runner for the entire CI pipeline (or individual stages)                           |
 | `install-ldc-windows.sh`     | LDC + bundled dub on a Windows runner (CircleCI has no D orb)                            |
+| `test-windows.sh`            | The Windows test leg: `dub test` per allowlisted sub-package, `-t 1` then `-t 0`         |
 
 Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 
 ## Job mapping
 
-| GitHub Actions job                  | CircleCI job                         | Notes                                                      |
-| ----------------------------------- | ------------------------------------ | ---------------------------------------------------------- |
-| `test` (ubuntu × ldc2/dmd)          | `test-linux-ldc2`, `test-linux-dmd`  | Matrix over the `dc` parameter                             |
-| `test` (macos × ldc2)               | `test-macos`                         | Separate job — different executor                          |
-| `extracted-tests`                   | `extracted-tests`                    |                                                            |
-| `sanitize`                          | `sanitize-tests`                     | Linux LDC only: ASan + stackovf; own `asan-dub` cache key  |
-| `win32-example`                     | `win32-example`                      | `setup-dlang` → `install-ldc-windows.sh`                   |
-| `nix-build` (ubuntu, macos)         | `nix-build-linux`, `nix-build-macos` |                                                            |
-| `nix-build-android`                 | `nix-build-android`                  |                                                            |
-| `lint`                              | `lint`                               |                                                            |
-| `docs` (build)                      | —                                    | GitHub Actions only (see below)                            |
-| `docs.yml` `deploy`                 | —                                    | GitHub Actions only (see below)                            |
-| `release.yml` `notify-dub-registry` | `notify-dub-registry`                |                                                            |
-| `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                            |
-| `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed |
+| GitHub Actions job                  | CircleCI job                         | Notes                                                                    |
+| ----------------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
+| `test` (ubuntu × ldc2/dmd)          | `test-linux-ldc2`, `test-linux-dmd`  | Matrix over the `dc` parameter                                           |
+| `test` (macos × ldc2)               | `test-macos`                         | Separate job — different executor                                        |
+| `extracted-tests`                   | `extracted-tests`                    |                                                                          |
+| `sanitize`                          | `sanitize-tests`                     | Linux LDC only: ASan + stackovf; own `asan-dub` cache key                |
+| `test` (windows × ldc2)             | `test-windows`                       | No Nix: `setup-dlang` / `install-ldc-windows.sh`, then `test-windows.sh` |
+| `nix-build` (ubuntu, macos)         | `nix-build-linux`, `nix-build-macos` |                                                                          |
+| `nix-build-android`                 | `nix-build-android`                  |                                                                          |
+| `lint`                              | `lint`                               |                                                                          |
+| `docs` (build)                      | —                                    | GitHub Actions only (see below)                                          |
+| `docs.yml` `deploy`                 | —                                    | GitHub Actions only (see below)                                          |
+| `release.yml` `notify-dub-registry` | `notify-dub-registry`                |                                                                          |
+| `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                                          |
+| `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed               |
 
 ## Switching the primary provider
 

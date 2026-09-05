@@ -12,14 +12,14 @@
 # GitHub Actions workflow still uses; there is no CircleCI orb for D.
 #
 # Environment:
-#   LDC_VERSION  LDC release to install (default 1.41.0 — keep in step with
+#   LDC_VERSION  LDC release to install (default 1.42.0 — keep in step with
 #                the `compiler:` pin in .github/workflows/ci.yml).
 set -euo pipefail
 
 # shellcheck source=ci/lib/common.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-version=${LDC_VERSION:-1.41.0}
+version=${LDC_VERSION:-1.42.0}
 prefix=${LDC_PREFIX:-/c/ldc}
 archive="ldc2-${version}-windows-x64.7z"
 url="https://github.com/ldc-developers/ldc/releases/download/v${version}/${archive}"

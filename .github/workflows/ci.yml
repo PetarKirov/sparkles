@@ -79,6 +79,16 @@ jobs:
           - runner: ubuntu-24.04-arm
             system: aarch64-linux
             DC: ldc2
+          # Native Windows — the host the `sparkles:wsi` Win32 backend had only
+          # ever been certified on through Wine. There is no Nix on the hosted
+          # runner, so this leg takes its toolchain from setup-dlang and runs
+          # the suite through ci/test-windows.sh instead of the `ci` helper
+          # (whose closure needs tree-sitter via pkg-config). Which packages it
+          # covers, and why the rest are left out, is that script's business;
+          # the Nix-only steps below are keyed off it by `runner.os`.
+          - runner: windows-latest
+            system: x86_64-windows
+            DC: ldc2
     runs-on: ${{ matrix.runner }}
     # The Linux legs finish in ~4m warm; the macOS leg normally runs ~5m but the
     # hosted Apple-Silicon runner occasionally hangs (a 5m job has stalled for
@@ -109,6 +119,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Nix
+        if: runner.os != 'Windows'
         uses: ./.github/actions/setup-nix
         with:
           push-to-cache: true
@@ -125,7 +136,17 @@ jobs:
             nix-v2-${{ matrix.system }}-${{ matrix.DC }}-
             nix-v2-${{ matrix.system }}-
 
+      # The Windows leg's toolchain (LDC plus the dub it bundles). Pinned to the
+      # flake's LDC so every leg agrees on the compiler; ci/install-ldc-windows.sh
+      # carries the same version for CircleCI.
+      - name: Install D (LDC)
+        if: runner.os == 'Windows'
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.42.0
+
       - name: Cache DUB packages
+        if: runner.os != 'Windows'
         uses: actions/cache@v6
         with:
           path: |
@@ -136,11 +157,23 @@ jobs:
           restore-keys: |
             ${{ matrix.system }}-dub-
 
+      # dub keeps its package store under %LOCALAPPDATA% on Windows, and the
+      # cache action does not accept a per-OS path list, hence the second step.
+      - name: Cache DUB packages (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ~/AppData/Local/dub
+          key: ${{ matrix.system }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            ${{ matrix.system }}-dub-
+
       - name: Run flake checks
-        if: matrix.system != 'aarch64-linux'
+        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: nix flake check
 
       - name: Build and test with dub
+        if: runner.os != 'Windows'
         run: ci --test --fail-fast
         env:
           # `ci` embeds dmd (small closure); honour the matrix compiler for the
@@ -148,8 +181,18 @@ jobs:
           # are on PATH via the `ci` dev shell.
           DC: ${{ matrix.DC }}
 
+      # `ci --test` without the `ci` helper: `dub test` per allowlisted
+      # sub-package, `-t 1` then `-t 0`, under Git Bash so the script shares
+      # ci/lib/common.sh with CircleCI's bash.exe.
+      - name: Build and test with dub (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ci/test-windows.sh
+        env:
+          DC: ${{ matrix.DC }}
+
       - name: Build and run examples
-        if: matrix.system != 'aarch64-linux'
+        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: ci --example-files --fail-fast
 
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
@@ -197,6 +240,42 @@ jobs:
             done
             kill "$weston_pid"
           fi
+
+      # The native half of what libs/wsi/scripts/verify-win32-wine.sh certifies
+      # under Wine: the shared WSI conformance suite through the Win32 driver,
+      # on a real User32 and IOCP. Wine is a compatibility lane, not native
+      # evidence — its monitors are fixed at 96 DPI and its modal loops depend
+      # on which display driver loaded — which is why the spec's comparison.md
+      # carried "native Windows CI" as an owed column. Counts are pinned as in
+      # every other lane, so a driver that skipped everything cannot pass.
+      - name: Build & run the sparkles:wsi Win32 conformance driver
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          dub run --single --compiler=ldc2 libs/wsi/examples/win32-hosted-smoke.d | tee smoke.log
+          grep -q '^ok: Win32 WSI conformance (15 checked, 3 skipped)' smoke.log
+          grep -q '^ok: Win32 text commit + IMM32 composition round trip' smoke.log
+
+      # The Win32 counterpart of the X11/Wayland OS-API steps above: the research
+      # example and the per-feature demos, on druntime's core.sys.windows alone.
+      # WSI_AUTO_EXIT bounds each demo's run; the interactive parts are exercised
+      # by hand and under Wine locally (see the manual-run queue).
+      - name: Build & run OS-API windowing example and demos (Win32)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          WSI_AUTO_EXIT: 1
+        run: |
+          base=docs/research/window-system-integration/os-apis
+          echo "::group::win32 $base/win32/example"
+          dub run --compiler=ldc2 --root="$base/win32/example"
+          echo "::endgroup::"
+          for d in "$base"/win32/examples/*/; do
+            [ -f "$d/dub.sdl" ] || continue
+            echo "::group::win32 $d"
+            dub run --compiler=ldc2 --root="$d"
+            echo "::endgroup::"
+          done
 
   # The test runner's extracted-test modes. `--test` does not cover these: a
   # @betterC test runs as an ordinary unittest there, and only `--better-c`
@@ -311,47 +390,6 @@ jobs:
         run: ci --test-sanitize --fail-fast
         env:
           DC: ldc2
-
-  # The Win32 OS-API example builds with druntime's core.sys.windows (no Nix, no
-  # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
-  win32-example:
-    name: Win32 OS-API example (windows-latest)
-    if: github.event_name == 'pull_request'
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Install D (LDC)
-        uses: dlang-community/setup-dlang@v2
-        with:
-          compiler: ldc-1.41.0
-
-      - name: Cache DUB packages
-        uses: actions/cache@v6
-        with:
-          path: ~/AppData/Local/dub
-          key: windows-dub-osapi
-          restore-keys: windows-dub-osapi
-
-      - name: Build & run the Win32 example
-        run: dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/win32/example
-
-      # Per-feature Win32 demos: bounded run via WSI_AUTO_EXIT (interactive parts
-      # are exercised manually / under Wine locally — see the manual-run queue).
-      - name: Build & run the Win32 demos
-        shell: bash
-        env:
-          WSI_AUTO_EXIT: 1
-        run: |
-          base=docs/research/window-system-integration/os-apis
-          for d in "$base"/win32/examples/*/; do
-            [ -f "$d/dub.sdl" ] || continue
-            echo "::group::win32 $d"
-            dub run --compiler=ldc2 --root="$d"
-            echo "::endgroup::"
-          done
 
   # Build the Nix outputs and push them to the binary cache, once per system
   # (the derivations are compiler-agnostic — they always build with ldc — so
@@ -593,7 +631,6 @@ jobs:
       - test
       - extracted-tests
       - sanitize
-      - win32-example
       - nix-build
       - nix-build-android
       - lint
