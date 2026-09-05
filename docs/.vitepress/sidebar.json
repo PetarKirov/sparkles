@@ -163,6 +163,23 @@
     "collapsed": true,
     "items": [
       {
+        "text": "event-horizon",
+        "link": "/libs/event-horizon/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Tutorial",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Coming from Node.js",
+                "link": "/libs/event-horizon/tutorial/coming-from-nodejs"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "base",
         "link": "/libs/base/",
         "collapsed": true,
