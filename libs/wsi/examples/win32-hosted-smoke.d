@@ -1,3 +1,16 @@
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "win32_hosted_smoke"
+    dependency "sparkles:wsi" path="../../.."
+    dependency "sparkles:event-horizon" path="../../.."
+    dependency "sparkles:input" path="../../.."
+    dependency "expected" version="~>0.4.1"
+    platforms "windows"
+    targetPath "build"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
 /**
 Win32 driver for the shared WSI conformance suite.
 
