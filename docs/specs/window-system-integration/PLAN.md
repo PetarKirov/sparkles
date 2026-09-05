@@ -4,7 +4,7 @@ _Companion to [SPEC.md](./SPEC.md). Each milestone ends green, records evidence 
 [comparison.md](./comparison.md), and leaves the repository buildable. Feature IDs refer
 to [feature-requirements.md](./feature-requirements.md)._
 
-**Last reviewed:** August 21, 2026
+**Last reviewed:** September 5, 2026
 
 ## Rules of execution
 
@@ -393,8 +393,9 @@ Record Wine results as compatibility evidence, not proof of undocumented native
 Windows behavior. The `windows-latest` test leg (`ci/test-windows.sh` plus the
 driver step in `.github/workflows/ci.yml`, mirrored by CircleCI's
 `test-windows`) runs the same `win32-hosted-smoke.d` recipe natively and is the
-evidence of record for what User32 does; Wine keeps the IMM32 composition round
-trip, which the hosted runner's IME-less layout cannot perform.
+evidence of record for what User32 does; Wine keeps the IMM32 preedit phase, which
+the hosted runner's IME-less layout never shows; the result-string commit is native
+evidence.
 
 ### macOS remotely
 

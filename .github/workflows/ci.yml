@@ -248,9 +248,9 @@ jobs:
       # on which display driver loaded — which is why the spec's comparison.md
       # carried "native Windows CI" as an owed column. Counts are pinned as in
       # every other lane, so a driver that skipped everything cannot pass. The
-      # IMM32 composition round trip is the one addendum this host cannot run:
-      # the runner's US layout composes nothing, so the driver reports the UTF-16
-      # commit alone and says so — that evidence stays with the Wine lane.
+      # IMM32 preedit phase is the one thing this host cannot show: the runner's
+      # US layout has no IME UI, so the driver sees the result-string commit but
+      # no preedit, and says so — the preedit evidence stays with the Wine lane.
       - name: Build & run the sparkles:wsi Win32 conformance driver
         if: runner.os == 'Windows'
         shell: bash
