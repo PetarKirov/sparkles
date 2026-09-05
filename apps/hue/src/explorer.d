@@ -347,6 +347,31 @@ struct ExplorerTui
         return entries;
     }
 
+    /// The first entry of `dir` this pane would show, or `null` when it would
+    /// show none — the cheap half of $(LREF listDir) for the one question a
+    /// closed directory has to answer. Stops at the first hit: no array, no
+    /// sort, no icon resolution for the rest.
+    private FsEntry* firstVisibleEntry(string dir) @system
+    {
+        try
+            foreach (e; dirEntries(dir, SpanMode.shallow))
+            {
+                const nm = baseName(e.name);
+                if (nm.length == 0 || nm == ".git")
+                    continue;
+                auto fe = FsEntry(nm, e.name, e.isDir);
+                if (!visible(fe))
+                    continue;
+                fe.iconFg = fe.isDir ? RgbColor(0xdc, 0xb6, 0x7a) : fsIcon(nm).fg;
+                fe.hasIconFg = true;
+                return [fe].ptr;
+            }
+        catch (Exception)
+        {
+        }
+        return null;
+    }
+
     // Case-insensitive substring match (ASCII fold; allocation-free).
     private bool matches(scope const(char)[] name) const @safe pure nothrow @nogc
     {
@@ -428,6 +453,23 @@ struct ExplorerTui
     {
         data = TreeData!FsEntry.init;
 
+
+        // A CLOSED directory's children are never displayed — `flatten` does
+        // not walk into a node that is not open — so the only question they
+        // answer is `hasChildren`, which decides its disclosure marker. One
+        // child answers it exactly as well as all of them, and finding one
+        // stops at the first visible entry instead of reading, allocating and
+        // sorting the whole directory.
+        //
+        // This is what made opening any file in a large directory expensive:
+        // the marker probe ran over every visible subdirectory, so the cost
+        // tracked the DIRECTORY, not the document.
+        void probeChild(string dir, uint parent)
+        {
+            if (auto first = firstVisibleEntry(dir))
+                data.add(*first, parent);
+        }
+
         // Unfiltered: children of visible dirs always load (so a closed but
         // visible dir's disclosure marker is honest — `expanded` runs one
         // level past `open`); recursion continues only down the visible+open
@@ -443,8 +485,10 @@ struct ExplorerTui
                 const idx = data.add(e, parent);
                 if (!e.isDir)
                     continue;
-                if (childrenVisible || isOpen)
-                    addChildren(e.path, idx, childrenVisible && isOpen);
+                if (isOpen)
+                    addChildren(e.path, idx, childrenVisible);
+                else if (childrenVisible)
+                    probeChild(e.path, idx);
             }
         }
 
@@ -1060,6 +1104,67 @@ unittest
     assert(!x.activate());
     assert(x.picked.canFind("app.d"));
 }
+@("explorer.tree.closedDirMarkerIsProbedNotListed")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : LabelSet;
+
+    // A closed directory's children are never displayed, so the tree only
+    // probes for the first one — its marker's honesty is the whole question.
+    // full/  : many children, marker shown, ALL of them appear when opened
+    // empty/ : no children, no marker
+    // dotonly/: only entries the pane hides, so also no marker
+    const root = buildPath(tempDir(), "hue-explorer-probe");
+    mkdirRecurse(buildPath(root, "full"));
+    mkdirRecurse(buildPath(root, "empty"));
+    mkdirRecurse(buildPath(root, "dotonly"));
+    scope (exit) rmdirRecurse(root);
+    foreach (i; 0 .. 12)
+        write(buildPath(root, "full", text("f", i, ".d")), "void main(){}\n");
+    // Hidden, so `visible` rejects it — the probe must apply the same filter
+    // the full listing does, not merely skip `.git`.
+    write(buildPath(root, "dotonly", ".hidden"), "x\n");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.pageFg = toRgb(x.theme.defaults.fg, fallbackFg);
+    x.pageBg = toRgb(x.theme.defaults.bg, fallbackBg);
+    x.width = 50;
+    x.height = 24;
+    x.rebuild();
+
+    uint nodeNamed(string want)
+    {
+        foreach (ref const r; x.rows)
+            if (x.data.nodes[r.node].value.name == want)
+                return r.node;
+        assert(false, "no row named " ~ want);
+    }
+
+    assert(x.data.hasChildren(nodeNamed("full")),
+        "a non-empty closed dir must still carry a disclosure marker");
+    assert(!x.data.hasChildren(nodeNamed("empty")),
+        "an empty dir must not claim children");
+    assert(!x.data.hasChildren(nodeNamed("dotonly")),
+        "a dir holding only hidden entries must not claim children");
+
+    // The probe stores one child, not all — but opening must still reveal
+    // every one of them, because opening rebuilds and lists in full.
+    x.open = x.open.opened(buildPath(root, "full"));
+    x.rebuild();
+    size_t under;
+    foreach (ref const r; x.rows)
+        if (r.depth == 1)
+            under++;
+    assert(under == 12, text("opening a probed dir must list all 12, saw ", under));
+}
+
 @("explorer.pointer.scrollbarGrabIsNotARowClick")
 @system
 unittest
