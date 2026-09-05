@@ -30,10 +30,12 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # npm ci + the wasm nix build + VitePress build + Cloudflare deploy run ~5m
-    # uncontended; runner contention during stacked-PR storms stretches the
-    # nix setup/teardown past 15m, cancelling after the deploy had succeeded.
-    timeout-minutes: 30
+    # The generated inputs build concurrently and VitePress takes ~3 min; the
+    # whole job is ~8m uncontended. No /nix/store Actions cache here either —
+    # see the note at the top of ci.yml: Cachix serves the closure, and the
+    # save was a refused two-minute tar. Headroom for runner contention, which
+    # once stretched a 15m cap past the deploy having succeeded.
+    timeout-minutes: 20
 
     permissions:
       contents: read
@@ -56,7 +58,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v7

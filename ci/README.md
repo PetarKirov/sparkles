@@ -73,21 +73,25 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 
 ## Job mapping
 
-| GitHub Actions job                  | CircleCI job                         | Notes                                                                    |
-| ----------------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
-| `test` (ubuntu × ldc2/dmd)          | `test-linux-ldc2`, `test-linux-dmd`  | Matrix over the `dc` parameter                                           |
-| `test` (macos × ldc2)               | `test-macos`                         | Separate job — different executor                                        |
-| `extracted-tests`                   | `extracted-tests`                    |                                                                          |
-| `sanitize`                          | `sanitize-tests`                     | Linux LDC only: ASan + stackovf; own `asan-dub` cache key                |
-| `test` (windows × ldc2)             | `test-windows`                       | No Nix: `setup-dlang` / `install-ldc-windows.sh`, then `test-windows.sh` |
-| `nix-build` (ubuntu, macos)         | `nix-build-linux`, `nix-build-macos` |                                                                          |
-| `nix-build-android`                 | `nix-build-android`                  |                                                                          |
-| `lint`                              | `lint`                               |                                                                          |
-| `docs` (build)                      | —                                    | GitHub Actions only (see below)                                          |
-| `docs.yml` `deploy`                 | —                                    | GitHub Actions only (see below)                                          |
-| `release.yml` `notify-dub-registry` | `notify-dub-registry`                |                                                                          |
-| `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                                          |
-| `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed               |
+| GitHub Actions job                    | CircleCI job                         | Notes                                                                    |
+| ------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
+| `test` (ubuntu × ldc2/dmd, 4 shards)  | `test-linux-ldc2`, `test-linux-dmd`  | `ci --test --shard I/4` per runner; CircleCI runs each leg unsharded     |
+| `test` (macos × ldc2, 4 shards)       | `test-macos`                         | Separate job — different executor                                        |
+| `test` (arm64 ubuntu, 4 shards)       | —                                    | GitHub Actions only                                                      |
+| `examples` (ubuntu × ldc2/dmd, macos) | —                                    | `nix flake check` + `ci --example-files`; was the tail of `test`         |
+| `wsi-demos`                           | —                                    | The X11/Wayland OS-API examples and demos; was the tail of `test`        |
+| `md-examples` (2 shards)              | —                                    | `ci --verify` over every markdown file; was the tail of `lint`           |
+| `extracted-tests`                     | `extracted-tests`                    |                                                                          |
+| `sanitize` (4 shards)                 | `sanitize-tests`                     | Linux LDC only: ASan + stackovf; own `asan-dub` cache key                |
+| `test-windows`                        | `test-windows`                       | No Nix: `setup-dlang` / `install-ldc-windows.sh`, then `test-windows.sh` |
+| `nix-build` (ubuntu, macos)           | `nix-build-linux`, `nix-build-macos` |                                                                          |
+| `nix-build-android`                   | `nix-build-android`                  |                                                                          |
+| `lint`                                | `lint`                               |                                                                          |
+| `docs` (build)                        | —                                    | GitHub Actions only (see below)                                          |
+| `docs.yml` `deploy`                   | —                                    | GitHub Actions only (see below)                                          |
+| `release.yml` `notify-dub-registry`   | `notify-dub-registry`                |                                                                          |
+| `release.yml` `nix-build-pin`         | `nix-build-pin-linux/-macos`         |                                                                          |
+| `ci` (fan-in)                         | `ci`                                 | CircleCI will not start it unless every `requires:` passed               |
 
 ## Switching the primary provider
 
@@ -116,7 +120,7 @@ then disable the project (CircleCI) or the workflow triggers (GitHub).
 
 > [!WARNING]
 > On GitHub Actions everything except `lint` is guarded by
-> `if: github.event_name != 'push'`, so a run on `main` deliberately does only
+> `if: github.event_name == 'pull_request'`, so a run on `main` deliberately does only
 > the cache seeding. That was written while CircleCI ran the full matrix on
 > `main`. Once CircleCI is disabled, **nothing runs the full suite on `main`**
 > — only per-PR. Drop those guards if you want post-merge coverage back.
