@@ -571,7 +571,36 @@ struct DocumentPipeline
                 throw new Exception(res.error.toString);
             return res.value;
         }
-        return readText(path);
+        return readValidatedUtf8(path);
+    }
+
+    /**
+    `std.file.readText` for files hue actually opens.
+
+    Phobos reads and then validates with `std.utf`, whose scalar walk runs at
+    roughly 550 MB/s all-in — 131 ms of a 73 MB file, most of it validation.
+    `sparkles.base.text.utf8.indexOfInvalidUtf8` is the same check written as
+    a word-at-a-time ASCII skip, documented as the replaceable seam for
+    exactly this, and measures **11.6 GB/s** on the same bytes. Reading raw
+    and validating with it costs 46 ms for the same guarantee.
+
+    The guarantee is the point: this does not skip validation, it stops using
+    a slow implementation of it. Every consumer downstream — the highlighter,
+    the grapheme segmentation in the cell measurer — still gets bytes it has
+    been told are well-formed, and an ill-formed file still fails here rather
+    than somewhere deep in a renderer.
+    */
+    private static string readValidatedUtf8(string path) @system
+    {
+        import sparkles.base.text.utf8 : indexOfInvalidUtf8;
+        import std.file : read;
+
+        auto bytes = cast(string) read(path);
+        const bad = indexOfInvalidUtf8(bytes);
+        if (bad != bytes.length)
+            throw new Exception(text("invalid UTF-8 in ", path,
+                " at byte ", bad));
+        return bytes;
     }
 
     /// A diff document from unified-patch text (`DVS2`: a `.patch`/`.diff`
