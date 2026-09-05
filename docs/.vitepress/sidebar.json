@@ -167,6 +167,55 @@
     "collapsed": true,
     "items": [
       {
+        "text": "event-horizon",
+        "link": "/libs/event-horizon/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Tutorial",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Coming from Node.js",
+                "link": "/libs/event-horizon/tutorial/coming-from-nodejs"
+              },
+              {
+                "text": "Coming from eventcore",
+                "link": "/libs/event-horizon/tutorial/coming-from-eventcore"
+              },
+              {
+                "text": "Coming from vibe-core",
+                "link": "/libs/event-horizon/tutorial/coming-from-vibe-core"
+              },
+              {
+                "text": "Coming from libasync",
+                "link": "/libs/event-horizon/tutorial/coming-from-libasync"
+              },
+              {
+                "text": "Coming from Photon",
+                "link": "/libs/event-horizon/tutorial/coming-from-photon"
+              },
+              {
+                "text": "Coming from collie",
+                "link": "/libs/event-horizon/tutorial/coming-from-collie"
+              },
+              {
+                "text": "Coming from hunt-net",
+                "link": "/libs/event-horizon/tutorial/coming-from-hunt-net"
+              },
+              {
+                "text": "Coming from EVE",
+                "link": "/libs/event-horizon/tutorial/coming-from-eve"
+              },
+              {
+                "text": "Running the examples",
+                "link": "/libs/event-horizon/tutorial/running-examples"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "base",
         "link": "/libs/base/",
         "collapsed": true,
