@@ -228,7 +228,7 @@ private ulong saturatingAdd(ulong a, ulong b) @safe pure nothrow @nogc
 
 version (linux)
 {
-    import core.stdc.errno : errno;
+    import core.stdc.errno : EMFILE, ENOENT, ESRCH, errno;
     import core.sys.posix.fcntl : O_CLOEXEC, O_DIRECTORY, O_PATH, O_RDONLY,
         open, openat;
     import core.sys.posix.unistd : close, pread;
@@ -391,24 +391,42 @@ version (linux)
                 || threadCpuNow() - startedCpu >= b.maxTime;
     }
 
+    /// What one proc read established: only `gone` is proof of death —
+    /// `unreadable` (a descriptor shortage, `EACCES`, an interrupted or
+    /// short read, a parse failure) retains the entry and reports
+    /// degradation, never a retirement.
+    package enum ProbeRead : ubyte
+    {
+        ok,
+        gone,
+        unreadable,
+    }
+
+    /// Whether an errno from opening a proc entry means the process is gone.
+    private bool errnoMeansGone(int err) @safe pure nothrow @nogc
+        => err == ENOENT || err == ESRCH;
+
     /// Reads `/proc/<pid>/stat` through a per-sample `O_PATH` handle of the
-    /// process directory; `false` when the process is gone or unreadable.
-    private bool readStatUnder(int dirFd, out ProcStat st, ref Spent spent)
+    /// process directory.
+    private ProbeRead readStatUnder(int dirFd, out ProcStat st, ref Spent spent)
         @trusted nothrow
     {
         const fd = openat(dirFd, "stat", O_RDONLY | O_CLOEXEC);
         if (fd < 0)
-            return false;
+            return errnoMeansGone(errno) ? ProbeRead.gone : ProbeRead.unreadable;
         scope (exit) close(fd);
         char[1024] buf = void;
         const n = pread(fd, buf.ptr, buf.length, 0);
-        if (n <= 0)
-            return false;
+        if (n < 0)
+            return errnoMeansGone(errno) ? ProbeRead.gone : ProbeRead.unreadable;
+        if (n == 0)
+            return ProbeRead.unreadable; // a zombie's stat still reads; empty is not death
         spent.bytes += n;
-        return parseProcStat(buf[0 .. n], st);
+        return parseProcStat(buf[0 .. n], st) ? ProbeRead.ok : ProbeRead.unreadable;
     }
 
-    /// Opens `/proc/<pid>` as an `O_PATH` directory handle; -1 when gone.
+    /// Opens `/proc/<pid>` as an `O_PATH` directory handle; -1 with `errno`
+    /// set when it cannot be opened.
     private int openProcDir(int pid) @trusted nothrow @nogc
     {
         import core.stdc.stdio : snprintf;
@@ -477,6 +495,8 @@ version (linux)
         {
             /// Test hook: runs between the two root validations of a sample.
             package void delegate() nothrow testBetweenValidations;
+            /// Test hook: every member open fails with `EMFILE` while set.
+            package bool testFailMemberOpens;
         }
 
         /// Whether pid-based sampling is possible for this run.
@@ -501,7 +521,7 @@ version (linux)
             _rootFd = openProcDir(rootPid);
             Spent spent;
             ProcStat st;
-            if (_rootFd < 0 || !readStatUnder(_rootFd, st, spent))
+            if (_rootFd < 0 || readStatUnder(_rootFd, st, spent) != ProbeRead.ok)
             {
                 if (_rootFd >= 0)
                     close(_rootFd);
@@ -521,6 +541,20 @@ version (linux)
                 close(_rootFd);
             _rootFd = -1;
             _anchored = false;
+        }
+
+        /**
+        The cgroup-only terminal sample (SPEC §13.8): reads and commits the
+        run cgroup's own cumulative counters and touches no proc path — the
+        request mode for a root whose pid identity is gone. `false` without
+        an owned cgroup: the caller reports the degraded skip.
+        */
+        bool sampleCgroupOnly() @trusted nothrow
+        {
+            if (_cgroup is null)
+                return false;
+            commitCgroupOnlyMerged(readCgroupCounters());
+            return true;
         }
 
         /// The root's identity as anchored (valid while `anchored`).
@@ -607,6 +641,7 @@ version (linux)
             ProcessIdentity[] gone;   /// live entries proven gone
             bool budgetHit;
             bool rejected;            /// an admission would exceed capacity
+            bool unreadable;          /// a live entry could not be read: retained, degraded
         }
 
         struct CgroupRead
@@ -622,7 +657,8 @@ version (linux)
         bool rootStillOriginal(ref Spent spent) @trusted nothrow
         {
             ProcStat st;
-            if (!readStatUnder(_rootFd, st, spent) || st.startTime != _rootStart)
+            if (readStatUnder(_rootFd, st, spent) != ProbeRead.ok
+                || st.startTime != _rootStart)
                 return false;
             _rootZombie = st.zombie;
             return true;
@@ -668,17 +704,40 @@ version (linux)
                     return false;
                 }
                 ++spent.entries;
-                const fd = openProcDir(id.pid);
+                int fd = -1;
+                version (unittest)
+                {
+                    if (testFailMemberOpens)
+                        errno = EMFILE; // a forced descriptor shortage
+                    else
+                        fd = openProcDir(id.pid);
+                }
+                else
+                    fd = openProcDir(id.pid);
                 if (fd < 0)
                 {
-                    scratch.gone ~= id;
+                    if (errnoMeansGone(errno))
+                        scratch.gone ~= id;
+                    else
+                        scratch.unreadable = true; // retained: not proof of death
                     return true;
                 }
                 scope (exit) close(fd);
                 ProcStat st;
-                if (!readStatUnder(fd, st, spent) || st.startTime != id.startTime)
+                final switch (readStatUnder(fd, st, spent))
                 {
-                    scratch.gone ~= id; // disappeared, or an immediate pid reuse
+                case ProbeRead.gone:
+                    scratch.gone ~= id;
+                    return true;
+                case ProbeRead.unreadable:
+                    scratch.unreadable = true;
+                    return true;
+                case ProbeRead.ok:
+                    break;
+                }
+                if (st.startTime != id.startTime)
+                {
+                    scratch.gone ~= id; // an immediate pid reuse: a different identity
                     return true;
                 }
                 scratch.present ~= Probe(id,
@@ -746,7 +805,7 @@ version (linux)
                     continue;
                 scope (exit) close(fd);
                 ProcStat st;
-                if (!readStatUnder(fd, st, spent))
+                if (readStatUnder(fd, st, spent) != ProbeRead.ok)
                     continue;
                 seen[pid] = Seen(st, false);
             }
@@ -847,7 +906,7 @@ version (linux)
                     continue;
                 scope (exit) close(fd);
                 ProcStat st;
-                if (!readStatUnder(fd, st, spent))
+                if (readStatUnder(fd, st, spent) != ProbeRead.ok)
                     continue;
                 noteDiscovered(scratch, ProcessIdentity(pid, st.startTime), st);
             }
@@ -881,7 +940,7 @@ version (linux)
                 if (!insideCgroup(fd, _cgroup.path[], spent))
                     continue;
                 ProcStat st;
-                if (!readStatUnder(fd, st, spent))
+                if (readStatUnder(fd, st, spent) != ProbeRead.ok)
                     continue;
                 noteDiscovered(scratch, ProcessIdentity(pid, st.startTime), st);
             }
@@ -906,6 +965,8 @@ version (linux)
 
             if (scratch.budgetHit || scratch.rejected)
                 usage.accountingSaturated = true;
+            if (scratch.unreadable)
+                usage.samplingDegraded = true; // a live entry was retained unread
             const liveCount = scratch.present.length;
             if (liveCount == 0)
                 return commitCgroupOnlyMerged(cg); // root unseen: keep prior peaks
@@ -1022,6 +1083,7 @@ else
         void anchor(int, void*) @safe nothrow @nogc {}
         void finish() @safe nothrow @nogc {}
         bool sample() @safe nothrow @nogc => false;
+        bool sampleCgroupOnly() @safe nothrow @nogc => false;
     }
 }
 
@@ -1303,6 +1365,100 @@ version (linux)
         assert(killTree(run) == 0);
         reapBlocking(child.pid);
         child.pid = -1;
+        bool leaked;
+        int failure;
+        cleanupRun(run, 2.seconds, leaked, failure);
+        assert(!leaked);
+    }
+}
+
+version (linux)
+{
+    @("sampling.reprobe.transientReadFailureRetainsALiveIdentity")
+    @system
+    unittest
+    {
+        // A CPU-burning root: its identity must survive a forced descriptor
+        // shortage on the re-probe and keep accumulating once reads work.
+        auto spawned = spawnProcess(["sh", "-c", "while :; do :; done"]);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        scope (exit)
+        {
+            cast(void) child.kill(SIGKILL);
+            reapBlocking(child.pid);
+        }
+        TreeSampler sampler;
+        sampler.anchor(child.pid, null);
+        assert(sampler.anchored);
+        scope (exit) sampler.finish();
+        Thread.sleep(60.msecs);
+        assert(sampler.sample());
+        const root = sampler.rootIdentity;
+        assert(sampler.ledger.isLive(root), "the root is a live ledger entry");
+        const before = sampler.ledger.total();
+        assert(!sampler.usage.samplingDegraded);
+
+        sampler.testFailMemberOpens = true;
+        assert(sampler.sample(), "the sample still merges");
+        sampler.testFailMemberOpens = false;
+        assert(sampler.ledger.isLive(root), "an unreadable entry is retained, not retired");
+        assert(sampler.usage.samplingDegraded, "…and the run reports the degradation");
+        assert(sampler.ledger.retired() == ProcessCpu.init, "nothing moved to the scalar");
+
+        Thread.sleep(120.msecs);
+        assert(sampler.sample());
+        assert(sampler.ledger.isLive(root));
+        const after = sampler.ledger.total();
+        assert(after.userTicks + after.systemTicks > before.userTicks + before.systemTicks,
+            "accumulation resumed for the living process");
+    }
+
+    @("sampling.cgroupOnly.commitsCountersWithoutProcAccess")
+    @system
+    unittest
+    {
+        import sparkles.event_horizon.cgroup : CgroupRun, cleanupRun, createRun,
+            killTree, migrateInto;
+
+        CgroupRun run;
+        createRun(run, 900_078);
+        if (run.tier == CgroupTier.none)
+        {
+            bool leaked;
+            int failure;
+            if (run.dirCreated)
+                cleanupRun(run, 10.msecs, leaked, failure);
+            skipTest("no owned cgroup v2 directory on this host");
+        }
+        // The root exits early; its CPU-burning daemon stays in the cgroup.
+        auto spawned = spawnProcess(["sh", "-c",
+            "sleep 0.05; (while :; do :; done) >/dev/null 2>&1 & exit 0"]);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        assert(migrateInto(run, child.pid) == 0);
+        TreeSampler sampler;
+        sampler.anchor(child.pid, &run);
+        assert(sampler.anchored);
+        scope (exit) sampler.finish();
+        Thread.sleep(150.msecs);
+        assert(sampler.sample());
+        const cpuBefore = sampler.usage.cgroupUserTime + sampler.usage.cgroupSystemTime;
+        const countBefore = sampler.usage.sampleCount;
+
+        // The root is reaped elsewhere (the contract violation the mode
+        // exists for); the daemon keeps burning inside the cgroup.
+        reapBlocking(child.pid);
+        child.pid = -1;
+        Thread.sleep(150.msecs);
+        assert(sampler.sampleCgroupOnly(), "the run cgroup's counters commit");
+        assert(sampler.usage.sampleCount == countBefore + 1);
+        assert(sampler.usage.cgroupUserTime + sampler.usage.cgroupSystemTime > cpuBefore,
+            "the final counters reflect CPU burned after the last full sample");
+        assert(!sampler.usage.samplingDegraded, "a cgroup-only commit is not a skip");
+        assert(!sampler.sample(), "the proc path, by contrast, fails closed");
+
+        assert(killTree(run) == 0);
         bool leaked;
         int failure;
         cleanupRun(run, 2.seconds, leaked, failure);

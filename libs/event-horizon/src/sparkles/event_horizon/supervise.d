@@ -304,10 +304,14 @@ private struct Run
     ClockSlot[ClockKind.max + 1] clocks;
     Alarm sampleAlarm;
     Alarm probeAlarm;
+    Alarm laneAlarm;     /// the lane observer worker's backoff
+    Alarm evidenceAlarm; /// the evidence worker's refusal backoff
+    int testObserverErrno; /// tests: make the root observer fail with this errno…
+    bool testObserverArmed; /// …once the first bytes message was handled
 
     FiberContext* clockCtx, samplerCtx, stdinCtx, stdoutCtx, stderrCtx,
-        observerCtx, evidenceCtx;
-    bool stopClock, stopSampler, stopStdin, stopEvidence, evidenceActive;
+        observerCtx, evidenceCtx, laneObserverCtx;
+    bool stopClock, stopSampler, stopStdin, stopEvidence, stopLane, evidenceActive;
 
     KillOutcome pgidKill, cgroupKillOutcome;
     bool killExecuted;
@@ -352,10 +356,11 @@ private struct Run
     bool streamsTerminal() const @safe pure nothrow @nogc
         => stdoutFinished && stderrFinished;
 
+    /// A failed observer is NOT a resolved root: its observation moves to
+    /// the lane (`laneOwned`) and resolves there.
     bool rootResolved() const @safe pure nothrow @nogc
         => observer == RootObserverState.observed
-            || observer == RootObserverState.lost
-            || observer == RootObserverState.failed;
+            || observer == RootObserverState.lost;
 
     bool treeResolved() const @safe pure nothrow @nogc
         => tree == TreeState.waited || tree == TreeState.detachedDrained
@@ -478,7 +483,8 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     scope const(ubyte)[] stdinBytes,
     scope ProcessEventSink onEvent,
     scope RelayTestHook beforeHandle,
-    int* signalAttempts = null) @trusted
+    int* signalAttempts = null,
+    int testObserverErrno = 0) @trusted
 {
     import core.atomic : atomicOp;
 
@@ -510,6 +516,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     version (unittest)
     {
         run.signalAttempts = signalAttempts;
+        run.testObserverErrno = testObserverErrno;
         run.beforeHandle = beforeHandle;
     }
 
@@ -698,6 +705,16 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     schedP.wake(rp.clockCtx);
             }
 
+            /// Stops the evidence worker wherever it parks: its parks are all
+            /// manual (the initial wait, the pool wait, the alarm backoff),
+            /// so a wake is always safe and always sufficient.
+            void stopEvidenceWorker()
+            {
+                rp.stopEvidence = true;
+                if (rp.evidenceCtx !is null)
+                    schedP.wake(rp.evidenceCtx);
+            }
+
             void stopStdinWorker()
             {
                 rp.stopStdin = true;
@@ -785,9 +802,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     rp.residualDegraded = true;
                     rp.residualError = why;
                 }
-                rp.stopEvidence = true;
-                if (rp.evidenceCtx !is null)
-                    interruptFiber(rp.evidenceCtx, Interrupt(InterruptKind.cancelled));
+                stopEvidenceWorker();
                 rp.tree = TreeState.graceArmed;
                 rp.grace = GraceKind.fallback;
                 ++rp.treeEpoch;
@@ -941,11 +956,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     return; // the kill is scheduled or done: no signalling
                 }
                 if (rp.tree == TreeState.waitPopulated)
-                {
-                    rp.stopEvidence = true;
-                    if (rp.evidenceCtx !is null)
-                        interruptFiber(rp.evidenceCtx, Interrupt(InterruptKind.cancelled));
-                }
+                    stopEvidenceWorker();
                 sendTerm(*rp);
                 rp.tree = TreeState.graceArmed;
                 rp.grace = GraceKind.requested;
@@ -986,7 +997,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     {
                         rp.tree = TreeState.waited;
                         ++rp.treeEpoch;
-                        rp.stopEvidence = true;
+                        stopEvidenceWorker();
                     }
                     if ((bits & Pending.evidenceFailed) && rp.tree == TreeState.waitPopulated)
                         fallbackEdge(IoError(5 /* EIO */, OpKind.none, IoErrorStage.completion,
@@ -1016,6 +1027,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 final switch (msg.kind)
                 {
                 case RelayKind.bytes:
+                    rp.testObserverArmed = true;
                     const isOut = msg.stream == ProcessStream.stdout_;
                     if (isOut ? rp.stdoutForced : rp.stderrForced)
                         break; // late bytes of a forced stream are ignored
@@ -1083,9 +1095,12 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     onRootObserved();
                     break;
                 case RelayKind.rootFailed:
+                    // Not an observation: the root's exit is still unknown.
+                    // Termination is requested, and the observation moves to
+                    // finite lane probes so sampling and the reap wait for it.
                     rememberError(msg.error);
                     requestTermination(ProcessEnd.cancelled);
-                    onRootObserved();
+                    startLaneObserver();
                     break;
                 case RelayKind.workerDefect:
                     // The first primary defect wins; one arriving during the
@@ -1104,11 +1119,36 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 processPending();
             }
 
-            IoResult!RelayMessage takeRelay()
+            /// Takes over a failed observer's observation with a lane worker;
+            /// when no fiber can be admitted, probes inline under protect —
+            /// slower for the relay, but the observation is never skipped.
+            void startLaneObserver()
             {
-                if (!rp.cancelledLatched)
-                    return rp.relay.take(*schedP);
-                return protect!(() => rp.relay.take(*schedP))(*schedP);
+                if (rp.observer != RootObserverState.failed)
+                    return;
+                rp.observer = RootObserverState.laneOwned;
+                auto worker = new LaneObserverWorker(rp, schedP, childP);
+                auto shell = new WorkerShell(rp, schedP, &rp.laneObserverCtx, &worker.run);
+                if (!sc.spawnShielded(&shell.run, &shield))
+                    cast(void) protect!(() { observeRootOnLane(); return 0; })(*schedP);
+            }
+
+            /// One main-loop iteration: a relay take and its handling.
+            /// Cancellation makes the whole iteration protected — the kill's
+            /// lane admission and every transition run inside it.
+            void iterate()
+            {
+                auto next = rp.relay.take(*schedP);
+                if (next.hasError)
+                {
+                    if (rp.cancelledLatched)
+                        return; // only a closed relay could reach here
+                    rp.cancelledLatched = true;
+                    requestTermination(ProcessEnd.cancelled);
+                    processPending();
+                    return;
+                }
+                handle(move(next.value));
             }
 
             /// The sampler-finalization barrier (§13.8): before the reap.
@@ -1214,7 +1254,10 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 rp.stopSampler = true;
                 if (rp.samplerCtx !is null)
                     schedP.wake(rp.samplerCtx);
-                rp.stopEvidence = true;
+                stopEvidenceWorker();
+                rp.stopLane = true;
+                if (rp.laneObserverCtx !is null)
+                    schedP.wake(rp.laneObserverCtx);
                 stopStdinWorker();
                 cancelTree(&shield, Interrupt(InterruptKind.cancelled));
             }
@@ -1296,42 +1339,45 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                         executeHardKill();
                     // Root observation before the sample: a delivered signal is
                     // not an observed exit.
-                    final switch (rp.observer)
+                    while (!rp.rootResolved)
                     {
-                    case RootObserverState.observed:
-                    case RootObserverState.lost:
-                    case RootObserverState.failed:
-                    case RootObserverState.laneOwned:
-                        break;
-                    case RootObserverState.inFlight:
-                        while (!rp.rootResolved)
+                        // No worker owns the observation: probe inline.
+                        if (rp.observer == RootObserverState.notAdmitted
+                            || rp.observer == RootObserverState.initializing
+                            || rp.observer == RootObserverState.failed
+                            || (rp.observer == RootObserverState.laneOwned
+                                && rp.laneObserverCtx is null))
                         {
-                            auto next = rp.relay.take(*schedP);
-                            if (next.hasError)
-                                break;
-                            if (next.value.kind == RelayKind.workerDefect)
-                                continue; // a second defect: recorded, not rethrown
-                            if (next.value.kind == RelayKind.rootObserved
-                                || next.value.kind == RelayKind.rootLost
-                                || next.value.kind == RelayKind.rootFailed)
-                            {
-                                if (next.value.kind == RelayKind.rootLost)
-                                {
-                                    rp.reap = ReapOutcome.lostToExternalReaper;
-                                    childP.pid = -1;
-                                    rp.processGroup = -1;
-                                }
-                                break;
-                            }
+                            observeRootOnLane();
+                            break;
                         }
-                        break;
-                    case RootObserverState.notAdmitted:
-                    case RootObserverState.initializing:
-                        observeRootOnLane();
-                        break;
+                        // The in-flight WNOWAIT op or the lane worker owns it:
+                        // rendezvous with its message.
+                        auto next = rp.relay.take(*schedP);
+                        if (next.hasError)
+                            break;
+                        final switch (next.value.kind)
+                        {
+                        case RelayKind.rootObserved:
+                            break;
+                        case RelayKind.rootLost:
+                            rp.reap = ReapOutcome.lostToExternalReaper;
+                            childP.pid = -1;
+                            rp.processGroup = -1;
+                            break;
+                        case RelayKind.rootFailed:
+                            observeRootOnLane();
+                            break;
+                        case RelayKind.workerDefect:
+                            recordSecondary(next.value.defect);
+                            break;
+                        case RelayKind.bytes:
+                        case RelayKind.streamEof:
+                        case RelayKind.readError:
+                        case RelayKind.wake:
+                            break;
+                        }
                     }
-                    if (rp.observer == RootObserverState.failed)
-                        rp.observer = RootObserverState.laneOwned, observeRootOnLane();
                     finalizeSampler(rp.observer == RootObserverState.lost
                         ? FinalSampleMode.cgroupOnly : FinalSampleMode.full);
                     reapRoot();
@@ -1358,17 +1404,27 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         {
             while (!rp.terminal)
             {
-                auto next = ctl.takeRelay();
-                if (next.hasError)
+                // An outer cancellation latches once; from then on every
+                // iteration — take, transitions, the hard kill's lane
+                // admission — runs under protect, so the latch can never
+                // refuse the mandatory `cgroup.kill`.
+                if (rp.cancelledLatched)
+                    cast(void) protect!(() { ctl.iterate(); return 0; })(*schedP);
+                else
                 {
-                    // An outer cancellation: the run ends through the
-                    // ordinary machine, protected from here on.
-                    rp.cancelledLatched = true;
-                    ctl.requestTermination(ProcessEnd.cancelled);
-                    ctl.processPending();
-                    continue;
+                    auto next = rp.relay.take(*schedP);
+                    if (next.hasError)
+                    {
+                        rp.cancelledLatched = true;
+                        cast(void) protect!(() {
+                            ctl.requestTermination(ProcessEnd.cancelled);
+                            ctl.processPending();
+                            return 0;
+                        })(*schedP);
+                    }
+                    else
+                        ctl.handle(move(next.value));
                 }
-                ctl.handle(move(next.value));
             }
             cast(void) protect!(() { ctl.terminalSequence(); return 0; })(*schedP);
         }
@@ -1531,7 +1587,13 @@ private final class ObserverWorker
         uint retries;
         for (;;)
         {
-            auto observed = observeExit(*s, child.pid);
+            if (rp.testObserverErrno != 0)
+                while (!rp.testObserverArmed && !rp.stopLane)
+                    cast(void) sleep(*s, 10.msecs); // after the root's first line
+            auto observed = rp.testObserverErrno != 0
+                ? ioErr!ExitStatus(rp.testObserverErrno, OpKind.waitid,
+                    IoErrorStage.submit, "injected observer failure")
+                : observeExit(*s, child.pid);
             RelayMessage msg;
             if (observed.hasValue)
             {
@@ -1561,6 +1623,70 @@ private final class ObserverWorker
             msg.error = observed.error;
             cast(void) rp.publish(*s, move(msg));
             return;
+        }
+    }
+}
+
+/// The lane-owned root observation after the observer failed: finite
+/// `WNOHANG` probe jobs on the termination-critical lane, an alarm-parked
+/// backoff between them (10 ms → 1 s), and the same messages the observer
+/// would have published. Only `observed` resolves the root.
+private final class LaneObserverWorker
+{
+    Run* rp;
+    Sched* s;
+    ChildProcess* child;
+
+    this(Run* rp, Sched* s, ChildProcess* child)
+    {
+        this.rp = rp;
+        this.s = s;
+        this.child = child;
+    }
+
+    void run()
+    {
+        Duration backoff = 10.msecs;
+        while (!rp.stopLane && child.pid > 0)
+        {
+            ProbeJob job = {pid: child.pid};
+            auto ran = rp.pool.runMandatory(*s, &probeCall, &job);
+            if (ran.hasError)
+            {
+                if (ran.error.errnoValue == ECANCELED)
+                    return; // the owner ended the run
+                s.fatal(ran.error);
+            }
+            RelayMessage msg;
+            final switch (job.kind)
+            {
+            case ProbeKind.observed:
+                rp.observedStatus = job.status;
+                rp.observer = RootObserverState.observed;
+                msg.kind = RelayKind.rootObserved;
+                msg.status = job.status;
+                cast(void) rp.publish(*s, move(msg));
+                return;
+            case ProbeKind.lost:
+                rp.observer = RootObserverState.lost;
+                msg.kind = RelayKind.rootLost;
+                msg.error = IoError(ECHILD, OpKind.waitid, IoErrorStage.completion,
+                    "root reaped elsewhere");
+                cast(void) rp.publish(*s, move(msg));
+                return;
+            case ProbeKind.fatal:
+                s.fatal(IoError(job.errnoValue, OpKind.waitid,
+                    IoErrorStage.completion, "root probe failed"));
+            case ProbeKind.pending:
+            case ProbeKind.retry:
+                break;
+            }
+            s.armAlarm(rp.laneAlarm, backoff);
+            while (!rp.laneAlarm.fired && !rp.stopLane)
+                s.park();
+            s.disarmAlarm(rp.laneAlarm);
+            rp.laneAlarm.reset();
+            backoff = backoff * 2 > 1.seconds ? 1.seconds : backoff * 2;
         }
     }
 }
@@ -1821,7 +1947,13 @@ private final class EvidenceWorker
             {
                 if (ran.error.errnoValue != EAGAIN || ++refusals > 8)
                     break; // finite budget → the fallback edge
-                cast(void) sleep(*s, backoff);
+                // An alarm-parked backoff: the owner's stop is a plain wake,
+                // which an in-ring sleep could not take.
+                s.armAlarm(rp.evidenceAlarm, backoff);
+                while (!rp.evidenceAlarm.fired && !rp.stopEvidence)
+                    s.park();
+                s.disarmAlarm(rp.evidenceAlarm);
+                rp.evidenceAlarm.reset();
                 backoff = backoff * 2 > 500.msecs ? 500.msecs : backoff * 2;
                 continue;
             }
@@ -1854,10 +1986,14 @@ private struct SampleJob
 private void sampleCall(void* p) nothrow
 {
     auto job = cast(SampleJob*) p;
-    version (linux)
+    if (job.cgroupOnly)
     {
-        if (job.cgroupOnly)
-            job.sampler.usage.samplingDegraded = true; // pid identity is gone
+        // Pid identity is gone: the run cgroup's own counters, and no proc
+        // path at all; without a cgroup this is the degraded skip.
+        job.merged = job.sampler.sampleCgroupOnly();
+        if (!job.merged)
+            job.sampler.usage.samplingDegraded = true;
+        return;
     }
     job.merged = job.sampler.sample();
 }
@@ -3239,9 +3375,12 @@ unittest
         cfg.sampleInterval = 5.msecs;
         const worker = `awk 'BEGIN{for(i=0;i<8000000;i++) x+=i}'`;
 
-        auto one = supervise(s, ["sh", "-c", worker], cfg);
+        // The first fork waits for the cgroup migration (SPEC §13.7), so in
+        // the cgroup tiers `cpu.stat` covers both workers whatever the
+        // sampler's latency under load.
+        auto one = supervise(s, ["sh", "-c", "sleep 0.05; " ~ worker], cfg);
         assert(one.hasValue, one.hasError ? one.error.context : "");
-        auto two = supervise(s, ["sh", "-c", worker ~ "; " ~ worker], cfg);
+        auto two = supervise(s, ["sh", "-c", "sleep 0.05; " ~ worker ~ "; " ~ worker], cfg);
         assert(two.hasValue, two.hasError ? two.error.context : "");
 
         version (linux)
@@ -3643,4 +3782,114 @@ unittest
     });
     assert(!r.hasError);
     assert(MonoTime.currTime - before < 2.seconds);
+}
+
+// ── implementation-review regressions ───────────────────────────────────────
+
+@("supervise.cancel.cgroupKillReachesASetsidDescendant")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.scope_ : JoinHandle, withScope;
+
+    Sched s;
+    schedOrSkip(s);
+    SupervisedProcessResult got;
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref outer) {
+            JoinHandle!void h;
+            outer.fork(h, () {
+                // A TERM-ignoring descendant in its own session, forked after
+                // the migration landed: outside the pgid, inside the cgroup.
+                // Only `cgroup.kill` can end it, and the outer cancellation
+                // that requested the kill must not refuse its lane admission.
+                SupervisedProcessConfig cfg;
+                cfg.terminateGrace = 100.msecs;
+                cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                auto run = supervise(s, ["sh", "-c",
+                    `sleep 0.05; setsid sh -c 'trap "" TERM; sleep 30' & echo ready; sleep 30`],
+                    cfg, null, (in ProcessEvent ev) {
+                        if (ev.kind == ProcessEventKind.line)
+                            outer.cancel();
+                    });
+                assert(run.hasValue, run.hasError ? run.error.context : "");
+                got = move(run.value);
+                return ioOk();
+            });
+            cast(void) h.join(s);
+        })(s);
+        assert(!outcome.hasError);
+    });
+    assert(!r.hasError);
+    assert(got.end == ProcessEnd.cancelled);
+    assert(!got.terminationDegraded, got.terminationError.context);
+    assert(MonoTime.currTime - before < 3.seconds);
+    if (got.usage.source == SampleSource.cgroupMembers
+        || got.usage.source == SampleSource.cgroupFull)
+    {
+        assert(!got.eofForced, "cgroup.kill ended the pipe-holding descendant: a natural EOF");
+        assert(!got.cgroupCleanupLeaked, "nothing survived in the run cgroup");
+    }
+}
+
+@("supervise.wait.teardownBeforeEvidenceActivationJoins")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        // The root outlives the timeout: termination is requested while the
+        // tree is still `live`, so the evidence worker is never activated
+        // and the teardown must wake it out of its initial park.
+        SupervisedProcessConfig cfg;
+        cfg.residualPolicy = ResidualPolicy.wait;
+        cfg.timeout = 100.msecs;
+        cfg.terminateGrace = 200.msecs;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        auto got = supervise(s, ["sleep", "30"], cfg);
+        if (got.hasError)
+        {
+            assert(got.error.errnoValue == EOPNOTSUPP);
+            return;
+        }
+        assert(got.value.end == ProcessEnd.timedOut);
+        assert(MonoTime.currTime - before < 2.seconds, "the join did not hang on the evidence worker");
+    });
+    assert(!r.hasError);
+}
+
+@("supervise.observer.failureIsProbedOnTheLaneBeforeSamplingAndReap")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+    auto r = s.run(() {
+        // The observer fails at once; the root ignores TERM and exits on its
+        // own later. The lane probes must establish the exit before the
+        // final sample and the consuming reap — never a kill syscall.
+        SupervisedProcessConfig cfg;
+        cfg.terminateGrace = 5.seconds;
+        cfg.sampleInterval = Duration.zero;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        const before = MonoTime.currTime;
+        // The trap precedes "ready", and the injected failure waits for it.
+        auto got = superviseImpl(s, ["sh", "-c", "trap '' TERM; echo ready; sleep 0.4"], cfg,
+            null, null, null, null, EINVAL);
+        assert(got.hasError && got.error.errnoValue == EINVAL,
+            "the observer's failure is the reported operation error");
+        assert(reapRightConsumed(testLastSupervisedPid), "the root was reaped exactly once");
+        const elapsed = MonoTime.currTime - before;
+        assert(elapsed >= 350.msecs, "the reap waited for the root's own exit");
+        assert(elapsed < 3.seconds, "…and the requested grace was not idled out");
+    });
+    assert(!r.hasError);
 }
