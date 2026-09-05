@@ -1017,6 +1017,7 @@ private string[] standaloneExampleGlobs()
         "libs/build-primitives/examples/*.d",
         "libs/core-cli/examples/*.d",
         "libs/event-horizon/examples/*.d",
+        "docs/libs/event-horizon/tutorial/snippets/*.d",
         "libs/wired/examples/*.d",
         "libs/http/examples/*.d",
         "docs/research/async-io/io-uring/examples/*.d",

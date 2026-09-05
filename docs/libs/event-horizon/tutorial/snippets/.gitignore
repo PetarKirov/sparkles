@@ -1,0 +1,11 @@
+# Outputs of dub run --single; keep source snippets tracked.
+/eh_channel
+/eh_concurrency
+/eh_deadline
+/eh_exec
+/eh_file_read
+/eh_retry
+/eh_signal
+/eh_spawn
+/eh_tcp_echo
+/eh_timers
