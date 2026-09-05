@@ -1171,7 +1171,14 @@ struct WorkspaceTui
 
     package void syncTreeSession() @system
     {
-        tree.session = viewer.diffEntries();
+        auto next = viewer.diffEntries();
+        // A rebuild walks the filesystem, and every caller of this pairs it
+        // with `tree.reveal`, which rebuilds again — so rebuilding here for a
+        // session that did not change was one full directory walk thrown
+        // away on every document open. The common case is two empty lists.
+        if (next == tree.session)
+            return;
+        tree.session = next;
         tree.rebuild();
     }
 
@@ -2009,7 +2016,8 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     w.treeVisible = isDir;
     w.treeFocused = isDir;
     w.lastThemeIdx = themeIdx;
-    w.tree.rebuild();
+    // Built once, below: `reveal` rebuilds on its own, so building here too
+    // meant the opening frame walked the directory twice over.
     if (!isDir && initial.title.length)
     {
         // The already-loaded document (no second read); reveal it in the
@@ -2034,13 +2042,19 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         w.syncTreeSession();
         w.startDiffTypes();
         if (target.length)
-            w.tree.reveal(target);
+            w.tree.reveal(target); // the one build of the opening frame
+        else
+            w.tree.rebuild();
         if (target.length)
             w.startLive(target, initial.twoslash.code.length != 0);
     }
     else if (!isDir && target.length)
     {
-        w.openDoc(target);
+        w.openDoc(target); // reveals, and so builds
+    }
+    else
+    {
+        w.tree.rebuild();
     }
 
     w.initialLine = initialLine;
