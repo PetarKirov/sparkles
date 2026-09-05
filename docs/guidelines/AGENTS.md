@@ -505,7 +505,7 @@ that depends on them.
 
 ```bash
 nix run .#ci -- --test --fail-fast       # dub test for every sub-package
-nix run .#ci -- --test --no-coverage --shard 2/4  # what one CI runner does: a cost-balanced quarter of the packages, no -cov
+nix run .#ci -- --test --no-coverage --shard 2/5  # what one CI runner does: a cost-balanced fifth of the packages, no -cov
 DC=ldc2 nix run .#ci -- --test-sanitize --fail-fast  # Linux only: ASan + stackovf (the nix `ci` picks DMD on x86_64-linux)
 nix run .#ci -- --test-extracted         # --better-c/--wasm for every sub-package using them
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
