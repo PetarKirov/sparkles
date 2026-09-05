@@ -27,7 +27,8 @@ module win32_hosted_smoke;
 
 version (Windows):
 
-import core.sys.windows.imm : CPS_COMPLETE, NI_COMPOSITIONSTR, SCS_SETSTR;
+import core.sys.windows.imm : CPS_COMPLETE, ImmIsIME, NI_COMPOSITIONSTR,
+    SCS_SETSTR;
 import core.sys.windows.windows;
 import core.time : Duration, MonoTime, seconds;
 import std.stdio : writeln;
@@ -203,14 +204,22 @@ int main()
     writeln("ok: Win32 WSI conformance (", outcome.checked, " checked, ",
         outcome.skipped, " skipped)");
 
-    checkTextAndComposition(wsi);
-    writeln("ok: Win32 text commit + IMM32 composition round trip");
+    if (checkTextAndComposition(wsi))
+        writeln("ok: Win32 text commit + IMM32 composition round trip");
+    else
+        writeln("ok: Win32 text commit (IMM32 composition skipped: "
+            ~ "the active keyboard layout has no IME)");
     return 0;
 }
 
 /// Win32-only addendum: VK logical identity, UTF-16 commits, and the IMM32
-/// preedit/result contract, on a fresh window.
-private void checkTextAndComposition(ref Win32Wsi wsi)
+/// preedit/result contract, on a fresh window. Returns whether the IMM32
+/// round trip ran: Wine's IMM32 composes on any layout, but native Windows
+/// accepts the calls and emits nothing when the layout has no IME, and a
+/// hosted CI runner's US layout has none. Only that case — no IME on the
+/// layout *and* no composition observed — is a skip; an IME that composes
+/// nothing is still a failure.
+private bool checkTextAndComposition(ref Win32Wsi wsi)
 {
     WindowConfig config;
     assert(config.title.assign("sparkles:wsi Win32 text"));
@@ -292,8 +301,12 @@ private void checkTextAndComposition(ref Win32Wsi wsi)
             },
             (_) {});
     });
-    assert(!imeDrain.hasError && sawPreedit && sawCompositionEnd
-        && sawImeCommit);
+    assert(!imeDrain.hasError);
+    const composed = sawPreedit && sawCompositionEnd && sawImeCommit;
+    const layoutHasIme = ImmIsIME(GetKeyboardLayout(0)) != 0;
+    assert(composed || (!layoutHasIme && !sawPreedit && !sawCompositionEnd
+        && !sawImeCommit));
 
     assert(!wsi.destroyWindow(id).hasError);
+    return composed;
 }
