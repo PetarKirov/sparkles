@@ -329,27 +329,61 @@ jobs:
           no_output_timeout: 45m
       - save_asan_dub_cache
 
-  # The Win32 OS-API example builds against druntime's core.sys.windows — no
-  # Nix, no third-party deps — so it runs on a plain Windows runner with LDC.
-  win32-example:
+  # The Windows leg of the test matrix (the GitHub Actions `test` job's
+  # windows-latest entry). No Nix on this executor, so the toolchain is a plain
+  # LDC install and the suite runs through ci/test-windows.sh — which packages,
+  # and why the rest are left out, is documented there — followed by the
+  # sparkles:wsi Win32 conformance driver and the Win32 OS-API example and
+  # demos. `set -eo pipefail` on each inline script: CircleCI adds those flags
+  # only to its default `/bin/bash`, not to `bash.exe`.
+  test-windows:
     executor: windows
+    environment:
+      DC: ldc2
     steps:
       - checkout
       - run:
           name: Install LDC
           shell: bash.exe
           command: bash ci/install-ldc-windows.sh
+      - run:
+          name: Compute the dub cache key
+          shell: bash.exe
+          command: bash ci/dub-cache-key.sh
       - restore_cache:
           keys:
-            - dub-win-v1-osapi
+            - dub-win-v2-{{ checksum ".dub-cache-key" }}
+            - dub-win-v2-
       - run:
-          name: Build & run the Win32 example
+          name: Build and test with dub
+          shell: bash.exe
+          command: bash ci/test-windows.sh
+          no_output_timeout: 30m
+      - run:
+          name: Build & run the sparkles:wsi Win32 conformance driver
           shell: bash.exe
           command: |
-            dub run --compiler=ldc2 \
-              --root=docs/research/window-system-integration/os-apis/win32/example
+            set -eo pipefail
+            dub run --single --compiler=ldc2 libs/wsi/examples/win32-hosted-smoke.d | tee smoke.log
+            grep -q '^ok: Win32 WSI conformance (15 checked, 3 skipped)' smoke.log
+            grep -q '^ok: Win32 text commit + IMM32 composition round trip' smoke.log
+      - run:
+          name: Build & run OS-API windowing example and demos (Win32)
+          shell: bash.exe
+          environment:
+            WSI_AUTO_EXIT: 1
+          command: |
+            set -eo pipefail
+            base=docs/research/window-system-integration/os-apis
+            dub run --compiler=ldc2 --root="$base/win32/example"
+            for d in "$base"/win32/examples/*/; do
+              [ -f "$d/dub.sdl" ] || continue
+              echo "----- win32 $d -----"
+              dub run --compiler=ldc2 --root="$d"
+            done
       - save_cache:
-          key: dub-win-v1-osapi
+          when: always
+          key: dub-win-v2-{{ checksum ".dub-cache-key" }}
           paths:
             - C:\Users\circleci\AppData\Local\dub
 
@@ -518,7 +552,7 @@ workflows:
           context: sparkles-ci
       - sanitize-tests:
           context: sparkles-ci
-      - win32-example
+      - test-windows
       - nix-build-linux:
           context: sparkles-ci
       - nix-build-macos:
@@ -534,7 +568,7 @@ workflows:
             - test-macos
             - extracted-tests
             - sanitize-tests
-            - win32-example
+            - test-windows
             - nix-build-linux
             - nix-build-macos
             - nix-build-android
