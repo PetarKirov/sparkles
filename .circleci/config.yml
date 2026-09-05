@@ -366,7 +366,7 @@ jobs:
             set -eo pipefail
             dub run --single --compiler=ldc2 libs/wsi/examples/win32-hosted-smoke.d | tee smoke.log
             grep -q '^ok: Win32 WSI conformance (15 checked, 3 skipped)' smoke.log
-            grep -q '^ok: Win32 text commit + IMM32 composition round trip' smoke.log
+            grep -q '^ok: Win32 text commit' smoke.log
       - run:
           name: Build & run OS-API windowing example and demos (Win32)
           shell: bash.exe

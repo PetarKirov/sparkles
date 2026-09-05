@@ -334,7 +334,10 @@ the surface, and a hardware ICD's dmabufs crash a software Weston — the
 windowed backend avoids both), and the triangle now reports the SDL handoff's
 comparison counters (`framesOver50ms`/`framesOver100ms`, `reaps`,
 `maxDispatchMs`) so the HITL run can be read against the measured target in
-one glance. The HITL live-resize trace itself and native Windows CI remain.
+one glance. The HITL live-resize trace itself remains; native Windows CI landed
+as the `windows-latest` leg of the test matrix, which runs `dub test :wsi` and
+the Win32 conformance driver on a real User32/IOCP — a 96-DPI, IME-less runner,
+so per-monitor scale and IME automation still wait for a host that has them.
 
 ## Milestone M7 — Skia Graphite
 
@@ -387,7 +390,11 @@ not Explorer virtual desktops:
 - Xvfb plus winex11 for the X11 display path.
 
 Record Wine results as compatibility evidence, not proof of undocumented native
-Windows behavior. Native Windows CI closes those gaps.
+Windows behavior. The `windows-latest` test leg (`ci/test-windows.sh` plus the
+driver step in `.github/workflows/ci.yml`, mirrored by CircleCI's
+`test-windows`) runs the same `win32-hosted-smoke.d` recipe natively and is the
+evidence of record for what User32 does; Wine keeps the IMM32 composition round
+trip, which the hosted runner's IME-less layout cannot perform.
 
 ### macOS remotely
 
