@@ -71,10 +71,41 @@ version (linux)
         return dlsym(RTLD_DEFAULT, "__tsan_init") !is null;
     }
 
+    /// Both workers rendezvous here before touching the counter.
+    shared int arrived;
+    /// The work behind the rendezvous. `__gshared`, not a `static` local: a
+    /// `static` variable is thread-local in D, and the workers must read what
+    /// the parent thread stored.
+    __gshared void function() pairWork;
+
+    /// Runs `work` on two threads that start their loops together.
+    ///
+    /// The rendezvous is what keeps demo 1 honest on a loaded host. TSan
+    /// reports a race between two accesses that no synchronization orders —
+    /// and druntime's thread registry lock is synchronization: a thread's
+    /// exit releases it, the next `start` acquires it. So on a runner busy
+    /// enough that `a` ran its whole loop before `b` was scheduled, `a`'s
+    /// writes happened-before `b`'s in TSan's model and the "race" was
+    /// silent (seen under four parallel example builds). A spin barrier on
+    /// an atomic orders only "before the barrier" against "after"; the two
+    /// loops that follow it share no edge, so every interleaving of them is
+    /// a report — and they now actually overlap in time.
     void runPair(void function() work)
     {
-        auto a = new Thread(work);
-        auto b = new Thread(work);
+        import core.atomic : atomicLoad, atomicStore;
+
+        atomicStore(arrived, 0);
+        pairWork = work;
+        static void synced()
+        {
+            atomicOp!"+="(arrived, 1);
+            while (atomicLoad(arrived) < 2)
+                Thread.yield();
+            pairWork();
+        }
+
+        auto a = new Thread(&synced);
+        auto b = new Thread(&synced);
         a.start();
         b.start();
         a.join();
