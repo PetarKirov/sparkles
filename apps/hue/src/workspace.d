@@ -849,7 +849,13 @@ struct WorkspaceTui
             doc.coverage, doc.hasCoverage);
         viewer.docNote = doc.dsvNote;
         viewer.vm.docPath = path; // .editorconfig discovery (format preview)
-        viewer.dsvCopy = DsvCopy.of(doc.dsvText, doc.dsvInfo);
+        // `DSN7`: the pipeline already parsed this document; adopt its model
+        // rather than resolving a throwaway one over the same bytes. This is
+        // the per-open path, so the duplicate parse was paid on EVERY open.
+        dsvModel = doc.dsvModel;
+        viewer.dsvCopy = dsvModel !is null
+            ? DsvCopy.of(dsvModel, doc.dsvInfo)
+            : DsvCopy.of(doc.dsvText, doc.dsvInfo);
         viewer.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         dsvBrowser = DsvBrowser.init;
         dsvPalOpen = false;
@@ -1974,7 +1980,10 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
                 fresh.diffDoc, fresh.diffSides, fresh.diffSession,
                 fresh.diffEmphasis, fresh.coverage, fresh.hasCoverage);
             w.viewer.docNote = fresh.dsvNote;
-            w.viewer.dsvCopy = DsvCopy.of(fresh.dsvText, fresh.dsvInfo);
+            w.dsvModel = fresh.dsvModel; // `DSN7`: adopt, do not re-resolve
+            w.viewer.dsvCopy = w.dsvModel !is null
+                ? DsvCopy.of(w.dsvModel, fresh.dsvInfo)
+                : DsvCopy.of(fresh.dsvText, fresh.dsvInfo);
             w.viewer.tableFmt = resolveTableCopy(w.tableCopyFlag,
                 fresh.dsvInfo.present);
             w.dsvBrowser = DsvBrowser.init;
@@ -2033,7 +2042,14 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         if (formatPreview)
             w.viewer.showNotice(formatPreviewStart(w.viewer.vm,
                 formatWidth, formatterName));
-        w.viewer.dsvCopy = DsvCopy.of(initial.dsvText, initial.dsvInfo);
+        // `DSN7`: adopt the model the pipeline already built. The
+        // bytes-taking overload would resolve a throwaway one and parse the
+        // whole file again — 116 ms of the opening frame on a 73 MB document,
+        // for a parse that had just finished.
+        w.dsvModel = initial.dsvModel;
+        w.viewer.dsvCopy = w.dsvModel !is null
+            ? DsvCopy.of(w.dsvModel, initial.dsvInfo)
+            : DsvCopy.of(initial.dsvText, initial.dsvInfo);
         w.viewer.tableFmt = resolveTableCopy(tableCopyFlag,
             initial.dsvInfo.present);
         w.dsvBrowser = DsvBrowser.init;

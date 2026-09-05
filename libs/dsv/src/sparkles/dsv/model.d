@@ -14,13 +14,28 @@ module sparkles.dsv.model;
 
 import sparkles.base.buffer : SharedBuffer;
 
-/// A byte span into the borrowed source.
+/**
+A byte span into the borrowed source.
+
+Deliberately `uint`, not `size_t`. A span is the unit this model is made of —
+one per cell plus one per record — so its width sets the size of the two
+arenas a parse materializes, and those dominate parse cost at scale: a 73 MB
+document produces 8M cells, and every byte of `Span` is 8 MB of arena and 8 MB
+of memory traffic. Halving the span halves both.
+
+The cost is a 2 GiB ceiling on a single document, which $(REF parseDsv,
+sparkles,dsv,parse) rejects explicitly rather than letting it wrap. The
+normative target is 100 MB (`DSN6`), so the ceiling is 20× the requirement.
+*/
 struct Span
 {
-    size_t start;
-    size_t length;
+    uint start;
+    uint length;
 
-    size_t end() const @safe pure nothrow @nogc => start + length;
+    /// Widened deliberately: `start + length` is in range by construction
+    /// (the parser caps the source at `int.max`), but the sum is used to
+    /// slice, and a `size_t` keeps that arithmetic away from the boundary.
+    size_t end() const @safe pure nothrow @nogc => size_t(start) + length;
 }
 
 /// How the first record is interpreted; `auto_` defers to the sniffer's
@@ -60,16 +75,46 @@ enum CellFlags : ubyte
     quoted = 1 << 0,
 }
 
-/// One cell. Plain data: `raw` spans the borrowed source **including** any
-/// quotes/escapes (the identity channel, `DSM2`); [cellRaw]/[decodeCell]
-/// resolve the text.
+/**
+One cell. Plain data: [raw] spans the borrowed source **including** any
+quotes/escapes (the identity channel, `DSM2`); [cellRaw]/[decodeCell] resolve
+the text.
+
+Exactly **8 bytes**, and packed to stay that way: the one flag lives in the
+top bit of the length rather than in a `ubyte` field, which would cost three
+bytes of tail padding. That is not micro-optimization at this scale — a
+document materializes one of these per cell, 8M of them for a 1M-row file,
+and the arena's cost is dominated by first-touching its pages, which is
+linear in its size. The three bytes padding would have cost would be 24 MB of
+fresh pages, and ~9 ms of faults, on every parse of such a file.
+*/
 struct DsvCell
 {
-    Span raw;
-    ubyte flags;
+    private uint start_;
+    /// Length in the low 31 bits, the quoted flag in the top one.
+    private uint lenFlags_;
+
+    private enum uint quotedBit = 1u << 31;
+    private enum uint lengthMask = quotedBit - 1;
+
+    this(Span raw, CellFlags flags = CellFlags.none) @safe pure nothrow @nogc
+    in (raw.length <= lengthMask, "a cell cannot exceed 2 GiB")
+    {
+        start_ = raw.start;
+        lenFlags_ = raw.length
+            | ((flags & CellFlags.quoted) ? quotedBit : 0u);
+    }
+
+    /// The raw span, quotes included (the identity channel, `DSM2`).
+    Span raw() const @safe pure nothrow @nogc
+        => Span(start_, lenFlags_ & lengthMask);
+
+    /// ditto
+    CellFlags flags() const @safe pure nothrow @nogc
+        => (lenFlags_ & quotedBit) ? CellFlags.quoted : CellFlags.none;
 
     bool needsDecode() const @safe pure nothrow @nogc
-        => (flags & CellFlags.quoted) != 0;
+        => (lenFlags_ & quotedBit) != 0;
 }
 
 /// One record: its cell range in the document's `cells` arena, its raw span
@@ -243,7 +288,7 @@ unittest
 {
     DsvDoc doc;
     doc.source = `"he said ""hi"", left"`;
-    const cell = DsvCell(Span(0, doc.source.length), CellFlags.quoted);
+    const cell = DsvCell(Span(0, cast(uint) doc.source.length), CellFlags.quoted);
     SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == `he said "hi", left`);
 }
@@ -255,7 +300,7 @@ unittest
     // `"a"b"c"` — quoted "a", literal b, re-entered quoted "c" (`DSM1`).
     DsvDoc doc;
     doc.source = `"a"b"c"`;
-    const cell = DsvCell(Span(0, doc.source.length), CellFlags.quoted);
+    const cell = DsvCell(Span(0, cast(uint) doc.source.length), CellFlags.quoted);
     SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == "abc");
 }

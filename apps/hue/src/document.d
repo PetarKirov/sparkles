@@ -39,7 +39,8 @@ import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import coverage_discovery : findCoverageArtifact;
 import coverage_rebase : rebasedCoverage;
-import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvProjection,
+import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvModel,
+    DsvProjection,
     dsvStatusNote, DsvWindow;
 import gui_preview : PreviewModel;
 
@@ -87,6 +88,11 @@ struct Document
     /// decoded buffer — see `dsv_view`; the raw-fidelity copy contract
     /// `DSC2`–`DSC5` is post-CHK and reads these).
     string dsvText;
+    /// `DSN7`: the resolved model the adapter built from `dsvText` — the
+    /// parse, the sampled types and the header names. Carried on the document
+    /// so a host adopts it instead of parsing the file a second time; null
+    /// for every non-DSV document.
+    DsvModel dsvModel;
     /// `kind == dsv`: the resolved dialect/header/ragged facts (`DSK5`).
     DsvInfo dsvInfo;
     /// `kind == dsv`: the status-chrome readout (`DSK5`).
@@ -565,7 +571,36 @@ struct DocumentPipeline
                 throw new Exception(res.error.toString);
             return res.value;
         }
-        return readText(path);
+        return readValidatedUtf8(path);
+    }
+
+    /**
+    `std.file.readText` for files hue actually opens.
+
+    Phobos reads and then validates with `std.utf`, whose scalar walk runs at
+    roughly 550 MB/s all-in — 131 ms of a 73 MB file, most of it validation.
+    `sparkles.base.text.utf8.indexOfInvalidUtf8` is the same check written as
+    a word-at-a-time ASCII skip, documented as the replaceable seam for
+    exactly this, and measures **11.6 GB/s** on the same bytes. Reading raw
+    and validating with it costs 46 ms for the same guarantee.
+
+    The guarantee is the point: this does not skip validation, it stops using
+    a slow implementation of it. Every consumer downstream — the highlighter,
+    the grapheme segmentation in the cell measurer — still gets bytes it has
+    been told are well-formed, and an ill-formed file still fails here rather
+    than somewhere deep in a renderer.
+    */
+    private static string readValidatedUtf8(string path) @system
+    {
+        import sparkles.base.text.utf8 : indexOfInvalidUtf8;
+        import std.file : read;
+
+        auto bytes = cast(string) read(path);
+        const bad = indexOfInvalidUtf8(bytes);
+        if (bad != bytes.length)
+            throw new Exception(text("invalid UTF-8 in ", path,
+                " at byte ", bad));
+        return bytes;
     }
 
     /// A diff document from unified-patch text (`DVS2`: a `.patch`/`.diff`
@@ -596,8 +631,12 @@ struct DocumentPipeline
     /// to the plain code view (`DSM3`/`DEG` doctrine), never errors.
     Document fromDsvSource(string path, string title, string dsvText, string ext)
     {
-        auto adapted = adaptDsv(dsvText, ext,
-            DsvFlags(dsvDelimiter, dsvQuote, dsvHeader), DsvProjection.init,
+        // `DSN7`: the model is built here and kept, not built and thrown
+        // away. Handing it to the host on the `Document` is what stops the
+        // opening frame parsing the whole file a second time.
+        auto model = DsvModel.of(dsvText, ext,
+            DsvFlags(dsvDelimiter, dsvQuote, dsvHeader));
+        auto adapted = adaptDsv(model, DsvProjection.init,
             DsvWindow(rows: dsvWindowRows));
         if (!adapted.info.present || adapted.info.columns == 0)
         {
@@ -608,7 +647,7 @@ struct DocumentPipeline
         Document doc = {
             path: path, title: title, kind: ContentKind.dsv,
             source: adapted.text, lang: ext.length ? ext : "csv",
-            dsvText: dsvText, dsvInfo: adapted.info,
+            dsvText: dsvText, dsvInfo: adapted.info, dsvModel: model,
             dsvNote: dsvStatusNote(adapted.info),
         };
         import gui_preview : previewOf;

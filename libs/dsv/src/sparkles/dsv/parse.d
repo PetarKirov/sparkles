@@ -31,10 +31,26 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
     if (d == q || d == '\r' || d == '\n' || q == '\r' || q == '\n')
         return parseErr!DsvDoc(ParseErrorCode.unexpectedCharacter, 0,
             "delimiter and quote must be distinct, non-newline bytes");
+    // `Span` is a `uint` pair and `DsvCell` spends the top length bit on its
+    // quoted flag, so a span is 8 bytes at the price of a 2 GiB ceiling.
+    // Refused outright rather than wrapped: a truncated span would silently
+    // point at the wrong bytes, which is the worst failure this model can
+    // have.
+    if (source.length > int.max)
+        return parseErr!DsvDoc(ParseErrorCode.numericOverflow, 0,
+            "document exceeds the 2 GiB span limit");
 
     DsvDoc doc;
     doc.source = source;
     doc.dialect = dialect;
+
+    // One record's cells are staged here and committed in a single `put`.
+    // Appending them one at a time costs a capacity check and a call per
+    // cell, which over the 8M cells of a 1M-row document is ~20 ms of pure
+    // overhead — measurably more than the copy this staging adds. 64 slots
+    // keeps all but pathologically wide records inline, so the staging
+    // buffer never touches the heap.
+    SharedBuffer!(DsvCell, 64) rowCells;
 
     size_t i = 0;
     if (source.length >= 3 && source[0 .. 3] == "\xEF\xBB\xBF")
@@ -48,6 +64,7 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
         const recStart = i;
         const cellsStart = cast(uint) doc.cells.length;
         uint cellCount = 0;
+        rowCells.clear();
         Terminator term = Terminator.none;
         size_t recEnd = i;
         bool recordDone = false;
@@ -107,7 +124,8 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
                 doc.unterminatedQuote = true;
 
             const fieldEnd = i;
-            doc.cells ~= DsvCell(Span(fieldStart, fieldEnd - fieldStart),
+            rowCells ~= DsvCell(Span(cast(uint) fieldStart,
+                cast(uint)(fieldEnd - fieldStart)),
                 startedQuoted ? CellFlags.quoted : CellFlags.none);
             cellCount++;
 
@@ -137,8 +155,9 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
             }
         }
 
+        doc.cells.put(rowCells[]);
         doc.records ~= DsvRecord(cellsStart, cellCount, term,
-            Span(recStart, recEnd - recStart));
+            Span(cast(uint) recStart, cast(uint)(recEnd - recStart)));
     }
 
     finishCounts(doc);
