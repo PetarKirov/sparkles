@@ -20,16 +20,16 @@ on:
   # — which is how 13 caches came to occupy 14.64 GB against a 10 GB quota,
   # evicting each other by LRU.
   #
-  # Seeding only lychee's cache is the deliberate trade: the ~1.8 GB `nix-v2-*`
-  # and `Linux-dub-*` entries stay per-PR, because warming those would mean
-  # running the whole matrix on every merge while CircleCI runs it too.
+  # Seeding only lychee's cache is the deliberate trade: the `*-dub-*` entries
+  # stay per-PR, because warming those would mean running the whole matrix on
+  # every merge.
   #
   # That seeding is now a fallback rather than the plan. A cache written once
   # per merge is, by construction, the least-recently-used entry in a repository
-  # whose pull requests write multi-gigabyte caches on every push — so it is
-  # always the first thing evicted, and raising the quota moves that threshold
-  # without changing the ordering. A pull request therefore no longer depends on
-  # it: `lychee-offline` covers the whole tree without the network, and the
+  # whose pull requests write caches on every push — so it is always the first
+  # thing evicted, and raising the quota moves that threshold without changing
+  # the ordering. A pull request therefore no longer depends on it:
+  # `lychee-offline` covers the whole tree without the network, and the
   # networked check runs over the diff. The full sweep is the `schedule` below.
   push:
     branches:
@@ -52,66 +52,97 @@ concurrency:
   # merge would leave every PR cold again.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Every job below takes its Nix closure straight from Cachix and does NOT
+# cache /nix/store in the Actions cache (`use-nix-cache` is left off). That
+# cache had become pure cost: the repository's Actions cache is at its budget
+# and read-only ("You have reached your configured budget, your cache is now
+# read only"), so every restore missed, every job then fetched the closure
+# from Cachix anyway, and every job still spent 30 s (test legs) to 136 s
+# (`nix-build`) in its post-job step tarring a multi-GB store for a save that
+# was refused. Even with the budget lifted the arithmetic is poor: a
+# per-system, per-compiler 1.8 GB store cache saved by every PR push is what
+# blew the quota in the first place, and a Cachix fetch of `devShells.ci` is
+# ~60 s on Linux — about what a restore costs. The DUB caches stay: they are
+# small and hold the one thing Cachix cannot serve (dub's build of the
+# `dmd:frontend` git dependency, ~1 min per consumer).
+#
+# The pipeline is shaped for a wall clock of 5–10 min per job. The D test
+# suite is sharded across runners (`ci --shard I/N`, cost-balanced and
+# deterministic, see apps/ci/src/shard.d) rather than run as one 20–30 min
+# job, coverage instrumentation is off (nothing in CI reads the listings, and
+# LDC's atomic `-cov` counters made `base`'s parallel leg 17× slower: 84 s
+# against 5 s), and the research sweeps that had accreted onto the test job —
+# the standalone examples, the X11/Wayland demos, the markdown example
+# verification — each run as their own job in parallel with it.
+
 jobs:
   test:
+    name: test (${{ matrix.system }}, ${{ matrix.DC }}, shard ${{ matrix.shard }}/${{ matrix.shards }})
     # `main` and `schedule` runs exist for the link sweep and the cache it
-    # seeds. Everything but `lint` is therefore pull-request-only, rather than
-    # duplicating a full matrix that CircleCI already runs on `main` — and, for
-    # the nightly, one that nothing has changed since the last run.
+    # seeds. Everything but `lint` is therefore pull-request-only. Since
+    # CircleCI was retired nothing runs the suite post-merge; drop these
+    # guards to get that coverage back (see ci/README.md).
     if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
+      # `leg × shard`, with `include` attaching the runner/system/compiler
+      # and the leg's shard count to each leg by its key (an `include` entry
+      # that names an existing `leg` value is merged into every combination
+      # carrying it). `shards` is what `--shard I/N` divides by, so a leg
+      # with fewer shards than the axis lists drops its surplus in `exclude`.
+      #
+      # Five for the Linux legs, from the first sharded run's numbers: the
+      # suite is ~1600 s of per-package cost on the slowest leg, a runner
+      # spends 1–3 min on its Nix fetch before the first `dub` runs (the whole
+      # matrix starts at once and shares Cachix's bandwidth), so four shards
+      # put the heaviest at 10 min and five put it at ~8. Four for macOS: the
+      # hosted plan runs at most five macOS jobs at once, and this workflow
+      # has the `examples` shards and `nix-build` on macOS too — a fifth test
+      # shard only queued behind the first wave, while a quarter of the
+      # macOS suite is ~4 min of `dub` after the fetch.
       matrix:
+        leg:
+          - x86_64-linux-ldc2
+          - x86_64-linux-dmd
+          - aarch64-darwin-ldc2
+          - aarch64-linux-ldc2
+        shard: [1, 2, 3, 4, 5]
         include:
-          - runner: ubuntu-latest
+          - leg: x86_64-linux-ldc2
+            runner: ubuntu-latest
             system: x86_64-linux
             DC: ldc2
-          - runner: ubuntu-latest
+            shards: 5
+          - leg: x86_64-linux-dmd
+            runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
-          - runner: macos-latest
+            shards: 5
+          - leg: aarch64-darwin-ldc2
+            runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
+            shards: 4
           # The one host where `real` is binary128 (`real.mant_dig == 113`):
           # the leg that compiles and runs the wide-format conversion paths
-          # natively. Scoped to `ci --test` for now; the example and OS-API
-          # steps below are keyed to the x86_64 leg until this one is proven.
-          - runner: ubuntu-24.04-arm
+          # natively. That makes `base` its outlier (its float sweeps run 3×
+          # slower than on x86 under `-cov`; a third of `hue` without it).
+          - leg: aarch64-linux-ldc2
+            runner: ubuntu-24.04-arm
             system: aarch64-linux
             DC: ldc2
-          # Native Windows — the host the `sparkles:wsi` Win32 backend had only
-          # ever been certified on through Wine. There is no Nix on the hosted
-          # runner, so this leg takes its toolchain from setup-dlang and runs
-          # the suite through ci/test-windows.sh instead of the `ci` helper
-          # (whose closure needs tree-sitter via pkg-config). Which packages it
-          # covers, and why the rest are left out, is that script's business;
-          # the Nix-only steps below are keyed off it by `runner.os`.
-          - runner: windows-latest
-            system: x86_64-windows
-            DC: ldc2
+            shards: 5
+        exclude:
+          - leg: aarch64-darwin-ldc2
+            shard: 5
     runs-on: ${{ matrix.runner }}
-    # The Linux legs finish in ~4m warm; the macOS leg normally runs ~5m but the
-    # hosted Apple-Silicon runner occasionally hangs (a 5m job has stalled for
-    # 78m). The cap is uniform at 20m because the DUB cache key is the hash of
-    # the dub files, so bumping the `dmd:frontend` pin invalidates it and the
-    # leg pays a cold frontend build — ~7m under dmd, which overran a 12m cap.
-    # That is a build cost, not a runtime one, and it recurs on every pin bump.
-    #
-    # Raised to 30 for the OS-API windowing demos below, which add ~4m30s to the
-    # Linux ldc2 leg (41 dub packages built and run under xvfb/weston). That leg
-    # measured 19m23s against the old 20m cap — a 37-second margin, and the next
-    # thing to grow the job pushed it over: a run cancelled mid-demo at 20m07s.
-    # A cap this tight fails as a *cancellation* in the middle of a step, which
-    # reads as a hang rather than as "out of budget".
-    #
-    # The demos are a research sweep bolted onto the D test gate and now eat a
-    # quarter of its budget; moving them to their own parallel job is the better
-    # fix, left as follow-up so this stack does not restructure shared CI.
-    #
-    # 40 since the runner runs every package twice (`-t 1`, then `-t N`) and
-    # `base` carries the format-parameterized float sweeps: macOS measured 25m
-    # before those and crossed 30m with them.
-    timeout-minutes: 40
+    # A shard is 4–7 min warm. The cap has to absorb a cold DUB cache — the key
+    # is the hash of the dub files, so bumping the `dmd:frontend` pin makes
+    # every shard that consumes it pay that build again (~1 min under ldc2,
+    # several under dmd) — and the hosted Apple-Silicon runner's occasional
+    # stall. A cap that fires mid-step reads as a hang rather than as "out of
+    # budget", so it is generous relative to the warm figure, not tight.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -119,7 +150,6 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Nix
-        if: runner.os != 'Windows'
         uses: ./.github/actions/setup-nix
         with:
           push-to-cache: true
@@ -128,80 +158,242 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          # Keyed by system, not runner.os: that is "Linux" for x86_64 and arm64 alike,
-          # and two legs sharing one cache corrupt it for each other.
-          nix-cache-key: nix-v2-${{ matrix.system }}-${{ matrix.DC }}-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ matrix.system }}-${{ matrix.DC }}-
-            nix-v2-${{ matrix.system }}-
 
-      # The Windows leg's toolchain (LDC plus the dub it bundles). Pinned to the
-      # flake's LDC so every leg agrees on the compiler; ci/install-ldc-windows.sh
-      # carries the same version for CircleCI.
-      - name: Install D (LDC)
-        if: runner.os == 'Windows'
-        uses: dlang-community/setup-dlang@v2
-        with:
-          compiler: ldc-1.42.0
-
+      # Keyed by system, not runner.os (that is "Linux" for x86_64 and arm64
+      # alike), by compiler (dub hashes the compiler into every build id), and
+      # by shard: each shard builds a different subset of the third-party
+      # dependencies, and the Actions cache never overwrites an existing key —
+      # so one key shared by four shards would freeze at whichever shard saved
+      # first and stay partial for the other three.
+      #
+      # `~/.dub/cache/sparkles` is excluded: dub's build cache for the in-tree
+      # packages is keyed by `git describe`, so it holds this commit's builds
+      # and nothing a later run can reuse. Without the exclusion every save
+      # would carry a stale copy of the whole tree's objects.
       - name: Cache DUB packages
-        if: runner.os != 'Windows'
         uses: actions/cache@v6
         with:
           path: |
             ~/.dub
             ~/.local/share/dub
-          # Same reason as the Nix cache key above.
-          key: ${{ matrix.system }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+            !~/.dub/cache/sparkles
+          key: ${{ matrix.system }}-${{ matrix.DC }}-dub-${{ matrix.shard }}-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
           restore-keys: |
-            ${{ matrix.system }}-dub-
+            ${{ matrix.system }}-${{ matrix.DC }}-dub-${{ matrix.shard }}-
+            ${{ matrix.system }}-${{ matrix.DC }}-dub-
 
-      # dub keeps its package store under %LOCALAPPDATA% on Windows, and the
-      # cache action does not accept a per-OS path list, hence the second step.
-      - name: Cache DUB packages (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v6
-        with:
-          path: ~/AppData/Local/dub
-          key: ${{ matrix.system }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
-          restore-keys: |
-            ${{ matrix.system }}-dub-
-
-      - name: Run flake checks
-        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
-        run: nix flake check
-
+      # `--no-coverage`: nothing in CI consumes the `-cov` listings, and the
+      # instrumentation is not free — see the note at the top of this file.
+      # Coverage stays on by default for a local `ci --test`, where `hue --cov`
+      # reads the result.
       - name: Build and test with dub
-        if: runner.os != 'Windows'
-        run: ci --test --fail-fast
+        run: ci --test --fail-fast --no-coverage --shard ${{ matrix.shard }}/${{ matrix.shards }}
         env:
           # `ci` embeds dmd (small closure); honour the matrix compiler for the
           # test suite so the ldc2/dmd dimensions are actually exercised. Both
           # are on PATH via the `ci` dev shell.
           DC: ${{ matrix.DC }}
 
+  # Native Windows — the host the `sparkles:wsi` Win32 backend had only ever
+  # been certified on through Wine. There is no Nix on the hosted runner, so
+  # this leg takes its toolchain from setup-dlang and runs the suite through
+  # ci/test-windows.sh instead of the `ci` helper (whose closure needs
+  # tree-sitter via pkg-config). Which packages it covers, and why the rest are
+  # left out, is that script's business. Its own job rather than a `test`
+  # matrix leg: it shares no step with the Nix legs, and the 19-package
+  # allowlist runs in ~4 min unsharded.
+  test-windows:
+    name: test (x86_64-windows, ldc2)
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The Windows leg's toolchain (LDC plus the dub it bundles). Pinned to the
+      # flake's LDC so every leg agrees on the compiler; ci/install-ldc-windows.sh
+      # carries the same version for CircleCI.
+      - name: Install D (LDC)
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.42.0
+
+      # dub keeps its package store under %LOCALAPPDATA% on Windows.
+      - name: Cache DUB packages (Windows)
+        uses: actions/cache@v6
+        with:
+          path: ~/AppData/Local/dub
+          key: x86_64-windows-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            x86_64-windows-dub-
+
       # `ci --test` without the `ci` helper: `dub test` per allowlisted
       # sub-package, `-t 1` then `-t 0`, under Git Bash so the script shares
       # ci/lib/common.sh with CircleCI's bash.exe.
       - name: Build and test with dub (Windows)
-        if: runner.os == 'Windows'
         shell: bash
         run: ci/test-windows.sh
         env:
-          DC: ${{ matrix.DC }}
+          DC: ldc2
 
+      # The native half of what libs/wsi/scripts/verify-win32-wine.sh certifies
+      # under Wine: the shared WSI conformance suite through the Win32 driver,
+      # on a real User32 and IOCP. Wine is a compatibility lane, not native
+      # evidence — its monitors are fixed at 96 DPI and its modal loops depend
+      # on which display driver loaded — which is why the spec's comparison.md
+      # carried "native Windows CI" as an owed column. Counts are pinned as in
+      # every other lane, so a driver that skipped everything cannot pass. The
+      # IMM32 preedit phase is the one thing this host cannot show: the runner's
+      # US layout has no IME UI, so the driver sees the result-string commit but
+      # no preedit, and says so — the preedit evidence stays with the Wine lane.
+      - name: Build & run the sparkles:wsi Win32 conformance driver
+        shell: bash
+        run: |
+          dub run --single --compiler=ldc2 libs/wsi/examples/win32-hosted-smoke.d | tee smoke.log
+          grep -q '^ok: Win32 WSI conformance (15 checked, 3 skipped)' smoke.log
+          grep -q '^ok: Win32 text commit' smoke.log
+
+      # The Win32 OS-API research example and the per-feature demos: bounded
+      # runs via WSI_AUTO_EXIT (the interactive parts are exercised manually /
+      # under Wine locally — see the manual-run queue).
+      - name: Build & run the Win32 OS-API example and demos
+        shell: bash
+        env:
+          WSI_AUTO_EXIT: 1
+        run: |
+          base=docs/research/window-system-integration/os-apis
+          echo "::group::win32 $base/win32/example"
+          dub run --compiler=ldc2 --root="$base/win32/example"
+          echo "::endgroup::"
+          for d in "$base"/win32/examples/*/; do
+            [ -f "$d/dub.sdl" ] || continue
+            echo "::group::win32 $d"
+            dub run --compiler=ldc2 --root="$d"
+            echo "::endgroup::"
+          done
+
+  # The standalone example programs (`libs/*/examples/*.d` and the research
+  # catalogs' `examples/`), built and run on the hosts that have a Nix
+  # toolchain — plus `nix flake check`, which is a flake-evaluation gate rather
+  # than a test and only needs to run once per system. Previously the tail of
+  # the `test` job; 4–5 min of parallel builds that never depended on the
+  # tests, now two shards per host (`leg × shard`, as in `test`) so the
+  # macOS leg — 5 min of builds on 3 cores after a 3 min Nix fetch — stays
+  # inside the budget.
+  examples:
+    name: examples (${{ matrix.system }}, ${{ matrix.DC }}, shard ${{ matrix.shard }}/2)
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        leg:
+          - x86_64-linux-ldc2
+          - x86_64-linux-dmd
+          - aarch64-darwin-ldc2
+        shard: [1, 2]
+        include:
+          - leg: x86_64-linux-ldc2
+            runner: ubuntu-latest
+            system: x86_64-linux
+            DC: ldc2
+            jobs: 4
+          - leg: x86_64-linux-dmd
+            runner: ubuntu-latest
+            system: x86_64-linux
+            DC: dmd
+            jobs: 4
+          # 3 vCPUs and ~7 GiB: `ci` budgets ~2 GiB per concurrent ldc build,
+          # so three is what the host affords.
+          - leg: aarch64-darwin-ldc2
+            runner: macos-latest
+            system: aarch64-darwin
+            DC: ldc2
+            jobs: 3
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+
+      - name: Cache DUB packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub
+            ~/.local/share/dub
+            !~/.dub/cache/sparkles
+          key: ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-${{ matrix.shard }}-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-${{ matrix.shard }}-
+            ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-
+
+      - name: Run flake checks
+        if: matrix.shard == 1
+        run: nix flake check
+
+      # `SPARKLES_CI_JOBS` pins the example builder's worker count. Left to
+      # itself `ci` derives one from the host's 1-minute load average, which
+      # on a runner still reflects the Nix fetch that just finished: the lint
+      # job's example verification once ran 140 examples on ONE worker
+      # (`workers=1 online=4 load=3.74`) for 16 minutes.
       - name: Build and run examples
-        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
-        run: ci --example-files --fail-fast
+        run: ci --example-files --fail-fast --shard ${{ matrix.shard }}/2
+        env:
+          DC: ${{ matrix.DC }}
+          SPARKLES_CI_JOBS: ${{ matrix.jobs }}
 
-      # OS-API research examples (docs/research/.../os-apis). These are multi-file
-      # dub packages (ImportC), not single-file, so they are outside `ci
-      # --example-files`; build/run the Linux ones here in the devshell. X11 opens a
-      # real window under xvfb; Wayland has no compositor in CI so it prints SKIP and
-      # exits 0. (macOS/iOS/Android are verified out of band — see the surveys.)
+  # OS-API research examples (docs/research/.../os-apis). These are multi-file
+  # dub packages (ImportC), not single-file, so they are outside `ci
+  # --example-files`; build/run the Linux ones here in the devshell. X11 opens a
+  # real window under xvfb; Wayland has no compositor in CI so it prints SKIP
+  # and exits 0. (macOS/iOS/Android are verified out of band — see the
+  # surveys.) A research sweep, so it gets its own job rather than a quarter of
+  # the test gate's budget: 41 dub packages built and run under xvfb/weston,
+  # ~4m30s.
+  wsi-demos:
+    name: OS-API windowing examples (X11 + Wayland)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+
+      - name: Cache DUB packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub
+            ~/.local/share/dub
+            !~/.dub/cache/sparkles
+          key: x86_64-linux-ldc2-dub-wsi-demos-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            x86_64-linux-ldc2-dub-wsi-demos-
+
       - name: Build & run OS-API windowing examples (X11 + Wayland)
-        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
           dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
@@ -216,7 +408,6 @@ jobs:
       # red the build. X11 demos run under Xvfb; Wayland demos under a headless
       # weston instance.
       - name: Build & run OS-API windowing demos (X11 + Wayland)
-        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         env:
           WSI_AUTO_EXIT: 1
         run: |
@@ -241,44 +432,47 @@ jobs:
             kill "$weston_pid"
           fi
 
-      # The native half of what libs/wsi/scripts/verify-win32-wine.sh certifies
-      # under Wine: the shared WSI conformance suite through the Win32 driver,
-      # on a real User32 and IOCP. Wine is a compatibility lane, not native
-      # evidence — its monitors are fixed at 96 DPI and its modal loops depend
-      # on which display driver loaded — which is why the spec's comparison.md
-      # carried "native Windows CI" as an owed column. Counts are pinned as in
-      # every other lane, so a driver that skipped everything cannot pass. The
-      # IMM32 preedit phase is the one thing this host cannot show: the runner's
-      # US layout has no IME UI, so the driver sees the result-string commit but
-      # no preedit, and says so — the preedit evidence stays with the Wine lane.
-      - name: Build & run the sparkles:wsi Win32 conformance driver
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          dub run --single --compiler=ldc2 libs/wsi/examples/win32-hosted-smoke.d | tee smoke.log
-          grep -q '^ok: Win32 WSI conformance (15 checked, 3 skipped)' smoke.log
-          grep -q '^ok: Win32 text commit' smoke.log
+  # The runnable markdown examples (README.md, the guidelines, the research
+  # catalogs): every ` ```d ` fence with a dub recipe is built, run, and its
+  # output compared with the ` ```ansi ` block beside it. 140 examples, each an
+  # isolated dub build with its own DUB_HOME, so the cost is the closure build
+  # per example — which parallelises across workers and across shards. This
+  # used to be the tail of the `lint` job, where it ran 16 min single-threaded
+  # (see the `SPARKLES_CI_JOBS` note in `examples`).
+  md-examples:
+    name: Markdown examples (shard ${{ matrix.shard }}/2)
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      # The Win32 counterpart of the X11/Wayland OS-API steps above: the research
-      # example and the per-feature demos, on druntime's core.sys.windows alone.
-      # WSI_AUTO_EXIT bounds each demo's run; the interactive parts are exercised
-      # by hand and under Wine locally (see the manual-run queue).
-      - name: Build & run OS-API windowing example and demos (Win32)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          WSI_AUTO_EXIT: 1
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+
+      # The markdown RENDERING fixtures are inputs to the golden suite, not
+      # runnable examples — a fixture may hold any code (a deliberately huge
+      # dub script, a fence with fake paths) purely for how it renders. Same
+      # exclusion as the `verify-md-examples` pre-commit hook.
+      - name: Verify markdown runnable examples
         run: |
-          base=docs/research/window-system-integration/os-apis
-          echo "::group::win32 $base/win32/example"
-          dub run --compiler=ldc2 --root="$base/win32/example"
-          echo "::endgroup::"
-          for d in "$base"/win32/examples/*/; do
-            [ -f "$d/dub.sdl" ] || continue
-            echo "::group::win32 $d"
-            dub run --compiler=ldc2 --root="$d"
-            echo "::endgroup::"
-          done
+          ci --verify --fail-fast --shard ${{ matrix.shard }}/2 \
+            --include-files '**.md' \
+            --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
+        env:
+          SPARKLES_CI_JOBS: 4
 
   # The test runner's extracted-test modes. `--test` does not cover these: a
   # @betterC test runs as an ordinary unittest there, and only `--better-c`
@@ -310,11 +504,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          nix-cache-key: nix-v2-${{ runner.os }}-extracted-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ runner.os }}-extracted-
-            nix-v2-${{ runner.os }}-
 
       - name: Cache DUB packages
         uses: actions/cache@v6
@@ -322,9 +511,10 @@ jobs:
           path: |
             ~/.dub
             ~/.local/share/dub
-          key: ${{ runner.os }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+            !~/.dub/cache/sparkles
+          key: x86_64-linux-ldc2-dub-extracted-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
           restore-keys: |
-            ${{ runner.os }}-dub-
+            x86_64-linux-ldc2-dub-extracted-
 
       # Both modes normally *skip* when their toolchain is missing, which is
       # right on a contributor's machine and exactly wrong here. `ci
@@ -341,13 +531,19 @@ jobs:
   # No UBSan: LDC rejects `-fsanitize=undefined` for D, and `-Xcc` never
   # reaches ImportC codegen (docs/research/sanitizers/ubsan.md). One `-t N`
   # leg on 4 MiB workers (the stack watermark is off under ASan).
-  # 45m: every package is rebuilt with ASan; a 30m cap cancelled mid-package
-  # the same way the test job's old 20m cap did.
+  #
+  # Sharded like `test` — every package is rebuilt with ASan, which made this
+  # a 17–20 min job on its own; five shards of the same cost table bring a
+  # shard to ~4 min of ASan builds plus the Nix fetch.
   sanitize:
-    name: Sanitizers (ASan, stackovf)
+    name: Sanitizers (ASan, stackovf, shard ${{ matrix.shard }}/5)
     if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -365,32 +561,27 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          # ubuntu-latest is x86_64-linux; key by system, not runner.os, so a
-          # future arm64 Ubuntu runner cannot share this cache (see the test job).
-          nix-cache-key: nix-v2-x86_64-linux-sanitize-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-x86_64-linux-sanitize-
-            nix-v2-x86_64-linux-
 
       # Its own key family. dub hashes `$DFLAGS` into every build id, so an
       # ASan build shares nothing with a plain one; falling back to the test
-      # job's `x86_64-linux-dub-` cache would only restore dead weight, and
-      # saving the union back would let the test job restore ours in turn
-      # (its prefix matches `x86_64-linux-dub-*`) — doubling both caches in
-      # an Actions cache already at its quota. `asan-dub` matches neither.
+      # job's `x86_64-linux-ldc2-dub-` cache would only restore dead weight,
+      # and saving the union back would let the test job restore ours in turn
+      # — doubling both caches. `asan-dub` matches neither. Per shard for the
+      # same reason as the test job's key.
       - name: Cache DUB packages
         uses: actions/cache@v6
         with:
           path: |
             ~/.dub
             ~/.local/share/dub
-          key: x86_64-linux-asan-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+            !~/.dub/cache/sparkles
+          key: x86_64-linux-asan-dub-${{ matrix.shard }}-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
           restore-keys: |
+            x86_64-linux-asan-dub-${{ matrix.shard }}-
             x86_64-linux-asan-dub-
 
       - name: Run tests under ASan / stackovf
-        run: ci --test-sanitize --fail-fast
+        run: ci --test-sanitize --fail-fast --shard ${{ matrix.shard }}/5
         env:
           DC: ldc2
 
@@ -425,11 +616,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixbuild-
-            nix-${{ runner.os }}-
 
       # `with-cachix.sh` pushes each path as it is built, so a failure in the
       # step below still leaves this build's outputs in the cache. The
@@ -471,11 +657,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-nixandroid-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixandroid-
-            nix-${{ runner.os }}-
 
       - name: Build & push the Android APK closure
         env:
@@ -486,7 +667,9 @@ jobs:
   lint:
     name: Lint & markdown link check
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # ~2 min on a pull request; the full link sweep on `main`/`schedule` is
+    # the long tail and depends on the hosts it checks.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -500,11 +683,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: pre-commit
-          use-nix-cache: true
-          nix-cache-key: nix-v2-${{ runner.os }}-lint-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ runner.os }}-lint-
-            nix-v2-${{ runner.os }}-
 
       - name: Restore lychee cache
         uses: actions/cache/restore@v6
@@ -520,6 +698,7 @@ jobs:
       # cannot see: a renamed heading or a deleted page breaking a relative link
       # in a file this change never touched.
       #
+      # `verify-md-examples` runs as the `md-examples` job above.
       # `no-commit-to-branch` is a local developer guard (don't commit on main);
       # on push-to-main the checkout is that branch, so the hook would fail the
       # job that exists precisely to seed caches and re-check links after merge.
@@ -555,13 +734,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Verify markdown runnable examples
-        # Pull requests only: this compiles and runs every example, half an hour
-        # of runner time, and the non-PR runs exist for the link sweep.
-        if: github.event_name == 'pull_request'
-        run: |
-          nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
-
       - name: Save lychee cache
         if: always()
         uses: actions/cache/save@v6
@@ -579,14 +751,19 @@ jobs:
     name: Build documentation site
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # The build itself runs ~11m; under runner contention the nix teardown
-    # stretched past a 15m cap and cancelled after every real step had
-    # succeeded. 30m matches the test job's headroom.
-    timeout-minutes: 30
+    # ~8 min: the three generated inputs (wasm module, twoslash showcase,
+    # source listings) build concurrently, then VitePress takes ~3 min.
+    # Headroom for runner contention, which once stretched a 15m cap past
+    # every real step having succeeded.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # `npm run docs:build` first runs `build:wasm`, which invokes
+      # `nix build .#table-wasm` to compile the drawTable playground module.
+      # Install Nix and wire up the binary cache so the ldc-wasm toolchain is
+      # pulled from the cache rather than built from source.
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
@@ -595,7 +772,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -632,6 +808,10 @@ jobs:
     name: CI
     needs:
       - test
+      - test-windows
+      - examples
+      - wsi-demos
+      - md-examples
       - extracted-tests
       - sanitize
       - nix-build
