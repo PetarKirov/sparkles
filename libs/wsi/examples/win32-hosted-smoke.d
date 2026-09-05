@@ -27,11 +27,11 @@ module win32_hosted_smoke;
 
 version (Windows):
 
-import core.sys.windows.imm : CPS_COMPLETE, ImmIsIME, NI_COMPOSITIONSTR,
-    SCS_SETSTR;
+import core.sys.windows.imm : CPS_COMPLETE, ImmGetIMEFileNameW, ImmIsIME,
+    NI_COMPOSITIONSTR, SCS_SETSTR;
 import core.sys.windows.windows;
 import core.time : Duration, MonoTime, seconds;
-import std.stdio : writeln;
+import std.stdio : writefln, writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.input.events : KeyAction;
@@ -208,17 +208,20 @@ int main()
         writeln("ok: Win32 text commit + IMM32 composition round trip");
     else
         writeln("ok: Win32 text commit (IMM32 composition skipped: "
-            ~ "the active keyboard layout has no IME)");
+            ~ "the active keyboard layout composed nothing)");
     return 0;
 }
 
 /// Win32-only addendum: VK logical identity, UTF-16 commits, and the IMM32
 /// preedit/result contract, on a fresh window. Returns whether the IMM32
 /// round trip ran: Wine's IMM32 composes on any layout, but native Windows
-/// accepts the calls and emits nothing when the layout has no IME, and a
-/// hosted CI runner's US layout has none. Only that case — no IME on the
-/// layout *and* no composition observed — is a skip; an IME that composes
-/// nothing is still a failure.
+/// accepts the calls and emits nothing when the layout's IME composes
+/// nothing — a hosted CI runner's US layout, for one. IMM32's static
+/// queries cannot tell the two apart (`ImmIsIME` answers true for the plain
+/// US layout on both, and the IME file name is empty on both), so the rule
+/// is behavioral: no composition observed is a reported skip, a composition
+/// that starts and does not end and commit is a failure. The report line
+/// carries what the layout claimed next to what was seen.
 private bool checkTextAndComposition(ref Win32Wsi wsi)
 {
     WindowConfig config;
@@ -303,9 +306,19 @@ private bool checkTextAndComposition(ref Win32Wsi wsi)
     });
     assert(!imeDrain.hasError);
     const composed = sawPreedit && sawCompositionEnd && sawImeCommit;
-    const layoutHasIme = ImmIsIME(GetKeyboardLayout(0)) != 0;
-    assert(composed || (!layoutHasIme && !sawPreedit && !sawCompositionEnd
-        && !sawImeCommit));
+    auto layout = GetKeyboardLayout(0);
+    const layoutHasIme = ImmIsIME(layout) != 0;
+    // The report carries what IMM32 says about the layout next to what was
+    // observed, so a skip (or a failure) can be read without a debugger.
+    wchar[260] imeFile = void;
+    const imeFileLength = ImmGetIMEFileNameW(layout, imeFile.ptr,
+        cast(UINT) imeFile.length);
+    writefln("info: Win32 keyboard layout %08x ImmIsIME=%s imeFile=%s "
+        ~ "preedit=%s compositionEnd=%s commit=%s",
+        cast(size_t) layout, layoutHasIme, imeFile[0 .. imeFileLength],
+        sawPreedit, sawCompositionEnd, sawImeCommit);
+    assert(composed || (!sawPreedit && !sawCompositionEnd && !sawImeCommit),
+        "a composition that started must also end and commit");
 
     assert(!wsi.destroyWindow(id).hasError);
     return composed;
