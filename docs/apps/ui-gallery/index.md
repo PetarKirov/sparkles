@@ -94,6 +94,13 @@ mouse reporting (vim, htop) get the pointer too, pane-relative through the
 mode-aware encoder; a forwarded click also focuses the pane. Emulator-level
 mouse — selection, link hover — still waits on the mouse-event conversion.
 
+Each pane's pty rides the event loop's own ring, so a shell's output wakes the
+catalog rather than a clock finding it: with no terminal open the terminal arm
+sleeps on input alone, and it asks for a timed wake only for a pane the ring
+cannot carry. Nothing about that is visible except in what the application
+does _not_ do — twenty wakeups a second, on every page, whether or not one had
+ever been opened.
+
 Mouse, where the target has one: click a page or a theme, press a tab or an
 action segment, drag the split divider, and **grab a scrollbar** — a press on
 the track jumps the thumb there, a press on the thumb grabs it in place, and

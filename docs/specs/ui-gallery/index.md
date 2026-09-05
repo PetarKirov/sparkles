@@ -46,6 +46,7 @@ real consumer.
 | `UGL20` | No automated test forks a shell: spawning is main-enabled only, so recorded scripts assert on the request flags and the model, and the pty path is verified live.                                                                                                                                                                                                       | full   |
 | `UGL21` | The inspector is a shell panel, not a page: toggled with `\|` beside any page, it inspects the **showing** page at the width it is actually laid out at — the generic [inspector component](../ui/inspector.md) over the widget-tree adapter (collapsible rows, click-selection, a details pane) — scrolls independently, and yields below the width that can carry it. | full   |
 | `UGL22` | The body band's three panes tile through `sparkles.ui.components.dock` (`DCK1`/`DCK3`): both seams are draggable dividers with per-pane floors and surface-derived ceilings, the arranged widths are mirrored into the state the pure views read, and a hidden pane returns at its dragged width.                                                                       | full   |
+| `UGL23` | A terminal pane rides the ring (`TVW8`) and the timed wake is asked per frame (`HST16`) for the panes it does not carry, so a catalog with no terminal open parks on input alone.                                                                                                                                                                                       | full   |
 
 ## Shape
 
@@ -128,8 +129,18 @@ and were invisible without it.
   at exactly the width of its own hint line. Pages size widths from state
   (`fixed`), as their heights always did.
 
+- **Every pty master leaked into the next tab's shell.** `forkpty` returns a
+  plain master, so opening a second terminal in one process handed its child a
+  copy of the first's — `5 -> /dev/ptmx` in the second shell's own
+  `/proc/self/fd`. An unrelated shell could read and write another tab's
+  terminal, and, because a hangup waits for the **last** master to close,
+  closing the first tab would not have hung up the shell inside it. Only a
+  multi-terminal embedder could expose this; `apps/terminal` opens one. The
+  master is `FD_CLOEXEC` now (`UGL-O9`'s audit).
+
 Each of the last three is now an assertion; the first is a unit test in the
-backend that owns the arithmetic.
+backend that owns the arithmetic. The pty leak is verified the way it was
+found — the spawned shell listing its own descriptors.
 
 ## Verification
 

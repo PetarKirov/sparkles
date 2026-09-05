@@ -25,7 +25,8 @@ drain → input → render order, event-shaped.
 */
 module sparkles.terminal_view.component;
 
-import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+import core.sys.posix.fcntl : F_GETFD, F_GETFL, F_SETFD, F_SETFL, fcntl,
+    FD_CLOEXEC, O_NONBLOCK;
 import core.sys.posix.sys.ioctl : ioctl, TIOCSWINSZ, winsize;
 import core.sys.posix.sys.types : pid_t;
 import core.sys.posix.unistd : execv, getuid, read, _exit;
@@ -315,6 +316,31 @@ struct TerminalView
         {
             execv(shellZ, cast(char**) argv.ptr);
             _exit(127);
+        }
+
+        // Close-on-exec, before anything else can fork: `forkpty` returns a
+        // plain master, so the NEXT terminal opened in this process hands its
+        // shell a copy of THIS one's master. Audited live in the gallery,
+        // which is the first embedder to open more than one: the second tab's
+        // shell listed `5 -> /dev/ptmx` — the first tab's master, readable and
+        // writable by an unrelated shell, and (the functional half) an extra
+        // holder keeping that pty open. A hangup is delivered when the LAST
+        // master closes, so closing the first tab would not have hung its
+        // shell up while the second one lived; the tab would go and the
+        // process would stay. `apps/terminal` never saw it — one pty, no
+        // second fork. This flag is on the fd the parent keeps, so the child
+        // already forked is unaffected: its 0/1/2 are the slave.
+        if (fcntl(s.pty_fd, F_SETFD, fcntl(s.pty_fd, F_GETFD) | FD_CLOEXEC) < 0)
+        {
+            import core.sys.posix.unistd : close;
+
+            close(s.pty_fd);
+            s.pty_fd = -1;
+            hangUpAndReap();
+            s.childReaped = true;
+            ghostty_terminal_free(s.terminal);
+            s.terminal = null;
+            return false;
         }
 
         // Non-blocking master: read() must return EAGAIN, never stall a frame.
@@ -990,6 +1016,51 @@ struct TerminalView
             auto hp = (() @trusted => &h)();
             ringPump = h.spawnDaemon(() { pumpFiber(self, hp); });
         }
+    }
+
+    /**
+    ditto — whether a daemon carries this instance's pty right now.
+
+    What an $(B embedder) needs to size its own wake: a pane the ring drives
+    wakes the loop when bytes arrive, and one still on the sync `pump()` only
+    catches up when something else wakes it, so a host running both wants a
+    timed wake for exactly as long as it has panes of the second kind. The
+    answer changes over a run — `startRingPump` may decline, and the daemon
+    clears it on an unexpected error — so it is a question per frame, not a
+    fact per open.
+    */
+    bool ringPumped() const @safe pure nothrow @nogc => ringPump;
+
+    @("terminal_view.component.ringPumpNeedsAnOpenPtyAndAWillingHost")
+    @safe unittest
+    {
+        // Heap, not the stack: this value is far larger than the 512 KiB a
+        // non-main thread gets on macOS, and the test runner runs on one.
+        auto tv = new TerminalView;
+
+        // Never opened: nothing to read, so no daemon may be spawned — the
+        // guard that stops a fiber parking on a fd that does not exist. A
+        // host that would happily supply one changes nothing here.
+        static struct EagerHost
+        {
+            size_t asks;
+            bool spawnDaemon(scope void delegate() body_) { ++asks; return true; }
+            void wake() {}
+        }
+
+        EagerHost h;
+        tv.startRingPump(h);
+        assert(h.asks == 0, "an unopened view must not spawn a pump");
+        assert(!tv.ringPumped);
+
+        // And a host with no errand at all leaves the sync path in place
+        // rather than failing to compile at the call site — which is what
+        // lets one embedder serve the recorder and a live loop alike.
+        static struct PlainHost {}
+
+        PlainHost p;
+        tv.startRingPump(p);
+        assert(!tv.ringPumped);
     }
 
     /// ditto — the daemon body.
