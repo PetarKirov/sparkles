@@ -11,8 +11,12 @@ on:
       - 'libs/twoslash/**'
       - 'package.json'
       - 'package-lock.json'
+  # No `branches` filter: a stacked PR's base is a feature branch, and its
+  # preview matters as much as a PR against main. The deploy is a preview
+  # either way — `ci/deploy-cloudflare-pages.sh` keys it on the PR's head
+  # branch (`GITHUB_HEAD_REF`), never on the base — so only the push to main
+  # above is a production deploy.
   pull_request:
-    branches: [main]
     paths:
       - 'docs/**'
       # The twoslash showcase gallery is rendered from these at docs-build time
