@@ -1138,9 +1138,11 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 processPending();
             }
 
-            /// Takes over a failed observer's observation with a lane worker;
-            /// when no fiber can be admitted, probes inline under protect —
-            /// slower for the relay, but the observation is never skipped.
+            /// Hands a failed observer's observation to the pre-admitted lane
+            /// worker (an activation wake, never an admission). Should that
+            /// worker already have ended, the fallback kills first and then
+            /// probes inline under protect, so the observation can never
+            /// wait on an exit only the kill can cause.
             void startLaneObserver()
             {
                 if (rp.observer != RootObserverState.failed)
@@ -3930,33 +3932,60 @@ unittest
 }
 
 @("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
-@safe
+@system
 unittest
 {
+    import core.stdc.errno : errno;
+    import core.sys.posix.signal : kill_ = kill;
+    import core.sys.posix.unistd : getpid;
     import core.time : MonoTime, msecs, seconds;
+    import std.conv : text, to;
+    import std.file : exists, readText, remove, tempDir;
+    import std.path : buildPath;
+    import std.string : strip;
     import sparkles.event_horizon.scope_ : JoinHandle, withScope;
 
     Sched s;
     schedOrSkip(s);
+    const pidFile = buildPath(tempDir(), text("eh-setsid-", getpid(), "-", MonoTime.currTime.ticks));
+    scope (exit)
+        if (exists(pidFile))
+            remove(pidFile);
+
     SupervisedProcessResult got;
+    int descendant;
+    string descendantCgroup;
     const before = MonoTime.currTime;
     auto r = s.run(() {
         auto outcome = withScope!((ref outer) {
             JoinHandle!void h;
             outer.fork(h, () {
-                // The root leaves a TERM-ignoring session-leader descendant
-                // in the cgroup (pipes closed) and exits after an
-                // unterminated fragment. The fragment's callback cancels the
-                // scope from INSIDE the handler that will issue the kill:
-                // the kill's lane admission must not be refused by it.
+                // Ordering, made deterministic: the root exits at once (so it
+                // is observed first) while a helper holds stdout for 200 ms
+                // and then writes an unterminated fragment — the fragment's
+                // callback cancels the scope from INSIDE the EOF handler
+                // that goes on to issue the kill. Containment, made
+                // checkable: the TERM-ignoring session-leader descendant
+                // records its pid, and the callback reads that pid's cgroup
+                // line before cancelling.
                 SupervisedProcessConfig cfg;
                 cfg.terminateGrace = 100.msecs;
                 cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
                 auto run = supervise(s, ["sh", "-c",
-                    `sleep 0.05; setsid sh -c 'trap "" TERM; sleep 30' >/dev/null 2>&1 & printf partial; exit 0`],
+                    `sleep 0.05; setsid sh -c 'echo $$ > ` ~ pidFile
+                    ~ `; trap "" TERM; sleep 30' >/dev/null 2>&1 & `
+                    ~ `(sleep 0.2; printf partial) & exit 0`],
                     cfg, null, (in ProcessEvent ev) {
-                        if (ev.kind == ProcessEventKind.line && !ev.line.terminated)
-                            outer.cancel();
+                        if (ev.kind != ProcessEventKind.line || ev.line.terminated)
+                            return;
+                        if (exists(pidFile))
+                        {
+                            descendant = readText(pidFile).strip.to!int;
+                            const cg = text("/proc/", descendant, "/cgroup");
+                            if (exists(cg))
+                                descendantCgroup = readText(cg);
+                        }
+                        outer.cancel();
                     });
                 assert(run.hasValue, run.hasError ? run.error.context : "");
                 got = move(run.value);
@@ -3971,9 +4000,18 @@ unittest
     assert(got.status.ok && got.reap == ReapOutcome.reaped);
     assert(!got.terminationDegraded, got.terminationError.context);
     assert(MonoTime.currTime - before < 3.seconds);
-    if (got.usage.source == SampleSource.cgroupMembers
-        || got.usage.source == SampleSource.cgroupFull)
-        assert(!got.cgroupCleanupLeaked, "cgroup.kill executed: no survivor in the run cgroup");
+    assert(descendant > 0, "the descendant announced itself before the fragment");
+    import std.algorithm.searching : canFind;
+    if (descendantCgroup.canFind("/eh-run-"))
+    {
+        // The handshake proved the descendant was inside the run cgroup and
+        // outside the process group: only `cgroup.kill` can have ended it.
+        assert(kill_(descendant, 0) == -1 && errno == ESRCH,
+            "the session-leader descendant is gone");
+        assert(!got.cgroupCleanupLeaked, "no survivor in the run cgroup");
+    }
+    else if (descendant > 0)
+        cast(void) kill_(descendant, SIGKILL); // proc-only host: not ours to promise
 }
 
 @("supervise.observer.failureWithNoReplacementFiberStillKillsAndReaps")
