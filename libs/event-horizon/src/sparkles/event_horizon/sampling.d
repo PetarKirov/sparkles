@@ -1339,7 +1339,7 @@ version (linux)
         // The fork waits for the migration: `cgroup.procs` moves one
         // process, so a child forked before the write stays outside the
         // cgroup (the pgid still covers it — SPEC §13.7).
-        auto spawned = spawnProcess(["sh", "-c", "sleep 0.1; sleep 0.4 & sleep 1"]);
+        auto spawned = spawnProcess(["sh", "-c", "sleep 0.1; sleep 3 & sleep 4"]);
         assert(spawned.hasValue);
         auto child = spawned.value;
         assert(migrateInto(run, child.pid) == 0);
@@ -1349,7 +1349,7 @@ version (linux)
         assert(sampler.anchored);
         assert(sampler.source == (run.tier == CgroupTier.accounted
             ? SampleSource.cgroupFull : SampleSource.cgroupMembers));
-        Thread.sleep(250.msecs);
+        Thread.sleep(400.msecs); // well past the fork, well before either exit
         assert(sampler.sample());
         assert(sampler.usage.peakProcesses >= 2, "the roster saw the shell and a sleep");
         assert(sampler.usage.cgroupCpuSource == MetricSource.cgroup);

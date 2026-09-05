@@ -72,7 +72,7 @@ import sparkles.event_horizon.backend.concept : canSubmitOp;
 import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.blocking_pool : BlockingPool, sharedBlockingPool;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
-    InterruptKind, cancelTree, interruptFiber;
+    InterruptKind, cancelTree, interruptFiber, interruptRequested;
 import sparkles.event_horizon.channel : Channel;
 import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
@@ -312,6 +312,7 @@ private struct Run
     FiberContext* clockCtx, samplerCtx, stdinCtx, stdoutCtx, stderrCtx,
         observerCtx, evidenceCtx, laneObserverCtx;
     bool stopClock, stopSampler, stopStdin, stopEvidence, stopLane, evidenceActive;
+    bool laneActive; /// the pre-spawned lane observer was handed the observation
 
     KillOutcome pgidKill, cgroupKillOutcome;
     bool killExecuted;
@@ -689,6 +690,12 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
             if (policy == ResidualPolicy.wait && !admissionFailed)
                 spawnWorker(&rp.evidenceCtx, &(new EvidenceWorker(rp, schedP)).run);
 
+        // The replacement observer is admitted now, while admission failure
+        // still has the ordinary emergency answer (kill before observing);
+        // a failed observer later merely activates it.
+        if (!admissionFailed)
+            spawnWorker(&rp.laneObserverCtx, &(new LaneObserverWorker(rp, schedP, childP)).run);
+
         // ── the supervisor: a nested struct so its methods may call each
         // other in any order (nested functions cannot be forward-referenced)
         struct Ctl
@@ -736,6 +743,14 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     rp.sink = null;
                     requestTermination(ProcessEnd.cancelled);
                 }
+                // A callback may cancel the enclosing scope synchronously:
+                // that is the first trigger from this instant, and every
+                // later step of this handler runs with it latched.
+                if (!rp.cancelledLatched && interruptRequested(*schedP.currentContext()))
+                {
+                    rp.cancelledLatched = true;
+                    requestTermination(ProcessEnd.cancelled);
+                }
             }
 
             void rememberError(IoError error)
@@ -759,7 +774,11 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 {
                     if (rp.cgroupOwned)
                     {
-                        auto killed = cgroupKill(*schedP, rp.pool, rp.cgroup);
+                        // Termination-critical admission is cancellation-safe
+                        // on its own: a cancellation that arrived inside the
+                        // current handler (a callback cancelling the scope)
+                        // has not latched the loop's protection yet.
+                        auto killed = protect!(() => cgroupKill(*schedP, rp.pool, rp.cgroup))(*schedP);
                         rp.cgroupKillOutcome = killed.hasError
                             ? KillOutcome(KillResult.failed, killed.error.errnoValue)
                             : KillOutcome(KillResult.delivered, 0);
@@ -1127,10 +1146,17 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 if (rp.observer != RootObserverState.failed)
                     return;
                 rp.observer = RootObserverState.laneOwned;
-                auto worker = new LaneObserverWorker(rp, schedP, childP);
-                auto shell = new WorkerShell(rp, schedP, &rp.laneObserverCtx, &worker.run);
-                if (!sc.spawnShielded(&shell.run, &shield))
-                    cast(void) protect!(() { observeRootOnLane(); return 0; })(*schedP);
+                rp.laneActive = true;
+                if (rp.laneObserverCtx !is null)
+                {
+                    schedP.wake(rp.laneObserverCtx);
+                    return;
+                }
+                // No worker (it already ended): kill first, so the inline
+                // observation cannot wait on an exit only the kill can cause.
+                if (!rp.killIssued)
+                    executeHardKill();
+                cast(void) protect!(() { observeRootOnLane(); return 0; })(*schedP);
             }
 
             /// One main-loop iteration: a relay take and its handling.
@@ -1372,6 +1398,8 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                             recordSecondary(next.value.defect);
                             break;
                         case RelayKind.bytes:
+                            rp.testObserverArmed = true;
+                            break;
                         case RelayKind.streamEof:
                         case RelayKind.readError:
                         case RelayKind.wake:
@@ -1588,8 +1616,11 @@ private final class ObserverWorker
         for (;;)
         {
             if (rp.testObserverErrno != 0)
-                while (!rp.testObserverArmed && !rp.stopLane)
-                    cast(void) sleep(*s, 10.msecs); // after the root's first line
+                // After the root's first line — unless the run is already
+                // tearing down, when no line may ever come.
+                while (!rp.testObserverArmed && !rp.stopLane
+                    && rp.control == ControlState.running)
+                    cast(void) sleep(*s, 10.msecs);
             auto observed = rp.testObserverErrno != 0
                 ? ioErr!ExitStatus(rp.testObserverErrno, OpKind.waitid,
                     IoErrorStage.submit, "injected observer failure")
@@ -1646,6 +1677,8 @@ private final class LaneObserverWorker
 
     void run()
     {
+        while (!rp.laneActive && !rp.stopLane)
+            s.park(); // pre-spawned: parked until a failed observer hands over
         Duration backoff = 10.msecs;
         while (!rp.stopLane && child.pid > 0)
         {
@@ -3290,13 +3323,14 @@ unittest
     auto r = s.run(() {
         EventLog log;
         SupervisedProcessConfig cfg;
-        // Nominal cadence is 16 ticks over the 400 ms run; requiring three
-        // survives an 8x sustained scheduler stall without weakening the
-        // repeated-sampling property (missed instants coalesce by design,
-        // SPEC §13.8 — they do not queue).
+        // Nominal cadence is 40 ticks over the one-second run; requiring
+        // three survives a sustained stall of the shared pool's public lane
+        // under the parallel suite without weakening the repeated-sampling
+        // property (missed instants coalesce by design, SPEC §13.8 — they
+        // do not queue).
         cfg.sampleInterval = 25.msecs;
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
-        auto got = supervise(s, ["sleep", "0.4"], cfg, null, log.sink());
+        auto got = supervise(s, ["sleep", "1"], cfg, null, log.sink());
         assert(got.hasValue, got.error.context);
 
         size_t samples;
@@ -3373,7 +3407,8 @@ unittest
     auto r = s.run(() {
         SupervisedProcessConfig cfg;
         cfg.sampleInterval = 5.msecs;
-        const worker = `awk 'BEGIN{for(i=0;i<8000000;i++) x+=i}'`;
+        // Long enough that the sampler cannot miss a worker under load.
+        const worker = `awk 'BEGIN{for(i=0;i<20000000;i++) x+=i}'`;
 
         // The first fork waits for the cgroup migration (SPEC §13.7), so in
         // the cgroup tiers `cpu.stat` covers both workers whatever the
@@ -3892,4 +3927,81 @@ unittest
         assert(elapsed < 3.seconds, "…and the requested grace was not idled out");
     });
     assert(!r.hasError);
+}
+
+@("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
+@safe
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import sparkles.event_horizon.scope_ : JoinHandle, withScope;
+
+    Sched s;
+    schedOrSkip(s);
+    SupervisedProcessResult got;
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        auto outcome = withScope!((ref outer) {
+            JoinHandle!void h;
+            outer.fork(h, () {
+                // The root leaves a TERM-ignoring session-leader descendant
+                // in the cgroup (pipes closed) and exits after an
+                // unterminated fragment. The fragment's callback cancels the
+                // scope from INSIDE the handler that will issue the kill:
+                // the kill's lane admission must not be refused by it.
+                SupervisedProcessConfig cfg;
+                cfg.terminateGrace = 100.msecs;
+                cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+                auto run = supervise(s, ["sh", "-c",
+                    `sleep 0.05; setsid sh -c 'trap "" TERM; sleep 30' >/dev/null 2>&1 & printf partial; exit 0`],
+                    cfg, null, (in ProcessEvent ev) {
+                        if (ev.kind == ProcessEventKind.line && !ev.line.terminated)
+                            outer.cancel();
+                    });
+                assert(run.hasValue, run.hasError ? run.error.context : "");
+                got = move(run.value);
+                return ioOk();
+            });
+            cast(void) h.join(s);
+        })(s);
+        assert(!outcome.hasError);
+    });
+    assert(!r.hasError);
+    assert(got.end == ProcessEnd.cancelled, "the callback's cancellation is the first trigger");
+    assert(got.status.ok && got.reap == ReapOutcome.reaped);
+    assert(!got.terminationDegraded, got.terminationError.context);
+    assert(MonoTime.currTime - before < 3.seconds);
+    if (got.usage.source == SampleSource.cgroupMembers
+        || got.usage.source == SampleSource.cgroupFull)
+        assert(!got.cgroupCleanupLeaked, "cgroup.kill executed: no survivor in the run cgroup");
+}
+
+@("supervise.observer.failureWithNoReplacementFiberStillKillsAndReaps")
+@safe
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    // Root + observer + two drains + clock + sampler fit; the pre-spawned
+    // lane observer does not. Its admission failure is the ordinary
+    // emergency answer: the hard kill precedes any observation, so an
+    // observer failure against an indefinitely TERM-ignoring root is
+    // still bounded — nothing waits on an exit only the kill can cause.
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 6;
+    schedOrSkip(s, opts);
+    const before = MonoTime.currTime;
+    auto r = s.run(() {
+        SupervisedProcessConfig cfg;
+        cfg.terminateGrace = 5.seconds;
+        cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
+        auto got = superviseImpl(s, ["sh", "-c", "trap '' TERM; echo ready; sleep 30"], cfg,
+            null, null, null, null, EINVAL);
+        assert(got.hasError && got.error.errnoValue == ENOBUFS);
+        assert(reapRightConsumed(testLastSupervisedPid), "the root was killed and reaped");
+    });
+    assert(!r.hasError);
+    assert(MonoTime.currTime - before < 3.seconds, "hard kill and reap completed promptly");
 }
