@@ -207,21 +207,21 @@ int main()
     if (checkTextAndComposition(wsi))
         writeln("ok: Win32 text commit + IMM32 composition round trip");
     else
-        writeln("ok: Win32 text commit (IMM32 composition skipped: "
-            ~ "the active keyboard layout composed nothing)");
+        writeln("ok: Win32 text commit + IMM32 result commit (no preedit "
+            ~ "phase: the active keyboard layout has no IME UI)");
     return 0;
 }
 
 /// Win32-only addendum: VK logical identity, UTF-16 commits, and the IMM32
 /// preedit/result contract, on a fresh window. Returns whether the IMM32
-/// round trip ran: Wine's IMM32 composes on any layout, but native Windows
-/// accepts the calls and emits nothing when the layout's IME composes
-/// nothing — a hosted CI runner's US layout, for one. IMM32's static
-/// queries cannot tell the two apart (`ImmIsIME` answers true for the plain
-/// US layout on both, and the IME file name is empty on both), so the rule
-/// is behavioral: no composition observed is a reported skip, a composition
-/// that starts and does not end and commit is a failure. The report line
-/// carries what the layout claimed next to what was seen.
+/// preedit phase was seen. `CPS_COMPLETE` commits the result string on every
+/// host — that is asserted unconditionally — but only an IME UI shows a
+/// preedit first: Wine's IMM32 does on any layout, native Windows on a
+/// hosted CI runner's US layout does not, and IMM32's static queries cannot
+/// tell the two apart (`ImmIsIME` answers true for the plain US layout on
+/// both, and the IME file name is empty on both). So the preedit phase is
+/// reported where it appears, a composition that started must end, and the
+/// report line carries what the layout claimed next to what was seen.
 private bool checkTextAndComposition(ref Win32Wsi wsi)
 {
     WindowConfig config;
@@ -317,8 +317,9 @@ private bool checkTextAndComposition(ref Win32Wsi wsi)
         ~ "preedit=%s compositionEnd=%s commit=%s",
         cast(size_t) layout, layoutHasIme, imeFile[0 .. imeFileLength],
         sawPreedit, sawCompositionEnd, sawImeCommit);
-    assert(composed || (!sawPreedit && !sawCompositionEnd && !sawImeCommit),
-        "a composition that started must also end and commit");
+    assert(sawImeCommit, "IMM32 CPS_COMPLETE must commit the result string");
+    assert(!sawPreedit || sawCompositionEnd,
+        "a composition that started must also end");
 
     assert(!wsi.destroyWindow(id).hasError);
     return composed;
