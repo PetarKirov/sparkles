@@ -77,7 +77,7 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.system }}, ${{ matrix.DC }}, shard ${{ matrix.shard }}/4)
+    name: test (${{ matrix.system }}, ${{ matrix.DC }}, shard ${{ matrix.shard }}/5)
     # `main` and `schedule` runs exist for the link sweep and the cache it
     # seeds. Everything but `lint` is therefore pull-request-only. Since
     # CircleCI was retired nothing runs the suite post-merge; drop these
@@ -88,15 +88,21 @@ jobs:
       # `leg × shard`, with `include` attaching the runner/system/compiler to
       # each leg by its key (an `include` entry that names an existing `leg`
       # value is merged into every combination carrying it, so this is 4 legs
-      # × 4 shards = 16 jobs). The shard count is repeated in the `--shard`
+      # × 5 shards = 20 jobs). The shard count is repeated in the `--shard`
       # argument below; both must agree.
+      #
+      # Five, from the first sharded run's numbers: the whole suite is ~1600 s
+      # of per-package cost on the slowest leg, a runner spends ~1-3 min on
+      # its Nix fetch before the first `dub` runs (the whole matrix starts at
+      # once and shares Cachix's bandwidth), so four shards put the heaviest
+      # at 10 min and five put it at ~8.
       matrix:
         leg:
           - x86_64-linux-ldc2
           - x86_64-linux-dmd
           - aarch64-darwin-ldc2
           - aarch64-linux-ldc2
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
         include:
           - leg: x86_64-linux-ldc2
             runner: ubuntu-latest
@@ -113,8 +119,7 @@ jobs:
           # The one host where `real` is binary128 (`real.mant_dig == 113`):
           # the leg that compiles and runs the wide-format conversion paths
           # natively. That makes `base` its outlier (its float sweeps run 3×
-          # slower than on x86), which is why the shard weights give `base` a
-          # runner of its own on every leg.
+          # slower than on x86 under `-cov`; a third of `hue` without it).
           - leg: aarch64-linux-ldc2
             runner: ubuntu-24.04-arm
             system: aarch64-linux
@@ -171,7 +176,7 @@ jobs:
       # Coverage stays on by default for a local `ci --test`, where `hue --cov`
       # reads the result.
       - name: Build and test with dub
-        run: ci --test --fail-fast --no-coverage --shard ${{ matrix.shard }}/4
+        run: ci --test --fail-fast --no-coverage --shard ${{ matrix.shard }}/5
         env:
           # `ci` embeds dmd (small closure); honour the matrix compiler for the
           # test suite so the ldc2/dmd dimensions are actually exercised. Both
@@ -263,25 +268,36 @@ jobs:
   # catalogs' `examples/`), built and run on the hosts that have a Nix
   # toolchain — plus `nix flake check`, which is a flake-evaluation gate rather
   # than a test and only needs to run once per system. Previously the tail of
-  # the `test` job; ~4 min of parallel builds that never depended on the tests.
+  # the `test` job; 4–5 min of parallel builds that never depended on the
+  # tests, now two shards per host (`leg × shard`, as in `test`) so the
+  # macOS leg — 5 min of builds on 3 cores after a 3 min Nix fetch — stays
+  # inside the budget.
   examples:
-    name: examples (${{ matrix.system }}, ${{ matrix.DC }})
+    name: examples (${{ matrix.system }}, ${{ matrix.DC }}, shard ${{ matrix.shard }}/2)
     if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
+        leg:
+          - x86_64-linux-ldc2
+          - x86_64-linux-dmd
+          - aarch64-darwin-ldc2
+        shard: [1, 2]
         include:
-          - runner: ubuntu-latest
+          - leg: x86_64-linux-ldc2
+            runner: ubuntu-latest
             system: x86_64-linux
             DC: ldc2
             jobs: 4
-          - runner: ubuntu-latest
+          - leg: x86_64-linux-dmd
+            runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
             jobs: 4
           # 3 vCPUs and ~7 GiB: `ci` budgets ~2 GiB per concurrent ldc build,
           # so three is what the host affords.
-          - runner: macos-latest
+          - leg: aarch64-darwin-ldc2
+            runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
             jobs: 3
@@ -308,11 +324,13 @@ jobs:
             ~/.dub
             ~/.local/share/dub
             !~/.dub/cache/sparkles
-          key: ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          key: ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-${{ matrix.shard }}-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
           restore-keys: |
+            ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-${{ matrix.shard }}-
             ${{ matrix.system }}-${{ matrix.DC }}-dub-examples-
 
       - name: Run flake checks
+        if: matrix.shard == 1
         run: nix flake check
 
       # `SPARKLES_CI_JOBS` pins the example builder's worker count. Left to
@@ -321,7 +339,7 @@ jobs:
       # job's example verification once ran 140 examples on ONE worker
       # (`workers=1 online=4 load=3.74`) for 16 minutes.
       - name: Build and run examples
-        run: ci --example-files --fail-fast
+        run: ci --example-files --fail-fast --shard ${{ matrix.shard }}/2
         env:
           DC: ${{ matrix.DC }}
           SPARKLES_CI_JOBS: ${{ matrix.jobs }}
@@ -504,15 +522,15 @@ jobs:
   # leg on 4 MiB workers (the stack watermark is off under ASan).
   #
   # Sharded like `test` — every package is rebuilt with ASan, which made this
-  # a 17–20 min job on its own; four shards of the same cost table bring a
-  # shard to ~5 min plus the closure rebuild.
+  # a 17–20 min job on its own; five shards of the same cost table bring a
+  # shard to ~4 min of ASan builds plus the Nix fetch.
   sanitize:
-    name: Sanitizers (ASan, stackovf, shard ${{ matrix.shard }}/4)
+    name: Sanitizers (ASan, stackovf, shard ${{ matrix.shard }}/5)
     if: github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -552,7 +570,7 @@ jobs:
             x86_64-linux-asan-dub-
 
       - name: Run tests under ASan / stackovf
-        run: ci --test-sanitize --fail-fast --shard ${{ matrix.shard }}/4
+        run: ci --test-sanitize --fail-fast --shard ${{ matrix.shard }}/5
         env:
           DC: ldc2
 

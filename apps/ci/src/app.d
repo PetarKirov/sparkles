@@ -1234,11 +1234,12 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
         gathered ~= FileExamples(mdFile, examples);
     }
 
-    // A file's cost is its example count: each example is one dub build, and
-    // the builds are what the wall clock is made of.
+    // A file's cost is the sum of its examples' (see `exampleWeight`): each
+    // example is one dub build, and the builds are what the wall clock is
+    // made of.
     if (shard.active)
     {
-        gathered = shardOf!(g => g.examples.length)(gathered, shard);
+        gathered = shardOf!(g => g.examples.map!(e => exampleWeight(e.code)).sum)(gathered, shard);
         info(i"shard $(shard.index)/$(shard.count): $(gathered.length) file(s), $(gathered.map!(g => g.examples.length).sum) example(s)");
     }
 
@@ -2280,11 +2281,11 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast,
     foreach (skippedFile; skippedFiles)
         info(i"{yellow ⊘} {cyan $(skippedFile.baseName)} — skipped (unsupported on this platform)");
 
-    // Sliced after the platform filter so a shard never holds only skips, and
-    // by count: a standalone example is one build much like another.
+    // Sliced after the platform filter so a shard never holds only skips,
+    // weighted by what each file pulls in (see `exampleWeight`).
     if (shard.active)
     {
-        exampleFiles = shardOf!(f => 1)(exampleFiles, shard);
+        exampleFiles = shardOf!(f => exampleWeight(f.exists ? f.readText : ""))(exampleFiles, shard);
         info(i"shard $(shard.index)/$(shard.count): $(exampleFiles.length) example file(s)");
     }
 
@@ -2811,13 +2812,15 @@ private int runDubBuildMode(bool failFast)
 The relative cost of `dub test :pkg` — both legs, dependency closure included
 — in seconds, for `--shard` to balance the sub-packages across runners.
 
-Measured on the four `ci --test` legs of CI run 33931968343 (2026-09-05) and
-taking each package's $(I slowest) leg, so the shard that is heaviest anywhere
-is the one kept small: `base` is the aarch64-linux outlier (the binary128
-`real` float sweeps run natively there), `twoslash-d` its second. The apps
-rate high mostly for the closure they rebuild, which a shard pays once, so the
-balance is approximate by construction; what it guarantees is that no runner
-draws both `base` and `hue`.
+Measured on the sharded, `--no-coverage` legs of CI run 33956387221
+(2026-09-05: x86_64 ldc2/dmd, aarch64-darwin, aarch64-linux, and the ASan
+shards) and taking each package's $(I slowest) leg, so the shard that is
+heaviest anywhere is the one kept small. Under `-cov` the table looked very
+different — `base` alone was 654 s on aarch64, its float sweeps hammering
+LDC's atomic counters — which is why the figures are from a run without it.
+The apps rate high mostly for the closure they rebuild (`hue` is 210 s under
+ASan), which a shard pays once, so the balance is approximate by
+construction; what it guarantees is that no runner draws two of them.
 
 A package this table has not met weighs a typical library, so a new one lands
 in some shard rather than nowhere. Refresh the figures when the ordering
@@ -2827,52 +2830,52 @@ uint testPackageWeight(string pkgName) @safe pure nothrow @nogc
 {
     switch (pkgName)
     {
-        case "base": return 654;
-        case "hue": return 164;
-        case "twoslash-extract": return 91;
-        case "twoslash-d": return 91;
-        case "build-primitives": return 69;
-        case "ci": return 67;
-        case "diagram": return 66;
-        case "dmd-fmt": return 65;
-        case "terminal": return 54;
-        case "tui": return 43;
-        case "dmd-lsp": return 39;
-        case "ui": return 33;
-        case "dsv": return 31;
-        case "wired": return 31;
-        case "twoslash": return 31;
-        case "release": return 30;
-        case "ui-app": return 20;
-        case "dql": return 20;
-        case "core-cli": return 19;
-        case "vulkan-wsi": return 16;
-        case "tree-sitter": return 14;
-        case "syntax": return 14;
-        case "test-runner-impl": return 12;
-        case "fuzzy": return 12;
-        case "docs": return 12;
-        case "test-utils": return 11;
-        case "raylib-text": return 11;
-        case "input": return 11;
-        case "ui-gallery": return 11;
-        case "vulkan": return 9;
-        case "source-view": return 9;
+        case "hue": return 210;
+        case "twoslash-extract": return 126;
+        case "dmd-lsp": return 84;
+        case "dmd-fmt": return 81;
+        case "release": return 78;
+        case "ci": return 72;
+        case "docs": return 67;
+        case "terminal": return 66;
+        case "ui-gallery": return 65;
+        case "diagram": return 60;
+        case "terminal-benchmark": return 54;
+        case "base": return 53;
+        case "ui": return 43;
+        case "ui-raylib": return 27;
+        case "tui": return 26;
+        case "core-cli": return 26;
+        case "wired": return 24;
+        case "tree-sitter": return 24;
+        case "test-utils": return 23;
+        case "ui-app": return 22;
+        case "twoslash-d": return 22;
+        case "dql": return 22;
+        case "diff": return 20;
+        case "syntax": return 16;
+        case "dsv": return 15;
+        case "test-runner-impl": return 14;
+        case "fuzzy": return 14;
+        case "raylib-text": return 13;
+        case "input": return 13;
+        case "twoslash": return 12;
+        case "source-view": return 12;
+        case "ui-sdl3": return 11;
+        case "terminal-view": return 9;
+        case "event-horizon": return 8;
         case "versions": return 7;
-        case "ui-tui": return 6;
-        case "ui-sdl3": return 6;
-        case "twoslash-protocol": return 6;
+        case "ui-tui": return 7;
+        case "vulkan-wsi": return 6;
+        case "http": return 6;
+        case "code-instrumentation": return 6;
         case "wsi": return 5;
-        case "event-horizon": return 5;
-        case "diff": return 5;
-        case "code-instrumentation": return 5;
-        case "terminal-view": return 5;
-        case "http": return 4;
-        case "ui-raylib": return 3;
+        case "vulkan": return 5;
+        case "twoslash-protocol": return 5;
         case "test-runner": return 3;
         case "math": return 2;
-        case "terminal-benchmark": return 2;
         case "ghostty": return 2;
+        case "build-primitives": return 2;
         case "reflection": return 1;
         case "metadata": return 1;
         default: return 10;
@@ -2884,11 +2887,39 @@ uint testPackageWeight(string pkgName) @safe pure nothrow @nogc
 unittest
 {
     // The two packages that must never share a shard outweigh everything else.
-    assert(testPackageWeight("base") > testPackageWeight("hue"));
     assert(testPackageWeight("hue") > testPackageWeight("twoslash-extract"));
+    assert(testPackageWeight("twoslash-extract") > testPackageWeight("base"));
     // An unknown package weighs a typical library, never zero.
     assert(testPackageWeight("brand-new-lib") == 10);
     assert(testPackageWeight("metadata") > 0);
+}
+
+/**
+The relative cost of building one example, for `--shard` to balance the
+markdown files and the standalone example files across runners.
+
+An example that depends on a `sparkles:` package builds that package's whole
+closure in its private `DUB_HOME` — `base`, `core-cli`, `ui`, … — while one
+that only imports Phobos compiles in a second. The first sharded run split the
+markdown examples 70/70 by count and got 83 s against 256 s, the README's
+`sparkles:core-cli` examples all on one side. Eight to one is that ratio,
+rounded; only the ratio matters.
+*/
+uint exampleWeight(scope const(char)[] source) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return source.canFind("sparkles:") ? 8 : 1;
+}
+
+@("ci.exampleWeight")
+@safe pure nothrow
+unittest
+{
+    assert(exampleWeight(`dependency "sparkles:core-cli" version="*"`) == 8);
+    assert(exampleWeight(`dependency "sparkles:base" path="../../.."`) == 8);
+    assert(exampleWeight("import std.stdio; void main() {}") == 1);
+    assert(exampleWeight("") == 1);
 }
 
 private int runDubTestsMode(bool failFast, bool coverage, Shard shard = Shard.init,
