@@ -325,8 +325,12 @@ unittest
 {
     enum resolved = resolveSourcePath(
         "libs/base/src/sparkles/base/source_uri.d");
-    // Must be absolute
-    assert(resolved.length > 0 && resolved[0] == '/');
+    // Must be absolute — a drive-letter root on Windows, where dub hands the
+    // compiler `D:\a\...` full paths, a leading slash everywhere else.
+    version (Windows)
+        assert(resolved.length > 2 && resolved[1] == ':');
+    else
+        assert(resolved.length > 0 && resolved[0] == '/');
     // Must end with the relative path
     assert(resolved.length > 40
         && resolved[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
@@ -341,7 +345,10 @@ unittest
     static assert(absPath == "/already/absolute");
 
     enum relPath = resolveSourcePath("libs/base/src/sparkles/base/source_uri.d");
-    static assert(relPath.length > 0 && relPath[0] == '/');
+    version (Windows)
+        static assert(relPath.length > 2 && relPath[1] == ':');
+    else
+        static assert(relPath.length > 0 && relPath[0] == '/');
 }
 
 /// FileUriHook produces file:// URIs.
