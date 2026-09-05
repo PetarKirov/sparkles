@@ -16,12 +16,12 @@ executed by placing a header comment after the `dub.sdl` block:
 
 Usage:
 ---
-nix run .#ci -- [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
-nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- [--verify|--update] [--fail-fast] [--shard I/N] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
+nix run .#ci -- --example-files [--fail-fast] [--shard I/N] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --build [--fail-fast]
-nix run .#ci -- --test [--fail-fast]
+nix run .#ci -- --test [--fail-fast] [--no-coverage] [--shard I/N]
 nix run .#ci -- --test-extracted [--fail-fast]
-nix run .#ci -- --test-sanitize [--fail-fast]
+nix run .#ci -- --test-sanitize [--fail-fast] [--shard I/N]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
@@ -43,6 +43,7 @@ $(LIST
     $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--exclude-files` — drop matching files from the include set (or from the mode's defaults); same path/glob selectors as `--include-files`)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
+    $(ITEM `--shard I/N` — run only the I-th of N deterministic, cost-balanced slices of the work (1-based): the sub-packages under `--test`/`--test-sanitize`, the markdown files under the example modes, the files under `--example-files`. The N slices of one input together cover it exactly once, so a CI provider can spread one step over N runners with nothing but a different `I` on each — see `shard.d`)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
@@ -109,7 +110,7 @@ nor verified; removing the directive makes the example required again:
 module app;
 
 // std.* modules
-import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
+import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith, sum;
 import std.array : array, join, split;
 import std.conv : text, to;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -150,6 +151,7 @@ import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
+import shard : parseShard, Shard, shardOf;
 
 // === UI sizing ===
 
@@ -215,6 +217,12 @@ struct CliParams
 
     @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
     bool failFast;
+
+    @(Option(`shard`,
+        description: "Run only the I-th of N deterministic, cost-balanced slices of the work (I/N, 1-based): "
+        ~ "the sub-packages with --test/--test-sanitize, the markdown files with --verify/--update, "
+        ~ "the files with --example-files. The N slices of one input together cover it exactly once."))
+    string shard;
 
     // Canonical name last (same convention as short|long): `--files` is the
     // alias, `--include-files` is the primary name shown in synopsis/errors.
@@ -466,6 +474,19 @@ int ciMain(string[] args)
     if (mode == ProgramMode.runSanitizeTests && cli.coverage)
         info(i"coverage is off under --test-sanitize (ASan and -cov instrumentation do not mix)");
 
+    const shardParsed = parseShard(cli.shard);
+    if (shardParsed.hasError)
+    {
+        error(i"$(shardParsed.error)");
+        return 1;
+    }
+    const shard = shardParsed.value;
+    if (shard.active && !modeSupportsSharding(mode))
+    {
+        error(i"--shard applies only to --test, --test-sanitize, --example-files and the markdown example modes");
+        return 1;
+    }
+
     if (mode == ProgramMode.checkCommitScope)
     {
         string source = (positionalArgs.length > 0) ? positionalArgs[0] : "-";
@@ -484,10 +505,10 @@ int ciMain(string[] args)
         return runDubBuildMode(cli.failFast);
 
     if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast, coverage);
+        return runDubTestsMode(cli.failFast, coverage, shard);
 
     if (mode == ProgramMode.runSanitizeTests)
-        return runDubTestsMode(cli.failFast, coverage, sanitize: true);
+        return runDubTestsMode(cli.failFast, coverage, shard, sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
         return runExtractedTestsMode(cli.failFast);
@@ -524,7 +545,7 @@ int ciMain(string[] args)
     }
 
     if (mode == ProgramMode.runExampleFiles)
-        return runExampleFilesMode(inputFiles, cli.failFast);
+        return runExampleFilesMode(inputFiles, cli.failFast, shard);
 
     if (mode == ProgramMode.checkReferenceLinks)
         return runReferenceLinkMode(inputFiles, false);
@@ -538,7 +559,45 @@ int ciMain(string[] args)
     if (mode == ProgramMode.checkBlobPaths)
         return runCheckBlobPaths(inputFiles, cli.cloneRoot);
 
-    return runExamplesForFiles(inputFiles, mode, cli.failFast);
+    return runExamplesForFiles(inputFiles, mode, cli.failFast, shard);
+}
+
+/// The modes whose work is a list `--shard` can slice: everything that walks
+/// the sub-packages or the example files. The checkers and rewriters walk
+/// markdown too, but are seconds of work nobody would spread over runners.
+private bool modeSupportsSharding(ProgramMode mode) @safe pure nothrow @nogc
+{
+    final switch (mode)
+    {
+        case ProgramMode.runExamples:
+        case ProgramMode.verifyExamples:
+        case ProgramMode.updateExamples:
+        case ProgramMode.runExampleFiles:
+        case ProgramMode.runDubTests:
+        case ProgramMode.runSanitizeTests:
+            return true;
+        case ProgramMode.runDubBuild:
+        case ProgramMode.runExtractedTests:
+        case ProgramMode.checkReferenceLinks:
+        case ProgramMode.fixReferenceLinks:
+        case ProgramMode.checkCommitScope:
+        case ProgramMode.checkVcsUrls:
+        case ProgramMode.checkDocsSidebar:
+        case ProgramMode.checkBlobPaths:
+        case ProgramMode.ciStats:
+        case ProgramMode.auditFences:
+            return false;
+    }
+}
+
+@("ci.modeSupportsSharding")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(modeSupportsSharding(ProgramMode.runDubTests));
+    assert(modeSupportsSharding(ProgramMode.verifyExamples));
+    assert(!modeSupportsSharding(ProgramMode.runExtractedTests));
+    assert(!modeSupportsSharding(ProgramMode.ciStats));
 }
 
 private string validateCliMode(
@@ -1143,7 +1202,8 @@ private string[] collectInputFiles(
         .array;
 }
 
-private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
+private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast,
+    Shard shard = Shard.init)
 {
     static struct FileExamples
     {
@@ -1172,6 +1232,14 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
         }
 
         gathered ~= FileExamples(mdFile, examples);
+    }
+
+    // A file's cost is its example count: each example is one dub build, and
+    // the builds are what the wall clock is made of.
+    if (shard.active)
+    {
+        gathered = shardOf!(g => g.examples.length)(gathered, shard);
+        info(i"shard $(shard.index)/$(shard.count): $(gathered.length) file(s), $(gathered.map!(g => g.examples.length).sum) example(s)");
     }
 
     if (gathered.length == 0)
@@ -2192,7 +2260,8 @@ private MonitoredResult executeLogged(
     return noteIfTimedOut(res, timeout);
 }
 
-private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
+private int runExampleFilesMode(string[] allExampleFiles, bool failFast,
+    Shard shard = Shard.init)
 {
     // Honor each example's dub `platforms` declaration: skip (don't build) the
     // ones this host can't satisfy — e.g. the Linux-only `io_uring` examples on
@@ -2210,6 +2279,14 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
 
     foreach (skippedFile; skippedFiles)
         info(i"{yellow ⊘} {cyan $(skippedFile.baseName)} — skipped (unsupported on this platform)");
+
+    // Sliced after the platform filter so a shard never holds only skips, and
+    // by count: a standalone example is one build much like another.
+    if (shard.active)
+    {
+        exampleFiles = shardOf!(f => 1)(exampleFiles, shard);
+        info(i"shard $(shard.index)/$(shard.count): $(exampleFiles.length) example file(s)");
+    }
 
     i"Checking $(exampleFiles.length) standalone example file(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -2730,7 +2807,92 @@ private int runDubBuildMode(bool failFast)
     return failures > 0 ? 1 : 0;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
+/**
+The relative cost of `dub test :pkg` — both legs, dependency closure included
+— in seconds, for `--shard` to balance the sub-packages across runners.
+
+Measured on the four `ci --test` legs of CI run 33931968343 (2026-09-05) and
+taking each package's $(I slowest) leg, so the shard that is heaviest anywhere
+is the one kept small: `base` is the aarch64-linux outlier (the binary128
+`real` float sweeps run natively there), `twoslash-d` its second. The apps
+rate high mostly for the closure they rebuild, which a shard pays once, so the
+balance is approximate by construction; what it guarantees is that no runner
+draws both `base` and `hue`.
+
+A package this table has not met weighs a typical library, so a new one lands
+in some shard rather than nowhere. Refresh the figures when the ordering
+changes, not when the numbers drift.
+*/
+uint testPackageWeight(string pkgName) @safe pure nothrow @nogc
+{
+    switch (pkgName)
+    {
+        case "base": return 654;
+        case "hue": return 164;
+        case "twoslash-extract": return 91;
+        case "twoslash-d": return 91;
+        case "build-primitives": return 69;
+        case "ci": return 67;
+        case "diagram": return 66;
+        case "dmd-fmt": return 65;
+        case "terminal": return 54;
+        case "tui": return 43;
+        case "dmd-lsp": return 39;
+        case "ui": return 33;
+        case "dsv": return 31;
+        case "wired": return 31;
+        case "twoslash": return 31;
+        case "release": return 30;
+        case "ui-app": return 20;
+        case "dql": return 20;
+        case "core-cli": return 19;
+        case "vulkan-wsi": return 16;
+        case "tree-sitter": return 14;
+        case "syntax": return 14;
+        case "test-runner-impl": return 12;
+        case "fuzzy": return 12;
+        case "docs": return 12;
+        case "test-utils": return 11;
+        case "raylib-text": return 11;
+        case "input": return 11;
+        case "ui-gallery": return 11;
+        case "vulkan": return 9;
+        case "source-view": return 9;
+        case "versions": return 7;
+        case "ui-tui": return 6;
+        case "ui-sdl3": return 6;
+        case "twoslash-protocol": return 6;
+        case "wsi": return 5;
+        case "event-horizon": return 5;
+        case "diff": return 5;
+        case "code-instrumentation": return 5;
+        case "terminal-view": return 5;
+        case "http": return 4;
+        case "ui-raylib": return 3;
+        case "test-runner": return 3;
+        case "math": return 2;
+        case "terminal-benchmark": return 2;
+        case "ghostty": return 2;
+        case "reflection": return 1;
+        case "metadata": return 1;
+        default: return 10;
+    }
+}
+
+@("ci.testPackageWeight")
+@safe pure nothrow @nogc
+unittest
+{
+    // The two packages that must never share a shard outweigh everything else.
+    assert(testPackageWeight("base") > testPackageWeight("hue"));
+    assert(testPackageWeight("hue") > testPackageWeight("twoslash-extract"));
+    // An unknown package weighs a typical library, never zero.
+    assert(testPackageWeight("brand-new-lib") == 10);
+    assert(testPackageWeight("metadata") > 0);
+}
+
+private int runDubTestsMode(bool failFast, bool coverage, Shard shard = Shard.init,
+    bool sanitize = false)
 {
     if (sanitize)
     {
@@ -2763,6 +2925,16 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
         return 1;
     }
     info(i"$(subPackages.length) sub-package(s) to test");
+    if (shard.active)
+    {
+        subPackages = shardOf!(p => testPackageWeight(p.baseName))(subPackages, shard);
+        info(i"shard $(shard.index)/$(shard.count): $(subPackages.length) sub-package(s): $(subPackages.map!baseName.join(", "))");
+        if (subPackages.length == 0)
+        {
+            info(i"shard $(shard.index)/$(shard.count) holds no sub-package (more shards than packages); nothing to do");
+            return 0;
+        }
+    }
     if (compilerIsLdc(environment.get("DC", "")))
         info(i"ldc codegen threads capped at $(hwParallelism())");
     if (sanitize)
@@ -2774,7 +2946,8 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     if (coverage)
         info(i"coverage ready at $(cov.dir)");
 
-    i"Testing $(subPackages.length) sub-package(s)".text
+    const shardNote = shard.active ? i" (shard $(shard.index)/$(shard.count))".text : "";
+    i"Testing $(subPackages.length) sub-package(s)$(shardNote)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
     flushStdout();
