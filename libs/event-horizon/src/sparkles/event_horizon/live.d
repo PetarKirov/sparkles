@@ -19,12 +19,270 @@ import core.time : Duration, MonoTime;
 import sparkles.event_horizon.backend.concept : canSubmitOp;
 import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.capability : CtxOf;
+import sparkles.event_horizon.cause : Cause;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.op : OpWaitid;
-import sparkles.event_horizon.proc : ExitStatus, ProcessConfig, StdioMode, StdioSpec;
+import sparkles.event_horizon.errors : IoError;
+import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus,
+    ProcessConfig, StdioMode, StdioSpec;
 import sparkles.event_horizon.sched : Sched;
+
+private:
+
+extern (C) extern __gshared char** environ;
+
+/// The inherited environment as borrowed slices (`environ` itself, never
+/// mutated — overlays copy before editing, SPEC §13.1).
+package const(char)[][] inheritedEnvironment() @trusted nothrow
+{
+    import core.stdc.string : strlen;
+
+    size_t n;
+    while (environ[n] !is null)
+        ++n;
+    auto out_ = new const(char)[][](n);
+    foreach (i; 0 .. n)
+        out_[i] = environ[i][0 .. strlen(environ[i])];
+    return out_;
+}
+
+/// A "KEY=value" entry's name (everything before the first '=', or the whole
+/// entry — an entry without '=' is inherited-name-only by convention).
+package const(char)[] envNameOf(const(char)[] entry) @safe pure nothrow @nogc
+{
+    foreach (i, c; entry)
+        if (c == '=')
+            return entry[0 .. i];
+    return entry;
+}
+
+/**
+Validates and computes the child environment per SPEC §13.1: the base is
+$(LREF ProcessConfig.env) when non-null, else the inherited environment;
+`envOverlay` changes then apply in order — last change for a name wins,
+`unset` removes. Name matching is byte-exact on POSIX.
+
+An invalid edit (empty name, '=' or NUL anywhere in a name, NUL in a value)
+fails with `EINVAL` $(B before any child exists). The result is null exactly
+when the child should inherit unmodified (no custom base and no overlay);
+otherwise it is the full replacement block handed to `posix_spawn`.
+*/
+package IoResult!(const(char)[][]) effectiveEnvironment(
+    in ProcessConfig cfg) @safe
+{
+    import core.lifetime : move;
+
+    enum EINVAL = 22;
+    if (cfg.env !is null)
+        foreach (entry; cfg.env)
+        {
+            size_t equals = size_t.max;
+            foreach (i, c; entry)
+            {
+                if (c == '\0')
+                    return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                        IoErrorStage.submit,
+                        "environment entry must not contain NUL");
+                if (c == '=' && equals == size_t.max)
+                    equals = i;
+            }
+            if (equals == size_t.max || equals == 0)
+                return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                    IoErrorStage.submit,
+                    "environment entry must be nonempty KEY=value");
+        }
+    foreach (change; cfg.envOverlay)
+    {
+        if (change.name.length == 0)
+            return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                IoErrorStage.submit, "environment name must not be empty");
+        foreach (c; change.name)
+            if (c == '=' || c == '\0')
+                return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                    IoErrorStage.submit, "environment name must not contain"
+                    ~ " '=' or NUL");
+        if (!change.unset)
+            foreach (c; change.value)
+                if (c == '\0')
+                    return ioErr!(const(char)[][])(EINVAL, OpKind.none,
+                        IoErrorStage.submit,
+                        "environment value must not contain NUL");
+    }
+
+    alias EnvBlock = const(char)[][];
+    if (cfg.env is null && cfg.envOverlay.length == 0)
+        return ioOk(EnvBlock.init);
+
+    const(char)[][] entries;
+    if (cfg.env !is null)
+    {
+        entries.length = cfg.env.length;
+        foreach (i, e; cfg.env)
+            entries[i] = e.dup;
+    }
+    else
+        entries = inheritedEnvironment();
+
+    foreach (change; cfg.envOverlay)
+    {
+        // Remove every prior spelling, including duplicates inherited from a
+        // caller-supplied replacement block. A set then appends exactly one.
+        size_t writeAt;
+        foreach (entry; entries)
+            if (envNameOf(entry) != change.name)
+                entries[writeAt++] = entry;
+        entries.length = writeAt;
+        if (!change.unset)
+        {
+            entries ~= change.name ~ "=" ~ change.value;
+        }
+    }
+    return ioOk(move(entries));
+}
+
+/// The fallback search path for a child whose environment carries no PATH:
+/// what `execvp`-family implementations use (the `_CS_PATH` confstr, which
+/// is `/bin:/usr/bin` wherever that confstr is unavailable to us).
+private string defaultPath() @trusted nothrow
+{
+    import core.sys.posix.unistd : _CS_PATH, confstr;
+
+    char[1024] buf;
+    const n = confstr(_CS_PATH, buf.ptr, buf.length);
+    if (n == 0 || n > buf.length)
+        return "/bin:/usr/bin";
+    // confstr includes the terminating NUL in its count.
+    return buf[0 .. n - 1].idup;
+}
+
+/// The PATH the child will see (SPEC §13.1: "PATH lookup uses the resulting
+/// environment"): the built entries when a custom environment was made,
+/// the parent's otherwise; unset ⇒ `_CS_PATH`.
+private string childSearchPath(scope const(char)[][] envEntries,
+    bool customEnv) @trusted
+{
+    import core.stdc.stdlib : getenv;
+    import core.stdc.string : strlen;
+
+    if (customEnv)
+    {
+        foreach (entry; envEntries)
+            if (entry.length >= 5 && entry[0 .. 5] == "PATH=")
+                return entry[5 .. $].idup;
+        return defaultPath();
+    }
+    auto inherited = getenv("PATH");
+    return inherited is null ? defaultPath() : inherited[0 .. strlen(inherited)].idup;
+}
+
+/// Whether a candidate might exec: anything but a definite "no such file"
+/// from `stat` is left for the spawn to decide, so this can only skip work,
+/// never change an outcome.
+private bool mightExec(scope const(char)[] probe) @trusted nothrow
+{
+    import core.stdc.errno : ENOENT, ENOTDIR, errno;
+    import core.sys.posix.sys.stat : stat, stat_t;
+    import std.string : toStringz;
+
+    stat_t status;
+    if (stat(probe.toStringz, &status) == 0)
+        return true;
+    return errno != ENOENT && errno != ENOTDIR;
+}
+
+/**
+The child's PATH search (SPEC §13.1), driven by the spawn itself rather than
+by an `access(2)` pre-check: `access` answers for the real uid while exec
+answers for the effective one, and a fabricated `ENOENT` hid every other
+failure. Each candidate is handed to `attempt` — a `posix_spawn` whose exec
+runs in the child's cwd with the child's credentials — under execvp's rules:
+`ENOENT`/`ENOTDIR` move on, `EACCES` is remembered and reported when nothing
+later succeeds, and any other error ends the search. Unlike `posix_spawnp`
+there is no `/bin/sh` retry on `ENOEXEC`. A name containing '/' is spawned as
+spelled; an empty PATH component is the child cwd; a candidate that
+definitely does not exist (in the parent's view of the child cwd) is skipped
+without a spawn — a `stat` is far cheaper than a clone.
+
+Returns the spawn's errno, 0 on success.
+*/
+private int spawnSearchingPath(Attempt)(const(char)[] program,
+    string searchPath, const(char)[] childCwd, scope Attempt attempt)
+{
+    import core.stdc.errno : EACCES, ENOENT, ENOTDIR;
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : canFind;
+    import std.array : array;
+    import std.path : isAbsolute;
+
+    if (program.canFind('/'))
+        return attempt(program);
+
+    // `PATH=` is exactly one empty component — `splitter` would yield none.
+    auto segments = searchPath.length ? searchPath.splitter(':').array : [""];
+    bool sawEacces;
+    foreach (segment; segments)
+    {
+        // Spelled relative to the child's cwd (the exec runs after the
+        // chdir file action); probed relative to the parent's.
+        const childDir = segment.length ? segment : ".";
+        const candidate = childDir.idup ~ "/" ~ program;
+        const probe = childCwd !is null && !childDir.isAbsolute
+            ? childCwd.idup ~ "/" ~ candidate
+            : candidate;
+        if (!mightExec(probe))
+            continue;
+        const rc = attempt(candidate);
+        if (rc == 0)
+            return 0;
+        if (rc == EACCES)
+        {
+            sawEacces = true;
+            continue;
+        }
+        if (rc != ENOENT && rc != ENOTDIR)
+            return rc;
+    }
+    return sawEacces ? EACCES : ENOENT;
+}
+
+/// Names a failed spawn's cause for the error's context.
+private string spawnFailureContext(int rc) @safe pure nothrow @nogc
+{
+    import core.stdc.errno : EACCES, ENOENT, ENOEXEC;
+
+    switch (rc)
+    {
+    case ENOENT:
+        return "program not found in child PATH";
+    case EACCES:
+        return "program found in child PATH but not executable";
+    case ENOEXEC:
+        return "program is not a recognised executable (no shell fallback)";
+    default:
+        return "posix_spawn failed";
+    }
+}
+
+private IoResult!void validateSpawnStrings(scope const(char[])[] argv,
+    const(char)[] cwd) @safe pure nothrow @nogc
+{
+    enum EINVAL = 22;
+    foreach (arg; argv)
+        foreach (c; arg)
+            if (c == '\0')
+                return ioErr!void(EINVAL, OpKind.none, IoErrorStage.submit,
+                    "argv entries must not contain NUL");
+    if (cwd !is null)
+        foreach (c; cwd)
+            if (c == '\0')
+                return ioErr!void(EINVAL, OpKind.none, IoErrorStage.submit,
+                    "cwd must not contain NUL");
+    return ioOk();
+}
+
+public:
 
 /// The live clock capability: monotonic time and an in-ring timer sleep.
 struct RingClock
@@ -177,12 +435,13 @@ struct ChildProcess
                 "killGroup failed");
         return ioOk();
     }
+
 }
 
 /**
 Spawns `argv` (PATH-searched) per `cfg` (SPEC §13.1–§13.2): per-stream
 pipes / /dev/null / borrowed fds, "KEY=value" environment, working
-directory, and an optional fresh process group. `posix_spawnp`, never
+directory, and an optional fresh process group. `posix_spawn`, never
 `fork` — a fiber stack is the worst possible place for a fork. Spawning is
 a setup-phase operation and may allocate (argv/env staging is heap-built;
 the M7 4 KiB budget and its `E2BIG` are gone).
@@ -191,23 +450,40 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     in ProcessConfig cfg = ProcessConfig()) @trusted
 {
     import core.stdc.errno : errno;
-    import core.sys.posix.fcntl : O_RDONLY, O_WRONLY;
-    import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
+    import core.sys.posix.fcntl : F_GETFD, F_SETFD, FD_CLOEXEC, O_RDONLY,
+        O_WRONLY, fcntl;
+    import core.sys.posix.spawn : posix_spawn, posix_spawn_file_actions_adddup2,
         posix_spawn_file_actions_addclose, posix_spawn_file_actions_addopen,
         posix_spawn_file_actions_destroy, posix_spawn_file_actions_init,
         posix_spawn_file_actions_t, posix_spawnattr_destroy,
         posix_spawnattr_init, posix_spawnattr_setflags,
-        posix_spawnattr_setpgroup, posix_spawnattr_t, posix_spawnp,
+        posix_spawnattr_setpgroup, posix_spawnattr_t,
         POSIX_SPAWN_SETPGROUP;
     import core.sys.posix.unistd : close;
 
     if (argv.length == 0)
         return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
             IoErrorStage.submit, "empty argv");
+    auto stringsValid = validateSpawnStrings(argv, cfg.cwd);
+    if (stringsValid.hasError)
+        return ioErr!ChildProcess(stringsValid.error);
+
+    // Environment overlay (SPEC §13.1): validated before pipes or file
+    // actions exist, so an invalid edit fails with no child.
+    auto envBuilt = effectiveEnvironment(cfg);
+    if (envBuilt.hasError)
+        return ioErr!ChildProcess(envBuilt.error);
+    const customEnv = cfg.env !is null || cfg.envOverlay.length > 0;
+    const searchPath = childSearchPath(envBuilt.value, customEnv);
 
     // Parent/child pipe ends per stream; -1 = not piped.
     int[2] inPipe = -1, outPipe = -1, errPipe = -1;
-    scope (failure) closePipes(inPipe, outPipe, errPipe);
+    int[3] restoreFlags = [-1, -1, -1];
+    scope (exit) closePipes(inPipe, outPipe, errPipe);
+    scope (exit)
+        foreach (fd, flags; restoreFlags)
+            if (flags >= 0)
+                cast(void) fcntl(cast(int) fd, F_SETFD, flags);
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
@@ -224,16 +500,39 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
                 if (!openPipe(pipeFds))
                     return false;
                 const childEnd = childReads ? pipeFds[0] : pipeFds[1];
-                posix_spawn_file_actions_adddup2(&actions, childEnd, childFd);
-                posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
-                posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
+                if (childEnd != childFd)
+                    posix_spawn_file_actions_adddup2(
+                        &actions, childEnd, childFd);
+                else
+                {
+                    const flags = fcntl(childEnd, F_GETFD);
+                    if (flags < 0
+                        || fcntl(childEnd, F_SETFD, flags & ~FD_CLOEXEC) != 0)
+                        return false;
+                }
+                // A pipe endpoint may itself be fd 0/1/2 when the parent had
+                // that descriptor closed. Never close the child target after
+                // installing (or retaining) it.
+                if (pipeFds[0] != childFd)
+                    posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
+                if (pipeFds[1] != childFd)
+                    posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
                 return true;
             case StdioMode.nullDev:
                 posix_spawn_file_actions_addopen(&actions, childFd,
                     "/dev/null", childReads ? O_RDONLY : O_WRONLY, 0);
                 return true;
             case StdioMode.fd:
-                posix_spawn_file_actions_adddup2(&actions, spec.fd, childFd);
+                if (spec.fd != childFd)
+                    posix_spawn_file_actions_adddup2(&actions, spec.fd, childFd);
+                else
+                {
+                    const flags = fcntl(spec.fd, F_GETFD);
+                    if (flags < 0
+                        || fcntl(spec.fd, F_SETFD, flags & ~FD_CLOEXEC) != 0)
+                        return false;
+                    restoreFlags[childFd] = flags;
+                }
                 return true;
             case StdioMode.mergeStdout:
                 // Valid for stderr only (checked before wiring). The stdout
@@ -271,25 +570,35 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     auto cargv = cstrings(argv);
     // Bound to a named local rather than used as a bare `.ptr`: the slice is
     // the only thing keeping the inner `char[]`s reachable, and the child's
-    // environment must survive until posix_spawnp has read it. `cargv` above
+    // environment must survive until posix_spawn has read it. `cargv` above
     // was already rooted this way; `cenv` was the one that was not.
-    auto cenvArray = cfg.env is null ? null : cstrings(cfg.env);
-    auto cenv = cfg.env is null ? environ : cenvArray.ptr;
+    auto cenvArray = customEnv ? cstrings(envBuilt.value) : null;
+    auto cenv = customEnv ? cenvArray.ptr : environ;
 
+    // The child's own PATH search (§13.1): never `posix_spawnp`, whose
+    // search consults the parent's PATH and retries scripts via /bin/sh.
     int pid;
-    const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
+    const rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
+        (const(char)[] candidate) => posix_spawn(&pid, zstring(candidate),
+            &actions, &attr, cargv.ptr, cenv));
 
     // Parent keeps only its own ends; the child-side ends close now.
     closeIf(cfg.stdinSpec, inPipe[0]);
+    inPipe[0] = -1;
     closeIf(cfg.stdoutSpec, outPipe[1]);
+    outPipe[1] = -1;
     closeIf(cfg.stderrSpec, errPipe[1]);
+    errPipe[1] = -1;
     if (rc != 0)
     {
         closeIf(cfg.stdinSpec, inPipe[1]);
+        inPipe[1] = -1;
         closeIf(cfg.stdoutSpec, outPipe[0]);
+        outPipe[0] = -1;
         closeIf(cfg.stderrSpec, errPipe[0]);
+        errPipe[0] = -1;
         return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
-            "posix_spawnp failed");
+            spawnFailureContext(rc));
     }
 
     ChildProcess child;
@@ -297,6 +606,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     child.stdinW = FileHandle(inPipe[1]);
     child.stdoutR = FileHandle(outPipe[0]);
     child.stderrR = FileHandle(errPipe[0]);
+    inPipe[1] = outPipe[0] = errPipe[0] = -1;
     return ioOk(child);
 }
 
@@ -354,9 +664,10 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             return info.si_status;
     }
 
-    IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
+    private IoResult!ExitStatus waitPidFlags(ref Sched s, int pid,
+        int flags) @trusted
     {
-        import core.sys.posix.sys.wait : WEXITED, idtype_t;
+        import core.sys.posix.sys.wait : idtype_t;
 
         if (pid <= 0)
             return ioErr!ExitStatus(10 /* ECHILD */, OpKind.waitid,
@@ -365,7 +676,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         // The siginfo out-buffer lives on this parked frame (SPEC §6.5).
         SigInfo info;
         auto o = s.await(OpWaitid(cast(int) idtype_t.P_PID,
-            cast(uint) pid, cast(void*) &info, WEXITED));
+            cast(uint) pid, cast(void*) &info, flags));
         if (o.res < 0)
             return ioErr!ExitStatus(-o.res, OpKind.waitid);
 
@@ -374,6 +685,22 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         return ioOk(info.si_code == CLD_EXITED
             ? ExitStatus(false, code)
             : ExitStatus(true, code));
+    }
+
+    IoResult!ExitStatus waitPid(ref Sched s, int pid) @trusted
+    {
+        import core.sys.posix.sys.wait : WEXITED;
+
+        return waitPidFlags(s, pid, WEXITED);
+    }
+
+    /// Waits for exit without consuming the zombie, so final accounting can
+    /// inspect `/proc/<pid>` before the one real reap.
+    package IoResult!ExitStatus observeExit(ref Sched s, int pid) @trusted
+    {
+        import core.sys.posix.sys.wait : WEXITED, WNOWAIT;
+
+        return waitPidFlags(s, pid, WEXITED | WNOWAIT);
     }
 
     /// ditto — on the current fiber's scheduler, the tier-B convention
@@ -409,19 +736,28 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
 {
     import core.stdc.errno : errno;
     import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
-    import core.sys.posix.spawn : posix_spawn_file_actions_adddup2,
+    import core.sys.posix.spawn : posix_spawn, posix_spawn_file_actions_adddup2,
         posix_spawn_file_actions_addopen, posix_spawn_file_actions_destroy,
         posix_spawn_file_actions_init, posix_spawn_file_actions_t,
         posix_spawnattr_destroy, posix_spawnattr_init,
-        posix_spawnattr_setflags, posix_spawnattr_t, posix_spawnp;
+        posix_spawnattr_setflags, posix_spawnattr_t;
     import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
     import core.sys.posix.unistd : close;
 
     if (argv.length == 0)
         return ioErr!ChildProcess(22 /* EINVAL */, OpKind.none,
             IoErrorStage.submit, "empty argv");
+    auto stringsValid = validateSpawnStrings(argv, cfg.cwd);
+    if (stringsValid.hasError)
+        return ioErr!ChildProcess(stringsValid.error);
 
-    const master = posix_openpt(O_RDWR | O_NOCTTY);
+    auto envBuilt = effectiveEnvironment(cfg);
+    if (envBuilt.hasError)
+        return ioErr!ChildProcess(envBuilt.error);
+    const customEnv = cfg.env !is null || cfg.envOverlay.length > 0;
+    const searchPath = childSearchPath(envBuilt.value, customEnv);
+
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
     if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0)
     {
         if (master >= 0)
@@ -429,7 +765,9 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
         return ioErr!ChildProcess(errno ? errno : 5, OpKind.none,
             IoErrorStage.setup, "pty allocation failed");
     }
-    scope (failure) close(master);
+    scope (exit)
+        if (master >= 0)
+            close(master);
 
     const slavePath = ptsname(master);
     if (slavePath is null)
@@ -451,7 +789,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     if (slaveFd < 0)
         return ioErr!ChildProcess(errno ? errno : 5, OpKind.none,
             IoErrorStage.setup, "pty slave open failed");
-    // Closed only after `posix_spawnp` has run the file actions, so the tty
+    // Closed only after `posix_spawn` has run the file actions, so the tty
     // never has zero opens between the preset and the child's own open.
     scope (exit) close(slaveFd);
 
@@ -472,24 +810,27 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     posix_spawn_file_actions_addopen(&actions, 0, slavePath, O_RDWR, 0);
     posix_spawn_file_actions_adddup2(&actions, 0, 1);
     posix_spawn_file_actions_adddup2(&actions, 0, 2);
+    if (cfg.cwd !is null)
+        posix_spawn_file_actions_addchdir_np(&actions, zstring(cfg.cwd));
 
     auto cargv = cstrings(argv);
-    // Bound to a named local rather than used as a bare `.ptr`: the slice is
-    // the only thing keeping the inner `char[]`s reachable, and the child's
-    // environment must survive until posix_spawnp has read it. `cargv` above
-    // was already rooted this way; `cenv` was the one that was not.
-    auto cenvArray = cfg.env is null ? null : cstrings(cfg.env);
-    auto cenv = cfg.env is null ? environ : cenvArray.ptr;
+    // Bound to a named local rather than used as a bare `.ptr` (see
+    // `spawnProcess`); the overlay-computed block replaces it wholesale.
+    auto cenvArray = customEnv ? cstrings(envBuilt.value) : null;
+    auto cenv = customEnv ? cenvArray.ptr : environ;
 
     int pid;
-    const rc = posix_spawnp(&pid, cargv[0], &actions, &attr, cargv.ptr, cenv);
+    const rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
+        (const(char)[] candidate) => posix_spawn(&pid, zstring(candidate),
+            &actions, &attr, cargv.ptr, cenv));
     if (rc != 0)
         return ioErr!ChildProcess(rc, OpKind.none, IoErrorStage.submit,
-            "posix_spawnp failed");
+            spawnFailureContext(rc));
 
     ChildProcess child;
     child.pid = pid;
     child.ptyMaster = FileHandle(master);
+    master = -1;
     return ioOk(child);
 }
 
@@ -530,25 +871,56 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
     The scope join is the lifetime argument: the drain fibers borrow this
     frame's locals and are all joined before it returns.
+
+    No exit leaves a zombie. A drain fiber that cannot be admitted, a read
+    that fails, and a cancellation that interrupts the run each end the
+    child (`SIGKILL`) and reap it — on the shared pool's termination-critical
+    lane, under `protect`, so a latched interrupt is delivered at the
+    caller's next checkpoint and never between the kill and the reap. The
+    error returned is the first cause: the admission error, the read error,
+    or the interrupt as `ECANCELED`. A failed read is never mistaken for EOF.
     */
     IoResult!CapturedOutput capture(ref Sched s, scope const(char[])[] argv,
         in ProcessConfig cfg = ProcessConfig(),
         scope const(ubyte)[] stdinBytes = null) @trusted
     {
         import core.lifetime : move;
+        import core.stdc.errno : ECHILD;
+        import core.sys.posix.signal : SIGKILL;
 
         import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.blocking_pool : sharedBlockingPool;
+        import sparkles.event_horizon.cause : Cause;
         import sparkles.event_horizon.io : read, write;
-        import sparkles.event_horizon.scope_ : withScope;
+        import sparkles.event_horizon.scope_ : protect, withScope;
 
         scope ProcessConfig effective = cfg;
         if (stdinBytes !is null && effective.stdinSpec.mode == StdioMode.inherit)
             effective.stdinSpec = StdioSpec(StdioMode.pipe);
 
+        // The reap must never depend on a resource acquired after the child
+        // exists (SPEC §13.8): the shared pool and this scheduler's inbox
+        // waker are secured first — either failure means no child was made.
+        auto pool = sharedBlockingPool();
+        if (pool.hasError)
+            return ioErr!CapturedOutput(pool.error);
+        auto prepared = pool.value.prepare(s);
+        if (prepared.hasError)
+            return ioErr!CapturedOutput(prepared.error);
+
         auto spawned = spawnProcess(argv, effective);
         if (spawned.hasError)
             return ioErr!CapturedOutput(spawned.error);
         auto child = spawned.value;
+        version (unittest)
+            testLastCapturePid = child.pid;
+        scope (exit)
+        {
+            child.stdinW.close();
+            child.stdoutR.close();
+            child.stderrR.close();
+            child.ptyMaster.close();
+        }
 
         // Fibers capture plain locals, never `ref`/`scope` parameters (a
         // captured parameter slot outlives nothing — the tui-loop lesson).
@@ -556,12 +928,15 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         SharedBuffer!(ubyte, 256) stdinCopy;
         if (stdinBytes !is null)
             stdinCopy ~= stdinBytes;
+        CaptureDrainState drainState = {child: &child};
         auto childP = &child;
         auto outP = &out_;
         auto stdinP = &stdinCopy;
+        auto drainP = &drainState;
         const feedStdin = stdinBytes !is null && child.stdinW.fd >= 0;
 
-        static void drain(FileHandle from, SharedBuffer!(ubyte, 256)* into)
+        static void drain(CaptureDrainState* st, FileHandle from,
+            SharedBuffer!(ubyte, 256)* into)
         {
             for (;;)
             {
@@ -569,17 +944,40 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
                 chunk.length = 512;
                 auto got = read(from, move(chunk));
                 chunk = move(got.buf);
-                if (got.res.hasError || got.res.value == 0)
-                    return; // EOF or error: the stream is done
+                version (unittest)
+                {
+                    if (testCaptureReadErrno != 0 && !got.res.hasError)
+                        got.res = ioErr!uint(testCaptureReadErrno, OpKind.read,
+                            IoErrorStage.completion, "injected capture read error");
+                }
+                if (got.res.hasError)
+                {
+                    // Not EOF: the output can no longer be complete, so the
+                    // run ends now — a child blocked on this pipe would
+                    // otherwise never let the other stream reach EOF.
+                    if (!st.failed)
+                    {
+                        st.failed = true;
+                        st.error = got.res.error;
+                    }
+                    cast(void) st.child.kill(SIGKILL);
+                    return;
+                }
+                if (got.res.value == 0)
+                    return; // EOF
                 *into ~= chunk[][0 .. got.res.value];
             }
         }
 
         auto joined = withScope!((ref sc) {
-            if (childP.stdoutR.fd >= 0)
-                sc.spawn(() { drain(childP.stdoutR, &outP.stdout_); });
-            if (childP.stderrR.fd >= 0)
-                sc.spawn(() { drain(childP.stderrR, &outP.stderr_); });
+            // A rejected drain is a failed run, not a silently missing
+            // stream: the scope records ENOBUFS and cancels its siblings.
+            if (childP.stdoutR.fd >= 0
+                && !sc.spawn(() { drain(drainP, childP.stdoutR, &outP.stdout_); }))
+                return;
+            if (childP.stderrR.fd >= 0
+                && !sc.spawn(() { drain(drainP, childP.stderrR, &outP.stderr_); }))
+                return;
             // The body is a member fiber: feed stdin concurrently with the
             // drains, then signal EOF.
             if (feedStdin)
@@ -591,14 +989,77 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         child.stdoutR.close();
         child.stderrR.close();
         if (joined.hasError)
-            return ioErr!CapturedOutput(125 /* ECANCELED */, OpKind.none,
-                IoErrorStage.completion, "capture scope interrupted");
+        {
+            // The join proves no read is in flight on this frame's pipes;
+            // the child may be live, blocked, or already a zombie — end it
+            // and consume the reap right before the interrupt is delivered.
+            killAndReapProtected(s, child);
+            if (joined.error.kind == Cause!IoError.Kind.die)
+                throw joined.error.defect;
+            return ioErr!CapturedOutput(captureCauseError(joined.error));
+        }
 
         auto st = wait(s, child);
         if (st.hasError)
+        {
+            // Only ECHILD proves the reap right is gone; anything else
+            // (a cancellation landing on the reap itself) leaves the child
+            // ours to end and consume.
+            if (st.error.errnoValue != ECHILD)
+                killAndReapProtected(s, child);
             return ioErr!CapturedOutput(st.error);
+        }
+        if (drainState.failed)
+            return ioErr!CapturedOutput(drainState.error);
         out_.status = st.value;
         return ioOk(move(out_));
+    }
+
+    /// The drain fibers' shared frame state: the first read failure wins.
+    private struct CaptureDrainState
+    {
+        ChildProcess* child;
+        bool failed;
+        IoError error;
+    }
+
+    /// Maps a capture scope's cause to the error `capture` reports: a
+    /// failure carries its own error (a drain's ENOBUFS admission); an
+    /// interrupt is the cancellation it was.
+    private IoError captureCauseError(Cause!IoError cause)
+        @safe pure nothrow @nogc
+    {
+        import core.stdc.errno : ECANCELED;
+
+        return cause.kind == Cause!IoError.Kind.fail
+            ? cause.failure
+            : IoError(ECANCELED, OpKind.none, IoErrorStage.completion,
+                "capture scope interrupted");
+    }
+
+    /// Ends a still-owned child and consumes its reap right on the shared
+    /// pool's termination-critical lane, under `protect` so that a pending
+    /// interrupt cannot split the kill from the reap. `pid` is nulled once
+    /// the right is consumed — or proven lost to an external reaper.
+    private void killAndReapProtected(ref Sched s, ref ChildProcess child)
+        @trusted
+    {
+        import core.stdc.errno : ECHILD;
+        import core.sys.posix.signal : SIGKILL;
+
+        import sparkles.event_horizon.scope_ : protect;
+
+        if (child.pid <= 0)
+            return;
+        auto childP = &child;
+        auto sP = &s;
+        protect!(() {
+            cast(void) childP.kill(SIGKILL);
+            auto reaped = waitPidOnLane(*sP, childP.pid);
+            if (!reaped.hasError || reaped.error.errnoValue == ECHILD)
+                childP.pid = -1;
+            return 0;
+        })(s);
     }
 
     /// The live proc capability (SPEC §13.4): `isProc` over the real spawn
@@ -628,6 +1089,74 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             => .wait(*_sched, child);
     }
 
+    // ── the lane-side reap fallback shared with `supervise` ─────────────
+
+    private struct WaitPidJob
+    {
+        int pid;
+        bool ok;
+        ExitStatus status;
+        int errnoValue;
+        string context;
+    }
+
+    private void waitPidBlocking(void* p) nothrow
+    {
+        import core.stdc.errno : EINTR, errno;
+        import core.sys.posix.sys.wait : WEXITSTATUS, WIFEXITED, WIFSIGNALED,
+            WTERMSIG, waitpid;
+
+        auto job = cast(WaitPidJob*) p;
+        int raw;
+        int rc;
+        do
+            rc = waitpid(job.pid, &raw, 0);
+        while (rc < 0 && errno == EINTR);
+        if (rc < 0)
+        {
+            job.errnoValue = errno;
+            job.context = "waitpid fallback failed";
+            return;
+        }
+        if (WIFEXITED(raw))
+        {
+            job.ok = true;
+            job.status = ExitStatus(false, WEXITSTATUS(raw));
+        }
+        else if (WIFSIGNALED(raw))
+        {
+            job.ok = true;
+            job.status = ExitStatus(true, WTERMSIG(raw));
+        }
+        else
+        {
+            job.errnoValue = 5; // EIO
+            job.context = "waitpid returned no terminal status";
+        }
+    }
+
+    /// The consuming `waitpid` fallback, off the scheduler thread (SPEC
+    /// §13.8): a D-state child would otherwise wedge every fiber of this
+    /// loop. Runs on the shared pool's termination-critical lane. Shared
+    /// by `capture` and `supervise`.
+    package IoResult!ExitStatus waitPidOnLane(ref Sched s, int pid) @trusted
+    {
+        import sparkles.event_horizon.blocking_pool : sharedBlockingPool;
+
+        auto pool = sharedBlockingPool();
+        if (pool.hasError)
+            return ioErr!ExitStatus(pool.error);
+        WaitPidJob job = {pid: pid};
+        auto ran = pool.value.runMandatory(s, &waitPidBlocking, &job);
+        if (ran.hasError)
+            return ioErr!ExitStatus(ran.error);
+        if (!job.ok)
+            return ioErr!ExitStatus(job.errnoValue, OpKind.waitid,
+                IoErrorStage.completion, job.context);
+        return ioOk(job.status);
+    }
+
+
     /// The default live capability row handed to the root fiber (SPEC §11).
     alias Env = CtxOf!(RingClock, RingNet, RingProc);
 }
@@ -652,8 +1181,6 @@ Env liveEnv(Sched* sched) @safe pure nothrow @nogc
 // ── spawn plumbing ──────────────────────────────────────────────────────────
 
 private:
-
-extern (C) extern __gshared char** environ;
 
 // glibc ≥ 2.29 / musl ≥ 1.1.24; absent from druntime's posix.spawn.
 extern (C) int posix_spawn_file_actions_addchdir_np(
@@ -756,10 +1283,20 @@ void closePipes(ref int[2] a, ref int[2] b, ref int[2] c) @trusted nothrow @nogc
 
 version (unittest)
 {
+    import core.thread : Thread;
+
     import sparkles.event_horizon.capability : hasCaps;
+
+    /// Fault injection for `capture`'s drains: a non-zero errno replaces the
+    /// result of every successful read while set.
+    package int testCaptureReadErrno;
+    /// The pid of the child the last `capture` spawned — for the
+    /// no-zombie postconditions.
+    package int testLastCapturePid;
     import sparkles.event_horizon.clock : isClock;
     import sparkles.event_horizon.net : isNet;
     import sparkles.event_horizon.proc : isProc;
+    import sparkles.test_runner.skip : skipTest;
 
     static assert(isClock!RingClock);
     static assert(isNet!RingNet);
@@ -768,6 +1305,12 @@ version (unittest)
     {
         static assert(isProc!RingProc);
         static assert(hasCaps!(Env, "clock", "net", "proc"));
+    }
+
+    private void requireSingleThreadedProcess() @system
+    {
+        if (Thread.getAll().length != 1)
+            skipTest("mutates process-global descriptors/signals; run with -t 1");
     }
 }
 
@@ -1013,6 +1556,102 @@ unittest
     assert(!r.hasError);
 }
 
+version (unittest)
+{
+    /// The no-zombie postcondition: the reap right for `pid` is gone.
+    private bool reapRightConsumed(int pid) @trusted
+    {
+        import core.stdc.errno : ECHILD, errno;
+        import core.sys.posix.sys.wait : WNOHANG, waitpid;
+
+        int raw;
+        return waitpid(pid, &raw, WNOHANG) < 0 && errno == ECHILD;
+    }
+}
+
+@("live.capture.readErrorEndsTheRunAndReaps")
+@system
+unittest
+{
+    import core.stdc.errno : EIO;
+    import core.time : MonoTime, seconds;
+
+    Sched s;
+    schedOrSkip(s);
+
+    testCaptureReadErrno = EIO;
+    scope (exit) testCaptureReadErrno = 0;
+    auto r = s.run(() {
+        // A chatty child that would block on its pipe forever once nobody
+        // reads: the failed read must end it, not pose as EOF.
+        const started = MonoTime.currTime;
+        auto got = capture(s, ["sh", "-c", "while :; do echo chatter; done"]);
+        assert(got.hasError && got.error.errnoValue == EIO,
+            "the read error is reported, not truncated output");
+        assert(MonoTime.currTime - started < 10.seconds);
+        assert(reapRightConsumed(testLastCapturePid), "no zombie");
+    });
+    assert(!r.hasError);
+}
+
+@("live.capture.cancellationKillsAndReaps")
+@system
+unittest
+{
+    import core.stdc.errno : ECANCELED;
+    import core.time : MonoTime, msecs, seconds;
+
+    import sparkles.event_horizon.scope_ : withDeadline;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        const started = MonoTime.currTime;
+        int pid;
+        bool sawCancel;
+        auto outcome = withDeadline!((ref sc) {
+            auto got = capture(s, ["sleep", "30"]);
+            sawCancel = got.hasError && got.error.errnoValue == ECANCELED;
+            pid = testLastCapturePid;
+            // The interrupt is delivered here, after the reap.
+            return 0;
+        })(s, 100.msecs);
+        assert(outcome.hasError && outcome.error.isTimeout);
+        assert(sawCancel, "capture reports the cancellation");
+        assert(MonoTime.currTime - started < 10.seconds,
+            "the child was killed, not waited out");
+        assert(reapRightConsumed(pid), "no zombie");
+    });
+    assert(!r.hasError);
+}
+
+@("live.capture.drainAdmissionFailureReapsAndReportsEnobufs")
+@system
+unittest
+{
+    import core.stdc.errno : ENOBUFS;
+
+    import sparkles.event_horizon.sched : SchedOptions;
+
+    // Two fiber slots: the root and one drain. The second drain's admission
+    // fails, so the run fails with ENOBUFS — and still reaps.
+    Sched s;
+    SchedOptions opts;
+    opts.maxFibers = 2;
+    schedOrSkip(s, opts);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+        auto got = capture(s, ["sh", "-c", "while :; do echo chatter; done"], cfg);
+        assert(got.hasError && got.error.errnoValue == ENOBUFS,
+            "the admission failure is the reported error");
+        assert(reapRightConsumed(testLastCapturePid), "no zombie");
+    });
+    assert(!r.hasError);
+}
+
 @("live.spawn.mergeStdoutIsStderrOnly")
 @safe
 unittest
@@ -1058,6 +1697,29 @@ unittest
     assert(!r.hasError);
 }
 
+@("live.killGroup.afterWaitIsLocalEsrch")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        ProcessConfig cfg;
+        cfg.newProcessGroup = true;
+        cfg.stdoutSpec = StdioSpec(StdioMode.inherit);
+        auto spawned = spawnProcess(["true"], cfg);
+        assert(spawned.hasValue);
+        auto child = spawned.value;
+        auto status = wait(s, child);
+        assert(status.hasValue && status.value.ok);
+        auto killed = child.killGroup();
+        assert(killed.hasError && killed.error.errnoValue == 3 /* ESRCH */,
+            "a reaped low-level handle never signals a reusable PGID");
+    });
+    assert(!r.hasError);
+}
+
 @("live.spawnPty.sessionLeaderOnTheMaster")
 @safe
 unittest
@@ -1092,4 +1754,445 @@ unittest
         });
         assert(!r.hasError);
     }
+}
+
+// ── environment overlays (SPEC §13.1) ───────────────────────────────────────
+
+@("live.env.overlaySetReplaceUnsetInherit")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    // Pure-function matrix over effectiveEnvironment first: no child needed
+    // to prove ordering, last-wins, unset, and inheritance.
+    ProcessConfig cfg;
+    cfg.env = cast(const(char[])[]) ["A=base", "B=base", "PATH=/bin"];
+    cfg.envOverlay = cast(const(EnvironmentChange)[])([
+        EnvironmentChange("C", "new"),      // set on top of the base
+        EnvironmentChange("A", "over"),     // replace
+        EnvironmentChange("A", "over2"),    // last change wins
+        EnvironmentChange("B", null, true), // remove
+        EnvironmentChange("D", "v", true),  // unset of absent: no-op
+    ]);
+    const built = effectiveEnvironment(cfg);
+    assert(built.hasValue, built.error.context);
+    const entries = built.value;
+    bool has(const(char)[] entry) @safe pure nothrow @nogc
+    {
+        foreach (e; entries)
+            if (e == entry)
+                return true;
+        return false;
+    }
+    assert(has("A=over2"), "last change for a name wins");
+    assert(!has("A=base") && !has("B=base"), "unset removes");
+    assert(has("C=new") && has("PATH=/bin"), "sets and replaces landed");
+    assert(!has("D=v"),
+        "unsetting an absent name is a no-op, not an insert");
+}
+
+@("live.env.overlayOnInheritedKeepsParentValues")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        // One edit on top of the INHERITED environment: the parent's other
+        // variables ride along untouched (§13.1's whole point vs. `env=`).
+        ProcessConfig cfg;
+        cfg.envOverlay = cast(const(EnvironmentChange)[])([
+            EnvironmentChange("EH_PROBE", "overlay"),
+        ]);
+        auto got = capture(s, ["sh", "-c", "echo $EH_PROBE"], cfg);
+        assert(got.hasValue, got.error.context);
+        assert(got.value.stdout_[] == cast(const(ubyte)[]) "overlay\n");
+        assert(got.value.status.ok);
+    });
+    assert(!r.hasError);
+}
+
+@("live.env.emptyReplacementStaysEmptyAndDuplicatesCollapse")
+@safe
+unittest
+{
+    // A zero-length non-null slice is a complete replacement, not inherit.
+    auto storage = new const(char)[][1];
+    ProcessConfig empty;
+    empty.env = storage[0 .. 0];
+    assert(empty.env !is null);
+    auto builtEmpty = effectiveEnvironment(empty);
+    assert(builtEmpty.hasValue && builtEmpty.value.length == 0);
+
+    Sched s;
+    schedOrSkip(s);
+    auto ran = s.run(() {
+        auto child = capture(s, ["/usr/bin/env"], empty);
+        assert(child.hasValue, child.hasError ? child.error.context : "");
+        assert(child.value.status.ok && child.value.stdout_.length == 0,
+            "a non-null empty replacement reaches the child as empty");
+    });
+    assert(!ran.hasError);
+
+    ProcessConfig duplicate;
+    duplicate.env = cast(const(char[])[]) ["A=one", "A=two", "B=keep"];
+    duplicate.envOverlay = cast(const(EnvironmentChange)[]) [
+        EnvironmentChange("A", "final"),
+    ];
+    auto built = effectiveEnvironment(duplicate);
+    assert(built.hasValue);
+    size_t aCount;
+    foreach (entry; built.value)
+        if (envNameOf(entry) == "A")
+        {
+            ++aCount;
+            assert(entry == "A=final");
+        }
+    assert(aCount == 1, "an overlay removes every duplicate before setting");
+}
+
+@("live.env.invalidEditsFailBeforeAnyChild")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    static void expectEinvalid(scope const(EnvironmentChange)[] edits)
+    {
+        ProcessConfig cfg;
+        cfg.envOverlay = edits;
+        const bad = effectiveEnvironment(cfg);
+        assert(bad.hasError);
+        assert(bad.error.errnoValue == 22 /* EINVAL */);
+        assert(bad.error.stage == IoErrorStage.submit,
+            "a pre-spawn rejection is a submit-stage failure");
+    }
+
+    expectEinvalid([EnvironmentChange(null, "v", false)]); // empty name
+    expectEinvalid([EnvironmentChange("na=me", "v", false)]); // '=' in name
+    expectEinvalid([EnvironmentChange("na\0me", "v", false)]); // NUL in name
+    expectEinvalid([EnvironmentChange("ok", "va\0l", false)]); // NUL in value
+
+    foreach (entry; ["", "NOVALUE", "=value", "NA\0ME=value",
+        "NAME=va\0lue"])
+    {
+        ProcessConfig replacement;
+        replacement.env = [entry];
+        const bad = effectiveEnvironment(replacement);
+        assert(bad.hasError && bad.error.errnoValue == 22,
+            "malformed replacement entries fail before spawn");
+    }
+
+    // And through the public spawner, which must not leave a child behind.
+    ProcessConfig cfg;
+    cfg.envOverlay = [EnvironmentChange("bad=name", "v", false)];
+    const refused = spawnProcess(["true"], cfg);
+    assert(refused.hasError && refused.error.errnoValue == 22);
+}
+
+@("live.spawn.rejectsNulInArgvAndCwdBeforeChild")
+@safe
+unittest
+{
+    ProcessConfig cfg;
+    auto badArg = spawnProcess(["true", "bad\0tail"], cfg);
+    assert(badArg.hasError && badArg.error.errnoValue == 22);
+
+    cfg.cwd = "/tmp\0ignored";
+    auto badCwd = spawnProcess(["true"], cfg);
+    assert(badCwd.hasError && badCwd.error.errnoValue == 22);
+
+    cfg.cwd = "";
+    auto emptyCwd = validateSpawnStrings(["true"], cfg.cwd);
+    assert(!emptyCwd.hasError, "empty cwd contains no invalid byte");
+}
+
+@("live.spawn.pipeFdCollisionKeepsChildStdinOpen")
+@system
+unittest
+{
+    import core.sys.posix.signal : SIG_IGN, SIGPIPE, sigaction,
+        sigaction_t, sigemptyset;
+    import core.sys.posix.unistd : STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO,
+        close, dup, dup2;
+
+    requireSingleThreadedProcess();
+    Sched s;
+    schedOrSkip(s);
+
+    sigaction_t ignored, previousPipe;
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    assert(sigaction(SIGPIPE, &ignored, &previousPipe) == 0);
+
+    IoResult!void runResult;
+    try
+    {
+        runResult = s.run(() {
+            void withClosedFd(int fd, scope void delegate() body)
+            {
+                const saved = dup(fd);
+                assert(saved >= 0 && close(fd) == 0);
+                try
+                    body();
+                catch (Throwable defect)
+                {
+                    cast(void) dup2(saved, fd);
+                    close(saved);
+                    throw defect;
+                }
+                assert(dup2(saved, fd) == fd);
+                close(saved);
+            }
+
+            withClosedFd(STDIN_FILENO, () {
+                auto got = capture(s, ["cat"], ProcessConfig(),
+                    cast(const(ubyte)[]) "fd-zero-survives");
+                assert(got.hasValue && got.value.status.ok);
+                assert(got.value.stdout_[]
+                    == cast(const(ubyte)[]) "fd-zero-survives");
+            });
+            withClosedFd(STDOUT_FILENO, () {
+                auto got = capture(s, ["sh", "-c", "printf stdout"]);
+                assert(got.hasValue && got.value.status.ok);
+                assert(got.value.stdout_[] == cast(const(ubyte)[]) "stdout");
+            });
+            withClosedFd(STDERR_FILENO, () {
+                ProcessConfig cfg;
+                cfg.stdoutSpec = StdioSpec(StdioMode.nullDev);
+                cfg.stderrSpec = StdioSpec(StdioMode.pipe);
+                auto got = capture(s, ["sh", "-c", "printf stderr >&2"], cfg);
+                assert(got.hasValue && got.value.status.ok);
+                assert(got.value.stderr_[] == cast(const(ubyte)[]) "stderr");
+            });
+        });
+    }
+    catch (Throwable defect)
+    {
+        cast(void) sigaction(SIGPIPE, &previousPipe, null);
+        throw defect;
+    }
+    const signalRestored = sigaction(SIGPIPE, &previousPipe, null);
+
+    assert(signalRestored == 0);
+    assert(!runResult.hasError,
+        "dup2(fd, fd) must not be followed by a child close action");
+}
+
+version (unittest)
+private string makeProbeDir(string marker) @system
+{
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+    import std.file : mkdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    const dir = buildPath(tempDir(),
+        text("eh-path-probe-", marker, "-", getpid()));
+    mkdirRecurse(dir);
+    {
+        import std.string : toStringz;
+        import core.sys.posix.sys.stat : chmod;
+
+        const script = buildPath(dir, "ehprobe");
+        write(script, "#!/bin/sh\necho from-overlay\n");
+        enum uint mode755 = 493; // 0o755
+        cast(void) chmod(script.toStringz, mode755);
+    }
+    return dir;
+}
+
+@("live.env.pathLookupUsesTheOverlayResult")
+@system
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    const probeDir = makeProbeDir("lookup");
+    const scriptPath = probeDir ~ "/ehprobe";
+    // Unconditional: a failing assertion below must not strand the probe
+    // script or its directory in the temp dir.
+    scope (exit)
+    {
+        import std.file : remove, rmdir;
+
+        remove(scriptPath);
+        rmdir(probeDir);
+    }
+
+    auto r = s.run(() {
+        // Control: without the overlay the bare name is not findable.
+        const missing = capture(s, ["ehprobe"]);
+        assert(missing.hasError, "the probe name must not resolve by luck");
+
+        // With PATH overlaid onto the inherited environment, the lookup
+        // runs against the RESULTING environment and finds our script.
+        ProcessConfig cfg;
+        cfg.envOverlay = cast(const(EnvironmentChange)[])([
+            EnvironmentChange("PATH", probeDir),
+        ]);
+        auto found = capture(s, ["ehprobe"], cfg);
+        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.value.status.ok);
+        assert(found.value.stdout_[] == cast(const(ubyte)[]) "from-overlay\n");
+
+        // A PATH-less environment still resolves through the `_CS_PATH`
+        // fallback, so plain system tools keep working.
+        ProcessConfig noPath;
+        noPath.env = cast(const(char[])[]) ["EH_PROBE=x"]; // no PATH entry
+        auto fallback = capture(s, ["sh", "-c", "echo fallback"], noPath);
+        assert(fallback.hasValue, fallback.error.context);
+        assert(fallback.value.stdout_[] == cast(const(ubyte)[]) "fallback\n");
+    });
+    assert(!r.hasError);
+}
+
+@("live.env.customPathMissAndChildCwdRelativeLookup")
+@system
+unittest
+{
+    import core.sys.posix.sys.stat : chmod;
+    import std.file : mkdirRecurse, remove, rmdir, tempDir, write;
+    import std.path : buildPath;
+    import std.string : toStringz;
+
+    Sched s;
+    schedOrSkip(s);
+
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+
+    const root = buildPath(tempDir(), text("eh-path-cwd-probe-", getpid()));
+    const bin = buildPath(root, "bin");
+    const script = buildPath(bin, "cwdprobe");
+    const emptyScript = buildPath(root, "emptyprobe");
+    mkdirRecurse(bin);
+    write(script, "#!/bin/sh\nprintf cwd-relative\n");
+    write(emptyScript, "#!/bin/sh\nprintf cwd-empty\n");
+    cast(void) chmod(script.toStringz, 493 /* 0o755 */);
+    cast(void) chmod(emptyScript.toStringz, 493 /* 0o755 */);
+    scope (exit)
+    {
+        remove(script);
+        remove(emptyScript);
+        rmdir(bin);
+        rmdir(root);
+    }
+
+    auto r = s.run(() {
+        ProcessConfig excluded;
+        excluded.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
+        auto missing = capture(s, ["sh", "-c", "exit 0"], excluded);
+        assert(missing.hasError && missing.error.errnoValue == 2,
+            "a custom PATH miss must not retry through the parent PATH");
+
+        // The cwd contains an executable with this bare name, but PATH does
+        // not. Returning the bare spelling after a miss would let the child
+        // chdir make it executable despite the configured PATH exclusion.
+        ProcessConfig cwdExcluded;
+        cwdExcluded.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
+        cwdExcluded.cwd = root;
+        auto cwdMiss = capture(s, ["emptyprobe"], cwdExcluded);
+        assert(cwdMiss.hasError && cwdMiss.error.errnoValue == 2,
+            "a PATH miss is ENOENT with no child left behind, even when cwd matches");
+
+        ProcessConfig relative;
+        relative.env = cast(const(char[])[]) ["PATH=bin"];
+        relative.cwd = root;
+        auto found = capture(s, ["cwdprobe"], relative);
+        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.value.status.ok);
+        assert(found.value.stdout_[] == cast(const(ubyte)[]) "cwd-relative");
+
+        ProcessConfig emptyComponent;
+        emptyComponent.env = cast(const(char[])[]) ["PATH="];
+        emptyComponent.cwd = root;
+        auto foundEmpty = capture(s, ["emptyprobe"], emptyComponent);
+        assert(foundEmpty.hasValue,
+            foundEmpty.hasError ? foundEmpty.error.context : "");
+        assert(foundEmpty.value.stdout_[] == cast(const(ubyte)[]) "cwd-empty",
+            "an empty PATH component resolves in the configured child cwd");
+    });
+    assert(!r.hasError);
+}
+
+@("live.env.pathSearchStickyEaccesAndNoShellFallback")
+@system
+unittest
+{
+    import core.stdc.errno : EACCES, ENOEXEC, ENOENT;
+    import core.sys.posix.sys.stat : chmod;
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+    import std.file : mkdirRecurse, remove, rmdir, tempDir, write;
+    import std.path : buildPath;
+    import std.string : toStringz;
+
+    Sched s;
+    schedOrSkip(s);
+
+    const root = buildPath(tempDir(), text("eh-path-search-probe-", getpid()));
+    const unexec = buildPath(root, "unexec");
+    const exec = buildPath(root, "exec");
+    const garbage = buildPath(root, "garbage");
+    mkdirRecurse(unexec);
+    mkdirRecurse(exec);
+    mkdirRecurse(garbage);
+    // The same name three ways: not executable, executable, and an
+    // executable that is not an exec format.
+    write(buildPath(unexec, "ehprobe"), "#!/bin/sh\nprintf wrong\n");
+    write(buildPath(exec, "ehprobe"), "#!/bin/sh\nprintf right\n");
+    write(buildPath(garbage, "ehprobe"), "\x00\x01\x02not-an-executable");
+    cast(void) chmod(buildPath(unexec, "ehprobe").toStringz, 420 /* 0o644 */);
+    cast(void) chmod(buildPath(exec, "ehprobe").toStringz, 493 /* 0o755 */);
+    cast(void) chmod(buildPath(garbage, "ehprobe").toStringz, 493 /* 0o755 */);
+    scope (exit)
+    {
+        foreach (dir; [unexec, exec, garbage])
+        {
+            remove(buildPath(dir, "ehprobe"));
+            rmdir(dir);
+        }
+        rmdir(root);
+    }
+
+    auto r = s.run(() {
+        // EACCES is sticky: a later miss does not downgrade it to ENOENT.
+        ProcessConfig sticky;
+        sticky.env = cast(const(char[])[])(
+            ["PATH=" ~ unexec ~ ":/definitely/not/here"]);
+        auto denied = capture(s, ["ehprobe"], sticky);
+        assert(denied.hasError && denied.error.errnoValue == EACCES,
+            "the unexecutable match is reported, not hidden as ENOENT");
+
+        // …but EACCES does not stop the search: a later executable wins.
+        ProcessConfig later;
+        later.env = cast(const(char[])[])(["PATH=" ~ unexec ~ ":" ~ exec]);
+        auto found = capture(s, ["ehprobe"], later);
+        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.value.stdout_[] == cast(const(ubyte)[]) "right");
+
+        // A miss everywhere is ENOENT.
+        ProcessConfig none;
+        none.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
+        auto missing = capture(s, ["ehprobe"], none);
+        assert(missing.hasError && missing.error.errnoValue == ENOENT);
+
+        // No /bin/sh retry: an unrecognised format is ENOEXEC, in a custom
+        // and in the inherited environment alike.
+        ProcessConfig unrecognised;
+        unrecognised.env = cast(const(char[])[])(["PATH=" ~ garbage]);
+        auto format = capture(s, ["ehprobe"], unrecognised);
+        assert(format.hasError && format.error.errnoValue == ENOEXEC,
+            format.hasError ? format.error.context : "spawned garbage");
+        auto direct = capture(s, [buildPath(garbage, "ehprobe")]);
+        assert(direct.hasError && direct.error.errnoValue == ENOEXEC,
+            "a name with a slash is spawned as spelled, still without a shell");
+    });
+    assert(!r.hasError);
 }
