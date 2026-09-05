@@ -60,23 +60,18 @@ flowchart LR
 
 ## Timers: `setTimeout` is a parked fiber
 
-```js
-// Node.js
-for (let i = 1; i <= 3; i++) {
-  await new Promise(resolve => setTimeout(resolve, 10));
-  console.log(`tick ${i}`);
-}
-```
-
 `env.clock.sleep` parks the current fiber on an in-ring timer. The thread is free to
 run other fibers meanwhile; nothing spins.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_timers"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:20]
 import core.time : msecs;
 import std.stdio : writeln;
 import sparkles.event_horizon;
@@ -105,12 +100,17 @@ tick 2
 tick 3
 ```
 
-## Concurrency: `Promise.all` is a scope with children
-
-```js
+```js [Node.js]
 // Node.js
-const [a, b] = await Promise.all([fetchA(), fetchB()]);
+for (let i = 1; i <= 3; i++) {
+  await new Promise(resolve => setTimeout(resolve, 10));
+  console.log(`tick ${i}`);
+}
 ```
+
+:::
+
+## Concurrency: `Promise.all` is a scope with children
 
 A **scope** owns its children: `withScope` does not return until every fiber it
 spawned has finished, and a child's typed result comes back through a `JoinHandle`.
@@ -126,12 +126,15 @@ flowchart TB
   root -->|"exit only after both joined"| out["Outcome of the scope"]
 ```
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_promise_all"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:32]
 import core.time : msecs;
 import std.stdio : writeln;
 import sparkles.event_horizon;
@@ -170,17 +173,14 @@ void main()
 joined: 12
 ```
 
-## Cancellation and timeouts: `AbortController` is a cancel scope
-
-```js
+```js [Node.js]
 // Node.js
-const signal = AbortSignal.timeout(50);
-try {
-  await slowOperation({ signal });
-} catch (e) {
-  if (e.name === 'TimeoutError') console.log('timed out');
-}
+const [a, b] = await Promise.all([fetchA(), fetchB()]);
 ```
+
+:::
+
+## Cancellation and timeouts: `AbortController` is a cancel scope
 
 In Node, honouring a signal is the callee's job — every layer must thread `signal`
 through and check it. Here a deadline **is** a cancel scope: `withDeadline` interrupts
@@ -200,12 +200,15 @@ stateDiagram-v2
   note right of cleanup: protect() runs cleanup with the latch held, never lost
 ```
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_deadline"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:30]
 import core.time : msecs, seconds;
 import std.stdio : writeln;
 import sparkles.event_horizon;
@@ -244,24 +247,33 @@ timed out: true
 cleaned up: true
 ```
 
-## Events and backpressure: `EventEmitter` is a bounded channel
-
-```js
-// Node.js — nothing stops a fast emitter from flooding a slow listener
-emitter.on('item', x => slowConsume(x));
-for (const x of items) emitter.emit('item', x);
+```js [Node.js]
+// Node.js
+const signal = AbortSignal.timeout(50);
+try {
+  await slowOperation({ signal });
+} catch (e) {
+  if (e.name === 'TimeoutError') console.log('timed out');
+}
 ```
+
+:::
+
+## Events and backpressure: `EventEmitter` is a bounded channel
 
 A `Channel!T` is bounded; `put` parks the producer while the buffer is full, so
 backpressure is what you get by default. `close` wakes every waiter: takers drain what
 is buffered and then see `EPIPE`.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_channel"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:35]
 import core.time : msecs;
 import std.stdio : writeln;
 import sparkles.event_horizon;
@@ -303,27 +315,30 @@ void main()
 consumed: 15
 ```
 
-## Sockets: `net.createServer` is `listen` + `accept` in a fiber
-
-```js
-// Node.js
-const server = net.createServer(sock => sock.pipe(sock)); // echo
-server.listen(0, '127.0.0.1', () => {
-  /* connect a client, write, read */
-});
+```js [Node.js]
+// Node.js — nothing stops a fast emitter from flooding a slow listener
+emitter.on('item', x => slowConsume(x));
+for (const x of items) emitter.emit('item', x);
 ```
+
+:::
+
+## Sockets: `net.createServer` is `listen` + `accept` in a fiber
 
 The shape is the same — a listener, a connection per client — but each side is a fiber
 running sequential code. One thing is genuinely different: the **buffer moves**. The
 kernel owns it while the operation is in flight, so `recv(move(buf))` hands it over and
 the result hands it back. That is what makes zero-copy completion I/O safe.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_tcp_echo"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:66]
 import core.lifetime : move;
 import std.stdio : writeln;
 import sparkles.base.buffer : UniqueBuffer;
@@ -396,22 +411,30 @@ ushort boundPort(ref Listener l) @trusted
 echoed: hello
 ```
 
-## Files: `fs.promises.readFile` without the thread pool
-
-```js
-// Node.js — libuv runs this on its worker threadpool
-const text = await fs.promises.readFile('/tmp/example.txt', 'utf8');
+```js [Node.js]
+// Node.js
+const server = net.createServer(sock => sock.pipe(sock)); // echo
+server.listen(0, '127.0.0.1', () => {
+  /* connect a client, write, read */
+});
 ```
+
+:::
+
+## Files: `fs.promises.readFile` without the thread pool
 
 Node's async file I/O is a thread pool because `epoll` cannot express a file read.
 `io_uring` can: `openFile` and `read` are real completions on the loop.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_file_read"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:32]
 import core.lifetime : move;
 import core.sys.posix.fcntl : O_RDONLY;
 import std.file : remove, tempDir, write;
@@ -450,26 +473,28 @@ void main()
 read 18 bytes: hello from a file
 ```
 
-## Child processes: `exec` is `capture`, `spawn` is `supervise`
-
-```js
-// Node.js
-const { stdout } = await execFile('sh', [
-  '-c',
-  'echo out; echo err >&2; exit 3',
-]);
+```js [Node.js]
+// Node.js — libuv runs this on its worker threadpool
+const text = await fs.promises.readFile('/tmp/example.txt', 'utf8');
 ```
+
+:::
+
+## Child processes: `exec` is `capture`, `spawn` is `supervise`
 
 `capture` spawns, drains both pipes concurrently (so a chatty child can never deadlock
 against an undrained pipe), and reaps exactly once. A non-zero exit is data, not an
 error.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_exec"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:21]
 import std.stdio : writeln;
 import sparkles.event_horizon;
 
@@ -501,13 +526,15 @@ stderr: err
 exit code: 3
 ```
 
-```js
-// Node.js — streaming, with a kill after a deadline that you wire yourself
-const child = spawn('sh', ['-c', 'echo one; echo two; sleep 30']);
-child.stdout.on('data', chunk => process.stdout.write(chunk));
-setTimeout(() => child.kill('SIGTERM'), 100);
-child.on('exit', (code, signal) => console.log('exit', code, signal));
+```js [Node.js]
+// Node.js
+const { stdout } = await execFile('sh', [
+  '-c',
+  'echo out; echo err >&2; exit 3',
+]);
 ```
+
+:::
 
 `supervise` owns the whole run: it frames each stream into lines, feeds stdin, applies
 a timeout as TERM-then-grace-then-KILL to the child's **process tree** (a fresh process
@@ -532,12 +559,15 @@ sequenceDiagram
   S-->>You: result (usage, truncation, reap outcome)
 ```
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_spawn"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:36]
 import core.time : msecs;
 import std.stdio : writeln;
 import sparkles.event_horizon;
@@ -583,25 +613,32 @@ exited: timedOut, signaled by 15
 end: timedOut, reap: reaped
 ```
 
-## Signals: `process.on('SIGINT')` is a completion too
-
-```js
-// Node.js
-process.on('SIGUSR1', () => console.log('got SIGUSR1'));
-process.kill(process.pid, 'SIGUSR1');
+```js [Node.js]
+// Node.js — streaming, with a kill after a deadline that you wire yourself
+const child = spawn('sh', ['-c', 'echo one; echo two; sleep 30']);
+child.stdout.on('data', chunk => process.stdout.write(chunk));
+setTimeout(() => child.kill('SIGTERM'), 100);
+child.on('exit', (code, signal) => console.log('exit', code, signal));
 ```
+
+:::
+
+## Signals: `process.on('SIGINT')` is a completion too
 
 A `SignalFd` turns signals into completions the loop delivers to the fiber waiting on
 them — no handler runs asynchronously, so the code that reacts holds no locks and races
 nothing.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_signal"
     dependency "sparkles:event-horizon" version="*"
     platforms "linux"
 +/
+// [!code focus:24]
 import core.sys.posix.signal : SIGUSR1, kill;
 import core.sys.posix.unistd : getpid;
 import std.stdio : writeln;
@@ -632,23 +669,29 @@ void main()
 got signal SIGUSR1
 ```
 
-## Retries: a schedule is a value, not a loop you write
-
-```js
-// Node.js (p-retry)
-await pRetry(op, { retries: 4, factor: 2, minTimeout: 5 });
+```js [Node.js]
+// Node.js
+process.on('SIGUSR1', () => console.log('got SIGUSR1'));
+process.kill(process.pid, 'SIGUSR1');
 ```
+
+:::
+
+## Retries: a schedule is a value, not a loop you write
 
 Schedules compose as values (`exponential(5.msecs) & recurs(4)` reads "back off
 exponentially, at most four times") and the `retry` driver sleeps through whatever
 clock you pass it — so a test can virtualise time with a `TestClock`.
 
-```d
+::: code-group
+
+```d [D]
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "eh_node_retry"
     dependency "sparkles:event-horizon" version="*"
 +/
+// [!code focus:29]
 import core.time : msecs;
 import std.stdio : writeln;
 import sparkles.event_horizon;
@@ -683,6 +726,13 @@ void main()
 ```ansi
 succeeded on attempt 3
 ```
+
+```js [Node.js]
+// Node.js (p-retry)
+await pRetry(op, { retries: 4, factor: 2, minTimeout: 5 });
+```
+
+:::
 
 ## Where the models deliberately differ
 
