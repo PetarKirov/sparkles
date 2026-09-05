@@ -831,8 +831,9 @@ int runGui(GuiArgs guiArgs) @system
         vm.docPath = path; // .editorconfig discovery + {path} (format preview)
         // `DSN7`: a new document is a new model; the old one's parse and memo
         // describe bytes that are no longer open.
-        dsvModel = doc.dsvInfo.present
-            ? modelFor(null, doc.dsvText, "", flagsOf(doc.dsvInfo)) : null;
+        // `DSN7`: adopt the pipeline's model rather than resolving a second
+        // one over the same bytes.
+        dsvModel = doc.dsvModel;
         dsvCopy = dsvModel !is null
             ? DsvCopy.of(dsvModel, doc.dsvInfo) : DsvCopy.of(doc.dsvText, doc.dsvInfo);
         dsvBrowser = DsvBrowser.init; // a new document starts unprojected (DSB2)

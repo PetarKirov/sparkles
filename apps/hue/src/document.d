@@ -39,7 +39,8 @@ import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import coverage_discovery : findCoverageArtifact;
 import coverage_rebase : rebasedCoverage;
-import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvProjection,
+import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvModel,
+    DsvProjection,
     dsvStatusNote, DsvWindow;
 import gui_preview : PreviewModel;
 
@@ -87,6 +88,11 @@ struct Document
     /// decoded buffer — see `dsv_view`; the raw-fidelity copy contract
     /// `DSC2`–`DSC5` is post-CHK and reads these).
     string dsvText;
+    /// `DSN7`: the resolved model the adapter built from `dsvText` — the
+    /// parse, the sampled types and the header names. Carried on the document
+    /// so a host adopts it instead of parsing the file a second time; null
+    /// for every non-DSV document.
+    DsvModel dsvModel;
     /// `kind == dsv`: the resolved dialect/header/ragged facts (`DSK5`).
     DsvInfo dsvInfo;
     /// `kind == dsv`: the status-chrome readout (`DSK5`).
@@ -596,8 +602,12 @@ struct DocumentPipeline
     /// to the plain code view (`DSM3`/`DEG` doctrine), never errors.
     Document fromDsvSource(string path, string title, string dsvText, string ext)
     {
-        auto adapted = adaptDsv(dsvText, ext,
-            DsvFlags(dsvDelimiter, dsvQuote, dsvHeader), DsvProjection.init,
+        // `DSN7`: the model is built here and kept, not built and thrown
+        // away. Handing it to the host on the `Document` is what stops the
+        // opening frame parsing the whole file a second time.
+        auto model = DsvModel.of(dsvText, ext,
+            DsvFlags(dsvDelimiter, dsvQuote, dsvHeader));
+        auto adapted = adaptDsv(model, DsvProjection.init,
             DsvWindow(rows: dsvWindowRows));
         if (!adapted.info.present || adapted.info.columns == 0)
         {
@@ -608,7 +618,7 @@ struct DocumentPipeline
         Document doc = {
             path: path, title: title, kind: ContentKind.dsv,
             source: adapted.text, lang: ext.length ? ext : "csv",
-            dsvText: dsvText, dsvInfo: adapted.info,
+            dsvText: dsvText, dsvInfo: adapted.info, dsvModel: model,
             dsvNote: dsvStatusNote(adapted.info),
         };
         import gui_preview : previewOf;
