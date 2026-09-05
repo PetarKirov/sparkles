@@ -72,9 +72,7 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
             case rule:
                 // The cell backend has no sub-cell resolution: a hairline
                 // becomes the box-drawing line along the same edge (UIA2).
-                Point rf, rt;
-                ruleSpan(op.rect, op.ruleEdge, rf, rt);
-                canvas.line(rf, rt, op.visual, LineStyle.solid);
+                canvas.rule(op.rect, op.ruleEdge, op.visual);
                 break;
             case scrollbar:
                 paintScrollbarCells(canvas, op);
@@ -500,6 +498,75 @@ struct GridCanvas
         // A wide glyph claims the next column as a zero-width continuation.
         if (w == 2 && inBounds(x + 1, y))
             cell(x + 1, y).setCodepoint(' ', 0, st, v.linkId);
+    }
+
+    /**
+    A hairline along one edge of `r`, on the CORRECT side of the cell.
+
+    A cell has four sides and only two of them have a text attribute: an
+    underline sits at the bottom, and there is no overline. So three of the
+    four edges are eighth-blocks — the same glyphs the accent borders use, so
+    a rule and a border of equal weight agree — and only `bottom` is the
+    underline it was always drawn as.
+
+    Getting this from `line` was impossible: it takes two points, and the edge
+    is exactly the information those points no longer carry. Degrading a `top`
+    edge to an underline put it a row BELOW the box (the phantom title strip
+    across every diagram node), and a `right` edge to a left-eighth-block put
+    it a column inside.
+    */
+    void rule(in Rect r, RuleEdge edge, in Visual v) scope
+    {
+        if (r.empty)
+            return;
+        const fg = Color.fromRgb(v.fg);
+
+        void stroke(int x, int y, dchar glyph) scope
+        {
+            if (!inBounds(x, y))
+                return;
+            auto c = &cell(x, y);
+            auto st = c.style;
+            st.fg = fg;
+            c.setCodepoint(glyph, 1, st);
+        }
+
+        void underline(int y) scope
+        {
+            foreach (x; r.x .. r.x + r.width)
+                if (inBounds(x, y))
+                {
+                    auto c = &cell(x, y);
+                    c.style.underline = UnderlineStyle.single;
+                    c.style.underlineColor = fg;
+                }
+        }
+
+        final switch (edge) with (RuleEdge)
+        {
+            case top:
+                foreach (x; r.x .. r.x + r.width)
+                    stroke(x, r.y, '\u2594'); // ▔ upper eighth
+                break;
+            case bottom:
+                underline(r.y + r.height - 1);
+                break;
+            case centerY:
+                underline(r.y + r.height / 2);
+                break;
+            case left:
+                foreach (y; r.y .. r.y + r.height)
+                    stroke(r.x, y, accentGlyph(1, left: true)); // ▏
+                break;
+            case right:
+                foreach (y; r.y .. r.y + r.height)
+                    stroke(r.x + r.width - 1, y, accentGlyph(1, left: false)); // ▕
+                break;
+            case centerX:
+                foreach (y; r.y .. r.y + r.height)
+                    stroke(r.x + r.width / 2, y, accentGlyph(1, left: true));
+                break;
+        }
     }
 
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
@@ -946,24 +1013,75 @@ static assert(isCanvas!GridCanvas);
     assert(g[3, 0].grapheme == " ");
 }
 
-@("tui_canvas.aHorizontalRuleReachesItsLastCell")
+@("tui_canvas.aRuleReachesItsLastCell")
 @safe unittest
 {
     import sparkles.ui.canvas : ruleOp, RuleEdge;
     import sparkles.ui.style : Slot;
 
-    // `ruleEndpoints` names the last cell ON the rule; `line` takes a
-    // half-open span (a widget's `lineTo` is exclusive, which the undercurl
-    // test above pins). The degradation passed one to the other unchanged, so
-    // every rule came up one cell short of its own rect — a full-width board
-    // rule stopped a column before the right edge.
+    // `ruleEndpoints` names the last cell ON the rule; the `line` primitive a
+    // backend without $(LREF GridCanvas.rule) falls back to is half-open (a
+    // widget's `lineTo` is exclusive, which the undercurl test pins). The
+    // degradation handed one convention to the other unchanged, so every rule
+    // came up a cell short of its own rect — a full-width board rule stopped a
+    // column before the right edge. `ruleSpan` converts once, at the seam.
     Grid g;
     g.resize(6, 2);
-    auto ops = [ruleOp(Rect(0, 1, 6, 1), RuleEdge.top, Slot.border,
-        Visual(fg: RgbColor(0x88, 0x88, 0x88)))];
-    paintGrid(g, RgbColor(0, 0, 0), ops);
+    paintGrid(g, RgbColor(0, 0, 0), [ruleOp(Rect(0, 1, 6, 1), RuleEdge.bottom,
+        Slot.border, Visual(fg: RgbColor(0x88, 0x88, 0x88)))]);
 
     foreach (x; 0 .. 6)
         assert(g[cast(ushort) x, 1].style.underline == UnderlineStyle.single,
             "the rule covers its whole rect, last cell included");
+}
+
+@("tui_canvas.ruleSpanIsHalfOpenForTheLineFallback")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.canvas : RuleEdge, ruleEndpoints, ruleSpan;
+
+    // The conversion itself, for the backends that have no `rule` of their own
+    // and degrade through `line`.
+    Point f, t;
+    ruleEndpoints(Rect(2, 3, 10, 4), RuleEdge.bottom, f, t);
+    assert(f == Point(2, 6) && t == Point(11, 6), "inclusive");
+    ruleSpan(Rect(2, 3, 10, 4), RuleEdge.bottom, f, t);
+    assert(f == Point(2, 6) && t == Point(12, 6), "half-open");
+    ruleSpan(Rect(2, 3, 10, 4), RuleEdge.left, f, t);
+    assert(f == Point(2, 3) && t == Point(2, 7), "…on the vertical axis too");
+}
+
+@("tui_canvas.eachRuleEdgeLandsOnItsOwnSideOfTheCell")
+@safe unittest
+{
+    import sparkles.ui.canvas : ruleOp, RuleEdge;
+    import sparkles.ui.style : Slot;
+
+    // A box outline is four rules, one per edge (`apps/diagram` draws every
+    // entity that way). A cell has four sides and the degradation has to pick
+    // the RIGHT one: an underline sits at the bottom of its cell, so using it
+    // for a `top` edge draws the line a row below the box — which is what put
+    // a phantom one-cell "title strip" across the top of every node. The same
+    // error horizontally: a LEFT eighth-block on the `right` edge draws inside
+    // the box, a column short.
+    Grid g;
+    g.resize(6, 5);
+    const vis = Visual(fg: RgbColor(0x88, 0x88, 0x88));
+    const box = Rect(1, 1, 4, 3); // cols 1..4, rows 1..3
+    paintGrid(g, RgbColor(0, 0, 0), [
+        ruleOp(box, RuleEdge.top, Slot.border, vis),
+        ruleOp(box, RuleEdge.bottom, Slot.border, vis),
+        ruleOp(box, RuleEdge.left, Slot.border, vis),
+        ruleOp(box, RuleEdge.right, Slot.border, vis),
+    ]);
+
+    // Top rides the TOP of its own row, not the bottom of it.
+    assert(g[2, 1].grapheme == "▔", "the top edge is on row 1");
+    // Bottom is the one edge an underline already expresses correctly.
+    assert(g[2, 3].style.underline == UnderlineStyle.single,
+        "the bottom edge is on row 3");
+    // Left hugs the left of its column; right hugs the RIGHT of its own.
+    assert(g[1, 2].grapheme == "▏", "the left edge is on column 1");
+    assert(g[4, 2].grapheme == "▕", "the right edge is on column 4");
 }
