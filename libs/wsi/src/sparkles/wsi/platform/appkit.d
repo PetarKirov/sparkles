@@ -172,6 +172,8 @@ private extern class NSEvent : NSObject
         @selector("charactersIgnoringModifiers");
     NSPoint locationInWindow() @selector("locationInWindow");
     long buttonNumber() @selector("buttonNumber");
+    double deltaX() @selector("deltaX");
+    double deltaY() @selector("deltaY");
     double scrollingDeltaX() @selector("scrollingDeltaX");
     double scrollingDeltaY() @selector("scrollingDeltaY");
     bool hasPreciseScrollingDeltas()
@@ -532,6 +534,7 @@ struct AppKitWsi
         SurfaceMetrics metrics;
         InlineBuffer!(char, 512) marked;
         ulong markedUnits16;
+        bool relativePointer;
     }
 
     private NSApplication application_;
@@ -1125,6 +1128,42 @@ struct AppKitWsi
 
     /// NSCursor.hide/unhide is a balanced global counter, so the hidden
     /// state is tracked and only toggled on transitions.
+    /*
+    F10 on AppKit: there is no explicit capture (a drag already routes to
+    the mouseDown view) and no pointer confinement, so both modes are typed
+    `unsupported` rather than pretended. Relative motion is the delta pair
+    every mouse event already carries; it is device motion after the
+    system's acceleration, so it is reported with `raw = false`.
+    */
+    WsiResult!void setPointerCapture(WindowId id, PointerCaptureMode mode)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        final switch (mode)
+        {
+            case PointerCaptureMode.none:
+                return wsiOk();
+            case PointerCaptureMode.capture:
+                return appKitFailure!void(WsiOperation.command, 0,
+                    "AppKit has no explicit pointer capture beyond the drag",
+                    WsiErrorKind.unsupported);
+            case PointerCaptureMode.confine:
+                return appKitFailure!void(WsiOperation.command, 0,
+                    "macOS has no pointer confinement",
+                    WsiErrorKind.unsupported);
+        }
+    }
+
+    WsiResult!void setRelativePointer(WindowId id, bool enabled)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        windows_[checked.value].relativePointer = enabled;
+        return wsiOk();
+    }
+
     WsiResult!void setCursorVisible(WindowId id, bool visible)
     {
         auto checked = checkedSlot(id, WsiOperation.command);
@@ -1191,6 +1230,14 @@ struct AppKitWsi
             cast(int)(at.x * scale + 0.5), cast(int)(at.y * scale + 0.5));
         pointer.modifiers = appKitMods(event.modifierFlags());
         emit(idAt(index), pointer);
+        if (phase == PointerPhase.moved && slot.relativePointer)
+        {
+            const dx = event.deltaX();
+            const dy = event.deltaY();
+            if (dx != 0 || dy != 0)
+                emit(idAt(index),
+                    RelativePointerEvent(viewPointer, dx, dy, false));
+        }
     }
 
     // AppKit's scrollingDelta is positive when content moves down toward
