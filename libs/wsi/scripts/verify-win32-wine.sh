@@ -27,7 +27,7 @@ env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$work/runtime" \
   WINEPREFIX="$work/wine" WINEDEBUG=-all \
   xvfb-run -a wine64 "$exe" \
   | tee "$work/output.log"
-grep -q '^ok: Win32 WSI conformance (15 checked, 6 skipped)' "$work/output.log"
+grep -q '^ok: Win32 WSI conformance (18 checked, 3 skipped)' "$work/output.log"
 grep -q '^ok: Win32 text commit + IMM32 composition round trip' "$work/output.log"
 
 # No 192-DPI phase: a per-monitor-V2-aware window under Wine always sees a

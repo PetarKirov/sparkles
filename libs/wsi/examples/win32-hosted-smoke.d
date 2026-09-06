@@ -169,6 +169,35 @@ private struct Win32Hooks
             "WM_SETCURSOR did not apply the stored cursor");
     }
 
+    /*
+    Real cursor moves, not posted messages: only User32's own routing
+    shows that an explicitly captured window receives motion from beyond
+    its client area and that a clip clamps the landing point inside it.
+    Two distinct points, neither inside first, so an uncaptured window
+    receives nothing and the property times out.
+    */
+    void injectMotionOutside()
+    {
+        RECT client;
+        assert(GetClientRect(hwnd, &client));
+        POINT origin;
+        assert(ClientToScreen(hwnd, &origin));
+        assert(SetCursorPos(origin.x + client.right + 60,
+            origin.y + client.bottom + 40));
+        assert(SetCursorPos(origin.x + client.right + 60, origin.y + 20));
+    }
+
+    /// Injected input reaches Raw Input; a `SetCursorPos` warp does not.
+    void injectRelativeMotion()
+    {
+        INPUT input;
+        input.type = INPUT_MOUSE;
+        input.mi.dx = 20;
+        input.mi.dy = 20;
+        input.mi.dwFlags = MOUSEEVENTF_MOVE;
+        assert(SendInput(1, &input, INPUT.sizeof) == 1);
+    }
+
     void injectScroll()
     {
         // Wheel messages carry screen coordinates.
