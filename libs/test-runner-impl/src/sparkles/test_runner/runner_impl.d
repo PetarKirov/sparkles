@@ -718,6 +718,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
             foreach (thrown; result.thrown)
                 output ~= formatThrown(thrown, colored, options.verbose);
             stdout.lockingTextWriter.put(output);
+            stdout.flush();
 
             if (result.skipped)
                 atomicOp!"+="(skipped, size_t(1));
