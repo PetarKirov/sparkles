@@ -80,8 +80,19 @@ nowhere to put anything and fails the template constraint.
 
 `N` means one thing everywhere: the inline capacity. It is not a limit for a
 policy carrying `Storage.heap`, and it must be `0` for a policy without
-`Storage.inline` — `HeapBuffer` supplies that zero. A heap-only buffer is sized
-up front with `reserve`, not with `N`.
+`Storage.inline` — `HeapBuffer` supplies that zero. Any buffer that can reach the
+heap is sized up front with `reserve`, whatever `N` it has.
+
+**Residency is recorded, not inferred.** It would be tempting to read it off the
+length — elements are inline while `length <= N`, on the heap above it — and for a
+while the buffer did. The invariant costs nothing to store and two capabilities to
+assume: a buffer holding three elements can then only be holding them inline, so
+`reserve` has nothing to pre-grow and `clear` has nothing to keep. Every shrink
+past `N` also had to copy the survivors back into the inline slots and free, which
+is work no caller asked for. With both residencies the top bit of the length word
+carries the answer instead — free, since the struct stays three words and a buffer
+of 2^63 elements is not a thing — and with only one residency the discriminant is
+a constant or the block pointer, and no bit is spent.
 
 `SharedBuffer` shares _storage_, not _value_. A write through one copy clones
 the block first, so it is invisible to the others; copies behave as independent
@@ -89,22 +100,23 @@ values. This is unlike `shared_ptr`, where a mutation propagates.
 
 ### Requirements
 
-| ID      | Requirement                                                                                                                                                                                                                                     | Status  |
-| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `BUF1`  | `Buffer` must take residency and sharing as one `Storage` flag set, so the two are independently selectable and every combination is spellable.                                                                                                 | decided |
-| `BUF2`  | A policy with neither `Storage.inline` nor `Storage.heap` must fail to instantiate.                                                                                                                                                             | full    |
-| `BUF3`  | `N` must be `0` when `Storage.inline` is absent, enforced at compile time. `N` must never mean anything other than inline capacity.                                                                                                             | full    |
-| `BUF4`  | A policy without `Storage.inline` must hold no inline array, so the struct costs one slice regardless of `N`.                                                                                                                                   | full    |
-| `BUF5`  | A policy without `Storage.heap` must never allocate, and must have no destructor — it is plain data.                                                                                                                                            | full    |
-| `BUF6`  | A policy without `Storage.heap` must store its elements in a plain `T[N]` field rather than a union, so that `-dip1000` rejects escaping a slice or pointer derived from a local.                                                               | full    |
-| `BUF7`  | `Storage.unique` must disable copy construction and copy assignment, and must remove the reference count from the grow path.                                                                                                                    | full    |
-| `BUF8`  | Without `Storage.unique`, a copy must share heap storage and clone it before a mutation, so copies behave as independent values.                                                                                                                | full    |
-| `BUF9`  | Inline storage must be default-initialised when `T` has indirections, so a conservative scan never follows a garbage pointer in an untouched slot; it may be `= void` otherwise. Either way, capacity beyond `length` is not part of the value. | full    |
-| `BUF10` | `opEquals` must compare `this[]` against `rhs[]`, so equality is content equality across every policy and never reads capacity beyond `length`.                                                                                                 | full    |
-| `BUF11` | `reserve` must allocate on a buffer that is not yet on the heap, since that is the only way to size a `HeapBuffer` before use.                                                                                                                  | full    |
-| `BUF12` | The four aliases must be the documented entry points; the raw `Buffer!(T, N, flags)` form is for generic code and the two policies without an alias.                                                                                            | decided |
-| `BUF13` | A policy without `Storage.inline` must keep its heap block across `popBack`, a shrinking `length`, and `clear`; the block is released only by the destructor or transferred by `toShared`, so one `reserve` serves every reuse.                 | full    |
-| `BUF14` | `inlineCapacity` must expose `N` as a compile-time constant, so a caller can size a static array from a buffer's type rather than repeating the literal.                                                                                        | full    |
+| ID      | Requirement                                                                                                                                                                                                                                                                                                           | Status  |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `BUF1`  | `Buffer` must take residency and sharing as one `Storage` flag set, so the two are independently selectable and every combination is spellable.                                                                                                                                                                       | decided |
+| `BUF2`  | A policy with neither `Storage.inline` nor `Storage.heap` must fail to instantiate.                                                                                                                                                                                                                                   | full    |
+| `BUF3`  | `N` must be `0` when `Storage.inline` is absent, enforced at compile time. `N` must never mean anything other than inline capacity.                                                                                                                                                                                   | full    |
+| `BUF4`  | A policy without `Storage.inline` must hold no inline array, so the struct costs one slice regardless of `N`.                                                                                                                                                                                                         | full    |
+| `BUF5`  | A policy without `Storage.heap` must never allocate, and must have no destructor — it is plain data.                                                                                                                                                                                                                  | full    |
+| `BUF6`  | A policy without `Storage.heap` must store its elements in a plain `T[N]` field rather than a union, so that `-dip1000` rejects escaping a slice or pointer derived from a local.                                                                                                                                     | full    |
+| `BUF7`  | `Storage.unique` must disable copy construction and copy assignment, and must remove the reference count from the grow path.                                                                                                                                                                                          | full    |
+| `BUF8`  | Without `Storage.unique`, a copy must share heap storage and clone it before a mutation, so copies behave as independent values.                                                                                                                                                                                      | full    |
+| `BUF9`  | Inline storage must be default-initialised when `T` has indirections, so a conservative scan never follows a garbage pointer in an untouched slot; it may be `= void` otherwise. Either way, capacity beyond `length` is not part of the value.                                                                       | full    |
+| `BUF10` | `opEquals` must compare `this[]` against `rhs[]`, so equality is content equality across every policy and never reads capacity beyond `length`.                                                                                                                                                                       | full    |
+| `BUF11` | `reserve` must allocate on a buffer that is not yet on the heap — for every policy that can reach the heap, not only the ones without inline slots. A request larger than `N` moves the buffer immediately, however few elements it holds; a request `N` already satisfies changes nothing.                           | full    |
+| `BUF12` | The four aliases must be the documented entry points; the raw `Buffer!(T, N, flags)` form is for generic code and the two policies without an alias.                                                                                                                                                                  | decided |
+| `BUF13` | A buffer that has reached the heap must keep its block across `popBack` and a shrinking `length`; residency is recorded, never inferred from the length, so a shrink neither copies elements back into the inline slots nor frees. The block is released by `clear`, by the destructor, or transferred by `toShared`. | full    |
+| `BUF14` | `inlineCapacity` must expose `N` as a compile-time constant, so a caller can size a static array from a buffer's type rather than repeating the literal.                                                                                                                                                              | full    |
+| `BUF15` | `clear` must take whether to give the block back. The default does — a finished buffer should not sit on memory — but a builder reused across iterations says otherwise and keeps what it reserved. A policy without `Storage.inline` has nothing to revert to and keeps its block either way.                        | full    |
 
 ## 4. Bounded writing (`WRT`)
 
