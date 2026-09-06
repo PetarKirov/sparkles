@@ -17,25 +17,16 @@ import sparkles.base.buffer : SharedBuffer;
 /**
 A byte span into the borrowed source.
 
-Deliberately `uint`, not `size_t`. A span is the unit this model is made of —
-one per cell plus one per record — so its width sets the size of the two
-arenas a parse materializes, and those dominate parse cost at scale: a 73 MB
-document produces 8M cells, and every byte of `Span` is 8 MB of arena and 8 MB
-of memory traffic. Halving the span halves both.
-
-The cost is a 2 GiB ceiling on a single document, which $(REF parseDsv,
-sparkles,dsv,parse) rejects explicitly rather than letting it wrap. The
-normative target is 100 MB (`DSN6`), so the ceiling is 20× the requirement.
+Plain `size_t` — a `Span` is a value the accessors hand back, never a field
+of the arena. What the arena stores is packed: see $(LREF DsvCell) and
+$(LREF DsvRecord), whose widths are what set a parse's memory cost.
 */
 struct Span
 {
-    uint start;
-    uint length;
+    size_t start;
+    size_t length;
 
-    /// Widened deliberately: `start + length` is in range by construction
-    /// (the parser caps the source at `int.max`), but the sum is used to
-    /// slice, and a `size_t` keeps that arithmetic away from the boundary.
-    size_t end() const @safe pure nothrow @nogc => size_t(start) + length;
+    size_t end() const @safe pure nothrow @nogc => start + length;
 }
 
 /// How the first record is interpreted; `auto_` defers to the sniffer's
@@ -76,55 +67,83 @@ enum CellFlags : ubyte
 }
 
 /**
-One cell. Plain data: [raw] spans the borrowed source **including** any
-quotes/escapes (the identity channel, `DSM2`); [cellRaw]/[decodeCell] resolve
-the text.
+One cell: a span of the borrowed source, quotes included (the identity
+channel, `DSM2`); [cellRaw]/[decodeCell] resolve the text.
 
-Exactly **8 bytes**, and packed to stay that way: the one flag lives in the
-top bit of the length rather than in a `ubyte` field, which would cost three
-bytes of tail padding. That is not micro-optimization at this scale — a
-document materializes one of these per cell, 8M of them for a 1M-row file,
-and the arena's cost is dominated by first-touching its pages, which is
-linear in its size. The three bytes padding would have cost would be 24 MB of
-fresh pages, and ~9 ms of faults, on every parse of such a file.
+**Exactly 8 bytes**, and packed into one word to stay that way at a scale
+where it matters: a document materializes one of these per cell — 8M of them
+for a 1M-row file — and the arena's cost is dominated by first-touching its
+pages, which is linear in its size. Three bytes of tail padding would be
+24 MB of extra pages, and ~9 ms of faults, on every parse of such a file.
+
+Forty bits of offset and twenty-four of length, so the limits are a **1 TiB
+document** and a **16 MiB cell** — 200x and beyond what the `DSN6` target
+asks for. $(REF parseDsv, sparkles,dsv,parse) refuses past either rather
+than wrapping: a truncated span silently points at the wrong bytes, which is
+the worst failure this model can have.
+
+There is no quoted flag, because it would not be information. A cell needs
+decoding exactly when its first raw byte is the dialect's quote — that is
+the same test the parser makes to decide it — so
+$(REF DsvDoc.needsDecode, sparkles,dsv,model) reads it off the source and
+the bit stays available for the length.
 */
 struct DsvCell
 {
-    private uint start_;
-    /// Length in the low 31 bits, the quoted flag in the top one.
-    private uint lenFlags_;
+    private ulong bits_;
 
-    private enum uint quotedBit = 1u << 31;
-    private enum uint lengthMask = quotedBit - 1;
+    private enum uint startBits = 40;
+    private enum ulong startMask = (1UL << startBits) - 1;
+    /// The largest offset and length this packing can hold.
+    enum size_t maxStart = startMask;
+    /// ditto
+    enum size_t maxLength = (1UL << (64 - startBits)) - 1;
 
-    this(Span raw, CellFlags flags = CellFlags.none) @safe pure nothrow @nogc
-    in (raw.length <= lengthMask, "a cell cannot exceed 2 GiB")
+    this(Span raw) @safe pure nothrow @nogc
+    in (raw.start <= maxStart, "cell offset beyond the 1 TiB document limit")
+    in (raw.length <= maxLength, "cell longer than 16 MiB")
     {
-        start_ = raw.start;
-        lenFlags_ = raw.length
-            | ((flags & CellFlags.quoted) ? quotedBit : 0u);
+        bits_ = raw.start | (ulong(raw.length) << startBits);
     }
 
-    /// The raw span, quotes included (the identity channel, `DSM2`).
+    /// The raw span, quotes included.
     Span raw() const @safe pure nothrow @nogc
-        => Span(start_, lenFlags_ & lengthMask);
-
-    /// ditto
-    CellFlags flags() const @safe pure nothrow @nogc
-        => (lenFlags_ & quotedBit) ? CellFlags.quoted : CellFlags.none;
-
-    bool needsDecode() const @safe pure nothrow @nogc
-        => (lenFlags_ & quotedBit) != 0;
+        => Span(bits_ & startMask, bits_ >> startBits);
 }
 
-/// One record: its cell range in the document's `cells` arena, its raw span
-/// (terminator excluded), and how it was terminated.
+/**
+One record: its cell range in the document's `cells` arena, its raw span
+(terminator excluded), and how it was terminated.
+
+The start is a full `size_t` — records are an eighth as numerous as cells in
+a typical document, so the width that matters is the cell's, and paying it
+here buys absolute addressing with no document-size limit of its own.
+*/
 struct DsvRecord
 {
+    // Widest first: D lays fields out in declaration order, so a `size_t`
+    // after the `ubyte` terminator would strand seven bytes of padding —
+    // 8 MB of it across a 1M-row document.
+    private size_t rawStart_;
+    private uint rawLength_;
     uint cellsStart;
     uint cellCount;
     Terminator terminator;
-    Span raw;
+
+    this(uint cellsStart, uint cellCount, Terminator terminator, Span raw)
+        @safe pure nothrow @nogc
+    in (raw.length <= uint.max, "record longer than 4 GiB")
+    {
+        this.cellsStart = cellsStart;
+        this.cellCount = cellCount;
+        this.terminator = terminator;
+        rawStart_ = raw.start;
+        rawLength_ = cast(uint) raw.length;
+    }
+
+    /// The record's bytes, terminator excluded.
+    Span raw() const @safe pure nothrow @nogc
+        => Span(rawStart_, rawLength_);
 }
 
 /// The classification of one decoded cell value ([classifyValue]).
@@ -192,6 +211,22 @@ struct DsvDoc
     const(char)[] cellRaw(in DsvCell c) const return scope
         => source[c.raw.start .. c.raw.end];
 
+    /**
+    Whether `c`'s text differs from its raw span — i.e. whether it carries a
+    quoted segment and so needs [decodeCell].
+
+    Read off the source rather than stored: the parser decides a field is
+    quoted by testing exactly this byte, so a flag would be a second copy of
+    something the bytes already say, and it would cost the cell the length
+    bit it now spends. An empty cell has no first byte and is never quoted —
+    a quoted empty cell is `""`, two bytes long.
+    */
+    bool needsDecode(in DsvCell c) const scope @safe pure nothrow @nogc
+    {
+        const r = c.raw;
+        return r.length != 0 && source[r.start] == dialect.quote;
+    }
+
     /// The number of data records (the header, when present, excluded).
     size_t dataRecordCount() const
         => records.length == 0 ? 0 : records.length - (hasHeader ? 1 : 0);
@@ -203,7 +238,7 @@ struct DsvDoc
 /// collapse doubled quotes, literal segments copy verbatim.
 const(char)[] decodeCell(Buf)(in DsvDoc doc, in DsvCell cell, ref Buf buf)
 {
-    if (!cell.needsDecode)
+    if (!doc.needsDecode(cell))
         return doc.cellRaw(cell);
 
     const raw = doc.cellRaw(cell);
@@ -288,7 +323,7 @@ unittest
 {
     DsvDoc doc;
     doc.source = `"he said ""hi"", left"`;
-    const cell = DsvCell(Span(0, cast(uint) doc.source.length), CellFlags.quoted);
+    const cell = DsvCell(Span(0, cast(uint) doc.source.length));
     SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == `he said "hi", left`);
 }
@@ -300,7 +335,7 @@ unittest
     // `"a"b"c"` — quoted "a", literal b, re-entered quoted "c" (`DSM1`).
     DsvDoc doc;
     doc.source = `"a"b"c"`;
-    const cell = DsvCell(Span(0, cast(uint) doc.source.length), CellFlags.quoted);
+    const cell = DsvCell(Span(0, cast(uint) doc.source.length));
     SharedBuffer!(char, 64) buf;
     assert(decodeCell(doc, cell, buf) == "abc");
 }

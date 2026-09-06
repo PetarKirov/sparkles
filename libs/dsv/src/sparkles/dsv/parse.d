@@ -17,7 +17,7 @@ module sparkles.dsv.parse;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr, parseOk;
-import sparkles.dsv.model : CellFlags, Dialect, DsvCell, DsvDoc, DsvRecord,
+import sparkles.dsv.model : Dialect, DsvCell, DsvDoc, DsvRecord,
     Span, Terminator;
 
 /// Parses `source` under `dialect` into a [DsvDoc] borrowing `source`.
@@ -31,14 +31,15 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
     if (d == q || d == '\r' || d == '\n' || q == '\r' || q == '\n')
         return parseErr!DsvDoc(ParseErrorCode.unexpectedCharacter, 0,
             "delimiter and quote must be distinct, non-newline bytes");
-    // `Span` is a `uint` pair and `DsvCell` spends the top length bit on its
-    // quoted flag, so a span is 8 bytes at the price of a 2 GiB ceiling.
-    // Refused outright rather than wrapped: a truncated span would silently
-    // point at the wrong bytes, which is the worst failure this model can
-    // have.
-    if (source.length > int.max)
+    // `DsvCell` packs its span into one word (40 bits of offset, 24 of
+    // length), which is what keeps the arena at 8 bytes a cell. Both limits
+    // are refused outright rather than wrapped: a truncated span silently
+    // points at the wrong bytes, which is the worst failure this model can
+    // have. The per-cell limit is checked at the field below, where the
+    // length is known.
+    if (source.length > DsvCell.maxStart)
         return parseErr!DsvDoc(ParseErrorCode.numericOverflow, 0,
-            "document exceeds the 2 GiB span limit");
+            "document exceeds the 1 TiB limit");
 
     DsvDoc doc;
     doc.source = source;
@@ -124,9 +125,10 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
                 doc.unterminatedQuote = true;
 
             const fieldEnd = i;
-            rowCells ~= DsvCell(Span(cast(uint) fieldStart,
-                cast(uint)(fieldEnd - fieldStart)),
-                startedQuoted ? CellFlags.quoted : CellFlags.none);
+            if (fieldEnd - fieldStart > DsvCell.maxLength)
+                return parseErr!DsvDoc(ParseErrorCode.numericOverflow,
+                    fieldStart, "cell exceeds the 16 MiB limit");
+            rowCells ~= DsvCell(Span(fieldStart, fieldEnd - fieldStart));
             cellCount++;
 
             if (i >= source.length)
@@ -155,9 +157,12 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
             }
         }
 
+        if (doc.cells.length + rowCells.length > uint.max)
+            return parseErr!DsvDoc(ParseErrorCode.numericOverflow, recStart,
+                "document exceeds 4 billion cells");
         doc.cells.put(rowCells[]);
         doc.records ~= DsvRecord(cellsStart, cellCount, term,
-            Span(cast(uint) recStart, cast(uint)(recEnd - recStart)));
+            Span(recStart, recEnd - recStart));
     }
 
     finishCounts(doc);
@@ -230,6 +235,50 @@ unittest
     assert(doc.records[0].terminator == Terminator.lf);
 }
 
+@("parse.limits.refusedNotWrapped")
+@system unittest
+{
+    // The packed cell buys 8 bytes at the price of two limits. Both must
+    // REFUSE rather than wrap: a truncated span points at the wrong bytes,
+    // and a grid that silently shows the wrong cells is worse than one that
+    // will not open.
+    import sparkles.base.text.errors : ParseErrorCode;
+
+    // A cell one byte past the limit. Built without materializing 16 MiB of
+    // source: the span check reads lengths, not bytes.
+    auto big = new char[](DsvCell.maxLength + 2);
+    big[] = 'x';
+    const res = parseDsv(cast(const(char)[]) big, Dialect(','));
+    assert(res.hasError, "a cell over 16 MiB must be refused");
+    assert(res.error.code == ParseErrorCode.numericOverflow);
+
+    // And one byte under it parses, so the boundary is where it says.
+    auto ok = new char[](DsvCell.maxLength);
+    ok[] = 'x';
+    const good = parseDsv(cast(const(char)[]) ok, Dialect(','));
+    assert(!good.hasError, "a cell at exactly the limit must still parse");
+    assert(good.value.cells.length == 1);
+    assert(good.value.cells[0].raw.length == DsvCell.maxLength);
+}
+
+@("parse.spans.resolveBeyondFourGigabytes")
+@safe pure nothrow @nogc
+unittest
+{
+    // The ceiling this packing exists to lift: a span must still resolve
+    // when its offset is past 2^32. Constructed directly — materializing a
+    // multi-GB document in a unittest is not the point, the arithmetic is.
+    enum size_t past4G = 5_000_000_000;
+    const cell = DsvCell(Span(past4G, 7));
+    assert(cell.raw.start == past4G, "a 40-bit offset must survive the pack");
+    assert(cell.raw.length == 7);
+    assert(cell.raw.end == past4G + 7);
+
+    const rec = DsvRecord(0, 3, Terminator.lf, Span(past4G, 4_000_000_000));
+    assert(rec.raw.start == past4G);
+    assert(rec.raw.length == 4_000_000_000);
+}
+
 @("parse.dialect.invalid")
 @safe pure nothrow @nogc
 unittest
@@ -271,7 +320,7 @@ unittest
     assert(doc.records[0].cellCount == 2);
     SharedBuffer!(char, 256) buf;
     assert(cellAt(buf, doc, 0, 0) == "a\"b");
-    assert(!doc.cells[0].needsDecode);
+    assert(!doc.needsDecode(doc.cells[0]));
 }
 
 @("parse.deviations.excelReentry")

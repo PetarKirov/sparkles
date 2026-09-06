@@ -182,7 +182,7 @@ private QuoteEvidence quoteEvidence(const(char)[] sample, in Dialect d)
     const doc = res.value;
     uint quoted = 0;
     foreach (i; 0 .. doc.cells.length)
-        if (doc.cells[i].needsDecode)
+        if (doc.needsDecode(doc.cells[i]))
             quoted++;
     return QuoteEvidence(quoted, doc.unterminatedQuote);
 }
