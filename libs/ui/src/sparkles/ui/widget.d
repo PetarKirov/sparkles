@@ -216,6 +216,35 @@ struct Builder
     /// Freezes the arena into a tree rooted at `root`.
     WidgetTree finish(uint root)
         => WidgetTree(nodes, root);
+
+    /**
+    Empties the arena while $(B keeping its storage), so a builder held across
+    frames asks the GC for nothing in the steady state.
+
+    A view that rebuilds every frame otherwise pays for its whole arena every
+    frame: hue's DSV grid builds 3307 nodes for one 48-row window, and a
+    `Widget` is 256 bytes, so a fresh `Builder` per frame is ~850 KB of
+    garbage per scroll notch — enough, on its own, to run a collection every
+    few frames and put a multi-millisecond pause inside a 4 ms budget.
+
+    $(B The previously finished tree is invalidated.) Its `nodes` alias this
+    arena, and the next `add` overwrites them, so reset only once the last
+    reader of the outgoing tree is done — a rebuild's first act, never its
+    last.
+    */
+    void reset()
+    {
+        nodes.length = 0;
+        () @trusted { nodes.assumeSafeAppend(); }();
+    }
+
+    /// Sizes the arena for `n` nodes up front, so a build of known shape
+    /// neither grows nor copies. Never shrinks.
+    void reserve(size_t n)
+    {
+        if (n > nodes.capacity)
+            nodes.reserve(n);
+    }
 }
 
 @("ui.widget.builder.childList")
