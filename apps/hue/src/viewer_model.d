@@ -312,6 +312,14 @@ struct ViewerModel
     Palette palette;
 
     // ── the widget pipeline (derived; rebuilt as one) ───────────────────────
+    /// The widget arena, kept across rebuilds (`DSN9`). Every view kind
+    /// builds into this one builder, and `rebuildTree` empties it first, so a
+    /// scroll notch writes its nodes over storage the model already owns
+    /// instead of asking the GC for a fresh ~850 KB. `tree` always aliases
+    /// it — which is why the reset is the rebuild's FIRST act, after the
+    /// anchor has been captured off the outgoing rows and before anything
+    /// reads the outgoing tree.
+    private Builder arena_;
     WidgetTree tree;
     Frame[] frames;
     DrawOp[] ops;
@@ -1030,6 +1038,9 @@ struct ViewerModel
 
     private void rebuildTree()
     {
+        // The outgoing tree dies here: from this point on `tree` aliases
+        // storage the builder is about to overwrite.
+        arena_.reset();
         if (showPreview && diff.files.length)
         {
             // A diff document (`DVL1`/`DVL4`): the unified diff widget view;
@@ -1076,7 +1087,7 @@ struct ViewerModel
             // `reservedChannels` reads it, and the previous document's regions
             // would reserve an icon strip this view puts no arrows in.
             foldable = null;
-            auto b = Builder();
+            alias b = arena_;
             const docRoot = viewTwoslashDocumentInto(b, tw, events,
                 thisCurrent(), pageFg, cache,
                 contentWidthCols,
@@ -1118,7 +1129,7 @@ struct ViewerModel
             const(HighlightEvent)[] evs = plainSyntax
                 ? [HighlightEvent.sourceSpan(0, source.length)] : events;
 
-            auto b = Builder();
+            alias b = arena_;
             const docRoot = viewCodeDocumentInto(b, source, evs,
                 thisCurrent(), pageFg,
                 CodeViewOptions(foldedRegions: closed,
@@ -1187,7 +1198,7 @@ struct ViewerModel
         mdLinkTable = MdLinkTable.init;
         opt.linkTable = &mdLinkTable;
         mdLinks = mdLinkRanges(preview.doc);
-        auto mb = Builder();
+        alias mb = arena_;
         const mdRoot = viewMarkdownInto(mb, preview.doc, opt);
         tree = gutter(mb, mdRoot);
         frames = layout(tree, Constraints(maxW: widthCols));
