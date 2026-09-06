@@ -228,16 +228,51 @@ final class DsvModel
         return m;
     }
 
-    /// Whether this model already describes exactly these bytes under exactly
-    /// these flags — the reuse test. The source is compared by **slice
-    /// identity**, not by content: a reload produces a different buffer and
-    /// must re-resolve even when the bytes happen to match.
+    /**
+    Whether this model already describes exactly these bytes under exactly
+    these flags — the reuse test (`DSN7`).
+
+    The source is compared by **slice identity**, not by content: a reload
+    produces a different buffer and must re-resolve even when the bytes
+    happen to match.
+
+    The flags are compared by what they $(B decide), not by how they are
+    spelled. A flag naming only what the model already resolved is satisfied,
+    and that is the common case rather than a corner one: $(LREF flagsOf)
+    reconstructs an explicit delimiter, quote and header verdict out of a
+    resolved $(LREF DsvInfo), so every replay arrives spelled differently
+    from the `DsvFlags.init` the document was opened under. Comparing
+    spellings meant the first grid interaction with any DSV document re-parsed
+    it whole — ~110 ms of stall on the `DSN6` corpus, once, exactly where the
+    reader first touches the data.
+
+    A model that never parsed has no resolved dialect to test against, so it
+    falls back to the spellings it was built with.
+    */
     bool describes(string source, in DsvFlags flags) const @safe pure nothrow @nogc
-        => source_.ptr is source.ptr && source_.length == source.length
-            && flags_ == flags;
+    {
+        if (source_.ptr !is source.ptr || source_.length != source.length)
+            return false;
+        if (!usable_)
+            return flags_ == flags;
+        if (flags.delimiter.length
+            && flagChar(flags.delimiter, base_.dialect.delimiter)
+                != base_.dialect.delimiter)
+            return false;
+        if (flags.quote.length
+            && flagChar(flags.quote, base_.dialect.quote) != base_.dialect.quote)
+            return false;
+        if (flags.header == "yes" && !base_.hasHeader)
+            return false;
+        if (flags.header == "no" && base_.hasHeader)
+            return false;
+        return true;
+    }
 
     /// The parse succeeded and the grid is renderable.
     bool usable() const @safe pure nothrow @nogc => usable_;
+    /// The flag spellings this model was resolved under (`DSD` precedence).
+    DsvFlags flags() const @safe pure nothrow @nogc => flags_;
     /// The resolved facts that do not depend on a projection or a window.
     DsvInfo baseInfo() const @safe pure nothrow @nogc => base_;
     /// ditto
@@ -378,7 +413,7 @@ DsvFlags flagsOf(in DsvInfo info) @safe pure
 }
 
 /// One flag char from its CLI spelling (`,` · `;` · `\t`/`tab` · …).
-private char flagChar(string s, char fallback) @safe pure nothrow
+private char flagChar(string s, char fallback) @safe pure nothrow @nogc
 {
     if (s == `\t` || s == "tab")
         return '\t';
@@ -1528,6 +1563,40 @@ unittest
     // A flag override changes the grid, so it must re-resolve too.
     assert(!model.describes(a, DsvFlags(delimiter: ";")));
     assert(modelFor(model, a, "csv", DsvFlags(delimiter: ";")) !is model);
+}
+
+/// The replay every scrolling host performs: it holds a resolved `DsvInfo`,
+/// not the flags the document was opened with, so `flagsOf` hands `modelFor`
+/// an explicit spelling of what the sniffer already decided. That must reuse
+/// the model — comparing spellings instead of decisions re-parsed the whole
+/// document on the reader's first interaction with the grid.
+@("dsv_view.model.aReplayOfItsOwnVerdictReusesTheModel")
+@safe
+unittest
+{
+    const a = "n,name\n1,alice\n2,bob\n";
+    auto model = DsvModel.of(a, "csv", DsvFlags());
+    const info = model.baseInfo;
+    assert(info.dialect.delimiter == ',' && info.hasHeader);
+
+    const replay = flagsOf(info);
+    assert(replay != model.flags, "the replay is spelled differently");
+    assert(model.describes(a, replay),
+        "a flag naming what the model already resolved is satisfied");
+    assert(modelFor(model, a, "csv", replay) is model);
+
+    // A headerless document replays as `header: "no"`, and must reuse too.
+    const b = "1,alice\n2,bob\n3,carol\n";
+    auto noHead = DsvModel.of(b, "csv", DsvFlags(header: "no"));
+    assert(!noHead.baseInfo.hasHeader);
+    assert(modelFor(noHead, b, "csv", flagsOf(noHead.baseInfo)) is noHead);
+
+    // But a replay that DISAGREES with the verdict still re-resolves: the
+    // test is what the flags decide, not that they were supplied.
+    assert(!model.describes(a, DsvFlags(delimiter: ";", quote: "\"",
+        header: "yes")));
+    assert(!model.describes(a, flagsOf(DsvInfo(present: true,
+        dialect: info.dialect, hasHeader: false))));
 }
 
 @("dsv_view.model.rowMaskMemoFollowsTheParts")
