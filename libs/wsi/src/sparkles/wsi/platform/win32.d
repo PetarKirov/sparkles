@@ -38,6 +38,9 @@ private enum DWORD MWMO_INPUTAVAILABLE_ = 0x0004;
 private enum DWORD WAIT_FAILED_ = 0xFFFF_FFFF;
 private enum DWORD WAIT_TIMEOUT_ = 258;
 private enum int GWLP_USERDATA_ = -21;
+private enum UINT WM_INPUT_ = 0x00FF;
+private enum USHORT hidUsagePageGeneric = 0x01;
+private enum USHORT hidUsageMouse = 0x02;
 
 // druntime currently models HIMC as DWORD, but Win64 declares it as a
 // pointer-sized handle. Redeclare the small IMM32 surface with the correct ABI
@@ -87,6 +90,8 @@ struct Win32Wsi
         HCURSOR cursor;
         SurfaceMetrics metrics;
         PhysicalPosition lastPointer;
+        PointerCaptureMode captureMode;
+        bool relativePointer;
     }
 
     private HINSTANCE instance_;
@@ -726,6 +731,114 @@ struct Win32Wsi
         return wsiOk();
     }
 
+    /*
+    F10 on Win32: explicit `capture` is `SetCapture` held past the buttons
+    (the implicit press-to-release capture must not drop it), `confine` is
+    `ClipCursor` over the client area in screen coordinates, re-clipped as
+    the window moves or resizes and lifted while focus is elsewhere, and
+    raw relative motion is Raw Input for the mouse usage targeted at the
+    window: `WM_INPUT` carries `RAWMOUSE` deltas that no cursor clamp or
+    acceleration touched. Capture loss (`WM_CAPTURECHANGED`) and destruction
+    unwind all of it.
+    */
+
+    WsiResult!void setPointerCapture(WindowId id, PointerCaptureMode mode)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        if (slot.captureMode == PointerCaptureMode.capture
+            && mode != PointerCaptureMode.capture)
+        {
+            slot.captureMode = PointerCaptureMode.none;
+            if (GetCapture() == slot.hwnd && slot.buttonsDown == 0)
+                ReleaseCapture();
+        }
+        if (slot.captureMode == PointerCaptureMode.confine
+            && mode != PointerCaptureMode.confine)
+        {
+            slot.captureMode = PointerCaptureMode.none;
+            ClipCursor(null);
+        }
+        final switch (mode)
+        {
+            case PointerCaptureMode.none:
+                return wsiOk();
+            case PointerCaptureMode.capture:
+                slot.captureMode = mode;
+                if (GetCapture() != slot.hwnd)
+                    SetCapture(slot.hwnd);
+                return wsiOk();
+            case PointerCaptureMode.confine:
+                slot.captureMode = mode;
+                return clipToClient(slot)
+                    ? wsiOk()
+                    : win32Failure!void(WsiOperation.command,
+                        GetLastError(), "ClipCursor failed");
+        }
+    }
+
+    WsiResult!void setRelativePointer(WindowId id, bool enabled)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        if (slot.relativePointer == enabled)
+            return wsiOk();
+        if (!registerRawMouse(slot.hwnd, enabled))
+            return win32Failure!void(WsiOperation.command, GetLastError(),
+                "RegisterRawInputDevices failed");
+        slot.relativePointer = enabled;
+        return wsiOk();
+    }
+
+    /// The client rectangle in screen coordinates is the clip rectangle.
+    private static bool clipToClient(ref Slot slot) nothrow @nogc
+    {
+        RECT client;
+        if (!GetClientRect(slot.hwnd, &client))
+            return false;
+        POINT origin = POINT(client.left, client.top);
+        POINT extent = POINT(client.right, client.bottom);
+        if (!ClientToScreen(slot.hwnd, &origin)
+            || !ClientToScreen(slot.hwnd, &extent))
+            return false;
+        RECT screen = RECT(origin.x, origin.y, extent.x, extent.y);
+        return ClipCursor(&screen) != 0;
+    }
+
+    /// Raw mouse input is registered per target window; `RIDEV_REMOVE`
+    /// unregisters the usage for the process.
+    private static bool registerRawMouse(HWND hwnd, bool on) nothrow @nogc
+    {
+        RAWINPUTDEVICE device;
+        device.usUsagePage = hidUsagePageGeneric;
+        device.usUsage = hidUsageMouse;
+        device.dwFlags = on ? 0 : RIDEV_REMOVE;
+        device.hwndTarget = on ? hwnd : null;
+        return RegisterRawInputDevices(&device, 1, RAWINPUTDEVICE.sizeof) != 0;
+    }
+
+    private void handleRawInput(ref Slot slot, WindowId id, LPARAM lParam)
+        nothrow
+    {
+        RAWINPUT raw;
+        UINT size = RAWINPUT.sizeof;
+        const copied = GetRawInputData(cast(HRAWINPUT) lParam, RID_INPUT,
+            &raw, &size, RAWINPUTHEADER.sizeof);
+        if (copied == cast(UINT) -1 || copied < RAWINPUTHEADER.sizeof
+            || raw.header.dwType != RIM_TYPEMOUSE
+            || (raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) != 0)
+            return;
+        const dx = raw.data.mouse.lLastX;
+        const dy = raw.data.mouse.lLastY;
+        if ((dx == 0 && dy == 0) || !slot.relativePointer)
+            return;
+        emit(id, RelativePointerEvent(queuePointer, dx, dy, true));
+    }
+
     /// Stock cursor ids (IDC_*).
     package static const(wchar)* win32CursorId(PointerShape shape)
         @trusted pure nothrow @nogc
@@ -786,7 +899,8 @@ struct Win32Wsi
         else if (slot.buttonsDown != 0)
         {
             --slot.buttonsDown;
-            if (slot.buttonsDown == 0)
+            if (slot.buttonsDown == 0
+                && slot.captureMode != PointerCaptureMode.capture)
                 ReleaseCapture();
         }
         emitPointer(slot, id,
@@ -954,11 +1068,21 @@ struct Win32Wsi
                 owner.emit(id, CloseRequestedEvent());
                 return 0;
             case WM_SETFOCUS:
+                if (slot.captureMode == PointerCaptureMode.confine)
+                    clipToClient(*slot);
                 owner.emit(id, FocusChangedEvent(true));
                 return 0;
             case WM_KILLFOCUS:
+                // The clip is a system-wide resource; it must not outlive
+                // this window's focus.
+                if (slot.captureMode == PointerCaptureMode.confine)
+                    ClipCursor(null);
                 owner.emit(id, FocusChangedEvent(false));
                 return 0;
+            case WM_INPUT_:
+                owner.handleRawInput(*slot, id, lParam);
+                // The system frees the raw input buffer in DefWindowProc.
+                return DefWindowProcW(hwnd, message, wParam, lParam);
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN:
                 owner.emitKeyboard(*slot, id, wParam, lParam, true);
@@ -1051,8 +1175,11 @@ struct Win32Wsi
                 return TRUE;
             case WM_CAPTURECHANGED:
                 // Capture was taken elsewhere; forget the held buttons so a
-                // later press starts a fresh implicit capture.
+                // later press starts a fresh implicit capture, and an
+                // explicit capture is over too.
                 slot.buttonsDown = 0;
+                if (slot.captureMode == PointerCaptureMode.capture)
+                    slot.captureMode = PointerCaptureMode.none;
                 return 0;
             case WM_MOUSEWHEEL:
             case WM_MOUSEHWHEEL:
@@ -1065,6 +1192,8 @@ struct Win32Wsi
                     owner.emit(id,
                         SurfaceMetricsChangedEvent(metrics));
                 slot.metrics = metrics;
+                if (slot.captureMode == PointerCaptureMode.confine)
+                    clipToClient(*slot);
                 return 0;
             case WM_MOVE:
                 const x = cast(short)(lParam & 0xFFFF);
@@ -1072,6 +1201,8 @@ struct Win32Wsi
                 if (slot.ready)
                     owner.emit(id,
                         MovedEvent(PhysicalPosition(x, y)));
+                if (slot.captureMode == PointerCaptureMode.confine)
+                    clipToClient(*slot);
                 return 0;
             case WM_DPICHANGED_:
                 auto suggested = cast(RECT*) lParam;
@@ -1096,6 +1227,12 @@ struct Win32Wsi
                 }
                 return 0;
             case WM_NCDESTROY:
+                if (slot.captureMode == PointerCaptureMode.confine)
+                    ClipCursor(null);
+                if (slot.relativePointer)
+                    registerRawMouse(hwnd, false);
+                slot.captureMode = PointerCaptureMode.none;
+                slot.relativePointer = false;
                 if (slot.live)
                     owner.emit(id, DestroyedEvent());
                 slot.live = false;
