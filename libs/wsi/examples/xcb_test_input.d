@@ -96,6 +96,16 @@ int warpPointerOnScreen(xcb_connection_t* connection, short x, short y)
     return warpPointer(connection, screens.data.root, x, y);
 }
 
+/// Relative motion through the XTEST slave pointer: unlike a core
+/// WarpPointer, this is real device input, so XInput 2 RawMotion sees it.
+int sendRelativeMotion(xcb_connection_t* connection, short dx, short dy)
+{
+    const error = checkedRequest(connection,
+        xcb_test_fake_input_checked(connection, XCB_MOTION_NOTIFY, 1,
+            XCB_CURRENT_TIME, XCB_NONE, dx, dy, 0));
+    return error != 0 ? error : flushOrError(connection);
+}
+
 int sendButton(xcb_connection_t* connection, ubyte button, bool press)
 {
     const error = checkedRequest(connection,

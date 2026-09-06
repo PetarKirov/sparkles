@@ -53,6 +53,18 @@ $(LIST
         completion to fire during the phase; the completion callback is
         what calls `exitModalPhase` (which must be `nothrow @nogc`), so a
         starved loop cannot pass. `enterModalPhase` blocks until then.
+    * `void injectMotionOutside()` — move the pointer to two distinct
+        points beyond the window's border with no button held, and never
+        position it inside first: without a grab no motion then reaches the
+        window, which is what makes both properties discriminating. With
+        explicit capture on, the property requires motion reported with
+        outside coordinates; with confinement on, it requires the motion to
+        report from inside the bounds (the clamped landing points differ,
+        so the pointer moves). `void injectRelativeMotion()` — move the
+        pointer inside the window; in relative mode the property requires a
+        `RelativePointerEvent` with a non-zero delta. All three share the
+        pointer runtime gate; a backend answering typed `unsupported` passes
+        the property honestly.
     * `void onWindowReady(WindowId id)` — post-ready driver setup (e.g.
         mapping a buffer so a compositor will grant keyboard focus); the
         two-argument form also receives the ready metrics, so the buffer
@@ -138,6 +150,9 @@ private struct Observed
     ScrollSource scrollSource;
     bool dragPressed;
     bool outsideRelease;
+    bool relativeMotion;
+    bool motionInside;
+    bool motionOutside;
 }
 
 /**
@@ -183,6 +198,9 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
                     observeCommit(hooks, seen, value);
                 },
                 (in PointerEvent value) { observePointer(seen, value); },
+                (in RelativePointerEvent value) {
+                    seen.relativeMotion |= value.dx != 0 || value.dy != 0;
+                },
                 (in ScrollEvent value) {
                     if (value.discreteY > 0 || value.dy > 0)
                     {
@@ -573,6 +591,108 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
     else
         ++outcome.skipped;
 
+    // Property: explicit capture routes pointer motion to the window even
+    // when the pointer is outside its content, with no button held — the
+    // distinct-capability half of F10 that implicit drag capture does not
+    // cover. Backends without explicit capture report typed unsupported.
+    static if (is(typeof(wsi.setPointerCapture(WindowId.init,
+            PointerCaptureMode.init)))
+        && is(typeof(hooks.injectMotionOutside())))
+    {
+        bool runCapture = true;
+        static if (is(typeof(hooks.pointerEnabled)))
+            runCapture = hooks.pointerEnabled;
+        if (runCapture)
+        {
+            auto captured = wsi.setPointerCapture(id, PointerCaptureMode.capture);
+            assert(!captured.hasError
+                || captured.error.kind == WsiErrorKind.unsupported,
+                "setPointerCapture(capture) failed with something other than typed unsupported");
+            if (!captured.hasError)
+            {
+                seen.motionOutside = false;
+                hooks.injectMotionOutside();
+                driveUntil(() => seen.motionOutside,
+                    "captured pointer motion outside the window never arrived");
+                assert(!wsi.setPointerCapture(id, PointerCaptureMode.none)
+                    .hasError, "releasing explicit capture failed");
+            }
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: confinement keeps the pointer inside the content area — a
+    // move aimed beyond the border still reports from inside the bounds.
+    // Without confinement the same moves reach no window of ours at all,
+    // so the drive times out rather than passing vacuously.
+    static if (is(typeof(wsi.setPointerCapture(WindowId.init,
+            PointerCaptureMode.init)))
+        && is(typeof(hooks.injectMotionOutside())))
+    {
+        bool runConfine = true;
+        static if (is(typeof(hooks.pointerEnabled)))
+            runConfine = hooks.pointerEnabled;
+        if (runConfine)
+        {
+            auto confined = wsi.setPointerCapture(id, PointerCaptureMode.confine);
+            assert(!confined.hasError
+                || confined.error.kind == WsiErrorKind.unsupported,
+                "setPointerCapture(confine) failed with something other than typed unsupported");
+            if (!confined.hasError)
+            {
+                seen.motionInside = false;
+                seen.motionOutside = false;
+                hooks.injectMotionOutside();
+                driveUntil(() => seen.motionInside || seen.motionOutside,
+                    "no motion arrived while confined");
+                assert(!seen.motionOutside,
+                    "a confined pointer reported motion outside the window");
+                assert(!wsi.setPointerCapture(id, PointerCaptureMode.none)
+                    .hasError, "releasing confinement failed");
+            }
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
+    // Property: relative mode delivers RelativePointerEvent deltas for
+    // motion — the raw-motion capability, distinct from capture.
+    static if (is(typeof(wsi.setRelativePointer(WindowId.init, true)))
+        && is(typeof(hooks.injectRelativeMotion())))
+    {
+        bool runRelative = true;
+        static if (is(typeof(hooks.pointerEnabled)))
+            runRelative = hooks.pointerEnabled;
+        if (runRelative)
+        {
+            auto relative = wsi.setRelativePointer(id, true);
+            assert(!relative.hasError
+                || relative.error.kind == WsiErrorKind.unsupported,
+                "setRelativePointer failed with something other than typed unsupported");
+            if (!relative.hasError)
+            {
+                seen.relativeMotion = false;
+                hooks.injectRelativeMotion();
+                driveUntil(() => seen.relativeMotion,
+                    "no relative pointer motion arrived in relative mode");
+                assert(!wsi.setRelativePointer(id, false).hasError,
+                    "leaving relative mode failed");
+            }
+            ++outcome.checked;
+        }
+        else
+            ++outcome.skipped;
+    }
+    else
+        ++outcome.skipped;
+
     // Property: a standard cursor shape applies through the shared
     // PointerShape or fails with a typed unsupported — never silently —
     // and cursor visibility round-trips.
@@ -655,6 +775,15 @@ private void observePointer(ref Observed seen, in PointerEvent event)
             break;
         case PointerPhase.moved:
             seen.pointerMoved = true;
+            {
+                const bounds = seen.lastMetrics.logicalSize;
+                const outside = event.logicalPosition.x < 0
+                    || event.logicalPosition.y < 0
+                    || event.logicalPosition.x >= bounds.width
+                    || event.logicalPosition.y >= bounds.height;
+                seen.motionOutside |= outside;
+                seen.motionInside |= !outside;
+            }
             break;
         case PointerPhase.pressed:
             if (event.button == PointerButton.left)
@@ -771,5 +900,5 @@ unittest
     auto hooks = RecordingHooks(&wsi);
     const outcome = checkWsiConformance(wsi, loop, hooks,
         "sparkles:wsi recording conformance");
-    assert(outcome.checked == 6 && outcome.skipped == 12);
+    assert(outcome.checked == 6 && outcome.skipped == 15);
 }

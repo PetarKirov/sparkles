@@ -25,7 +25,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$during_src" \
   "$repo/libs/wsi/examples/x11-hosted-smoke.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-imdkit \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-xinput -L-lxcb-imdkit \
   -L-lxkbcommon -L-lxkbcommon-x11 \
   -of="$work/wsi-x11-smoke"
 
@@ -35,7 +35,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/examples" \
   "$repo/libs/wsi/examples/xim-test-server.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-imdkit \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-xinput -L-lxcb-imdkit \
   -L-lxkbcommon -L-lxkbcommon-x11 \
   -of="$work/xim-test-server"
 
@@ -55,5 +55,5 @@ EOF
 echo ">> running under Xvfb with the test XIM server ..."
 xvfb-run -a -s "-screen 0 1024x768x24" bash "$work/lane.sh" \
   | tee "$work/output.log"
-grep -q '^ok: X11 WSI conformance (16 checked, 2 skipped)' "$work/output.log"
+grep -q '^ok: X11 WSI conformance (19 checked, 2 skipped)' "$work/output.log"
 echo ">> sparkles:wsi X11 foreign-fd smoke verified under Xvfb."
