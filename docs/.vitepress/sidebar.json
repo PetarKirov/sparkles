@@ -48,6 +48,10 @@
         "link": "/guidelines/research-docs"
       },
       {
+        "text": "Writing Specification Docs",
+        "link": "/guidelines/spec-docs"
+      },
+      {
         "text": "Integrating C Libraries (ImportC)",
         "link": "/guidelines/importc-c-libraries"
       },

@@ -17,6 +17,12 @@ should be stylistically indistinguishable.
 > [Code Style](./code-style.md) guide (for code). For where each kind of doc
 > lives, see [AGENTS § Where docs live](./AGENTS.md#where-docs-live).
 
+For turning research into accepted design contracts, follow
+[Writing Specification Docs](./spec-docs.md). Its
+[critical comparison](./spec-docs.md#learn-from-research-not-its-template) explains
+which research conventions transfer and why citations, passing examples, and
+stylistic uniformity are not sufficient evidence of correctness.
+
 > [!IMPORTANT]
 > Research here is **grounded twice over**: every claim is tied to a primary source (a
 > cited file path or URL, usually with a verbatim quote), and wherever a behaviour can
