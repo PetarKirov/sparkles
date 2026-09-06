@@ -1216,7 +1216,8 @@ struct WorkspaceTui
             RgbColor(0xcc, 0xcc, 0xcc));
         pageBg = tree.pageBg = toRgb(tree.theme.defaults.bg,
             RgbColor(0x1e, 0x1e, 0x1e));
-        tree.rebuild();
+        // A theme swap recolors the tree; it does not re-shape it.
+        tree.restyle();
     }
 
     // The shape a live PANE grab wants (empty when none is grabbing) and
@@ -1694,9 +1695,11 @@ struct WorkspaceTui
         }
         // Format preview (`FPR9`): an applied buffer must paint this pass.
         changed |= formatPreviewPump(viewer.vm);
+        // A status snapshot changes badges, never structure — restyle the
+        // arena in place rather than re-walking the filesystem for it.
         if (tree.git.poll())
         {
-            tree.rebuild();
+            tree.restyle();
             changed = true;
         }
         // File monitoring (`WCH2`): a pending reload applies before the frame
