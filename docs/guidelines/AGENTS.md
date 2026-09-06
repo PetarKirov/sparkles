@@ -88,6 +88,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 - **[Interpolated Expression Sequences](./interpolated-expression-sequences.md)** — IES syntax, metadata processing, context-aware encoding
 - **[DDoc](./ddoc.md)** — Documentation comments, sections, macros, cross-referencing
 - **[Writing Research Docs](./research-docs.md)** — Research catalog layout, deep-dive & index skeletons, house style, VitePress gotchas, co-located runnable samples
+- **[Writing Specification Docs](./spec-docs.md)** — Scope, library boundaries, falsifiable contracts, independent test oracles, evidence, decisions, and delivery gates
 - **[Cutting a Release](./release.md)** — Single-monorepo versioning, pre-1.0 SemVer, annotated-tag changelog format, publishing to code.dlang.org
 - **[Integrating C Libraries (ImportC)](./importc-c-libraries.md)** — Adding a C dependency via ImportC + pkg-config + Nix + dub (`sourceLibrary` gotcha)
 - **[Benchmarking & Profiling](./benchmarking-and-profiling.md)** — Measuring the terminal renderer (`terminal-benchmark`, `perf`, `vtebench`/`termbench`); render- vs parse-bound; the measure→profile→fix loop
@@ -913,7 +914,8 @@ unittest { /* ... */ }
 - Per-library docs → `docs/libs/<name>/` as a Diátaxis tree
   (`tutorial/`, `how-to/`, `reference/`, `explanation/`). Mirror `libs/<name>/`.
 - Background research → `docs/research/<topic>/` as a cross-linked catalog; follow
-  [Writing Research Docs](./research-docs.md). Design specs → `docs/specs/`.
+  [Writing Research Docs](./research-docs.md). Design specs → `docs/specs/`; follow
+  [Writing Specification Docs](./spec-docs.md).
 
 ### The docs sidebar is data
 
