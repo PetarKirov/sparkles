@@ -181,7 +181,30 @@ struct DsvDoc
 
     Dialect dialect;
 
+    /**
+    The two arenas. `SharedBuffer` (`inline | heap`) — measured, not assumed.
+
+    Two alternatives were tried and both are recorded here so they are not
+    re-proposed. Over 8M isolated appends a reserved heap-only buffer looked
+    a third faster (47 ms against 68), and `Storage.unique` faster still
+    (43 ms), which is why they were tried at all.
+
+    `Storage.unique` does not survive the `Expected` this parser returns
+    through: the payload is stored by a blit that does not neutralize its
+    source, so the original's destructor frees the block and the document
+    reads back **empty**. Move-only payloads with destructors are not
+    something that vocabulary supports today.
+
+    Heap-only residency, with and without a sampled `reserve`, measured
+    **worse in the real parser** — 126 ms and 163 ms against 110 ms for the
+    73 MB corpus. The isolated probe had measured single-element appends,
+    while the parser commits a record's cells with one `put`; the win it
+    predicted does not exist on the path actually taken. A microbenchmark
+    that does not match the production path is worth exactly nothing, and
+    this one cost a day.
+    */
     SharedBuffer!DsvRecord records;
+    /// ditto
     SharedBuffer!DsvCell cells;
 
     /// The widest record's cell count — the grid's column count (`DSM3`:

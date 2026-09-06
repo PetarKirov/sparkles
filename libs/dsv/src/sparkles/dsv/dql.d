@@ -170,7 +170,7 @@ struct DsvRecordResolver
     const src = "name,age,active,score\nAlice,30,true,95.5\nBob,25,false,82.0\n";
     auto parsed = parseDsv(src, Dialect(','));
     assert(!parsed.hasError);
-    const doc = parsed.value;
+    ref const doc = parsed.value;
 
     const(const(char)[])[] headers = ["name", "age", "active", "score"];
     const rec0 = doc.records[1]; // Alice

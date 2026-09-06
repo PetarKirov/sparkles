@@ -438,15 +438,17 @@ version (unittest)
     import sparkles.dsv.model : Dialect, inferColumnTypes;
     import sparkles.dsv.parse : parseDsv;
 
-    private DsvDoc fixtureDoc() @safe pure nothrow @nogc
+    // Returns the whole `Expected`, not the document: `DsvDoc` owns
+    // move-only arenas, so the caller binds `.value` by reference.
+    private auto fixtureDoc() @safe pure nothrow @nogc
     {
-        auto doc = parseDsv("name,qty,price,when,ok\n"
+        auto res = parseDsv("name,qty,price,when,ok\n"
             ~ "carol,10,2.50,2026-03-01,true\n"
             ~ "alice,2,10.00,2026-01-15,false\n"
             ~ "bob,10,x,2026-02-01 09:00,true\n"
-            ~ "dave,,3.25,2026-02-01T08:00,false\n", Dialect(',')).value;
-        doc.hasHeader = true;
-        return doc;
+            ~ "dave,,3.25,2026-02-01T08:00,false\n", Dialect(','));
+        res.value.hasHeader = true;
+        return res;
     }
 
     private ColumnType[] fixtureTypes(in DsvDoc doc) @safe
@@ -468,7 +470,8 @@ version (unittest)
 @("project.sort.typedSingleKey")
 @safe unittest
 {
-    const doc = fixtureDoc();
+    auto fixture = fixtureDoc();
+    ref const doc = fixture.value;
     const types = fixtureTypes(doc);
     // qty (integer): 2 < 10 == 10 (source-order tiebreak) < empty(dave).
     assert(project(doc, types, ProjectionSpec([SortKey(1)]))
@@ -483,7 +486,8 @@ version (unittest)
 @("project.sort.floatAndNonConforming")
 @safe unittest
 {
-    const doc = fixtureDoc();
+    auto fixture = fixtureDoc();
+    ref const doc = fixture.value;
     const types = fixtureTypes(doc);
     // price (floating, 3/4 conform → still floating at 75%? 95% floor says
     // TEXT). Sanity: with a text column, order is bytewise.
@@ -495,7 +499,8 @@ version (unittest)
 @("project.sort.dateSeparatorNormalized")
 @safe unittest
 {
-    const doc = fixtureDoc();
+    auto fixture = fixtureDoc();
+    ref const doc = fixture.value;
     const types = fixtureTypes(doc);
     assert(types[3] == ColumnType.date);
     // 2026-01-15 < 2026-02-01T08:00 (dave) < 2026-02-01 09:00 (bob, space
@@ -507,7 +512,8 @@ version (unittest)
 @("project.sort.multiKeyComposition")
 @safe unittest
 {
-    const doc = fixtureDoc();
+    auto fixture = fixtureDoc();
+    ref const doc = fixture.value;
     const types = fixtureTypes(doc);
     // qty asc, then name desc among the qty==10 pair (carol, bob).
     const spec = ProjectionSpec([SortKey(1), SortKey(0, descending: true)]);
@@ -519,7 +525,8 @@ version (unittest)
 @("project.filter.operators")
 @safe unittest
 {
-    const doc = fixtureDoc();
+    auto fixture = fixtureDoc();
+    ref const doc = fixture.value;
     const types = fixtureTypes(doc);
 
     assert(project(doc, types, ProjectionSpec(null,
@@ -542,7 +549,8 @@ version (unittest)
 @("project.pristine")
 @safe unittest
 {
-    const doc = fixtureDoc();
+    auto fixture = fixtureDoc();
+    ref const doc = fixture.value;
     const types = fixtureTypes(doc);
     assert(ProjectionSpec.init.pristine);
     assert(project(doc, types, ProjectionSpec.init) == [0u, 1, 2, 3]);
@@ -575,8 +583,8 @@ unittest
 
     auto parsed = parseDsv(src, Dialect(','));
     assert(!parsed.hasError);
-    auto doc = parsed.value;
-    doc.hasHeader = true;
+    parsed.value.hasHeader = true;
+    ref const doc = parsed.value;
 
     SharedBuffer!(ColumnType, 16) types;
     inferColumnTypes(doc, 100, types);
