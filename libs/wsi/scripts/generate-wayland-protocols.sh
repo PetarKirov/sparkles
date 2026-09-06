@@ -44,3 +44,16 @@ wayland-scanner private-code "$text_xml" \
     "$repo/libs/wsi/src/wayland_text_input_protocol.c"
 sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
     "$repo/libs/wsi/src/wayland_text_input_protocol.c"
+
+# F10 on Wayland: pointer-constraints (lock/confine, unstable v1) and the
+# relative-pointer (unaccelerated deltas, unstable v1) it pairs with.
+for proto in pointer-constraints relative-pointer; do
+    xml="$(pkg-config --variable=pkgdatadir wayland-protocols)/unstable/$proto/$proto-unstable-v1.xml"
+    stem="$(printf '%s' "$proto" | tr '-' '_')"
+    wayland-scanner client-header "$xml" \
+        "$repo/libs/wsi/src/wayland_${stem}_client_protocol.h"
+    wayland-scanner private-code "$xml" \
+        "$repo/libs/wsi/src/wayland_${stem}_protocol.c"
+    sed -i -e 's/#include <stdlib.h>/#include <stddef.h>/' -e '${/^$/d;}' \
+        "$repo/libs/wsi/src/wayland_${stem}_protocol.c"
+done
