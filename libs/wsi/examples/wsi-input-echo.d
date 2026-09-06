@@ -33,7 +33,10 @@ $(LIST
         the only way a bare toplevel resizes there); hold Alt and drag
         anywhere to move the window;
     * press `c` to cycle the standard cursor shapes, `m` to toggle
-        maximize, `q` to quit;
+        maximize, `g` to cycle the pointer capture mode (none, capture,
+        confine — move the pointer past the border to see the difference),
+        `r` to toggle relative motion (`relativePointer` events beside the
+        absolute ones), `q` to quit;
     * filter events with `-F "!pointer"`, `-F "pointer.phase == pressed"`, or
         `-F ?` for the schema-generated path and category tables.
 )
@@ -268,6 +271,8 @@ private struct EchoState
     WindowId id;
     SurfaceMetrics metrics;
     size_t cursorIndex;
+    PointerCaptureMode captureMode;
+    bool relative;
     bool repaint;
     bool quit;
 }
@@ -403,6 +408,40 @@ private void handleCommand(Backend)(ref Backend wsi, ref EchoState state,
                 warning(i"setCursor($(shape)): $(set.error.diagnostic[])");
             else
                 info(i"setCursor($(shape)): ok");
+            break;
+        case 'g':
+            static if (is(typeof(wsi.setPointerCapture(state.id,
+                    PointerCaptureMode.init))))
+            {
+                static immutable modes = [EnumMembers!PointerCaptureMode];
+                const next = modes[(state.captureMode + 1) % modes.length];
+                auto result = wsi.setPointerCapture(state.id, next);
+                if (result.hasError)
+                    warning(i"setPointerCapture($(next)): $(result.error.diagnostic[])");
+                else
+                {
+                    state.captureMode = next;
+                    info(i"setPointerCapture($(next)): ok");
+                }
+            }
+            else
+                info(i"setPointerCapture: not available on this backend");
+            break;
+        case 'r':
+            static if (is(typeof(wsi.setRelativePointer(state.id, true))))
+            {
+                const next = !state.relative;
+                auto result = wsi.setRelativePointer(state.id, next);
+                if (result.hasError)
+                    warning(i"setRelativePointer($(next)): $(result.error.diagnostic[])");
+                else
+                {
+                    state.relative = next;
+                    info(i"setRelativePointer($(next)): ok");
+                }
+            }
+            else
+                info(i"setRelativePointer: not available on this backend");
             break;
         case 'm':
             static if (is(typeof(wsi.setMaximized(state.id, true))))
@@ -626,7 +665,7 @@ private Expected!(RunReport, string) runBackend(Backend)(ref Backend wsi, ref De
         exitedBecause: "window closed",
     };
 
-    info(i"wsi-input-echo on $(name) — hold keys, type through your IME, scroll, drag the blue border to resize, alt+drag to move, c cycles cursors, m toggles maximize, q quits");
+    info(i"wsi-input-echo on $(name) — hold keys, type through your IME, scroll, drag the blue border to resize, alt+drag to move, c cycles cursors, m toggles maximize, g cycles pointer capture, r toggles relative motion, q quits");
 
     // Drain the ready event before the first paint so metrics are real.
     auto drained = wsi.drain((WindowEvent event) @safe {
