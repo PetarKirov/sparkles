@@ -188,14 +188,46 @@ private void sortByKeys(Buf)(in DsvDoc doc, in ColumnType[] types,
         }
     }
 
-    SharedBuffer!(uint, 64) order;
-    foreach (i; 0 .. n)
-        order ~= cast(uint) i;
-
     // Taken once: a mutable `opSlice` on a shared buffer would clone per call.
     auto ks = keys[];
     auto ar = arena[];
     const srcText = doc.source;
+
+    if (nKeys == 1)
+    {
+        // The single-key case, which is nearly every sort a reader performs,
+        // sorts the DECORATED ROWS rather than an index into them.
+        //
+        // Sorting an index array looks cheaper — it swaps four bytes instead
+        // of twenty-four — but it makes every comparison a random access into
+        // a 24 MB key array, and a comparison sort makes ~20M of them over a
+        // million rows. Sorting the rows themselves keeps each comparison's
+        // operands in the elements being partitioned, which is where the sort
+        // has already brought the cache lines.
+        const k = spec.sortKeys[0];
+        const colType = k.column < types.length
+            ? types[k.column] : ColumnType.text;
+
+        SharedBuffer!(SortRow, 64) rows;
+        foreach (pos; 0 .. n)
+            rows ~= SortRow(ks[pos], cast(uint) pos);
+
+        auto rs = rows[];
+        rs.sort!((ref a, ref b) {
+            const c = compareEntries(a.key, b.key, colType, ar, srcText);
+            if (c != 0)
+                return k.descending ? c > 0 : c < 0;
+            return a.pos < b.pos; // `DSS3`: the position tiebreak makes it total
+        });
+
+        foreach (i; 0 .. n)
+            out_[startLen + i] = src[rs[i].pos];
+        return;
+    }
+
+    SharedBuffer!(uint, 64) order;
+    foreach (i; 0 .. n)
+        order ~= cast(uint) i;
 
     // The position tiebreak IS the data-index tiebreak (`DSS3`): `src` is
     // ascending, so positions and data indexes order identically. That makes
@@ -240,6 +272,15 @@ private void classifyInto(ref SortEntry e, scope const(char)[] text,
     case ColumnType.text:
         break; // keyed by its text
     }
+}
+
+/// One decorated row of a single-key sort: the extracted key beside the
+/// position it came from. Exactly the size of a bare $(LREF SortEntry) —
+/// the position lands in the padding the key already carried.
+private struct SortRow
+{
+    SortEntry key;
+    uint pos;
 }
 
 /// One row's extracted key for one sort column (`DSN8`) — the decoded,
@@ -561,6 +602,62 @@ version (unittest)
 // make the two paths diverge if the extraction is sloppy — quoted cells
 // (whose text is not their source bytes), non-conforming values in a typed
 // column, empties, and ragged rows missing the key column entirely.
+@("dsv.project.sortByKeys.tiesKeepSourceOrder")
+@safe
+unittest
+{
+    import sparkles.dsv.parse : parseDsv;
+    import std.array : appender;
+    import std.format : formattedWrite;
+
+    // `DSS3`: equal keys keep source order. The index tiebreak is what makes
+    // the comparison total, and an unstable sort is invisible until a column
+    // has many ties — eight rows will not show it, so this uses 600 rows over
+    // three distinct keys and checks each tie group is ascending by data
+    // index. Introsort reorders equals freely without the tiebreak.
+    auto w = appender!string;
+    w.put("grp,n\n");
+    foreach (i; 0 .. 600)
+        w.formattedWrite!"%s,%s\n"(i % 3, i);
+
+    auto parsed = parseDsv(w[], Dialect(','));
+    assert(!parsed.hasError);
+    auto doc = parsed.value;
+    doc.hasHeader = true;
+
+    SharedBuffer!(ColumnType, 16) types;
+    inferColumnTypes(doc, 100, types);
+
+    ProjectionSpec spec;
+    spec.sortKeys = [SortKey(column: 0)];
+    SharedBuffer!(uint, 64) perm;
+    applyProjection(doc, types[], spec, perm);
+    assert(perm.length == 600);
+
+    SharedBuffer!(char, 64) buf;
+    const(char)[] group(uint dataIdx) @safe
+    {
+        const rec = doc.records[1 + dataIdx];
+        return decodeCell(doc, doc.cells[rec.cellsStart], buf);
+    }
+
+    const(char)[] seen;
+    uint prev = 0;
+    foreach (i, dataIdx; perm[])
+    {
+        const g = group(dataIdx);
+        if (i == 0 || g != seen)
+        {
+            seen = g.dup; // a new tie group
+            prev = dataIdx;
+            continue;
+        }
+        assert(dataIdx > prev,
+            "equal keys must stay in source order (DSS3)");
+        prev = dataIdx;
+    }
+}
+
 @("dsv.project.sortByKeys.matchesTheDirectComparator")
 @safe
 unittest
