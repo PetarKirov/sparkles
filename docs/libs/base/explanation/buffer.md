@@ -221,9 +221,16 @@ $$
 \left\lceil \log_2 \frac{n}{N} \right\rceil \text{ times, copying at most } 2n \text{ elements in total}
 $$
 
-which is what makes each append amortised $O(1)$. Location is tied to length:
-the elements are inline exactly when `length <= N`, so shrinking back across
-`N` moves them home again and releases the block.
+which is what makes each append amortised $O(1)$ — and what `reserve` is for:
+one allocation instead of $\lceil \log_2 (n/N) \rceil$ of them, on any policy
+that can reach the heap.
+
+Residency is **recorded**, not read off the length. A buffer holding three
+elements may be holding them inline, or on a block `reserve` sized for it
+before anything was written; the top bit of the length word says which. Once
+on the heap it stays there through every shrink — `popBack`, a smaller
+`length` — until `clear` or the destructor gives the block back. So a builder
+refilled in a loop allocates once.
 
 ```mermaid
 stateDiagram-v2
@@ -231,8 +238,10 @@ stateDiagram-v2
   [*] --> inline : default-initialised
   inline --> inline : append, length ≤ N
   inline --> heap : append past N, allocate 2^⌈log₂ n⌉
+  inline --> heap : reserve(> N), however few elements are held
   heap --> heap : append, realloc to the next power of two when full
-  heap --> inline : shrink to length ≤ N, block released
+  heap --> heap : shrink — the block stays
+  heap --> inline : clear(), block released
 ```
 
 ```d
@@ -246,16 +255,29 @@ import sparkles.base.buffer : SharedBuffer;
 
 void main()
 {
+    void show(ref SharedBuffer!(int, 2) b, string note = "")
+    {
+        writefln("length %s  capacity %2s  %-6s %s", b.length, b.capacity,
+            b.onHeap ? "heap" : "inline", note);
+    }
+
     SharedBuffer!(int, 2) buf;
     foreach (i; 0 .. 9)
     {
         buf ~= i;
-        writefln("length %s  capacity %2s  %s", buf.length, buf.capacity,
-            buf.onHeap ? "heap" : "inline");
+        show(buf);
     }
     buf.length = 2;
-    writefln("length %s  capacity %2s  %s  (shrunk to N: the block is released)",
-        buf.length, buf.capacity, buf.onHeap ? "heap" : "inline");
+    show(buf, "shrunk to N: the block stays");
+    buf.clear(releaseStorage: false);
+    show(buf, "cleared for a refill: still ours");
+    buf.clear();
+    show(buf, "cleared: the block goes back");
+
+    // And one allocation instead of three, for a fill of known size.
+    SharedBuffer!(int, 2) sized;
+    sized.reserve(9);
+    show(sized, "reserved before a single append");
 }
 ```
 
@@ -269,7 +291,10 @@ length 6  capacity  8  heap
 length 7  capacity  8  heap
 length 8  capacity  8  heap
 length 9  capacity 16  heap
-length 2  capacity  2  inline  (shrunk to N: the block is released)
+length 2  capacity 16  heap   shrunk to N: the block stays
+length 0  capacity 16  heap   cleared for a refill: still ours
+length 0  capacity  2  inline cleared: the block goes back
+length 0  capacity 16  heap   reserved before a single append
 ```
 
 The block comes from `malloc`, not the collector, through an
@@ -426,13 +451,13 @@ reader  = [0, 1, 4, 9, 16, 25]
 
 ## 7. Heap-only: reserve once, reuse forever
 
-The small-buffer policies tie location to length, which is what lets them
-revert to inline storage when they shrink. A heap-only buffer has nothing to
-revert to, so it makes the opposite promise: once it has a block, it keeps it.
-`popBack`, a shrinking `length`, and `clear` reset the length and nothing else;
-the block is released by the destructor, or handed on by `toShared`. One
-`reserve` therefore serves every reuse — which is exactly what a buffer that is
-cleared and refilled each frame needs.
+Every policy keeps its block through a shrink ([§4](#_4-what-heap-buys-growth-and-its-price)),
+but a heap-only buffer has nowhere to revert to at all, so it keeps it through
+`clear` as well: `popBack`, a shrinking `length`, and `clear` reset the length
+and nothing else, and the block is released by the destructor or handed on by
+`toShared`. One `reserve` therefore serves every reuse — which is exactly what a
+buffer that is cleared and refilled each frame needs. A small-buffer policy asks
+for the same thing by name, with `clear(releaseStorage: false)`.
 
 ```mermaid
 stateDiagram-v2
@@ -478,10 +503,12 @@ frame 1  (length 7, capacity 256, still the reserved block: true)
 frame 2  (length 7, capacity 256, still the reserved block: true)
 ```
 
-Contrast `reserve` on a small-buffer policy that is still inline: it is a no-op
-there, because an empty buffer's elements live inline by definition and a heap
-block cannot be held at the same time. `reserve` pre-grows a buffer that is
-already on the heap, or sizes a `HeapBuffer` before use; those are its two jobs.
+`reserve` does the same job on a small-buffer policy: a request larger than `N`
+moves the buffer to a block immediately, however few elements it is holding, and
+a request `N` already satisfies changes nothing — inline capacity that costs no
+allocation is not worth spending one to match. The difference between the
+policies is only what `clear` does by default: heap-only keeps the block because
+there is nothing to revert to, and the rest hand it back unless told otherwise.
 
 ## 8. Writing into something that cannot grow
 
