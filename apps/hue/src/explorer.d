@@ -583,7 +583,7 @@ struct ExplorerTui
                     // Roll back the speculative subtree (append-only arena:
                     // truncate + unlink from the parent/sibling chain).
                     data.nodes = data.nodes[0 .. mark];
-                    unlink(parent, cast(uint) mark);
+                    data.dropLastChild(parent);
                     continue;
                 }
                 any = true;
@@ -595,24 +595,6 @@ struct ExplorerTui
             }
         }
         return any;
-    }
-
-    // Removes the (just-truncated) node `idx` from its parent's child chain.
-    private void unlink(uint parent, uint idx) @safe pure nothrow @nogc
-    {
-        auto head = parent == uint.max ? &data.firstRoot
-            : &data.nodes[parent].firstChild;
-        if (*head == idx)
-        {
-            *head = uint.max;
-            return;
-        }
-        for (auto at = *head; at != uint.max; at = data.nodes[at].nextSibling)
-            if (data.nodes[at].nextSibling == idx)
-            {
-                data.nodes[at].nextSibling = uint.max;
-                return;
-            }
     }
 
     void paint(ref Grid g) @system
