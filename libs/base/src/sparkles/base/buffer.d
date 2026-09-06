@@ -17,7 +17,7 @@ import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.traits : hasIndirections;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 
-import sparkles.test_runner.attributes : betterC;
+import sparkles.test_runner.attributes : benchmark, betterC;
 
 version (unittest) import std.range : iota;
 
@@ -280,13 +280,12 @@ enum Storage : ubyte
  * buffer that cannot grow cannot promise that — so write into it with
  * $(LREF Buffer.tryWrite), which reports overflow instead.
  *
- * Note: with both storage bits, location is tied to length (data is inline
- * whenever `length <= N`), so `reserve` pre-grows only once on the heap,
- * and `clear`/`popBack` that drop the length back to `<= N` revert
- * to inline storage. A policy with `Storage.heap` alone has nothing to revert
- * to, so it keeps its block across every shrink — `popBack`, `length`, `clear` —
- * and releases it only in the destructor (or transfers it via `toShared`):
- * `reserve` once, then reuse.
+ * Note: residency is recorded, not inferred from the length, so a buffer holding
+ * three elements may be holding them inline or on a block `reserve` sized for it.
+ * A buffer moves to the heap when it outgrows `N` or when `reserve` asks for more
+ * than `N`, and it stays there across every shrink — `popBack`, `length`,
+ * `clear(releaseStorage: false)` — until `clear` or the destructor gives the block
+ * back (or `toShared` transfers it). `reserve` once, then reuse.
  *
  * Params:
  *   T = Element type
@@ -335,10 +334,50 @@ pure nothrow @nogc:
 
     private
     {
-        // Discriminant: `_length <= N` <=> data lives inline. With only one
-        // residency that reduces to a constant, and the dead field is absent
-        // rather than merely unused.
-        size_t _length = 0;
+        // Length, and — where both residencies exist — where the elements are.
+        //
+        // The length alone cannot say: a buffer holding three elements may be
+        // holding them inline, or on a block `reserve` sized for it before
+        // anything was written. So the top bit of the length carries the
+        // answer. It is free — the struct stays three words, and a buffer of
+        // 2^63 elements is not a thing — and it is what lets `reserve`
+        // pre-size a buffer that has not spilled yet (`BUF11`) and `clear`
+        // keep the block it already has (`BUF15`). With only one residency the
+        // discriminant is a constant or the block pointer, and no bit is spent.
+        size_t _lenBits = 0;
+
+        enum bool packsResidency = hasHeap && hasInline;
+        static if (packsResidency)
+            enum size_t heapFlag = ~(size_t.max >> 1);
+
+        @property size_t _length() const scope @safe pure nothrow @nogc
+        {
+            static if (packsResidency)
+                return _lenBits & ~heapFlag;
+            else
+                return _lenBits;
+        }
+
+        @property void _length(size_t n) scope @safe pure nothrow @nogc
+        {
+            static if (packsResidency)
+            {
+                assert(n < heapFlag, "Buffer: length overflows the arena");
+                _lenBits = (_lenBits & heapFlag) | n;
+            }
+            else
+                _lenBits = n;
+        }
+
+        static if (packsResidency)
+            // Say where the elements live. Every caller sits beside a `_block`
+            // assignment or a release — residency changes nowhere else.
+            void setResidency(bool heap) scope @safe pure nothrow @nogc
+            {
+                _lenBits = heap ? (_lenBits | heapFlag) : (_lenBits & ~heapFlag);
+            }
+        else
+            void setResidency(bool) scope @safe pure nothrow @nogc {}
 
         // `_inline` is deliberately NOT `= void`. For a `T` holding references
         // the untouched slots would be garbage pointers, which the conservative
@@ -379,13 +418,14 @@ pure nothrow @nogc:
 
         /// Returns true if the buffer is using heap-allocated storage.
         static if (hasHeap && !hasInline)
-            // `_length > N` is `_length > 0` here, which cannot express a block
-            // reserved before anything was written. The block itself is the
-            // discriminant instead. `@trusted` to read the overlapped field:
-            // `T[0]` occupies no bytes, so nothing else can be live in it.
+            // No inline slots to be in, so the block itself is the
+            // discriminant. `@trusted` to read the overlapped field: `T[0]`
+            // occupies no bytes, so nothing else can be live in it.
             bool onHeap() @trusted => _block !is null;
+        else static if (hasHeap)
+            bool onHeap() => (_lenBits & heapFlag) != 0;
         else
-            bool onHeap() => hasHeap && _length > N;
+            bool onHeap() => false;
 
     @trusted:
         /// Returns the total capacity of the buffer.
@@ -424,21 +464,24 @@ pure nothrow @nogc:
          */
         this(ref scope inout Buffer rhs) inout scope @trusted
         {
-            this._length = rhs._length;
             // `inout` is assignable only inside an `inout` function, and
             // `copyElements` is not one — so the qualifier is cast off for the
             // copy. Sound here for the same reason the `const` overload below
             // casts: this object is under construction and nothing else can
-            // observe its storage yet.
+            // observe its storage yet. The residency travels with the length
+            // for the same reason: a shared block is shared, an inline buffer
+            // is copied, and the bit says which this is.
             static if (hasHeap)
             {
                 if (rhs.onHeap)
                 {
+                    this._lenBits = rhs._lenBits;
                     this._block = rhs._block;
                     ++this.ctrl().refCount;
                     return;
                 }
             }
+            this._lenBits = rhs._length;
             copyElements(cast(T[]) this._inline[0 .. rhs._length],
                 cast(const(T)[]) rhs._inline[0 .. rhs._length]);
         }
@@ -446,16 +489,17 @@ pure nothrow @nogc:
         /// Build a mutable working copy from a `const` (e.g. borrowed) buffer.
         this(ref scope const Buffer rhs) scope @trusted
         {
-            _length = rhs._length;
             static if (hasHeap)
             {
                 if (rhs.onHeap)
                 {
+                    _lenBits = rhs._lenBits;
                     _block = cast(T[]) rhs._block;
                     ++ctrl().refCount;
                     return;
                 }
             }
+            _lenBits = rhs._length;
             copyElements(_inline[0 .. rhs._length], rhs._inline[0 .. rhs._length]);
         }
 
@@ -473,17 +517,15 @@ pure nothrow @nogc:
                     ++rhs.ctrl().refCount; // acquire rhs before releasing self
 
                 releaseStorage();
-                _length = rhs._length;
 
                 if (rhs.onHeap)
                 {
+                    _lenBits = rhs._lenBits;
                     _block = cast(T[]) rhs._block;
                     return this;
                 }
             }
-            else
-                _length = rhs._length;
-
+            _lenBits = rhs._length;
             copyElements(_inline[0 .. rhs._length], rhs._inline[0 .. rhs._length]);
             return this;
         }
@@ -497,24 +539,22 @@ pure nothrow @nogc:
         static if (hasHeap)
         {
             releaseStorage();
-            _length = rhs._length;
             if (rhs.onHeap)
             {
+                _lenBits = rhs._lenBits;
                 _block = rhs._block;
-                // Both discriminants: a policy with inline storage derives
-                // `onHeap` from the length, a heap-only one from the block.
+                // Both discriminants: a policy with inline storage carries
+                // residency in the length word, a heap-only one in the block.
                 // Zeroing only the length left the latter's destructor freeing
                 // the block this buffer had just taken.
                 rhs._block = null;
-                rhs._length = 0;
+                rhs._lenBits = 0;
                 return this;
             }
         }
-        else
-            _length = rhs._length;
-
+        _lenBits = rhs._length;
         copyElements(_inline[0 .. rhs._length], rhs._inline[0 .. rhs._length]);
-        rhs._length = 0;
+        rhs._lenBits = 0;
         return this;
     }
 
@@ -625,13 +665,15 @@ pure nothrow @nogc:
         */
         private void putOne(T element) scope @safe
         {
-            // Fast path: while the buffer is inline (`length <= N`) it is always
-            // uniquely owned — copy-on-write applies only to shared heap blocks — so
-            // append straight into the inline slots and skip `ensureUniqueStorage`
-            // (and its refcount work) entirely. This is the hot path for output-range
-            // builders that never spill to the heap.
+            // Fast path: an inline buffer is always uniquely owned —
+            // copy-on-write applies only to shared heap blocks — so append
+            // straight into the inline slots and skip `ensureUniqueStorage`
+            // (and its refcount work) entirely. This is the hot path for
+            // output-range builders that never spill to the heap. `!onHeap`,
+            // not `l < N` alone: a `reserve`d buffer holds few elements on a
+            // block, and writing them inline would lose them.
             const l = _length;
-            if (l < N)
+            if (!onHeap && l < N)
             {
                 (() @trusted { _inline[l] = element; })();
                 _length = l + 1;
@@ -640,7 +682,7 @@ pure nothrow @nogc:
             T tmp = element;
             T[] tail = ensureUniqueStorage(extraLen: 1);
             tail[0] = tmp;
-            ++_length;
+            _length = _length + 1;
         }
 
         /// Output range interface: appends elements from a slice.
@@ -692,14 +734,14 @@ pure nothrow @nogc:
                 // Fast path: the result stays inline (always uniquely owned) and the
                 // source doesn't alias our live inline data — one bulk copy, no
                 // `ensureUniqueStorage`/refcount work.
-                if (newLen <= N && !overlapsInline)
+                if (!onHeap && newLen <= N && !overlapsInline)
                 {
                     copyElements(_inline[oldLen .. newLen], elements[]);
                     _length = newLen;
                     return;
                 }
 
-                if (newLen > N && overlapsInline)
+                if (!onHeap && newLen > N && overlapsInline)
                 {
                     static if (hasIndirections!T)
                         T[N] tmp;
@@ -716,7 +758,7 @@ pure nothrow @nogc:
                 // old block alive until after the tail copy. `ensureUniqueStorage` then
                 // takes the shared-clone path instead of reallocating underneath us.
                 T[] retainedBlock;
-                if (oldLen > N && newLen > _block.length
+                if (onHeap && newLen > _block.length
                     && ctrl().refCount == 1
                     && elements.aliasesRegion(cast(const(T)[]) _block))
                 {
@@ -788,6 +830,7 @@ pure nothrow @nogc:
 
                     () @trusted {
                         _block = nb;
+                        setResidency(true);
                         _length = newLen;
                     }();
                 }
@@ -814,8 +857,10 @@ pure nothrow @nogc:
 
         /**
          * Sets the element count. Growing appends `T.init`-filled elements (one
-         * storage growth); shrinking drops elements from the back, reverting to
-         * inline storage when the new length fits (the `popBack` invariant).
+         * storage growth); shrinking drops elements from the back and keeps the
+         * storage, whichever it is (`BUF13`) — a buffer that has spilled to the
+         * heap stays there until `clear` or the destructor, so a shrink costs
+         * neither a copy back into the inline slots nor a free.
          */
         @property void length(size_t newLength) @trusted
         {
@@ -828,22 +873,9 @@ pure nothrow @nogc:
                 _length = newLength;
                 return;
             }
-            static if (hasInline)
-            {
-                if (_length > N && newLength <= N)
-                {
-                    // Crossing heap -> inline: copy survivors out first to keep the
-                    // invariant `length <= N  <=>  inline`.
-                    T[] b = _block;
-                    T[N] tmp = void;
-                    copyElements(tmp[0 .. newLength], b[0 .. newLength]);
-                    releaseStorage();
-                    copyElements(_inline[0 .. newLength], tmp[0 .. newLength]);
-                    _length = newLength;
-                    return;
-                }
-            }
-            // A heap-only policy has nothing to revert to: the block stays.
+            // The block stays: residency is recorded, not inferred, so a
+            // shrink no longer has to move elements to keep the length and the
+            // storage agreeing.
             _length = newLength;
         }
 
@@ -851,33 +883,31 @@ pure nothrow @nogc:
         void popBack() @trusted
         in (_length > 0, "Cannot pop from empty buffer")
         {
-            static if (hasInline)
-            {
-                if (_length == N + 1)
-                {
-                    // Crossing N+1 -> N: data must move back inline to keep the
-                    // invariant `length <= N  <=>  inline`. Copy survivors out first.
-                    T[] b = _block;
-                    T[N] tmp = void;
-                    copyElements(tmp[], b[0 .. N]);
-                    releaseStorage();
-                    copyElements(_inline[0 .. N], tmp[]);
-                    _length = N;
-                    return;
-                }
-            }
-            // A heap-only policy has nothing to revert to: the block stays.
-            --_length;
+            // The block stays, as for the `length` setter above.
+            _length = _length - 1;
         }
 
-        /// Removes all elements. With inline storage this releases the heap
-        /// block and reverts to inline; a heap-only policy keeps its block
-        /// (there is nothing to revert to), so `reserve` once and `clear`
-        /// between uses is allocation-free. The destructor releases it.
-        void clear() scope @safe
+        /**
+         * Removes all elements (`BUF15`).
+         *
+         * `releaseStorage: true` — the default, and what a buffer whose work is
+         * finished wants — also gives the heap block back, reverting an inline
+         * policy to its inline slots. Pass `false` to keep the block: a builder
+         * reused across iterations then allocates once and refills, which is
+         * the whole point of having `reserve`d it.
+         *
+         * A policy without `Storage.inline` has nothing to revert to, so its
+         * block survives either way and only the destructor releases it.
+         */
+        void clear(bool releaseStorage = true) scope @safe
         {
-            static if (hasInline)
-                releaseStorage();
+            static if (hasInline && hasHeap)
+                if (releaseStorage)
+                {
+                    this.releaseStorage();
+                    _lenBits = 0;
+                    return;
+                }
             _length = 0;
         }
 
@@ -909,7 +939,7 @@ pure nothrow @nogc:
             auto written = _inline[_length .. N].tryWrite(fn);
             if (written is null)
                 return false;
-            _length += written.length;
+            _length = _length + written.length;
             return true;
         }
 
@@ -920,7 +950,7 @@ pure nothrow @nogc:
             auto written = _inline[_length .. N].tryWrite(fn);
             if (written is null)
                 return false;
-            _length += written.length;
+            _length = _length + written.length;
             return true;
         }
 
@@ -975,14 +1005,12 @@ pure nothrow @nogc:
     /**
      * Ensures the buffer has at least `newCapacity` slots.
      *
-     * With inline storage, location is tied to length — data is inline whenever
-     * `length <= N` — so `reserve` can only pre-grow a buffer that is
-     * $(I already) on the heap; on an inline (including empty) buffer it is a
-     * no-op, and the next inline→heap transition allocates from scratch.
-     *
-     * For a heap-only policy this is how the buffer is sized before use: there
-     * is no `N` to raise, and the block persists across `popBack`, `length` and
-     * `clear` until the destructor, so one `reserve` serves every reuse.
+     * This is how a buffer is sized before use, for every policy that can
+     * reach the heap: a request larger than the inline slots moves the buffer
+     * there immediately, however few elements it holds, and the block then
+     * persists across `popBack`, a shrinking `length` and
+     * `clear(releaseStorage: false)` until the destructor. One `reserve` serves
+     * every reuse.
      *
      * Without `Storage.heap` there is nowhere to grow to, and this is a no-op.
      */
@@ -1056,20 +1084,24 @@ pure nothrow @nogc:
         Shared toShared() @trusted
         {
             Shared result;
-            result._length = _length;
             static if (hasHeap)
             {
                 if (onHeap)
                 {
+                    // The residency travels with the length: the two
+                    // instantiations differ only in ownership discipline, so
+                    // the word means the same thing in both.
+                    result._lenBits = _lenBits;
                     result._block = _block; // transfer ownership (refCount already 1)
                     _block = null; // relinquish: our destructor must not free the block
-                    _length = 0;
+                    _lenBits = 0;
                     return result;
                 }
             }
             // Inline elements are copied; there is no block to hand over.
+            result._lenBits = _length;
             copyElements(result._inline[0 .. _length], _inline[0 .. _length]);
-            _length = 0;
+            _lenBits = 0;
             return result;
         }
     }
@@ -1174,7 +1206,11 @@ pure nothrow @nogc:
 
             static if (hasInline)
             {
-                if (newLen <= N)
+                // `minCapacity` is what `reserve` asks with: a request larger
+                // than the inline slots must fall through and allocate even
+                // though the elements would still fit inline. That is the whole
+                // of `BUF11` for a policy that has both residencies.
+                if (!onHeap && newLen <= N && minCapacity <= N)
                     return (() @trusted => _inline[oldLen .. newLen])();
             }
             else
@@ -1203,6 +1239,7 @@ pure nothrow @nogc:
                         copyElements(nb[0 .. oldLen], _inline[0 .. oldLen]);
                         _block = nb;
                     }();
+                    setResidency(true);
                     return nb[oldLen .. newLen];
                 }
                 // Already on the heap: grow in place when too small.
@@ -1224,6 +1261,9 @@ pure nothrow @nogc:
                     return (() @trusted => _block[oldLen .. newLen])();
                 }
 
+                // Reached both to clone a shared block and to leave the inline
+                // slots for the first time (`refCount` reads 0 while inline, so
+                // the `rc == 1` fast path above is heap-only by construction).
                 T[] oldBlock = this.view;
                 T[] newBlock = allocateBlock(max(this.capacity, capacity));
                 copyElements(newBlock[0 .. oldLen], oldBlock[]);
@@ -1231,6 +1271,7 @@ pure nothrow @nogc:
                     if (rc > 1) --ctrl().refCount;
                     _block = newBlock;
                 }();
+                setResidency(true);
                 return newBlock[oldLen .. newLen];
             }
         }
@@ -1253,6 +1294,7 @@ pure nothrow @nogc:
                 dispose(Allocator.instance, _block);
             }
             _block = null;
+            setResidency(false);
         }
     }
 }
@@ -1416,11 +1458,14 @@ unittest
     assert(buf[1 .. 3] == [2, 3]);
     assert(buf.front == 1 && buf.back == 5);
 
-    // popBack/clear shrink it; dropping back to <= N reverts to inline storage.
+    // popBack/clear shrink it. The block stays through a shrink; `clear` gives
+    // it back, unless asked to keep it for the next fill.
     buf.popBack();
-    assert(buf[] == [1, 2, 3, 4] && !buf.onHeap);
+    assert(buf[] == [1, 2, 3, 4] && buf.onHeap);
+    buf.clear(releaseStorage: false);
+    assert(buf.empty && buf.onHeap && buf.capacity >= 5);
     buf.clear();
-    assert(buf.empty);
+    assert(buf.empty && !buf.onHeap);
 
     // ── Copy-on-write ────────────────────────────────────────────────────────
     Buffer!(int, 2) a;
@@ -1887,12 +1932,13 @@ unittest
     assert(buf.onHeap);
     assert(buf[0] == 7 && buf[5] == 0);
 
-    // Shrink on the heap, then across heap -> inline (content preserved).
+    // Shrink on the heap, and down past `N` — the block stays either way,
+    // content preserved.
     buf[1] = 42;
     buf.length = 5;
     assert(buf.onHeap && buf.length == 5);
     buf.length = 2;
-    assert(!buf.onHeap);
+    assert(buf.onHeap, "a shrink keeps the storage it has (`BUF13`)");
     assert(buf.length == 2);
     assert(buf[0] == 7 && buf[1] == 42);
 
@@ -1907,14 +1953,25 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // Reserve is a no-op when inline (storage location tied to length)
+    // `BUF11`: a request past the inline slots moves an EMPTY buffer to the
+    // heap, which is the only way to size one before use.
     {
         Buffer!(int, 4) buf;
         buf.reserve(100);
-        assert(buf.capacity == 4);
-        assert(!buf.onHeap);
+        assert(buf.capacity >= 100);
+        assert(buf.onHeap);
         assert(buf.length == 0);
+
+        // And nothing else grows: the whole point is one allocation.
+        buf ~= 0;
+        const p = &buf[0];
+        foreach (i; 1 .. 100)
+            buf ~= cast(int) i;
+        assert(&buf[0] is p, "a reserved buffer must not reallocate");
+        assert(buf.length == 100 && buf[99] == 99);
     }
+    // A request the inline slots already satisfy stays inline: `N` is capacity
+    // that costs nothing, and spending an allocation to match it is backwards.
     {
         Buffer!(int, 8) buf;
         buf.reserve(4); // Less than N
@@ -1925,8 +1982,8 @@ unittest
         Buffer!(int, 4) buf;
         buf ~= [1, 2];
         buf.reserve(8);
-        assert(!buf.onHeap);
-        assert(buf.capacity == 4);
+        assert(buf.onHeap, "the elements come along");
+        assert(buf.capacity >= 8);
         assert(buf[] == [1, 2]);
     }
 
@@ -1940,6 +1997,169 @@ unittest
         assert(buf.length == 5);
         assert(buf[] == [0, 1, 2, 3, 4]);
     }
+}
+
+/// `BUF15`: a builder reused across iterations allocates once. `clear` gives
+/// the block back by default — a finished buffer should not sit on memory —
+/// but a caller that is about to refill says so and keeps it.
+@("Buffer.clear.keepsTheStorageWhenAsked")
+@system pure nothrow @nogc
+unittest
+{
+    Buffer!(int, 4) buf;
+    buf.reserve(64);
+    buf ~= 0;
+    const p = &buf[0];
+    assert(buf.onHeap);
+
+    foreach (round; 0 .. 8)
+    {
+        buf.clear(releaseStorage: false);
+        assert(buf.empty, "cleared either way");
+        assert(buf.onHeap && buf.capacity >= 64, "but still holding the block");
+        foreach (i; 0 .. 64)
+            buf ~= cast(int) i;
+        assert(&buf[0] is p, "and never reallocating");
+    }
+
+    // The default hands it back, inline slots and all.
+    buf.clear();
+    assert(buf.empty && !buf.onHeap && buf.capacity == 4);
+
+    // A unique buffer behaves the same — the flag is about residency, not
+    // ownership.
+    UniqueBuffer!(int, 2) u;
+    u.reserve(32);
+    u ~= [1, 2, 3];
+    u.clear(releaseStorage: false);
+    assert(u.onHeap && u.capacity >= 32 && u.empty);
+    u.clear();
+    assert(!u.onHeap && u.empty);
+}
+
+/// A buffer that `reserve` moved to the heap while it still holds few enough
+/// elements to fit inline is the state the old length-derived discriminant
+/// could not express. Every path that used to read residency off the length
+/// has to agree with the recorded answer instead.
+@("Buffer.reserve.shortOnTheHeap")
+@safe pure nothrow @nogc
+unittest
+{
+    // `putOne` (the append fast path) must not write into the inline slots.
+    {
+        Buffer!(int, 8) buf;
+        buf.reserve(64);
+        buf ~= 1;
+        buf ~= 2;
+        assert(buf.onHeap && buf[] == [1, 2]);
+    }
+    // `put(slice)` (the bulk fast path), same question.
+    {
+        Buffer!(int, 8) buf;
+        buf.reserve(64);
+        buf.put([1, 2, 3]);
+        buf.put([4, 5]);
+        assert(buf.onHeap && buf[] == [1, 2, 3, 4, 5]);
+    }
+    // A self-append, where the source aliases the block rather than the slots.
+    {
+        Buffer!(int, 8) buf;
+        buf.reserve(64);
+        buf ~= [1, 2, 3];
+        buf.put(buf[]);
+        assert(buf[] == [1, 2, 3, 1, 2, 3]);
+    }
+    // Copy-on-write still sees a heap source: the copy shares, and writing
+    // through it clones rather than corrupting the original.
+    {
+        Buffer!(int, 8) a;
+        a.reserve(64);
+        a ~= [1, 2];
+        auto b = a;
+        assert(b.onHeap && b[] == [1, 2]);
+        b ~= 3;
+        assert(a[] == [1, 2] && b[] == [1, 2, 3]);
+    }
+    // And a move takes the block with the residency, leaving nothing behind.
+    {
+        import core.lifetime : move;
+
+        UniqueBuffer!(int, 4) a;
+        a.reserve(64);
+        a ~= [1, 2];
+        UniqueBuffer!(int, 4) b;
+        b = move(a);
+        assert(b.onHeap && b[] == [1, 2]);
+        assert(a.empty && !a.onHeap);
+    }
+    // `toShared` hands the short-on-the-heap state across intact.
+    {
+        UniqueBuffer!(int, 8) u;
+        u.reserve(64);
+        u ~= [1, 2];
+        auto sh = u.toShared();
+        assert(sh.onHeap && sh.capacity >= 64 && sh[] == [1, 2]);
+        assert(u.empty && !u.onHeap);
+    }
+}
+
+/// What `reserve` buys, now that it works from the inline slots: filling a
+/// buffer of known size either grows it a step at a time — every step a
+/// realloc that may move and copy everything written so far — or does not.
+@("Buffer.bench.reserveVsGrow")
+@benchmark @system
+unittest
+{
+    import sparkles.test_runner.bench : benchIter, blackBox;
+
+    enum n = 1 << 16;
+
+    benchIter({
+        Buffer!(int, 16) buf;
+        foreach (i; 0 .. n)
+            buf ~= cast(int) i;
+        blackBox(buf.length);
+    }, ["fill": "grown", "elements": "65536"]);
+
+    benchIter({
+        Buffer!(int, 16) buf;
+        buf.reserve(n);
+        foreach (i; 0 .. n)
+            buf ~= cast(int) i;
+        blackBox(buf.length);
+    }, ["fill": "reserved", "elements": "65536"]);
+
+    // The reuse the reservation is really for: one allocation, many fills.
+    Buffer!(int, 16) reused;
+    reused.reserve(n);
+    benchIter({
+        reused.clear(releaseStorage: false);
+        foreach (i; 0 .. n)
+            reused ~= cast(int) i;
+        blackBox(reused.length);
+    }, ["fill": "reserved+reused", "elements": "65536"]);
+
+    // An element type carrying a reference cannot grow in place: the block is
+    // not GC-scanned, so `realloc` would move the elements into memory the
+    // collector does not look at and free the old root before the new one is
+    // registered. Every growth step allocates, copies, re-roots and frees, and
+    // that is where not growing pays.
+    static immutable string[4] words = ["alpha", "beta", "gamma", "delta"];
+
+    benchIter({
+        Buffer!(string, 4) buf;
+        foreach (i; 0 .. n)
+            buf ~= words[i & 3];
+        blackBox(buf.length);
+    }, ["fill": "grown", "elements": "65536-with-references"]);
+
+    benchIter({
+        Buffer!(string, 4) buf;
+        buf.reserve(n);
+        foreach (i; 0 .. n)
+            buf ~= words[i & 3];
+        blackBox(buf.length);
+    }, ["fill": "reserved", "elements": "65536-with-references"]);
 }
 
 @("Buffer.frontBack")
@@ -1971,13 +2191,14 @@ unittest
     assert(buf.length == 1);
     assert(buf[0] == 1);
 
-    // Revert to inline from heap
+    // Popping back past `N` keeps the block (`BUF13`): a shrink is not a
+    // reason to copy elements back into the inline slots and free.
     buf.clear();
     buf ~= iota(5); // length 5 > 4 -> heap
     assert(buf.onHeap);
 
-    buf.popBack(); // 5 -> 4: must revert to inline
-    assert(!buf.onHeap);
+    buf.popBack(); // 5 -> 4
+    assert(buf.onHeap);
     assert(buf.length == 4);
     assert(buf[] == [0, 1, 2, 3]);
 }
@@ -2586,12 +2807,12 @@ unittest
     foreach (i; 0 .. 100)
         assert(buf[i] == i);
 
-    // popBack across the heap->inline boundary and clear both work.
+    // popBack past `N` and clear both work; the block outlives the shrink.
     buf.clear();
     assert(buf.empty && !buf.onHeap);
     buf ~= iota(3);                      // heap: [0, 1, 2]
-    buf.popBack();                       // 3 -> 2: revert to inline
-    assert(!buf.onHeap && buf[] == [0, 1]);
+    buf.popBack();                       // 3 -> 2
+    assert(buf.onHeap && buf[] == [0, 1]);
 }
 
 @("Buffer.unique.selfAppend.inlineToHeap")
