@@ -42,9 +42,9 @@ unittest
 
     const csv1k = makeCsv(1_000);
     const csv10k = makeCsv(10_000);
-    benchIter({ blackBox(parseDsv(blackBox(csv1k), Dialect(','))); },
+    benchIter({ blackBox(parseDsv(blackBox(csv1k), Dialect(',')).value.records.length); },
         ["op": "parse", "rows": "1k"]);
-    benchIter({ blackBox(parseDsv(blackBox(csv10k), Dialect(','))); },
+    benchIter({ blackBox(parseDsv(blackBox(csv10k), Dialect(',')).value.records.length); },
         ["op": "parse", "rows": "10k"]);
 }
 
@@ -76,9 +76,13 @@ unittest
 private final class ScaleCorpus
 {
     string src;
+    // The document lives inside its `Expected` and is reached by reference:
+    // `DsvDoc` owns move-only arenas, so a second handle is not a copy that
+    // can be made.
     typeof(parseDsv("", Dialect.init)) parsed;
-    DsvDoc doc;
     SharedBuffer!(ColumnType, 16) types;
+
+    ref inout(DsvDoc) doc() inout @safe pure nothrow @nogc => parsed.value;
 
     this() @safe
     {
@@ -99,8 +103,7 @@ private final class ScaleCorpus
         src = w[];
 
         parsed = parseDsv(src, Dialect(','));
-        doc = parsed.value;
-        doc.hasHeader = true;
+        parsed.value.hasHeader = true;
         inferColumnTypes(doc, sniffMaxRecords, types);
     }
 }

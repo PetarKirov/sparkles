@@ -104,7 +104,8 @@ private DelimScore scoreDialect(const(char)[] sample, in Dialect d)
     auto res = parseDsv(sample, d);
     if (res.hasError)
         return DelimScore(0, 0, 0);
-    const doc = res.value;
+    // Bound by reference, not copied: `DsvDoc` owns move-only arenas.
+    ref const doc = res.value;
     return DelimScore(cast(uint) doc.records.length,
         cast(uint)(doc.records.length - doc.raggedCount), doc.modalColumnCount);
 }
@@ -157,7 +158,7 @@ SniffResult sniff(const(char)[] sample, in Dialect seed = Dialect(','))
     auto res = parseDsv(sample, r.dialect);
     if (res.hasError)
         return r;
-    auto doc = res.value;
+    ref const doc = res.value;
     r.sampleRecords = cast(uint) doc.records.length;
     r.modalColumns = doc.modalColumnCount;
     const modalRecords = cast(uint)(doc.records.length - doc.raggedCount);
@@ -179,7 +180,7 @@ private QuoteEvidence quoteEvidence(const(char)[] sample, in Dialect d)
     auto res = parseDsv(sample, d);
     if (res.hasError)
         return QuoteEvidence(0, true);
-    const doc = res.value;
+    ref const doc = res.value;
     uint quoted = 0;
     foreach (i; 0 .. doc.cells.length)
         if (doc.needsDecode(doc.cells[i]))
