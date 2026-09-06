@@ -126,7 +126,7 @@ permutation back. Each cell is now decoded, classified and parsed exactly
 once, and the comparator only reads scalars and spans.
 
 Text is borrowed, not copied: a cell that needs no decoding
-($(REF DsvCell.needsDecode, sparkles,dsv,model)) keys directly off its raw
+($(REF DsvDoc.needsDecode, sparkles,dsv,model)) keys directly off its raw
 span in the borrowed source, so the decode arena only ever holds the quoted
 cells. The keys themselves are sized by the **filtered** row count, not the
 document's, so a narrow filter over a huge file pays for what it kept.
@@ -163,7 +163,7 @@ private void sortByKeys(Buf)(in DsvDoc doc, in ColumnType[] types,
                 const cell = doc.cells[rec.cellsStart + k.column];
                 const colType = k.column < types.length
                     ? types[k.column] : ColumnType.text;
-                if (cell.needsDecode)
+                if (doc.needsDecode(cell))
                 {
                     // Quoted: the decoded bytes differ from the source, so they
                     // are appended to the arena and keyed by offset — a stored
