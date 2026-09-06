@@ -125,7 +125,8 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     PickerGeometry geometry = PickerGeometry.init,
     PickerLayout preset = PickerLayout.default_,
     Scope_ focus = Scope_.pickerInput,
-    scope const(GrepRowText)[] grepRows = null)
+    scope const(GrepRowText)[] grepRows = null,
+    const(char)[] modeLabel = null)
 {
     auto builder = Builder();
     // The focused pane's panel carries the accent chrome, and INSIDE the
@@ -153,6 +154,13 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     const promptText = builder.add(Widget(kind: WidgetKind.rich,
         spans: promptSpans, width: SizeSpec.grow()));
     uint[] promptChildren = [promptText];
+    // `PKL5`: the active search mode, shown because `PKC9` classifies the
+    // query ONCE and falls back at most once — a reader who cannot see
+    // which question was asked cannot explain the result list. A
+    // single-mode configuration passes none and the indicator disappears.
+    if (modeLabel.length)
+        promptChildren ~= builder.add(Widget(kind: WidgetKind.text,
+            text: text("[", modeLabel, "]"), slot: Slot.chromeAccent));
     if (state.corpusTotal != 0)
         promptChildren ~= builder.add(Widget(kind: WidgetKind.text,
             text: text(state.matchedTotal, "/", state.corpusTotal),
