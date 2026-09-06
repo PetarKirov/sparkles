@@ -17,8 +17,9 @@ module wayland_hosted_smoke;
 version (linux):
 
 import core.stdc.stdlib : getenv;
-import core.time : Duration, MonoTime, seconds;
+import core.time : Duration, MonoTime, msecs, seconds;
 import std.stdio : writeln;
+import std.sumtype : match;
 
 import core.stdc.string : strcmp;
 import core.sys.posix.stdlib : mkstemp;
@@ -220,6 +221,18 @@ private struct WaylandHooks
     {
         injectClick();
     }
+
+    /*
+    The injector's pointer leg warps Weston's X11 window between two
+    points, which Weston turns into relative deltas for the focused
+    surface; only a relative-pointer object receives them. No
+    `injectMotionOutside`: a fullscreen kiosk surface has no outside, so
+    the capture and confinement properties skip here.
+    */
+    void injectRelativeMotion()
+    {
+        injectClick();
+    }
 }
 
 int main()
@@ -266,5 +279,56 @@ int main()
         "sparkles:wsi Wayland conformance");
     writeln("ok: Wayland WSI conformance (", outcome.checked, " checked, ",
         outcome.skipped, " skipped)");
+
+    /*
+    Kiosk addendum: confinement has no conformance evidence under a
+    fullscreen surface (there is no outside to aim at), so prove what the
+    compositor can still tell us — it accepts the constraint and its
+    release without a protocol error (one would poison the connection and
+    surface on the next command), and explicit capture is refused with the
+    typed kind rather than pretended.
+    */
+    if (hooks.pointerEnabled)
+    {
+        // The conformance window is gone; this addendum needs a live one.
+        WindowConfig config;
+        assert(config.title.assign("sparkles:wsi Wayland confine"));
+        const id = wsi.createWindow(config).value;
+        bool ready;
+        const deadline = MonoTime.currTime + 5.seconds;
+        while (!ready)
+        {
+            assert(MonoTime.currTime < deadline,
+                "no ReadyEvent for the confine window");
+            hooks.step(200.msecs);
+            SurfaceMetrics readyMetrics;
+            assert(!wsi.drain((WindowEvent event) {
+                if (event.window == id)
+                    event.payload.match!(
+                        (in ReadyEvent value) {
+                            ready = true;
+                            readyMetrics = value.metrics;
+                        },
+                        (_) {});
+            }).hasError);
+            if (ready)
+                hooks.onWindowReady(id, readyMetrics);
+        }
+        const confined = wsi.setPointerCapture(id, PointerCaptureMode.confine);
+        if (confined.hasError)
+            writeln("confine failed: ", confined.error.kind, " ",
+                confined.error.diagnostic[]);
+        assert(!confined.hasError);
+        hooks.step(200.msecs);
+        assert(!wsi.setPointerCapture(id, PointerCaptureMode.none).hasError);
+        hooks.step(200.msecs);
+        assert(!wsi.setCursorVisible(id, true).hasError,
+            "the compositor rejected the pointer constraint");
+        const captured = wsi.setPointerCapture(id, PointerCaptureMode.capture);
+        assert(captured.hasError
+            && captured.error.kind == WsiErrorKind.unsupported);
+        assert(!wsi.destroyWindow(id).hasError);
+        writeln("ok: Wayland pointer confinement accepted and released");
+    }
     return 0;
 }
