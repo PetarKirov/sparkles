@@ -68,6 +68,8 @@ struct WaylandWsi
         int scale = 1;
         PointerShape cursorShape = PointerShape.default_;
         bool cursorVisible = true;
+        zwp_confined_pointer_v1* confined;
+        bool relative;
     }
 
     private wl_display* display_;
@@ -105,6 +107,9 @@ struct WaylandWsi
     private const(wl_surface)* keyboardFocus_;
     private Mods keyboardMods_;
     private zwp_text_input_manager_v3* textInputManager_;
+    private zwp_pointer_constraints_v1* pointerConstraints_;
+    private zwp_relative_pointer_manager_v1* relativePointerManager_;
+    private zwp_relative_pointer_v1* relativePointer_;
     private zwp_text_input_v3* textInput_;
     private const(wl_surface)* textInputFocus_;
     private PendingTextInput pendingText_;
@@ -696,6 +701,16 @@ struct WaylandWsi
             zwp_text_input_manager_v3_destroy(textInputManager_);
             textInputManager_ = null;
         }
+        if (pointerConstraints_ !is null)
+        {
+            zwp_pointer_constraints_v1_destroy(pointerConstraints_);
+            pointerConstraints_ = null;
+        }
+        if (relativePointerManager_ !is null)
+        {
+            zwp_relative_pointer_manager_v1_destroy(relativePointerManager_);
+            relativePointerManager_ = null;
+        }
         if (cursorShapeManager_ !is null)
         {
             wp_cursor_shape_manager_v1_destroy(cursorShapeManager_);
@@ -763,6 +778,8 @@ struct WaylandWsi
 
     private static void destroyNative(ref Slot slot) nothrow @nogc
     {
+        if (slot.confined !is null)
+            zwp_confined_pointer_v1_destroy(slot.confined);
         if (slot.frameCallback !is null)
             wl_callback_destroy(slot.frameCallback);
         if (slot.toplevel !is null)
@@ -954,6 +971,23 @@ struct WaylandWsi
                 wl_registry_bind(registry, name,
                     &zwp_text_input_manager_v3_interface, 1);
             owner.ensureTextInput();
+        }
+        else if (strcmp(interfaceName,
+            zwp_pointer_constraints_v1_interface.name) == 0
+            && owner.pointerConstraints_ is null)
+        {
+            owner.pointerConstraints_ = cast(zwp_pointer_constraints_v1*)
+                wl_registry_bind(registry, name,
+                    &zwp_pointer_constraints_v1_interface, 1);
+        }
+        else if (strcmp(interfaceName,
+            zwp_relative_pointer_manager_v1_interface.name) == 0
+            && owner.relativePointerManager_ is null)
+        {
+            owner.relativePointerManager_ =
+                cast(zwp_relative_pointer_manager_v1*)
+                wl_registry_bind(registry, name,
+                    &zwp_relative_pointer_manager_v1_interface, 1);
         }
     }
 
@@ -1204,6 +1238,127 @@ struct WaylandWsi
         return prepareAndArm();
     }
 
+    /*
+    F10 on Wayland: the compositor owns every grab, so explicit `capture`
+    is honestly `unsupported`; `confine` is `pointer-constraints-v1`'s
+    `confine_pointer` over the whole surface with a persistent lifetime
+    (the compositor activates it while the pointer is over the surface and
+    re-activates it after focus returns), and raw relative motion is
+    `relative-pointer-v1`'s per-seat object, whose unaccelerated deltas go
+    to the focused window that asked for them. Both die with the surface
+    and with the seat's pointer.
+    */
+
+    /// Confines the pointer to the window's surface, or releases it;
+    /// `capture` reports typed `unsupported`.
+    WsiResult!void setPointerCapture(WindowId id, PointerCaptureMode mode)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        if (mode == PointerCaptureMode.capture)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "Wayland has no explicit pointer capture: the compositor owns grabs",
+                WsiErrorKind.unsupported);
+        if (mode == PointerCaptureMode.confine)
+        {
+            if (pointerConstraints_ is null)
+                return waylandFailure!void(WsiOperation.command, 0,
+                    "compositor lacks zwp_pointer_constraints_v1",
+                    WsiErrorKind.unsupported);
+            if (pointer_ is null)
+                return waylandFailure!void(WsiOperation.command, 0,
+                    "the seat has no pointer to confine",
+                    WsiErrorKind.unavailable);
+            if (slot.confined !is null)
+                return wsiOk();
+        }
+        else if (slot.confined is null)
+            return wsiOk();
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        if (mode == PointerCaptureMode.confine)
+        {
+            slot.confined = zwp_pointer_constraints_v1_confine_pointer(
+                pointerConstraints_, slot.surface, pointer_, null,
+                ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+            if (slot.confined is null)
+                remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.command, BackendKind.wayland, 0,
+                    "zwp_pointer_constraints_v1.confine_pointer failed"));
+        }
+        else
+        {
+            zwp_confined_pointer_v1_destroy(slot.confined);
+            slot.confined = null;
+        }
+        auto rearmed = prepareAndArm();
+        if (hasStickyError_)
+            return wsiErr!void(stickyError_);
+        return rearmed;
+    }
+
+    /// Routes the seat's unaccelerated motion to this window while it has
+    /// pointer focus.
+    WsiResult!void setRelativePointer(WindowId id, bool enabled)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (relativePointerManager_ is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "compositor lacks zwp_relative_pointer_manager_v1",
+                WsiErrorKind.unsupported);
+        if (enabled && pointer_ is null)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "the seat has no pointer", WsiErrorKind.unavailable);
+        windows_[checked.value].relative = enabled;
+        bool anyRelative;
+        foreach (ref slot; windows_)
+            anyRelative |= slot.live && slot.relative;
+        if (anyRelative == (relativePointer_ !is null))
+            return wsiOk();
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        if (anyRelative)
+        {
+            relativePointer_ =
+                zwp_relative_pointer_manager_v1_get_relative_pointer(
+                    relativePointerManager_, pointer_);
+            if (relativePointer_ is null
+                || zwp_relative_pointer_v1_add_listener(relativePointer_,
+                    listenerPtr(relativePointerListener), &this) != 0)
+                remember(wsiError(WsiErrorKind.nativeFailure,
+                    WsiOperation.command, BackendKind.wayland, 0,
+                    "failed to create the relative pointer"));
+        }
+        else
+        {
+            zwp_relative_pointer_v1_destroy(relativePointer_);
+            relativePointer_ = null;
+        }
+        auto rearmed = prepareAndArm();
+        if (hasStickyError_)
+            return wsiErr!void(stickyError_);
+        return rearmed;
+    }
+
+    private extern (C) static void onRelativeMotion(void* data,
+        zwp_relative_pointer_v1*, uint, uint, wl_fixed_t, wl_fixed_t,
+        wl_fixed_t dxUnaccel, wl_fixed_t dyUnaccel) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        const index = owner.indexOfSurface(owner.pointerFocus_);
+        if (index == size_t.max || !owner.windows_[index].relative)
+            return;
+        owner.emit(owner.idAt(index), RelativePointerEvent(seatPointer,
+            wl_fixed_to_double(dxUnaccel), wl_fixed_to_double(dyUnaccel),
+            true));
+    }
+
     /// Visibility uses the core null-surface cursor, so it works with or
     /// without the shape protocol.
     WsiResult!void setCursorVisible(WindowId id, bool visible)
@@ -1262,6 +1417,18 @@ struct WaylandWsi
     {
         if (pointer_ is null)
             return;
+        // Constraints and the relative pointer name this wl_pointer.
+        if (relativePointer_ !is null)
+        {
+            zwp_relative_pointer_v1_destroy(relativePointer_);
+            relativePointer_ = null;
+        }
+        foreach (ref slot; windows_)
+            if (slot.confined !is null)
+            {
+                zwp_confined_pointer_v1_destroy(slot.confined);
+                slot.confined = null;
+            }
         if (cursorShapeDevice_ !is null)
         {
             wp_cursor_shape_device_v1_destroy(cursorShapeDevice_);
@@ -1929,6 +2096,9 @@ private immutable wl_pointer_listener pointerListener = {
     &WaylandWsi.onPointerAxisDiscrete, &WaylandWsi.onPointerAxisValue120,
     &WaylandWsi.onPointerAxisRelativeDirection, &WaylandWsi.onPointerWarp
 };
+private immutable zwp_relative_pointer_v1_listener relativePointerListener = {
+    &WaylandWsi.onRelativeMotion
+};
 private immutable zwp_text_input_v3_listener textInputListener = {
     &WaylandWsi.onTextInputEnter, &WaylandWsi.onTextInputLeave,
     &WaylandWsi.onTextInputPreedit, &WaylandWsi.onTextInputCommit,
@@ -2441,4 +2611,58 @@ private void zwp_text_input_v3_destroy()(zwp_text_input_v3* self)
     wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_DESTROY,
         null, wl_proxy_get_version(cast(wl_proxy*) self),
         WL_MARSHAL_FLAG_DESTROY);
+}
+
+private zwp_confined_pointer_v1* zwp_pointer_constraints_v1_confine_pointer()(
+        zwp_pointer_constraints_v1* self, wl_surface* surface,
+        wl_pointer* pointer, wl_region* region, uint lifetime)
+    => cast(zwp_confined_pointer_v1*) wl_proxy_marshal_flags(
+        cast(wl_proxy*) self, ZWP_POINTER_CONSTRAINTS_V1_CONFINE_POINTER,
+        &zwp_confined_pointer_v1_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null,
+        surface, pointer, region, lifetime);
+
+private void zwp_pointer_constraints_v1_destroy()(
+        zwp_pointer_constraints_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        ZWP_POINTER_CONSTRAINTS_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private void zwp_confined_pointer_v1_destroy()(zwp_confined_pointer_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        ZWP_CONFINED_POINTER_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private zwp_relative_pointer_v1* zwp_relative_pointer_manager_v1_get_relative_pointer()(
+        zwp_relative_pointer_manager_v1* self, wl_pointer* pointer)
+    => cast(zwp_relative_pointer_v1*) wl_proxy_marshal_flags(
+        cast(wl_proxy*) self,
+        ZWP_RELATIVE_POINTER_MANAGER_V1_GET_RELATIVE_POINTER,
+        &zwp_relative_pointer_v1_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null,
+        pointer);
+
+private void zwp_relative_pointer_manager_v1_destroy()(
+        zwp_relative_pointer_manager_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        ZWP_RELATIVE_POINTER_MANAGER_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private int zwp_relative_pointer_v1_add_listener()(
+        zwp_relative_pointer_v1* self,
+        const(zwp_relative_pointer_v1_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void zwp_relative_pointer_v1_destroy()(zwp_relative_pointer_v1* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        ZWP_RELATIVE_POINTER_V1_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
 }
