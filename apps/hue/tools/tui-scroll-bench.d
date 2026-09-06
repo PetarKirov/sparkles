@@ -79,6 +79,11 @@ struct Args
         ~ "rate for this many ms (0 = off)"))
     int observe;
 
+    @(Option("samples", description: "Print every frame's latency and byte "
+        ~ "count in send order. A tail figure says a spike exists; only the "
+        ~ "sequence says WHICH keystroke pays it."))
+    bool samples;
+
     @(Option("sequence", description: "Comma-separated keys to send in order, "
         ~ "one measured frame each (overrides --keys/--count). Use it for "
         ~ "gestures a repeated key cannot express — a scrollbar drag is a "
@@ -211,13 +216,19 @@ int main(string[] argv)
 
     // A gesture is a sequence of DIFFERENT events; a repeated key is the
     // degenerate case of one.
-    string[] steps;
+    string[] steps, names;
     if (args.sequence.length)
         foreach (name; args.sequence.split(","))
+        {
             steps ~= keyBytes(name);
+            names ~= name;
+        }
     else
         foreach (_; 0 .. args.count)
+        {
             steps ~= keyBytes(args.keys);
+            names ~= args.keys;
+        }
 
     auto latencies = appender!(Duration[]);
     auto sizes = appender!(size_t[]);
@@ -247,6 +258,10 @@ int main(string[] argv)
     shutdown(pipes, fd);
 
     auto ms = latencies[].map!(d => d.total!"usecs" / 1000.0).array;
+    if (args.samples)
+        foreach (i, d; latencies[])
+            writefln("sample %3s  %7.2f ms  %6s bytes  %s",
+                i, d.total!"usecs" / 1000.0, sizes[][i], names[i]);
     ms.sort();
     auto bytes = sizes[].array;
     bytes.sort();
