@@ -162,6 +162,20 @@ unittest
     assert(resizeEdgeAt(metrics, 100, 5) == ResizeEdge.top);
 }
 
+/**
+Explicit pointer capture, as two distinct capabilities (F10): `capture`
+routes every pointer event to the window even outside its content until
+released, `confine` keeps the pointer inside the content area. Raw relative
+motion is a separate switch (`setRelativePointer`). A backend without a
+mode reports typed `unsupported`; it never silently succeeds.
+*/
+enum PointerCaptureMode : ubyte
+{
+    none,
+    capture,
+    confine,
+}
+
 enum DecorationPreference : ubyte
 {
     automatic,

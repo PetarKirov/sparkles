@@ -38,7 +38,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/examples" \
   "$repo/libs/wsi/examples/x11-key-injector.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxkbcommon -L-lxkbcommon-x11 \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-xinput -L-lxkbcommon -L-lxkbcommon-x11 \
   -of="$work/x11-key-injector"
 
 cat >"$work/lane.sh" <<EOF
@@ -90,5 +90,5 @@ env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1280x800x24" \
   bash "$work/lane.sh" || lane_status=$?
 cat "$work/smoke.log" 2>/dev/null || true
 test "$lane_status" -eq 0
-grep -q '^ok: Wayland WSI conformance (13 checked, 5 skipped)' "$work/smoke.log"
+grep -q '^ok: Wayland WSI conformance (13 checked, 8 skipped)' "$work/smoke.log"
 echo ">> sparkles:wsi Wayland keyboard verified through Weston."

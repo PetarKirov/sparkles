@@ -17,7 +17,7 @@ import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.wsi;
 import xcb_native : xcb_connection_t;
 import xcb_test_input : focusWindow, resizeWindow, sendButton, sendClose,
-    sendKey, warpPointerOnScreen;
+    sendKey, sendRelativeMotion, warpPointerOnScreen;
 
 private struct X11Hooks
 {
@@ -141,6 +141,25 @@ private struct X11Hooks
         assert(sendButton(connection, 1, true) == 0);
         assert(warpPointerOnScreen(connection, 700, 500) == 0);
         assert(sendButton(connection, 1, false) == 0);
+    }
+
+    void injectMotionOutside()
+    {
+        // No button held and no inside warp first: only an explicit grab
+        // (F10) routes motion beyond the 640x480 window back to it, and a
+        // confining grab clamps each warp to a different edge point, so the
+        // pointer moves inside the bounds. Without a grab nothing arrives.
+        assert(warpPointerOnScreen(connection, 700, 500) == 0);
+        assert(warpPointerOnScreen(connection, 700, 300) == 0);
+    }
+
+    void injectRelativeMotion()
+    {
+        // A core WarpPointer is a server-side move and raises no raw event;
+        // XTEST motion comes from the virtual XTEST slave pointer, so XI2
+        // RawMotion on every device sees it like a real mouse.
+        assert(warpPointerOnScreen(connection, 120, 80) == 0);
+        assert(sendRelativeMotion(connection, 20, 20) == 0);
     }
 }
 

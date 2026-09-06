@@ -47,6 +47,8 @@ struct X11Wsi
         uint cursor;
         ushort xic;
         bool xicReady;
+        PointerCaptureMode captureMode;
+        bool relativePointer;
     }
 
     private struct Bootstrap
@@ -85,6 +87,8 @@ struct X11Wsi
     private xcb_xim_t* xim_;
     private bool ximConnected_;
     private size_t pendingIcSlot_ = size_t.max;
+    private ubyte xiOpcode_;
+    private bool xiRawSelected_;
 
     /** Connects to the process' selected X display on the calling UI thread. */
     static WsiResult!void open(out X11Wsi wsi)
@@ -135,6 +139,7 @@ struct X11Wsi
         // before each repeated press, and held keys read as typing.
         enableDetectableAutorepeat(connection);
         wsi.openKeymap();
+        wsi.openXInput();
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         return wsiOk();
@@ -329,6 +334,12 @@ struct X11Wsi
         if (checked.hasError)
             return wsiErr!void(checked.error);
         ref slot = windows_[checked.value];
+        if (slot.captureMode != PointerCaptureMode.none)
+        {
+            xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
+            slot.captureMode = PointerCaptureMode.none;
+        }
+        slot.relativePointer = false;
         if (slot.xicReady && xim_ !is null)
             xcb_xim_destroy_ic(xim_, slot.xic, null, null);
         slot.xic = 0;
@@ -342,6 +353,158 @@ struct X11Wsi
         slot.window = 0;
         emit(id, DestroyedEvent());
         return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+    }
+
+    /*
+    F10 on X11: explicit capture and confinement are one active pointer grab
+    — `owner_events` keeps normal delivery inside the window, `confine_to`
+    pins the pointer to it — and raw relative motion is XInput 2's
+    `RawMotion` selected on the root window (raw events come from the
+    slave device, so the selection names every device). Both unwind on
+    destruction; a grab outlives focus changes by design, since it holds
+    the pointer.
+    */
+
+    /// Grabs (or releases) the pointer for this window; `confine` also
+    /// keeps it inside the content area.
+    WsiResult!void setPointerCapture(WindowId id, PointerCaptureMode mode)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_[checked.value];
+        if (mode == PointerCaptureMode.none)
+        {
+            if (slot.captureMode != PointerCaptureMode.none)
+            {
+                xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
+                flushCommands();
+            }
+            slot.captureMode = mode;
+            return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
+        }
+        enum ushort grabMask = XCB_EVENT_MASK_BUTTON_PRESS
+            | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION
+            | XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW;
+        auto cookie = xcb_grab_pointer(connection_, 1, slot.window, grabMask,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
+            mode == PointerCaptureMode.confine ? slot.window : XCB_NONE,
+            XCB_NONE, XCB_CURRENT_TIME);
+        auto reply = xcb_grab_pointer_reply(connection_, cookie, null);
+        if (reply is null)
+            return x11Failure!void(WsiOperation.command,
+                xcb_connection_has_error(connection_),
+                "xcb_grab_pointer produced no reply");
+        scope (exit) free(reply);
+        if (reply.status != XCB_GRAB_STATUS_SUCCESS)
+            return x11Failure!void(WsiOperation.command, reply.status,
+                "the server refused the pointer grab");
+        slot.captureMode = mode;
+        return wsiOk();
+    }
+
+    /// Selects raw relative motion; a server without XInput 2 answers
+    /// typed unsupported.
+    WsiResult!void setRelativePointer(WindowId id, bool enabled)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (xiOpcode_ == 0)
+            return x11Failure!void(WsiOperation.command, 0,
+                "XInput 2 raw motion is not available on this server",
+                WsiErrorKind.unsupported);
+        windows_[checked.value].relativePointer = enabled;
+        bool anyRelative;
+        foreach (ref slot; windows_)
+            anyRelative |= slot.live && slot.relativePointer;
+        if (anyRelative == xiRawSelected_)
+            return wsiOk();
+        auto selected = selectRawMotion(anyRelative);
+        if (selected.hasError)
+            return selected;
+        xiRawSelected_ = anyRelative;
+        return wsiOk();
+    }
+
+    private void openXInput() nothrow @nogc
+    {
+        auto data = xcb_get_extension_data(connection_, &xcb_input_id);
+        if (data is null || data.present == 0)
+            return;
+        // The server must see a version query before any XI2 request.
+        auto cookie = xcb_input_xi_query_version(connection_, 2, 2);
+        auto reply = xcb_input_xi_query_version_reply(connection_, cookie,
+            null);
+        if (reply is null)
+            return;
+        const supported = reply.major_version >= 2;
+        free(reply);
+        if (supported)
+            xiOpcode_ = data.major_opcode;
+    }
+
+    private WsiResult!void selectRawMotion(bool on)
+    {
+        // xcb_input_event_mask_t is a header followed by mask_len words.
+        static struct RawMotionMask
+        {
+            xcb_input_event_mask_t head;
+            uint mask;
+        }
+
+        RawMotionMask masks;
+        masks.head.deviceid = XCB_INPUT_DEVICE_ALL;
+        masks.head.mask_len = 1;
+        masks.mask = on ? XCB_INPUT_XI_EVENT_MASK_RAW_MOTION : 0;
+        // ImportC drops the header's `const` on the mask pointer.
+        const error = checkedRequest(xcb_input_xi_select_events_checked(
+            connection_, bootstrap_.root, 1,
+            cast(xcb_input_event_mask_t*) &masks));
+        if (error != 0)
+            return x11Failure!void(WsiOperation.command, error,
+                "xcb_input_xi_select_events failed");
+        return wsiOk();
+    }
+
+    /// One XInput 2 RawMotion event: valuators 0 and 1 are the pointer's
+    /// x and y; the raw (unaccelerated) values are what relative mode
+    /// reports.
+    private void handleRawMotion(xcb_input_raw_motion_event_t* event)
+        nothrow @nogc
+    {
+        // The accessors are read-only in C; ImportC loses that `const`.
+        const maskLength =
+            xcb_input_raw_button_press_valuator_mask_length(event);
+        const masks = xcb_input_raw_button_press_valuator_mask(event);
+        const rawCount = xcb_input_raw_button_press_axisvalues_raw_length(event);
+        const raw = xcb_input_raw_button_press_axisvalues_raw(event);
+        if (masks is null || raw is null)
+            return;
+        double dx = 0;
+        double dy = 0;
+        size_t next;
+        foreach (word; 0 .. maskLength)
+            foreach (bit; 0 .. 32)
+            {
+                if ((masks[word] & (1u << bit)) == 0)
+                    continue;
+                if (next >= rawCount)
+                    return;
+                const value = raw[next].integral
+                    + raw[next].frac / 4294967296.0;
+                ++next;
+                const valuator = word * 32 + bit;
+                if (valuator == 0)
+                    dx = value;
+                else if (valuator == 1)
+                    dy = value;
+            }
+        if (dx == 0 && dy == 0)
+            return;
+        foreach (i, ref slot; windows_)
+            if (slot.live && slot.relativePointer)
+                emit(idAt(i), RelativePointerEvent(corePointer, dx, dy, true));
     }
 
     /**
@@ -1076,6 +1239,13 @@ struct X11Wsi
                     }
                     emit(idAt(index), FocusChangedEvent(focused));
                 }
+                break;
+            case XCB_GE_GENERIC:
+                auto generic2 = cast(const xcb_ge_generic_event_t*) generic;
+                if (xiOpcode_ != 0 && generic2.extension == xiOpcode_
+                    && generic2.event_type == XCB_INPUT_RAW_MOTION)
+                    handleRawMotion(
+                        cast(xcb_input_raw_motion_event_t*) generic);
                 break;
             case XCB_DESTROY_NOTIFY:
                 auto event = cast(const xcb_destroy_notify_event_t*) generic;
