@@ -268,9 +268,21 @@ User32 stops delivering client messages at the border without it — spanning
 the first press to the last release and unwound on `WM_CAPTURECHANGED`, while
 X11's automatic core grab and AppKit's window drag routing are verified
 rather than assumed; the conformance drag property requires the release to
-arrive with outside coordinates. X11 scale detection, custom cursor images,
-full output enumeration/hotplug, explicit capture/confinement, raw relative
-motion, and native-Windows evidence remain.
+arrive with outside coordinates. The explicit-capture slice completes F10's
+vocabulary: `setPointerCapture` takes a `PointerCaptureMode` (`capture`,
+`confine`) and `setRelativePointer` switches a separate delta stream, each
+backend answering typed `unsupported` where the platform has no such thing
+rather than pretending — X11 grabs (with `confine_to`) and XInput 2
+`RawMotion`, Wayland `pointer-constraints-v1` confinement and
+`relative-pointer-v1` deltas with capture refused (the compositor owns
+grabs), Win32 `SetCapture` held past the buttons, `ClipCursor` re-clipped on
+move/size and lifted on focus loss, and Raw Input `WM_INPUT` deltas, AppKit
+the event deltas with both capture modes refused. Three conformance
+properties drive real pointer motion (a warp or an injected move, never a
+posted message) and time out rather than pass vacuously when nothing is
+routed. X11 scale detection, custom cursor images, full output
+enumeration/hotplug, and native-Windows evidence beyond the hosted runner
+remain.
 
 Required platform paths:
 

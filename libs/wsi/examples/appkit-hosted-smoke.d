@@ -51,6 +51,8 @@ private extern class NSWindow : NSObject
     void setContentSize(NSSize size) @selector("setContentSize:");
     void performClose(NSObject sender) @selector("performClose:");
     long windowNumber() @selector("windowNumber");
+    NSPoint convertPointToScreen(NSPoint point)
+        @selector("convertPointToScreen:");
 }
 
 private extern class NSString : NSObject
@@ -73,6 +75,8 @@ private extern class NSEvent : NSObject
         nothrow @nogc
         @selector("otherEventWithType:location:modifierFlags:timestamp:"
             ~ "windowNumber:context:subtype:data1:data2:");
+    static NSEvent eventWithCGEvent(void* cgEvent)
+        @selector("eventWithCGEvent:");
     static NSEvent keyEventWithType(ulong type, NSPoint location,
         ulong modifierFlags, double timestamp, long windowNumber,
         NSObject context, NSString characters,
@@ -128,6 +132,34 @@ private extern class NSCursor : NSObject
 }
 
 extern (D):
+
+private extern (C) struct CGPoint
+{
+    double x;
+    double y;
+}
+
+private extern (C) struct CGSize
+{
+    double width;
+    double height;
+}
+
+private extern (C) struct CGRect
+{
+    CGPoint origin;
+    CGSize size;
+}
+
+private extern (C) nothrow @nogc
+{
+    uint CGMainDisplayID();
+    CGRect CGDisplayBounds(uint display);
+    void* CGEventCreateMouseEvent(void* source, uint type, CGPoint location,
+        uint button);
+    void CGEventSetIntegerValueField(void* event, uint field, long value);
+    void CFRelease(void* value);
+}
 
 private struct AppKitHooks
 {
@@ -254,6 +286,42 @@ private struct AppKitHooks
 
     // NSWindow keeps routing the drag to the mouseDown view, so the
     // outside release must come back through the same path.
+    /*
+    A posted NSEvent carries no deltas, so the relative property needs a
+    Core Graphics event: the delta fields are set on it, it names the
+    window under the pointer so AppKit resolves the target without a
+    hit test on screen state this headless lane cannot rely on, and its
+    location is the window's (120, 400) in Quartz's top-left screen space.
+    Capture and confinement are typed `unsupported` here, which the
+    properties accept as the honest answer; the hook exists so they run,
+    and must never be reached.
+    */
+    void injectMotionOutside()
+    {
+        assert(false, "AppKit answered a capture mode with success");
+    }
+
+    void injectRelativeMotion()
+    {
+        enum uint mouseMovedType = 5; // kCGEventMouseMoved
+        enum uint deltaXField = 4; // kCGMouseEventDeltaX
+        enum uint deltaYField = 5; // kCGMouseEventDeltaY
+        enum uint windowField = 91; // kCGMouseEventWindowUnderMousePointer
+        const inScreen = nativeWindow.convertPointToScreen(NSPoint(120, 400));
+        const screen = CGDisplayBounds(CGMainDisplayID());
+        const at = CGPoint(inScreen.x, screen.size.height - inScreen.y);
+        auto cgEvent = CGEventCreateMouseEvent(null, mouseMovedType, at, 0);
+        assert(cgEvent !is null);
+        CGEventSetIntegerValueField(cgEvent, deltaXField, 20);
+        CGEventSetIntegerValueField(cgEvent, deltaYField, 20);
+        CGEventSetIntegerValueField(cgEvent, windowField,
+            nativeWindow.windowNumber());
+        auto event = NSEvent.eventWithCGEvent(cgEvent);
+        assert(event !is null);
+        NSApplication.sharedApplication().postEvent(event, false);
+        CFRelease(cgEvent);
+    }
+
     void injectDragOutside()
     {
         enum ulong leftDownType = 1;
