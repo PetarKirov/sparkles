@@ -1267,7 +1267,15 @@ struct WorkspaceTui
     /// Opens the fuzzy file picker (`<leader>ff`, `PKS1`) over the tree's
     /// root, with the explorer's include/exclude globs. Reopening re-walks
     /// the corpus, so files created since the last open are found.
-    package void openPicker() @system
+    /// `<leader>/` — the same picker over the content-search corpus
+    /// (`PKS2`). Shares every wire with `openPicker`; only the corpus and
+    /// the entry point differ.
+    package void openGrepPicker() @system
+    {
+        openPicker(grep: true);
+    }
+
+    package void openPicker(bool grep = false) @system
     {
         if (picker.empty)
             picker = makeUnique!PickerHost();
@@ -1284,8 +1292,11 @@ struct WorkspaceTui
         pickerDoc.pane.vm.decodeAnsi = viewer.vm.decodeAnsi;
         pickerDoc.caps = mousePointer; // the same profile the dock eases with
         pickerDoc.syncTheme(viewer.themeIndex);
-        picker.get.open(tree.root.length ? tree.root : ".",
-            tree.includeGlobs, tree.excludeGlobs);
+        const root = tree.root.length ? tree.root : ".";
+        if (grep)
+            picker.get.openGrep(root, tree.includeGlobs, tree.excludeGlobs);
+        else
+            picker.get.open(root, tree.includeGlobs, tree.excludeGlobs);
         syncConfigDerived(); // the picker knobs exist only once it does
         dirty = true;
     }
@@ -1581,6 +1592,12 @@ struct WorkspaceTui
                 openPicker();
                 return true;
             }
+            if (tree.grepRequested) // `<leader>/` with the tree focused
+            {
+                tree.grepRequested = false;
+                openGrepPicker();
+                return true;
+            }
             if (tree.explorerToggleRequested) // `e` / `<leader>e`
             {
                 tree.explorerToggleRequested = false;
@@ -1625,6 +1642,11 @@ struct WorkspaceTui
         {
             viewer.pickerRequested = false;
             openPicker();
+        }
+        if (viewer.grepRequested) // `<leader>/` from the document pane
+        {
+            viewer.grepRequested = false;
+            openGrepPicker();
         }
         if (viewer.explorerToggleRequested) // `e` / `<leader>e`
         {
@@ -3913,4 +3935,83 @@ unittest
     assert(typed == "fo",
         "the terminal admitted a non-ASCII keystroke into the query: " ~ typed);
     w.handle(Event(KeyEvent(key: Key.escape)));
+}
+
+@("workspace.leaderSlashGrepsAndCyclesItsMode")
+@system
+unittest
+{
+    // `<leader>/` end to end (`PKS2`/`PKL5`), read back off a real terminal
+    // grid — the widget tree can be right while nothing reaches the screen.
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    import sparkles.input.events : Mods;
+
+    import picker_grep : GrepMode, PickerSource;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-grep-test");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    write(buildPath(root, "alpha.d"), "struct Widget\n{\n    int n;\n}\n");
+    write(buildPath(root, "beta.d"), "void f() { Widget w; }\n");
+
+    static void settle(ref WorkspaceTui w) @system
+    {
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.get.busy)
+                return;
+            Thread.yield();
+        }
+    }
+
+    // `<leader>/` routes through the focused pane's own key path.
+    foreach (ch; " /")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    assert(!w.picker.empty && w.picker.get.state.active, "the picker opened");
+    assert(w.picker.get.source == PickerSource.grep, "…on the grep corpus");
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+
+    foreach (ch; "Widget")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    settle(w);
+    assert(w.picker.get.state.rowCount == 2, "a declaration and a mention");
+
+    Grid g;
+    g.resize(100, 24);
+    w.paint(g);
+    string all;
+    foreach (y; 0 .. g.rows)
+        foreach (x; 0 .. g.cols)
+            all ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+
+    // The row model actually reaches the screen: document, position, line.
+    assert(all.canFind("alpha.d"), "the document is named");
+    assert(all.canFind(":1:8"),
+        "the position is shown, in the form `PKQ4` parses back");
+    assert(all.canFind("struct Widget"), "the matching line is shown");
+    assert(all.canFind("▸"), "the declaration is marked (`PKC14`)");
+    assert(all.canFind("[plain]"), "the active mode is shown (`PKL5`)");
+
+    // `<S-Tab>` cycles the MODE here, where it reverses the pane focus
+    // everywhere else — the `CtxFlag.grepActive` gate, on screen.
+    assert(w.handle(Event(KeyEvent(key: Key.tab, mods: Mods(shift: true)))));
+    settle(w);
+    assert(w.picker.get.grep.grepMode == GrepMode.fuzzy,
+        "regex is skipped while its engine is unwritten (`PKC16`)");
+
+    g.resize(100, 24);
+    w.paint(g);
+    string after;
+    foreach (y; 0 .. g.rows)
+        foreach (x; 0 .. g.cols)
+            after ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+    assert(after.canFind("[fuzzy]"), "and the indicator followed it");
+    assert(!after.canFind("[plain]"));
 }

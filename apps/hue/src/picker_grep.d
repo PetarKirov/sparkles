@@ -535,6 +535,23 @@ to the synchronous path rather than forcing the whole scan off the pool.
 bool poolEligible(GrepMode mode) @safe pure nothrow @nogc
     => mode != GrepMode.regex;
 
+/// Whether a mode can actually answer a query yet. `PKC16`'s bounded engine
+/// is specified and unwritten, and a mode that silently returns nothing is
+/// worse than one the cycle skips.
+bool modeImplemented(GrepMode mode) @safe pure nothrow @nogc
+    => mode != GrepMode.regex;
+
+/// The mode's name, for the prompt's indicator (`PKL5`).
+string modeLabel(GrepMode mode) @safe pure nothrow @nogc
+{
+    final switch (mode)
+    {
+    case GrepMode.plain: return "plain";
+    case GrepMode.regex: return "regex";
+    case GrepMode.fuzzy: return "fuzzy";
+    }
+}
+
 /// Bytes of context stored around a hit (`PKC11`). Chosen so a row stays
 /// inside `maxDpUnits` and scoring never silently degrades.
 enum size_t windowBytes = 512;
@@ -1463,6 +1480,31 @@ struct GrepFinder
     private size_t needleLen_;
     private AnalysisCase mode_;
     private size_t maxFileBytes_ = defaultMaxFileBytes;
+    private GrepMode grepMode_;
+
+    /// The active search mode (`PKL5`). Shown in the prompt, so a reader can
+    /// always tell which question was asked.
+    GrepMode grepMode() const @safe pure nothrow @nogc => grepMode_;
+
+    /**
+    Advance to the next mode (`<S-Tab>`).
+
+    Cycles rather than toggles because there are three, and it wraps because
+    a reader who overshoots should not have to know which direction is
+    which. Modes that cannot run yet are skipped: `PKC16`'s engine is not
+    written, and offering a mode that returns nothing is worse than not
+    offering it.
+    */
+    void cycleMode() @safe nothrow
+    {
+        foreach (_; 0 .. GrepMode.max + 1)
+        {
+            grepMode_ = grepMode_ == GrepMode.max
+                ? GrepMode.init : cast(GrepMode)(grepMode_ + 1);
+            if (modeImplemented(grepMode_))
+                return;
+        }
+    }
 
     /// Documents the live generation is walking.
     size_t corpusTotal() const @safe pure nothrow @nogc => corpus_.length;

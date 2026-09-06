@@ -1050,7 +1050,7 @@ int runGui(GuiArgs guiArgs) @system
     }
 
 
-    void openFilePicker()
+    void openFilePicker(bool grep = false)
     {
         if (filePicker.empty)
             filePicker = makeUnique!PickerHost();
@@ -1064,9 +1064,17 @@ int runGui(GuiArgs guiArgs) @system
         filePickerDoc.pane.vm.decodeAnsi = (const(char)[] b) => decodeAnsi(b);
         filePickerDoc.syncTheme(vm.themeIdx);
         syncConfigDerived(); // the picker knobs exist only once it does
-        filePicker.get.open(pn.tree.root.length ? pn.tree.root : ".",
-            pn.tree.includeGlobs, pn.tree.excludeGlobs);
+        const pickRoot = pn.tree.root.length ? pn.tree.root : ".";
+        if (grep)
+            filePicker.get.openGrep(pickRoot,
+                pn.tree.includeGlobs, pn.tree.excludeGlobs);
+        else
+            filePicker.get.open(pickRoot,
+                pn.tree.includeGlobs, pn.tree.excludeGlobs);
     }
+
+    /// `<leader>/` — the same picker over the content-search corpus (`PKS2`).
+    void openGrepPicker() { openFilePicker(grep: true); }
 
     scope (exit) if (!filePicker.empty) filePicker.get.shutdown();
     scope (exit) if (filePickerDoc !is null) filePickerDoc.shutdown();
@@ -3106,6 +3114,13 @@ int runGui(GuiArgs guiArgs) @system
                     break;
                 case Command.pickerFiles:
                     openFilePicker();
+                    break;
+                case Command.pickerGrep:
+                    openGrepPicker();
+                    break;
+                case Command.pickerCycleMode:
+                    // Resolved inside the picker's own modal scope, which
+                    // `handleKey` answers before this dispatch is reached.
                     break;
 
                 // ── the `z` fold sequence (FLD5) ─────────────────────────

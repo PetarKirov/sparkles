@@ -233,6 +233,8 @@ struct ExplorerTui
     /// Set by the `pickerFiles` command arm (`<leader>ff`); the workspace
     /// drains it and opens the fuzzy picker (the `picked` handoff pattern).
     bool pickerRequested;
+    /// ditto — `<leader>/`, the content-search picker (`PKS2`).
+    bool grepRequested;
     /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split
     /// is the workspace's, so the pane reports the intent.
     bool explorerToggleRequested;
@@ -926,6 +928,11 @@ struct ExplorerTui
             // document; a focused tree simply does not answer these. Explicit
             // arms rather than a `default:`, so a new command is a compile
             // error here until someone decides whether the tree answers it.
+            case Command.pickerGrep:
+                grepRequested = true;
+                break;
+
+            case Command.pickerCycleMode:
             case Command.toggleInspector:
             case Command.viewDown: case Command.viewUp:
             case Command.viewHome: case Command.viewEnd:

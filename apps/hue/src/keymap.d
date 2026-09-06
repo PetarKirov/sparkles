@@ -263,6 +263,8 @@ enum Command : ubyte
     dsvPalClose,           /// Escape / `q` / `Shift-C` — close the palette
     lanternAll,            /// `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
+    pickerGrep,            /// `<leader>/` — the content-search picker (`PKS2`)
+    pickerCycleMode,       /// `<S-Tab>` in grep — plain / regex / fuzzy (`PKL5`)
     quit,                  /// `q` — leave the viewer
     viewTop, viewBottom,   /// `gg` / `G`
     toggleHoverRegions,    /// Enter — open a twoslash signature's collapsed runs
@@ -697,6 +699,10 @@ immutable Binding[] hueBindings = [
     group(Scope_.shared_, chord(leader), chord('f'), "file/find"),
     bind(Scope_.shared_, chord(leader), chord('f'), chord('f'),
         Command.pickerFiles, "find files"),
+    // `<leader>/` was unclaimed — the `PKS` table said the map reserved every
+    // source's key and it did not. Grep claims its own as it lands.
+    bind(Scope_.shared_, chord(leader), chord('/'),
+        Command.pickerGrep, "grep"),
 
     group(Scope_.shared_, chord(leader), chord('v'), "view"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('r'),
@@ -785,8 +791,14 @@ immutable Binding[] hueBindings = [
     bind(Scope_.picker, chord(Key.backspace), Command.pickerErase, "erase"),
     bind(Scope_.picker, chord(Key.tab, ShiftReq.no), Command.pickerFocusNext,
         "next pane"),
+    // `PKL5`: in the grep source `<S-Tab>` cycles the search mode; anywhere
+    // else it reverses the pane focus. Two rows on one chord, separated by
+    // context rather than by a branch inside an arm — which is what makes
+    // the guide list the right one in each state.
     bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerFocusPrev,
-        "prev pane"),
+        "prev pane", forbid: CtxFlag.grepActive),
+    bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerCycleMode,
+        "search mode", require: CtxFlag.grepActive),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', ctrl: true),
         Command.pickerToggleScore, "score breakdown"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', super_: true),

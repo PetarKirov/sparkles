@@ -141,6 +141,8 @@ struct PreviewTui
     /// ditto — the `pickerFiles` command arm (`<leader>ff`): the corpus and
     /// the loader are the workspace's, so the pane reports the intent.
     bool pickerRequested;
+    /// ditto — the `pickerGrep` arm (`<leader>/`, `PKS2`).
+    bool grepRequested;
 
     /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split is
     /// the workspace's, so the pane reports the intent. This is what retired
@@ -1518,6 +1520,13 @@ struct PreviewTui
                 // The workspace owns the corpus and the loader; the pane only
                 // reports the intent — the `inspectorToggleRequested` shape.
                 pickerRequested = true;
+                break;
+            case Command.pickerGrep:
+                grepRequested = true;
+                break;
+            case Command.pickerCycleMode:
+                // Only reachable while the grep picker is up, which is a
+                // workspace surface — this pane never sees it.
                 break;
 
             case Command.quit: return false;

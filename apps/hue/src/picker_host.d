@@ -29,7 +29,7 @@ import keymap : Command, commandFor, KeyContext, Scope_;
 import picker : PickerScheduler, PickerState;
 import sparkles.source_view.search : SearchPolicy;
 
-import picker_grep : GrepFinder, PickerSource, ScanStep;
+import picker_grep : GrepFinder, modeLabel, PickerSource, ScanStep;
 import picker_sources : collectFilesFinder, FilesFinder, PickerTarget;
 import picker_view : GrepRowText;
 import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
@@ -321,10 +321,27 @@ struct PickerHost
         foreach (i; 0 .. shown)
             highlights[i] = RowHighlight(rowRanges[i][0 .. rowRangeCounts[i]]);
         const path = selectedPath();
+
+        // Grep rows and their mode indicator, for the grep source only. The
+        // view takes plain data, so it never learns what a scanner is.
+        GrepRowText[pickerVisibleRows] rows;
+        const(char)[] mode;
+        final switch (source)
+        {
+        case PickerSource.files:
+            break;
+        case PickerSource.grep:
+            foreach (i, ranked; state.visible)
+                rows[i] = grep.rowText(ranked.corpusIndex);
+            mode = modeLabel(grep.grepMode);
+            break;
+        }
+
         return pickerView(state, snapshot,
             highlights[0 .. shown],
             path.length ? baseName(path) : null, geometry, preset,
-            focus.focused);
+            focus.focused,
+            source == PickerSource.grep ? rows[0 .. shown] : null, mode);
     }
 
     /// The `:line[:col]` suffix the prompt currently carries (`PKQ4`), or
@@ -339,7 +356,8 @@ struct PickerHost
     /// The resolution context the picker's keys live in: the modal flag plus
     /// the focused pane (`FOC4` — modality is context gating).
     KeyContext keyContext() const @safe pure nothrow @nogc
-        => KeyContext(pickerActive: true, pickerFocus: focus.focused);
+        => KeyContext(pickerActive: true, pickerFocus: focus.focused,
+            grepActive: source == PickerSource.grep);
 
     /**
     The modal key policy, identical in both hosts — and, since `PKL7`, table
@@ -384,6 +402,13 @@ struct PickerHost
             acceptedTarget = target;
             close();
             return PickerAction.accepted;
+        case Command.pickerCycleMode:
+            // `PKL5`. Gated to the grep source by `CtxFlag.grepActive`, so
+            // the same chord still reverses the pane focus everywhere else
+            // and the guide lists whichever one applies.
+            grep.cycleMode();
+            request();
+            return PickerAction.consumed;
         case Command.pickerErase:
             if (state.prompt.erase())
                 request();
