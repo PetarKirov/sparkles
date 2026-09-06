@@ -16,7 +16,8 @@ import core.time : Duration, msecs;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.event_horizon.raw_pool : RawPoolResult;
 import sparkles.fuzzy : CandidateSnapshot, DefaultFuzzyCaps, FuzzyLimits,
-    Location, MatchConfig, MatcherWorkspace, parseQuery, positions, TextRange;
+    Location, MatchConfig, MatcherWorkspace, parseQuery, positions,
+    RankedResult, TextRange;
 import sparkles.input.events : Event, Key, KeyEvent, match, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import sparkles.ui.focus : ScopeFocus;
@@ -26,7 +27,11 @@ import sparkles.ui.widget : WidgetTree;
 
 import keymap : Command, commandFor, KeyContext, Scope_;
 import picker : PickerScheduler, PickerState;
+import sparkles.source_view.search : SearchPolicy;
+
+import picker_grep : GrepFinder, PickerSource, ScanStep;
 import picker_sources : collectFilesFinder, FilesFinder, PickerTarget;
+import picker_view : GrepRowText;
 import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
     pickerView, RowHighlight;
 
@@ -84,6 +89,18 @@ struct PickerHost
     PickerState!pickerTopK state;
     PickerScheduler!(DefaultFuzzyCaps, pickerTopK) scheduler;
     FilesFinder finder;
+    /**
+    The content-search corpus, live when `source == PickerSource.grep`.
+
+    Held BESIDE the files finder rather than selected by templating
+    `PickerHost` on its source: the scheduler's generation slots are
+    megabytes of workspace, and a template would duplicate them once per
+    source. Dispatch is a `final switch`, so the compiler proves every arm
+    is answered.
+    */
+    GrepFinder grep;
+    /// Which corpus the open picker is showing.
+    PickerSource source;
     /// Set by `handleKey` when it returns `PickerAction.accepted`.
     /// Where the accepted row goes (`PKC3`): a path when the source is
     /// file-backed, plus a line/column when the source has a position to
@@ -144,6 +161,7 @@ struct PickerHost
     void open(string root, const(string)[] includeGlobs = null,
         const(string)[] excludeGlobs = null) @system
     {
+        source = PickerSource.files;
         if (!poolTried)
         {
             // One worker: the search is chunked and cancellable, and the UI
@@ -163,6 +181,30 @@ struct PickerHost
         selectedIndex_ = size_t.max;
         selectedPath_ = null;
         refreshHighlights();
+        request();
+    }
+
+    /**
+    Open the **grep** source over `root` (`PKS2`).
+
+    Same shape as `open`, and deliberately a separate entry point rather
+    than a flag: the two sources disagree about what a generation IS — the
+    files corpus is walked once and searched repeatedly, while grep re-walks
+    nothing and re-reads per query — so sharing one function would mean a
+    branch in every line of it.
+    */
+    void openGrep(string root, const(string)[] includeGlobs = null,
+        const(string)[] excludeGlobs = null) @system
+    {
+        source = PickerSource.grep;
+        scheduler.cancel(); // the fuzzy scheduler owns nothing here
+        grep.openCorpus(root, includeGlobs, excludeGlobs);
+        state.viewRows = pickerVisibleRows;
+        state.open();
+        focus = ScopeFocus!Scope_(Scope_.pickerInput);
+        selectedIndex_ = size_t.max;
+        selectedPath_ = null;
+        rowRangeCounts[] = 0;
         request();
     }
 
@@ -188,12 +230,30 @@ struct PickerHost
     /// the scheduler searches, so the view cannot resolve rows against a
     /// different snapshot.
     CandidateSnapshot snapshot() const @trusted pure nothrow @nogc
-        => finder.snapshot();
+    {
+        // A grep row resolves through `GrepFinder`, not through a candidate
+        // snapshot — its rows are lines, and a snapshot describes paths.
+        // The view reads `grepRows` for those, and never indexes this.
+        final switch (source)
+        {
+        case PickerSource.files: return finder.snapshot();
+        case PickerSource.grep: return CandidateSnapshot.init;
+        }
+    }
 
     /// Whether the loop must keep ticking to make progress (a running or
     /// pending generation) rather than blocking on input.
     bool busy() const @safe nothrow @nogc
-        => state.active && (state.searching || scheduler.hasInFlight);
+        => state.active && (state.searching || scheduler.hasInFlight
+            || grep.searching);
+
+    /// Documents scanned per frame in grep mode. A budget in FILES rather
+    /// than milliseconds: the scan is clock-free so it can run on the pool,
+    /// and the host already ticks once per frame.
+    enum size_t grepDocsPerFrame = 64;
+
+    /// The case rule both the viewer and the picker obey (`FND`).
+    SearchPolicy searchPolicy;
 
     /**
     Dispatch completions and publish the newest partial page. Call once per
@@ -204,7 +264,21 @@ struct PickerHost
         if (!state.active && !scheduler.hasInFlight)
             return false;
         const before = fingerprint();
-        scheduler.poll(state);
+        final switch (source)
+        {
+        case PickerSource.files:
+            scheduler.poll(state);
+            break;
+        case PickerSource.grep:
+            // One frame's worth of documents, then publish what is admitted
+            // so far — the list grows rather than appearing all at once.
+            if (grep.searching)
+            {
+                cast(void) grep.step(grepDocsPerFrame);
+                publishGrep();
+            }
+            break;
+        }
         const changed = fingerprint() != before;
         if (changed)
             refreshHighlights();
@@ -219,7 +293,15 @@ struct PickerHost
         if (index != selectedIndex_)
         {
             selectedIndex_ = index;
-            selectedPath_ = finder.resolve(index).path;
+            final switch (source)
+            {
+            case PickerSource.files:
+                selectedPath_ = finder.resolve(index).path;
+                break;
+            case PickerSource.grep:
+                selectedPath_ = grep.resolve(index).path;
+                break;
+            }
         }
         return selectedPath_;
     }
@@ -281,7 +363,7 @@ struct PickerHost
             return PickerAction.closed;
         case Command.pickerAccept:
             const index = state.selectedCorpusIndex;
-            auto target = finder.resolve(index);
+            auto target = resolveRow(index);
             if (!target.valid)
                 return PickerAction.consumed; // nothing to accept yet
             // `PKQ4`: the query language has always parsed a trailing
@@ -486,13 +568,45 @@ private:
 
     void request() @system
     {
-        auto requested = scheduler.request(state.prompt.text,
-            finder.snapshot(), stepBudget);
-        if (requested.hasError)
+        final switch (source)
         {
-            state.error = requested.error;
-            state.searching = false;
+        case PickerSource.files:
+            auto requested = scheduler.request(state.prompt.text,
+                finder.snapshot(), stepBudget);
+            if (requested.hasError)
+            {
+                state.error = requested.error;
+                state.searching = false;
+            }
+            return;
+        case PickerSource.grep:
+            grep.begin(state.prompt.text, searchPolicy);
+            state.searching = grep.searching;
+            state.corpusTotal = grep.corpusTotal;
+            state.matchedTotal = 0;
+            publishGrep();
+            return;
         }
+    }
+
+    /// Where the row at `index` goes, whichever source produced it.
+    PickerTarget resolveRow(size_t index) @system
+    {
+        final switch (source)
+        {
+        case PickerSource.files: return finder.resolve(index);
+        case PickerSource.grep: return grep.resolve(index);
+        }
+    }
+
+    /// Publish the grep scan's current page into the shared state.
+    private void publishGrep() @system
+    {
+        RankedResult[pickerTopK] page = void;
+        const n = grep.page(page[]);
+        state.publish(page[0 .. n], state.generation + 1, grep.searching);
+        state.matchedTotal = grep.hitCount;
+        state.corpusTotal = grep.corpusTotal;
     }
 
     /// Everything the view reads, folded into one comparable value so `poll`
@@ -796,4 +910,64 @@ unittest
     assert(plain.handleKey(KeyEvent(Key.enter)) == PickerAction.accepted);
     assert(plain.acceptedTarget.line == 0,
         "a query with no suffix must not invent a position");
+}
+
+@("picker.host.grepSourceOpensSearchesAndAcceptsALocation")
+@system
+unittest
+{
+    // The mount: the engine stops being dead code here. Everything below
+    // goes through the host's real entry points — `openGrep`, typed keys,
+    // `poll`, Enter — because the seam worth testing is the one the
+    // workspace actually calls.
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-host-" ~ randomUUID.toString);
+    mkdirRecurse(buildPath(root, "src"));
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "src", "widget.d"), "struct Widget\n{\n}\n");
+    write(buildPath(root, "src", "use.d"), "    Widget w;\n");
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+
+    host.openGrep(root);
+    assert(host.source == PickerSource.grep);
+    assert(host.state.active);
+
+    foreach (ch; "Widget")
+        assert(host.handleKey(KeyEvent(Key.char_, ch))
+            == PickerAction.consumed);
+    // Drive the scan to completion through the frame entry point.
+    foreach (_; 0 .. 64)
+        if (!host.busy)
+            break;
+        else
+            cast(void) host.poll();
+
+    assert(host.state.rowCount == 2, "one declaration, one mention");
+
+    // `PKC13`: the declaration is first.
+    const top = host.grep.rowText(host.state.rows[0].corpusIndex);
+    assert(top.definition, "the declaration outranks the mention");
+    assert(top.label == "src/widget.d");
+
+    // `PKC3`: accepting names a LOCATION, and the host reports it.
+    assert(host.handleKey(KeyEvent(Key.enter)) == PickerAction.accepted);
+    assert(host.acceptedTarget.path == buildPath(root, "src/widget.d"));
+    assert(host.acceptedTarget.line == 1);
+    assert(host.acceptedTarget.column == 8, "`struct ` is 7 bytes");
+    assert(host.acceptedTarget.handle.valid);
+
+    // The files source still works from the same host — the two corpora
+    // live side by side rather than one replacing the other.
+    host.open(root);
+    assert(host.source == PickerSource.files);
+    drain(*host);
+    assert(host.state.rowCount >= 2);
+    assert(host.acceptedTarget.line == 1,
+        "a files row leaves the previous target alone until one is accepted");
 }

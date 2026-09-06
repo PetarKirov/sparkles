@@ -20,9 +20,12 @@ would one get at it".
 module picker_grep;
 
 import sparkles.base.text.analysis : AnalysisCase;
-import sparkles.fuzzy : ScoreBreakdown;
+import sparkles.fuzzy : CandidateId, RankedResult, ScoreBreakdown;
+import sparkles.source_view.search : SearchPolicy;
 
 import grep_classify : classifyLine, HitKind;
+import picker_host : pickerTopK;
+import picker_view : GrepRowText;
 
 // The marker UDA is imported UNCONDITIONALLY: a module carrying it is
 // compiled in every build, not only `-unittest`, so guarding this behind
@@ -1012,20 +1015,19 @@ struct GrepScan
     polled $(B before every file) so a newer keystroke stops this scan
     within one document rather than at the end of the budget.
     */
-    ScanStep step(size_t budget,
-        scope size_t delegate(size_t) @safe nothrow @nogc scanOne,
-        scope bool delegate() @safe nothrow @nogc superseded)
-        @safe nothrow @nogc
+    ScanStep step(Scan, Superseded = typeof(null))(size_t budget,
+        scope Scan scanOne, scope Superseded superseded = null)
     {
         if (!active_)
             return ScanStep.idle;
         foreach (_; 0 .. budget)
         {
-            if (superseded !is null && superseded())
-            {
-                active_ = false;
-                return ScanStep.cancelled;
-            }
+            static if (!is(Superseded == typeof(null)))
+                if (superseded !is null && superseded())
+                {
+                    active_ = false;
+                    return ScanStep.cancelled;
+                }
             if (cursor_ >= total_)
                 break;
             admitted_ += scanOne(cursor_);
@@ -1386,4 +1388,343 @@ version (unittest)
             after: &c.check,
             metrics: [Metric(Unit("B"), text.length, Metric.Mode.rate)]);
     }
+}
+
+// ── acquiring bytes (`PKC7`) ───────────────────────────────────────────────
+
+/// Default cap on a single document (`PKC7`). Lower than a caching grep's
+/// because hue re-reads per query: fff can afford a large cap because it
+/// pays the read once.
+enum size_t defaultMaxFileBytes = 1024 * 1024;
+
+/// The ceiling a user may raise the cap to. Past this the re-read-per-query
+/// model stops being interactive whatever the scan costs.
+enum size_t hardMaxFileBytes = 10 * 1024 * 1024;
+
+/**
+Read at most `buf.length` bytes of `path` (`PKC7`).
+
+Returns the filled prefix, empty on any failure — a file that vanished
+between the walk and the scan is an ordinary event in a live tree, not an
+error worth a diagnostic.
+
+Whole-read, capped, rather than memory-mapped: ripgrep's reasoning applies
+with more force here, because hue holds documents open while a file changes
+underneath it. A map that faults mid-scan takes the process down; a short
+read only truncates a row.
+*/
+const(char)[] readCapped(string path, scope return char[] buf) @trusted
+{
+    import std.stdio : File;
+
+    if (buf.length == 0)
+        return null;
+    try
+    {
+        auto f = File(path, "rb");
+        auto got = f.rawRead(buf);
+        return got;
+    }
+    catch (Exception)
+        return null;
+}
+
+// ── the finder (`PKC1`) ────────────────────────────────────────────────────
+
+/// Which corpus the picker is showing. A `final switch` on this, never a
+/// template: templating `PickerHost` on its source would duplicate the
+/// scheduler's generation slots — megabytes of workspace — once per source.
+enum PickerSource : ubyte
+{
+    files,
+    grep,
+}
+
+/**
+The grep source: corpus, scan, ranking, and row resolution.
+
+Re-enters the shared picker only with `RankedResult`s (`PKC1`). Content
+lines never touch `validateCandidate`/`rank`, whose `filenameOffset == 0`
+invariant would award every admitted line the filename bonus.
+*/
+struct GrepFinder
+{
+    @disable this(this);
+
+    private DocCorpus corpus_;
+    private GrepScan scan_;
+    private string root_;
+    private string[] paths_;          // repo-relative, owned
+    private GrepHit[] hits_;          // one recycled bank
+    private GrepContext[] contexts_;
+    private size_t found_;
+    private char[] readBuf_;
+    private char[256] needle_ = void;
+    private size_t needleLen_;
+    private AnalysisCase mode_;
+    private size_t maxFileBytes_ = defaultMaxFileBytes;
+
+    /// Documents the live generation is walking.
+    size_t corpusTotal() const @safe pure nothrow @nogc => corpus_.length;
+    /// Hits admitted so far.
+    size_t hitCount() const @safe pure nothrow @nogc => found_;
+    /// Whether a scan is still running.
+    bool searching() const @safe pure nothrow @nogc => scan_.active;
+
+    /// Raise the per-file cap (`PKC7`), clamped to `hardMaxFileBytes`.
+    void maxFileBytes(size_t value) @safe nothrow
+    {
+        maxFileBytes_ = value == 0 ? defaultMaxFileBytes
+            : value > hardMaxFileBytes ? hardMaxFileBytes : value;
+        if (readBuf_.length != maxFileBytes_)
+            readBuf_ = new char[](maxFileBytes_);
+    }
+
+    /**
+    Point the corpus at `root`, over the same walk the files source uses
+    (`PKC4`), plus the session's in-memory documents (`PKC2`).
+
+    Allocation happens here — a user action, under the startup/shutdown
+    carve-out — never on a keystroke.
+    */
+    void openCorpus(string root, scope const(string)[] includeGlobs = null,
+        scope const(string)[] excludeGlobs = null,
+        SessionDocs session = SessionDocs.init) @safe
+    {
+        import sparkles.build_primitives.glob_walk : globWalkGitRepository;
+
+        root_ = root;
+        paths_ = null;
+        auto walk = globWalkGitRepository(root, includeGlobs, excludeGlobs);
+        while (!walk.empty)
+        {
+            paths_ ~= walk.front;
+            walk.popFront();
+        }
+        corpus_.rebuild(session, RepoDocs(root: root, paths: paths_));
+
+        if (hits_.length == 0)
+        {
+            hits_ = new GrepHit[](pickerTopK * 4);
+            contexts_ = new GrepContext[](pickerTopK * 4);
+        }
+        if (readBuf_.length == 0)
+            readBuf_ = new char[](maxFileBytes_);
+    }
+
+    /// Start a generation for `query`. An empty query scans nothing — a
+    /// content search with no needle would admit the whole tree.
+    void begin(scope const(char)[] query, in SearchPolicy policy) @safe nothrow
+    {
+        needleLen_ = query.length < needle_.length
+            ? query.length : needle_.length;
+        needle_[0 .. needleLen_] = query[0 .. needleLen_];
+        mode_ = policy.caseFor(query);
+        found_ = 0;
+        if (needleLen_ == 0)
+        {
+            scan_.cancel();
+            return;
+        }
+        scan_.begin(corpus_.length);
+    }
+
+    /// Abandon the live scan.
+    void cancel() @safe pure nothrow @nogc { scan_.cancel(); found_ = 0; }
+
+    /**
+    Advance the scan by up to `budget` documents.
+
+    One whole document per unit (`PKC10`); `superseded` is polled before
+    each, so a newer keystroke costs at most one more file.
+    */
+    ScanStep step(size_t budget,
+        scope bool delegate() @safe nothrow @nogc superseded = null) @system
+    {
+        return scan_.step(budget,
+            (size_t index) => scanOne(index), superseded);
+    }
+
+    private size_t scanOne(size_t index) @trusted
+    {
+        if (found_ >= hits_.length)
+            return 0;
+        const doc = corpus_.at(index);
+        if (!doc.handle.valid)
+            return 0;
+
+        const(char)[] bytes;
+        if (doc.resident)
+            bytes = doc.source;
+        else
+        {
+            if (!searchable(doc.label, null))
+                return 0; // the path filter alone, before any I/O
+            try
+                bytes = readCapped(doc.path, readBuf_);
+            catch (Exception)
+                return 0;
+        }
+        const head = bytes.length < sniffBytes ? bytes : bytes[0 .. sniffBytes];
+        if (classifyContent(head) != ContentVerdict.text)
+            return 0;
+
+        const n = scanText(bytes, needle_[0 .. needleLen_], mode_,
+            doc.handle, hits_[found_ .. $], contexts_[found_ .. $]);
+        found_ += n;
+        return n;
+    }
+
+    /// Where an accepted row goes (`PKC3`).
+    PickerTarget resolve(size_t index) @safe
+    {
+        if (index >= found_)
+            return PickerTarget.init;
+        const hit = hits_[index];
+        const doc = corpus_.resolve(hit.doc);
+        return PickerTarget(path: doc.path, line: hit.line,
+            column: hit.column, handle: hit.doc);
+    }
+
+    /// The row's rendered form for the view.
+    GrepRowText rowText(size_t index) @safe
+    {
+        if (index >= found_)
+            return GrepRowText.init;
+        const hit = hits_[index];
+        ref const ctx = contexts_[index];
+        return GrepRowText(label: corpus_.resolve(hit.doc).label,
+            context: ctx.text, line: hit.line, column: hit.column,
+            matchStart: ctx.matchStart, matchLen: ctx.matchLen,
+            elidedLeft: ctx.elidedLeft, elidedRight: ctx.elidedRight,
+            definition: hit.kind == HitKind.definition);
+    }
+
+    /**
+    The current page, ranked (`PKC13`).
+
+    Sorted by composite score, definitions first, ties broken by corpus
+    order so the list is stable while a scan is still admitting hits — a
+    page that reshuffles under the reader is worse than a page that grows.
+    */
+    size_t page(scope RankedResult[] out_) @safe
+    {
+        import std.algorithm.sorting : sort;
+
+        const n = found_ < out_.length ? found_ : out_.length;
+        if (found_ == 0)
+            return 0;
+        auto order = new size_t[](found_);
+        foreach (i; 0 .. found_)
+            order[i] = i;
+        // Score descending, then corpus order — an explicit total order
+        // rather than a sort's incidental stability. A page that reshuffles
+        // under the reader while a scan is still admitting hits is worse
+        // than one that only grows.
+        sort!((a, b) {
+            const sa = grepScore(hits_[a].kind).total;
+            const sb = grepScore(hits_[b].kind).total;
+            return sa != sb ? sa > sb : a < b;
+        })(order);
+        foreach (i; 0 .. n)
+        {
+            const src = order[i];
+            out_[i] = RankedResult(id: CandidateId(cast(uint) src),
+                corpusIndex: src, score: grepScore(hits_[src].kind));
+        }
+        return n;
+    }
+}
+
+@("picker_grep.finder.scansARealTreeAndRanksDefinitionsFirst")
+@system
+unittest
+{
+    // The first test that touches a filesystem: everything above is pure.
+    // It pins the seam the rest of the picker sees — corpus in, ranked rows
+    // and resolvable targets out (`PKC1`).
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
+    mkdirRecurse(buildPath(root, "src"));
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, ".gitignore"), "ignored/\n*.bin\n");
+    write(buildPath(root, "src", "widget.d"),
+        "struct Widget\n{\n    int n;\n}\n");
+    write(buildPath(root, "src", "use.d"),
+        "void f()\n{\n    Widget w;\n}\n");
+    write(buildPath(root, "notes.md"), "Widget is a thing\n");
+    write(buildPath(root, "blob.bin"), "Widget\x00binary\n");
+
+    GrepFinder finder;
+    finder.openCorpus(root);
+    assert(finder.corpusTotal >= 4, "the walk found the tree");
+
+    finder.begin("Widget", SearchPolicy.init);
+    ScanStep outcome;
+    do
+        outcome = finder.step(64);
+    while (outcome == ScanStep.progressed);
+    assert(outcome == ScanStep.finished);
+
+    assert(finder.hitCount == 3,
+        "three text hits; the gitignored `.bin` is not searched at all");
+
+    RankedResult[16] page;
+    const n = finder.page(page[]);
+    assert(n == 3);
+
+    // `PKC13`: the declaration outranks both mentions.
+    const top = finder.rowText(page[0].corpusIndex);
+    assert(top.definition, "the declaration ranks first");
+    assert(top.label == "src/widget.d");
+    assert(top.line == 1);
+    assert(page[0].score.total > page[1].score.total);
+
+    // `PKC3`: the accepted row names a location, not merely a file.
+    const target = finder.resolve(page[0].corpusIndex);
+    assert(target.valid);
+    assert(target.path == buildPath(root, "src/widget.d"));
+    assert(target.line == 1 && target.column == 8,
+        "`struct ` is 7 bytes, so `Widget` starts at column 8");
+    assert(target.handle.valid, "and carries its document handle");
+
+    // An empty query admits nothing: a content search with no needle would
+    // otherwise return the whole tree.
+    finder.begin("", SearchPolicy.init);
+    assert(!finder.searching && finder.hitCount == 0);
+}
+
+@("picker_grep.finder.binaryAndOversizeDocumentsAreSkipped")
+@system
+unittest
+{
+    // The two ways a document is refused, both without a second read
+    // (`PKC6`/`PKC7`).
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-skip-" ~ randomUUID.toString);
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+
+    // A NUL-bearing file whose EXTENSION says nothing — only the byte sniff
+    // can refuse it.
+    write(buildPath(root, "data.txt"), "needle\x00more needle\n");
+    write(buildPath(root, "ok.txt"), "needle\n");
+
+    GrepFinder finder;
+    finder.openCorpus(root);
+    finder.begin("needle", SearchPolicy.init);
+    ScanStep outcome;
+    do
+        outcome = finder.step(64);
+    while (outcome == ScanStep.progressed);
+
+    assert(finder.hitCount == 1,
+        "the NUL-bearing document is refused despite its `.txt` name");
+    assert(finder.rowText(0).label == "ok.txt");
 }
