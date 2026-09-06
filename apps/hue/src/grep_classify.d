@@ -95,9 +95,23 @@ name) — the check fff's version omits.
 A leading `#`, `//`, `--` or `*` short-circuits to `mention`: a keyword
 inside a comment or a preprocessor line introduces nothing.
 */
+enum size_t defnScanLimit = 256;
+
 HitKind classifyLine(scope const(char)[] line, size_t matchStart,
     size_t matchLen) @safe pure nothrow @nogc
 {
+    // A declaration's introducer and the name it introduces sit at the START
+    // of the line; a match a quarter-kilobyte in is not the name a keyword in
+    // column 0 introduced. Bounding the walk is therefore free in accuracy
+    // and load-bearing in cost: a minified file is one enormous line of
+    // identifier bytes, so the unbounded version read the WHOLE line looking
+    // for the end of its first word — once per hit. 4096 hits in a 1 MiB line
+    // took over twenty seconds; bounded, the same scan is milliseconds.
+    if (matchStart >= defnScanLimit)
+        return HitKind.mention;
+    if (line.length > defnScanLimit)
+        line = line[0 .. defnScanLimit];
+
     size_t i;
     while (i < line.length && (line[i] == ' ' || line[i] == '\t'))
         ++i;

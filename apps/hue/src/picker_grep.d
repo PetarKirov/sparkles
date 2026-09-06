@@ -24,6 +24,15 @@ import sparkles.fuzzy : ScoreBreakdown;
 
 import grep_classify : classifyLine, HitKind;
 
+// The marker UDA is imported UNCONDITIONALLY: a module carrying it is
+// compiled in every build, not only `-unittest`, so guarding this behind
+// `version (unittest)` breaks the application build (`AGENTS.md`). The
+// measurement API itself lives in the impl library and stays guarded.
+import sparkles.test_runner.attributes : benchmark;
+
+version (unittest)
+    import sparkles.test_runner.bench : benchCase, Metric, Unit;
+
 import picker_sources : PickerTarget;
 
 /**
@@ -371,19 +380,28 @@ ContentVerdict classifyContent(scope const(char)[] head) @safe pure nothrow @nog
         else
             return ContentVerdict.binary; // continuation as lead, or 0xC0/0xC1/0xF5+
 
-        // The window ended mid-character. That is a boundary, not corruption.
-        if (i + len > head.length)
-            return ContentVerdict.text;
-
-        const c1 = cast(ubyte) head[i + 1];
-        if (c1 < lo || c1 > hi)
-            return ContentVerdict.binary;
-        foreach (k; 2 .. len)
+        // Validate the bytes that ARE here, then forgive only the ones that
+        // are missing. Returning early on a short tail would accept whatever
+        // it had not looked at — including a NUL, which is the classifier's
+        // headline rule, and including bytes that are not continuations at
+        // all. A truncation is a promise about the FUTURE of the buffer, not
+        // an amnesty for its present.
+        const avail = head.length - i;
+        const check = len < avail ? len : avail;
+        if (check > 1)
         {
-            const c = cast(ubyte) head[i + k];
-            if (c < 0x80 || c > 0xBF)
+            const c1 = cast(ubyte) head[i + 1];
+            if (c1 < lo || c1 > hi)
                 return ContentVerdict.binary;
+            foreach (k; 2 .. check)
+            {
+                const c = cast(ubyte) head[i + k];
+                if (c < 0x80 || c > 0xBF)
+                    return ContentVerdict.binary;
+            }
         }
+        if (avail < len)
+            return ContentVerdict.text; // valid so far; the window ended
         i += len;
     }
     return ContentVerdict.text;
@@ -610,13 +628,21 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
     const room = hits.length < contexts.length ? hits.length : contexts.length;
     uint line = 1;
     size_t lineStart;
+    // The current line's extent, computed ONCE per line rather than once per
+    // hit. Re-deriving it at every match made a minified file — one enormous
+    // line, many matches — cost O(hits x line): 4096 hits in a 1 MiB single
+    // line took over twenty seconds. Cancellation is polled between FILES
+    // (`PKC10`), so a quadratic file also delays the keystroke that
+    // superseded it.
+    size_t lineEnd = lineEndFrom(text, 0);
     size_t i;
     while (i + needle.length <= text.length && found < room)
     {
-        if (text[i] == '\n')
+        if (i >= lineEnd)
         {
             ++line;
             lineStart = i + 1;
+            lineEnd = lineEndFrom(text, lineStart);
             ++i;
             continue;
         }
@@ -626,11 +652,6 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
             continue;
         }
 
-        // The line's extent, for both the window and the match clip.
-        size_t lineEnd = i;
-        while (lineEnd < text.length && text[lineEnd] != '\n')
-            ++lineEnd;
-
         const lineText = text[lineStart .. lineEnd];
         hits[found] = GrepHit(doc: doc, line: line,
             column: cast(uint)(i - lineStart + 1), offset: i,
@@ -639,7 +660,9 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
             needle.length);
         ++found;
 
-        // Non-overlapping, like the in-document search.
+        // Non-overlapping, like the in-document search. A needle cannot
+        // contain a newline (the input bar refuses control bytes), but the
+        // crossing is handled rather than assumed.
         const next = i + needle.length;
         while (i < next && i < text.length)
         {
@@ -647,11 +670,23 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
             {
                 ++line;
                 lineStart = i + 1;
+                lineEnd = lineEndFrom(text, lineStart);
             }
             ++i;
         }
     }
     return found;
+}
+
+/// The offset of the newline ending the line that starts at `from`, or
+/// `text.length` when the last line is unterminated.
+private size_t lineEndFrom(scope const(char)[] text, size_t from)
+    @safe pure nothrow @nogc
+{
+    size_t at = from;
+    while (at < text.length && text[at] != '\n')
+        ++at;
+    return at;
 }
 
 /**
@@ -666,6 +701,9 @@ land in the wrong place, which is the failure worth stating.
 When the line still does not fit, the window slides to keep the match
 visible and marks the sides it cut.
 */
+private bool isContinuation(char c) @safe pure nothrow @nogc
+    => (cast(ubyte) c & 0xC0) == 0x80;
+
 private GrepContext captureWindow(scope const(char)[] lineText,
     size_t matchInLine, size_t matchLen) @safe pure nothrow @nogc
 {
@@ -689,6 +727,15 @@ private GrepContext captureWindow(scope const(char)[] lineText,
         to = lineText.length;
     else
         ctx.elidedRight = true;
+
+    // Both edges are byte offsets derived from a BUDGET, so either can land
+    // inside a multi-byte character — and then a row built from perfectly
+    // valid source carries invalid UTF-8 into whatever paints it. Nudge each
+    // edge to the next character boundary before slicing.
+    while (from < to && isContinuation(lineText[from]))
+        ++from;
+    while (to > from && to < lineText.length && isContinuation(lineText[to]))
+        --to;
 
     const span = lineText[from .. to];
     ctx.length = cast(ushort) span.length;
@@ -1153,4 +1200,190 @@ unittest
     assert(hits[1].kind == HitKind.mention, "line 3 uses it");
     assert(grepScore(hits[0].kind).total > grepScore(hits[1].kind).total,
         "so the declaration outranks the use");
+}
+
+@("picker_grep.classify.truncationForgivesMissingBytesNotWrongOnes")
+@safe pure nothrow @nogc
+unittest
+{
+    // Forgiving a cut sequence must not forgive the bytes that ARE present.
+    // The first version returned `text` the moment the window ended before
+    // the sequence did, without looking at what it had — so a NUL sitting
+    // inside a truncated lead went unseen, and the classifier's own headline
+    // rule silently did not apply.
+    assert(classifyContent("\xF0\x00") == ContentVerdict.binary,
+        "a NUL is a NUL even inside an incomplete sequence");
+    assert(classifyContent("\xF0\x41") == ContentVerdict.binary,
+        "0x41 is not a continuation byte, truncated or not");
+    assert(classifyContent("\xE0\x80") == ContentVerdict.binary,
+        "an overlong lead is still overlong when cut short");
+    assert(classifyContent("\xED\xA0") == ContentVerdict.binary,
+        "a surrogate lead is still a surrogate when cut short");
+
+    // What genuinely IS a boundary still passes: the bytes present are
+    // valid, only later ones are missing.
+    assert(classifyContent("\xF0\x9F\x98") == ContentVerdict.text,
+        "a valid 4-byte sequence cut before its last byte");
+    assert(classifyContent("\xF0") == ContentVerdict.text,
+        "cut immediately after the lead: nothing present to contradict it");
+    assert(classifyContent("ab\xC3") == ContentVerdict.text);
+}
+
+@("picker_grep.scan.windowsAreValidUtf8")
+@safe pure nothrow @nogc
+unittest
+{
+    // The window is sliced at byte offsets computed from a budget, so both
+    // edges can land inside a multi-byte character. That produces invalid
+    // UTF-8 in a row the terminal then has to paint — from source text that
+    // was perfectly valid.
+    char[8] cell = "é"; // 2 bytes: C3 A9
+    char[1200] buf = void;
+    size_t n;
+    buf[n++] = 'x';
+    foreach (_; 0 .. 400)
+    {
+        buf[n++] = cell[0];
+        buf[n++] = cell[1];
+    }
+    foreach (c; "aneedle")
+        buf[n++] = c;
+    const text = buf[0 .. n];
+
+    GrepHit[2] hits;
+    GrepContext[2] ctx;
+    assert(scanText(text, "needle", AnalysisCase.sensitive,
+        DocHandle(1, 1), hits[], ctx[]) == 1);
+
+    assert(classifyContent(ctx[0].text) == ContentVerdict.text,
+        "a window sliced mid-character is invalid UTF-8");
+    const shown = ctx[0].text[ctx[0].matchStart
+        .. ctx[0].matchStart + ctx[0].matchLen];
+    assert(shown == "needle", "and the match must still be located correctly");
+}
+
+@("picker_grep.scan.denseMatchesOnALongLineStayLinear")
+@safe
+unittest
+{
+    // A minified file is one enormous line with many matches, and TWO
+    // separate re-scans made it quadratic: the line end was re-derived per
+    // hit, and `classifyLine` walked the whole line looking for the end of
+    // its first word — because a line of identifier bytes IS one word. 4096
+    // hits in 1 MiB took over twenty seconds; both are bounded now.
+    //
+    // This asserts the RESULT, not the clock. The cost is tracked by
+    // `picker_grep.scan.bench` below, where a regression is a number to
+    // compare rather than a threshold to tune.
+    enum size_t hits = 4096;
+    auto buf = new char[](1024 * 1024);
+    buf[] = 'x';
+    const stride = buf.length / hits;
+    foreach (k; 0 .. hits)
+        buf[k * stride .. k * stride + 2] = "ab";
+
+    auto found = new GrepHit[](hits);
+    auto ctx = new GrepContext[](hits);
+    const n = scanText(buf, "ab", AnalysisCase.sensitive,
+        DocHandle(1, 1), found, ctx);
+    assert(n == hits, "every needle found");
+    assert(found[0].line == 1 && found[$ - 1].line == 1, "all on one line");
+    assert(found[$ - 1].column > found[0].column, "columns advance");
+    // The classifier is bounded, so a match far into the line is a mention
+    // rather than an accident of where the walk happened to stop.
+    assert(found[$ - 1].kind == HitKind.mention);
+}
+
+@("picker_grep.scan.bench")
+@benchmark @safe
+unittest
+{
+    // Three shapes with different failure modes: an ordinary source file,
+    // the dense-single-line case that was quadratic twice over, and a file
+    // with no match at all — the common case, since most files do not
+    // contain the needle, so the miss path is where a whole-tree scan
+    // actually spends itself.
+    //
+    // Each case is registered from its own function because `benchCase`
+    // runs AFTER this body returns: closures sharing this frame read it
+    // once it is gone, which segfaults inside the scan rather than
+    // reporting anything useful.
+    registerScanCase("many-lines", "wrapped", wrappedCorpus(), "ab", true);
+    registerScanCase("one-long-line", "minified", minifiedCorpus(), "ab", true);
+    registerScanCase("no-match", "wrapped", wrappedCorpus(), "zzzz", false);
+}
+
+version (unittest)
+{
+    /// 256 KiB of 64-byte lines, a needle every 256 bytes.
+    private char[] wrappedCorpus() @safe
+    {
+        auto text = new char[](256 * 1024);
+        text[] = 'x';
+        foreach (k; 0 .. text.length / 64)
+            text[k * 64 + 63] = '\n';
+        foreach (k; 0 .. 512)
+            text[k * 256 .. k * 256 + 2] = "ab";
+        return text;
+    }
+
+    /// 1 MiB on ONE line with 4096 needles — the shape that was quadratic.
+    private char[] minifiedCorpus() @safe
+    {
+        auto text = new char[](1024 * 1024);
+        text[] = 'x';
+        foreach (k; 0 .. 4096)
+            text[k * 256 .. k * 256 + 2] = "ab";
+        return text;
+    }
+
+    /**
+    One registered case, owning everything it touches.
+
+    A class rather than a lambda on purpose: `benchCase` runs the case after
+    the registering function has returned, so a closure over that frame reads
+    a frame that is gone — which shows up as a segfault inside the scan
+    rather than as anything that names the real problem. Binding `timed` and
+    `after` to a heap object (`&c.run`) is the pattern the other benchmarks
+    in this repo use, for this reason.
+    */
+    private final class ScanCase
+    {
+        char[] text;
+        string needle;
+        GrepHit[] hits;
+        GrepContext[] ctx;
+        bool expectHits;
+
+        this(char[] text, string needle, bool expectHits) @safe
+        {
+            this.text = text;
+            this.needle = needle;
+            this.expectHits = expectHits;
+            this.hits = new GrepHit[](8192);
+            this.ctx = new GrepContext[](8192);
+        }
+
+        size_t run() @safe
+            => scanText(text, needle, AnalysisCase.sensitive,
+                DocHandle(1, 1), hits, ctx);
+
+        void check(ref size_t n) @safe
+        {
+            assert(expectHits == (n != 0),
+                "the measured scan did not do the work it claims");
+        }
+    }
+
+    /// Register one case, owning its own corpus and result bank.
+    private void registerScanCase(string name, string shape, char[] text,
+        string needle, bool expectHits) @safe
+    {
+        auto c = new ScanCase(text, needle, expectHits);
+        benchCase(name: name,
+            labels: ["shape": shape, "outcome": expectHits ? "hits" : "miss"],
+            timed: &c.run,
+            after: &c.check,
+            metrics: [Metric(Unit("B"), text.length, Metric.Mode.rate)]);
+    }
 }
