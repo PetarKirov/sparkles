@@ -3,7 +3,7 @@ module picker_view;
 
 import std.conv : text;
 
-import sparkles.fuzzy : CandidateSnapshot, TextRange;
+import sparkles.fuzzy : CandidateSnapshot, RankedResult, TextRange;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
@@ -31,6 +31,39 @@ borrows the host's fixed storage for exactly this build.
 struct RowHighlight
 {
     const(TextRange)[] ranges;
+}
+
+/**
+One content-search row, as the view needs it (`PKS2`/`PKC11`).
+
+A plain data shape rather than the grep source's own types, so the view
+stays ignorant of the scanner: the host fills these in from its hits, and
+`picker_view` renders text. A row is rendered in grep form exactly when the
+caller supplies one of these for it.
+
+Offsets are into `context`, which is the stored window — already trimmed
+and possibly elided — never into the source line.
+*/
+struct GrepRowText
+{
+    /// The document's display label: a repository-relative path, or a name
+    /// for a document that has none (`PR #476 · src/app.d`).
+    const(char)[] label;
+    /// The stored window around the match.
+    const(char)[] context;
+    /// 1-based source position, rendered as the `:12:5` suffix a reader can
+    /// paste back into the prompt (`PKQ4`).
+    uint line;
+    uint column;
+    /// The match, as an offset into `context`.
+    ushort matchStart;
+    ushort matchLen;
+    /// Whether the window dropped text on each side.
+    bool elidedLeft, elidedRight;
+    /// The line defines the matched name rather than mentioning it
+    /// (`PKC14`). Rendered as a marker, because a ranking nudge nobody can
+    /// SEE is indistinguishable from a ranking bug.
+    bool definition;
 }
 
 /**
@@ -91,7 +124,8 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     const(char)[] previewTitle = null,
     PickerGeometry geometry = PickerGeometry.init,
     PickerLayout preset = PickerLayout.default_,
-    Scope_ focus = Scope_.pickerInput)
+    Scope_ focus = Scope_.pickerInput,
+    scope const(GrepRowText)[] grepRows = null)
 {
     auto builder = Builder();
     // The focused pane's panel carries the accent chrome, and INSIDE the
@@ -137,7 +171,9 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     foreach (i, ranked; state.visible)
     {
         TextSpan[] spans;
-        if (ranked.corpusIndex < snapshot.candidates.length)
+        if (i < grepRows.length)
+            grepSpans(spans, grepRows[i]);
+        else if (ranked.corpusIndex < snapshot.candidates.length)
         {
             const candidate = snapshot.candidates[ranked.corpusIndex];
             const icon = fsIcon(candidate.path[candidate.filenameOffset .. $]);
@@ -289,6 +325,50 @@ private void pathSpans(ref TextSpan[] spans, const(char)[] path,
             textStyle: matched ? TextStyle(bold: true) : TextStyle.init);
         at = end;
     }
+}
+
+/**
+Render one content-search row: marker · label · `:line:col` · the window.
+
+The match inside the window carries `Slot.matched` exactly as a fuzzy path
+match does, so the two row kinds highlight the same way and a reader learns
+one convention. Elision is spelled with `…` on the side that was cut —
+ripgrep's `--max-columns-preview` behaviour — because a silently truncated
+line reads as a complete one.
+*/
+private void grepSpans(ref TextSpan[] spans, GrepRowText row) @safe
+{
+    // A definition is marked, not merely ranked: a nudge nobody can see is
+    // indistinguishable from a ranking bug.
+    spans ~= TextSpan(text: row.definition ? "▸ " : "  ",
+        slot: row.definition ? Slot.chromeAccent : Slot.inherit,
+        noBreak: true);
+
+    spans ~= TextSpan(text: row.label, slot: Slot.muted, noBreak: true);
+
+    spans ~= TextSpan(text: row.column != 0
+            ? text(":", row.line, ":", row.column)
+            : text(":", row.line),
+        slot: Slot.muted, noBreak: true);
+    spans ~= TextSpan(text: "  ", noBreak: true);
+
+    if (row.elidedLeft)
+        spans ~= TextSpan(text: "…", slot: Slot.muted, noBreak: true);
+
+    const ctx = row.context;
+    const from = row.matchStart <= ctx.length ? row.matchStart : ctx.length;
+    const to = from + row.matchLen <= ctx.length
+        ? from + row.matchLen : ctx.length;
+    if (from)
+        spans ~= TextSpan(text: ctx[0 .. from]);
+    if (to > from)
+        spans ~= TextSpan(text: ctx[from .. to], slot: Slot.matched,
+            textStyle: TextStyle(bold: true));
+    if (to < ctx.length)
+        spans ~= TextSpan(text: ctx[to .. $]);
+
+    if (row.elidedRight)
+        spans ~= TextSpan(text: "…", slot: Slot.muted, noBreak: true);
 }
 
 private bool inRange(scope const(TextRange)[] ranges, size_t at)
@@ -457,4 +537,98 @@ unittest
     assert(!pv.caret, "no caret while the keys go to the preview");
     assert(!pv.promptBand && !pv.brightBar && !pv.dimBar,
         "every band rests while the preview reads");
+}
+
+@("picker.view.grepRowShowsLocationContextAndTheMatch")
+@safe
+unittest
+{
+    // A grep row is not a path row: it has to say WHERE in the document, and
+    // show the line so the reader can judge the hit without opening it.
+    import std.algorithm.searching : canFind;
+
+    PickerState!8 state;
+    state.viewRows = 8;
+    state.open();
+    RankedResult[1] ranked;
+    ranked[0].corpusIndex = 0;
+    state.publish(ranked[], 1, false);
+
+    const GrepRowText[1] rows = [GrepRowText(
+        label: "src/app.d", context: "auto x = parse(input);",
+        line: 12, column: 10, matchStart: 9, matchLen: 5)];
+
+    auto tree = pickerView(state, CandidateSnapshot.init, null, null,
+        PickerGeometry.init, PickerLayout.default_, Scope_.pickerInput,
+        rows[]);
+
+    // Gather the row's spans.
+    TextSpan[] found;
+    foreach (ref const node; tree.nodes)
+        if (node.kind == WidgetKind.rich && node.spans.length
+            && node.spans[$ - 1].text.canFind(";"))
+            found = node.spans.dup;
+    assert(found.length, "the grep row was not rendered");
+
+    string all;
+    foreach (ref const sp; found)
+        all ~= sp.text;
+    assert(all.canFind("src/app.d"), "the document must be named");
+    assert(all.canFind(":12:10"),
+        "the position must be shown, and in the form `PKQ4` accepts back");
+    assert(all.canFind("parse"), "the line must be shown");
+
+    // The match carries `Slot.matched`, exactly as a fuzzy path match does,
+    // so a reader learns one highlight convention rather than two.
+    bool matchedSpan;
+    foreach (ref const sp; found)
+        if (sp.slot == Slot.matched)
+        {
+            assert(sp.text == "parse", "the highlight must be the match");
+            matchedSpan = true;
+        }
+    assert(matchedSpan, "the match must be highlighted");
+}
+
+@("picker.view.grepRowMarksElisionAndDefinitions")
+@safe
+unittest
+{
+    // Two cues a ranking cannot supply on its own: a truncated line must say
+    // it was truncated (else it reads as complete), and a definition must be
+    // VISIBLE — a nudge nobody can see is indistinguishable from a ranking
+    // bug (`PKC14`).
+    import std.algorithm.searching : canFind;
+
+    static string render(GrepRowText row) @safe
+    {
+        PickerState!8 state;
+        state.viewRows = 8;
+        state.open();
+        RankedResult[1] ranked;
+        state.publish(ranked[], 1, false);
+        auto tree = pickerView(state, CandidateSnapshot.init, null, null,
+            PickerGeometry.init, PickerLayout.default_, Scope_.pickerInput,
+            [row]);
+        string all;
+        foreach (ref const node; tree.nodes)
+            if (node.kind == WidgetKind.rich)
+                foreach (ref const sp; node.spans)
+                    all ~= sp.text;
+        return all;
+    }
+
+    const plain = render(GrepRowText(label: "a.d", context: "x",
+        line: 1, matchStart: 0, matchLen: 1));
+    assert(!plain.canFind("…"), "a complete line claims no elision");
+    assert(!plain.canFind("▸"), "and a mention carries no marker");
+
+    const cut = render(GrepRowText(label: "a.d", context: "x",
+        line: 1, matchStart: 0, matchLen: 1,
+        elidedLeft: true, elidedRight: true));
+    assert(cut.canFind("…"), "a truncated line must say so");
+
+    const def = render(GrepRowText(label: "a.d", context: "struct Foo",
+        line: 1, matchStart: 7, matchLen: 3, definition: true));
+    assert(def.canFind("▸"), "a definition must be marked, not merely ranked");
 }
