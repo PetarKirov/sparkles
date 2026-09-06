@@ -17,7 +17,7 @@ Package module re-exporting `buffer`, `custom_float`, `lifetime`, `logger`,
 | `InlineBuffer!(T, N)`           | Never allocates; not an output range — write with `tryWrite`. Plain data, no destructor.        |
 | `UniqueBuffer!(T, N)`           | Inline until it spills, then heap; move-only, so the grow path carries no reference count.      |
 | `SharedBuffer!(T, N)`           | As `UniqueBuffer`, but copyable: copies share the heap block and clone on the next write.       |
-| `HeapBuffer!T`                  | Heap only, no inline array; size it with `reserve`.                                             |
+| `HeapBuffer!T`                  | Heap only, no inline array; `clear` keeps its block, since there is nothing to revert to.       |
 | `tryWrite(dest, fn)`            | Bounded write into storage someone else owns; returns the written slice, or `null` on overflow. |
 | `BoundedSink!T`                 | The bounded output range `tryWrite` hands to `fn`.                                              |
 | `checkToString` / `checkWriter` | `@nogc` unit-test helpers for output-range rendering assertions.                                |
