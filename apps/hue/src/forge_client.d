@@ -99,12 +99,12 @@ rather than a request.
 */
 RepoId currentRepo() @safe
 {
-    import std.process : execute;
+    import sparkles.build_primitives.git_env : runGit;
     import std.string : strip;
 
     foreach (remote; ["origin", "upstream"])
     {
-        const r = execute(["git", "remote", "get-url", remote]);
+        const r = runGit(["remote", "get-url", remote]);
         if (r.status != 0)
             continue;
         const id = repoFromRemote(r.output.strip);

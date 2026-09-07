@@ -1359,9 +1359,9 @@ unittest
 {
     import core.thread : Thread;
     import core.time : msecs;
+    import sparkles.build_primitives.git_env : runGit;
     import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import std.process : execute;
     import sparkles.syntax : LabelSet;
     import sparkles.test_runner.skip : skipTest;
     import git_status : GitStatus;
@@ -1375,15 +1375,15 @@ unittest
     scope (exit) rmdirRecurse(root);
     try
     {
-        if (execute(["git", "init", "-q", root]).status != 0)
+        if (runGit(["init", "-q", root]).status != 0)
             skipTest("git init failed");
     }
     catch (Exception)
         skipTest("git not available");
     write(buildPath(root, "tracked.d"), "int a;\n");
     write(buildPath(root, ".gitignore"), "junk/\n");
-    execute(["git", "-C", root, "add", "-A"]);
-    execute(["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t",
+    runGit(["-C", root, "add", "-A"]);
+    runGit(["-C", root, "-c", "user.email=t@t", "-c", "user.name=t",
         "commit", "-qm", "init"]);
     write(buildPath(root, "tracked.d"), "int a; int b;\n"); // modified
     write(buildPath(root, "fresh.d"), "int c;\n");          // untracked
@@ -1567,11 +1567,11 @@ unittest
     // it must CONFIRM the seeded state, not clobber it (a non-repo root
     // yields an empty map and made this test flaky).
     {
-        import std.process : execute;
+        import sparkles.build_primitives.git_env : runGit;
 
         write(buildPath(root, ".gitignore"), "build/\n");
         try
-            execute(["git", "init", "-q", root]);
+            runGit(["init", "-q", root]);
         catch (Exception)
         {
         }

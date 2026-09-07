@@ -66,7 +66,6 @@ call site.
 StageResult applyPatch(string patch, StageAction action, string workDir = null)
     @safe
 {
-    import std.process : execute;
     import std.string : strip;
 
     if (patch.length == 0)
@@ -103,6 +102,7 @@ StageResult applyPatch(string patch, StageAction action, string workDir = null)
 
 private auto run(string[] argv, string input, string workDir) @safe
 {
+    import sparkles.build_primitives.git_env : gitChildEnvironment;
     import std.process : Config, pipeProcess, Redirect, wait;
     import std.stdio : File;
 
@@ -112,8 +112,12 @@ private auto run(string[] argv, string input, string workDir) @safe
         string output;
     }
 
+    // `workDir` names the repository this patch applies to. Without the scrub
+    // an inherited `GIT_DIR` would redirect `apply --cached` — and that writes
+    // an index, so the wrong repository would be *changed*, not just read.
     auto pipes = pipeProcess(argv, Redirect.stdin | Redirect.stdout
-        | Redirect.stderrToStdout, null, Config.none, workDir);
+        | Redirect.stderrToStdout, gitChildEnvironment(), Config.newEnv,
+        workDir);
     pipes.stdin.rawWrite(input);
     pipes.stdin.close();
 
@@ -127,9 +131,9 @@ private auto run(string[] argv, string input, string workDir) @safe
 
 version (unittest)
 {
+    import sparkles.build_primitives.git_env : runGit;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import std.process : Config, execute;
 
     /// A throwaway repository with one committed file, for the tests below.
     private string makeRepo(string name, string content) @safe
@@ -139,23 +143,19 @@ version (unittest)
             rmdirRecurse(dir);
         catch (Exception) {}
         mkdirRecurse(dir);
-        foreach (argv; [["git", "init", "-q"],
-                ["git", "config", "user.email", "t@example.com"],
-                ["git", "config", "user.name", "t"]])
-            execute(argv, null, Config.none, size_t.max, dir);
+        foreach (argv; [["init", "-q"],
+                ["config", "user.email", "t@example.com"],
+                ["config", "user.name", "t"]])
+            runGit(argv, dir);
         write(buildPath(dir, "f.txt"), content);
-        execute(["git", "add", "f.txt"], null, Config.none,
-            size_t.max, dir);
-        execute(["git", "commit", "-qm", "base"], null,
-            Config.none, size_t.max, dir);
+        runGit(["add", "f.txt"], dir);
+        runGit(["commit", "-qm", "base"], dir);
         return dir;
     }
 
     private string staged(string dir) @safe
     {
-        const r = execute(["git", "diff", "--cached"], null,
-            Config.none, size_t.max, dir);
-        return r.output;
+        return runGit(["diff", "--cached"], dir).output;
     }
 }
 
@@ -279,8 +279,7 @@ version (unittest)
     // Staging everything must reproduce the working tree exactly in the
     // index — the strongest available statement that the line numbers are
     // right, since a wrong one would place text somewhere else.
-    const r = execute(["git", "show", ":f.txt"], null, Config.none,
-        size_t.max, dir);
+    const r = runGit(["show", ":f.txt"], dir);
     assert(r.status == 0);
     assert(r.output == after, "the index must match the file byte for byte");
 }
@@ -305,7 +304,6 @@ version (unittest)
     auto res = applyPatch(selectionPatch(doc, sel), StageAction.stage, dir);
     assert(!res.hasError, res.hasError ? res.error.detail : "");
 
-    const r = execute(["git", "show", ":f.txt"], null, Config.none,
-        size_t.max, dir);
+    const r = runGit(["show", ":f.txt"], dir);
     assert(r.output == after);
 }

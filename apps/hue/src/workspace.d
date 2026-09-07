@@ -2208,6 +2208,7 @@ private void refreshGitStatus(H)(ref WorkspaceTui w, ref H h, string root,
     uint gen) @system
 {
     import std.string : strip;
+    import sparkles.build_primitives.git_env : gitChildEnvList;
     import sparkles.event_horizon.live : capture;
     import sparkles.event_horizon.proc : ProcessConfig, StdioMode, StdioSpec;
     import sparkles.event_horizon.sched : currentScheduler, onScheduler, Sched;
@@ -2226,6 +2227,9 @@ private void refreshGitStatus(H)(ref WorkspaceTui w, ref H h, string root,
     ProcessConfig cfg;
     cfg.stdoutSpec = StdioSpec(StdioMode.pipe);
     cfg.stderrSpec = StdioSpec(StdioMode.nullDev);
+    // `-C root` alone does not survive an inherited `GIT_DIR`; the ring path
+    // owes the same guarantee as the thread path (`git_env`).
+    cfg.env = gitChildEnvList();
 
     bool ok;
     string top, payload;
