@@ -677,17 +677,20 @@ struct DocumentPipeline
     /// exactly (`DVM5`) instead of reverse-applying.
     Document loadGitDiff(string revspec, bool staged, string[] paths)
     {
-        import std.process : execute;
+        import sparkles.build_primitives.git_env : runGit;
         import std.string : strip;
 
-        auto argv = ["git", "diff", "--no-color", "--no-ext-diff"];
+        // No `-C`: the subject is the repository the working directory is
+        // in, which is only the same thing as an inherited `GIT_DIR` when
+        // nothing spawned us (`git_env`).
+        auto argv = ["diff", "--no-color", "--no-ext-diff"];
         if (staged)
             argv ~= "--cached";
         if (revspec.length)
             argv ~= revspec;
         if (paths.length)
             argv ~= "--" ~ paths;
-        const res = execute(argv);
+        const res = runGit(argv);
         if (res.status != 0)
             throw new Exception(text("git diff failed: ", res.output.strip));
 
@@ -754,8 +757,8 @@ struct DocumentPipeline
     private static DiffSides[] sidesFromGit(in DiffDoc dd, string revspec,
         bool staged)
     {
+        import sparkles.build_primitives.git_env : runGit;
         import std.file : exists, isFile;
-        import std.process : execute;
         import std.string : indexOf, strip;
 
         string oldSpec, newSpec;
@@ -766,7 +769,7 @@ struct DocumentPipeline
             const i = oldSpec.indexOf("...");
             const a = oldSpec[0 .. i].length ? oldSpec[0 .. i] : "HEAD";
             const b = oldSpec[i + 3 .. $].length ? oldSpec[i + 3 .. $] : "HEAD";
-            const mb = execute(["git", "merge-base", a, b]);
+            const mb = runGit(["merge-base", a, b]);
             if (mb.status != 0)
                 return new DiffSides[](dd.files.length);
             oldSpec = mb.output.strip;
@@ -777,7 +780,7 @@ struct DocumentPipeline
         string root;
         if (newSpec is null)
         {
-            const top = execute(["git", "rev-parse", "--show-toplevel"]);
+            const top = runGit(["rev-parse", "--show-toplevel"]);
             if (top.status != 0)
                 return new DiffSides[](dd.files.length);
             root = top.output.strip;
@@ -785,7 +788,7 @@ struct DocumentPipeline
 
         static string show(string spec, string path)
         {
-            const r = execute(["git", "show",
+            const r = runGit(["show",
                 spec == ":" ? ":" ~ path : spec ~ ":" ~ path]);
             return r.status == 0 ? r.output : null;
         }

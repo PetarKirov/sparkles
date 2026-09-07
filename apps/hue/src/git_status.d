@@ -212,16 +212,15 @@ private struct StatusResult
 
 private StatusResult runGitStatus(string root, uint gen)
 {
-    import std.process : execute;
+    import sparkles.build_primitives.git_env : runGit;
     import std.string : strip;
 
     try
     {
-        const top = execute(["git", "-C", root, "rev-parse",
-            "--show-toplevel"]);
+        const top = runGit(["-C", root, "rev-parse", "--show-toplevel"]);
         if (top.status != 0)
             return StatusResult(gen, false);
-        const st = execute(["git", "-C", root, "status", "--porcelain",
+        const st = runGit(["-C", root, "status", "--porcelain",
             "-z", "--ignored=matching"]);
         if (st.status != 0)
             return StatusResult(gen, false);
@@ -502,9 +501,9 @@ unittest
 {
     import core.thread : Thread;
     import core.time : msecs;
+    import sparkles.build_primitives.git_env : runGit;
     import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
-    import std.process : execute;
     import sparkles.test_runner.skip : skipTest;
 
     // A real throwaway repository (git comes with the dev shell).
@@ -515,7 +514,7 @@ unittest
     scope (exit) rmdirRecurse(root);
     try
     {
-        if (execute(["git", "init", "-q", root]).status != 0)
+        if (runGit(["init", "-q", root]).status != 0)
             skipTest("git init failed");
     }
     catch (Exception)
