@@ -171,9 +171,10 @@ struct PreviewTui
         import sparkles.ui.state : sourceOffsetAt;
 
         const bodyRows = height > 2 ? height - 2 : 1;
-        if (p.y < 1 || p.y > bodyRows || vm.rows.length == 0)
+        if (p.y < bodyTop || p.y >= bodyTop + bodyRows
+            || vm.rows.length == 0)
             return -1;
-        const line = vm.top + (p.y - 1);
+        const line = vm.top + (p.y - bodyTop);
         if (line < 0 || line >= cast(long) vm.rows.length)
             return -1;
         // Pinned-aware (see `ViewerModel.pinnedCols`): a pointer over a gutter
@@ -468,10 +469,10 @@ struct PreviewTui
         const dx = w.dx + (w.mods.shift ? w.dy : 0);
         if (dx != 0)
         {
-            const fb = vm.fenceBodyAtRow(top + (w.pos.y - 1));
+            const fb = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
             if (fb != size_t.max && vm.scrollFence(fb, dx))
                 return true;
-            const tb = vm.tableAtRow(top + (w.pos.y - 1));
+            const tb = vm.tableAtRow(top + (w.pos.y - bodyTop));
             if (tb != size_t.max && vm.scrollTable(tb, dx))
                 return true;
             vm.scrollHorizontal(dx);
@@ -481,7 +482,7 @@ struct PreviewTui
             return true; // a shifted notch never scrolls vertically
         // A vertical notch over a TALL fence or table scrolls it until its
         // edge; only then does it reach the document (the COD6/TBL8 rule).
-        const fbV = vm.fenceBodyAtRow(top + (w.pos.y - 1));
+        const fbV = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
         if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
             return true;
         // `DSN4`: a grid that owns the vertical axis owns every notch inside
@@ -492,7 +493,7 @@ struct PreviewTui
         // grid; the grid scrolls.
         if (gridOwnsVertical() && scrollGridV(w.dy))
             return true;
-        const tbV = vm.tableAtRow(top + (w.pos.y - 1));
+        const tbV = vm.tableAtRow(top + (w.pos.y - bodyTop));
         if (tbV != size_t.max && vm.scrollTableV(tbV, w.dy))
             return true;
         vm.scrollVertical(w.dy, bodyRows());
@@ -710,7 +711,8 @@ struct PreviewTui
         // Fill the pane with the theme background (the full-screen look).
         g.fillRect(cast(ushort) originX, 0, cast(ushort) width,
             cast(ushort) height, cellStyle(pageFg, true, pageBg, 0));
-        paintHeader(g);
+        if (!bareChrome)
+            paintHeader(g);
 
         paintMarkdown(g);
         paintFormatRuler(g);
@@ -873,9 +875,9 @@ struct PreviewTui
         // from `pinned` on is document — so neither pass filters anything. With
         // `hx == 0`, `pinned` is 0 and this is the single pass it was.
         if (pinned > 0)
-            paintGrid(g, pageBg, mdOps, originX, cast(int)(1 - top),
+            paintGrid(g, pageBg, mdOps, originX, cast(int)(bodyTop - top),
                 Rect(0, cast(int) top, pinned, rows));
-        paintGrid(g, pageBg, mdOps, originX - hx, cast(int)(1 - top),
+        paintGrid(g, pageBg, mdOps, originX - hx, cast(int)(bodyTop - top),
             Rect(pinned + hx, cast(int) top, contentWidth - pinned, rows));
 
         // The horizontal bar (IXB2): the last body row, when wide content
@@ -1825,7 +1827,7 @@ struct PreviewTui
         {
             barDrag(Point(e.pos.x + (vm.hOverflows()
                 ? cast(int) vm.hsb.offset : 0),
-                cast(int)(top + (e.pos.y - 1))));
+                cast(int)(top + (e.pos.y - bodyTop))));
             return true;
         }
         // The horizontal bar (IXB2): its row is the last body row; the
