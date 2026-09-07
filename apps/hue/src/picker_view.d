@@ -197,21 +197,40 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     uint[] body;
     size_t widest;
     body ~= promptRow;
+    // A rule between the query and its answers. Without it the prompt reads
+    // as the list's first row — which it is not, and which matters most
+    // exactly when the top pick is selected and two adjacent lines are both
+    // highlighted.
+    {
+        // Drawn as glyphs rather than a bordered box: a box's border is a
+        // px stroke the cell backend renders on its EDGE, which lands on
+        // the row above or below rather than in the row itself, and shows
+        // as a blank line.
+        const ruleCols = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
+        char[] rule;
+        foreach (_; 0 .. ruleCols)
+            rule ~= "─";
+        body ~= builder.add(Widget(kind: WidgetKind.text,
+            text: rule.idup, slot: Slot.border));
+    }
     // The PAINTED window, not the whole ranking (`pickerTopK` is deeper
     // than the viewport). `highlights` is window-relative; `selection` is
     // ranking-relative, so the comparison adds the scroll offset back.
     foreach (i, ranked; state.visible)
     {
         TextSpan[] spans;
-        bool pinnedIcon;
+        // How many leading spans identify the ROW rather than describe it,
+        // and so must survive a sideways scroll: a files row leads with its
+        // icon, a grep row with its icon and its definition marker.
+        size_t pinnedSpans;
         if (i < grepRows.length)
         {
             grepSpans(spans, grepRows[i]);
-            pinnedIcon = true; // the definition marker leads a grep row
+            pinnedSpans = 2;
         }
         else if (ranked.corpusIndex < snapshot.candidates.length)
         {
-            pinnedIcon = true;
+            pinnedSpans = 1;
             const candidate = snapshot.candidates[ranked.corpusIndex];
             const icon = fsIcon(candidate.path[candidate.filenameOffset .. $]);
             spans ~= TextSpan(text: icon.glyph, fg: icon.fg, hasFg: true,
@@ -239,11 +258,11 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         // strips the same way (`pinnedCols`), and for the same reason.
         if (state.hOffset)
         {
-            if (spans.length > 1 && pinnedIcon)
+            if (spans.length > pinnedSpans && pinnedSpans > 0)
             {
-                auto rest = spans[1 .. $];
+                auto rest = spans[pinnedSpans .. $];
                 trimLeading(rest, state.hOffset);
-                spans = spans[0 .. 1] ~ rest;
+                spans = spans[0 .. pinnedSpans] ~ rest;
             }
             else
                 trimLeading(spans, state.hOffset);
@@ -277,6 +296,12 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     // the one both paint and hit-testing read.
     if (widest > cast(size_t) geometry.panelCols)
     {
+        // Pushed to the panel's bottom edge rather than left where the rows
+        // happened to end: a bar floating mid-panel reads as a horizontal
+        // rule through the list, and it moves every time the row count
+        // changes. A grower before it claims the space between.
+        body ~= builder.add(Widget(kind: WidgetKind.box,
+            height: SizeSpec.grow()));
         const track = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
         body ~= scrollbar(builder, ScrollbarSpec(
             content: cast(long) widest,
@@ -333,8 +358,13 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             width: SizeSpec.grow(), height: SizeSpec.grow()))];
         const title = previewTitle.length
             ? text(" ", previewTitle, " ") : " preview ";
+        // The border and nothing more. A panel's padding is measured from
+        // its edge, so 1 clears the border stroke and 0 would paint the
+        // document OVER it; the default 2 columns then spend a cell a side
+        // on air. The files panel keeps the default — its rows are chrome
+        // and want the breathing room; a document wants the columns.
         const previewPanel = titledPanel(builder, previewBody, title,
-            geometry, focused: previewFocused);
+            geometry, focused: previewFocused, padding: Insets.all(1));
         root = builder.add(Widget(kind: WidgetKind.row,
             children: [filesPanel, previewPanel]));
         break;
@@ -355,7 +385,8 @@ resizes a panel, it clips inside one (`clipX`/`clipY`).
 the highlight border and the accent title, its sibling the muted ones.
 */
 private uint titledPanel(ref Builder builder, uint[] body,
-    const(char)[] title, in PickerGeometry geometry, bool focused = true)
+    const(char)[] title, in PickerGeometry geometry, bool focused = true,
+    Insets padding = Insets(1, 2, 1, 2))
     @safe
 {
     const content = builder.add(Widget(kind: WidgetKind.column,
@@ -363,7 +394,7 @@ private uint titledPanel(ref Builder builder, uint[] body,
         clipX: true, clipY: true));
     const boxed = builder.add(Widget(kind: WidgetKind.panel,
         children: [content],
-        padding: Insets(1, 2, 1, 2),
+        padding: padding,
         slot: Slot.surface, paintBackground: true,
         // `borderRadius` doubles as the rounded-corner flag: the window
         // rounds the stroke, the cell canvas picks `╭╮╰╯`.
@@ -427,8 +458,15 @@ line reads as a complete one.
 */
 private void grepSpans(ref TextSpan[] spans, GrepRowText row) @safe
 {
+    // The same file-type icon a files row leads with. A grep row names a
+    // document too, and reading a list of them without the type marker the
+    // rest of the app uses is a gratuitous difference.
+    const icon = fsIcon(baseNameOf(row.label));
+    spans ~= TextSpan(text: icon.glyph, fg: icon.fg, hasFg: true,
+        noBreak: true);
+
     // A definition is marked, not merely ranked: a nudge nobody can see is
-    // indistinguishable from a ranking bug.
+    // indistinguishable from a ranking bug (`PKC14`).
     spans ~= TextSpan(text: row.definition ? "▸ " : "  ",
         slot: row.definition ? Slot.chromeAccent : Slot.inherit,
         noBreak: true);
@@ -506,6 +544,16 @@ private void trimLeading(ref TextSpan[] spans, size_t cells) @safe
         break;
     }
     spans = spans[i .. $];
+}
+
+/// The last path segment of `p` — the part `fsIcon` reads an extension from.
+private const(char)[] baseNameOf(return scope const(char)[] p)
+    @safe pure nothrow @nogc
+{
+    foreach_reverse (i, c; p)
+        if (c == '/')
+            return p[i + 1 .. $];
+    return p;
 }
 
 private bool inRange(scope const(TextRange)[] ranges, size_t at)
