@@ -40,3 +40,9 @@ public import sparkles.core_cli.help_formatting :
     Sections,
     formatParagraph,
     formatSection;
+
+public import sparkles.base.assert_handler :
+    AssertHandlerKind,
+    abortAssertHandler,
+    installAssertHandler,
+    preScanAndInstallAssertHandler;

@@ -8,6 +8,7 @@ module sparkles.base;
 
 public import sparkles.base.lifetime;
 public import sparkles.base.logger;
+public import sparkles.base.assert_handler;
 public import sparkles.base.meta;
 public import sparkles.base.prettyprint;
 public import sparkles.base.buffer;

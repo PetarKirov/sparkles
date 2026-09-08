@@ -545,6 +545,9 @@ struct HueCli
     @(Option("log-level", description: "Log level: trace | info | warning | error | critical | off (default: warning)."))
     LogLevel logLevel = LogLevel.warning;
 
+    @(Option("assert-handler", description: "Assert failure behavior: default (throws AssertError) | abort (dumps core with backtrace preserved) | halt."))
+    AssertHandlerKind assertHandler = AssertHandlerKind.default_;
+
     @(Option("config", description: "Configuration file to read instead of the platform default (the CFG2 user layer)."))
     string configFile;
 
@@ -1180,4 +1183,47 @@ GuiOptions guiOptionsOf(const HueConfig eff) @safe
         (const CommandNode!Diff d) { assert(d.value.targets == ["a.d", "b.d"]); },
         (_ ) { assert(false, "Expected Diff command"); }
     );
+}
+
+@("cli.assertHandler.parsing")
+@system unittest
+{
+    {
+        const r = parseCli!HueCli(["hue", "--assert-handler", "abort"]);
+        assert(r, r.error.message);
+        assert(r.value.assertHandler == AssertHandlerKind.abort);
+    }
+    {
+        const r = parseCli!HueCli(["hue", "--assert-handler=halt"]);
+        assert(r, r.error.message);
+        assert(r.value.assertHandler == AssertHandlerKind.halt);
+    }
+    {
+        const r = parseCli!HueCli(["hue", "--assert-handler", "default"]);
+        assert(r, r.error.message);
+        assert(r.value.assertHandler == AssertHandlerKind.default_);
+    }
+    {
+        const r = parseCli!HueCli(["hue"]);
+        assert(r, r.error.message);
+        assert(r.value.assertHandler == AssertHandlerKind.default_);
+    }
+}
+
+@("cli.assertHandler.installation")
+@system unittest
+{
+    import core.exception : assertHandler;
+
+    const prev = assertHandler;
+    scope (exit) assertHandler = prev;
+
+    installAssertHandler(AssertHandlerKind.abort);
+    assert(assertHandler is &abortAssertHandler);
+
+    installAssertHandler(AssertHandlerKind.halt);
+    assert(assertHandler is &abortAssertHandler);
+
+    installAssertHandler(AssertHandlerKind.default_);
+    assert(assertHandler is null);
 }
