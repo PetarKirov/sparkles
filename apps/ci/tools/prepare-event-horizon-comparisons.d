@@ -61,6 +61,9 @@ void prepare(string name, string url, string revision, string patchName, string[
 
 void main()
 {
+    prepare("hunt", "https://github.com/huntlabs/hunt.git",
+        "5264f181088fb04cea5702ccdeab0fd5e1c8486d", "hunt-1.7.17-runtime.patch", [
+            "source/hunt/io/channel/AbstractChannel.d": "6f9a358e2cca97e170c9c1edf04bd24dce19356b"]);
     prepare("collie", "https://github.com/huntlabs/collie.git",
         "f1e58e38a2c36366766e4778d3ea655ebac6962c", "collie-0.10.16-compiler.patch", [
             "source/collie/bootstrap/client.d": "fc98ab9c638d3737c799155fbf2c8b6b959b56e1",

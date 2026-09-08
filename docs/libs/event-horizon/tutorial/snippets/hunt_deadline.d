@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "hunt_deadline"
     dependency "hunt-net" version="0.7.1"
+    dependency "hunt" path=".deps/hunt"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }

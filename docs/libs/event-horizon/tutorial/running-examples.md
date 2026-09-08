@@ -47,16 +47,18 @@ package recipe and changes that resolution. No line-sliced imports are used.
 | Collie        | `f1e58e38a2c36366766e4778d3ea655ebac6962c` (0.10.16) | Isolated compatibility checkout; low-level event examples use its Kiss engine. |
 | Kiss          | `6d07c263c2b9bdec493996b7f4cedb95b5812271` (0.4.9)   | Explicit transitive override for Collie, prepared below.                       |
 | Hunt-net      | 0.7.1                                                | Hunt Task/queue adapters are not native structured supervision.                |
+| Hunt          | `5264f181088fb04cea5702ccdeab0fd5e1c8486d` (1.7.17)  | Explicit transitive override for Hunt-net, with the flag-array bounds fix.     |
 | event-horizon | This Sparkles checkout                               | Requires usable Linux io_uring; no silent fallback or skip.                    |
 
-The preparation command clones Collie and Kiss into the ignored
+The preparation command clones Collie, Kiss, and Hunt into the ignored
 `snippets/.deps/` directory and applies checked-in patches. It does **not** edit
 registered DUB packages or the source checkouts used for research. Collie's patch
 parenthesizes assignment expressions and adds a missing timer import. Kiss's
 patch sizes the flag array to include index 16 (`ETMode`), fixes an eight-byte
 timerfd read into a four-byte variable, closes its
 wakeup channel during selector disposal, and avoids allocating a log message
-from GC finalization. These are patched baselines, not claims that the original
+from GC finalization. Hunt's patch likewise includes flag index 16 in its array.
+These are patched baselines, not claims that the original
 releases pass unchanged. Re-running preparation checks the pinned revisions.
 
 Hunt's standalone fixtures also stop and join its startup DateTime daemon before

@@ -2,14 +2,16 @@
 /+ dub.sdl:
     name "hunt_tcp_echo"
     dependency "hunt-net" version="0.7.1"
+    dependency "hunt" path=".deps/hunt"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
     platforms "linux"
 +/
 import core.thread : Thread;
+import core.time : seconds;
 import core.sync.semaphore : Semaphore;
-import std.socket : TcpSocket, InternetAddress;
+import std.socket : TcpSocket, InternetAddress, SocketOptionLevel, SocketOption;
 import std.stdio : writeln;
 import hunt.net.Connection : Connection, NetConnectionHandler;
 import hunt.net.NetClientOptions : NetClientOptions;
@@ -41,10 +43,13 @@ void main()
     scope(exit) listener.close();
     listener.bind(new InternetAddress("127.0.0.1", 0));
     listener.listen(1);
+    listener.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, 10.seconds);
     const port = (cast(InternetAddress) listener.localAddress).port;
     auto server = new Thread({
         auto socket = listener.accept();
         scope(exit) socket.close();
+        socket.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, 10.seconds);
+        socket.setOption(SocketOptionLevel.SOCKET, SocketOption.SNDTIMEO, 10.seconds);
         char[5] bytes;
         size_t received;
         while (received < bytes.length)
@@ -63,7 +68,7 @@ void main()
         }
     });
     server.start();
-    scope(exit) server.join();
+    scope(exit) server.join(false);
 
     auto done = new Semaphore(0);
     string received;
@@ -104,14 +109,17 @@ void main()
     assert(loop.register(start));
     start.trigger();
     auto loopThread = new Thread({
+        scope(exit) done.notify();
         loop.run(10);
     });
     loopThread.start();
-    done.wait();
+    const completed = done.wait(15.seconds);
     loop.stop();
     // stop() may have been initiated on the loop itself and handed to a worker.
     // Join the actual loop thread even if a second stop() returns early.
     loopThread.join();
+    assert(completed, "Hunt event loop did not finish within the fixture deadline");
+    server.join();
     assert(received == "hello");
     writeln("echoed: ", received);
 }

@@ -1,0 +1,11 @@
+diff --git a/source/hunt/io/channel/AbstractChannel.d b/source/hunt/io/channel/AbstractChannel.d
+--- a/source/hunt/io/channel/AbstractChannel.d
++++ b/source/hunt/io/channel/AbstractChannel.d
+@@ -27,6 +27,5 @@ abstract class AbstractChannel : Channel {
+     this(Selector loop, ChannelType type) {
+         this._inLoop = loop;
+         _type = type;
+-        _flags = BitArray([false, false, false, false, false, false, false,
+-                false, false, false, false, false, false, false, false, false]);
++        _flags.length = ChannelFlag.max + 1;
+     }
