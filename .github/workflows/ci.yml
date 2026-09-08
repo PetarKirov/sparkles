@@ -105,7 +105,9 @@ jobs:
     # 40 since the runner runs every package twice (`-t 1`, then `-t N`) and
     # `base` carries the format-parameterized float sweeps: macOS measured 25m
     # before those and crossed 30m with them.
-    timeout-minutes: 40
+    # The x86_64 LDC leg also runs the complete X11/Wayland demo sweep. It
+    # exceeded 40m during those demos on a cold run; allow cleanup headroom too.
+    timeout-minutes: ${{ matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2' && 55 || 40 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
