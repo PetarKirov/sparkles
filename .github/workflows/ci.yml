@@ -551,7 +551,8 @@ jobs:
       # say whether a commit on the branch builds.
       - name: Verify markdown runnable examples
         run: |
-          dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
+          # The pre-commit shell exposes the packaged verifier, not DUB.
+          nix develop .#ci --command dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
           nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 
       - name: Save lychee cache
