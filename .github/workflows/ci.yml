@@ -552,6 +552,11 @@ jobs:
       # path too, because a dispatched run of this workflow exists precisely to
       # say whether a commit on the branch builds.
       - name: Verify markdown runnable examples
+        # A transient load spike after Nix setup selected one worker for all
+        # 272 examples and exhausted the 35m job budget. Bound fan-out to two
+        # on this four-core runner, retaining headroom for compiler memory.
+        env:
+          SPARKLES_CI_JOBS: '2'
         run: |
           # The pre-commit shell exposes the packaged verifier, not DUB.
           nix develop .#ci --command dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
