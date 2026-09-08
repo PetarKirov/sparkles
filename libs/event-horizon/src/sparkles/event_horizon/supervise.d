@@ -3420,16 +3420,24 @@ unittest
     auto r = s.run(() {
         SupervisedProcessConfig cfg;
         cfg.sampleInterval = 5.msecs;
-        // Long enough that the sampler cannot miss a worker under load.
-        const worker = `awk 'BEGIN{for(i=0;i<30000000;i++) x+=i}'`;
+        // Compare equal CPU budgets, not equal iteration counts: separate
+        // fixed-work runs can consume different CPU time on a shared runner.
+        // Keep the worker alive briefly after burning its budget so the tree
+        // sampler can observe its final counters before the shell reaps it.
+        version (linux)
+            const worker = `awk 'BEGIN{do {for(i=0;i<10000;i++) x+=i; if ((getline stat < "/proc/self/stat") <= 0) exit 1; close("/proc/self/stat"); split(stat,f," "); ticks=f[14]+f[15]} while(ticks<25); system("sleep 0.1")}'`;
+        else
+            const worker = `awk 'BEGIN{for(i=0;i<30000000;i++) x+=i}'`;
 
         // The first fork waits for the cgroup migration (SPEC §13.7), so in
         // the cgroup tiers `cpu.stat` covers both workers whatever the
         // sampler's latency under load.
         auto one = supervise(s, ["sh", "-c", "sleep 0.05; " ~ worker], cfg);
         assert(one.hasValue, one.hasError ? one.error.context : "");
-        auto two = supervise(s, ["sh", "-c", "sleep 0.05; " ~ worker ~ "; sleep 0.05; " ~ worker], cfg);
+        assert(one.value.status.ok, "single CPU worker completed its budget");
+        auto two = supervise(s, ["sh", "-c", "sleep 0.05; " ~ worker ~ " && sleep 0.05 && " ~ worker], cfg);
         assert(two.hasValue, two.hasError ? two.error.context : "");
+        assert(two.value.status.ok, "both CPU workers completed their budgets");
 
         version (linux)
         {
