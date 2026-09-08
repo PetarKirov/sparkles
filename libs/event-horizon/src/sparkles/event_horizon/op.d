@@ -320,6 +320,15 @@ struct Completion
 /// function-pointer shape is the `-betterC`/C-ABI floor).
 alias OpCallback = void function(void* ctx, ref Completion done) nothrow @nogc;
 
+/// Generates the C-ABI trampoline for a handler taking `(ref State, ref
+/// Completion)`. The handler must be nothrow and @nogc. This only removes casts
+/// from callers: the state must remain address-stable until terminal completion
+/// (or successful detach), including after a cancellation request.
+void contextCallback(alias handler, State)(void* context, ref Completion done) nothrow @nogc
+{
+    handler(*cast(State*) context, done);
+}
+
 // ── the op-slot slab (SPEC §4.2–§4.3) ───────────────────────────────────────
 
 /// Slot lifetime states.

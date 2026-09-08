@@ -101,6 +101,16 @@ if (isFiberExecutor!X)
         ++_childCount;
     }
 
+    /// Joins a handle forked by this scope using its owning executor. The handle
+    /// must still occupy its original slot. A foreign scope's handle is a
+    /// programming error, not a request to switch schedulers.
+    Outcome!(T, E) join(T)(ref JoinHandle!(T, E) handle)
+    {
+        assert((() @trusted => handle._scopeCtx is cast(void*) &this)(),
+            "join handle belongs to another scope");
+        return handle.join(*_exec);
+    }
+
     /// Requests cancellation of the subtree — idempotent, first reason
     /// wins; never blocks (children observe at checkpoints or via their
     /// in-flight cancel functions; the join collects them).

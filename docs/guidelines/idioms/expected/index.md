@@ -493,6 +493,16 @@ pub fn parse_err<T>(code: ParseErrorCode, offset: usize) -> ParseResult<T> {
 
 ## Cheat Sheet: D `Expected` vs Rust `Result`
 
+> [!NOTE]
+> With Expected 0.4.1, `map` selects `Abort` by default rather than preserving a
+> subsystem's custom hook. For an event-horizon `IoResult`, use
+> `result.map!(transform, NoGcHook)` to retain that policy. Mapping a non-void
+> value to `void` does not compile in this version; use
+> `result.andThen!((value) { /* work */ return ioOk(); })` instead. `andThen`
+> requires the returned result to have the same error type and hook. These
+> details matter when composing APIs with checked access and disabled default
+> construction; they do not require exception-based unwrapping.
+
 | Operation                                                                        | D `Expected!(T, E)`                                                                                         | Rust `Result<T, E>`                                                                                    |
 | :------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
 | [Creation (Success)](#_1-basic-usage-success-failure-construction)               | [`ok(value)`](https://tchaloupka.github.io/expected/expected.ok.html) or `ok!(ErrorType)(value)`            | [`Ok(value)`](https://doc.rust-lang.org/std/result/enum.Result.html#variant.Ok)                        |

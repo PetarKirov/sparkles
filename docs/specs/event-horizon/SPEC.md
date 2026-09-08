@@ -2400,3 +2400,33 @@ fixed-size slots, and a **serial** zygote — the shipping client (hue's
 format preview) is single-flight by design. Parallel grandchild fan-out
 (per-process globals mean there is no lock to contend) is recorded
 follow-up, not built.
+
+## Additive tutorial ergonomics
+
+The direct-style core remains available unchanged. These conveniences centralize
+repeated application code without changing the raw completion ownership model:
+
+| Surface                                   | Contract                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LoopGroup.runResult`                     | A body returns `IoResult!T`; the caller receives `Outcome!T`. Body failure enters the scope policy before children join. First recorded failure wins; a latched body interruption remains an interruption, including a swallowed ECANCELED. Escaped defects still unwind/join and propagate. |
+| `runApplication`                          | Owns a pinned single-topology group in its frame, checks startup and destroys before returning. Returns an outcome; never prints or terminates the process.                                                                                                                                  |
+| `sendAll`, `writeAll`, `readExactly`      | Operate on `buf[]`, not spare capacity. Return ownership and the completed prefix count on every path. Premature EOF/zero progress is EIO; positioned-range overflow fails before submission. Empty requests do not submit.                                                                  |
+| `readToEnd`, `readText`                   | Require an explicit byte bound. Read-to-end allocates owned storage; text additionally allocates a GC string, with no Unicode validation. Errors discard accumulated data; detecting an oversized input consumes one byte beyond the bound.                                                  |
+| `localAddress`, `port`                    | POSIX socket query and IPv4/IPv6 port extraction; usable without a scheduler. Invalid/truncated families fail explicitly.                                                                                                                                                                    |
+| `env.fs` / `RingFs`                       | Present only where the backend implements the ring file operations. Typed modes preserve the raw flags API. Opens are close-on-exec; created files request mode 0600.                                                                                                                        |
+| `RingFs.withFile`                         | Lexical owner lends a handle to a body returning an I/O result. Body must join users before return and must not retain or close a copy. Normal close runs under protection; exceptional unwind has a synchronous fallback. Body error wins over close error.                                 |
+| `withSocket`                              | Linux lexical socket owner with checked, non-retried close; same borrowed-body discipline. No cleanup slot or asynchronous destructor.                                                                                                                                                       |
+| Typed `submit`, `submitAfter`, `submitAt` | Generate a function-pointer trampoline for `(ref State, ref Completion)`. Handler remains nothrow/@nogc. Context remains caller-owned and pinned through terminal completion or detach; cancel submission alone does not discharge its lifetime.                                             |
+| `scope.join(handle)`                      | Uses the scope's executor and rejects handles belonging to another scope. The handle remains caller-owned and pinned.                                                                                                                                                                        |
+| Inferred `effectOf!fn()`                  | Infers value/error types for concretely typed bodies, reusing the existing interpreter and `zipPar`. Generic bodies retain the explicit type form.                                                                                                                                           |
+
+Design decisions: retain copyable low-level handle views, address-pinned join
+slots and explicit raw callback registrations. A general managed callback owner
+would add storage and dispatch-time destruction rules; typed-context prototypes
+do not justify that additional layer yet. No new task DSL or hidden fiber wrapper
+is introduced. Lexical resource helpers do not make escaping borrowed views safe.
+
+Expected 0.4.1 needs `map!(fn, NoGcHook)` when preserving EH's custom hook. For
+a value-to-void transformation, use `andThen` returning `ioOk()`; this version's
+`map` cannot instantiate that transformation. Ordinary failures are not defects
+and are not replaced by throwing unwraps or fallback success values.

@@ -116,9 +116,53 @@ struct LoopGroup
     }
 
     /**
+    Runs a fallible root without nesting `IoResult` inside `Outcome`.
+    A returned I/O error is recorded through the scope's normal failure policy
+    before joining children. The scope's first cause wins; later failures are
+    counted as suppressed. Cancellation and escaped defects retain the same
+    semantics as `run`. No exception-based unwrap is involved.
+    */
+    auto runResult(F)(scope F main)
+    {
+        import core.stdc.errno : ECANCELED;
+        import std.traits : ReturnType, TemplateArgsOf;
+
+        alias T = TemplateArgsOf!(ReturnType!F)[0];
+        static assert(is(ReturnType!F == IoResult!T),
+            "runResult requires a body returning IoResult!T");
+        static if (!is(T == void))
+            T value;
+        auto result = run((ref RootScope root, ref Env env) {
+            auto body = main(root, env);
+            // A cancelled body may return ECANCELED or even swallow it. Keep
+            // the scope interruption channel rather than manufacturing an I/O
+            // failure from that checkpoint. An already recorded scope failure
+            // still wins under the existing first-cause policy.
+            auto context = _sched.currentContext();
+            if (!root._failed && context.interrupted)
+                root.fail(Cause!IoError.fromInterrupt(context.pendingInterrupt));
+            if (body.hasError && !(context.interrupted
+                && body.error.errnoValue == ECANCELED))
+                root.fail(Cause!IoError.fromFailure(body.error));
+            else if (!body.hasError)
+            {
+                static if (!is(T == void))
+                    value = move(body.value);
+            }
+        });
+        if (result.hasError)
+            return outcomeErr!(T, IoError)(result.error);
+        static if (is(T == void))
+            return outcomeOk!IoError();
+        else
+            return outcomeOk!IoError(move(value));
+    }
+
+    /**
     Runs `main` as the root fiber inside the root scope, handing it the live
     capability row. All authority originates here. Blocks the calling thread
-    until the root scope joins; the group is then shut down.
+    until the root scope joins. The group remains available until explicit
+    shutdown or destruction.
     */
     Outcome!T run(T)(scope T delegate(ref RootScope root, ref Env env) main)
     {
@@ -325,6 +369,101 @@ unittest
     });
     assert(!outcome.hasError);
     assert(verified);
+}
+
+/**
+One-shot, single-scheduler application boundary for a fallible root. Startup
+errors use the ordinary failure channel. The runtime stays pinned in this frame
+and is destroyed before returning; this function never prints or exits.
+Use an explicit `LoopGroup` for other topologies or repeated root runs.
+*/
+auto runApplication(F)(scope F main)
+{
+    import std.traits : ReturnType, TemplateArgsOf;
+
+    alias T = TemplateArgsOf!(ReturnType!F)[0];
+    static assert(is(ReturnType!F == IoResult!T),
+        "runApplication requires a body returning IoResult!T");
+    LoopGroup group;
+    auto started = LoopGroup.start(group);
+    if (started.hasError)
+        return outcomeErr!(T, IoError)(Cause!IoError.fromFailure(started.error));
+    try return group.runResult(main);
+    catch (Throwable error)
+    {
+        group.shutdown();
+        throw error;
+    }
+}
+
+@("group.runResult.valuesAndFailures") @system unittest
+{
+    import core.stdc.errno : EIO;
+    import sparkles.base.buffer : UniqueBuffer;
+
+    LoopGroup group;
+    groupOrSkip(group);
+    auto value = group.runResult((ref RootScope root, ref Env env) => ioOk(42));
+    assert(value.value == 42);
+    auto empty = group.runResult((ref RootScope root, ref Env env) => ioOk());
+    assert(!empty.hasError);
+    auto owned = group.runResult((ref RootScope root, ref Env env) {
+        UniqueBuffer!(ubyte, 8) buf;
+        buf ~= cast(ubyte) 7;
+        return ioOk(move(buf));
+    });
+    assert(owned.value[] == [7]);
+    auto failure = group.runResult((ref RootScope root, ref Env env) => ioErr!int(EIO, OpKind.none));
+    assert(failure.error.kind == Cause!IoError.Kind.fail);
+    assert(failure.error.failure.errnoValue == EIO);
+}
+
+@("group.runResult.interruptionAndDefect") @system unittest
+{
+    import core.stdc.errno : ECANCELED;
+
+    LoopGroup group;
+    groupOrSkip(group);
+    auto cancelled = group.runResult((ref RootScope root, ref Env env) {
+        root.cancel(Interrupt(InterruptKind.shutdown));
+        return ioErr!void(ECANCELED, OpKind.timeout);
+    });
+    assert(cancelled.error.kind == Cause!IoError.Kind.interrupt);
+    assert(cancelled.error.interrupt.kind == InterruptKind.shutdown);
+
+    // A fresh group avoids depending on reuse after a latched outer interrupt.
+    LoopGroup other;
+    groupOrSkip(other);
+    bool cleaned;
+    auto defect = new Exception("root defect");
+    try
+    {
+        other.runResult((ref RootScope root, ref Env env) {
+            root.onExit(() nothrow { cleaned = true; });
+            throw defect;
+            return ioOk();
+        });
+        assert(false, "defects must escape");
+    }
+    catch (Exception error) { assert(error is defect); }
+    assert(cleaned);
+}
+
+@("group.runResult.firstCauseAndCleanup") @system unittest
+{
+    import core.stdc.errno : EIO, EINVAL;
+
+    LoopGroup group;
+    groupOrSkip(group);
+    bool cleaned;
+    auto result = group.runResult((ref RootScope root, ref Env env) {
+        root.onExit(() nothrow { cleaned = true; });
+        root.fail(Cause!IoError.fromFailure(IoError(EINVAL)));
+        return ioErr!int(EIO, OpKind.none);
+    });
+    assert(cleaned);
+    assert(result.error.failure.errnoValue == EINVAL);
+    assert(result.error.suppressedCount == 1);
 }
 
 version (unittest)

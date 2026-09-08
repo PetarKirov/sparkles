@@ -135,6 +135,22 @@ template effect(alias fn)
 /// Lifts a body with explicit result types (the deduction-free form).
 auto effectOf(alias fn, T, E = IoError)() => Lifted!(fn, T, E)();
 
+/// Infers value/error types for a concretely typed direct-style function.
+/// Generic bodies whose scope/context types are not known yet continue to use
+/// `effectOf!(fn, T, E)`. This reuses the existing interpreter and combinators.
+auto effectOf(alias fn)()
+{
+    import expected : Expected;
+    import std.traits : ReturnType, TemplateArgsOf;
+
+    alias R = ReturnType!fn;
+    alias T = TemplateArgsOf!R[0];
+    alias E = TemplateArgsOf!R[1];
+    static assert(is(R == Expected!(T, E, NoGcHook)),
+        "effectOf requires a body returning Expected!(T, E, NoGcHook)");
+    return Lifted!(fn, T, E)();
+}
+
 /// `map` combinator.
 auto map(alias f, Eff)(Eff e) if (isEffect!Eff) => Mapped!(Eff, f)(e);
 
@@ -386,6 +402,29 @@ unittest
         })(s);
     });
     assert(!r.hasError);
+}
+
+@("effect.inferredLift.reusesZipPar") @system unittest
+{
+    import sparkles.event_horizon.scope_ : Scope;
+    struct Context {}
+    static IoResult!int seven(ref Scope!Sched sc, ref Context ctx) => ioOk(7);
+    Sched sched;
+    schedOrSkip(sched);
+    scope(exit) sched.destroy();
+    auto ran = sched.run(() {
+        auto outcome = withScope!((ref sc) {
+            Context ctx;
+            auto effect = zipPar(effectOf!seven(), succeed(5));
+            auto result = run(effect, sc, ctx);
+            assert(result.value[0] + result.value[1] == 12);
+            JoinHandle!int handle;
+            sc.fork(handle, () => ioOk(3));
+            assert(sc.join(handle).value == 3);
+        })(sched);
+        assert(!outcome.hasError);
+    });
+    assert(!ran.hasError);
 }
 
 @("effect.zipPar.runsBothAndPairs")
