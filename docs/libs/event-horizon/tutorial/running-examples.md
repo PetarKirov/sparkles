@@ -53,7 +53,8 @@ The preparation command clones Collie and Kiss into the ignored
 `snippets/.deps/` directory and applies checked-in patches. It does **not** edit
 registered DUB packages or the source checkouts used for research. Collie's patch
 parenthesizes assignment expressions and adds a missing timer import. Kiss's
-patch fixes an eight-byte timerfd read into a four-byte variable, closes its
+patch sizes the flag array to include index 16 (`ETMode`), fixes an eight-byte
+timerfd read into a four-byte variable, closes its
 wakeup channel during selector disposal, and avoids allocating a log message
 from GC finalization. These are patched baselines, not claims that the original
 releases pass unchanged. Re-running preparation checks the pinned revisions.
