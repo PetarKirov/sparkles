@@ -67,7 +67,7 @@ void main()
             "source/collie/channel/pipeline.d": "fb60d0f0a5330268681ff266652bae0e439e0da5"]);
     prepare("kiss", "https://github.com/huntlabs/kiss.git",
         "6d07c263c2b9bdec493996b7f4cedb95b5812271", "kiss-0.4.9-runtime.patch", [
-            "source/kiss/event/core.d": "7d499050f29137270fcfadf2a590cc50433c24d7",
+            "source/kiss/event/core.d": "ad73e5a0a67eaf5f8eeda56b932ed5045ed6fea9",
             "source/kiss/event/selector/epoll.d": "c03ecf14f49d4beb5f017c2d65fa8d3dbab45a99",
             "source/kiss/event/timer/epoll.d": "2933a93964bba1638acc742021aed160366a2b71"]);
 }
