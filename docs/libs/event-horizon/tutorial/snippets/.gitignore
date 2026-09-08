@@ -1,4 +1,8 @@
 # Outputs of dub run --single; keep source snippets tracked.
+/*_*
+!/*.d
+!/*.mjs
+/.deps/
 /eh_channel
 /eh_concurrency
 /eh_deadline

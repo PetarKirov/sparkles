@@ -1,0 +1,46 @@
+diff --git a/source/kiss/event/selector/epoll.d b/source/kiss/event/selector/epoll.d
+--- a/source/kiss/event/selector/epoll.d
++++ b/source/kiss/event/selector/epoll.d
+@@ -56,7 +56,7 @@ class AbstractSelector : Selector
+         if(isDisposed)
+             return;
+         isDisposed = true;
+-        deregister(_event);
++        _event.close();
+         core.sys.posix.unistd.close(_epollFD);
+     }
+     private bool isDisposed = false;
+@@ -110,7 +110,7 @@ class AbstractSelector : Selector
+
+         if ((epoll_ctl(_epollFD, EPOLL_CTL_DEL, fd, null)) != 0)
+         {
+-            errorf("unregister failed, watcher.handle=%d", watcher.handle);
++            // Can run during GC finalization; logging here must not allocate.
+             return false;
+         }
+         // TODO: check this
+diff --git a/source/kiss/event/timer/epoll.d b/source/kiss/event/timer/epoll.d
+--- a/source/kiss/event/timer/epoll.d
++++ b/source/kiss/event/timer/epoll.d
+@@ -70,8 +70,8 @@ class AbstractTimer : TimerChannel
+     bool readTimer(scope ReadCallBack read)
+     {
+         this.clearError();
+-        uint value;
++        ulong value;
+         core.sys.posix.unistd.read(this.handle, &value, 8);
+-        this._readBuffer.data = value;
++        this._readBuffer.data = cast(uint) value;
+         if (read)
+             read(this._readBuffer);
+diff --git a/source/kiss/event/core.d b/source/kiss/event/core.d
+--- a/source/kiss/event/core.d
++++ b/source/kiss/event/core.d
+@@ -174,6 +174,6 @@ abstract class AbstractChannel : Channel
+         }
+         else
+         {
+-            debug warningf("The watcher(fd=%d) has already been closed", this.handle);
++            // Idempotent close may be called by a GC finalizer: do not allocate.
+         }
+     }

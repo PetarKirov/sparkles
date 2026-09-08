@@ -146,6 +146,7 @@ export default withMermaid(
         });
       },
       languageAlias: {
+        mjs: 'javascript',
         sdl: 'd',
         eff: 'ocaml',
         frank: 'ocaml',

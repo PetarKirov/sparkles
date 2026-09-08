@@ -50,6 +50,7 @@
           pkgs.ldc
           pkgs.lld
           pkgs.nodejs
+          pkgs.coreutils
           pkgs.curl.out
           pkgs.tree-sitter
         ];
@@ -65,6 +66,7 @@
               pkgs.lld
               pkgs.nodejs
               pkgs.dub
+              pkgs.coreutils
               pkgs.gitMinimal
             ];
             # Render `--set NAME VALUE` triples for wrapProgram from the toolchain

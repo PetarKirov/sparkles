@@ -187,7 +187,11 @@ jobs:
 
       - name: Build and run examples
         if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
-        run: ci --example-files --fail-fast
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
+          fi
+          ci --example-files --fail-fast
 
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
       # dub packages (ImportC), not single-file, so they are outside `ci
@@ -547,6 +551,7 @@ jobs:
       # say whether a commit on the branch builds.
       - name: Verify markdown runnable examples
         run: |
+          dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
           nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 
       - name: Save lychee cache
