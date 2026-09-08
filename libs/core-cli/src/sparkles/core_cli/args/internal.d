@@ -173,6 +173,15 @@ int runCli(Cli)(
     scope int delegate(ref ParsedCommand!Cli) beforeRun = null,
 )
 {
+    import sparkles.base.assert_handler : AssertHandlerKind, installAssertHandler,
+        preScanAndInstallAssertHandler;
+
+    static if (__traits(hasMember, Cli, "assertHandler")
+        && is(typeof(Cli.init.assertHandler) : AssertHandlerKind))
+    {
+        preScanAndInstallAssertHandler(argv);
+    }
+
     auto parsed = parseCli!Cli(argv);
     if (!parsed)
         return reportCliError(parsed.error);
@@ -182,6 +191,8 @@ int runCli(Cli)(
 
     static if (is(typeof(value.logLevel) : LogLevel))
         initLogger(value.logLevel);
+    static if (is(typeof(value.assertHandler) : AssertHandlerKind))
+        installAssertHandler(value.assertHandler);
     if (beforeRun !is null)
     {
         const rc = beforeRun(value);
@@ -1027,12 +1038,28 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
 
         alias names = wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T));
         static foreach (i, m; __traits(allMembers, T))
+        {
             if (value == names[i])
                 return ok(__traits(getMember, T, m));
+            static if (m.length > 1 && m[$ - 1] == '_')
+            {
+                if (value == names[i][0 .. $ - 1])
+                    return ok(__traits(getMember, T, m));
+            }
+        }
+        string[] displayNames = names.dup;
+        static foreach (i, m; __traits(allMembers, T))
+        {
+            static if (m.length > 1 && m[$ - 1] == '_')
+            {
+                if (displayNames[i] == m)
+                    displayNames[i] = m[0 .. $ - 1];
+            }
+        }
         return error!T(CliError(
             kind: CliError.Kind.parse,
             message: "Invalid value `" ~ value ~ "`; expected one of: "
-                ~ names.join(", "),
+                ~ displayNames.join(", "),
         ));
     }
     else
@@ -1885,6 +1912,37 @@ unittest
     assert(runCli!Silent(["silent"]) == 3);
     assert(sharedCoreLog is afterLogged, "no logLevel field: do not re-init");
 }
+
+@("args.runCli.installsAssertHandlerWhenPresent")
+@system
+unittest
+{
+    import sparkles.base.assert_handler : AssertHandlerKind, abortAssertHandler;
+    import core.exception : assertHandler;
+
+    @(Command("app"))
+    static struct App
+    {
+        @(Option("assert-handler"))
+        AssertHandlerKind assertHandler = AssertHandlerKind.default_;
+
+        int run() => 42;
+    }
+
+    const prev = assertHandler;
+    scope (exit) assertHandler = prev;
+
+    assertHandler = null;
+    assert(runCli!App(["app", "--assert-handler", "abort"]) == 42);
+    assert(assertHandler is &abortAssertHandler);
+
+    assert(runCli!App(["app", "--assert-handler", "default"]) == 42);
+    assert(assertHandler is null);
+
+    assert(runCli!App(["app", "--assert-handler=halt"]) == 42);
+    assert(assertHandler is &abortAssertHandler);
+}
+
 
 @("args.parseCli.shortOptionBundleSplitsOnlyWhenAllCharsAreKnownFlags")
 @system

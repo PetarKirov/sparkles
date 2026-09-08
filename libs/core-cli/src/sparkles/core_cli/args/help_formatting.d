@@ -483,7 +483,16 @@ private string[] optionValues(T)(Option optionInfo)
         // `@WireName` renames, not the D identifier.
         import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
 
-        return wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T)).dup;
+        auto vals = wireNames!(AnyFormat, T, resolveCaseStyle!(AnyFormat, T)).dup;
+        static foreach (i, m; __traits(allMembers, T))
+        {
+            static if (m.length > 1 && m[$ - 1] == '_')
+            {
+                if (vals[i] == m)
+                    vals[i] = m[0 .. $ - 1];
+            }
+        }
+        return vals;
     }
     else static if (is(T == bool))
         return ["true, yes  (or bare flag)", "false, no"];
