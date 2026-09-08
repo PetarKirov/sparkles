@@ -23,7 +23,7 @@ import sparkles.event_horizon.cause : Cause;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
 import sparkles.event_horizon.net : SockAddr;
-import sparkles.event_horizon.op : OpWaitid;
+import sparkles.event_horizon.op : OpWaitid, OpOpenAt;
 import sparkles.event_horizon.errors : IoError;
 import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus,
     ProcessConfig, StdioMode, StdioSpec;
@@ -1158,7 +1158,13 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
 
     /// The default live capability row handed to the root fiber (SPEC §11).
-    alias Env = CtxOf!(RingClock, RingNet, RingProc);
+    static if (canSubmitOp!(DefaultBackend, OpOpenAt))
+    {
+        import sparkles.event_horizon.fs : RingFs;
+        alias Env = CtxOf!(RingClock, RingNet, RingProc, RingFs);
+    }
+    else
+        alias Env = CtxOf!(RingClock, RingNet, RingProc);
 }
 else
 {
@@ -1173,7 +1179,12 @@ else
 Env liveEnv(Sched* sched) @safe pure nothrow @nogc
 {
     static if (canSubmitOp!(DefaultBackend, OpWaitid))
-        return Env(RingClock(sched), RingNet(sched), RingProc(sched));
+    {
+        static if (canSubmitOp!(DefaultBackend, OpOpenAt))
+            return Env(RingClock(sched), RingFs(sched), RingNet(sched), RingProc(sched));
+        else
+            return Env(RingClock(sched), RingNet(sched), RingProc(sched));
+    }
     else
         return Env(RingClock(sched), RingNet(sched));
 }

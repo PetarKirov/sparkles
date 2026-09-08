@@ -118,6 +118,21 @@ IoResult!T ioErr(T)(int errnoValue, OpKind op,
 IoResult!uint fromRes(int res, OpKind op) @safe pure nothrow @nogc
     => res < 0 ? ioErr!uint(-res, op) : ioOk(cast(uint) res);
 
+@("errors.expected.compositionPreservesHook") @safe unittest
+{
+    import expected : map, andThen, mapOrElse;
+
+    auto doubled = ioOk(21).map!(x => x * 2, NoGcHook);
+    static assert(is(typeof(doubled) == IoResult!int));
+    assert(doubled.value == 42);
+    auto discarded = doubled.andThen!((int x) => ioOk());
+    static assert(is(typeof(discarded) == IoResult!void));
+    assert(!discarded.hasError);
+    auto failed = ioErr!int(5, OpKind.read).andThen!((int x) => ioOk());
+    assert(failed.hasError && failed.error.errnoValue == 5);
+    assert(doubled.mapOrElse!(x => x, e => -1) == 42);
+}
+
 version (unittest)
 {
     /// The `skipTest` reason for an `IoError` that degrades a test to a SKIP.

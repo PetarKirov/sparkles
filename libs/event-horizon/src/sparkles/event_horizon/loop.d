@@ -243,6 +243,13 @@ if (isCompletionBackend!Backend)
         return ioOk(OpHandle(token));
     }
 
+    /// Typed-context form of `submit`. The caller must keep `state` pinned and
+    /// alive until terminal completion or detach. Deliberately not @safe:
+    /// retaining its address cannot be checked by DIP1000.
+    IoResult!OpHandle submit(alias handler, Op, State)(Op op, ref State state)
+    if (isOpDesc!Op && canSubmitOp!(Backend, Op))
+        => submit(move(op), &contextCallback!(handler, State), cast(void*) &state);
+
     // Timers exist only when the backend can lower `OpTimeout` (io_uring's
     // in-ring TIMEOUT, kqueue's EVFILT_TIMER); a backend without them (the
     // current IOCP data path) simply doesn't expose the timer API.
@@ -257,12 +264,20 @@ if (isCompletionBackend!Backend)
             return submit(OpTimeout(KernelTimespec(secs, nsecs)), cb, ctx);
         }
 
+        /// Typed-context timer; same lifetime requirement as typed `submit`.
+        IoResult!OpHandle submitAfter(alias handler, State)(Duration rel, ref State state)
+            => submitAfter(rel, &contextCallback!(handler, State), cast(void*) &state);
+
         /// ditto, absolute against `now()`.
         IoResult!OpHandle submitAt(MonoTime deadline, OpCallback cb, void* ctx = null)
         {
             const rel = deadline - now();
             return submitAfter(rel > Duration.zero ? rel : Duration.zero, cb, ctx);
         }
+
+        /// Typed-context absolute timer.
+        IoResult!OpHandle submitAt(alias handler, State)(MonoTime deadline, ref State state)
+            => submitAt(deadline, &contextCallback!(handler, State), cast(void*) &state);
     }
 
     /**
@@ -1039,6 +1054,32 @@ unittest
     assert(!r.hasError);
     assert(fired == 1);
     assert(loop.now() - before >= 5.msecs);
+}
+
+@("loop.typedContext.timerAndCancellation") @system unittest
+{
+    import core.time : msecs, minutes;
+
+    struct State { int calls; int result; }
+    static void record(ref State state, ref Completion done) nothrow @nogc
+    {
+        ++state.calls;
+        state.result = done.res;
+    }
+    DefaultLoop loop;
+    createOrSkip(loop);
+    scope(exit) loop.destroy();
+    State expiry;
+    assert(loop.submitAfter!record(1.msecs, expiry).hasValue);
+    assert(!loop.run().hasError);
+    assert(expiry.calls == 1 && expiry.result == 0);
+    State cancelled;
+    auto pending = loop.submitAt!record(loop.now() + 1.minutes, cancelled);
+    assert(pending.hasValue);
+    assert(!loop.cancel(pending.value).hasError);
+    assert(!loop.run().hasError);
+    assert(cancelled.calls == 1 && cancelled.result == -ECANCELED);
+    assert(loop.inFlight == 0);
 }
 
 @("loop.cancel.timerObservesEcanceled")

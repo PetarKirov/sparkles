@@ -33,6 +33,120 @@ import sparkles.event_horizon.sched : Sched;
 /// `AT_FDCWD`: resolve relative paths against the working directory.
 enum int atFdCwd = -100;
 
+/// Common open policies; raw POSIX flags remain available through `openFile`.
+enum FileMode
+{
+    read,
+    writeTruncate,
+    append,
+}
+
+/// Scheduler-bound file capability. Present only on backends implementing the
+/// ring filesystem operations. Construction does not open or allocate anything.
+struct RingFs
+{
+    enum capName = "fs";
+    private Sched* _sched;
+
+    this(Sched* sched) @safe pure nothrow @nogc { _sched = sched; }
+
+    IoResult!FileHandle open(scope const(char)[] path, FileMode mode = FileMode.read) @system
+    {
+        import core.sys.posix.fcntl : O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC, O_APPEND, O_CLOEXEC;
+
+        int flags;
+        final switch (mode)
+        {
+            case FileMode.read: flags = O_RDONLY; break;
+            case FileMode.writeTruncate: flags = O_WRONLY | O_CREAT | O_TRUNC; break;
+            case FileMode.append: flags = O_WRONLY | O_CREAT | O_APPEND; break;
+        }
+        return openFile(*_sched, path, flags | O_CLOEXEC, 0x180 /* 0600 */);
+    }
+
+    /// Executes the body with a borrowed handle, then closes under cancellation
+    /// protection. The body must join users before returning and must not retain
+    /// or close a copy. Body failure wins over close failure; a successful body
+    /// reports a close failure. Escaped defects still close and propagate.
+    /// Lexical cleanup uses no scope onExit slot and never parks in a destructor.
+    auto withFile(F)(scope const(char)[] path, scope F body, FileMode mode = FileMode.read)
+    {
+        import std.traits : ReturnType;
+        import sparkles.event_horizon.scope_ : protect;
+
+        alias R = ReturnType!F;
+        auto opened = open(path, mode);
+        if (opened.hasError)
+        {
+            import std.traits : TemplateArgsOf;
+            return ioErr!(TemplateArgsOf!R[0])(opened.error);
+        }
+        auto file = opened.value;
+        // Fallback on exceptional unwind only. Normal close happens below so
+        // its result can be returned. FileHandle.close is a synchronous fallback.
+        scope(exit) file.close();
+        auto result = () {
+            try return body(file);
+            catch (Throwable error)
+            {
+                // Error unwinding can elide scope(exit) in nothrow frames.
+                file.close();
+                throw error;
+            }
+        }();
+        auto closed = protect!(() => closeFile(*_sched, file))(*_sched);
+        if (!result.hasError && closed.hasError)
+        {
+            import std.traits : TemplateArgsOf;
+            return ioErr!(TemplateArgsOf!R[0])(closed.error);
+        }
+        return result;
+    }
+
+    /// Reads and closes a file with an explicit byte bound. GC-allocating,
+    /// byte-preserving convenience; see `transfer.readText`.
+    IoResult!string readText(scope const(char)[] path, size_t maxBytes) @system
+    {
+        import sparkles.event_horizon.transfer : readText;
+
+        return withFile(path, (ref FileHandle file) => readText(file, maxBytes));
+    }
+}
+
+@("fs.capability.boundedTextAndScopedClose") @system unittest
+{
+    import core.stdc.errno : EFBIG, EIO;
+    import core.sys.posix.fcntl : fcntl, F_GETFD;
+    import std.stdio : File;
+    import sparkles.event_horizon.sched : schedOrSkip;
+
+    // /proc/self/fd gives a stable, isolated fixture path without a named temp
+    // file; this module and its tests are Linux-only.
+    auto fixture = File.tmpfile();
+    fixture.rawWrite("hello");
+    fixture.flush();
+    import std.conv : to;
+    const path = "/proc/self/fd/" ~ fixture.fileno.to!string;
+    Sched sched;
+    schedOrSkip(sched);
+    scope(exit) sched.destroy();
+    auto ran = sched.run(() {
+        auto fs = RingFs(&sched);
+        assert(fs.readText(path, 5).value == "hello");
+        assert(fs.readText(path, 4).error.errnoValue == EFBIG);
+        assert(fs.readText(path, 0).error.errnoValue == EFBIG);
+        assert(fs.readText(path ~ "-missing", 5).hasError);
+        int borrowed = -1;
+        auto failed = fs.withFile(path, (ref FileHandle file) {
+            borrowed = file.fd;
+            return ioErr!void(EIO, OpKind.read);
+        });
+        assert(failed.error.errnoValue == EIO);
+        assert(fcntl(borrowed, F_GETFD) == -1);
+    });
+    assert(!ran.hasError);
+}
+
 /// A `struct statx` mirror (kernel UAPI layout, 256 bytes).
 struct Statx
 {

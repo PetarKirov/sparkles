@@ -18,6 +18,7 @@ public import sparkles.event_horizon.buffer;
 public import sparkles.event_horizon.effect;
 public import sparkles.event_horizon.op;
 public import sparkles.event_horizon.raw_pool;
+public import sparkles.event_horizon.transfer;
 
 version (Windows)
 {
@@ -34,6 +35,7 @@ version (Windows)
 // capabilities per backend.
 version (Posix)
 {
+    public import sparkles.event_horizon.endpoint;
     public import sparkles.event_horizon.live;
     public import sparkles.event_horizon.proc;
     public import sparkles.event_horizon.supervise;
@@ -49,6 +51,7 @@ version (OSX)
 
 version (linux)
 {
+    public import sparkles.event_horizon.resources;
     public import sparkles.event_horizon.backend.probe;
     public import sparkles.event_horizon.loop;
     public import sparkles.event_horizon.sched;
