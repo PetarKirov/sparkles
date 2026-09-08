@@ -5,13 +5,18 @@ You know the Node.js event loop: one thread, callbacks and promises, `async`/`aw
 each of those onto `sparkles:event-horizon`, explains where the two models deliberately
 differ, and gives you a runnable D program for every mapping.
 
-**Last reviewed:** September 6, 2026
+**Last reviewed:** September 7, 2026
 
 > [!NOTE]
-> Every D tab imports a shared single-file `dub` program run by the standalone-example
-> CI gate. See [Running the examples](./running-examples.md) for Linux prerequisites
-> and commands. Output blocks are illustrative; assertions check the programs' results.
-> The Node.js blocks show the shape being translated and are not executed.
+> Every implementation below is a complete executable tutorial, with error handling
+> and cleanup. Assertion-heavy contract examples are linked after each comparison.
+> D files run with `dub run --single <file> -b checked`; Node.js files run with
+> `node <file>`. The labelled output tabs belong to the immediately preceding source.
+> `ci --verify` checks both tutorial outputs and independently runs the contract
+> counterparts with assertions enabled. Linux prerequisites
+> and dependency versions are documented in [Running the examples](./running-examples.md).
+
+<!-- verified-comparisons -->
 
 ## The one-paragraph difference
 
@@ -40,57 +45,74 @@ flowchart LR
 
 ## Concept map
 
-| Node.js                                   | `event-horizon`                                              | Notes                                                                       |
-| ----------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| the process-wide event loop               | `LoopGroup` + `RootScope` + `Env`                            | one loop per thread; you start it, it does not start itself                 |
-| `Promise<T>` / rejection                  | `IoResult!T` (a value _or_ an `IoError`)                     | ordinary I/O errors are values; defects remain distinct                     |
-| `async function` / `await`                | a fiber; every verb is a checkpoint                          | `recv`, `sleep`, `accept` park the fiber and return the result              |
-| `setTimeout` / `setInterval`              | `env.clock.sleep` / `Ticker`                                 | `Ticker` is absolute-deadline paced: no drift, missed ticks are skipped     |
-| `Promise.all` / `Promise.allSettled`      | `withScope` + `fork`/`join`                                  | the scope cannot exit until every child is done                             |
-| `Promise.race`                            | `race`                                                       | losers are cancelled and joined; this is not `Promise.any` semantics        |
-| `AbortController` / `AbortSignal.timeout` | `Scope.cancel` / `withDeadline` / `protect`                  | cancellation is a tree, delivered at checkpoints, and cleanup runs shielded |
-| streams' backpressure                     | `Channel!(T, capacity)`                                      | bounded queue, not a broadcast emitter; scheduler-local                     |
-| `net.createServer` / `net.connect`        | `env.net.listen` / `env.net.connect`, `accept`/`recv`/`send` | buffers move in and come back (the kernel owns them mid-flight)             |
-| `fs.promises.readFile`                    | `openFile` + `read`                                          | Linux io_uring submits reads; backend implementations differ                |
-| `child_process.exec`                      | `capture`                                                    | concurrent drains and root reap ownership                                   |
-| `child_process.spawn` + `'data'` events   | `supervise` + `ProcessEvent`s                                | framed lines, timeouts, tree kill, resource accounting                      |
-| `process.on('SIGINT')`                    | `SignalFd`                                                   | signals are completions, not handlers                                       |
-| `fs.watch`                                | `Watcher`                                                    | inotify events through the loop                                             |
-| `p-retry` / hand-rolled backoff           | `retry` + schedules (`exponential & recurs`)                 | schedules are pure values; time comes in, decisions come out                |
-| `worker_threads`                          | `LoopGroup` topologies                                       | default is one loop; multi-worker ownership must be designed explicitly     |
-| unhandled rejection event                 | explicit result checking                                     | dropping an `IoResult` does not automatically report an error               |
+| Node.js                                   | `event-horizon`                                              | Notes                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| the process-wide event loop               | `LoopGroup` + `RootScope` + `Env`                            | one loop per thread; you start it, it does not start itself                  |
+| `Promise<T>` / rejection                  | `IoResult!T` (a value _or_ an `IoError`)                     | ordinary I/O errors are values; defects remain distinct                      |
+| `async function` / `await`                | a fiber; every verb is a checkpoint                          | `recv`, `sleep`, `accept` park the fiber and return the result               |
+| `setTimeout` / `setInterval`              | `env.clock.sleep` / `Ticker`                                 | `Ticker` avoids cumulative delay drift; individual wakeups can still be late |
+| `Promise.all` / `Promise.allSettled`      | `withScope` + `fork`/`join`                                  | the scope cannot exit until every child is done                              |
+| `Promise.race`                            | `race`                                                       | losers are cancelled and joined; this is not `Promise.any` semantics         |
+| `AbortController` / `AbortSignal.timeout` | `Scope.cancel` / `withDeadline` / `protect`                  | cancellation is a tree, delivered at checkpoints, and cleanup runs shielded  |
+| streams' backpressure                     | `Channel!(T, capacity)`                                      | bounded queue, not a broadcast emitter; scheduler-local                      |
+| `net.createServer` / `net.connect`        | `env.net.listen` / `env.net.connect`, `accept`/`recv`/`send` | buffers move in and come back (the kernel owns them mid-flight)              |
+| `fs.promises.readFile`                    | `openFile` + `read`                                          | Linux io_uring submits reads; backend implementations differ                 |
+| `child_process.exec`                      | `capture`                                                    | concurrent drains and root reap ownership                                    |
+| `child_process.spawn` + `'data'` events   | `supervise` + `ProcessEvent`s                                | framed lines, timeouts, tree kill, resource accounting                       |
+| `process.on('SIGINT')`                    | `SignalFd`                                                   | signals are completions, not handlers                                        |
+| `fs.watch`                                | `Watcher`                                                    | inotify events through the loop                                              |
+| `p-retry` / hand-rolled backoff           | `retry` + schedules (`exponential & recurs`)                 | schedules are pure values; time comes in, decisions come out                 |
+| `worker_threads`                          | `LoopGroup` topologies                                       | default is one loop; multi-worker ownership must be designed explicitly      |
+| unhandled rejection event                 | explicit result checking                                     | dropping an `IoResult` does not automatically report an error                |
+
+The EH programs use `runApplication`: it starts a single-scheduler runtime,
+provides the root scope and capabilities, then joins and cleans up. The body
+returns `IoResult`; the application receives an `Outcome` that distinguishes
+ordinary failure from cancellation and defects. For reusable or multi-worker
+runtimes, use `LoopGroup` explicitly instead.
 
 ## Timers: `setTimeout` is a parked fiber
 
-`env.clock.sleep` parks the current fiber on an in-ring timer. The thread is free to
-run other fibers meanwhile; nothing spins.
+Both examples print three ticks separated by relative delays. A delay
+starts when requested: it is not an absolute ticker and does not prove drift-free
+cadence. `env.clock.sleep` parks this fiber; Node's promise timer suspends this
+async function. Neither promises exact wall-clock execution under load.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_timers.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_timers.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 tick 1
 tick 2
 tick 3
 ```
 
-```js [Node.js]
-// Node.js
-for (let i = 1; i <= 3; i++) {
-  await new Promise(resolve => setTimeout(resolve, 10));
-  console.log(`tick ${i}`);
-}
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_timers.d [event-horizon]
+
+```ansi [event-horizon output]
+tick 1
+tick 2
+tick 3
 ```
 
 :::
 
-## Concurrency: `Promise.all` is a scope with children
+Contract examples: [Node.js](./snippets/node_timers.mjs) · [event-horizon](./snippets/eh_timers.d).
 
-A **scope** owns its children: `withScope` does not return until every fiber it
+## Concurrency: joining promises versus owning children
+
+Both examples start two delayed computations before joining their results.
+`Promise.all` joins these successful promises, but does not itself own or cancel
+underlying work on failure. A **scope** owns its children: `withScope` does not return until every fiber it
 spawned has finished, and a child's typed result comes back through a `JoinHandle`.
 That is the whole of structured concurrency — there is no way to leak a running fiber
 past the block that created it.
+
+The EH example joins both handles before reporting their outcomes. A `fork`'s
+typed failure goes to its join handle; it does not itself invoke the scope's
+sibling-cancellation policy. Here `root.fail` explicitly promotes a joined
+failure into the root outcome. This is not JavaScript's fail-fast promise behavior.
 
 ```mermaid
 flowchart TB
@@ -103,18 +125,21 @@ flowchart TB
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_concurrency.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_concurrency.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 joined: 12
 ```
 
-```js [Node.js]
-// Node.js
-const [a, b] = await Promise.all([fetchA(), fetchB()]);
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_concurrency.d [event-horizon]
+
+```ansi [event-horizon output]
+joined: 12
 ```
 
 :::
+
+Contract examples: [Node.js](./snippets/node_concurrency.mjs) · [event-horizon](./snippets/eh_concurrency.d).
 
 ## Cancellation and timeouts: `AbortController` is a cancel scope
 
@@ -138,25 +163,25 @@ stateDiagram-v2
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_deadline.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_deadline.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
+sleep returned: AbortError
+timed out: true
+cleaned up: true
+```
+
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_deadline.d [event-horizon]
+
+```ansi [event-horizon output]
 sleep returned: ECANCELED
 timed out: true
 cleaned up: true
 ```
 
-```js [Node.js]
-// Node.js
-const signal = AbortSignal.timeout(50);
-try {
-  await slowOperation({ signal });
-} catch (e) {
-  if (e.name === 'TimeoutError') console.log('timed out');
-}
-```
-
 :::
+
+Contract examples: [Node.js](./snippets/node_deadline.mjs) · [event-horizon](./snippets/eh_deadline.d).
 
 ## Events and backpressure: choose a bounded channel
 
@@ -167,19 +192,21 @@ is buffered and then see `EPIPE`.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_channel.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_channel.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 consumed: 15
 ```
 
-```js [Node.js]
-// Node.js — nothing stops a fast emitter from flooding a slow listener
-emitter.on('item', x => slowConsume(x));
-for (const x of items) emitter.emit('item', x);
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_channel.d [event-horizon]
+
+```ansi [event-horizon output]
+consumed: 15
 ```
 
 :::
+
+Contract examples: [Node.js](./snippets/node_channel.mjs) · [event-horizon](./snippets/eh_channel.d).
 
 ## Sockets: `net.createServer` is `listen` + `accept` in a fiber
 
@@ -187,46 +214,56 @@ The shape is the same — a listener, a connection per client — but each side 
 running sequential code. One thing is genuinely different: the **buffer moves**. The
 kernel owns it while the operation is in flight, so `recv(move(buf))` hands it over and
 the result hands it back. This expresses ownership, not a zero-copy guarantee.
-The example handles partial transfers; TCP does not preserve message boundaries.
+`sendAll` and `readExactly` handle partial transfers while returning the buffer
+owner. The EH example uses a five-byte frame; Node ends the request stream and
+reads the echo through EOF. TCP itself preserves neither write boundaries nor
+application messages.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_tcp_echo.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_tcp_echo.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 echoed: hello
 ```
 
-```js [Node.js]
-// Node.js
-const server = net.createServer(sock => sock.pipe(sock)); // echo
-server.listen(0, '127.0.0.1', () => {
-  /* connect a client, write, read */
-});
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_tcp_echo.d [event-horizon]
+
+```ansi [event-horizon output]
+echoed: hello
 ```
 
 :::
 
-## Files: `fs.promises.readFile` without the thread pool
+Contract examples: [Node.js](./snippets/node_tcp_echo.mjs) · [event-horizon](./snippets/eh_tcp_echo.d).
+
+## Files: bounded whole-file reads
 
 Node's async file I/O is a thread pool because `epoll` cannot express a file read.
-`io_uring` can: `openFile` and `read` are real completions on the loop.
+`io_uring` can: `env.fs.readText` composes open, reads and protected close over
+the ring-backed file operations. Its explicit byte limit prevents unbounded
+accumulation, and the returned string is GC-allocated without Unicode validation.
+The anonymous temporary fixture makes this Linux D program self-contained.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_file_read.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_file_read.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 read 18 bytes: hello from a file
 
 ```
 
-```js [Node.js]
-// Node.js — libuv runs this on its worker threadpool
-const text = await fs.promises.readFile('/tmp/example.txt', 'utf8');
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_file_read.d [event-horizon]
+
+```ansi [event-horizon output]
+read 18 bytes: hello from a file
+
 ```
 
 :::
+
+Contract examples: [Node.js](./snippets/node_file_read.mjs) · [event-horizon](./snippets/eh_file_read.d).
 
 ## Child processes: `exec` is `capture`, `spawn` is `supervise`
 
@@ -236,9 +273,9 @@ error.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_exec.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_exec.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 stdout: out
 
 stderr: err
@@ -246,15 +283,19 @@ stderr: err
 exit code: 3
 ```
 
-```js [Node.js]
-// Node.js
-const { stdout } = await execFile('sh', [
-  '-c',
-  'echo out; echo err >&2; exit 3',
-]);
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_exec.d [event-horizon]
+
+```ansi [event-horizon output]
+stdout: out
+
+stderr: err
+
+exit code: 3
 ```
 
 :::
+
+Contract examples: [Node.js](./snippets/node_exec.mjs) · [event-horizon](./snippets/eh_exec.d).
 
 `supervise` owns the whole run: it frames each stream into lines, feeds stdin, applies
 a timeout as TERM-then-grace-then-KILL to the child's **process tree** (a fresh process
@@ -264,6 +305,12 @@ once after the terminal sequence. Streams can be forcibly closed at the drain
 limit, and the result records reap provenance and termination degradation. Process
 groups and post-spawn cgroup migration are not inescapable containment; see
 [the supervision caveats](./running-examples.md#capture-versus-streaming-supervision).
+
+The diagram shows the timeout path. The executable programs below instead wait
+for the child's second line before requesting termination. EH deliberately
+cancels its root, waits for supervision to drain and reap, then handles that
+expected cancellation at the application boundary. Node sends SIGTERM to its
+single child and waits for `close`; it does not acquire EH's tree policy.
 
 ```mermaid
 sequenceDiagram
@@ -284,24 +331,27 @@ sequenceDiagram
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_spawn.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_spawn.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 line: one
 line: two
-exited: timedOut, signaled by 15
-end: timedOut, reap: reaped
+exited: SIGTERM
+end: closed
 ```
 
-```js [Node.js]
-// Node.js — streaming, with a kill after a deadline that you wire yourself
-const child = spawn('sh', ['-c', 'echo one; echo two; sleep 30']);
-child.stdout.on('data', chunk => process.stdout.write(chunk));
-setTimeout(() => child.kill('SIGTERM'), 100);
-child.on('exit', (code, signal) => console.log('exit', code, signal));
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_spawn.d [event-horizon]
+
+```ansi [event-horizon output]
+line: one
+line: two
+exited: cancelled, signaled by 15
+end: cancelled, reap: reaped
 ```
 
 :::
+
+Contract examples: [Node.js](./snippets/node_spawn.mjs) · [event-horizon](./snippets/eh_spawn.d).
 
 ## Signals: `process.on('SIGINT')` is a completion too
 
@@ -312,19 +362,21 @@ not by itself make all application state race-free.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_signal.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_signal.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
 got signal SIGUSR1
 ```
 
-```js [Node.js]
-// Node.js
-process.on('SIGUSR1', () => console.log('got SIGUSR1'));
-process.kill(process.pid, 'SIGUSR1');
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_signal.d [event-horizon]
+
+```ansi [event-horizon output]
+got signal SIGUSR1
 ```
 
 :::
+
+Contract examples: [Node.js](./snippets/node_signal.mjs) · [event-horizon](./snippets/eh_signal.d).
 
 ## Retries: a schedule is a value, not a loop you write
 
@@ -334,18 +386,21 @@ clock you pass it — so a test can virtualise time with a `TestClock`.
 
 ::: code-group
 
-<<< @/libs/event-horizon/tutorial/snippets/eh_retry.d [D]
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/node_retry.mjs [Node.js]
 
-```ansi
+```ansi [Node.js output]
+attempts: 3
+```
+
+<<< @/libs/event-horizon/tutorial/snippets/tutorial/eh_retry.d [event-horizon]
+
+```ansi [event-horizon output]
 succeeded on attempt 3
 ```
 
-```js [Node.js]
-// Node.js (p-retry)
-await pRetry(op, { retries: 4, factor: 2, minTimeout: 5 });
-```
-
 :::
+
+Contract examples: [Node.js](./snippets/node_retry.mjs) · [event-horizon](./snippets/eh_retry.d).
 
 ## Where the models deliberately differ
 

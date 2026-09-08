@@ -1,0 +1,33 @@
+diff --git a/source/collie/bootstrap/client.d b/source/collie/bootstrap/client.d
+--- a/source/collie/bootstrap/client.d
++++ b/source/collie/bootstrap/client.d
+@@ -18,6 +18,7 @@ import collie.bootstrap.exception;
+ import collie.net.client.linklogInfo;
+ public import kiss.net.TcpStream;
+ import kiss.event.task;
++import kiss.util.timer;
+
+ final class ClientBootstrap(PipeLine) : PipelineManager
+ {
+diff --git a/source/collie/channel/pipeline.d b/source/collie/channel/pipeline.d
+--- a/source/collie/channel/pipeline.d
++++ b/source/collie/channel/pipeline.d
+@@ -182,15 +182,15 @@ private:
+
+         }
+         _isFinalize = false;
+-        front ? _ctxs = addBefore(_ctxs,ctx) : _ctxs ~= ctx;
++        front ? (_ctxs = addBefore(_ctxs,ctx)) : (_ctxs ~= ctx);
+         if (Context.dir == HandlerDir.BOTH || Context.dir == HandlerDir.IN)
+         {
+-            front ? _inCtxs = addBefore(_inCtxs,ctx) : _inCtxs ~= ctx;
++            front ? (_inCtxs = addBefore(_inCtxs,ctx)) : (_inCtxs ~= ctx);
+             //front ? _inCtxs.insertBefore(ctx) : _inCtxs.insertBack(ctx);
+         }
+         if (Context.dir == HandlerDir.BOTH || Context.dir == HandlerDir.OUT)
+         {
+-            front ? _outCtxs = addBefore(_outCtxs,ctx) : _outCtxs ~= ctx;
++            front ? (_outCtxs = addBefore(_outCtxs,ctx)) : (_outCtxs ~= ctx);
+             //front ? _outCtxs.insertBefore(ctx) : _outCtxs.insertBack(ctx);
+         }
+         return this;

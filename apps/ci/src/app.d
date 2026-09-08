@@ -407,6 +407,7 @@ enum ProgramMode
 
 struct Example
 {
+    string sourcePath; /// Complete imported source; keeps dependency resolution at its origin.
     string name;
     string code;
     string expectedOutput;
@@ -1227,6 +1228,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
     }
 
     FileExamples[] gathered;
+    Example[] contractExamples;
     int totalFailures = 0;
 
     foreach (mdFile; mdFiles)
@@ -1238,7 +1240,35 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             continue;
         }
 
-        auto examples = extractExamples(mdFile.readText);
+        Example[] examples;
+        try
+        {
+            const content = mdFile.readText;
+            examples = extractExamples(content);
+            import comparison_examples : extractComparisons, validateMigrationComparisons,
+                migrationContractSources;
+            const comparisons = extractComparisons(content, buildPath(detectRepoRoot(), "docs"));
+            if (mdFile.canFind("event-horizon/tutorial/coming-from-"))
+            {
+                validateMigrationComparisons(mdFile, comparisons);
+                foreach (source; migrationContractSources(mdFile, comparisons,
+                    buildPath(detectRepoRoot(), "docs")))
+                    contractExamples ~= Example(sourcePath: source, name: "contract " ~ source.baseName);
+            }
+            foreach (item; comparisons)
+                examples ~= Example(sourcePath: item.sourcePath,
+                    name: item.sourcePath.baseName[0 .. $ - (item.sourcePath.endsWith(".mjs") ? 4 : 2)], expectedOutput: item.expectedOutput,
+                    outputFenceType: item.outputFenceType,
+                    codeBlockStart: item.codeStart, codeBlockEnd: item.codeStart,
+                    outputBlockStart: item.outputStart, outputBlockEnd: item.outputEnd);
+            examples.sort!((a, b) => a.codeBlockStart < b.codeBlockStart);
+        }
+        catch (Exception e)
+        {
+            error(i"Invalid comparisons in $(mdFile): $(e.msg)");
+            totalFailures++;
+            continue;
+        }
 
         if (examples.length == 0)
         {
@@ -1261,7 +1291,45 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
     // Concurrency is race-free thanks to `--temp-build` (see executeExample) and
     // bounded by `exampleJobCount` to keep peak memory in check.
     auto allExamples = gathered.map!(g => g.examples).joiner.array;
-    auto allResults = executeExamplesParallel(allExamples, repoRoot);
+    // Shared full-file programs execute once per invocation. Each occurrence
+    // still has its own expected output and Markdown positions below.
+    Example[] uniqueExamples;
+    size_t[] executionIndices;
+    size_t[string] importedIndices;
+    foreach (example; allExamples)
+    {
+        auto existing = example.sourcePath.length ? example.sourcePath in importedIndices : null;
+        if (existing !is null) executionIndices ~= *existing;
+        else
+        {
+            executionIndices ~= uniqueExamples.length;
+            if (example.sourcePath.length) importedIndices[example.sourcePath] = uniqueExamples.length;
+            uniqueExamples ~= example;
+        }
+    }
+    // Contract counterparts are executed independently, never deduplicated by
+    // basename with tutorial sources and never used as Markdown update targets.
+    size_t[] contractIndices;
+    foreach (example; contractExamples)
+    {
+        if (example.sourcePath in importedIndices) continue;
+        importedIndices[example.sourcePath] = uniqueExamples.length;
+        contractIndices ~= uniqueExamples.length;
+        uniqueExamples ~= example;
+    }
+    auto uniqueResults = executeExamplesParallel(uniqueExamples, repoRoot);
+    foreach (index; contractIndices)
+    {
+        if (!uniqueResults[index].success)
+        {
+            error(i"Contract example failed: $(uniqueExamples[index].sourcePath)");
+            error(i"$(uniqueResults[index].rawOutput)");
+            ++totalFailures;
+        }
+    }
+    if (contractIndices.length)
+        info(i"Executed $(contractIndices.length) independent contract examples.");
+    auto allResults = executionIndices.map!(i => uniqueResults[i]).array;
 
     size_t offset = 0;
     foreach (g; gathered)
@@ -1990,7 +2058,7 @@ private int runCheckDocsSidebar()
 
 private bool isAnsiFence(string fenceType)
 {
-    return fenceType == "ansi" || fenceType == "[Output:ansi]";
+    return fenceType == "ansi" || fenceType.startsWith("ansi [") || fenceType == "[Output:ansi]";
 }
 
 /// Extracts dub single-file examples from markdown content,
@@ -2140,6 +2208,36 @@ Example[] extractExamples(string content)
 /// invoking it ourselves.
 ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqueId)
 {
+    if (example.sourcePath.length)
+    {
+        // Run the original file: DUB resolves path dependencies relative to it.
+        // Isolate dependency builds just as for inline examples.
+        import std.uuid : randomUUID;
+        auto importedDir = buildPath(tempDir, "md-import-" ~ randomUUID().toString());
+        mkdirRecurse(importedDir);
+        scope(exit) { import std.file : rmdirRecurse; rmdirRecurse(importedDir); }
+        auto cmd = (example.sourcePath.endsWith(".mjs")
+            ? ["node", example.sourcePath]
+            : dubSingleFileCommand("run", example.sourcePath, repoRoot)).dup;
+        foreach (ref argument; cmd)
+            if (argument == "--build=debug") argument = "--build=checked";
+        const isolatedEnv = ["/usr/bin/env", "DUB_HOME=" ~ importedDir, "TMPDIR=" ~ importedDir];
+        if (!example.sourcePath.endsWith(".mjs"))
+        {
+            // Populate this isolated, content-addressed cache first. Compiler
+            // diagnostics are not program output; a failed build still reports
+            // its complete diagnostics. The subsequent run reuses the artifact.
+            auto buildCmd = cmd.dup;
+            buildCmd[1] = "build";
+            auto built = executeComparisonCommand(isolatedEnv ~ buildCmd, "build " ~ example.name);
+            if (built.status != 0)
+                return ExecutionResult(success: false, programOutput: built.output.unstyle,
+                    rawOutput: built.output, usage: built.usage);
+        }
+        auto result = executeComparisonCommand(isolatedEnv ~ cmd, "run " ~ example.name);
+        return ExecutionResult(success: result.status == 0,
+            programOutput: result.output.unstyle, rawOutput: result.output, usage: result.usage);
+    }
     // Give each example its own subdirectory: examples in different markdown
     // files can share a `name` (hence the same source filename), and these runs
     // happen concurrently. Keep the filename itself unchanged — ldc derives the
@@ -2192,6 +2290,20 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
         rawOutput: result.output,
         usage: result.usage,
     );
+}
+
+/// GNU timeout owns a process group, so a wedged DUB child cannot survive the
+/// launcher's timeout. The outer monitor gives its TERM/KILL sequence time to
+/// finish. Strict comparison fixtures run on the documented Linux toolchain.
+private MonitoredResult executeComparisonCommand(const(string)[] command, string label)
+{
+    auto budget = exampleTimeout();
+    if (budget <= Duration.zero) budget = 300.seconds;
+    auto result = executeLogged(["timeout", "--kill-after=2s", budget.total!"seconds".to!string ~ "s"]
+        ~ command, label, budget + 5.seconds);
+    if (result.status == 124 || result.status == 137)
+        result.output ~= "\n[ci] comparison exceeded its process-group deadline\n";
+    return result;
 }
 
 /**
@@ -3267,6 +3379,21 @@ int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile,
 
 /// Verify mode: run examples, display output, and compare against expected output blocks.
 /// `results` holds the pre-computed execution result for each example.
+@("ci.importedOutputsAreMandatoryAndLiteral") unittest
+{
+    Example example = Example(sourcePath: "/docs/fixture.mjs", name: "fixture",
+        outputFenceType: "ansi [fixture output]");
+    ExecutionResult result = ExecutionResult(success: true, programOutput: "unexpected", rawOutput: "unexpected");
+    assert(runVerifyMode([example], [result], "fixture.md", false) == 1,
+        "an empty imported output must not mean skip verification");
+    example.expectedOutput = "...";
+    assert(runVerifyMode([example], [result], "fixture.md", false) == 1,
+        "imported outputs are literal, not wildcard patterns");
+    example.expectedOutput = null;
+    result.programOutput = result.rawOutput = null;
+    assert(runVerifyMode([example], [result], "fixture.md", false) == 0);
+}
+
 int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Verifying $(examples.length) example(s) from $(mdFile)".text
@@ -3318,7 +3445,7 @@ int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, 
             ? example.verifyPattern
             : example.expectedOutput;
 
-        if (verifyAgainst is null)
+        if (verifyAgainst is null && example.sourcePath.length == 0)
         {
             outputLines
                 .formatOutputLines
@@ -3344,7 +3471,7 @@ int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, 
         }
         auto expected = verifyAgainst.strip;
 
-        if (matchesWithWildcards(actual, expected))
+        if (example.sourcePath.length ? actual == expected : matchesWithWildcards(actual, expected))
         {
             outputLines
                 .formatOutputLines
@@ -4579,6 +4706,8 @@ private string standaloneExampleVerb(StandaloneExampleMode mode)
 /// Formats the header line for an example run.
 private string formatExampleHeader(in Example example, string progress)
 {
+    if (example.sourcePath.endsWith(".mjs"))
+        return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › node $(example.sourcePath.baseName)}");
     return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
 }
 

@@ -8,6 +8,7 @@
     platforms "linux"
 +/
 import core.lifetime : move;
+import core.stdc.errno : ENOENT;
 import core.sys.posix.fcntl : O_RDONLY;
 import core.sys.posix.stdlib : mkdtemp;
 import std.file : remove, rmdir, tempDir, write;
@@ -33,6 +34,8 @@ void main()
 
     auto run = group.run((ref RootScope sc, ref Env env) {
         ref Sched s = currentScheduler();
+        auto missing = openFile(s, buildPath(dir, "missing"), O_RDONLY);
+        assert(missing.hasError && missing.error.errnoValue == ENOENT);
         auto opened = openFile(s, path, O_RDONLY);
         assert(opened.hasValue);
         auto f = move(opened.value);
