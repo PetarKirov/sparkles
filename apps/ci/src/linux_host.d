@@ -47,7 +47,7 @@ import std.process : environment, execute, spawnProcess, wait;
 import std.stdio : writeln;
 import std.string : lineSplitter, strip;
 
-import sparkles.base.hw_caps : hwMemoryBytes, hwParallelism;
+import sparkles.base.hw_caps : describe, hwMemoryBytes, hwWorkerBudget, ResourceCap;
 import sparkles.base.logger : error, info, warning;
 
 /// Nix systems this dispatcher can target from macOS.
@@ -632,7 +632,9 @@ int runOnLinuxHost(string hostSystem, string[] args, string ciRev = null)
     import std.file : getcwd, mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
-    const size = linuxHostSizeFor(hwParallelism(), hwMemoryBytes());
+    const budget = hwWorkerBudget();
+    const hostMemory = hwMemoryBytes();
+    const size = linuxHostSizeFor(budget.workers, hostMemory);
 
     // The entry script is a few KiB of exports — too big for `--env`, so it
     // travels as a file in a host directory the guest mounts at the same path.
@@ -651,7 +653,14 @@ int runOnLinuxHost(string hostSystem, string[] args, string ciRev = null)
     auto cmd = containerRunCommand(
         target, entry, args, repoTop, getcwd(), size, environment.get("DC", null),
         gitCommonDir);
-    info(i"container run $(hostSystem): $(size.cpus) cpus, $(size.memoryGiB) GiB");
+    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.base.text.writers : writeBytes;
+
+    SharedBuffer!(char, 24) hostMemoryText;
+    writeBytes(hostMemoryText, hostMemory);
+    const why = budget.cap == ResourceCap.none
+        ? "every allowed CPU" : describe(budget.cap);
+    info(i"container run $(hostSystem): $(size.cpus) vCPUs (host workers=$(budget.workers) of $(budget.cpus) CPUs, $(why)), $(size.memoryGiB) GiB (half of $(hostMemoryText[]) host RAM)");
     auto pid = spawnProcess(cmd);
     return wait(pid);
 }

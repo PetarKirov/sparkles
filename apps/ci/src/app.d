@@ -123,7 +123,7 @@ import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.parallelism : TaskPool;
 import sparkles.base.hw_caps :
     hwAvailableMemoryBytes, hwLoadAverageCenti, hwLoadUnknown,
-    hwMemoryBytes, hwOnlineCpuCount, hwParallelism, hwSwapUsedBytes;
+    hwMemoryBytes, hwOnlineCpuCount, hwParallelism, hwSwapUsedBytes, describe, hwWorkerBudget, ResourceCap;
 import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
@@ -1536,7 +1536,12 @@ private void logHostResources()
     else
         writeFixedPoint(loadBuf, load, 2);
 
-    info(i"host: workers=$(hwParallelism()) online=$(hwOnlineCpuCount()) load=$(loadBuf[]) mem=$(avail[])/$(total[]) swap=$(swap[])");
+    info(i"host: $(hwOnlineCpuCount()) CPUs online, load $(loadBuf[]); RAM $(avail[]) available of $(total[]), swap $(swap[]) in use");
+    const budget = hwWorkerBudget();
+    if (budget.cap == ResourceCap.none)
+        info(i"host: workers=$(budget.workers) (every allowed CPU)");
+    else
+        info(i"host: workers=$(budget.workers) of $(budget.cpus) CPUs — $(describe(budget.cap))");
 }
 
 /// GitHub Actions (and any other piped sink) fully-buffers stdout. A hang
