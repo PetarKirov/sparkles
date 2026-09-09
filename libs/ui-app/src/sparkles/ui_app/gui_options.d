@@ -240,6 +240,74 @@ FontRequest fontRequestOf(O)(const O o) @safe pure nothrow
     return r;
 }
 
+/// The variable $(LREF envFontDirs) reads.
+enum fontDirEnvVar = "SPARKLES_UI_FONT_DIR";
+
+/**
+Extra font directories from the environment, `:`-separated (`CLI3`).
+
+The same shape as `--font-dir`, and for the same reason — resolve faces by
+scanning, with no dependence on the host's fontconfig configuration — but
+reachable without an application's cooperation, which is what a launcher needs.
+`ci --smoke-apps` starts four applications with four argument parsers; a font
+bundle it could only hand to the ones taught the flag would cover three.
+
+Appended to `--font-dir`'s directories, and carrying the flag's whole meaning:
+its presence turns the system font database off, so selection becomes a scan of
+exactly these directories. That is deliberate — `--font-dir` exists to make
+selection deterministic, and a variable that only *added* a fallback would leave
+a CI runner's answer depending on whether fontconfig happened to be configured.
+
+Blank entries are dropped, so a trailing `:` is not a request to scan the
+working directory.
+*/
+string[] envFontDirs() nothrow
+{
+    import std.algorithm : filter, splitter;
+    import std.array : array;
+    import std.process : environment;
+
+    try
+    {
+        const raw = environment.get(fontDirEnvVar, "");
+        if (raw.length == 0)
+            return null;
+        return raw.splitter(':').filter!(d => d.length != 0).array;
+    }
+    catch (Exception)
+        return null;
+}
+
+@("ui_app.gui_options.envFontDirsSplitsAndDropsBlanks")
+@system
+unittest
+{
+    import std.process : environment;
+
+    const had = environment.get(fontDirEnvVar, null);
+    scope (exit)
+    {
+        if (had is null)
+            environment.remove(fontDirEnvVar);
+        else
+            environment[fontDirEnvVar] = had;
+    }
+
+    environment.remove(fontDirEnvVar);
+    assert(envFontDirs is null);
+
+    environment[fontDirEnvVar] = "/a/fonts";
+    assert(envFontDirs == ["/a/fonts"]);
+
+    // A trailing separator is a typo, not a request to scan the working
+    // directory — which is where a font would least like to be found.
+    environment[fontDirEnvVar] = "/a/fonts:/b/fonts:";
+    assert(envFontDirs == ["/a/fonts", "/b/fonts"]);
+
+    environment[fontDirEnvVar] = "";
+    assert(envFontDirs is null);
+}
+
 /**
 The theme `o` names, or `null`.
 

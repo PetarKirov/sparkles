@@ -104,7 +104,35 @@ Returns `false` when no font could be resolved — the caller's cue to report th
 family it asked for, since the window is open by then and painting into it
 without a font would produce a blank one.
 */
-bool openGuiSession(in GuiRequest req, out GuiSession session) @system
+/**
+Why a window did not come up (`HST21`).
+
+`openGuiSession` had one `false` for two situations that want opposite
+responses — no display at all, and a display with no font the request names —
+and every application reported whichever of the two it happened to have written
+into its own message. hue's said "is fontconfig available?" for a headless
+session; `apps/terminal`'s named both and committed to neither.
+*/
+enum GuiOpenFailure : ubyte
+{
+    none,     /// it opened
+    noWindow, /// no display, a locked session, or no GL context
+    noFont,   /// the window opened; nothing matched the requested family
+}
+
+/// ditto
+string name(GuiOpenFailure f) @safe pure nothrow @nogc
+{
+    final switch (f)
+    {
+        case GuiOpenFailure.none:     return "none";
+        case GuiOpenFailure.noWindow: return "noWindow";
+        case GuiOpenFailure.noFont:   return "noFont";
+    }
+}
+
+bool openGuiSession(in GuiRequest req, out GuiSession session,
+    out GuiOpenFailure why) @system
 {
     if (req.traceSink !is null)
     {
@@ -132,7 +160,10 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
     //    platform") runs on into font loading with no GL context and dies on a
     //    null texture — a SIGSEGV where an error message belongs.
     if (!session.window.ready)
+    {
+        why = GuiOpenFailure.noWindow;
         return false;
+    }
 
     // 2. The point size. An explicit pixel override wins and suppresses density
     //    scaling; otherwise the panel decides, which is not an Android special
@@ -172,7 +203,10 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
 
     if (!FontSet.tryLoad(family, session.fontSizePx, session.fonts,
             maps, faces, sources, session.atlasScale))
+    {
+        why = GuiOpenFailure.noFont;
         return false;
+    }
 
     // 4. The size, now that a cell has a width. Skipped on Android, where the
     //    surface is the screen and there is nothing to size.

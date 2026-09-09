@@ -512,7 +512,48 @@ nix run .#ci -- --test-extracted         # --better-c/--wasm for every sub-packa
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
 nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinned GitHub URLs
 nix run .#ci -- --check-docs-sidebar     # sidebar ↔ pages consistency (VitePress)
+nix run .#ci -- --smoke-apps             # launch every windowed app; require a clean exit
 ```
+
+### Smoke-launching the windowed applications
+
+`--smoke-apps` is the only thing in the repository that **runs** hue, terminal,
+ui-gallery and diagram. Everything else compiles them, which is how a window
+that aborted on startup — before it drew a frame — once reached `main`.
+
+It needs the binaries built first, and looks in three places per application,
+in order — so either way of building works and neither needs a flag:
+
+| Built by                      | Found at                          |
+| ----------------------------- | --------------------------------- |
+| `nix build .#all-desktop`     | `result/<app>/bin/<app>`          |
+| `dub build :<app>`            | `apps/<app>/build/sparkles_<app>` |
+| a build whose root is the app | `apps/<app>/build/<app>`          |
+
+The middle row is why the in-tree spelling differs: `dub build :diagram` builds
+the **sub-package**, whose target is named after it (`sparkles_diagram`), while
+the nix build's root package _is_ the app.
+
+Each launch is bounded to a few frames through `SPARKLES_UI_FRAMES` (`HST21`) and
+must exit cleanly having painted at least one frame.
+
+```bash
+# One package per invocation — `dub build` takes one argument or none.
+nix develop -c sh -c 'for p in :hue :terminal :ui-gallery :diagram; do dub build $p; done'
+nix run .#ci -- --smoke-apps                        # all of them
+nix run .#ci -- --smoke-apps --include ui-gallery   # one of them
+xvfb-run -a nix run .#ci -- --smoke-apps            # headless Linux
+```
+
+A machine with no window server reports each GUI launch as **skipped**, not
+failed — but the summary says when _nothing_ ran, so a job where every leg
+skipped cannot be mistaken for one where the check passed.
+
+> [!NOTE]
+> An application needs no cooperation: the budget arrives through the
+> environment, because the four have four different argument parsers and a
+> harness that needed each of them to opt in would silently skip whichever had
+> not been taught yet.
 
 One further check exists that CI **cannot** run, because it reads the upstream
 clones under `$REPOS`:

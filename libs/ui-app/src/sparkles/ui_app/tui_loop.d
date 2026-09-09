@@ -40,8 +40,9 @@ import sparkles.input : Event, InputCapabilities, isEndOfInput, isNoEvent,
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
-import sparkles.ui_app.host : FrameOps, HostState, isHost, modsOf, noDraw,
-    noSetup, RunConfig, withRealSize;
+import sparkles.ui_app.host : FrameBudget, FrameOps, HostState, isHost, modsOf,
+    noDraw, noSetup, reportFrames, resolveFrameBudget, RunConfig,
+    withRealSize;
 import sparkles.ui_tui.session : TerminalRequest, TerminalSession;
 
 /**
@@ -232,10 +233,15 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
     }();
     setup(host);
 
+    // `HST21`: a bounded run for a smoke check; unbounded for everyone else.
+    auto budget = FrameBudget(resolveFrameBudget(cfg.frameBudget));
+    scope (exit) reportFrames(budget, "tui");
+
     void frame()
     {
         const sz = session.resizeToTerminal();
         host.size_ = Size(sz.width, sz.height);
+        budget.noteAttempt();
         host.beginFrameState();
 
         present(host);
@@ -247,6 +253,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[]);
         draw(host); // `HST13`: the application's own cells, before the diff
         session.present();
+        budget.notePainted();
     }
 
     frame(); // an application draws before anything happens to it
@@ -318,7 +325,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
                     host._wake = null;
                 }
 
-                while (!host.quitRequested)
+                while (!host.quitRequested && !budget.exhausted)
                 {
                     // The park deadline: the application's per-frame ask
                     // (`HST16`) against the caller's fixed idle interval —
@@ -329,10 +336,15 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
                     Duration deadline = host.wakeAsk;
                     if (idleTimeoutMs >= 0 && idleTimeoutMs.msecs < deadline)
                         deadline = idleTimeoutMs.msecs;
+                    // `HST21`: nobody is typing into a bounded run, so parking
+                    // on input would spend the whole budget waiting for a
+                    // keystroke that is never coming.
+                    if (budget.bounded)
+                        deadline = Duration.zero;
 
                     Event e;
                     bool haveEvent = true;
-                    if (host.frameRequested)
+                    if (host.frameRequested || budget.bounded)
                     {
                         // An animation frame: do not block; drain one event
                         // if one is already queued.
@@ -397,7 +409,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
     }
 
     // The blocking fallback arm: same protocol over session reads.
-    while (!host.quitRequested)
+    while (!host.quitRequested && !budget.exhausted)
     {
         // Block unless the application asked for another frame, or the caller
         // wants a turn on an interval, or the application asked for a timed
@@ -413,8 +425,8 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
             if (timeout < 0 || askMs < timeout)
                 timeout = askMs;
         }
-        if (host.frameRequested)
-            timeout = 0;
+        if (host.frameRequested || budget.bounded)
+            timeout = 0; // `HST21`: a bounded run waits for nobody
         auto e = session.next(timeout);
 
         if (e.isEndOfInput)
