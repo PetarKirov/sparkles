@@ -408,8 +408,12 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.runner }}
     # `.#all-desktop` builds the whole closure; normally 2-4m from cache, but
-    # a cold-cache rebuild (after a flake.lock bump) needs real margin.
-    timeout-minutes: 20
+    # a cold-cache rebuild (after a flake.lock bump) needs real margin. On
+    # Linux the aggregate also carries the wasm toolchain, and a cold rebuild
+    # of that compiles the LDC fork from source — far more than 20 minutes.
+    # `with-cachix.sh` pushes each path as it completes, so even a run that
+    # hits this cap leaves progress in the cache for the next one.
+    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 90 || 20 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -581,7 +585,10 @@ jobs:
     # The build itself runs ~11m; under runner contention the nix teardown
     # stretched past a 15m cap and cancelled after every real step had
     # succeeded. 30m matches the test job's headroom.
-    timeout-minutes: 30
+    # The site embeds the wasm modules, which need the wasm toolchain; when
+    # the cache lacks it (see `nix-build`) this job rebuilds it too, and 30
+    # minutes was not enough for that.
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v7
