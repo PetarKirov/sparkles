@@ -10,8 +10,9 @@ module x11_hosted_smoke;
 
 version (linux):
 
-import core.time : Duration, msecs;
+import core.time : Duration, MonoTime, msecs, seconds;
 import std.stdio : writeln;
+import std.sumtype : match;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.wsi;
@@ -189,5 +190,55 @@ int main()
         "sparkles:wsi X11 conformance");
     writeln("ok: X11 WSI conformance (", outcome.checked, " checked, ",
         outcome.skipped, " skipped)");
+
+    /*
+    Addendum: one device motion is one `RelativePointerEvent`. XInput 2
+    raises a raw event per slave device that reported the motion and, since
+    2.1, a copy under the master's id; only the slave's own delivery from a
+    relative-axis device may come through (Xwayland's absolute pointer
+    beside its relative one would otherwise double every move).
+    */
+    {
+        WindowConfig config;
+        assert(config.title.assign("sparkles:wsi X11 raw motion"));
+        const id = wsi.createWindow(config).value;
+        bool ready;
+        const readyDeadline = MonoTime.currTime + 5.seconds;
+        while (!ready)
+        {
+            assert(MonoTime.currTime < readyDeadline,
+                "no ReadyEvent for the raw-motion window");
+            hooks.step(200.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                if (event.window == id)
+                    event.payload.match!(
+                        (in ReadyEvent _) { ready = true; },
+                        (_) {});
+            }).hasError);
+        }
+        assert(!wsi.setRelativePointer(id, true).hasError);
+        assert(sendRelativeMotion(hooks.connection, 20, 20) == 0);
+        uint relativeEvents;
+        double dx = 0;
+        // Wait long enough for every copy the server might send.
+        foreach (_; 0 .. 5)
+        {
+            hooks.step(100.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                event.payload.match!(
+                    (in RelativePointerEvent value) {
+                        ++relativeEvents;
+                        dx = value.dx;
+                    },
+                    (_) {});
+            }).hasError);
+        }
+        assert(relativeEvents == 1,
+            "one device motion must be exactly one RelativePointerEvent");
+        assert(dx == 20, "the raw delta must be the device's own value");
+        assert(!wsi.setRelativePointer(id, false).hasError);
+        assert(!wsi.destroyWindow(id).hasError);
+        writeln("ok: X11 raw motion is one event per device motion");
+    }
     return 0;
 }

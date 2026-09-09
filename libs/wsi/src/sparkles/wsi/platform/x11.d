@@ -89,6 +89,10 @@ struct X11Wsi
     private size_t pendingIcSlot_ = size_t.max;
     private ubyte xiOpcode_;
     private bool xiRawSelected_;
+    // Per XInput device id: 0 unknown, 1 relative x/y axes, 2 anything
+    // else. Reset whenever the device hierarchy or a device's classes
+    // change, so a reused id cannot inherit a stale answer.
+    private ubyte[256] rawDeviceKind_;
 
     /** Connects to the process' selected X display on the calling UI thread. */
     static WsiResult!void open(out X11Wsi wsi)
@@ -363,6 +367,18 @@ struct X11Wsi
     slave device, so the selection names every device). Both unwind on
     destruction; a grab outlives focus changes by design, since it holds
     the pointer.
+
+    One physical motion raises several raw events: one per slave device
+    that reported it, and since XI 2.1 a copy under the master's id. Only
+    the slave-originated event (`deviceid == sourceid`) from a device whose
+    x/y valuators are relative becomes a `RelativePointerEvent`: an
+    absolute device (a tablet, a touchscreen, Xwayland's absolute
+    `xwayland-pointer` beside its `xwayland-relative-pointer`) carries
+    positions in its raw values, not deltas, so it is not differentiated
+    into motion. Under Xwayland the grab also reaches less than on a real
+    server: the compositor routes no pointer events over non-X surfaces to
+    it, and a warp (the confine-time warp inside included) is dropped
+    unless the pointer is already over the window.
     */
 
     /// Grabs (or releases) the pointer for this window; `confine` also
@@ -456,7 +472,11 @@ struct X11Wsi
         RawMotionMask masks;
         masks.head.deviceid = XCB_INPUT_DEVICE_ALL;
         masks.head.mask_len = 1;
-        masks.mask = on ? XCB_INPUT_XI_EVENT_MASK_RAW_MOTION : 0;
+        masks.mask = on
+            ? XCB_INPUT_XI_EVENT_MASK_RAW_MOTION
+                | XCB_INPUT_XI_EVENT_MASK_HIERARCHY
+                | XCB_INPUT_XI_EVENT_MASK_DEVICE_CHANGED
+            : 0;
         // ImportC drops the header's `const` on the mask pointer.
         const error = checkedRequest(xcb_input_xi_select_events_checked(
             connection_, bootstrap_.root, 1,
@@ -473,6 +493,11 @@ struct X11Wsi
     private void handleRawMotion(xcb_input_raw_motion_event_t* event)
         nothrow @nogc
     {
+        // The master's XI 2.1 copy of a slave event carries the master's
+        // id; the slave's own delivery is the one to keep.
+        if (event.deviceid != event.sourceid
+            || !hasRelativeAxes(event.sourceid))
+            return;
         // The accessors are read-only in C; ImportC loses that `const`.
         const maskLength =
             xcb_input_raw_button_press_valuator_mask_length(event);
@@ -505,6 +530,50 @@ struct X11Wsi
         foreach (i, ref slot; windows_)
             if (slot.live && slot.relativePointer)
                 emit(idAt(i), RelativePointerEvent(corePointer, dx, dy, true));
+    }
+
+    /// Whether a device's x and y valuators (0 and 1) are relative axes,
+    /// asked of the server once per device id and remembered.
+    private bool hasRelativeAxes(ushort deviceId) nothrow @nogc
+    {
+        if (deviceId >= rawDeviceKind_.length)
+            return false;
+        if (rawDeviceKind_[deviceId] == 0)
+            rawDeviceKind_[deviceId] = queryAxesRelative(deviceId) ? 1 : 2;
+        return rawDeviceKind_[deviceId] == 1;
+    }
+
+    private bool queryAxesRelative(ushort deviceId) nothrow @nogc
+    {
+        auto cookie = xcb_input_xi_query_device(connection_, deviceId);
+        auto reply = xcb_input_xi_query_device_reply(connection_, cookie,
+            null);
+        if (reply is null)
+            return false;
+        scope (exit) free(reply);
+        bool sawX;
+        bool sawY;
+        bool relative = true;
+        for (auto infos = xcb_input_xi_query_device_infos_iterator(reply);
+            infos.rem != 0; xcb_input_xi_device_info_next(&infos))
+        {
+            if (infos.data.deviceid != deviceId)
+                continue;
+            for (auto classes =
+                    xcb_input_xi_device_info_classes_iterator(infos.data);
+                classes.rem != 0; xcb_input_device_class_next(&classes))
+            {
+                if (classes.data.type != XCB_INPUT_DEVICE_CLASS_TYPE_VALUATOR)
+                    continue;
+                auto valuator =
+                    cast(const xcb_input_valuator_class_t*) classes.data;
+                if (valuator.number > 1)
+                    continue;
+                (valuator.number == 0 ? sawX : sawY) = true;
+                relative &= valuator.mode == XCB_INPUT_VALUATOR_MODE_RELATIVE;
+            }
+        }
+        return sawX && sawY && relative;
     }
 
     /**
@@ -1242,10 +1311,14 @@ struct X11Wsi
                 break;
             case XCB_GE_GENERIC:
                 auto generic2 = cast(const xcb_ge_generic_event_t*) generic;
-                if (xiOpcode_ != 0 && generic2.extension == xiOpcode_
-                    && generic2.event_type == XCB_INPUT_RAW_MOTION)
+                if (xiOpcode_ == 0 || generic2.extension != xiOpcode_)
+                    break;
+                if (generic2.event_type == XCB_INPUT_RAW_MOTION)
                     handleRawMotion(
                         cast(xcb_input_raw_motion_event_t*) generic);
+                else if (generic2.event_type == XCB_INPUT_HIERARCHY
+                    || generic2.event_type == XCB_INPUT_DEVICE_CHANGED)
+                    rawDeviceKind_[] = 0;
                 break;
             case XCB_DESTROY_NOTIFY:
                 auto event = cast(const xcb_destroy_notify_event_t*) generic;

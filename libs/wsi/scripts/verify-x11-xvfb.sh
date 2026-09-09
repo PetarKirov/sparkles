@@ -56,4 +56,5 @@ echo ">> running under Xvfb with the test XIM server ..."
 xvfb-run -a -s "-screen 0 1024x768x24" bash "$work/lane.sh" \
   | tee "$work/output.log"
 grep -q '^ok: X11 WSI conformance (19 checked, 2 skipped)' "$work/output.log"
+grep -q '^ok: X11 raw motion is one event per device motion' "$work/output.log"
 echo ">> sparkles:wsi X11 foreign-fd smoke verified under Xvfb."

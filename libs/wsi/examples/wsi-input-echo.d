@@ -34,8 +34,10 @@ $(LIST
         anywhere to move the window;
     * press `c` to cycle the standard cursor shapes, `m` to toggle
         maximize, `g` to cycle the pointer capture mode (none, capture,
-        confine — move the pointer past the border to see the difference),
-        `r` to toggle relative motion (`relativePointer` events beside the
+        confine — move the pointer past the border to see the difference;
+        under Xwayland the compositor routes no motion over non-X surfaces
+        to a grab and drops the confine-time warp, so start inside), `r`
+        to toggle relative motion (`relativePointer` events beside the
         absolute ones), `q` to quit;
     * filter events with `-F "!pointer"`, `-F "pointer.phase == pressed"`, or
         `-F ?` for the schema-generated path and category tables.
@@ -344,7 +346,7 @@ private Expected!(void, string) echoLoop(Backend)(ref Backend wsi, ref DefaultLo
                 report.exitedBecause = "destroyed";
             },
             (other) {
-                info(i"#$(event.sequence) $(typeof(other).stringof)");
+                info(i"#$(event.sequence) $(prettyPrint(other, opt))");
             });
     }
 
