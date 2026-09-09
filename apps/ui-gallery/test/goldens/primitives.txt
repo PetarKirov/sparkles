@@ -1,0 +1,32 @@
+ sparkles:ui the ten widget kinds                                                   tokyo-night
+   Welcome           ▕ Primitives · the eleven widget kinds                                    █
+ ▸ Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ Every tree in this catalog is built from these and nothing else. A      █
+   Text              ▕ widget names a semantic slot, never a colour — the palette resolves it  █
+   Themes            ▕ while the display list is built, which is why every specimen below      █
+   Slots             ▕ repaints when you press ] .                                             █
+   Decoration        ▕                                                                         █
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ leaves                                                              │ █
+   Tree              ▕ │ box                                                                 │ █
+   Property tree     ▕ │ text             a run of text                                      │ █
+   Table             ▕ │ rich             auto n = 42;                                       │ █
+   Scrolling         ▕ │ glyph            ◆                                                  │ █
+   State             ▕ │ line · solid     an underlined run                                  │ █
+   Split             ▕ │ line · wavy      a squiggled run                                    │ █
+   Dock              ▕ │ scrollbar        ││                                                 │ █
+   Terminal          ▕ │                  ││                                                 │ │
+                     ▕ │                  ██                                                 │ │
+                     ▕ │                  ██                                                 │ │
+                     ▕ │                  ││                                                 │ │
+                     ▕ │                  ││                                                 │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ flow containers                                                     │ │
+                     ▕ │ row               one   two   three                                 │ │
+                     ▕ │ column            one                                               │ │
+                     ▕ │                   two                                               │ │
+                     ▕
+ pages                                                                          ? keys   q quit

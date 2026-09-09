@@ -1,0 +1,32 @@
+ sparkles:ui one value, reflected                                                   tokyo-night
+   Welcome           ▕ Property tree · one value, reflected                                    █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ PropertyTree!T reflects the subject below at compile time — no          █
+   Text              ▕ registry, no base class — and rebuilds one flat row snapshot from ref   █
+   Themes            ▕ subject on every change. Disclosure, selection, the filter, and the     █
+   Slots             ▕ undo/redo history are host-owned values beside it.                      █
+   Decoration        ▕                                                                         █
+   Grid              ▕ / starts the ranked fuzzy filter                                        █
+   Components        ▕                                                                         █
+   Tree              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+ ▸ Property tree     ▕ │ the live tree                                                       │ █
+   Table             ▕ │ ├─ name                   "background"  ⟨needs EDT⟩            █    │ █
+   Scrolling         ▕ │ ├─ visible                [x] true                             █    │ █
+   State             ▕ │ ├─ blend                  ◂ normal ▸                           █    │ █
+   Split             ▕ │ ├─ ▸ fill                                                      █    │ █
+   Dock              ▕ │ ├─ ▸ metrics                                                   █    │ █
+   Terminal          ▕ │ ├─ ▸ dashes               [3]                                  █    │ █
+                     ▕ │ ├─ id ⊘                   42                                   █    │ █
+                     ▕ │ ├─ tint                   3368601                              █    │ │
+                     ▕ │ ├─ handle ⊘               Handle(0x12648430)                   █    │ │
+                     ▕ │ ├─ ▸ extra                {3 keys}                             █    │ │
+                     ▕ │ └─ ▸ linked                                                    █    │ │
+                     ▕ │                                                                █    │ │
+                     ▕ │                                                                █    │ │
+                     ▕ │                                                                █    │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕
+ pa↓ ↑ → e← coll⏎ tog+ s- stv prevu uU r/ fin nexN preb revep read-e exteO opeC clor reset? keys

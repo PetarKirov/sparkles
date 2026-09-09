@@ -1,0 +1,32 @@
+ sparkles:ui one thumb formula                                                      tokyo-night
+   Welcome           ▕ Scrolling · one thumb formula                                           █
+   Primitives        ▕                                                                         █
+   Layout            ▕                                                                         █
+   Tracks            ▕ A scroll view is a clipping container plus a child offset — the layout  █
+   Text              ▕ engine's viewport primitive with the scroll machine plugged in. Rows    █
+   Themes            ▕ above the viewport get negative frames, and the display list culls      █
+   Slots             ▕ whatever falls fully outside.                                           █
+   Decoration        ▕                                                                         █
+   Grid              ▕ ┌─────────────────────────────────────────────────────────────────────┐ █
+   Components        ▕ │ forty rows in an eight-row viewport                                 │ █
+   Tree              ▕ │  1  — a landmark row —  █                                           │ █
+   Property tree     ▕ │  2  the quick brown fox │                                           │ █
+   Table             ▕ │  3  the quick brown fox │                                           │ │
+ ▸ Scrolling         ▕ │  4  the quick brown fox │                                           │ │
+   State             ▕ │  5  the quick brown fox │                                           │ │
+   Split             ▕ │  6  — a landmark row —  │                                           │ │
+   Dock              ▕ │  7  the quick brown fox │                                           │ │
+   Terminal          ▕ │  8  the quick brown fox │                                           │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ the machine                                                         │ │
+                     ▕ │ offset           0 of 32                                            │ │
+                     ▕ │ thumb            start 0, extent 1                                  │ │
+                     ▕ │ track            8 cells                                            │ │
+                     ▕ └─────────────────────────────────────────────────────────────────────┘ │
+                     ▕                                                                         │
+                     ▕ ┌─────────────────────────────────────────────────────────────────────┐ │
+                     ▕ │ the same formula at three offsets                                   │ │
+                     ▕
+ pages n down p up N page down P page up g top G bottom                         ? keys   q quit
