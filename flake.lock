@@ -16,16 +16,16 @@
         "wasm-component-ld": "wasm-component-ld"
       },
       "locked": {
-        "lastModified": 1785430409,
-        "narHash": "sha256-oEMpKOniKOsqg6YR9mxeNT//GcXB401yEKXF7ApRaLc=",
+        "lastModified": 1788991924,
+        "narHash": "sha256-Jqt7fIC02kFIZ0utq00XXGjIrjytchqoPNbAKMxhchc=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "a0b2e8eb0f4a5f09cd3e97ff2d9e86be39b7eb2e",
+        "rev": "1f2376a178d9ee93f0d1c098587131eae8ee65d0",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
-        "ref": "feat/ldc-wasm",
+        "ref": "fix/wasm-component-ld-static-crates",
         "repo": "dlang.nix",
         "type": "github"
       }
