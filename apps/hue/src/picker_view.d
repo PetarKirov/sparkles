@@ -223,10 +223,12 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         // and so must survive a sideways scroll: a files row leads with its
         // icon, a grep row with its icon and its definition marker.
         size_t pinnedSpans;
+        bool definitionRow;
         if (i < grepRows.length)
         {
             grepSpans(spans, grepRows[i]);
-            pinnedSpans = 2;
+            pinnedSpans = 1; // the file icon; the marker is a tint now
+            definitionRow = grepRows[i].definition;
         }
         else if (ranked.corpusIndex < snapshot.candidates.length)
         {
@@ -272,9 +274,16 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         // the list owns the keyboard, a tint while the prompt types, at
         // rest while the preview reads.
         const selected = state.firstRow + i == state.selection;
-        const rowSlot = !selected ? Slot.inherit
-            : listFocused ? Slot.selection
+        // A visible selection outranks the definition tint — the cursor must
+        // stay findable, and a row can be both. But when the selection
+        // paints NOTHING (the preview holds the focus, so the bar is at
+        // rest), the definition tint is what that row still has to say.
+        Slot rowSlot = Slot.inherit;
+        if (selected)
+            rowSlot = listFocused ? Slot.selection
                 : inputFocused ? Slot.highlight : Slot.inherit;
+        if (rowSlot == Slot.inherit && definitionRow)
+            rowSlot = Slot.highlight;
         body ~= builder.add(Widget(kind: WidgetKind.rich,
             spans: spans,
             slot: rowSlot,
@@ -465,12 +474,11 @@ private void grepSpans(ref TextSpan[] spans, GrepRowText row) @safe
     spans ~= TextSpan(text: icon.glyph, fg: icon.fg, hasFg: true,
         noBreak: true);
 
-    // A definition is marked, not merely ranked: a nudge nobody can see is
-    // indistinguishable from a ranking bug (`PKC14`).
-    spans ~= TextSpan(text: row.definition ? "▸ " : "  ",
-        slot: row.definition ? Slot.chromeAccent : Slot.inherit,
-        noBreak: true);
-
+    // A definition is marked, not merely ranked — a nudge nobody can see is
+    // indistinguishable from a ranking bug (`PKC14`) — but it is marked with
+    // a BACKGROUND TINT rather than a leading glyph. An arrow in the text
+    // reads as punctuation the reader has to decode, and it costs two
+    // columns on every row to say something about a minority of them.
     spans ~= TextSpan(text: row.label, slot: Slot.muted, noBreak: true);
 
     spans ~= TextSpan(text: row.column != 0
@@ -813,9 +821,31 @@ unittest
         elidedLeft: true, elidedRight: true));
     assert(cut.canFind("…"), "a truncated line must say so");
 
-    const def = render(GrepRowText(label: "a.d", context: "struct Foo",
-        line: 1, matchStart: 7, matchLen: 3, definition: true));
-    assert(def.canFind("▸"), "a definition must be marked, not merely ranked");
+    // A definition is marked by a background TINT on its row, not by a
+    // glyph in its text: an arrow reads as punctuation to decode, and costs
+    // two columns on every row to say something about a minority of them.
+    static bool tinted(GrepRowText row) @safe
+    {
+        PickerState!8 state;
+        state.viewRows = 8;
+        state.open();
+        RankedResult[1] ranked;
+        state.publish(ranked[], 1, false);
+        auto tree = pickerView(state, CandidateSnapshot.init, null, null,
+            PickerGeometry.init, PickerLayout.default_, Scope_.pickerPreview,
+            [row]);
+        foreach (ref const node; tree.nodes)
+            if (node.kind == WidgetKind.rich && node.hitId != 0)
+                return node.paintBackground && node.slot == Slot.highlight;
+        return false;
+    }
+
+    assert(tinted(GrepRowText(label: "a.d", context: "struct Foo",
+        line: 1, matchStart: 7, matchLen: 3, definition: true)),
+        "a definition must be marked, not merely ranked");
+    assert(!tinted(GrepRowText(label: "a.d", context: "  Foo f;",
+        line: 9, matchStart: 2, matchLen: 3)),
+        "…and a mention must not be");
 }
 
 @("picker.view.geometryGrowsWithTheScreen")

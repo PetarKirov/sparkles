@@ -4029,7 +4029,27 @@ unittest
     assert(all.canFind(":1:8"),
         "the position is shown, in the form `PKQ4` parses back");
     assert(all.canFind("struct Widget"), "the matching line is shown");
-    assert(all.canFind("▸"), "the declaration is marked (`PKC14`)");
+    // The declaration's row carries a background tint rather than a glyph
+    // (`PKC14`). Read off the grid: the row showing `struct Widget` must
+    // differ in background from the mention's row.
+    {
+        int defRow = -1, useRow = -1;
+        foreach (y; 0 .. g.rows)
+        {
+            string row;
+            foreach (x; 0 .. g.cols)
+                row ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+            if (row.canFind("alpha.d:1:8"))
+                defRow = y;
+            else if (row.canFind("beta.d:1:"))
+                useRow = y;
+        }
+        assert(defRow >= 0 && useRow >= 0, "both rows are on screen");
+        const defBg = g[cast(ushort) 20, cast(ushort) defRow].style.bg;
+        const useBg = g[cast(ushort) 20, cast(ushort) useRow].style.bg;
+        assert(defBg != useBg,
+            "the declaration's row is tinted and the mention's is not");
+    }
     assert(all.canFind("[plain]"), "the active mode is shown (`PKL5`)");
 
     // `<S-Tab>` cycles the MODE here, where it reverses the pane focus

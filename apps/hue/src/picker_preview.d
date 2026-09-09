@@ -272,9 +272,16 @@ struct PickerDocPane
     */
     ScrollLayout bars() @system
     {
-        const rows = rowsShown > 2 ? rowsShown - 2 : rowsShown;
+        // The pane's own body rect, not an arithmetic guess at it. The
+        // literal this replaced (`Rect(0, 1, cols, rows - 2)`) encoded a
+        // header and a status bar that `bareChrome` removes, so the
+        // horizontal bar sat two rows above the document's last line.
+        // Vertical extent from the pane, horizontal from the hole: the pane
+        // is sized to `cols - 1` because the host RESERVES the last column
+        // as the bar's gutter, so the pane's own width is one short of the
+        // lane the bar lives in.
         return scrollLayout(ScrollArea(
-            rect: Rect(0, 1, colsShown, rows),
+            rect: Rect(0, pane.docBody.y, colsShown, pane.docBody.height),
             v: ScrollAreaAxis(content: pane.docRows,
                 viewport: pane.docViewRows, gutter: 1),
             // The horizontal axis was declared dead here, with the reasoning
@@ -499,15 +506,25 @@ unittest
 
     // The bar geometry is host-shared and hole-local: the reserved gutter is
     // the last column, spanning the body rows.
+    //
+    // A preview is BARE (`PKL2`) — no header, no status bar — so its body is
+    // the whole pane: rows 0..11 of twelve, not 1..10. This assertion read
+    // `Rect(39, 1, 1, 10)` while `bars()` derived the rect from a literal
+    // that encoded the two chrome rows, and the two agreed with each other
+    // and not with the pane, which is how the horizontal bar came to sit two
+    // rows above the document's last line.
     const lay = preview.bars;
     assert(lay.vLive, "an overflowing document has a live bar");
-    assert(lay.vTrack == Rect(39, 1, 1, 10));
+    assert(lay.vTrack == Rect(39, 0, 1, 12));
+    assert(lay.vTrack.y == preview.pane.docBody.y
+        && lay.vTrack.height == preview.pane.docBody.height,
+        "and it spans exactly the rows the pane's body occupies");
 
     // A press on the thumb and a drag scroll the DOCUMENT, through the
     // pane's own `vm.scroll` machine — the same one the main document pane
     // runs, which is the whole parity point.
     const before = preview.pane.vm.top;
-    preview.forward(Event(PointerEvent(pos: Point(39, 1),
+    preview.forward(Event(PointerEvent(pos: Point(39, 0),
         action: PointerAction.press, button: PointerButton.left)));
     assert(preview.pane.vm.scroll.grabbing, "a thumb press grabs");
     preview.forward(Event(PointerEvent(pos: Point(39, 6),
