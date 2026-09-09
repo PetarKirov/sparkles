@@ -119,6 +119,19 @@ struct PreviewTui
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
+    /**
+    The document body's rect in pane-local cells (`SCV7`).
+
+    An external bar owner must measure against the rows the document
+    actually occupies, and those move with the pane's chrome: a bare pane
+    has neither header nor status bar, so its body starts at row 0 and is
+    two rows taller. Hosts asked with a literal `Rect(0, 1, w, rows - 2)`
+    before this, which put the horizontal bar two rows above the body's
+    bottom the moment `bareChrome` was set.
+    */
+    Rect docBody() const @safe pure nothrow @nogc
+        => Rect(0, bodyTop, width, bodyRows);
+
     /// The scroll extents an external bar owner reads (`SCV1`): the
     /// document's total visual rows and the body viewport — what the
     /// picker's preview needs to run the pane's own `vm.scroll` machines
