@@ -29,7 +29,13 @@
       # compiler used by `devShells.android`) with the `ldc-wasm` wasm32-wasip2
       # toolchain consumed by `packages.text-wasm`. Revert toward the default
       # branch once these land upstream.
-      url = "github:PetarKirov/dlang.nix/feat/ldc-wasm";
+      # `fix/wasm-component-ld-static-crates` is `feat/ldc-wasm` plus one
+      # commit: the WASI linker vendors its crates with `fetchCargoVendor`.
+      # crates.io answers 403 to Nix's `curl/…` user agent on the `/api/v1`
+      # download route that `importCargoLock` uses at dlang.nix's nixpkgs, so
+      # an uncached build of `wasm-component-ld` — and with it every wasm
+      # module here — failed in CI. Fold back into `feat/ldc-wasm` upstream.
+      url = "github:PetarKirov/dlang.nix/fix/wasm-component-ld-static-crates";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
