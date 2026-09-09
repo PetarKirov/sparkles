@@ -63,13 +63,54 @@ and the memory/load/swap cap ($(LREF applyResourceCaps)), never less than 1.
 On a host with no restriction and no pressure this is the online CPU count,
 so it is a safe drop-in for `std.parallelism.totalCPUs`.
 */
-uint hwParallelism() @trusted nothrow @nogc
+uint hwParallelism() @trusted nothrow @nogc => hwWorkerBudget().workers;
+
+/**
+Which constraint in $(LREF explainResourceCaps) produced the answer.
+
+`none` means the CPU count stood. The memory caps are split at their
+thresholds so a log line can say which one bit without re-deriving it.
+*/
+enum ResourceCap : ubyte
+{
+    none,        /// the CPU count stood
+    lowMemory,   /// under 2 GiB available → 1 worker
+    tightMemory, /// under 4 GiB available → at most 2 workers
+    swap,        /// ≥ 1 GiB swapped out with under 8 GiB available → at most 2
+    load,        /// the 1-minute load left fewer spare CPUs than that
+}
+
+/// A worker count together with the reason it is not the CPU count.
+struct WorkerBudget
+{
+    uint workers;     /// the answer, never 0
+    uint cpus;        /// the CPU count the caps were applied to
+    ResourceCap cap;  /// the constraint that produced `workers`, or `none`
+}
+
+/// A one-line, static description of a cap for a log.
+string describe(ResourceCap cap) @safe pure nothrow @nogc
+{
+    final switch (cap)
+    {
+        case ResourceCap.none:        return "no cap";
+        case ResourceCap.lowMemory:   return "capped by available RAM below 2 GiB";
+        case ResourceCap.tightMemory: return "capped by available RAM below 4 GiB";
+        case ResourceCap.swap:        return "capped by swap in use with under 8 GiB available";
+        case ResourceCap.load:        return "capped by the 1-minute load";
+    }
+}
+
+/// $(LREF hwParallelism) with its reason: the same probes, the same caps,
+/// plus which one bound the answer, for the log line that has to explain
+/// why a 14-CPU laptop got two workers.
+WorkerBudget hwWorkerBudget() @trusted nothrow @nogc
 {
     const allowed = allowedCpuCount();
     const quota = quotaCpuCount();
     const n = quota > 0 && quota < allowed ? quota : allowed;
     const cpu = n > 0 ? n : 1;
-    return applyResourceCaps(
+    return explainResourceCaps(
         cpu, hwAvailableMemoryBytes(), hwLoadAverageCenti(), hwSwapUsedBytes());
 }
 
@@ -274,35 +315,80 @@ uint applyResourceCaps(
     uint loadCenti,
     ulong swapUsedBytes = 0,
 ) @safe pure nothrow @nogc
+    => explainResourceCaps(cpuCount, availableBytes, loadCenti, swapUsedBytes).workers;
+
+/// $(LREF applyResourceCaps), also saying which cap produced the answer.
+/// When several would lower the count, the one recorded is the one that
+/// set the final value — the binding constraint.
+WorkerBudget explainResourceCaps(
+    uint cpuCount,
+    ulong availableBytes,
+    uint loadCenti,
+    ulong swapUsedBytes = 0,
+) @safe pure nothrow @nogc
 {
-    uint n = cpuCount > 0 ? cpuCount : 1;
+    WorkerBudget b;
+    b.cpus = cpuCount > 0 ? cpuCount : 1;
+    uint n = b.cpus;
 
     if (availableBytes > 0)
     {
         uint memCap = uint.max;
+        ResourceCap why = ResourceCap.none;
         if (availableBytes < (2UL << 30))
+        {
             memCap = 1;
+            why = ResourceCap.lowMemory;
+        }
         else if (availableBytes < (4UL << 30))
+        {
             memCap = 2;
+            why = ResourceCap.tightMemory;
+        }
         if (memCap < n)
+        {
             n = memCap;
+            b.cap = why;
+        }
     }
 
     // Swap-in-use only bites when RAM is also tight. A 60 GiB workstation
     // with some swapped-out idle pages is not the GitHub-macOS case.
     if (swapUsedBytes >= (1UL << 30)
         && availableBytes > 0 && availableBytes < (8UL << 30) && n > 2)
+    {
         n = 2;
+        b.cap = ResourceCap.swap;
+    }
 
     if (loadCenti != hwLoadUnknown && cpuCount > 0)
     {
         const busy = loadCenti / 100;
         const spare = cpuCount > busy ? cpuCount - busy : 1;
         if (spare < n)
+        {
             n = spare;
+            b.cap = ResourceCap.load;
+        }
     }
 
-    return n > 0 ? n : 1;
+    b.workers = n > 0 ? n : 1;
+    return b;
+}
+
+@("base.hw_caps.explainResourceCaps.namesTheBindingCap")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(explainResourceCaps(8, 0, hwLoadUnknown) == WorkerBudget(8, 8, ResourceCap.none));
+    assert(explainResourceCaps(14, 3UL << 30, 112) == WorkerBudget(2, 14, ResourceCap.tightMemory));
+    assert(explainResourceCaps(8, (2UL << 30) - 1, hwLoadUnknown).cap == ResourceCap.lowMemory);
+    assert(explainResourceCaps(8, 5UL << 30, hwLoadUnknown, 1UL << 30).cap == ResourceCap.swap);
+    // Load lowers it further than memory did: load is the binding cap.
+    assert(explainResourceCaps(4, 3UL << 30, 350) == WorkerBudget(1, 4, ResourceCap.load));
+    // Load would allow less than memory only if it is the lower one.
+    assert(explainResourceCaps(4, 3UL << 30, 100).cap == ResourceCap.tightMemory);
+    assert(describe(ResourceCap.tightMemory) == "capped by available RAM below 4 GiB");
 }
 
 @("base.hw_caps.applyResourceCaps.memoryLoadAndSwap")
