@@ -2043,15 +2043,26 @@ int runGui(GuiArgs guiArgs) @system
                 if (lay.vLive)
                 {
                     const sv = filePickerDoc.pane.vm.scroll;
-                    drawBar(Rect(
-                        (pkOriginX + hole.x + lay.vTrack.x) * cellW,
-                        (1 + hole.y + lay.vTrack.y) * cellH,
-                        lay.vTrack.width * cellW,
-                        lay.vTrack.height * cellH),
+                    drawBar(PickerDocPane.barRectCells(lay.vTrack,
+                        pkOriginX, hole.x, hole.y),
                         RuleEdge.right, lay.vExtents.content,
                         lay.vExtents.viewport, sv.v.offset,
                         sv.vAnim.percent,
                         sv.v.hovered || sv.v.dragging,
+                        vm.sbTrack, vm.sbThumb);
+                }
+                // ditto sideways (`PKS2`): a grep hit is at a column, and a
+                // preview whose lines overflow can hide the matched text off
+                // the edge of the pane that exists to show it.
+                if (lay.hLive)
+                {
+                    const sv = filePickerDoc.pane.vm.scroll;
+                    drawBar(PickerDocPane.barRectCells(lay.hTrack,
+                        pkOriginX, hole.x, hole.y),
+                        RuleEdge.bottom, lay.hExtents.content,
+                        lay.hExtents.viewport, sv.h.offset,
+                        sv.hAnim.percent,
+                        sv.h.hovered || sv.h.dragging,
                         vm.sbTrack, vm.sbThumb);
                 }
             }
@@ -2466,7 +2477,13 @@ int runGui(GuiArgs guiArgs) @system
         if (!filePicker.empty && filePicker.get.state.active
             && filePickerDoc !is null)
         {
-            filePickerDoc.select(filePicker.get.selectedPath);
+            // A grep row carries a position and a needle (`PKS2`); a files
+            // row carries neither, and this is exactly `select` for it.
+            {
+                const t = filePicker.get.selectedTarget();
+                filePickerDoc.selectAt(filePicker.get.selectedPath, t.line,
+                    filePicker.get.previewNeedle);
+            }
             filePickerDoc.syncTheme(vm.themeIdx);
         syncConfigDerived(); // the picker knobs exist only once it does
             filePickerDoc.caps = caps; // the same profile the dock eases with

@@ -18,10 +18,13 @@ import sparkles.event_horizon.raw_pool : RawPoolResult;
 import sparkles.fuzzy : CandidateSnapshot, DefaultFuzzyCaps, FuzzyLimits,
     Location, MatchConfig, MatcherWorkspace, parseQuery, positions,
     RankedResult, TextRange;
+import sparkles.input.capability : cellPointer, InputCapabilities;
 import sparkles.input.events : Event, Key, KeyEvent, match, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import sparkles.ui.focus : ScopeFocus;
 import sparkles.ui.geometry : Constraints, Point, Rect;
+import core.time : MonoTime;
+
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.widget : WidgetTree;
 
@@ -126,6 +129,40 @@ struct PickerHost
     /// (`STM11`): drags and the release forward wherever they stray, so its
     /// scrollbar grabs survive leaving the hole.
     private bool previewGrab;
+
+    /**
+    Ease the list bar's expansion (`IXB10`).
+
+    The bar had a live `hovered` flag and an `hAnim` that nothing ever
+    stepped, so it painted at a constant width: the hover expansion existed
+    in the state and never on screen. This is the pane's own easing, run on
+    the same `ScrollView` the preview eases its bars with, so the two look
+    alike rather than one animating and the other not.
+    */
+    private bool easeBars() @system
+    {
+        import core.time : MonoTime;
+
+        if (!state.active)
+            return false;
+        const now = MonoTime.currTime;
+        scope (exit) lastEase = now;
+        if (!easeArmed)
+        {
+            easeArmed = true;
+            return false;
+        }
+        const before = state.scroll.hAnim.percent;
+        const dt = cast(float)((now - lastEase).total!"hnsecs") / 10_000_000.0f;
+        state.scroll.easeH(caps, dt);
+        return state.scroll.hAnim.percent != before;
+    }
+
+    private MonoTime lastEase;
+    private bool easeArmed;
+
+    /// What the host's pointer can do — feeds the bar's hover easing.
+    InputCapabilities caps = cellPointer;
 
     /// Capture for the list's horizontal bar (`STM11`). A grab owns the
     /// pointer until release, so a drag that strays off the track keeps
@@ -295,7 +332,7 @@ struct PickerHost
         const changed = fingerprint() != before;
         if (changed)
             refreshHighlights();
-        return changed;
+        return changed || easeBars();
     }
 
     /// The selected row's resolved absolute path (null when nothing is
@@ -717,6 +754,36 @@ private:
         return over || wasGrab || state.scroll.h.dragging;
     }
 
+public:
+    /**
+    Where the SELECTED row points, for the preview (`PKS2`).
+
+    A files row names no position and no needle, so the preview opens as it
+    always has. A grep row names both, and a preview that ignored them would
+    show the reader the one part of the document they did not ask about.
+    */
+    PickerTarget selectedTarget() @system
+    {
+        final switch (source)
+        {
+        case PickerSource.files: return PickerTarget.init;
+        case PickerSource.grep: return grep.resolve(state.selectedCorpusIndex);
+        }
+    }
+
+    /// The needle the preview should light — the prompt, minus anything the
+    /// query language consumed. Empty for the files source, whose matches
+    /// are against the PATH and already drawn on the row.
+    const(char)[] previewNeedle() @system
+    {
+        final switch (source)
+        {
+        case PickerSource.files: return null;
+        case PickerSource.grep: return state.prompt.text;
+        }
+    }
+
+private:
     /// Where the row at `index` goes, whichever source produced it.
     PickerTarget resolveRow(size_t index) @system
     {

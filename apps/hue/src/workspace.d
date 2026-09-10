@@ -729,7 +729,34 @@ struct WorkspaceTui
             auto t = b.finish(bar);
             paintGrid(g, pageBg, buildDisplayList(t, layout(t),
                 pickerDoc.pane.vm.palette, pageFg, pageBg),
-                originX_ + hole.x + lay.vTrack.x, 1 + hole.y + lay.vTrack.y);
+                PickerDocPane.barRectCells(lay.vTrack, originX_, hole.x,
+                    hole.y).x,
+                PickerDocPane.barRectCells(lay.vTrack, originX_, hole.x,
+                    hole.y).y);
+        }
+        // ditto sideways: a grep hit is at a COLUMN, so a preview whose
+        // lines run past the pane can put the matched text off the very
+        // edge of the pane that exists to show it.
+        if (lay.hLive)
+        {
+            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+            import sparkles.ui.widget : Builder;
+
+            const sv = pickerDoc.pane.vm.scroll;
+            auto b = Builder();
+            const bar = scrollbar(b, sv.h,
+                lay.hExtents.content, lay.hExtents.viewport,
+                lay.hExtents.track, ScrollbarGlyphs('━', '─'),
+                expandPercent: cast(ubyte) sv.hAnim.percent,
+                gutter: lay.hTrack.height,
+                trackLit: sv.h.hovered || sv.h.dragging);
+            auto t = b.finish(bar);
+            paintGrid(g, pageBg, buildDisplayList(t, layout(t),
+                pickerDoc.pane.vm.palette, pageFg, pageBg),
+                PickerDocPane.barRectCells(lay.hTrack, originX_, hole.x,
+                    hole.y).x,
+                PickerDocPane.barRectCells(lay.hTrack, originX_, hole.x,
+                    hole.y).y);
         }
     }
 
@@ -1710,7 +1737,13 @@ struct WorkspaceTui
             changed = true;
         if (!picker.empty && picker.get.state.active && pickerDoc !is null)
         {
-            pickerDoc.select(picker.get.selectedPath);
+            // A grep row carries a position and a needle (`PKS2`); a files
+            // row carries neither, and this is exactly `select` for it.
+            {
+                const t = picker.get.selectedTarget();
+                pickerDoc.selectAt(picker.get.selectedPath, t.line,
+                    picker.get.previewNeedle);
+            }
             pickerDoc.syncTheme(viewer.themeIndex);
             changed |= pickerDoc.tick();
         }
@@ -4098,4 +4131,122 @@ unittest
         cast(void) w.handle(Event(KeyEvent(key: Key.left)));
     assert(w.picker.get.state.hOffset == 0);
     assert(screen(w).canFind("docs/research"));
+}
+
+@("workspace.grepPreviewLandsOnTheMatchAndCarriesBothBars")
+@system
+unittest
+{
+    // Three defects the screenshot showed, in one place because they share a
+    // cause: the preview was treated as orientation ("a glance") rather than
+    // as the thing that shows you the hit.
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-prevmatch");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+
+    // Long lines AND many of them, so both axes overflow.
+    string src;
+    foreach (i; 0 .. 300)
+        src ~= "int filler_aVeryLongLineOfSourceThatRunsPastAnyPreviewPane;\n";
+    src ~= "void needleHere() {}\n";
+    write(buildPath(root, "big.d"), src);
+
+    static void settle(ref WorkspaceTui w) @system
+    {
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.get.busy)
+                return;
+            Thread.yield();
+        }
+    }
+
+    foreach (ch; " /")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "needleHere")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    settle(w);
+    cast(void) w.pollAll();
+
+    Grid g;
+    g.resize(120, 30);
+    w.paint(g);
+
+    // 1. The preview LANDS on the hit. It used to open at the top of the
+    //    file — showing the reader the one region they did not ask about.
+    assert(w.pickerDoc.pane.vm.top > 0,
+        "the preview must scroll to the match, not sit at the top");
+
+    // 2. …and LIGHTS it, through the same `vm.search` the in-document
+    //    search uses, so the row's highlight and the preview's are one
+    //    implementation (`FND`).
+    assert(w.pickerDoc.pane.vm.matches.length == 1,
+        "the match must be highlighted in the preview");
+
+    // 3. Both bars are live. The horizontal axis was declared dead with the
+    //    reasoning that a preview "is a glance" — which holds for a files
+    //    picker and not for grep, where the hit is at a COLUMN.
+    const lay = w.pickerDoc.bars;
+    assert(lay.vLive, "the preview's vertical bar");
+    assert(lay.hLive, "and its horizontal one — the hit is at a column");
+}
+
+@("workspace.theListBarExpandsUnderThePointer")
+@system
+unittest
+{
+    // The bar carried a `hovered` flag and an `hAnim` that nothing stepped,
+    // so the expansion existed in the state and never on screen.
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-barease");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    const deep = buildPath(root, "docs", "research", "window-system", "os-apis");
+    mkdirRecurse(deep);
+    write(buildPath(deep, "distinctive.d"), "void f() { needleHere(); }\n");
+
+    foreach (ch; " /")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "needleHere")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    foreach (_; 0 .. 100_000)
+    {
+        cast(void) w.pollAll();
+        if (!w.picker.get.busy)
+            break;
+        Thread.yield();
+    }
+    // The extent is measured while building the frame, so the overflow is
+    // not known until something has painted.
+    Grid g;
+    g.resize(120, 30);
+    w.paint(g);
+    assert(w.picker.get.state.hOverflows);
+
+    // Mark the bar hovered as a pointer over it would, then let frames pass.
+    w.picker.get.state.scroll.h.hovered = true;
+    const before = w.picker.get.state.scroll.hAnim.percent;
+    foreach (_; 0 .. 40)
+    {
+        cast(void) w.pollAll();
+        Thread.sleep(2.msecs);
+    }
+    assert(w.picker.get.state.scroll.hAnim.percent > before,
+        "the bar must ease toward expanded while hovered");
 }
