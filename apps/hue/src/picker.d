@@ -16,7 +16,7 @@ import sparkles.fuzzy : CandidateId, CandidateSnapshot, CandidateView,
     MatchConfig, MatcherWorkspace, QueryParseOptions, QueryStorage,
     RankedResult, Scoring, SearchAccumulator, SearchCursor, SearchLimits,
     SearchStop, fuzzyErr, fuzzyOk, parseQuery, searchChunk;
-import sparkles.ui.state : ScrollState;
+import sparkles.ui.components.scroll_view : ScrollView;
 
 /// Fixed UTF-8 prompt editor; accepted keystrokes never allocate.
 struct PickerPrompt(size_t Capacity = 256)
@@ -84,7 +84,6 @@ if (Capacity > 0 && PromptCapacity > 0)
     private RankedResult[Capacity] rows_ = void;
     private size_t rowCount_;
     size_t selection;
-    ScrollState scroll;
     ulong generation;
     /// Candidates admitted so far this generation (grows while `searching`).
     size_t matchedTotal;
@@ -107,6 +106,56 @@ if (Capacity > 0 && PromptCapacity > 0)
     */
     size_t viewRows = 16;
     private size_t firstRow_;
+
+    /**
+    The list's scroll machines (`PKL8`, `SCV1`).
+
+    A `ScrollView`, not a bare offset: the first version of this carried a
+    `size_t` and painted a decorative string, which made it the SEVENTH site
+    to assemble a scrollbar by convention in a codebase that had just
+    finished collapsing six into one component. The machine owns the parts
+    that are easy to get wrong on the eighth try — press-on-thumb grabs in
+    place while press-on-track jumps, the grab owns the pointer until
+    release, hover is a state, and the offset clamps in exactly one place.
+
+    Only the horizontal axis is driven today; the list's vertical movement
+    is a SELECTION (`firstRow_` follows it), not a scroll offset.
+    */
+    ScrollView scroll;
+
+    /// The list's horizontal offset, in cells — the machine's, surfaced
+    /// under the name the view reads.
+    size_t hOffset() const @safe pure nothrow @nogc
+        => scroll.h.offset < 0 ? 0 : cast(size_t) scroll.h.offset;
+    /// The widest painted row, in cells — the extent the bar describes.
+    /// Published by the view, which is the only thing that knows how wide a
+    /// row rendered.
+    size_t contentCols;
+    /// Cells the list can show at once, set by the host from the geometry.
+    size_t viewCols = 40;
+
+    /// Whether any painted row is wider than the panel.
+    bool hOverflows() const @safe pure nothrow @nogc
+        => contentCols > viewCols;
+
+    /**
+    Scroll the list sideways, clamped to the widest row.
+
+    Returns `false` when there is nothing to scroll, so a host can leave the
+    key unhandled rather than repaint for nothing — the same contract
+    `ViewerModel.scrollHorizontal` has.
+    */
+    bool scrollHorizontal(long delta) @safe pure nothrow @nogc
+    {
+        if (delta == 0 || !hOverflows)
+            return false;
+        const next = ScrollView.clampOffset(scroll.h.offset + delta,
+            contentCols, viewCols);
+        if (next == scroll.h.offset)
+            return false;
+        scroll.h = scroll.h.scrolledTo(next);
+        return true;
+    }
 
     /// The whole kept ranking, deeper than the viewport.
     const(RankedResult)[] rows() const return scope @trusted pure nothrow @nogc
@@ -151,7 +200,8 @@ if (Capacity > 0 && PromptCapacity > 0)
         rowCount_ = 0;
         selection = 0;
         firstRow_ = 0;
-        scroll = ScrollState.init;
+        scroll = ScrollView.init;
+        contentCols = 0;
         matchedTotal = 0;
         corpusTotal = 0;
         error = FuzzyError.init;
@@ -210,6 +260,12 @@ public:
         rowCount_ = values.length < Capacity ? values.length : Capacity;
         foreach (i; 0 .. rowCount_)
             rows_[i] = values[i];
+        // A new generation is a different set of rows, so a sideways offset
+        // carried over from the last query would point into text that is no
+        // longer there. Compared BEFORE the assignment, or the test is
+        // trivially false and the offset never resets.
+        if (generation != newGeneration)
+            scroll.h = scroll.h.scrolledTo(0);
         generation = newGeneration;
         searching = stillSearching;
         error = FuzzyError.init;
@@ -700,4 +756,41 @@ unittest
     // And back up.
     state.moveSelection(-100);
     assert(state.selection == 0 && state.firstRow == 0);
+}
+
+@("picker.state.horizontalOffsetClampsAndResetsPerQuery")
+@safe pure nothrow @nogc
+unittest
+{
+    // `PKL8`. A deep path exhausts the panel before the match is reached,
+    // and the row was simply truncated with nothing to reveal the rest.
+    PickerState!8 state;
+    state.open();
+    state.viewCols = 40;
+    state.contentCols = 100;
+
+    assert(state.hOverflows);
+    assert(state.scrollHorizontal(8) && state.hOffset == 8);
+    assert(state.scrollHorizontal(-100) && state.hOffset == 0,
+        "clamped at the left edge, not negative");
+    assert(!state.scrollHorizontal(-8), "and refuses when already there");
+
+    assert(state.scrollHorizontal(1000));
+    assert(state.hOffset == 60, "clamped so the widest row's end is flush");
+    assert(!state.scrollHorizontal(8), "and refuses past it");
+
+    // Content that fits does not scroll at all.
+    state.contentCols = 20;
+    assert(!state.hOverflows);
+    assert(!state.scrollHorizontal(8), "nothing to scroll");
+
+    // A new generation is a different set of rows, so an offset carried
+    // over would point into text that is no longer there.
+    state.contentCols = 100;
+    cast(void) state.scrollHorizontal(-1000); // back to the left edge first
+    cast(void) state.scrollHorizontal(24);
+    assert(state.hOffset == 24);
+    RankedResult[1] rows;
+    state.publish(rows[], state.generation + 1, false);
+    assert(state.hOffset == 0, "a new query starts flush left");
 }

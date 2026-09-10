@@ -22,7 +22,7 @@ import sparkles.input.events : Event, Key, KeyEvent, match, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import sparkles.ui.focus : ScopeFocus;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.layout : layout;
+import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.widget : WidgetTree;
 
 import keymap : Command, commandFor, KeyContext, Scope_;
@@ -31,7 +31,11 @@ import sparkles.source_view.search : SearchPolicy;
 
 import picker_grep : GrepFinder, modeLabel, PickerSource, ScanStep;
 import picker_sources : collectFilesFinder, FilesFinder, PickerTarget;
-import picker_view : GrepRowText;
+import sparkles.ui.components.scroll_view : ScrollArea, ScrollAreaAxis,
+    scrollLayout;
+import sparkles.ui.state : CaptureState;
+
+import picker_view : GrepRowText, pickerHBarHitId;
 import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
     pickerView, RowHighlight;
 
@@ -122,6 +126,15 @@ struct PickerHost
     /// (`STM11`): drags and the release forward wherever they stray, so its
     /// scrollbar grabs survive leaving the hole.
     private bool previewGrab;
+
+    /// Capture for the list's horizontal bar (`STM11`). A grab owns the
+    /// pointer until release, so a drag that strays off the track keeps
+    /// scrolling rather than falling into the row-selection arm.
+    private CaptureState barCap;
+
+    /// The capture id the list's bar arbitrates under — distinct from the
+    /// preview pane's, which runs its own.
+    private enum size_t listBarCapId = 2;
 
     /// The pane order `Tab` cycles (`pickerFocusNext`/`Prev`).
     static immutable Scope_[3] paneOrder =
@@ -337,11 +350,36 @@ struct PickerHost
             break;
         }
 
-        return pickerView(state, snapshot,
+        state.viewCols = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
+        auto tree = pickerView(state, snapshot,
             highlights[0 .. shown],
             path.length ? baseName(path) : null, geometry, preset,
             focus.focused,
             source == PickerSource.grep ? rows[0 .. shown] : null, mode);
+
+        // The list's extent, measured off the tree that was just built
+        // rather than re-derived — the rendered spans ARE the row, so
+        // nothing can drift between what is painted and what the bar
+        // describes. Rows are trimmed by exactly `hOffset` cells, so adding
+        // it back recovers the untrimmed width of the widest one.
+        {
+            import sparkles.source_view.search : columnWidth;
+            import sparkles.ui.widget : WidgetKind;
+
+            size_t widest;
+            foreach (ref const node; tree.nodes)
+            {
+                if (node.kind != WidgetKind.rich)
+                    continue;
+                size_t w;
+                foreach (ref const sp; node.spans)
+                    w += columnWidth(sp.text);
+                if (w > widest)
+                    widest = w;
+            }
+            state.contentCols = widest == 0 ? 0 : widest + state.hOffset;
+        }
+        return tree;
     }
 
     /// The `:line[:col]` suffix the prompt currently carries (`PKQ4`), or
@@ -402,6 +440,14 @@ struct PickerHost
             acceptedTarget = target;
             close();
             return PickerAction.accepted;
+        case Command.pickerScrollLeft:
+        case Command.pickerScrollRight:
+            // `PKL8`. Eight cells a step: one is too slow across a deep
+            // path, and a whole panel loses the reader's place.
+            cast(void) state.scrollHorizontal(
+                commandFor(k, keyContext()).cmd == Command.pickerScrollLeft
+                    ? -8 : 8);
+            return PickerAction.consumed;
         case Command.pickerCycleMode:
             // `PKL5`. Gated to the grep source by `CtxFlag.grepActive`, so
             // the same chord still reverses the pane focus everywhere else
@@ -529,6 +575,16 @@ struct PickerHost
                     result = PickerAction.preview;
                     return;
                 }
+                // The bar rung first (`DCK13`'s shape, and the same order
+                // `picker_preview` uses for the preview's own bars): a
+                // pointer on the track — or owned by a live grab — drives
+                // the list's `ScrollView`, and nothing below sees it.
+                if (stepListBar(p, tree, frames))
+                {
+                    if (p.action == PointerAction.release)
+                        barCap = barCap.released(); // the central release
+                    return;
+                }
                 if (!press)
                     return;
                 // A press on a ranked row selects it and focuses the list;
@@ -612,6 +668,53 @@ private:
             publishGrep();
             return;
         }
+    }
+
+    /**
+    Drive the list's horizontal bar from a pointer event (`PKL8`).
+
+    Geometry comes from `scrollLayout` over the SAME rect the bar was
+    painted into, which is `SCV7`'s rule: one derivation, so paint and hit
+    cannot drift. The `hitId` the view stamps on the node is what makes
+    that rect findable rather than re-derived from magic offsets — the
+    failure the scrollbar audit found at six other sites.
+    */
+    private bool stepListBar(in PointerEvent p, in WidgetTree tree,
+        scope const(Frame)[] frames) @system
+    {
+        import sparkles.ui.state : hoverTargets;
+
+        if (!state.hOverflows && !state.scroll.h.dragging)
+            return false;
+
+        // The rect the bar was PAINTED into, found by the identity the view
+        // stamped on it — not a rect derived here from panel arithmetic.
+        // The first version of this computed its own `Rect(1, 1, …)` and was
+        // inert against the real layout: the bar is a child of the panel's
+        // body flow, so its row is wherever the rows above it ended, which
+        // no arithmetic outside the layout can know. That is `SCV7`
+        // precisely — one derivation, or paint and hit disagree — and its
+        // test passed only because the test picked the same wrong rect.
+        Rect barRect;
+        foreach (t; hoverTargets(tree, frames))
+            if (t.hitId == pickerHBarHitId)
+            {
+                barRect = t.rect;
+                break;
+            }
+        if (barRect.width == 0 && !state.scroll.h.dragging)
+            return false;
+
+        const lay = scrollLayout(ScrollArea(
+            rect: barRect,
+            v: ScrollAreaAxis(content: 0, viewport: 0, gutter: 0),
+            h: ScrollAreaAxis(content: cast(long) state.contentCols,
+                viewport: cast(long) state.viewCols, gutter: 1)));
+        const over = lay.hPointer(p).over;
+        const wasGrab = state.scroll.h.dragging;
+        barCap = state.scroll.stepH(barCap, listBarCapId, p,
+            state.scroll.h.offset, lay);
+        return over || wasGrab || state.scroll.h.dragging;
     }
 
     /// Where the row at `index` goes, whichever source produced it.
@@ -995,4 +1098,81 @@ unittest
     assert(host.state.rowCount >= 2);
     assert(host.acceptedTarget.line == 1,
         "a files row leaves the previous target alone until one is accepted");
+}
+
+@("picker.host.theListBarTakesAMouseDrag")
+@system
+unittest
+{
+    // The bug this exists to prevent: the first version of the list's
+    // horizontal bar was a hand-drawn string of glyphs with no `hitId` and
+    // no `ScrollbarState`. It painted correctly and the arrow keys drove
+    // it, so every test passed — and it was inert to the pointer, because
+    // nothing routed events to a decoration. Keys are not a substitute for
+    // a bar; a reader who reaches for the mouse finds nothing there.
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    const root = pickerFixture("hue-picker-bar");
+    scope (exit) rmdirRecurse(root);
+    const deep = buildPath(root, "docs", "research", "window-system", "os-apis");
+    mkdirRecurse(deep);
+    write(buildPath(deep, "distinctive.d"), "void f() { needleHere(); }\n");
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.openGrep(root);
+    foreach (ch; "needleHere")
+        host.handleKey(KeyEvent(Key.char_, ch));
+    foreach (_; 0 .. 64)
+        if (!host.busy) break; else cast(void) host.poll();
+    assert(host.state.rowCount == 1);
+
+    // Find where the bar was actually PAINTED, by the identity the view
+    // stamps on it. The first version of this test hardcoded a row derived
+    // from the panel height — the same wrong arithmetic the code used — so
+    // it passed against a bar that was nowhere near there. A test that
+    // re-derives the geometry under test cannot catch the geometry being
+    // wrong (`SCV7`).
+    import sparkles.ui.state : hoverTargets;
+    import picker_view : pickerHBarHitId;
+
+    const geometry = PickerGeometry(panelCols: 30, panelRows: 12);
+    auto tree = host.buildView(geometry);
+    auto frames = layout(tree, Constraints(maxW: 2 * geometry.panelCols));
+    assert(host.state.hOverflows, "the row is wider than the panel");
+    assert(host.state.hOffset == 0);
+
+    Rect bar;
+    foreach (t; hoverTargets(tree, frames))
+        if (t.hitId == pickerHBarHitId)
+            bar = t.rect;
+    assert(bar.width > 0, "the bar must be findable by its identity");
+
+    // A press on the TRACK, right of the thumb, jumps toward it — the
+    // machine's semantics, which a hand-rolled bar would have had to
+    // reinvent (press-on-thumb grabs in place; press-on-track jumps).
+    const barY = bar.y;
+    assert(host.handleOverlay(Event(PointerEvent(
+        pos: Point(bar.x + bar.width - 2, barY),
+        action: PointerAction.press, button: PointerButton.left)), geometry)
+        == PickerAction.consumed);
+    const afterPress = host.state.hOffset;
+    assert(afterPress > 0, "a press on the track scrolls the list");
+    assert(host.state.scroll.h.dragging, "and begins a grab");
+
+    // The grab OWNS the pointer: a drag that strays off the track keeps
+    // scrolling rather than falling into the row-selection arm.
+    cast(void) host.handleOverlay(Event(PointerEvent(
+        pos: Point(bar.x, barY + 40),
+        action: PointerAction.drag, button: PointerButton.left)), geometry);
+    assert(host.state.hOffset < afterPress,
+        "dragging back left scrolls back, even off the track");
+    assert(host.state.selection == 0, "and never selected a row");
+
+    // Release ends the grab.
+    cast(void) host.handleOverlay(Event(PointerEvent(pos: Point(bar.x, barY),
+        action: PointerAction.release, button: PointerButton.left)), geometry);
+    assert(!host.state.scroll.h.dragging, "the grab ended");
 }

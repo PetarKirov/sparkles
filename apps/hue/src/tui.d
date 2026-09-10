@@ -1528,6 +1528,10 @@ struct PreviewTui
                 // Only reachable while the grep picker is up, which is a
                 // workspace surface — this pane never sees it.
                 break;
+            case Command.pickerScrollLeft:
+            case Command.pickerScrollRight:
+                // ditto — the picker's own modal scope answers these.
+                break;
 
             case Command.quit: return false;
 
