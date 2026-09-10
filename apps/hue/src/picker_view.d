@@ -89,8 +89,48 @@ enum size_t pickerPreviewKey = 0x9c4b_9e77;
 /// paint geometry and hit geometry are the same derivation.
 enum size_t pickerHBarHitId = 0x9c4b_9e78;
 
+/// ditto, for the list's vertical bar.
+enum size_t pickerVBarHitId = 0x9c4b_9e79;
+
+/// The eased 0..100 the scrollbar op carries, clamped from a float.
+private ubyte clampPercent(float v) @safe pure nothrow @nogc
+    => v <= 0 ? 0 : v >= 100 ? 100 : cast(ubyte) v;
+
 /// The overlay geometry both hosts derive from their screen size (in cells)
 /// alone — never from content, which is what keeps the frame stable.
+/// The list panel's inner content box, in cells (`SCV7`).
+///
+/// One derivation for both the rows the list can show and the columns a row
+/// has. The panel's padding is `Insets(1, 2, 1, 2)`, so four columns and two
+/// rows never belong to content — and the chrome inside it (the prompt, the
+/// rule under it, the horizontal bar) takes three more rows.
+///
+/// Computing these separately is what left the list painting sixteen rows in
+/// a forty-row panel and its horizontal scroll two columns short of the end.
+struct PickerListBox
+{
+    int cols;
+    int rows;
+}
+
+/// ditto
+PickerListBox pickerListBox(in PickerGeometry geometry)
+    @safe pure nothrow @nogc
+{
+    // padding (2 left + 2 right) and the vertical bar's reserved gutter.
+    // The gutter is reserved whether or not the bar is live: a lane that
+    // appears with the bar would reflow every row at the ranking depth
+    // where it first overflows. Forgetting it here trimmed each row to one
+    // cell WIDER than the column it is painted in, so the last character
+    // clipped and the selection background stopped a cell short of it.
+    const cols = geometry.panelCols - 4 - 1;
+    const rows = geometry.panelRows - 2    // padding: 1 top + 1 bottom
+        - 1                                // the prompt
+        - 1                                // the rule under it
+        - 1;                               // the horizontal bar's lane
+    return PickerListBox(cols: cols > 1 ? cols : 1, rows: rows > 1 ? rows : 1);
+}
+
 /// The most a single panel grows to. Past this a row is wider than the eye
 /// tracks in one sweep, and the pair of panels stops reading as a pair.
 enum int pickerMaxPanelCols = 90;
@@ -195,6 +235,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
 
     // ── the ranked rows: icon · dimmed directory · filename · match marks ─
     uint[] body;
+    uint[] rowNodes;
     size_t widest;
     body ~= promptRow;
     // A rule between the query and its answers. Without it the prompt reads
@@ -284,7 +325,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
                 : inputFocused ? Slot.highlight : Slot.inherit;
         if (rowSlot == Slot.inherit && definitionRow)
             rowSlot = Slot.highlight;
-        body ~= builder.add(Widget(kind: WidgetKind.rich,
+        rowNodes ~= builder.add(Widget(kind: WidgetKind.rich,
             spans: spans,
             slot: rowSlot,
             paintBackground: rowSlot != Slot.inherit,
@@ -292,9 +333,41 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             width: SizeSpec.grow()));
     }
     if (state.rowCount == 0)
-        body ~= builder.add(Widget(kind: WidgetKind.text,
+        rowNodes ~= builder.add(Widget(kind: WidgetKind.text,
             text: state.searching ? "searching…" : "no matches",
             slot: Slot.muted));
+
+    // The rows and their vertical bar share a row, so the bar spans exactly
+    // the rows' height and the list keeps a reserved gutter whether or not
+    // the bar is live (`SCV`: a lane that appears and disappears makes the
+    // list reflow at the width where content just fits).
+    {
+        // Clipped on BOTH axes. Without `clipX` a row's text painted past
+        // its own frame — the panel's outer column clipped it a cell later,
+        // so the last character showed while the row's background, which
+        // covers the frame, stopped before it. The reported symptom was a
+        // selected row whose final letter looked unselected.
+        const rowsColumn = builder.add(Widget(kind: WidgetKind.column,
+            children: rowNodes, width: SizeSpec.grow(),
+            height: SizeSpec.grow(), clipX: true, clipY: true));
+        uint[] listChildren = [rowsColumn];
+        if (state.rowCount > state.viewRows)
+            listChildren ~= scrollbar(builder, ScrollbarSpec(
+                content: cast(long) state.rowCount,
+                viewport: cast(long) state.viewRows,
+                offset: cast(long) state.firstRow,
+                axis: ScrollAxis.vertical,
+                expandPercent: clampPercent(state.scroll.vAnim.percent),
+                hitId: pickerVBarHitId,
+                glyphs: ScrollbarGlyphs('█', '░')),
+                cast(int) state.viewRows);
+        else
+            listChildren ~= builder.add(Widget(kind: WidgetKind.box,
+                width: SizeSpec.fixed(1), height: SizeSpec.grow()));
+        body ~= builder.add(Widget(kind: WidgetKind.row,
+            children: listChildren, width: SizeSpec.grow(),
+            height: SizeSpec.grow()));
+    }
 
     // `PKL8`: the list's horizontal bar — the toolkit's `WidgetKind.scrollbar`
     // node (`SCV1`), not a string of glyphs. The first version of this drew
@@ -303,26 +376,22 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     // one component. Emitting the node means the px backend animates and
     // hover-expands it, the cell backend degrades it, and its geometry is
     // the one both paint and hit-testing read.
-    if (widest > cast(size_t) geometry.panelCols)
+    // The list row above grows, so the bar already sits at the panel's
+    // bottom edge; a grower here would claim height the rows need and push
+    // the bar out of a short panel entirely — which is what hid it whenever
+    // the panel was shorter than the ranking.
+    if (widest > state.viewCols)
     {
-        // Pushed to the panel's bottom edge rather than left where the rows
-        // happened to end: a bar floating mid-panel reads as a horizontal
-        // rule through the list, and it moves every time the row count
-        // changes. A grower before it claims the space between.
-        body ~= builder.add(Widget(kind: WidgetKind.box,
-            height: SizeSpec.grow()));
         const track = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
         body ~= scrollbar(builder, ScrollbarSpec(
             content: cast(long) widest,
-            viewport: geometry.panelCols,
+            viewport: cast(long) state.viewCols,
             offset: cast(long) state.hOffset,
             axis: ScrollAxis.horizontal,
             // The eased expansion, as the semantic 0..100 the op carries —
             // never a pixel width, which is the bargain that let the five
             // rail-width copies be deleted.
-            expandPercent: cast(ubyte)(state.scroll.hAnim.percent < 0 ? 0
-                : state.scroll.hAnim.percent > 100 ? 100
-                : state.scroll.hAnim.percent),
+            expandPercent: clampPercent(state.scroll.hAnim.percent),
             hitId: pickerHBarHitId,
             glyphs: ScrollbarGlyphs('━', '─')), track);
     }
