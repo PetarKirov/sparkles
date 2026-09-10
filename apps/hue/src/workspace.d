@@ -4250,3 +4250,127 @@ unittest
     assert(w.picker.get.state.scroll.hAnim.percent > before,
         "the bar must ease toward expanded while hovered");
 }
+
+@("workspace.typingRestartsTheListAtItsTopPick")
+@system
+unittest
+{
+    // `PIK10`. The FILES source is where this bites hardest: its ids are
+    // stable path hashes, so `publish`'s preserve-the-selection lookup finds
+    // the previously selected file in the NEW ranking and keeps the cursor
+    // on it — leaving the reader looking at row 4 of an answer whose first
+    // row is the one they just refined toward.
+    //
+    // (Preserving is right while the QUERY is unchanged — a partial page
+    // growing under the cursor. It is wrong across an edit.)
+    import core.thread : Thread;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-restart");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    foreach (n; ["alpha1", "alpha2", "alpha3", "alpha4"])
+        write(buildPath(root, n ~ ".d"), "int x;\n");
+
+    static void settle(ref WorkspaceTui w) @system
+    {
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.get.busy)
+                return;
+            Thread.yield();
+        }
+    }
+
+    foreach (ch; " ff")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "alph")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    settle(w);
+    const matched = w.picker.get.state.rowCount;
+    assert(matched >= 4, "at least the four `alpha*` files match");
+
+    foreach (_; 0 .. 3)
+        assert(w.handle(Event(KeyEvent(key: Key.down))));
+    assert(w.picker.get.state.selection == 3, "the cursor moved off the top");
+
+    // One more character that still matches every row, so the list stays
+    // FOUR deep — a query that emptied it would reset the selection for the
+    // trivial reason and prove nothing.
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'a'))));
+    settle(w);
+    assert(w.picker.get.state.rowCount >= 4,
+        "the list is still deep — this is not an emptied-list reset");
+    assert(w.picker.get.state.selection == 0,
+        "typing must restart the list at its top pick");
+}
+
+@("workspace.theFileTypeIconSurvivesHorizontalScrolling")
+@system
+unittest
+{
+    // The icon is the row's only at-a-glance marker; scrolling it away
+    // trades that for two more columns of path.
+    //
+    // Asserted against the picker's OWN rows, not the screen: the explorer
+    // tree beside it paints the same icons, so a screen-wide search finds
+    // one whether or not the picker kept its.
+    import core.thread : Thread;
+    import std.algorithm.searching : startsWith;
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : WidgetKind;
+    import explorer : fsIcon;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-iconpin");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    const deep = buildPath(root, "docs", "research", "window-system", "os-apis");
+    mkdirRecurse(deep);
+    write(buildPath(deep, "distinctive.d"), "int x;\n");
+
+    foreach (ch; " ff")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "distinctive")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    foreach (_; 0 .. 100_000)
+    {
+        cast(void) w.pollAll();
+        if (!w.picker.get.busy)
+            break;
+        Thread.yield();
+    }
+    assert(w.picker.get.state.rowCount == 1);
+
+    /// The first span of the deepest row the picker built.
+    static string leadSpan(ref WorkspaceTui w) @system
+    {
+        const geometry = w.pickerGeometry();
+        auto tree = w.picker.get.buildView(geometry);
+        auto frames = layout(tree, Constraints(maxW: 2 * geometry.panelCols));
+        foreach (ref const node; tree.nodes)
+            if (node.kind == WidgetKind.rich && node.hitId != 0
+                && node.spans.length)
+                return node.spans[0].text.idup;
+        return null;
+    }
+
+    const icon = fsIcon("distinctive.d").glyph;
+    assert(leadSpan(w).startsWith(icon), "the row leads with its file icon");
+
+    foreach (_; 0 .. 4)
+        cast(void) w.handle(Event(KeyEvent(key: Key.right)));
+    assert(w.picker.get.state.hOffset > 0, "the list really scrolled");
+    assert(leadSpan(w).startsWith(icon),
+        "and the icon is pinned — scrolling must not consume it");
+}

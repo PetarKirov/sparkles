@@ -1671,7 +1671,12 @@ struct GrepFinder
         foreach (i; 0 .. n)
         {
             const src = order[i];
-            out_[i] = RankedResult(id: CandidateId(cast(uint) src),
+            // The hit's own identity (`PKC12`), not its index. An index is
+            // reused by the NEXT query for a different hit, so the picker's
+            // selection-preserving lookup would match an unrelated row and
+            // land the cursor somewhere arbitrary.
+            out_[i] = RankedResult(
+                id: CandidateId(hits_[src].fingerprint()),
                 corpusIndex: src, score: grepScore(hits_[src].kind));
         }
         return n;

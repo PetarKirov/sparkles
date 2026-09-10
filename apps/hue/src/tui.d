@@ -105,6 +105,17 @@ struct PreviewTui
     /// self-contained component it has always been.
     bool externalScroll;
 
+    /**
+    Paint as a bare document: no status bar, no fold column (`PKL2`).
+
+    An embedded preview is a WINDOW ONTO a document, not a viewer of one.
+    Its status bar repeats what the panel's own header already says, its
+    fold triangles offer an interaction the reader did not come here for,
+    and both spend columns and a row that the document itself wants — in a
+    pane that is already the narrower half of an overlay.
+    */
+    bool bareChrome;
+
     BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
     ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
@@ -388,6 +399,7 @@ struct PreviewTui
         // The placeholder's inline ▸ is the fallback affordance, not the
         // default one: with the icon channel on, the arrow is in the gutter on
         // both backends and an inline copy of it is a second thing to click.
+        vm.foldColumn = vm.foldColumn && !bareChrome;
         vm.inlineFoldMarker = !vm.foldColumn;
         const contentWidth = externalScroll ? width : width - 1;
         vm.widthCols = contentWidth < 8 ? 8 : contentWidth;
@@ -413,8 +425,25 @@ struct PreviewTui
                     hoverNodes ~= ni;
     }
 
+    /**
+    The grid row the document body starts on.
+
+    `1` normally — under the header — and `0` when the pane is bare
+    (`PKL2`): an embedded preview has no header, so the row it would have
+    occupied belongs to the document. Every place that maps a document row
+    to a grid row goes through this, because a pane that PAINTS from 0 and
+    HIT-TESTS from 1 is off by one everywhere the pointer goes.
+    */
+    private int bodyTop() const @safe pure nothrow @nogc
+        => bareChrome ? 0 : 1;
+
+    /// Rows the document body occupies: the pane, minus whatever chrome it
+    /// is wearing (header + status, or neither).
     private int bodyRows() const @safe pure nothrow @nogc
-        => height > 2 ? height - 2 : 1;
+    {
+        const chromeRows = bareChrome ? 0 : 2;
+        return height > chromeRows ? height - chromeRows : 1;
+    }
 
     private long maxTop() const @safe pure nothrow @nogc
         => vm.maxTopFor(bodyRows());
@@ -688,7 +717,8 @@ struct PreviewTui
         paintHoverPopup(g);
         if (!externalScroll)
             paintScrollbar(g);
-        paintStatus(g);
+        if (!bareChrome)
+            paintStatus(g);
         paintLantern(g);
         paintToast(g);
     }
@@ -870,8 +900,8 @@ struct PreviewTui
             const inspFill = Color.fromRgb(selBg);
             foreach (ref const r; vm.inspectRects)
             {
-                const gy = 1 + r.y - top;
-                if (gy < 1 || gy > rows)
+                const gy = bodyTop + r.y - top;
+                if (gy < bodyTop || gy >= bodyTop + rows)
                     continue;
                 foreach (x; r.x - hx .. r.x - hx + r.width)
                     if (x >= 0 && x < contentWidth)
@@ -894,8 +924,8 @@ struct PreviewTui
             const fill = Color.fromRgb(mi == vm.curMatch ? curMatchBg : matchBg);
             foreach (ref const r; rects)
             {
-                const gy = 1 + r.y - top;
-                if (gy < 1 || gy > rows)
+                const gy = bodyTop + r.y - top;
+                if (gy < bodyTop || gy >= bodyTop + rows)
                     continue;
                 foreach (x; r.x - hx .. r.x - hx + r.width)
                     if (x >= 0 && x < contentWidth)
@@ -909,8 +939,8 @@ struct PreviewTui
         const selFill = Color.fromRgb(selBg);
         foreach (i; sel.lo .. sel.hi + 1)
         {
-            const gy = 1 + i - top;
-            if (gy < 1 || gy > rows)
+            const gy = bodyTop + i - top;
+            if (gy < bodyTop || gy >= bodyTop + rows)
                 continue;
             foreach (x; 0 .. (contentWidth > 0 ? contentWidth : 0))
                 g[cast(ushort)(originX + x), cast(ushort) gy].style.bg = selFill;
@@ -3043,4 +3073,56 @@ unittest
             }
     assert(tinted > 0, "no match cell was tinted");
     assert(sawCurrent && sawOther, "the current match is not distinguished");
+}
+
+@("tui.bareChrome.paintsWithinItsGridAtEveryRow")
+@system
+unittest
+{
+    // The crash this pins: `bareChrome` moved the body's first row from 1 to
+    // 0, and three tint loops kept guarding `gy < 1 || gy > rows` — written
+    // when the body occupied rows 1..rows. At `bodyTop == 0` that guard
+    // REJECTS the first valid row and ADMITS one past the last, so the very
+    // first paint with a selection indexed the grid out of bounds.
+    //
+    // `hue --tui` aborted on opening the grep picker. The unit tests did not
+    // catch it because none of them painted a bare pane that had a
+    // selection, which is the only combination that reaches those loops.
+    import sparkles.source_view.search : SearchPolicy;
+    import sparkles.syntax : HighlightEvent, LabelSet;
+
+    // Taller than the pane on purpose: the guard only misbehaves at the
+    // body's edges, so a document that fits never reaches the bad row.
+    static immutable src =
+        "alpha\nbeta alpha\ngamma\ndelta alpha\nepsilon\nzeta alpha\n"
+        ~ "eta\ntheta alpha\niota\nkappa alpha\nlambda\nmu alpha\n";
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    auto events = [HighlightEvent.sourceSpan(0, src.length)];
+
+    foreach (bare; [false, true])
+    {
+        PreviewTui t;
+        t.title = "t.txt";
+        t.labels = LabelSet.standard();
+        t.names = names[];
+        t.themes = themes[];
+        t.bareChrome = bare;
+        t.externalScroll = bare; // as the picker's preview is wired
+        t.resize(30, 6);
+        t.vm.searchPolicy = SearchPolicy.init;
+        t.setDocument("t.txt", src, events, PreviewModel.init,
+            startPreview: false);
+        t.relayout();
+
+        // A selection AND matches: both drive the tint loops whose guards
+        // were wrong, and both are ordinary picker-preview state.
+        t.vm.search("alpha");
+        // Across the pane's bottom edge, which is where `gy == rows`.
+        t.setSelection(Selection!long.started(0).extended(9));
+
+        Grid g;
+        g.resize(30, 6);
+        t.paint(g); // out-of-bounds here before the fix
+    }
 }

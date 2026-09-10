@@ -686,6 +686,12 @@ private:
 
     void request() @system
     {
+        // A prompt edit restarts the list at its top pick (`PIK10`). The
+        // grep source made this visible in the worst way — its rows were
+        // identified by INDEX, so the preserving lookup matched an unrelated
+        // hit and the cursor landed mid-list — but the rule holds for every
+        // source: the reader is asking a new question.
+        state.restartSelection();
         final switch (source)
         {
         case PickerSource.files:
