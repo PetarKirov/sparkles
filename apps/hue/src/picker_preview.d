@@ -246,6 +246,12 @@ struct PickerDocPane
         // pane paints no bar of its own, and the last column is its
         // reserved gutter — background here, the host's bar over it.
         pane.externalScroll = true;
+        // A preview is a window onto a document, not a viewer of one
+        // (`PKL2`): the panel's header already names the file, so the
+        // pane's own status bar repeats it, and its fold column offers an
+        // interaction nobody came to the picker for. Both cost space the
+        // narrower half of an overlay does not have.
+        pane.bareChrome = true;
         const paneCols = cols > 1 ? cols - 1 : cols;
         pane.resize(paneCols, rows);
         if (resized && shownPath.length)

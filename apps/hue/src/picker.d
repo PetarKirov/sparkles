@@ -139,6 +139,22 @@ if (Capacity > 0 && PromptCapacity > 0)
         => contentCols > viewCols;
 
     /**
+    A new query: the list starts at the top (`PIK10`).
+
+    Editing the prompt makes a different ranking, and the row that was
+    selected is not the row the reader is now asking about — the first hit
+    is. Preserving the selection across an edit is right only while the
+    QUERY is unchanged (a partial page growing under the cursor), which is
+    why this is the prompt's business rather than `publish`'s.
+    */
+    void restartSelection() @safe pure nothrow @nogc
+    {
+        selection = 0;
+        firstRow_ = 0;
+        scroll.h = scroll.h.scrolledTo(0);
+    }
+
+    /**
     Scroll the list sideways, clamped to the widest row.
 
     Returns `false` when there is nothing to scroll, so a host can leave the
@@ -793,4 +809,37 @@ unittest
     RankedResult[1] rows;
     state.publish(rows[], state.generation + 1, false);
     assert(state.hOffset == 0, "a new query starts flush left");
+}
+
+@("picker.state.aNewQueryStartsAtTheTopPick")
+@safe pure nothrow @nogc
+unittest
+{
+    // `PIK10`. Editing the prompt asks a different question, so the answer
+    // is the new first hit — not whichever row the old cursor happened to
+    // sit on. `publish`'s preserve-the-selection rule is right only while
+    // the query is UNCHANGED (a partial page growing under the cursor).
+    PickerState!16 state;
+    state.viewRows = 4;
+    state.open();
+
+    RankedResult[8] rows;
+    foreach (i; 0 .. rows.length)
+    {
+        rows[i].corpusIndex = i;
+        rows[i].id = CandidateId(cast(uint)(100 + i));
+    }
+    state.publish(rows[], 1, false);
+    state.moveSelection(6);
+    assert(state.selection == 6 && state.firstRow > 0,
+        "the cursor is deep in the list and the window followed it");
+    state.contentCols = 200;
+    state.viewCols = 40;
+    cast(void) state.scrollHorizontal(24);
+    assert(state.hOffset == 24);
+
+    state.restartSelection();
+    assert(state.selection == 0, "a new query selects the top pick");
+    assert(state.firstRow == 0, "and scrolls the window back to it");
+    assert(state.hOffset == 0, "and starts flush left");
 }

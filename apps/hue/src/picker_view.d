@@ -203,10 +203,15 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     foreach (i, ranked; state.visible)
     {
         TextSpan[] spans;
+        bool pinnedIcon;
         if (i < grepRows.length)
+        {
             grepSpans(spans, grepRows[i]);
+            pinnedIcon = true; // the definition marker leads a grep row
+        }
         else if (ranked.corpusIndex < snapshot.candidates.length)
         {
+            pinnedIcon = true;
             const candidate = snapshot.candidates[ranked.corpusIndex];
             const icon = fsIcon(candidate.path[candidate.filenameOffset .. $]);
             spans ~= TextSpan(text: icon.glyph, fg: icon.fg, hasFg: true,
@@ -228,8 +233,21 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             if (w > widest)
                 widest = w;
         }
+        // The file-type icon is PINNED: it identifies the row and costs two
+        // cells, so scrolling it away trades the row's only at-a-glance
+        // marker for two more columns of path. The viewer pins its gutter
+        // strips the same way (`pinnedCols`), and for the same reason.
         if (state.hOffset)
-            trimLeading(spans, state.hOffset);
+        {
+            if (spans.length > 1 && pinnedIcon)
+            {
+                auto rest = spans[1 .. $];
+                trimLeading(rest, state.hOffset);
+                spans = spans[0 .. 1] ~ rest;
+            }
+            else
+                trimLeading(spans, state.hOffset);
+        }
         // The selection bar's strength follows the focus — snacks dims its
         // cursorline the same way when focus leaves the list: bright while
         // the list owns the keyboard, a tint while the prompt types, at
