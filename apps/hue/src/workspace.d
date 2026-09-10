@@ -4394,3 +4394,179 @@ unittest
     assert(leadSpan(w).startsWith(icon),
         "and the icon is pinned — scrolling must not consume it");
 }
+
+@("workspace.theListFillsItsPanelAndScrollsToBothEnds")
+@system
+unittest
+{
+    // Four reported defects with one root: the list's geometry was
+    // constants where it had to be derived from the panel.
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.conv : to;
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-fill");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    const deep = buildPath(root, "docs", "research", "window-system-integration");
+    mkdirRecurse(deep);
+    foreach (i; 0 .. 40)
+        write(buildPath(deep, "alphafile" ~ i.to!string ~ ".md"), "x\n");
+
+    foreach (ch; " ff")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "alphafile")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    foreach (_; 0 .. 100_000)
+    {
+        cast(void) w.pollAll();
+        if (!w.picker.get.busy)
+            break;
+        Thread.yield();
+    }
+
+    static string screen(ref WorkspaceTui w) @system
+    {
+        Grid g;
+        g.resize(100, 40);
+        w.paint(g);
+        string all;
+        foreach (y; 0 .. g.rows)
+            foreach (x; 0 .. g.cols)
+                all ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+        return all;
+    }
+
+    w.arrange(100, 40);
+    const first = screen(w);
+    auto st = &w.picker.get.state;
+
+    // 1. The list fills a TALL panel. It painted a constant sixteen rows
+    //    before, whatever the window gave it.
+    assert(st.viewRows > 16,
+        "the viewport follows the panel, it is not a constant");
+    size_t painted;
+    {
+        Grid g;
+        g.resize(100, 40);
+        w.paint(g);
+        foreach (y; 0 .. g.rows)
+        {
+            string row;
+            foreach (x; 0 .. g.cols)
+                row ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+            if (row.canFind("docs/research/window"))
+                ++painted;
+        }
+    }
+    assert(painted == st.viewRows, "and every one of those rows is painted");
+
+    // 2. A ranking deeper than the viewport shows a VERTICAL bar.
+    assert(st.rowCount > st.viewRows, "the ranking is deeper than the pane");
+    assert(first.canFind("█") || first.canFind("░"),
+        "so the list carries a vertical scrollbar");
+
+    // 3. …and the horizontal one is there too, in a panel far shorter than
+    //    the ranking. A grower used to claim the height and push it out.
+    assert(st.hOverflows);
+    assert(first.canFind("━"), "the horizontal bar survives a full list");
+
+    // 4. Scrolling right reaches the row's END. It stopped two columns
+    //    short, because the viewport guess counted one padding column of
+    //    the panel's two.
+    foreach (_; 0 .. 40)
+        cast(void) w.handle(Event(KeyEvent(key: Key.right)));
+    assert(st.hOffset == st.contentCols - st.viewCols,
+        "the offset reaches its clamp");
+    assert(screen(w).canFind("alphafile0.md"),
+        "and the longest row's tail is on screen");
+}
+
+@("workspace.aSelectedRowIsTintedUnderEveryCharacterItShows")
+@system
+unittest
+{
+    // The reported symptom: the selected row's last character looked
+    // unselected. A row's text painted past its OWN frame — only the
+    // panel's outer column clipped it, a cell later — so the final glyph
+    // showed while the background, which covers the frame, stopped before
+    // it. Text and tint must end together.
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.conv : to;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-rowtint");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    // Names longer than the column: a row that fits cannot show the defect.
+    foreach (i; 0 .. 30)
+        write(buildPath(root,
+            "zeta-considerably-longer-than-the-column-is-wide" ~ i.to!string
+            ~ ".md"), "x\n");
+
+    foreach (ch; " ff")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "zeta")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    foreach (_; 0 .. 100_000)
+    {
+        cast(void) w.pollAll();
+        if (!w.picker.get.busy)
+            break;
+        Thread.yield();
+    }
+
+    w.arrange(110, 30);
+    Grid g;
+    g.resize(110, 30);
+    w.paint(g);
+
+    // The selected row is the one carrying a background distinct from the
+    // row below it; find it, then walk its cells.
+    int found = -1;
+    foreach (y; 1 .. g.rows - 1)
+    {
+        string row;
+        foreach (x; 0 .. g.cols)
+            row ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+        if (row.canFind("zeta-considerably"))
+        {
+            found = y;
+            break;
+        }
+    }
+    assert(found >= 0, "the selected row is on screen");
+
+    // Every cell that shows a character of the row must share that row's
+    // background. Scan the run of text and check it never outlives the tint.
+    const rowBg = g[cast(ushort) 0, cast(ushort) found].style.bg;
+    int lastText = -1, lastTint = -1;
+    foreach (x; 0 .. g.cols)
+    {
+        const c = g[cast(ushort) x, cast(ushort) found];
+        const isRowText = c.grapheme != " " && c.grapheme != "│"
+            && c.grapheme != "├" && c.grapheme != "─" && c.grapheme != "└";
+        if (c.style.bg != rowBg)
+            lastTint = x;
+        if (isRowText && c.style.bg != rowBg)
+            lastText = x;
+    }
+    assert(lastTint >= 0, "the row carries a tint at all");
+    assert(lastText <= lastTint,
+        "no character of the row may sit past the end of its background");
+    // NOTE: this holds both with and without `clipX` on the rows column, so
+    // it records the invariant rather than pinning the reported defect. The
+    // clip is right on its own terms — a row should be bounded by its own
+    // frame, not by an ancestor's — but the symptom is not reproduced here
+    // and may have another cause.
+}

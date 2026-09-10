@@ -38,7 +38,9 @@ import sparkles.ui.components.scroll_view : ScrollArea, ScrollAreaAxis,
     scrollLayout;
 import sparkles.ui.state : CaptureState;
 
-import picker_view : GrepRowText, pickerHBarHitId;
+import picker_view : GrepRowText, pickerHBarHitId, pickerListBox,
+    pickerVBarHitId,
+    pickerMaxPanelRows;
 import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
     pickerView, RowHighlight;
 
@@ -53,9 +55,16 @@ enum PickerAction : ubyte
     preview,  /// forward `previewEvent` to the preview document pane
 }
 
-/// Rows the list PAINTS at once. Bounded by the terminal workspace's ~20
-/// usable rows (the `P1` layouts revisit this).
-enum size_t pickerVisibleRows = 16;
+/**
+The most rows the list can paint at once — an array bound, not a policy.
+
+The ACTUAL viewport is `pickerListBox(geometry).rows`, which follows the
+panel. This is only the compile-time ceiling the per-row highlight arrays are
+sized to, so it must cover the tallest panel `pickerMaxPanelRows` allows
+minus its chrome. It was 16, which is why a forty-row panel painted sixteen
+rows and left the rest empty.
+*/
+enum size_t pickerVisibleRows = pickerMaxPanelRows;
 
 /// Ranked results the picker KEEPS — deeper than the viewport, so the list
 /// scrolls through the ranking instead of the ranking being truncated to
@@ -172,6 +181,9 @@ struct PickerHost
     /// The capture id the list's bar arbitrates under — distinct from the
     /// preview pane's, which runs its own.
     private enum size_t listBarCapId = 2;
+    /// ditto, for the vertical bar — a distinct id so the two arbitrate
+    /// separately and a grab on one never claims the other.
+    private enum size_t listVBarCapId = 3;
 
     /// The pane order `Tab` cycles (`pickerFocusNext`/`Prev`).
     static immutable Scope_[3] paneOrder =
@@ -387,7 +399,15 @@ struct PickerHost
             break;
         }
 
-        state.viewCols = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
+        // Both viewports from ONE derivation of the panel's content box.
+        // They were a constant 16 rows and a `panelCols - 2` guess before:
+        // the list painted sixteen rows however tall the panel grew, and
+        // the horizontal scroll stopped two columns short of the longest
+        // row because the guess forgot one of the two padding columns.
+        const listBox = pickerListBox(geometry);
+        state.viewCols = listBox.cols;
+        state.viewRows = listBox.rows > pickerVisibleRows
+            ? pickerVisibleRows : listBox.rows;
         auto tree = pickerView(state, snapshot,
             highlights[0 .. shown],
             path.length ? baseName(path) : null, geometry, preset,
@@ -616,7 +636,7 @@ struct PickerHost
                 // `picker_preview` uses for the preview's own bars): a
                 // pointer on the track — or owned by a live grab — drives
                 // the list's `ScrollView`, and nothing below sees it.
-                if (stepListBar(p, tree, frames))
+                if (stepListBars(p, tree, frames))
                 {
                     if (p.action == PointerAction.release)
                         barCap = barCap.released(); // the central release
@@ -722,11 +742,60 @@ private:
     that rect findable rather than re-derived from magic offsets — the
     failure the scrollbar audit found at six other sites.
     */
-    private bool stepListBar(in PointerEvent p, in WidgetTree tree,
+    /// The rect a bar with `id` was PAINTED into, or an empty rect.
+    private Rect barRect(size_t id, in WidgetTree tree,
         scope const(Frame)[] frames) @system
     {
         import sparkles.ui.state : hoverTargets;
 
+        foreach (t; hoverTargets(tree, frames))
+            if (t.hitId == id)
+                return t.rect;
+        return Rect.init;
+    }
+
+    /**
+    Drive the list's VERTICAL bar (`PKL8`).
+
+    The one input that moves the view without moving the cursor, so the
+    selection is pulled along rather than left off screen.
+    */
+    private bool stepListVBar(in PointerEvent p, in WidgetTree tree,
+        scope const(Frame)[] frames) @system
+    {
+        if (state.rowCount <= state.viewRows && !state.scroll.v.dragging)
+            return false;
+        const rect = barRect(pickerVBarHitId, tree, frames);
+        if (rect.height == 0 && !state.scroll.v.dragging)
+            return false;
+
+        const lay = scrollLayout(ScrollArea(
+            rect: rect,
+            v: ScrollAreaAxis(content: cast(long) state.rowCount,
+                viewport: cast(long) state.viewRows, gutter: 1),
+            h: ScrollAreaAxis(content: 0, viewport: 0, gutter: 0)));
+        const over = lay.vPointer(p).over;
+        const wasGrab = state.scroll.v.dragging;
+        barCap = state.scroll.stepV(barCap, listVBarCapId, p,
+            cast(long) state.firstRow, lay);
+        cast(void) state.scrollRowsTo(state.scroll.v.offset);
+        return over || wasGrab || state.scroll.v.dragging;
+    }
+
+    /// Both list bars, vertical first — a press inside the vertical gutter
+    /// is never also inside the horizontal one, and checking the taller
+    /// target first keeps the corner cell predictable.
+    private bool stepListBars(in PointerEvent p, in WidgetTree tree,
+        scope const(Frame)[] frames) @system
+    {
+        if (stepListVBar(p, tree, frames))
+            return true;
+        return stepListBar(p, tree, frames);
+    }
+
+    private bool stepListBar(in PointerEvent p, in WidgetTree tree,
+        scope const(Frame)[] frames) @system
+    {
         if (!state.hOverflows && !state.scroll.h.dragging)
             return false;
 
@@ -738,18 +807,12 @@ private:
         // no arithmetic outside the layout can know. That is `SCV7`
         // precisely — one derivation, or paint and hit disagree — and its
         // test passed only because the test picked the same wrong rect.
-        Rect barRect;
-        foreach (t; hoverTargets(tree, frames))
-            if (t.hitId == pickerHBarHitId)
-            {
-                barRect = t.rect;
-                break;
-            }
-        if (barRect.width == 0 && !state.scroll.h.dragging)
+        const hRect = barRect(pickerHBarHitId, tree, frames);
+        if (hRect.width == 0 && !state.scroll.h.dragging)
             return false;
 
         const lay = scrollLayout(ScrollArea(
-            rect: barRect,
+            rect: hRect,
             v: ScrollAreaAxis(content: 0, viewport: 0, gutter: 0),
             h: ScrollAreaAxis(content: cast(long) state.contentCols,
                 viewport: cast(long) state.viewCols, gutter: 1)));
@@ -1248,4 +1311,70 @@ unittest
     cast(void) host.handleOverlay(Event(PointerEvent(pos: Point(bar.x, barY),
         action: PointerAction.release, button: PointerButton.left)), geometry);
     assert(!host.state.scroll.h.dragging, "the grab ended");
+}
+
+@("picker.host.theListsVerticalBarTakesAMouseDrag")
+@system
+unittest
+{
+    // The vertical bar was emitted as a widget and never routed a pointer
+    // event — the same omission as the horizontal one, one commit later.
+    // It is the ONE input that moves the view without moving the cursor,
+    // so it also has to pull the selection along: a picker whose
+    // highlighted row is off screen has lost the reader's place, and Enter
+    // would open something they cannot see.
+    import sparkles.ui.state : hoverTargets;
+    import std.conv : to;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+    import picker_view : pickerVBarHitId;
+
+    const root = pickerFixture("hue-picker-vbar");
+    scope (exit) rmdirRecurse(root);
+    foreach (i; 0 .. 40)
+        write(buildPath(root, "zeta" ~ i.to!string ~ ".d"), "int x;\n");
+
+    auto owner = makeUnique!PickerHost();
+    auto host = &owner.get();
+    scope (exit) host.shutdown();
+    host.open(root);
+    foreach (ch; "zeta")
+        host.handleKey(KeyEvent(Key.char_, ch));
+    drain(*host);
+
+    const geometry = PickerGeometry(panelCols: 34, panelRows: 14);
+    auto tree = host.buildView(geometry);
+    auto frames = layout(tree, Constraints(maxW: 2 * geometry.panelCols));
+    assert(host.state.rowCount > host.state.viewRows,
+        "the ranking is deeper than the pane");
+
+    Rect bar;
+    foreach (t; hoverTargets(tree, frames))
+        if (t.hitId == pickerVBarHitId)
+            bar = t.rect;
+    assert(bar.height > 0, "the vertical bar is findable by its identity");
+    assert(host.state.firstRow == 0);
+
+    // A press low on the track scrolls the view down.
+    assert(host.handleOverlay(Event(PointerEvent(
+        pos: Point(bar.x, bar.y + bar.height - 1),
+        action: PointerAction.press, button: PointerButton.left)), geometry)
+        == PickerAction.consumed);
+    assert(host.state.firstRow > 0, "a press on the track scrolls the list");
+    assert(host.state.scroll.v.dragging, "and begins a grab");
+
+    // The selection came with it rather than being left off screen.
+    assert(host.state.selection >= host.state.firstRow
+        && host.state.selection < host.state.firstRow + host.state.viewRows,
+        "the cursor stays inside the window the bar moved to");
+
+    // The grab owns the pointer: a drag back up scrolls back, even off track.
+    const low = host.state.firstRow;
+    cast(void) host.handleOverlay(Event(PointerEvent(pos: Point(bar.x + 40, bar.y),
+        action: PointerAction.drag, button: PointerButton.left)), geometry);
+    assert(host.state.firstRow < low, "dragging up scrolls back");
+
+    cast(void) host.handleOverlay(Event(PointerEvent(pos: Point(bar.x, bar.y),
+        action: PointerAction.release, button: PointerButton.left)), geometry);
+    assert(!host.state.scroll.v.dragging, "the grab ended");
 }

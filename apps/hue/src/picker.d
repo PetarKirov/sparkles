@@ -139,6 +139,34 @@ if (Capacity > 0 && PromptCapacity > 0)
         => contentCols > viewCols;
 
     /**
+    Scroll the list vertically to put `first` at the top (`PKL8`).
+
+    Used by the vertical bar, which is the one input that moves the VIEW
+    without moving the cursor. The selection is then pulled into the visible
+    window rather than left behind it: a picker whose highlighted row is off
+    screen has lost the reader's place, and Enter would open something they
+    cannot see.
+    */
+    bool scrollRowsTo(long first) @safe pure nothrow @nogc
+    {
+        if (rowCount_ == 0)
+            return false;
+        const win = viewRows == 0 ? 1 : viewRows;
+        const maxFirst = rowCount_ > win ? rowCount_ - win : 0;
+        auto next = first < 0 ? 0 : first;
+        if (next > cast(long) maxFirst)
+            next = cast(long) maxFirst;
+        if (cast(size_t) next == firstRow_)
+            return false;
+        firstRow_ = cast(size_t) next;
+        if (selection < firstRow_)
+            selection = firstRow_;
+        else if (selection >= firstRow_ + win)
+            selection = firstRow_ + win - 1;
+        return true;
+    }
+
+    /**
     A new query: the list starts at the top (`PIK10`).
 
     Editing the prompt makes a different ranking, and the row that was
