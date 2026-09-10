@@ -72,11 +72,52 @@ struct PickerDocPane
     /// The picker's selection landed on `path` (empty = nothing selected).
     void select(string path) @system
     {
-        if (path == wantedPath)
+        selectAt(path, 0, null);
+    }
+
+    /**
+    ditto, landing on a position and highlighting a needle (`PKS2`).
+
+    A grep preview that opens at the top of the file shows the reader the
+    one part of the document they did not ask about. The row already knows
+    where its hit is (`PKC3`), so the preview lands there and lights the
+    match with the SAME `vm.search` the in-document search uses — the row's
+    highlight and the preview's are then one implementation, which is the
+    whole point of `FND`'s unification.
+
+    Re-applied whenever the shown document changes, because the jump reads
+    laid-out rows and those do not exist until the load has rebuilt them.
+    */
+    void selectAt(string path, uint line, const(char)[] needle) @system
+    {
+        const sameSpot = path == wantedPath && line == wantedLine
+            && needle == wantedNeedle;
+        if (sameSpot)
             return;
         wantedPath = path;
+        wantedLine = line;
+        wantedNeedle = needle.idup;
         wantedAt = MonoTime.currTime;
-        loadPending = path.length != 0;
+        // A move WITHIN the shown document needs no reload — only the jump.
+        loadPending = path.length != 0 && path != shownPath;
+        if (!loadPending && path.length && path == shownPath)
+            applyLocation();
+    }
+
+    private uint wantedLine;
+    private string wantedNeedle;
+
+    /// Light the needle and scroll to the wanted line, in that order: the
+    /// search rebuilds match rects the jump does not disturb, and the jump
+    /// reads rows the search does not move.
+    private void applyLocation() @system
+    {
+        if (wantedNeedle.length)
+            pane.vm.search(wantedNeedle);
+        else
+            pane.vm.clearSearch();
+        if (wantedLine != 0)
+            pane.vm.gotoSrcLine(wantedLine - 1);
     }
 
     /// Follow the host's theme; a real change relayouts the shown document.
@@ -123,6 +164,10 @@ struct PickerDocPane
                         doc.diffEmphasis);
                     shownPath = wantedPath;
                     shownAt = now;
+                    // After the load, never before: the jump reads laid-out
+                    // rows, which do not exist until `setDocument` has
+                    // rebuilt them.
+                    applyLocation();
                 }
                 changed = true;
             }
@@ -226,10 +271,37 @@ struct PickerDocPane
             rect: Rect(0, 1, colsShown, rows),
             v: ScrollAreaAxis(content: pane.docRows,
                 viewport: pane.docViewRows, gutter: 1),
-            h: ScrollAreaAxis(content: 0, viewport: 0, gutter: 0)));
+            // The horizontal axis was declared dead here, with the reasoning
+            // that the preview "is a glance" and its sideways overflow could
+            // live on the keys. That holds for a files picker, where the
+            // preview is orientation. It does not hold for grep: the hit is
+            // at a COLUMN, and a document whose lines run past the pane puts
+            // the matched text off the right edge of the very pane that
+            // exists to show it.
+            h: ScrollAreaAxis(content: pane.vm.contentCols,
+                viewport: pane.vm.widthCols, gutter: 1)));
     }
 
     private int colsShown, rowsShown;
+
+    /**
+    A preview track rect in overlay-absolute $(B cells) (`SCV7`).
+
+    Named, and returning cells, because the alternative is what shipped: the
+    window multiplied the same expression by `cellW`/`cellH` before handing
+    it to a canvas that scales cells to pixels itself, so the bar was drawn
+    at roughly `cellW` times its intended offset — far outside the window.
+    Hit-testing used the cell rect and was correct, which is why the bars
+    were $(B functional but invisible): clicking where they should have been
+    scrolled the pane.
+
+    Both hosts now ask for the rect instead of composing it, so neither can
+    disagree with the canvas about the unit.
+    */
+    static Rect barRectCells(in Rect track, int originX, int holeX, int holeY)
+        @safe pure nothrow @nogc
+        => Rect(originX + holeX + track.x, 1 + holeY + track.y,
+            track.width, track.height);
 
     /**
     An event the picker's routing forwarded (`PKL7`) — a key while the
@@ -261,12 +333,16 @@ struct PickerDocPane
     {
         const lay = bars();
         const overV = lay.vPointer(p).over;
+        const overH = lay.hPointer(p).over;
         const wasGrab = pane.vm.scroll.grabbing;
         barCap = pane.vm.scroll.stepV(barCap, 1, p, pane.vm.top, lay);
+        barCap = pane.vm.scroll.stepH(barCap, 2, p,
+            pane.vm.hsb.offset, lay);
         if (p.action == PointerAction.release)
             barCap = barCap.released(); // the central release (`STM11`)
         pane.vm.top = pane.vm.scroll.v.offset;
-        return overV || wasGrab || pane.vm.scroll.grabbing;
+        pane.vm.hsb = pane.vm.scroll.h;
+        return overV || overH || wasGrab || pane.vm.scroll.grabbing;
     }
 
     /// ditto
@@ -447,4 +523,31 @@ unittest
     assert(preview.pane.vm.scroll.vAnim.percent > 0,
         "the hover expansion eases");
     preview.shutdown();
+}
+
+@("picker_preview.barRectIsCellsNotPixels")
+@safe pure nothrow @nogc
+unittest
+{
+    // The bug this pins shipped and was reported twice: the window composed
+    // this rect itself and multiplied it by `cellW`/`cellH` before handing it
+    // to a canvas that scales cells to pixels on its own. The bar was then
+    // drawn about `cellW` times further out than intended — off the window
+    // entirely — while hit-testing used the unscaled cell rect and worked.
+    // "Not visible, though functional" is the exact signature of a unit
+    // mismatch between the paint path and the hit path.
+    const track = Rect(29, 3, 1, 16);
+    const r = PickerDocPane.barRectCells(track, originX: 12, holeX: 31,
+        holeY: 1);
+
+    // Cells: the sum of the origins, not a pixel product of them.
+    assert(r.x == 12 + 31 + 29);
+    assert(r.y == 1 + 1 + 3);
+    assert(r.width == 1 && r.height == 16,
+        "the track's own extent passes through unscaled");
+
+    // The guard that matters: a plausible cell coordinate stays small. A
+    // pixel-space rect for the same track would be in the thousands, which
+    // is how it left the window.
+    assert(r.x < 1000 && r.y < 1000);
 }
