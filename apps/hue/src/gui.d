@@ -3119,6 +3119,8 @@ int runGui(GuiArgs guiArgs) @system
                     openGrepPicker();
                     break;
                 case Command.pickerCycleMode:
+                case Command.pickerScrollLeft:
+                case Command.pickerScrollRight:
                     // Resolved inside the picker's own modal scope, which
                     // `handleKey` answers before this dispatch is reached.
                     break;

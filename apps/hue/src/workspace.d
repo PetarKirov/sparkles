@@ -4015,3 +4015,87 @@ unittest
     assert(after.canFind("[fuzzy]"), "and the indicator followed it");
     assert(!after.canFind("[plain]"));
 }
+
+@("workspace.pickerListScrollsSidewaysToRevealADeepPath")
+@system
+unittest
+{
+    // `PKL8`, read off a real grid. A deep path plus a source line runs past
+    // the panel, and before this the row was truncated with no way to reach
+    // the rest — which is exactly what the screenshot showed.
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-hscroll");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+
+    // A path deep enough that the tail cannot share a panel with the match.
+    const deep = "docs/research/window-system-integration/os-apis/appkit";
+    mkdirRecurse(buildPath(root, deep));
+    write(buildPath(root, deep, "distinctive.d"),
+        "void f() { needleHere(); }\n");
+
+    static void settle(ref WorkspaceTui w) @system
+    {
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.get.busy)
+                return;
+            Thread.yield();
+        }
+    }
+
+    foreach (ch; " /")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    foreach (ch; "needleHere")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    settle(w);
+    assert(w.picker.get.state.rowCount == 1);
+
+    static string screen(ref WorkspaceTui w) @system
+    {
+        Grid g;
+        g.resize(90, 24);
+        w.paint(g);
+        string all;
+        foreach (y; 0 .. g.rows)
+            foreach (x; 0 .. g.cols)
+                all ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+        return all;
+    }
+
+    // Assert on the `:1:12` position suffix, which ONLY the list row
+    // renders: the preview pane below shows the same file, so searching the
+    // whole screen for the matched text would find the preview's copy and
+    // prove nothing about the list.
+    const before = screen(w);
+    assert(before.canFind("docs/research"), "the row starts at the path");
+    assert(!before.canFind(":1:12"),
+        "and the row's tail is off the right edge — the state this fixes");
+    assert(w.picker.get.state.hOverflows, "so the list reports an overflow");
+    assert(before.canFind("━"), "and paints a horizontal bar");
+
+    // `→` walks the row sideways until the tail comes into view. Eight
+    // steps of eight cells lands the `:1:12` inside the panel; twelve would
+    // clamp at the right edge and scroll straight past it.
+    foreach (_; 0 .. 8)
+        cast(void) w.handle(Event(KeyEvent(key: Key.right)));
+    const after = screen(w);
+    assert(after.canFind(":1:12"),
+        "scrolling right reveals what was past the edge");
+    assert(!after.canFind("docs/research"),
+        "and the head has scrolled away, so the row really moved");
+
+    // `←` all the way back is flush left again.
+    foreach (_; 0 .. 40)
+        cast(void) w.handle(Event(KeyEvent(key: Key.left)));
+    assert(w.picker.get.state.hOffset == 0);
+    assert(screen(w).canFind("docs/research"));
+}

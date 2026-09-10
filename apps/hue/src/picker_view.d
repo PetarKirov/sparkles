@@ -6,6 +6,9 @@ import std.conv : text;
 import sparkles.fuzzy : CandidateSnapshot, RankedResult, TextRange;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
+import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs,
+    ScrollbarSpec;
+import sparkles.ui.state : ScrollAxis;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind,
     WidgetTree;
@@ -81,19 +84,39 @@ struct PickerGeometry
 /// laid-out rect and paint the document pane into it.
 enum size_t pickerPreviewKey = 0x9c4b_9e77;
 
+/// Identity for the list's horizontal bar (`WGT5`), so the host finds the
+/// rect it was painted at rather than re-deriving one — `SCV7`'s rule that
+/// paint geometry and hit geometry are the same derivation.
+enum size_t pickerHBarHitId = 0x9c4b_9e78;
+
 /// The overlay geometry both hosts derive from their screen size (in cells)
 /// alone — never from content, which is what keeps the frame stable.
+/// The most a single panel grows to. Past this a row is wider than the eye
+/// tracks in one sweep, and the pair of panels stops reading as a pair.
+enum int pickerMaxPanelCols = 90;
+
+/// The most rows a panel grows to. A list nobody scrolls is not more useful
+/// for being longer, and the preview beside it has the same height.
+enum int pickerMaxPanelRows = 45;
+
 PickerGeometry pickerGeometryFor(int screenCols, int screenRows)
     @safe pure nothrow @nogc
 {
-    int cols = (screenCols - 4) / 2;
-    if (cols > 60)
-        cols = 60;
+    // Take a fixed SHARE of the screen rather than a fixed number of cells.
+    // The previous caps (60 x 30) were sized for a terminal window and left
+    // a 200-column screen showing a picker over a third of it — the panels
+    // stayed put while everything around them grew.
+    int cols = screenCols * 8 / 10 / 2; // ~80% of the width, split in two
+    if (cols > pickerMaxPanelCols)
+        cols = pickerMaxPanelCols;
     if (cols < 20)
         cols = screenCols / 2 > 10 ? screenCols / 2 : 10;
-    int rows = screenRows - 3;
-    if (rows > 30)
-        rows = 30;
+
+    int rows = screenRows * 85 / 100;
+    if (rows > pickerMaxPanelRows)
+        rows = pickerMaxPanelRows;
+    if (rows > screenRows - 3)
+        rows = screenRows - 3;
     if (rows < 6)
         rows = screenRows > 2 ? screenRows - 2 : screenRows;
     return PickerGeometry(panelCols: cols, panelRows: rows);
@@ -172,6 +195,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
 
     // ── the ranked rows: icon · dimmed directory · filename · match marks ─
     uint[] body;
+    size_t widest;
     body ~= promptRow;
     // The PAINTED window, not the whole ranking (`pickerTopK` is deeper
     // than the viewport). `highlights` is window-relative; `selection` is
@@ -192,6 +216,20 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         }
         else
             spans ~= TextSpan(text: "(stale row)", slot: Slot.muted);
+
+        // Measure BEFORE trimming: the bar describes the whole row, and the
+        // widest row is what the offset clamps against.
+        {
+            import sparkles.source_view.search : columnWidth;
+
+            size_t w;
+            foreach (ref const sp; spans)
+                w += columnWidth(sp.text);
+            if (w > widest)
+                widest = w;
+        }
+        if (state.hOffset)
+            trimLeading(spans, state.hOffset);
         // The selection bar's strength follows the focus — snacks dims its
         // cursorline the same way when focus leaves the list: bright while
         // the list owns the keyboard, a tint while the prompt types, at
@@ -211,6 +249,31 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         body ~= builder.add(Widget(kind: WidgetKind.text,
             text: state.searching ? "searching…" : "no matches",
             slot: Slot.muted));
+
+    // `PKL8`: the list's horizontal bar — the toolkit's `WidgetKind.scrollbar`
+    // node (`SCV1`), not a string of glyphs. The first version of this drew
+    // its own track and thumb, which made it the seventh site to assemble a
+    // scrollbar by convention in a codebase that had just collapsed six into
+    // one component. Emitting the node means the px backend animates and
+    // hover-expands it, the cell backend degrades it, and its geometry is
+    // the one both paint and hit-testing read.
+    if (widest > cast(size_t) geometry.panelCols)
+    {
+        const track = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
+        body ~= scrollbar(builder, ScrollbarSpec(
+            content: cast(long) widest,
+            viewport: geometry.panelCols,
+            offset: cast(long) state.hOffset,
+            axis: ScrollAxis.horizontal,
+            // The eased expansion, as the semantic 0..100 the op carries —
+            // never a pixel width, which is the bargain that let the five
+            // rail-width copies be deleted.
+            expandPercent: cast(ubyte)(state.scroll.hAnim.percent < 0 ? 0
+                : state.scroll.hAnim.percent > 100 ? 100
+                : state.scroll.hAnim.percent),
+            hitId: pickerHBarHitId,
+            glyphs: ScrollbarGlyphs('━', '─')), track);
+    }
 
     const inspection = state.debugScore;
     if (inspection.present)
@@ -377,6 +440,54 @@ private void grepSpans(ref TextSpan[] spans, GrepRowText row) @safe
 
     if (row.elidedRight)
         spans ~= TextSpan(text: "…", slot: Slot.muted, noBreak: true);
+}
+
+/**
+Drop the first `cells` display columns from a rendered row (`PKL8`).
+
+The list scrolls sideways by trimming TEXT rather than by translating the
+widget subtree: a row is spans, the panel clips at its border, and shifting
+the layout would push the row under the border instead of past it. Trimming
+also keeps every span's style intact — the match stays `Slot.matched` even
+when its first half scrolls away.
+
+Spans are dropped whole while they fit entirely before the cut, then the
+straddling one is sliced at a character boundary.
+*/
+private void trimLeading(ref TextSpan[] spans, size_t cells) @safe
+{
+    import sparkles.source_view.search : columnWidth;
+
+    if (cells == 0)
+        return;
+    size_t dropped;
+    size_t i;
+    while (i < spans.length)
+    {
+        const w = columnWidth(spans[i].text);
+        if (dropped + w <= cells)
+        {
+            dropped += w;
+            ++i;
+            continue;
+        }
+        // Slice this span at the cut. Advance by whole characters so a
+        // multi-byte glyph is never halved.
+        auto t = spans[i].text;
+        size_t at;
+        while (at < t.length && dropped < cells)
+        {
+            size_t step = 1;
+            while (at + step < t.length
+                && (cast(ubyte) t[at + step] & 0xC0) == 0x80)
+                ++step;
+            dropped += columnWidth(t[at .. at + step]);
+            at += step;
+        }
+        spans[i].text = t[at .. $];
+        break;
+    }
+    spans = spans[i .. $];
 }
 
 private bool inRange(scope const(TextRange)[] ranges, size_t at)
@@ -639,4 +750,34 @@ unittest
     const def = render(GrepRowText(label: "a.d", context: "struct Foo",
         line: 1, matchStart: 7, matchLen: 3, definition: true));
     assert(def.canFind("▸"), "a definition must be marked, not merely ranked");
+}
+
+@("picker.view.geometryGrowsWithTheScreen")
+@safe pure nothrow @nogc
+unittest
+{
+    // The panels used to cap at 60x30 — sized for a terminal window. On a
+    // maximised GUI window that left the picker occupying about a third of
+    // the screen while everything around it grew, which is the shape the
+    // screenshot showed.
+    const small = pickerGeometryFor(80, 24);
+    const large = pickerGeometryFor(200, 40);
+    const huge = pickerGeometryFor(400, 120);
+
+    assert(large.panelCols > small.panelCols, "a wider screen widens the panels");
+    assert(large.panelRows > small.panelRows, "and a taller one lengthens them");
+
+    // ~80% of the width, split between the two panels.
+    assert(large.panelCols * 2 >= 200 * 7 / 10, "the pair uses most of the width");
+    assert(large.panelCols * 2 <= 200, "but never more than there is");
+
+    // Growth stops somewhere: past the cap a row is wider than the eye
+    // tracks in one sweep.
+    assert(huge.panelCols == pickerMaxPanelCols);
+    assert(huge.panelRows == pickerMaxPanelRows);
+
+    // And it still fits the smallest sane terminal.
+    const tiny = pickerGeometryFor(40, 10);
+    assert(tiny.panelCols >= 10 && tiny.panelCols * 2 <= 40);
+    assert(tiny.panelRows >= 1 && tiny.panelRows <= 10);
 }

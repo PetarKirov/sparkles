@@ -265,6 +265,7 @@ enum Command : ubyte
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     pickerGrep,            /// `<leader>/` — the content-search picker (`PKS2`)
     pickerCycleMode,       /// `<S-Tab>` in grep — plain / regex / fuzzy (`PKL5`)
+    pickerScrollLeft, pickerScrollRight, /// `←`/`→` — the list sideways (`PKL8`)
     quit,                  /// `q` — leave the viewer
     viewTop, viewBottom,   /// `gg` / `G`
     toggleHoverRegions,    /// Enter — open a twoslash signature's collapsed runs
@@ -799,6 +800,14 @@ immutable Binding[] hueBindings = [
         "prev pane", forbid: CtxFlag.grepActive),
     bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerCycleMode,
         "search mode", require: CtxFlag.grepActive),
+    // `PKL8`: a deep path or a long source line runs past the panel, and
+    // the arrows are the only keys the list had spare. They are the list's,
+    // not the prompt's — a caret in a query does not move sideways here,
+    // because the prompt is one line and always fits.
+    bind(Scope_.picker, chord(Key.left), Command.pickerScrollLeft,
+        "scroll left"),
+    bind(Scope_.picker, chord(Key.right), Command.pickerScrollRight,
+        "scroll right"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', ctrl: true),
         Command.pickerToggleScore, "score breakdown"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', super_: true),

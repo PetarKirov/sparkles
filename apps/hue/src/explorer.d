@@ -933,6 +933,8 @@ struct ExplorerTui
                 break;
 
             case Command.pickerCycleMode:
+            case Command.pickerScrollLeft:
+            case Command.pickerScrollRight:
             case Command.toggleInspector:
             case Command.viewDown: case Command.viewUp:
             case Command.viewHome: case Command.viewEnd:
