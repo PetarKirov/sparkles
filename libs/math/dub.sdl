@@ -8,6 +8,8 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:base" path="../.."
+
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"

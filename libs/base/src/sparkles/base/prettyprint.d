@@ -18,6 +18,8 @@ struct PrettyPrintOptions(SourceUriHook = void)
     // Only store hook if it has runtime state
     static if (!is(SourceUriHook == void))
         SourceUriHook sourceUriHook;
+
+    enum plainText = PrettyPrintOptions!void(colored: false);
 }
 
 /// Pretty-prints a value to a writer.
@@ -28,7 +30,7 @@ ref Writer writePretty(T, Writer, Hook = void)(
     in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook()
 )
 {
-    prettyPrintImpl(value, writer, opt, 0);
+    prettyPrintImpl(writer, value, opt, 0);
     return writer;
 }
 
@@ -42,8 +44,8 @@ string prettyPrint(T, Hook = void)(in T value, in PrettyPrintOptions!Hook opt = 
 }
 
 private void prettyPrintImpl(T, Writer, Hook)(
-    in T value,
     ref Writer w,
+    in T value,
     in PrettyPrintOptions!Hook opt,
     ushort depth
 )
@@ -86,32 +88,39 @@ private void prettyPrintImpl(T, Writer, Hook)(
     else static if (isPointer!T)
     {
         writeStylized(w, "&", opt.colored ? Style.magenta : Style.none);
-        prettyPrintImpl(*value, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, *value, opt, cast(ushort)(depth + 1));
     }
     // 5. std.typecons.Tuple
     else static if (is(T : Tuple!Args, Args...))
     {
-        prettyPrintTuple(value, w, opt, depth);
+        prettyPrintTuple(w, value, opt, depth);
     }
     // 6. Associative arrays
     else static if (isAssociativeArray!T)
     {
-        prettyPrintAA(value, w, opt, depth);
+        prettyPrintAA(w, value, opt, depth);
     }
     // 7. Static arrays - slice them
     else static if (isStaticArray!T)
     {
-        prettyPrintRange(value[], w, opt, depth);
+        prettyPrintRange(w, value[], opt, depth);
     }
     // 8. Dynamic arrays / slices and forward ranges with length
     else static if (isDynamicArray!T || (isForwardRange!T && hasLength!T))
     {
-        prettyPrintRange(value, w, opt, depth);
+        prettyPrintRange(w, value, opt, depth);
     }
     // 9. Structs and classes
     else static if (is(T == struct) || is(T == class))
     {
-        prettyPrintAggregate(value, w, opt, depth);
+        static if (__traits(hasMember, T, "writePretty"))
+        {
+            value.writePretty(w, opt, depth);
+        }
+        else
+        {
+            prettyPrintAggregate(w, value, opt, depth);
+        }
     }
     else static if (!isNullable)
     {
@@ -119,11 +128,11 @@ private void prettyPrintImpl(T, Writer, Hook)(
     }
 }
 
-private void prettyPrintTuple(Writer, Hook, Args...)(
-    in Tuple!Args value,
+void prettyPrintTuple(Writer, Hook = void, Args...)(
     ref Writer w,
-    in PrettyPrintOptions!Hook opt,
-    ushort depth
+    in Tuple!Args value,
+    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook(),
+    ushort depth = 0
 )
 {
     import std.range.primitives : put;
@@ -142,17 +151,25 @@ private void prettyPrintTuple(Writer, Hook, Args...)(
             put(w, ": ");
         }
 
-        prettyPrintImpl(field, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, field, opt, cast(ushort)(depth + 1));
     }
 
     put(w, ")");
 }
 
-private void prettyPrintAA(T, Writer, Hook)(
-    auto ref const T aa,
+void prettyPrintTuple(Writer, Args...)(
     ref Writer w,
-    in PrettyPrintOptions!Hook opt,
-    ushort depth
+    in Tuple!Args value
+)
+{
+    prettyPrintTuple(w, value, PrettyPrintOptions!void(), 0);
+}
+
+void prettyPrintAA(T, Writer, Hook = void)(
+    ref Writer w,
+    auto ref const T aa,
+    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook(),
+    ushort depth = 0
 )
 {
     import std.range : repeat;
@@ -190,9 +207,9 @@ private void prettyPrintAA(T, Writer, Hook)(
                 if (!first)
                     put(w, ", ");
                 first = false;
-                prettyPrintImpl(key, w, opt, cast(ushort)(depth + 1));
+                prettyPrintImpl(w, key, opt, cast(ushort)(depth + 1));
                 put(w, ": ");
-                prettyPrintImpl(val, w, opt, cast(ushort)(depth + 1));
+                prettyPrintImpl(w, val, opt, cast(ushort)(depth + 1));
             }
             put(w, "]");
             return;
@@ -226,15 +243,23 @@ private void prettyPrintAA(T, Writer, Hook)(
 
         put(w, "\n");
         put(w, indent);
-        prettyPrintImpl(key, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, key, opt, cast(ushort)(depth + 1));
         put(w, ": ");
-        prettyPrintImpl(val, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, val, opt, cast(ushort)(depth + 1));
         count++;
     }
 
     put(w, "\n");
     put(w, closingIndent);
     put(w, "]");
+}
+
+void prettyPrintAA(T, Writer)(
+    ref Writer w,
+    auto ref const T aa
+)
+{
+    prettyPrintAA(w, aa, PrettyPrintOptions!void(), 0);
 }
 
 private string prettyPrintAAInline(T)(in T aa, in PrettyPrintOptions!void opt, ushort depth)
@@ -248,9 +273,9 @@ private string prettyPrintAAInline(T)(in T aa, in PrettyPrintOptions!void opt, u
         if (!first)
             w.put(", ");
         first = false;
-        prettyPrintImpl(key, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, key, opt, cast(ushort)(depth + 1));
         w.put(": ");
-        prettyPrintImpl(val, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, val, opt, cast(ushort)(depth + 1));
     }
     w.put("]");
     return w.data;
@@ -267,7 +292,7 @@ private string prettyPrintRangeInline(R)(R range, in PrettyPrintOptions!void opt
         if (!first)
             w.put(", ");
         first = false;
-        prettyPrintImpl(elem, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, elem, opt, cast(ushort)(depth + 1));
     }
     w.put("]");
     return w.data;
@@ -293,18 +318,18 @@ private string prettyPrintAggregateInline(T)(auto ref const T value, in PrettyPr
             first = false;
             w.put(fieldName);
             w.put(": ");
-            prettyPrintImpl(value.tupleof[i], w, opt, cast(ushort)(depth + 1));
+            prettyPrintImpl(w, value.tupleof[i], opt, cast(ushort)(depth + 1));
         }
     }}
     w.put(")");
     return w.data;
 }
 
-private void prettyPrintRange(R, Writer, Hook)(
-    R range,
+void prettyPrintRange(R, Writer, Hook = void)(
     ref Writer w,
-    in PrettyPrintOptions!Hook opt,
-    ushort depth
+    R range,
+    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook(),
+    ushort depth = 0
 )
 {
     import std.range : repeat;
@@ -346,7 +371,7 @@ private void prettyPrintRange(R, Writer, Hook)(
                     if (!first)
                         put(w, ", ");
                     first = false;
-                    prettyPrintImpl(elem, w, opt, cast(ushort)(depth + 1));
+                    prettyPrintImpl(w, elem, opt, cast(ushort)(depth + 1));
                 }
                 put(w, "]");
                 return;
@@ -388,7 +413,7 @@ private void prettyPrintRange(R, Writer, Hook)(
 
         put(w, "\n");
         put(w, indent);
-        prettyPrintImpl(elem, w, opt, cast(ushort)(depth + 1));
+        prettyPrintImpl(w, elem, opt, cast(ushort)(depth + 1));
         count++;
     }
 
@@ -397,11 +422,19 @@ private void prettyPrintRange(R, Writer, Hook)(
     put(w, "]");
 }
 
-private void prettyPrintAggregate(T, Writer, Hook)(
-    auto ref const T value,
+void prettyPrintRange(R, Writer)(
     ref Writer w,
-    in PrettyPrintOptions!Hook opt,
-    ushort depth
+    R range
+)
+{
+    prettyPrintRange(w, range, PrettyPrintOptions!void(), 0);
+}
+
+void prettyPrintAggregate(T, Writer, Hook = void)(
+    ref Writer w,
+    auto ref const T value,
+    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook(),
+    ushort depth = 0
 )
 {
     import std.range : repeat;
@@ -442,7 +475,7 @@ private void prettyPrintAggregate(T, Writer, Hook)(
                     first = false;
                     writeStylized(w, fieldName, opt.colored ? Style.brightCyan : Style.none);
                     put(w, ": ");
-                    prettyPrintImpl(value.tupleof[i], w, opt, cast(ushort)(depth + 1));
+                    prettyPrintImpl(w, value.tupleof[i], opt, cast(ushort)(depth + 1));
                 }
             }}
             put(w, ")");
@@ -469,13 +502,21 @@ private void prettyPrintAggregate(T, Writer, Hook)(
             writeStylized(w, fieldName, opt.colored ? Style.brightCyan : Style.none);
             put(w, ": ");
 
-            prettyPrintImpl(value.tupleof[i], w, opt, cast(ushort)(depth + 1));
+            prettyPrintImpl(w, value.tupleof[i], opt, cast(ushort)(depth + 1));
         }
     }}
 
     put(w, "\n");
     put(w, closingIndent);
     put(w, ")");
+}
+
+void prettyPrintAggregate(T, Writer)(
+    ref Writer w,
+    auto ref const T value
+)
+{
+    prettyPrintAggregate(w, value, PrettyPrintOptions!void(), 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,7 +562,7 @@ private struct PrettyLeafHook
 /// Module-level instance avoids repeated construction.
 private immutable PrettyLeafHook prettyLeafHook;
 
-private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!Hook opt)
+void writeTypeName(T, Writer, Hook = void)(ref Writer w, in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook())
 {
     import std.range.primitives : put;
     import sparkles.base.source_uri : resolveSourcePath, hasWriteSourceUri, FileUriHook;
@@ -870,4 +911,37 @@ unittest
     }();
     check(Dot(5), "\x1b]8;;" ~ uri ~ "\x07" ~ "Dot" ~ "\x1b]8;;\x07" ~ "(r: 5)",
         PrettyPrintOptions!(SchemeHook!"code")(colored: false, useOscLinks: true));
+}
+
+@("prettyPrint.customWritePretty")
+@safe pure nothrow
+unittest
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    struct CustomVec
+    {
+        int x, y;
+
+        void writePretty(Writer, Opts)(ref Writer w, in Opts opts, ushort depth = 0) const
+        {
+            prettyPrintTuple(w, tuple(x, y), opts, depth);
+        }
+    }
+
+    auto v = CustomVec(1, 2);
+    check(v, "(1, 2)", PrettyPrintOptions!void.plainText);
+
+    // Also test UFCS on buffer directly with plainText options
+    SharedBuffer!(char, 64) buf;
+    prettyPrintTuple(buf, tuple(10, 20), PrettyPrintOptions!void.plainText);
+    assert(buf[] == "(10, 20)");
+
+    buf.clear();
+    prettyPrintRange(buf, [1, 2, 3], PrettyPrintOptions!void.plainText);
+    assert(buf[] == "[1, 2, 3]");
+
+    buf.clear();
+    writeTypeName!CustomVec(buf);
+    assert(buf[] == "\x1b[35mCustomVec\x1b[39m");
 }

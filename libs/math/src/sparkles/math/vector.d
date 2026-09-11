@@ -239,19 +239,25 @@ if (isNumeric!T && N > 0)
             data[indices[i]] = cast(T) rhs.data[i];
     }
 
-    /// Writes the vector as `(name0: value0, name1: value1, ...)`.
-    void toString(W)(scope ref W writer) const
+    /// Converts the vector components to an unnamed `std.typecons.Tuple`.
+    auto asTuple() const
     {
-        import std.format : formattedWrite;
+        import std.typecons : tuple;
+        return tuple(this.tupleof[1 .. $]);
+    }
 
-        formattedWrite(writer, "(");
-        static foreach (i; 0 .. N)
-        {
-            if (i != 0)
-                formattedWrite(writer, ", ");
-            formattedWrite(writer, "%s: %s", fieldNames[i], data[i]);
-        }
-        formattedWrite(writer, ")");
+    /// Formats the vector using the Sparkles pretty-printing protocol.
+    void writePretty(Writer, Opts)(ref Writer writer, in Opts opts, ushort depth = 0) const
+    {
+        import sparkles.base.prettyprint : prettyPrintTuple;
+        prettyPrintTuple(writer, this.asTuple, opts, depth);
+    }
+
+    /// Writes the vector as `(1, 2, ...)`.
+    void toString(Writer)(ref Writer w) const
+    {
+        import sparkles.base.prettyprint : PrettyPrintOptions;
+        this.writePretty(w, PrettyPrintOptions!void.plainText, 0);
     }
 
     static if (__traits(isFloating, T))
@@ -375,8 +381,18 @@ unittest
 unittest
 {
     import sparkles.base.buffer : checkToString;
+    import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 
-    checkToString(Vec3f(1, 2, 3), "(x: 1, y: 2, z: 3)");
+    checkToString(Vector!(int, 1)(1), "(1)");
+    checkToString(Vector!(int, 2)(1, 2), "(1, 2)");
+    checkToString(Vec2f(1, 2), "(1, 2)");
+    checkToString(Vec3f(1, 2, 3), "(1, 2, 3)");
+    checkToString(Vec4f(1, 2, 3, 4), "(1, 2, 3, 4)");
+
+    assert(prettyPrint(Vec2f(1, 2), PrettyPrintOptions!void.plainText) == "(1, 2)");
+    assert(prettyPrint(Vec3f(1, 2, 3), PrettyPrintOptions!void.plainText) == "(1, 2, 3)");
+    // Colored output has blue numbers (\x1b[34m)
+    assert(prettyPrint(Vec2f(1, 2)) == "(\x1b[34m1\x1b[39m, \x1b[34m2\x1b[39m)");
 }
 
 /// Swizzle read access supports arbitrary ordering and duplication.
