@@ -16,6 +16,7 @@ import sparkles.versions.schemes.semver : SemVer;
 
 import sparkles.release.result : Result, success, failure;
 import sparkles.release.segment : SegmentInput;
+import sparkles.release.stats : AuthorCount;
 
 @safe:
 
@@ -44,6 +45,22 @@ struct AgentSpec
     /// Alternative binary names to try on `$PATH` when `binary` is absent (e.g.
     /// a tool distributed under more than one command name).
     immutable(string)[] aliases;
+    /++
+    Possible git author names (`%an` / `git shortlog`) this agent may appear
+    under. Used to keep LLM tools out of the release-stats Authors box.
+
+    Matching ($(LREF isAgentCommitAuthor)):
+    $(LIST
+        * exact, case-insensitive equality against a listed name;
+        * a parenthesized suffix entry like `"(aider)"` matches any author
+            ending in `" (aider)"` (aider's default attribution style).
+    )
+
+    Co-Authored-By trailers alone do not change `%an`, so an agent that only
+    trailers (and never rewrites the author) has an empty list unless teams
+    also set that identity as the git author for audit trails.
+    +/
+    immutable(string)[] commitAuthorNames;
 }
 
 /++
@@ -65,24 +82,90 @@ $(LIST
         the file and the agent reads it with its own tools.
 )
 
+`commitAuthorNames` is filled from public docs / issue trackers (as of 2026-08):
+
+$(LIST
+    * `claude-code` — keeps the user's author by default; trailers
+        `Co-Authored-By: Claude <noreply@anthropic.com>` (sometimes with a
+        model name). `"Claude"` covers audit-trail configs that set the
+        author field to that name.
+    * `codex` — default is the user; optional attribution / shell policy often
+        uses author `"Codex"`.
+    * `amp` — `Co-authored-by: Amp <amp@ampcode.com>` (and optional author).
+    * `aider` — appends `" (aider)"` to the git author/committer name.
+    * `goose` — no documented automatic author rewrite.
+    * `gemini` — no default commit-level attribution.
+    * `copilot` — coding agent author `"GitHub Copilot"`; trailers / CLI also
+        use `"Copilot"`.
+    * `opencode` — `Co-Authored-By: opencode <noreply@opencode.ai>`.
+    * `q` — GitHub bot identity `amazon-q-developer[bot]` / `"Amazon Q"`.
+    * `crush` — `Co-Authored-By: Crush <crush@charm.land>` (or Assisted-by).
+    * `agy` — no documented automatic author rewrite.
+)
+
 NOTE: the invocations below are best-effort and drift between tool versions.
 `runAgent` surfaces the child's stderr so a wrong flag is diagnosable; fix the
 offending entry here.
 +/
 immutable AgentSpec[] agentRegistry = [
-    AgentSpec(key: "claude-code", binary: "claude",   flags: ["-p"]),
-    AgentSpec(key: "codex",       binary: "codex",    flags: ["exec"]),
-    AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"]),
-    AgentSpec(key: "aider",       binary: "aider",    flags: ["--message-file", promptPathPlaceholder]),
+    AgentSpec(key: "claude-code", binary: "claude",   flags: ["-p"],
+        commitAuthorNames: ["Claude"]),
+    AgentSpec(key: "codex",       binary: "codex",    flags: ["exec"],
+        commitAuthorNames: ["Codex"]),
+    AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"],
+        commitAuthorNames: ["Amp"]),
+    AgentSpec(key: "aider",       binary: "aider",    flags: ["--message-file", promptPathPlaceholder],
+        commitAuthorNames: ["(aider)"]),
     AgentSpec(key: "goose",       binary: "goose",    flags: ["run", "-i", promptPathPlaceholder]),
     AgentSpec(key: "gemini",      binary: "gemini",   flags: ["-p", followPromptFile]),
-    AgentSpec(key: "copilot",     binary: "copilot",  flags: ["-p", followPromptFile]),
-    AgentSpec(key: "opencode",    binary: "opencode", flags: ["run", followPromptFile]),
-    AgentSpec(key: "q",           binary: "q",        flags: ["chat", followPromptFile]),
-    AgentSpec(key: "crush",       binary: "crush",    flags: ["run", followPromptFile]),
-    AgentSpec(key: "agy",         binary: "agy",      flags: ["--print", followPromptFile], aliases: ["antigravity-cli"]),
+    AgentSpec(key: "copilot",     binary: "copilot",  flags: ["-p", followPromptFile],
+        commitAuthorNames: ["GitHub Copilot", "Copilot"]),
+    AgentSpec(key: "opencode",    binary: "opencode", flags: ["run", followPromptFile],
+        commitAuthorNames: ["opencode", "OpenCode"]),
+    AgentSpec(key: "q",           binary: "q",        flags: ["chat", followPromptFile],
+        commitAuthorNames: ["amazon-q-developer[bot]", "Amazon Q"]),
+    AgentSpec(key: "crush",       binary: "crush",    flags: ["run", followPromptFile],
+        commitAuthorNames: ["Crush"]),
+    AgentSpec(key: "agy",         binary: "agy",      flags: ["--print", followPromptFile],
+        aliases: ["antigravity-cli"]),
 ];
 
+/// True when `name` is a known LLM-agent git author from $(LREF agentRegistry).
+bool isAgentCommitAuthor(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    import std.uni : sicmp;
+
+    if (name.length == 0)
+        return false;
+    foreach (ref a; agentRegistry)
+        foreach (agentName; a.commitAuthorNames)
+        {
+            // Parenthesized suffix form: "(aider)" matches "Alice (aider)" only
+            // (not a bare "(aider)" author string).
+            if (agentName.length >= 3
+                && agentName[0] == '('
+                && agentName[$ - 1] == ')')
+            {
+                if (name.length > agentName.length
+                    && name[$ - agentName.length - 1] == ' '
+                    && sicmp(name[$ - agentName.length .. $], agentName) == 0)
+                    return true;
+                continue;
+            }
+            if (sicmp(name, agentName) == 0)
+                return true;
+        }
+    return false;
+}
+
+/// Drops entries whose `name` is a known agent author (see $(LREF isAgentCommitAuthor)).
+AuthorCount[] withoutAgentAuthors(AuthorCount[] authors) @safe pure nothrow
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+
+    return authors.filter!(a => !isAgentCommitAuthor(a.name)).array;
+}
 /// The registry entries resolvable to a `binary` on `$PATH`.
 const(AgentSpec)[] availableAgents()
 {
@@ -471,6 +554,48 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
         seen[a.key] = true;
     }
     assert(agentRegistry[0].key == "claude-code");
+    // Agents with known author attribution carry at least one name.
+    assert(findAgent("claude-code").commitAuthorNames.canFind("Claude"));
+    assert(findAgent("aider").commitAuthorNames.canFind("(aider)"));
+    assert(findAgent("copilot").commitAuthorNames.canFind("GitHub Copilot"));
+    assert(findAgent("goose").commitAuthorNames.length == 0);
+}
+
+@("agents.isAgentCommitAuthor")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(isAgentCommitAuthor("Claude"));
+    assert(isAgentCommitAuthor("claude"));           // case-insensitive
+    assert(isAgentCommitAuthor("GitHub Copilot"));
+    assert(isAgentCommitAuthor("Codex"));
+    assert(isAgentCommitAuthor("Amp"));
+    assert(isAgentCommitAuthor("opencode"));
+    assert(isAgentCommitAuthor("Crush"));
+    assert(isAgentCommitAuthor("amazon-q-developer[bot]"));
+    // Aider appends " (aider)" to the human name.
+    assert(isAgentCommitAuthor("Petar Kirov (aider)"));
+    assert(isAgentCommitAuthor("alice (Aider)"));    // case-insensitive suffix
+    assert(!isAgentCommitAuthor("Petar Kirov"));
+    assert(!isAgentCommitAuthor("aider"));           // bare suffix token is not a full name
+    assert(!isAgentCommitAuthor(""));
+    assert(!isAgentCommitAuthor("(aider)"));         // the pattern itself is not an author
+}
+
+@("agents.withoutAgentAuthors")
+@safe pure nothrow
+unittest
+{
+    auto filtered = withoutAgentAuthors([
+        AuthorCount("Petar Kirov", 10),
+        AuthorCount("Claude", 3),
+        AuthorCount("Bob (aider)", 2),
+        AuthorCount("GitHub Copilot", 1),
+        AuthorCount("Alice", 4),
+    ]);
+    assert(filtered.length == 2);
+    assert(filtered[0].name == "Petar Kirov" && filtered[0].commits == 10);
+    assert(filtered[1].name == "Alice" && filtered[1].commits == 4);
 }
 
 @("agents.findAgent")

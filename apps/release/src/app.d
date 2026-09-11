@@ -38,7 +38,7 @@ import sparkles.ui.components.tasklist : TaskReporter;
 import sparkles.ui.components.theme : makeTheme, Theme;
 import sparkles.versions.schemes.semver : SemVer;
 
-import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, buildSegmentationPrompt, capLogStat, buildSegmentationRetryCoda, buildSegmentNotesSection, findAgent, runAgent, resolveBinary;
+import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, buildSegmentationPrompt, capLogStat, buildSegmentationRetryCoda, buildSegmentNotesSection, findAgent, runAgent, resolveBinary, withoutAgentAuthors;
 import sparkles.release.artifacts : ArtifactSink, makeArtifactSink;
 import sparkles.release.bump : applyBump, BumpKind, parseBumpKind, suggestBump;
 import sparkles.release.conventional : CommitType;
@@ -1044,7 +1044,7 @@ private Result!ReleaseStats buildStats(Commit[] commits, string fromRef) @safe
     AuthorCount[] authors;
     auto authorsR = authorCounts(fromRef, "HEAD");
     if (authorsR.hasValue)
-        authors = authorsR.value;
+        authors = withoutAgentAuthors(authorsR.value);
 
     AreaStat[] areas;
     auto files = numstat(fromRef, "HEAD");
