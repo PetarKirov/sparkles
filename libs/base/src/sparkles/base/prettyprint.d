@@ -945,3 +945,35 @@ unittest
     writeTypeName!CustomVec(buf);
     assert(buf[] == "\x1b[35mCustomVec\x1b[39m");
 }
+
+@("prettyPrint.charBuffer")
+@safe
+unittest
+{
+    import sparkles.base.buffer : InlineBuffer, SharedBuffer, UniqueBuffer;
+
+    SharedBuffer!(char, 16) sbuf;
+    sbuf.put("hello");
+    check(sbuf, `"hello"`);
+
+    sbuf.clear();
+    sbuf.put("multi\nline\ttab");
+    check(sbuf, `"multi\nline\ttab"`);
+
+    UniqueBuffer!(char, 16) ubuf;
+    ubuf.put("unique");
+    check(ubuf, `"unique"`);
+
+    InlineBuffer!(char, 16) ibuf;
+    ibuf.assign("inline");
+    check(ibuf, `"inline"`);
+
+    // Nested within an aggregate
+    static struct Message
+    {
+        SharedBuffer!(char, 16) text;
+    }
+    Message msg;
+    msg.text.put("nested");
+    check(msg, `Message(text: "nested")`);
+}
