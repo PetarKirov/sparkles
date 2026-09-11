@@ -540,7 +540,14 @@ struct WorkspaceTui
         // One policy value, handed to whichever canvas is painting (`UIA13`).
         viewer.vm.searchPolicy = cfg.resolved.search.searchPolicy;
         if (!picker.empty)
+        {
             picker.get.stepBudget = cfg.resolved.picker.stepBudgetMs.msecs;
+            // …and the content search obeys the same rule the viewer does.
+            // It did not: `PickerHost.searchPolicy` was handed to every grep
+            // generation and assigned by nobody, so the corpus search ran on
+            // `SearchPolicy.init` whatever the file said (`PKC8`).
+            picker.get.searchPolicy = cfg.resolved.search.searchPolicy;
+        }
         if (pickerDoc !is null)
         {
             pickerDoc.loadDelay = cfg.resolved.picker.loadDelayMs.msecs;
@@ -1317,12 +1324,19 @@ struct WorkspaceTui
         pickerDoc.pane.vm.decodeAnsi = viewer.vm.decodeAnsi;
         pickerDoc.caps = mousePointer; // the same profile the dock eases with
         pickerDoc.syncTheme(viewer.themeIndex);
+        // Before the open rather than after it, which is how `gui.d` already
+        // orders the pair: `openGrep` starts a generation, and a generation
+        // reads the policy. Today that generation is harmless — `open()`
+        // clears the prompt, and an empty query scans nothing — so no test
+        // separates the two orders. It is kept this way because the day a
+        // reopen retains its last query, the other order is a live defect
+        // and a silent one.
+        syncConfigDerived(); // the picker knobs exist only once it does
         const root = tree.root.length ? tree.root : ".";
         if (grep)
             picker.get.openGrep(root, tree.includeGlobs, tree.excludeGlobs);
         else
             picker.get.open(root, tree.includeGlobs, tree.excludeGlobs);
-        syncConfigDerived(); // the picker knobs exist only once it does
         dirty = true;
     }
 
@@ -3995,6 +4009,56 @@ unittest
     assert(!w.viewer.vm.searchPolicy.smartCase,
         "the viewer kept `SearchPolicy.init` and ignored the store");
     assert(w.viewer.vm.searchPolicy.unicodeCaseFold);
+}
+
+@("workspace.grepObeysTheConfiguredCaseRule")
+@system
+unittest
+{
+    // The same gap one layer out: `PickerHost.searchPolicy` was declared,
+    // handed to `grep.begin` on every generation, and assigned by nobody.
+    //
+    // The discriminator is an UPPERCASE query over mixed-case content. With
+    // smart case on (`SearchPolicy.init`, what the unwired host ran) `Widget`
+    // matches case-sensitively and finds one line; with the configured rule —
+    // smart case OFF — it folds and finds both. A test querying lowercase, or
+    // leaving the setting at its default, would pass either way.
+    import core.thread : Thread;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-grep-case");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    write(buildPath(root, "alpha.d"), "struct Widget\n");
+    write(buildPath(root, "beta.d"), "auto widget = 1;\n");
+
+    auto store = new ConfigStore;
+    store.resolved = HueConfig.init;
+    store.resolved.search.smartCase = false;
+    store.userFilePath = buildPath(root, "config.json");
+    w.cfg = store;
+
+    foreach (ch; " /")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    assert(!w.picker.empty && w.picker.get.state.active, "the picker opened");
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+
+    foreach (ch; "Widget")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    foreach (_; 0 .. 100_000)
+    {
+        cast(void) w.pollAll();
+        if (!w.picker.get.busy)
+            break;
+        Thread.yield();
+    }
+
+    assert(w.picker.get.state.rowCount == 2,
+        "grep ran on `SearchPolicy.init` and matched case-sensitively — the "
+        ~ "configured rule reaches the viewer but not the content search");
 }
 
 @("workspace.leaderSlashGrepsAndCyclesItsMode")
