@@ -57,7 +57,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_sources : PickerTarget;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
-import settings : HueConfig;
+import settings : HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, hueApplyRules, SettingsPane;
@@ -538,9 +538,7 @@ struct WorkspaceTui
         viewer.lanternPlacement = l.placement;
         viewer.vm.hScrollStep = cfg.resolved.scroll.hScrollStep;
         // One policy value, handed to whichever canvas is painting (`UIA13`).
-        viewer.vm.searchPolicy = SearchPolicy(
-            smartCase: cfg.resolved.search.smartCase,
-            unicodeCaseFold: cfg.resolved.search.unicodeCaseFold);
+        viewer.vm.searchPolicy = cfg.resolved.search.searchPolicy;
         if (!picker.empty)
             picker.get.stepBudget = cfg.resolved.picker.stepBudgetMs.msecs;
         if (pickerDoc !is null)
@@ -3968,6 +3966,35 @@ unittest
     assert(typed == "fo",
         "the terminal admitted a non-ASCII keystroke into the query: " ~ typed);
     w.handle(Event(KeyEvent(key: Key.escape)));
+}
+
+@("workspace.theViewerTakesItsCaseRuleFromTheStore")
+@system
+unittest
+{
+    // `SearchSettings` shipped with `@Doc` strings, a settings-pane row and
+    // no consumer in two of the three places that hold a `SearchPolicy`.
+    // The defaults happen to equal `SearchPolicy.init`, so an unwired
+    // consumer looks correct right up until someone turns the knob — which
+    // is why this test turns it.
+    import std.file : rmdirRecurse;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-case-rule");
+    scope (exit) rmdirRecurse(root);
+
+    auto store = new ConfigStore;
+    store.resolved = HueConfig.init;
+    store.resolved.search.smartCase = false;
+    store.resolved.search.unicodeCaseFold = true;
+    store.userFilePath = buildPath(root, "config.json");
+    w.cfg = store;
+    w.syncConfigDerived();
+
+    assert(!w.viewer.vm.searchPolicy.smartCase,
+        "the viewer kept `SearchPolicy.init` and ignored the store");
+    assert(w.viewer.vm.searchPolicy.unicodeCaseFold);
 }
 
 @("workspace.leaderSlashGrepsAndCyclesItsMode")
