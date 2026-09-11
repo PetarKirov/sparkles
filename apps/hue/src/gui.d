@@ -134,7 +134,7 @@ import live_types : applyTip, LiveTypesSession;
 // the two entry points a navigation reload needs.
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
-import settings : HueConfig;
+import settings : HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, hueApplyRules, SettingsPane;
@@ -460,7 +460,13 @@ int runGui(GuiArgs guiArgs) @system
     vm.codeOverflow = codeOverflow;
     vm.codeMaxLines = codeMaxLines;
     if (configStore !is null)
+    {
         vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
+        // The same case rule the workspace's viewer reads (`UIA13`). The
+        // window never read it: `search.smart_case` moved one of hue's three
+        // searches, and this is one of the two lines that was missing.
+        vm.searchPolicy = configStore.resolved.search.searchPolicy;
+    }
     vm.tableOverflow = tableOverflow;
     vm.tableMaxLines = tableMaxLines;
     vm.fenceHotGlyphs = true; // resolves the semantic bar's hot thumb color
@@ -1002,6 +1008,7 @@ int runGui(GuiArgs guiArgs) @system
         if (configStore is null)
             return;
         vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
+        vm.searchPolicy = configStore.resolved.search.searchPolicy;
         if (!filePicker.empty)
             filePicker.get.stepBudget =
                 dur!"msecs"(configStore.resolved.picker.stepBudgetMs);
@@ -2485,7 +2492,6 @@ int runGui(GuiArgs guiArgs) @system
                     filePicker.get.previewNeedle);
             }
             filePickerDoc.syncTheme(vm.themeIdx);
-        syncConfigDerived(); // the picker knobs exist only once it does
             filePickerDoc.caps = caps; // the same profile the dock eases with
             cast(void) filePickerDoc.tick();
         }

@@ -38,6 +38,8 @@ import diff_structural : StructuralPolicy;
 import diff_view : DiffLayout;
 import viewer_model : ScrollAnchorMode;
 
+import sparkles.source_view.search : SearchPolicy;
+
 import sparkles.diff.normalize : WhitespaceMode;
 import sparkles.ui.components.lantern_view : Placement;
 import sparkles.wired.overlay : WireCompose, WireSection;
@@ -379,6 +381,35 @@ struct SearchSettings
     @Doc("Fold case beyond ASCII. Off by default: a full Unicode fold can change a run's length, and match highlighting is expressed in source byte offsets.")
     @Label("unicode case fold")
     bool unicodeCaseFold = false;
+}
+
+/**
+The matcher's policy, derived from the one section that owns it.
+
+Every search hue runs — the window's viewer, the workspace's viewer, and the
+picker's grep source — takes its case rule from here, so the three cannot
+drift apart (`UIA13`). They did once: the window matched case-sensitively
+while the terminal folded, which is the divergence `SearchSettings` exists to
+make impossible rather than merely unlikely.
+
+A function rather than three struct literals because `gui.d` links raylib and
+is excluded from `dub test :hue`. A literal written there is a literal no test
+can read; a call is one line over a derivation that is tested here.
+*/
+SearchPolicy searchPolicy(in SearchSettings s) @safe pure nothrow @nogc
+    => SearchPolicy(smartCase: s.smartCase, unicodeCaseFold: s.unicodeCaseFold);
+
+@("settings.searchPolicyFollowsItsSection")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(SearchSettings.init.searchPolicy == SearchPolicy.init,
+        "the shipped defaults and the policy's own defaults agree — which is "
+        ~ "exactly why an unwired consumer looks correct until a knob moves");
+
+    const off = SearchSettings(smartCase: false, unicodeCaseFold: true);
+    assert(!off.searchPolicy.smartCase);
+    assert(off.searchPolicy.unicodeCaseFold);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
