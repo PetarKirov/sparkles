@@ -1010,8 +1010,12 @@ int runGui(GuiArgs guiArgs) @system
         vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
         vm.searchPolicy = configStore.resolved.search.searchPolicy;
         if (!filePicker.empty)
+        {
             filePicker.get.stepBudget =
                 dur!"msecs"(configStore.resolved.picker.stepBudgetMs);
+            filePicker.get.searchPolicy =
+                configStore.resolved.search.searchPolicy;
+        }
         if (filePickerDoc !is null)
         {
             filePickerDoc.loadDelay =
