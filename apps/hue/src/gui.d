@@ -1015,6 +1015,8 @@ int runGui(GuiArgs guiArgs) @system
                 dur!"msecs"(configStore.resolved.picker.stepBudgetMs);
             filePicker.get.searchPolicy =
                 configStore.resolved.search.searchPolicy;
+            filePicker.get.grep.maxFileBytes =
+                configStore.resolved.picker.grepMaxFileKib * 1024;
         }
         if (filePickerDoc !is null)
         {
