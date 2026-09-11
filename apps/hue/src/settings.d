@@ -39,7 +39,6 @@ import diff_view : DiffLayout;
 import viewer_model : ScrollAnchorMode;
 
 import sparkles.source_view.search : SearchPolicy;
-
 import sparkles.diff.normalize : WhitespaceMode;
 import sparkles.ui.components.lantern_view : Placement;
 import sparkles.wired.overlay : WireCompose, WireSection;
@@ -438,6 +437,11 @@ struct PickerSettings
     @Label("overlay delay (ms)")
     @Range(0, 10_000, 100)
     int overlayDelayMs = 2000;
+
+    @Doc("Largest file the grep source reads, in KiB. hue re-reads per query where a cached grep would not, so the cap is lower than ripgrep's; 10 MiB is the ceiling the engine clamps to.")
+    @Label("grep max file (KiB)")
+    @Range(64, 10_240, 64)
+    int grepMaxFileKib = 1024;
 
     @Doc("Frecency store location (empty = the state-dir default; the store is machine-managed, the setting exists to relocate it).")
     @Label("frecency path")

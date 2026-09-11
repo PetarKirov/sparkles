@@ -547,6 +547,11 @@ struct WorkspaceTui
             // generation and assigned by nobody, so the corpus search ran on
             // `SearchPolicy.init` whatever the file said (`PKC8`).
             picker.get.searchPolicy = cfg.resolved.search.searchPolicy;
+            // `PKC7`'s "configurable to 10 MiB" half. The setter clamps and
+            // only reallocates when the length changes, so a per-commit sync
+            // is free.
+            picker.get.grep.maxFileBytes =
+                cfg.resolved.picker.grepMaxFileKib * 1024;
         }
         if (pickerDoc !is null)
         {
@@ -4059,6 +4064,61 @@ unittest
     assert(w.picker.get.state.rowCount == 2,
         "grep ran on `SearchPolicy.init` and matched case-sensitively — the "
         ~ "configured rule reaches the viewer but not the content search");
+}
+
+@("workspace.grepReadsAsFarAsItIsConfiguredTo")
+@system
+unittest
+{
+    // `PKC7` promised a cap "configurable to 10 MiB". `GrepFinder` grew the
+    // setter, the clamp and the reallocation — and no caller, so the cap was
+    // 1 MiB and nothing else. The knob is only a knob once a file the default
+    // would have read is one the setting refuses.
+    import core.thread : Thread;
+    import std.array : replicate;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-grep-cap");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+
+    // The needle sits past 64 KiB: inside the default cap, outside a small one.
+    write(buildPath(root, "big.d"),
+        "// filler\n".replicate(8 * 1024) ~ "struct Widget\n");
+
+    auto store = new ConfigStore;
+    store.resolved = HueConfig.init;
+    store.userFilePath = buildPath(root, "config.json");
+    w.cfg = store;
+
+    size_t hits(int capKib) @system
+    {
+        store.resolved.picker.grepMaxFileKib = capKib;
+        w.syncConfigDerived();
+        // A fresh `<leader>/` each time: `openPicker` syncs the store before
+        // it opens, so the generation this measures is the configured one.
+        if (!w.picker.empty && w.picker.get.state.active)
+            w.handle(Event(KeyEvent(key: Key.escape)));
+        foreach (ch; " /")
+            assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+        w.pickerDoc.loadDelay = Duration.zero;
+        w.pickerDoc.liveOverlays = false;
+        foreach (ch; "Widget")
+            assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.get.busy)
+                break;
+            Thread.yield();
+        }
+        return w.picker.get.state.rowCount;
+    }
+
+    assert(hits(64) == 0, "a 64 KiB cap stops short of the needle");
+    assert(hits(256) == 1, "raising the cap reaches it");
 }
 
 @("workspace.leaderSlashGrepsAndCyclesItsMode")
