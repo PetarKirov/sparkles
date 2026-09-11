@@ -128,7 +128,7 @@ ParseExpected!IdentityFile parseIdentityFileText(scope const(char)[] text)
     {
         auto sk = SshEd25519Identity.parse(text);
         if (sk.hasError)
-            return parseErr!R(sk.error);
+            return parseErr!R(sk.error.code, sk.error.offset);
 
         R file;
         file.sshEd25519 = [sk.value];
@@ -160,7 +160,7 @@ ParseExpected!IdentityFile parseIdentityFileText(scope const(char)[] text)
         X25519Identity id;
         auto parsed = X25519Identity.parse(line, id);
         if (parsed.hasError)
-            return parseErr!R(parsed.error);
+            return parseErr!R(parsed.error.code, parsed.error.offset);
 
         // Grow the owned array by one default-initialised slot, then move the
         // freshly parsed (non-copyable) identity into it. `ids[$ - 1]` is a slot

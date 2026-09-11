@@ -227,7 +227,7 @@ struct SshEd25519Recipient
 
         auto pub = parseAuthorizedKeyLine(authorizedKeyLine);
         if (pub.hasError)
-            return parseErr!R(pub.error);
+            return parseErr!R(pub.error.code, pub.error.offset);
 
         R result;
         result.ed25519Pub = pub.value.ed25519Pub;
@@ -345,7 +345,7 @@ struct SshEd25519Identity
 
         auto priv = parseOpenSshPrivateKey(opensshPrivateKeyPem);
         if (priv.hasError)
-            return parseErr!R(priv.error);
+            return parseErr!R(priv.error.code, priv.error.offset);
 
         R result;
         result.ed25519Secret = priv.value.ed25519Secret;

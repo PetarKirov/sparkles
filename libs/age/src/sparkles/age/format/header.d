@@ -267,7 +267,7 @@ ParseExpected!HeaderV1 parseHeader(scope const(ubyte)[] input, out size_t consum
 
         auto st = parseStanza(rest, start);
         if (!st.hasValue)
-            return parseErr!HeaderV1(st.error);
+            return parseErr!HeaderV1(st.error.code, st.error.offset);
         recipients ~= st.value;
     }
 
@@ -370,7 +370,7 @@ private ParseExpected!Stanza parseStanza(
     // ── Body: *full-line final-line (with legacy tolerance) ─────────────────────
     auto body_ = parseStanzaBody(rest, start);
     if (!body_.hasValue)
-        return parseErr!Stanza(body_.error);
+        return parseErr!Stanza(body_.error.code, body_.error.offset);
 
     return parseOk(Stanza(tag: tag, args: args, body_: body_.value));
 }

@@ -56,7 +56,7 @@ import sparkles.crypto.secret : SecretArray;
 import sparkles.crypto.x25519 : x25519, x25519Base;
 
 import sparkles.base.text.errors :
-    NoGcHook, ParseErrorCode, ParseExpected, parseErr, parseOk;
+    NoGcHook, ParseError, ParseErrorCode, ParseExpected, parseErr, parseOk;
 
 import sparkles.age.errors :
     EncryptErrorCode, EncryptExpected, encryptErr, encryptOk;
@@ -187,7 +187,7 @@ struct X25519Recipient
         const(char)[] hrp;
         auto decoded = decodeBech32(s, hrp, buf[0 .. bech32MaxDecodedLength(s.length)]);
         if (!decoded.hasValue)
-            return parseErr!R(decoded.error);
+            return parseErr!R(decoded.error.code, decoded.error.offset);
 
         if (!equalsAsciiCI(hrp, PUBLIC_KEY_HRP) || decoded.value.length != KEY_BYTES)
             return parseErr!R(ParseErrorCode.invalidIdentifier, 0);
@@ -356,7 +356,7 @@ struct X25519Identity
         const(char)[] hrp;
         auto decoded = decodeBech32(s, hrp, buf[0 .. bech32MaxDecodedLength(s.length)]);
         if (!decoded.hasValue)
-            return parseErr!void(decoded.error);
+            return parseErr!void(decoded.error.code, decoded.error.offset);
 
         if (!equalsAsciiCI(hrp, SECRET_KEY_HRP) || decoded.value.length != KEY_BYTES)
             return parseErr!void(ParseErrorCode.invalidIdentifier, 0);

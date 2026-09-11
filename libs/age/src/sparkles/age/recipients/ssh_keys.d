@@ -251,7 +251,7 @@ private ParseExpected!void sshReadStringTag(
     const(ubyte)[] start = data;
     auto s = sshReadString(data);
     if (s.hasError)
-        return parseErr!void(s.error);
+        return parseErr!void(s.error.code, s.error.offset);
     if (s.value != cast(const(ubyte)[]) expected)
     {
         data = start;

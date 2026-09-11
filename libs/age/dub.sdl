@@ -7,6 +7,7 @@ license "BSL-1.0"
 targetPath "build"
 
 importPaths "src"
+stringImportPaths "tests"
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -14,7 +15,6 @@ dependency "expected" version="~>0.4.1"
 
 configuration "library" {
     targetType "library"
-    stringImportPaths "tests"
     dependency "sparkles:base" path="../.."
     dependency "sparkles:crypto" path="../.."
 }
