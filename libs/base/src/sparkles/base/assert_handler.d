@@ -21,21 +21,28 @@ enum AssertHandlerKind
     halt,
 }
 
+/// Druntime assert handler type.
+alias AssertHandler = void function(string file, size_t line, string msg) nothrow;
+
+/// Resolves the assertion handler function pointer for the requested kind.
+AssertHandler resolveAssertHandler(AssertHandlerKind kind) pure nothrow @nogc @safe
+{
+    final switch (kind) with (AssertHandlerKind)
+    {
+        case default_:
+            return null;
+        case abort:
+        case halt:
+            return &abortAssertHandler;
+    }
+}
+
 /// Installs the requested druntime assertion handler.
 void installAssertHandler(AssertHandlerKind kind) @trusted
 {
     import core.exception : assertHandler;
 
-    final switch (kind) with (AssertHandlerKind)
-    {
-        case default_:
-            assertHandler = null;
-            break;
-        case abort:
-        case halt:
-            assertHandler = &abortAssertHandler;
-            break;
-    }
+    assertHandler = resolveAssertHandler(kind);
 }
 
 /// Druntime assert handler that prints failure details to stderr and calls
@@ -65,59 +72,63 @@ void abortAssertHandler(string file, size_t line, string msg) nothrow @nogc
     abort();
 }
 
-/// Pre-scans an argv array for --assert-handler flags and installs the handler immediately.
-void preScanAndInstallAssertHandler(const(string)[] args) @safe
+/// Pre-scans an argv array for --assert-handler flags.
+/// Returns true if a recognized flag was found and sets `kind`.
+bool parseAssertHandlerArg(const(string)[] args, out AssertHandlerKind kind) pure nothrow @safe @nogc
 {
     for (size_t i = 1; i < args.length; ++i)
     {
         const arg = args[i];
         if (arg == "--assert-handler=abort" || arg == "--assert-handler=halt")
-            installAssertHandler(AssertHandlerKind.abort);
+        {
+            kind = AssertHandlerKind.abort;
+            return true;
+        }
         else if (arg == "--assert-handler=default")
-            installAssertHandler(AssertHandlerKind.default_);
+        {
+            kind = AssertHandlerKind.default_;
+            return true;
+        }
         else if (arg == "--assert-handler" && i + 1 < args.length)
         {
             const next = args[i + 1];
             if (next == "abort" || next == "halt")
-                installAssertHandler(AssertHandlerKind.abort);
+            {
+                kind = AssertHandlerKind.abort;
+                return true;
+            }
             else if (next == "default")
-                installAssertHandler(AssertHandlerKind.default_);
+            {
+                kind = AssertHandlerKind.default_;
+                return true;
+            }
         }
     }
+    return false;
 }
 
-@("base.assertHandler.installAndRestore")
-@system unittest
+/// Pre-scans an argv array for --assert-handler flags and installs the handler immediately.
+void preScanAndInstallAssertHandler(const(string)[] args) @safe
 {
-    import core.exception : assertHandler;
-
-    const prev = assertHandler;
-    scope (exit) assertHandler = prev;
-
-    installAssertHandler(AssertHandlerKind.abort);
-    assert(assertHandler is &abortAssertHandler);
-
-    installAssertHandler(AssertHandlerKind.halt);
-    assert(assertHandler is &abortAssertHandler);
-
-    installAssertHandler(AssertHandlerKind.default_);
-    assert(assertHandler is null);
+    AssertHandlerKind kind;
+    if (parseAssertHandlerArg(args, kind))
+        installAssertHandler(kind);
 }
 
-@("base.assertHandler.preScan")
-@safe unittest
+@("base.assertHandler.resolveAssertHandler")
+@safe pure nothrow @nogc unittest
 {
-    import core.exception : assertHandler;
+    assert(resolveAssertHandler(AssertHandlerKind.abort) is &abortAssertHandler);
+    assert(resolveAssertHandler(AssertHandlerKind.halt) is &abortAssertHandler);
+    assert(resolveAssertHandler(AssertHandlerKind.default_) is null);
+}
 
-    const prev = assertHandler;
-    scope (exit) assertHandler = prev;
-
-    preScanAndInstallAssertHandler(["app", "--assert-handler", "abort"]);
-    assert(assertHandler is &abortAssertHandler);
-
-    preScanAndInstallAssertHandler(["app", "--assert-handler=default"]);
-    assert(assertHandler is null);
-
-    preScanAndInstallAssertHandler(["app", "--assert-handler=halt"]);
-    assert(assertHandler is &abortAssertHandler);
+@("base.assertHandler.parseAssertHandlerArg")
+@safe pure nothrow @nogc unittest
+{
+    AssertHandlerKind kind;
+    assert(parseAssertHandlerArg(["app", "--assert-handler", "abort"], kind) && kind == AssertHandlerKind.abort);
+    assert(parseAssertHandlerArg(["app", "--assert-handler=default"], kind) && kind == AssertHandlerKind.default_);
+    assert(parseAssertHandlerArg(["app", "--assert-handler=halt"], kind) && kind == AssertHandlerKind.abort);
+    assert(!parseAssertHandlerArg(["app", "--other"], kind));
 }
