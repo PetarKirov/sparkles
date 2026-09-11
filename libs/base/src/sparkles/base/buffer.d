@@ -302,8 +302,8 @@ struct Buffer(T, size_t N = max(size_t(1), (T[]).sizeof / T.sizeof),
     Storage storage = cast(Storage)(Storage.inline | Storage.heap))
 if (storage & (Storage.inline | Storage.heap))
 {
-pure nothrow @nogc:
-
+pure nothrow @nogc
+{
     /// May elements live in the inline `T[N]`?
     private enum bool hasInline = (storage & Storage.inline) != 0;
     /// May this buffer allocate?
@@ -1105,7 +1105,50 @@ pure nothrow @nogc:
             return result;
         }
     }
+} // pure nothrow @nogc
 
+    static if (is(immutable(T) == immutable(char)))
+    {
+        /**
+         * Formats this character buffer for pretty-printing as an escaped,
+         * quoted string with optional syntax coloring.
+         *
+         * Intercepts `prettyPrint` via the `writePretty` DbI presentation protocol.
+         */
+        void writePretty(Writer, Opts)(ref Writer writer, in Opts opts, ushort depth = 0) const
+        {
+            import sparkles.base.term_style : Style;
+            import sparkles.base.text.writers : writeStyledValue;
+
+            static struct BufferPrettyHook
+            {
+                enum escapeStrings = true;
+
+                Style styleOf(V)(in V val) const @safe pure nothrow @nogc
+                {
+                    return Style.cyan;
+                }
+            }
+
+            static if (__traits(hasMember, Opts, "colored"))
+                const bool colored = opts.colored;
+            else
+                const bool colored = false;
+
+            writeStyledValue(writer, this[], BufferPrettyHook.init, colored);
+        }
+
+        /// ditto
+        void writePretty(Writer)(ref Writer writer) const
+        {
+            import sparkles.base.prettyprint : PrettyPrintOptions;
+
+            this.writePretty(writer, PrettyPrintOptions!void.plainText, 0);
+        }
+    }
+
+pure nothrow @nogc
+{
     // ─────────────────────────────────────────────────────────────────────────
     // private helpers
     // ─────────────────────────────────────────────────────────────────────────
@@ -1297,6 +1340,7 @@ pure nothrow @nogc:
             setResidency(false);
         }
     }
+} // pure nothrow @nogc
 }
 
 ///
@@ -3607,4 +3651,45 @@ unittest
     static immutable int[2] want = [1, 2];
     assert(h.ints[] == want[]);
     assert(h.fixed.length == 0);
+}
+
+@("Buffer.writePretty.escapesStrings")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.prettyprint : PrettyPrintOptions;
+
+    SharedBuffer!(char, 16) buf;
+    buf ~= "hello\nworld";
+
+    SharedBuffer!(char, 32) outBuf;
+    buf.writePretty(outBuf, PrettyPrintOptions!void.plainText, 0);
+    assert(outBuf[] == `"hello\nworld"`);
+
+    outBuf.clear();
+    buf.writePretty(outBuf);
+    assert(outBuf[] == `"hello\nworld"`);
+}
+
+@("Buffer.writePretty.colored")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.prettyprint : PrettyPrintOptions;
+
+    SharedBuffer!(char, 16) buf;
+    buf ~= "hi";
+
+    SharedBuffer!(char, 32) outBuf;
+    buf.writePretty(outBuf, PrettyPrintOptions!void(colored: true), 0);
+    assert(outBuf[] == "\x1b[36m\"hi\"\x1b[39m");
+}
+
+@("Buffer.writePretty.onlyCharBuffers")
+unittest
+{
+    static assert(__traits(hasMember, Buffer!(char, 16), "writePretty"));
+    static assert(__traits(hasMember, SharedBuffer!(char, 16), "writePretty"));
+    static assert(__traits(hasMember, InlineBuffer!(char, 16), "writePretty"));
+    static assert(!__traits(hasMember, Buffer!(int, 4), "writePretty"));
 }
