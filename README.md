@@ -10,7 +10,7 @@
     <em>Early stage (v0.0.1) -- API may change</em>
   </p>
   <p align="center">
-    <a href="https://github.com/PetarKirov/sparkles/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PetarKirov/sparkles/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://github.com/PetarKirov/sparkles/actions/workflows/main-checks.yml"><img alt="Default branch status" src="https://img.shields.io/github/actions/workflow/status/PetarKirov/sparkles/main-checks.yml?branch=main&label=main&logo=github"></a>
     <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Merged pull requests" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles-docs.pages.dev%2Fbadges%2Fmerged-prs.json&logo=github"></a>
     <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Share of merged pull requests with green CI" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles-docs.pages.dev%2Fbadges%2Fmerged-green.json"></a>
     <a href="https://code.dlang.org/packages/sparkles"><img alt="Dub version" src="https://img.shields.io/dub/v/sparkles.svg"></a>
