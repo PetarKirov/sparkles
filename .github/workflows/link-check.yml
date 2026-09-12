@@ -64,8 +64,16 @@ jobs:
 
       # `tee` rather than a plain redirect so the log still shows the failures
       # in place; `pipefail` so the pipe does not swallow lychee's exit code.
+      # `continue-on-error`, because a scheduled run attaches its check runs to
+      # the default branch's head commit. A failing job here therefore files a
+      # red `Check every link` against whatever is on `main` — which is exactly
+      # the thing moving this sweep out of `ci.yml` was meant to stop, arriving
+      # by a different route. The verdict still reaches a person: the step's
+      # `outcome` (unaffected by this) drives the standing issue below, and the
+      # issue is this sweep's failure channel. The job's own status is not.
       - name: Check every link
         id: sweep
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
