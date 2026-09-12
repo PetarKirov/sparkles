@@ -64,12 +64,32 @@ patch markers ([Temporal]'s `GetVersion`, [DBOS]'s `DBOS.patch()`,
 [Inngest] can add, remove and reorder steps freely, because an orphaned memo is
 simply never looked up.
 
-**No system makes the arguments part of the key.** Only [Restate] compares them
-at all, as a per-command-type header equality _check_ rather than as the key,
-and it deliberately excludes computed fields (a `Sleep`'s wake-up time is
-ignored, only its name is compared). [Helland][idempotence] is the sole source
-arguing the key should be a function of the whole request, on the grounds that a
-retry carrying different arguments is a different request.
+**No durable-execution system makes the arguments part of the key.** Only
+[Restate] compares them at all, as a per-command-type header equality _check_
+rather than as the key, and it deliberately excludes computed fields (a
+`Sleep`'s wake-up time is ignored, only its name is compared).
+[Helland][idempotence] is the sole source arguing the key should be a function
+of the whole request, on the grounds that a retry carrying different arguments
+is a different request.
+
+The event stores disagree with each other on what to do about it, and the
+disagreement is worth preserving rather than resolving prematurely.
+[KurrentDB][kurrent]'s idempotence rule is strong when an explicit version is
+given — same stream, same event id, same event number — and a violation is
+refused as corrupted idempotency rather than reconciled. [Restate]'s is a check
+with three configurable outcomes (`retry`, `pause`, `fail`). So one tradition
+says an argument mismatch is a different step, the other says it is the same
+step reporting drift. They differ in what a resumed run should do next, and
+that is a decision, not a detail.
+
+[Deterministic record and replay][replay] then bounds how much an argument
+comparison can buy at all. `rr` compares the **entire register file at every
+event**, including scheduling events the program never requested; an argument
+hash only fires when the program issues an op. A program that consumes a
+replayed value differently but goes on to issue the same op with the same
+arguments replays silently wrong under an argument hash, and is caught by `rr`.
+Closing that gap means hashing the _inputs to decisions_, not only the arguments
+of effects.
 
 ### 2. Journal versus world: unanimity, and why it is not transferable
 
@@ -156,10 +176,22 @@ Four strategies, in increasing order of ambition:
    that treats "is the new code compatible with this history?" as a decidable
    question rather than a human judgement.
 
-In the event-sourcing family the equivalent is an **upcaster** applied on read
-([Marten] carries `type` and `mt_dotnet_type` per row so a rename is a mapping
-change, never a data migration) — and [Marten]'s documentation argues the
-stronger discipline that the past should not be rewritten at all.
+In the event-sourcing family the equivalent is an **upcaster** applied on read,
+and this family is markedly further ahead than the durable-execution one.
+[Marten] carries `type` and `mt_dotnet_type` per row so a rename is a mapping
+change, never a data migration, and its documentation argues the stronger
+discipline that the past should not be rewritten at all.
+[Akka/Pekko][akka] stores a **manifest** with every event and applies an
+`EventAdapter` at the read boundary whose `fromJournal` returns an `EventSeq`,
+so one stored event may be split, dropped or replaced on the way in.
+[Orleans] records a **format key per journal entry** and forces a fresh snapshot
+when it changes.
+
+The asymmetry is worth stating plainly: durable-execution systems mostly cope
+with code evolution by refusing it (pinning) or by accumulating markers, while
+event stores solved the corresponding problem a decade ago with a versioned
+record and a read-time adapter. The record being versioned is what makes the
+adapter possible.
 
 ### 6. Concurrency: identity scheme decides the difficulty
 
@@ -291,7 +323,20 @@ before it was written. Its verdicts:
   changes constantly.
 - _The journaling handler as the single impure boundary._ This is
   [Burckhardt's][burckhardt] three-model stack; Theorem 6.4 and Lemma 6.7 give
-  the correctness claim a citable shape.
+  the correctness claim a citable shape. A second, closer precedent exists:
+  Ramalingam and Vaswani's idempotence monad logs each effectful step under an
+  identifier plus a step counter and proves the translation failure-free modulo
+  retries (Theorem 3.9), with a compensation extension attached
+  ([effect handlers and record/replay][handlers]). Its proof puts the log in the
+  same atomic store as the effects, so it covers journal consistency and not the
+  outside world — but it is the nearest thing in the literature to what the
+  combinator claims.
+- _Capabilities as values, with no continuation capture._ Ahman and Bauer's
+  runners are exactly the `Ctx` row's shape — tail-resumptive handlers with a
+  finalisation-exactly-once theorem — which is also the precedent for
+  scope-registered LIFO compensations ([handlers]). Separately, Koppel, Scherer
+  and Solar-Lezama prove that replay from a recording _implements_ delimited
+  control, so refusing continuation capture costs no expressiveness.
 - _Compensations registered on a scope, LIFO, explicit-only._ Three engines and
   both compensation sources agree on the shape, and no engine rolls back
   automatically.
@@ -309,12 +354,26 @@ before it was written. Its verdicts:
 - _Compensations must not be in-memory closures._ [Sagas][sagas] requires them
   registered with name and arguments; [Cloudflare][cloudflare] demonstrates the
   bug that results from closures. Journal the registration.
-- _The args hash should be a divergence check, not part of the key._ [Restate]
-  separates matching from drift detection, and excludes computed fields from the
-  comparison. Keying on the hash makes every incidental argument change a new
-  step.
+- _The args hash should be a divergence check, not part of the key — but what a
+  mismatch means is now an open choice, not a detail._ [Restate] separates
+  matching from drift detection and excludes computed fields; [KurrentDB][kurrent]
+  takes the opposite line and refuses a mismatch outright as corrupted
+  idempotency. Keying on the hash makes every incidental argument change a new
+  step; refusing on mismatch makes it a stop. The design must say which, per op
+  kind.
+- _The args hash is a weaker oracle than assumed._ Per
+  [deterministic record and replay][replay], it only fires when the program
+  issues an op, so a program that consumes a replayed value differently and then
+  issues an identical op replays silently wrong. Hash decision inputs, not only
+  effect arguments.
 - _Concurrent compensations are structural, not interleaving-reversed._ The
   [calculi][calculi] state this as a law.
+- _Side effects after a journaled write are not automatically at-least-once._
+  [Akka/Pekko][akka] documents its post-persist side effects as **at-most-once**
+  — they simply do not run if the process dies after the write — and pushes
+  at-least-once back into replayed state. A `started` record is what buys the
+  stronger guarantee, and it only does so if resume actually re-examines every
+  started-without-completed op.
 
 **Reopened.**
 
@@ -326,6 +385,33 @@ before it was written. Its verdicts:
   from the journal alone.
 - _Whether a `pause` outcome belongs beside fail and retry._ [Restate] has three
   policies for a mismatch; the design has one.
+
+**Mechanisms worth adopting**, each already load-bearing somewhere:
+
+- **Append with an expected length.** [KurrentDB][kurrent]'s `ExpectedVersion`
+  is asserted per append and is a _different_ guard from its process-wide
+  exclusive lock. A `journal.jsonl` append that asserts "expected length N"
+  makes a second resume safe even when the lock file is stale, which a lock
+  alone does not.
+- **A run id on every line, plus a contiguity check.** [Akka/Pekko][akka]'s
+  `writerUuid` and its replay filter exist to detect two incarnations writing one
+  stream. The same check catches a journal that two `release` runs interleaved.
+- **A format version per line with a read-time adapter.** [Akka/Pekko][akka]'s
+  manifest plus `EventAdapter`, [Orleans]'s format key with forced re-snapshot,
+  [Marten]'s `type` column plus upcasters. This is the versioning tool the design
+  currently lacks entirely.
+- **Fold before write.** [Akka/Pekko][akka] applies an event to state before
+  appending it, so a record that the projection cannot consume never reaches the
+  journal.
+- **Atomic multi-record append.** [KurrentDB][kurrent] writes a batch across
+  streams atomically; the `started`/`completed` pair, or a step plus its
+  compensation registration, want the same treatment.
+- **An in-journal snapshot.** [Marten]'s `Compacted<T>` marks a fold point inside
+  the log rather than beside it — the shape `plan.json` and the publish manifest
+  should take once they become journal records.
+- **A hard stop when the projection throws.** [Orleans] swallows fold exceptions
+  and advances the version anyway, diverging silently. D's `pure` on the
+  projection plus a hard stop on a replay error is the opposite, and better.
 
 **Still parked** (they need the spec, not more research): the durable scope's
 API, the journal event schema field by field, and the `sparkles:effects`
@@ -354,11 +440,13 @@ what a journal can and cannot promise about the outside world.
 [DBOS]: ./dbos.md
 [effect-workflow]: ./effect-workflow.md
 [Golem]: ./golem.md
+[handlers]: ./effect-handlers-record-replay.md
 [idempotence]: ./idempotence.md
 [Inngest]: ./inngest.md
 [kurrent]: ./kurrentdb.md
 [Marten]: ./marten.md
 [Netherite]: ./netherite.md
+[replay]: ./deterministic-replay.md
 [Orleans]: ./orleans.md
 [replay-vs-snapshot]: ./replay-vs-snapshot.md
 [Resonate]: ./resonate.md
