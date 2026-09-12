@@ -2,7 +2,7 @@
 
 A research survey of algebraic effects across theory, language design, compiler/runtime implementation, and production libraries.
 
-**Last reviewed:** February 16, 2026.
+**Last reviewed:** September 12, 2026.
 
 ---
 
@@ -85,6 +85,7 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 ### Companion Surveys
 
 - [Async I/O & Event Loops] -- a companion survey on event loops, `io_uring`, and async runtimes
+- [Durable Execution] -- a companion survey on replay-based durable execution: journaling the results of effects so a program survives the death of its process
 
 ### History and Synthesis
 
@@ -221,3 +222,4 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 [Parallelism]: parallelism.md
 [Eff Language]: eff-lang.md
 [Async I/O & Event Loops]: ../async-io/index.md
+[Durable Execution]: durable-execution/index.md
