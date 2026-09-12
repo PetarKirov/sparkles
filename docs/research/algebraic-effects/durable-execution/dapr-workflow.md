@@ -229,6 +229,118 @@ Pure replay; there is no snapshot path in the modern backends (`HistoryStateEven
 
 DTFx ships an in-process backend, `DurableTask.Emulator.LocalOrchestrationService` — _"Fully functional in-proc orchestration service for testing"_ — implementing `IOrchestrationService` and `IOrchestrationServiceClient` over in-memory queues ([source][emulator]); the `.NET` SDK's `DurableTaskTestHost` does the same behind the gRPC sidecar protocol, _"without requiring any external backend (Azure Storage, SQL, etc)"_, backed by `InMemoryOrchestrationService` ([source][dotnet-testhost]). `durabletask-go` has `backend/local` for an in-memory task backend ([source][go-local]) and an sqlite backend. The engine's own suites include an explicit nondeterminism test — `NonDeterministicOrchestrationTest` drives `FAILTIMER`/`FAILTASK`/`FAILSUBORCH` variants of an orchestration and asserts the instance fails ([source][dtfx-nde-test]) — and the Go tests cover sequence-number reconciliation against synthetic optional timers ([source][go-exec-test]). What is **absent**: no crash-injection harness, no "replay this stored history against new code" fixture, and no guidance in the Dapr docs on unit-testing a workflow function (the SDK pages document no mocking API). The DTFx unit of test is a whole orchestration run end-to-end against the emulator.
 
+### 9. Journal integrity and the single writer
+
+Dapr's answer is inherited from its actor runtime, and it adds one mechanism
+nothing else in this survey has: the record is cryptographically signed.
+
+**The single writer is an actor activation.** A workflow instance is an actor, and
+the actor runtime _"provides a simple turn-based access model for accessing actor
+methods. Turn-based access greatly simplifies concurrent systems as there is no
+need for synchronization mechanisms for data access"_
+([actors overview][doc-actors]). Placement guarantees one live activation per
+actor id across the cluster, so "one writer per workflow" is a property of the
+platform rather than of the journal format, and there is no expected-version check
+on an individual history append.
+
+**Appends are transactional, at the state-store level.** History events, the inbox
+and the metadata key are written through the actor state store's transactional
+API, which the state store must support — the component has to declare
+`actorStateStore` true ([actors overview][doc-actors]). A turn's worth of events
+therefore commits together, which is what makes the per-turn `idCounter` scheme of
+§1 sound.
+
+**Every history event is signed, and the signature is checked on every load.**
+_"Every history event produced during a workflow's lifetime is signed using the
+sidecar's mTLS identity … creating an auditable chain of signatures that is
+verified each time the workflow state is loaded"_
+([history signing][doc-signing]). No other system surveyed treats its own record
+as potentially tampered with. The documentation is also unusually candid about the
+operational cost: signing trusts the Dapr root certificate authority, the default
+self-signed root lasts a year, and _"if that root expires, or if you rotate to a
+new root with a different private key, **every signed workflow issued under the
+old root stops verifying** and fails to load with error type
+`SignatureVerificationFailed`. There is no re-sign path."_ That is a durability
+mechanism whose failure mode is the loss of every in-flight record, stated plainly
+by its own authors.
+
+**Tamper detection is not writer fencing.** A signature proves the sidecar's
+identity wrote the event; it does not order two writers or reject a stale one.
+Those remain the actor placement's job.
+
+**Torn writes are the state store's problem**, and the choice of store therefore
+decides what "durable" means — a deliberate consequence of the pluggable-component
+model.
+
+**Retention is a first-class policy.** History is kept indefinitely by default,
+and a retention policy can be set per terminal state (`Completed`, `Failed`,
+`Terminated`) with a Go duration, with deletion only once a workflow is terminal
+([retention policy][doc-retention]). Few systems here make "how long is the record
+kept" a configurable per-outcome decision.
+
+### 10. Operator recovery and intervention
+
+Seven operations exist as public API handlers, which is a broader surface than
+most and narrower than it looks.
+
+**The verbs are get, start, terminate, raise-event, pause, resume and purge**
+([`workflow.go`][dapr-wf-api]), each versioned three times over (alpha, beta and
+stable) — which is itself evidence that the operator surface is treated as part of
+the product contract rather than as tooling.
+
+**Pause and resume act on an in-flight instance**, unlike Inngest's function-level
+pause: a paused workflow stops consuming its inbox and resumes where it stopped.
+
+**Purge deletes a terminal instance's state**, and is the manual counterpart to the
+retention policy.
+
+**Terminate has no cancellation counterpart.** There is no operation that delivers
+a cancellation the orchestrator can observe and handle, so compensation — which is
+user code in a `catch` (§4) — does not get a turn when an operator stops a
+workflow. That is a real gap next to Temporal's cancel-versus-terminate or
+Restate's cancel-versus-kill.
+
+**Raise-event doubles as the intervention channel**, letting an operator supply a
+value the workflow is waiting for (§11) without touching the state store.
+
+**Inspection is get-workflow plus whatever the state store allows.** There is no
+API that returns the history event by event, so "what did this workflow do" is
+answered by reading the actor's state keys directly — and, when signing is on, by
+a record that verifies.
+
+**A mismatch stalls rather than corrupts.** A version or patch mismatch puts the
+instance in a stalled state (§5), which is the right default: it leaves the record
+intact for an operator to act on instead of failing the run or guessing.
+
+### 11. Suspension and external input
+
+**Waiting is not running.** The workflow actor is deactivated while it waits, and a
+durable timer is a reminder registered with the actor runtime; the reminder is what
+brings the actor back. Because reminders are the platform's own durability
+primitive, the documentation states the consequence bluntly: _"if the node or the
+sidecar hosting the associated workflow or activity crashes, the reminder will
+reactivate the corresponding actor and the execution will be retried, forever."_
+
+**The primitives** are durable timers, external events
+(`WaitForExternalEvent`/`RaiseEvent`), child workflows, and activity completion.
+They are the Durable Task Framework's set, unchanged.
+
+**External input is addressed by workflow id plus event name**, and events are
+matched to waiters by name in arrival order (§1). An event that arrives before the
+orchestrator reaches its wait is buffered in the history; one that arrives twice
+is two events, so deduplication is the author's job; one that never arrives leaves
+the instance waiting until a timer the author raced against it fires.
+
+**There is no distinct persisted "suspended" state for a wait.** The runtime status
+vocabulary covers running, completed, failed, terminated, pending, suspended — but
+`Suspended` there means operator-paused, not waiting-on-input. A caller cannot
+distinguish "blocked on an external event" from "activity in flight" without
+reading the history.
+
+**Human-in-the-loop is the documented pattern** and is built from a timer raced
+against an external event, with the timer as escalation — the same construction as
+Azure Durable Functions, from which this model descends.
+
 ---
 
 ## Strengths
@@ -265,16 +377,37 @@ DTFx ships an in-process backend, `DurableTask.Emulator.LocalOrchestrationServic
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the started + completed pairing and the id-on-completion correlation.** DTFx's `TaskScheduled`/`TaskCompleted` with `TaskScheduledId` is exactly the design's `started`/`completed` pair; the Go layer's `(kind, id)` dedup set is the cheap duplicate guard the journal reader should have.
-- **Argues for stable names + attempt counter + args hash over positional ids.** DTFx's biggest operational pain — every insertion breaks every in-flight instance, and argument drift is silent — is precisely what a name-keyed, args-hashed step identity avoids. The design's choice is the right one; DTFx is the cautionary data point, and its `NonDeterministicOrchestrationException` message is a model for the diagnostic the mismatch should produce.
-- **Argues against "journal always wins" for observations.** DTFx has no re-observation because the orchestrator cannot see the world; `release` must (git tags, HEAD). The design's observe-and-reconcile rule table is therefore not optional — it fills a hole DTFx papers over by forbidding the question.
-- **Confirms that compensation must be explicit and outside the engine**, but shows how thin "outside" gets: the Dapr saga is a reversed list in a `catch`. The design's scope-registered LIFO compensations are strictly more than any subject here offers; keep them, and journal the compensation calls as ordinary steps so they replay.
-- **Fan-out under replay needs only schedule-time ids.** The design's `Task.WhenAll`-shaped combinator over journaled ops should assign identities at schedule time, in program order, and resolve by identity, as `ScheduleTaskInternal` does; the completion order then does not matter. No continuation capture is needed for this — DTFx's `SynchronousTaskScheduler` is the only trick, and `event-horizon`'s tail-resumptive ops do not need even that.
-- **Take the patch mechanism.** `IsPatched(name)` recorded on the turn-start event is a two-line versioning story for a CLI whose journal outlives a code change; the "exact prefix" mismatch check and stall-rather-than-corrupt behaviour are worth copying for `journal.jsonl`.
-- **Missing from the design, present here:** `CurrentUtcDateTime` as a journaled clock read (a `TestClock` reads it back), `NewGuid` as UUID v5 over journal-stable inputs, and a `Generation` counter to fence late arrivals after a `ContinueAsNew`-style restart of a chained `--split` release.
-- **Missing from DTFx, planned in the design:** crash-at-every-event-index tests and mutate-the-world-between-crash-and-resume. Neither clone has either; the design's test plan is ahead of the incumbents.
+- **Signing the record is a mechanism nobody else has, and its failure mode is
+  instructive** (§9). Cryptographic tamper detection verified on every load is a
+  real capability; trusting a certificate authority whose expiry invalidates every
+  in-flight record, with no re-sign path, is a real hazard. A library adding
+  integrity checks should prefer something whose key material cannot expire —
+  a content hash rather than a signature — unless tamper-_attribution_ is actually
+  required.
+- **Placement-based single-writer is strong and unportable.** One live activation
+  per id across a cluster is a better guarantee than any lease, and it is
+  available only to a library that owns a placement service. A library without one
+  has to fence explicitly.
+- **Terminate without a cancel counterpart is a gap** (§10). If compensation is
+  user code, an operator stop that never gives the program a turn cannot run it.
+  Offering only the abrupt verb silently makes rollback unreachable.
+- **Stall on mismatch, rather than fail** (§5). Leaving the record intact and the
+  instance parked is the recovery-friendly default, and it composes with an
+  operator surface that can then resume.
+- **Retention as a per-terminal-state policy** is the right granularity: a failed
+  run is worth keeping longer than a successful one, and a library that keeps
+  everything forever eventually becomes a storage problem for its users.
+- **Positional per-turn identity survives fan-out because ids are assigned at
+  schedule time** (§6), which is the general lesson: positional schemes are safe
+  under concurrency exactly when the position is fixed before any await.
+- **A journaled clock and id generator derived from already-recorded data** is
+  inherited from the Durable Task Framework and remains the cheapest way to remove
+  two sources of nondeterminism (§3).
+- **Retry forever is a default worth questioning.** Reminder-driven reactivation
+  means a permanently failing activity retries indefinitely with no quarantine
+  state, so an operator must notice.
 
 ---
 
@@ -373,3 +506,7 @@ DTFx ships an in-process backend, `DurableTask.Emulator.LocalOrchestrationServic
 [temporal]: ./temporal.md
 [index]: ./index.md
 [comparison]: ./comparison.md
+[dapr-wf-api]: https://github.com/dapr/dapr/blob/e9f08dc2dfbb37c9d52fa17186c1bbf6d9d94444/pkg/api/universal/workflow.go
+[doc-actors]: https://github.com/dapr/docs/blob/78b25330358bbe68b7e0f2d704f02d0432aebb75/daprdocs/content/en/developing-applications/building-blocks/actors/actors-overview.md
+[doc-retention]: https://github.com/dapr/docs/blob/78b25330358bbe68b7e0f2d704f02d0432aebb75/daprdocs/content/en/developing-applications/building-blocks/workflow/workflow-history-retention-policy.md
+[doc-signing]: https://github.com/dapr/docs/blob/78b25330358bbe68b7e0f2d704f02d0432aebb75/daprdocs/content/en/developing-applications/building-blocks/workflow/workflow-history-signing.md

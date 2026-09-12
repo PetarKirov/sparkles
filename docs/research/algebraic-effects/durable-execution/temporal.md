@@ -76,7 +76,7 @@ A `tree_id`/`branch_id` pair identifies one history branch; `node_id` is the fir
 
 ### The user-facing shape
 
-The Go SDK ([`internal/workflow.go`][go-workflow]) exposes the determinism-safe vocabulary as functions over a `workflow.Context`:
+The Go SDK ([`internal/workflow.go`][go-workflow-api]) exposes the determinism-safe vocabulary as functions over a `workflow.Context`:
 
 ```go
 func Now(ctx Context) time.Time                       // "the time when the workflow task is started or replayed"
@@ -212,7 +212,7 @@ A step is identified **positionally**, by the order in which command-producing c
 
 ### 3. Determinism enforcement
 
-**Discipline, backed by runtime substitution and runtime detection; never by the language.** Go offers no isolation at all: the SDK substitutes `workflow.Now`, `Sleep`, `Go`, `Channel`, `Selector` for their stdlib counterparts and documents that the stdlib forms _"must not be used in workflow code"_ ([`internal/workflow.go`][go-workflow]), but a stray `time.Now()` or `go func()` compiles and runs. TypeScript goes further with a `vm` context whose globals are rewritten (`Date`, `Date.now`, `setTimeout`, `Math.random`) or made to throw (`WeakRef`, `FinalizationRegistry`) ([`packages/workflow/src/global-overrides.ts`][ts-global-overrides]). Both SDKs then rely on detection after the fact: the command/event zip and the state-machine transitions raise `[TMPRL1100]` errors, and the TypeScript replayer surfaces them as `DeterminismViolationError`. Detection is bounded by the check's shallowness (§1): a nondeterministic branch that happens to issue the same command sequence passes.
+**Discipline, backed by runtime substitution and runtime detection; never by the language.** Go offers no isolation at all: the SDK substitutes `workflow.Now`, `Sleep`, `Go`, `Channel`, `Selector` for their stdlib counterparts and documents that the stdlib forms _"must not be used in workflow code"_ ([`internal/workflow.go`][go-workflow-api]), but a stray `time.Now()` or `go func()` compiles and runs. TypeScript goes further with a `vm` context whose globals are rewritten (`Date`, `Date.now`, `setTimeout`, `Math.random`) or made to throw (`WeakRef`, `FinalizationRegistry`) ([`packages/workflow/src/global-overrides.ts`][ts-global-overrides]). Both SDKs then rely on detection after the fact: the command/event zip and the state-machine transitions raise `[TMPRL1100]` errors, and the TypeScript replayer surfaces them as `DeterminismViolationError`. Detection is bounded by the check's shallowness (§1): a nondeterministic branch that happens to issue the same command sequence passes.
 
 ### 4. Compensation and failure handling
 
@@ -233,6 +233,133 @@ A step is identified **positionally**, by the order in which command-producing c
 ### 8. Testing
 
 Three tiers. **Replay tests**: `worker.NewWorkflowReplayer().ReplayWorkflowHistory(...)` in Go ([`worker/worker.go`][go-worker-pkg]) and `Worker.runReplayHistory(options, history)` in TypeScript, which _"Will resolve as soon as the history has finished being replayed, or if the workflow produces a nondeterminism error"_ ([`packages/worker/src/worker.ts`][ts-worker]); the documentation recommends downloading _"a representative set of recent open and closed Workflows"_ and failing CI on any replay error ([`docs/develop/go/best-practices/testing-suite.mdx`][doc-go-testing]). **Unit tests with a mock clock**: Go's `TestWorkflowEnvironment` runs the workflow against a `clock.Mock` that _"automatically move[s] forward to fire next timer when workflow is blocked"_ ([`internal/workflow_testsuite.go`][go-testsuite]), with `RegisterDelayedCallback` to inject signals at workflow-clock times. **Integration tests with a real server**: TypeScript's `TestWorkflowEnvironment.createTimeSkipping` runs the Java time-skipping test server, where _"Time skipping, which is automatically done when awaiting a workflow result and manually done on sleep, is global to the environment"_, and `createLocal` runs the real dev server without time skipping ([`packages/testing/src/testing-workflow-environment.ts`][ts-testing]). There is no crash-at-every-event test primitive; the replayer is the closest thing, and it tests compatibility of code with a _finished_ history rather than resumption from each prefix.
+
+### 9. Journal integrity and the single writer
+
+The history is server-owned, and its integrity rests on two fencing tokens at
+different scopes plus one predicate that admits what a failed write does not
+tell you.
+
+**A shard lease fences every write.** Each workflow execution belongs to a shard,
+and a shard is owned by exactly one history host holding a monotonically
+increasing `RangeID`. Every write carries that token: `AddHistoryTasksRequest`
+and `AssertShardOwnershipRequest` both take a `RangeID`, and `UpdateShardRequest`
+carries a `PreviousRangeID` so acquiring a shard is itself a conditional update
+([`data_interfaces.go`][srv-data-ifaces]). The failure mode is named after the
+mechanism: _"ShardOwnershipLostError is returned when conditional update fails
+due to RangeID for the shard"_. A host that has lost its lease cannot write,
+whether or not it has noticed.
+
+**A per-execution version fences the mutable state.** `GetWorkflowExecution`
+returns a `DBRecordVersion` alongside the state, and an update supplies it back;
+a mismatch is a `WorkflowConditionFailedError`. The older mechanism it replaces
+is visible in the same file, where `NextEventID` is marked _"TODO deprecate
+NextEventID in favor of DBRecordVersion"_ — that is, the conditional append moved
+from "the history is exactly this long" to an opaque record version
+([`data_interfaces.go`][srv-data-ifaces]).
+
+**Appends are atomic across history and tasks.** One transaction writes the new
+history events, the mutable-state update and the transfer or timer tasks that
+follow from them, which is why a completed workflow task never leaves a scheduled
+activity unrecorded. The transaction is size-bounded, and exceeding the bound is
+its own error (`TransactionSizeLimitError`).
+
+**Whether a failed write committed is explicitly modelled.**
+`OperationPossiblySucceeded` enumerates the errors that mean _"Persistence
+failure that means that write was definitely not committed"_ —
+`CurrentWorkflowConditionFailedError`, `WorkflowConditionFailedError`,
+`ConditionFailedError`, `ShardOwnershipLostError`, `AppendHistoryTimeoutError`
+and a few more — and returns true for everything else
+([`error_type.go`][srv-error-type]). That distinction is exactly the
+started-without-completed ambiguity, made a first-class predicate rather than
+left to a caller's judgement, and it is the piece most systems in this survey
+leave implicit.
+
+**Duplicate work is prevented by the task token, not by the journal.** A worker
+completes a workflow task by presenting the token it was handed; a token from a
+superseded attempt is rejected, so two workers racing on the same task cannot
+both append. Identity of the writing attempt is therefore checked, but it is
+checked at the task boundary rather than stamped on each record.
+
+### 10. Operator recovery and intervention
+
+Temporal has the richest operator surface in the survey, and the reason is
+structural: because the history is a first-class server-side object with an API,
+every intervention is an API call rather than a database edit.
+
+**Reset is fork-from-a-chosen-event, and it is first-class.**
+`ResetWorkflowExecution` takes an event id to reset to and starts a new run that
+inherits the history up to that point
+([`resetworkflow/api.go`][srv-reset]). What makes it more than a truncation is
+the reapply policy: `ResetReapplyType` and `ResetReapplyExcludeTypes` decide
+which post-reset-point external inputs — signals, updates — are replayed onto the
+new run rather than lost. A library that offers only "truncate here" leaves the
+caller to rediscover that signals received after the reset point are still owed
+to the program.
+
+**Cancel and terminate are deliberately different operations.** `CancelWorkflow`
+delivers a cancellation the program can observe and handle, so cleanup runs;
+`TerminateWorkflow` takes a reason and stops the execution without giving it a
+turn ([`client.go`][go-client]). The distinction matters precisely because
+compensation is user code: only the first gives it a chance to run.
+
+**Inspection is a first-class API, not a database query.** History can be
+fetched or long-polled event by event, an execution described, and both are
+public client operations. This is the affordance that library designs backed by
+opaque storage give up.
+
+**Signals and updates are also intervention tools.** Because any external process
+can send a signal or an update to a running execution, an operator can supply a
+value the program is waiting for without touching storage — the same mechanism
+the program's own peers use.
+
+**Undeliverable work goes to a dead-letter queue.** The history service exposes
+`getdlqtasks` and `deletedlqtasks` APIs, so a task that cannot be processed is
+parked and inspectable rather than retried forever or dropped.
+
+**What is not offered:** editing a recorded activity result in place. The
+supported route to "that step recorded the wrong thing" is reset to before it and
+re-run, which keeps the record append-only at the cost of a new run id.
+
+### 11. Suspension and external input
+
+**Waiting ends the worker's turn, not the execution.** A workflow task completes
+with commands and the worker stops running that execution; nothing is held except
+an optional sticky cache entry, which is a performance optimisation and not a
+correctness requirement. There is no threshold below which a wait is held in
+memory — the shortest timer and the longest both become history events.
+
+**The primitives are timers, signals, updates, queries and child executions.**
+Durable timers are `TimerStarted`/`TimerFired` pairs in the history
+([timers and delays][doc-timers]); signals and updates arrive as history events
+and are surfaced to the program through channels and handlers
+([message passing][doc-messages]). `Await` and `AwaitWithTimeout` block a
+workflow coroutine until a predicate over already-received input holds
+([`workflow.go`][go-workflow-api]), which is how a program waits on a condition
+rather than on a specific event.
+
+**There is no distinct persisted "suspended" state.** An execution waiting on a
+signal is `Running`, exactly like one whose activity is in flight. That is a
+deliberate simplification — the history says what is outstanding — but it means a
+caller cannot ask "is this blocked on me?" without reading the history and
+interpreting it.
+
+**External input is addressed by workflow id and signal name**, and delivery is
+at-least-once, so a duplicate signal is a second history event rather than a
+deduplicated no-op. Deduplicating is the program's job, and `signal-with-start`
+exists precisely because "deliver this, creating the execution if needed" is
+otherwise a race. An input that arrives before the program reaches its handler is
+buffered in the history; one that never arrives leaves the execution running
+until its own timeout fires.
+
+**Human-in-the-loop is a documented pattern built from these parts** — a timer
+raced against a signal, with the timer as the escalation path — rather than a
+dedicated construct.
+
+**History size bounds how long a wait can last.** An execution accumulates events
+while it waits, and the documented limits ([limits][doc-limits]) are what
+eventually force `Continue-As-New`. A program that waits on a human for a month
+is therefore a design problem, not just a long timer.
 
 ---
 
@@ -270,16 +397,39 @@ Three tiers. **Replay tests**: `worker.NewWorkflowReplayer().ReplayWorkflowHisto
 | History caps + `Continue-As-New`                                        | Bounds replay time and storage                                                          | The user must design a checkpoint-as-arguments shape and pick when to cut                                      |
 | Worker Versioning with pinned/auto-upgrade behaviours                   | Old code keeps running old executions; no patching needed for pinned types              | Operational surface (deployments, ramps, drain states) and a still-shifting API (`BuildID` already deprecated) |
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the two-record shape.** Temporal's `ActivityTaskScheduled` (intent, with the id the code chose) and `ActivityTaskCompleted` (outcome, with `scheduled_event_id` back-reference) are exactly the design's `started` + `completed` pair, and the back-reference is what lets concurrent completions land out of order. The journal should carry the intent id in the completion record.
-- **Argues for a name, not a counter, as step identity.** Temporal's positional ids are the root of its versioning pain: every inserted call renumbers the tail. The design's stable name plus attempt counter plus args hash is strictly stronger; keep it. But note that Temporal deliberately does _not_ compare arguments so inputs can change without a version bump; the design's args-hash-in-the-key means a changed argument reads as a _new_ step, which is the right call for `release` (a different tag name is a different action) but should be a documented choice, not an accident.
-- **Argues against "the journal wins" for observations, and the design already diverges.** Temporal never re-observes; it relies on idempotent activities and accepts duplicate effects. The design's re-observe-and-reconcile rule table for git tags and HEAD is the thing Temporal lacks, and `MutableSideEffect` (run, compare with `equals`, record only on change) is the nearest Temporal analogue: a per-observation equality plus a policy for what to do on inequality. Worth borrowing its shape: observation steps carry an `equals` and a reconciliation verdict, both journaled.
-- **The `[TMPRL1100]` detector pair is the test the design needs.** "Missing replay command", "extra replay command" and "mismatched command" are the three failure classes for a replaying journal; the crash-at-every-index test should assert each is raised, not just that resumption succeeds. Add the state-machine variant too: a `completed` record whose `started` the replaying code never produced.
-- **Compensation as a journaled, LIFO, explicit-only slice is what Temporal's docs recommend**, including the two rules the design should adopt verbatim: register before the step it undoes, and run compensations on a context that survives cancellation (the effect-row analogue of `NewDisconnectedContext`).
-- **Versioning is the gap.** The design says nothing about running new `release` code against a journal written by old code. Temporal's answer is a marker at the first live decision point plus a supported-version window that fails loudly. With named steps the design can do better (a renamed or removed step is detectable by name), but a `version` marker step with `[min, max]` validation is cheap and turns "old journal, new code" from undefined into an error with a message.
-- **Determinism enforcement will be by discipline, as in Go.** D has no sandbox; the design's "single pure-cast in the journaling combinator" is the Go SDK's position (substitute the primitives, document the rest). The TypeScript lesson is that the substitutions worth making are clock, randomness and timers; the design's `TestClock` already covers the first and third.
-- **Replay tests against saved journals are the cheapest regression suite Temporal has**, and the design's `journal.jsonl` makes them trivial: check journals from real runs into the tree and replay them in CI, failing on any of the three mismatch classes. Continue-As-New has no analogue needed; a `release` run is bounded.
+- **Two fencing tokens at two scopes is the strongest integrity design in the
+  survey** (§9): a monotonic shard lease on every write, and a per-execution
+  record version on the state. A library with one journal still needs both ideas —
+  something that stops a stale process writing at all, and something that makes an
+  individual append conditional.
+- **Model "did that failed write commit?" explicitly.** `OperationPossiblySucceeded`
+  enumerates the errors that mean the write definitely did not land and treats
+  everything else as possibly landed. Most systems leave that judgement to a
+  caller; making it a predicate is what lets recovery be correct rather than
+  hopeful.
+- **Reset-to-an-event with a reapply policy is the operator affordance to copy**
+  (§10). Truncating the record is the easy half; deciding which external inputs
+  received after the reset point are still owed to the new run is the half that
+  makes it usable, and Temporal is the only system here that models it.
+- **Cancel and terminate must be different operations.** One gives the program a
+  turn so its cleanup runs, the other does not. A library that offers only
+  "terminate" has silently decided that compensation is optional.
+- **Positional identity works, and its cost is visible in the mechanisms built to
+  survive it:** patch markers, worker pinning by build id, and a deliberate
+  refusal to compare arguments so that inputs may change without a version bump
+  (§1, §5). That last choice is defensible and should be made consciously.
+- **Substituting the nondeterministic primitives is necessary but not sufficient.**
+  Temporal replaces the clock, the scheduler and the random source, and still
+  needs an after-the-fact mismatch error, because a host language has more
+  nondeterminism than a runtime can intercept (§3).
+- **A history that can be fetched and long-polled is a product feature**, and it
+  is what makes replay-against-stored-histories a practical CI gate (§8). A
+  library whose record is opaque gives up both.
+- **There is no distinct persisted "waiting" state** (§11), which is a real cost:
+  a caller cannot distinguish "blocked on me" from "working" without reading and
+  interpreting the record.
 
 ---
 
@@ -294,7 +444,7 @@ Three tiers. **Replay tests**: `worker.NewWorkflowReplayer().ReplayWorkflowHisto
 - [`internal/internal_event_handlers.go` — `ProcessEvent` switch, `GenerateSequence`, `Now`, `SideEffect`, `MutableSideEffect`, `GetVersion`, `handleMarkerRecorded`][go-event-handlers]
 - [`internal/internal_command_state_machine.go` — `getCommand`, `failStateTransition`][go-csm]
 - [`internal/internal_workflow.go` — dispatcher contract, `ExecuteUntilAllBlocked`, `selectorImpl.Select`][go-internal-workflow]
-- [`internal/workflow.go` — public API docs: `Now`, `Go`, `Selector`, `SideEffect`, `MutableSideEffect`, `GetVersion`][go-workflow]
+- [`internal/workflow.go` — public API docs: `Now`, `Go`, `Selector`, `SideEffect`, `MutableSideEffect`, `GetVersion`][go-workflow-api]
 - [`internal/worker.go` — `WorkflowPanicPolicy`, `WorkerDeploymentOptions`, `PreferredVersionProvider`][go-worker]
 - [`internal/error.go` — `NewContinueAsNewError`][go-error]
 - [`internal/internal_flags.go` — SDK flags][go-flags]
@@ -332,7 +482,6 @@ Three tiers. **Replay tests**: `worker.NewWorkflowReplayer().ReplayWorkflowHisto
 [go-event-handlers]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/internal_event_handlers.go
 [go-csm]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/internal_command_state_machine.go
 [go-internal-workflow]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/internal_workflow.go
-[go-workflow]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/workflow.go
 [go-worker]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/worker.go
 [go-error]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/error.go
 [go-flags]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/internal_flags.go
@@ -369,3 +518,11 @@ Three tiers. **Replay tests**: `worker.NewWorkflowReplayer().ReplayWorkflowHisto
 [ts-effect]: ../typescript-effect.md
 [catalog-index]: ./index.md
 [topic-index]: ../index.md
+[doc-limits]: https://github.com/temporalio/documentation/blob/01c99ad49289ccd45519f113dcd05b5f6503a331/docs/encyclopedia/workflow/workflow-execution/limits.mdx
+[doc-messages]: https://github.com/temporalio/documentation/blob/01c99ad49289ccd45519f113dcd05b5f6503a331/docs/encyclopedia/workflow-message-passing/workflow-message-passing.mdx
+[doc-timers]: https://github.com/temporalio/documentation/blob/01c99ad49289ccd45519f113dcd05b5f6503a331/docs/encyclopedia/workflow/workflow-execution/timers-delays.mdx
+[go-client]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/client.go
+[go-workflow-api]: https://github.com/temporalio/sdk-go/blob/fee1a45426e6dd90389ac5af4a45d98a357566b4/internal/workflow.go
+[srv-data-ifaces]: https://github.com/temporalio/temporal/blob/2f7ba7ce3b4afb0db9ccf7aebbf7189e2d38bbef/common/persistence/data_interfaces.go
+[srv-error-type]: https://github.com/temporalio/temporal/blob/2f7ba7ce3b4afb0db9ccf7aebbf7189e2d38bbef/common/persistence/error_type.go
+[srv-reset]: https://github.com/temporalio/temporal/blob/2f7ba7ce3b4afb0db9ccf7aebbf7189e2d38bbef/service/history/api/resetworkflow/api.go

@@ -234,6 +234,127 @@ Pure replay. Each request re-runs the function from the top; cost is one functio
 
 `@inngest/test` ([`packages/test/README.md`][js-test]) wraps a function in an in-process `InngestTestEngine`: `t.execute()` drives the whole plan-run-memoize loop to completion without a server; `t.executeStep("id")` runs until one step has executed, which is how a `waitForEvent` or `sleep` is asserted to have been registered with the right options; the `steps` option mocks any step by id with a replacement `handler`. Returned `state` exposes each step's output. There is no crash-at-every-step harness and no world-mutation harness; the docs' advice for versioning is manual: start a run with a `step.sleep`, edit the code while it sleeps, and watch the dev server ([`versioning.mdx`][web-versioning]).
 
+### 9. Journal integrity and the single writer
+
+The record is a set of Redis keys per run, and integrity is bought with one Lua
+script rather than with a version check.
+
+**One atomic script writes the whole step record.** `saveResponse.lua` sets the
+step's output in the step hash, pushes the step id onto the stack list, removes it
+from the pending set and increments the metadata counters — all inside a single
+Redis script, so a step's result and its position in the completion order commit
+together ([`saveResponse.lua`][srv-lua]). A library that writes a result and then
+updates an index has a window this design does not.
+
+**Duplicate saves are distinguished by content, and the distinction is a return
+code.** The script's own comment enumerates the outcomes: `-1` is a duplicate
+response, `0` a successful save with no pending steps, `1` a successful save with
+some remaining. The interesting case is not in that list but in the body: if the
+step id already exists and _"the data is exactly the same, return -2, indicating
+an idempotent save req"_. A re-save with the same bytes is idempotent; a re-save
+with _different_ bytes for the same step id is rejected outright. That is the
+strongest same-key-different-value stance in the survey, and it is four lines of
+Lua.
+
+**There is no expected-version guard on the record as a whole.** Nothing checks
+how long the stack is before appending to it; the step id's absence from the hash
+is the whole condition. This follows from name-keyed identity (§1): if keys are
+unique, an append needs no position.
+
+**Single-writer is enforced by queue leases, not by the state.** Work items are
+leased with an expiry and the lease is extended while a worker holds it, and the
+same machinery appears at partition and role scope. A second executor cannot pick
+up a leased item, so two writers for one step do not normally arise — but the
+guard lives in the queue, so a lease that expires while a step is still running
+is exactly the case `saveResponse`'s content comparison has to catch.
+
+**Torn writes are Redis's problem.** Each record is a field in a hash written by
+an atomic script, so there is no partial record to describe and no checksum or
+length prefix in the format.
+
+**Nothing identifies the writing attempt.** There is no writer id or incarnation
+counter on a step record, so "which executor wrote this" is not recoverable from
+the record itself.
+
+### 10. Operator recovery and intervention
+
+Inngest's operator surface is the strongest in the survey on one specific axis:
+it is the only system here that lets a human **replace a step's input** and
+re-run from that point.
+
+**Rerun-from-step reconstructs earlier steps and re-executes the rest.** The
+documentation states the mechanism precisely: _"When you rerun from a step,
+Inngest creates a new run and reconstructs the results of all earlier steps as
+memoized state. The selected step and every step after it execute again. If you
+provide replacement input, the selected step uses that new input."_
+([rerun][doc-rerun]). Every other system with a fork affordance re-runs a step
+with whatever the record already holds; this one lets the operator correct the
+input first.
+
+**Replay is bulk recovery, positioned explicitly against dead-letter queues.**
+An operator selects a function, a time range and a set of statuses, and every
+matching run is re-run — _"The recovery flow in other systems may require
+dead-letter queues or some other form of manual intervention"_
+([replay][doc-replay]). The design consequence is that a permanently failing run
+is not parked in a special state; it stays failed and is re-run in bulk after the
+bug is fixed.
+
+**Pausing is a function-level state with documented semantics**, and the
+documentation is unusually careful about what it does not do: events keep
+arriving and are stored, the function is marked skipped, and _"Events received
+while the function was paused will not be reprocessed automatically"_ — Replay is
+the tool for that ([pause][doc-pause]). Pausing here is therefore about the
+trigger, not about an individual in-flight run.
+
+**Cancellation exists at three scales:** a declarative `cancelOn` on the function,
+an API call for one run, and a bulk cancellation over a time range
+([cancel][doc-cancel], [bulk cancellation][doc-bulk]). Cancelling is distinct
+from failing, and the `inngest/function.cancelled` event lets cleanup hang off it.
+
+**Status is a single metadata field.** `setStatus.lua` writes `status` on the run's
+metadata hash and returns `0` for _"Successfully cancelled"_
+([`setStatus.lua`][lua-status]), which is how coarse the run-level state model is:
+one enum, no distinct paused-mid-run value.
+
+**Inspection is the dashboard and the REST API**, not a queryable log. The step
+record is in Redis under internal keys, so reading a run's history without the
+platform's cooperation is not a supported operation — the opposite trade from
+DBOS's SQL tables.
+
+### 11. Suspension and external input
+
+**Waiting ends the process by construction**, because the execution model is
+already request-per-step: the server calls the function over HTTP, the SDK runs
+until the next step boundary, and returns. A sleep or an event wait is simply a
+response that says "wake me when", so there is no suspension mechanism distinct
+from the normal control flow, and no threshold below which a wait is held in
+memory.
+
+**The primitives** are `step.sleep` and `step.sleepUntil` (durable timers),
+`step.waitForEvent` (park until a matching event arrives, with a required
+timeout), `step.invoke` (call another function and wait for its result), and
+`step.sendEvent`.
+
+**External input is addressed by an event expression, not by a token.**
+`waitForEvent` names an event and supplies a `match` or `if` expression against
+the event's data, so the wait is a predicate over the incoming stream rather than
+a handle handed out to a specific party
+([`step.waitForEvent`][doc-waitforevent]). That makes correlation declarative and
+means two runs can legitimately match the same event.
+
+**A wait must have a timeout.** `waitForEvent` requires one, so "never arrives" is
+a case the API forces the author to handle — the resolved value is simply null.
+An event that arrives before the wait is reached is not retroactively matched; the
+wait observes the stream from the point it starts.
+
+**There is no persisted "suspended" state** distinct from running, for the same
+reason there is no suspension mechanism: between steps the run is not executing
+anywhere, and that is the normal condition rather than a special one.
+
+**Human-in-the-loop is `waitForEvent` plus a timeout raced against it**, which is
+the same shape as every other system here, expressed with the event stream as the
+input channel.
+
 ---
 
 ## Strengths
@@ -269,16 +390,36 @@ Pure replay. Each request re-runs the function from the top; cost is one functio
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms name-plus-counter keying.** The design's `stable name + attempt counter + args hash` is a superset of Inngest's `id + ":n"`. Inngest shows the counter alone is enough for loops and that position-independent keys are what make reorder/insert/rename safe. Keep the name as the primary key; treat position as a hint, exactly like `ctx.stack.stack`.
-- **Argues for the args hash Inngest lacks.** Same id with different inputs silently reuses a memo in Inngest. `release`'s steps (tag a version, publish a release) take arguments that change between resumes, so the args hash is the guard Inngest does not have. Decide what a mismatch means: Inngest's `saveResponse.lua` treats "same key, different data" as an error (`-1`), which is a reasonable default for the journal side.
-- **Argues against journal-always-wins for observations.** Inngest has no re-observe path, and it is the design's stated weakness that motivates the observe/decide split with a reconciliation table. Inngest's advice (put every world read inside a step) is the discipline version of the same split; the design makes it a type distinction in the capability row, which is stronger.
-- **Confirms that compensations are absent from step-memoization engines.** Neither Inngest, nor its docs, nor its spec has a compensation primitive; "rollback" is a `try`/`catch`. The design's explicit LIFO scope is not something to borrow from here, and Inngest is evidence that a durable engine can ship without one — so the scope must earn its place by `release`'s concrete undo cases (delete a pushed tag, delete a created GitHub release).
-- **Borrow the completion-order list.** `ctx.stack.stack` is a cheap, separate record of the order steps _completed_, distinct from the order they were _started_. The journal's `started`/`completed` pairs already encode this; make sure replay of concurrent steps fulfils them in completed order, not journal-append order, or racing steps reproduce differently.
-- **Borrow the `StepNotFound` timeout.** When resume asks for a step the replayed code never reaches, Inngest waits a bounded time and then reports the mismatch along with the steps it _did_ find. The design's crash-at-every-index test should have an equivalent assertion: a resume that never re-issues a journaled name is a detected failure with a diagnostic listing, not a hang.
-- **Warn versus fail is a real choice.** Inngest chose "warn and continue" for order changes and its engine ended up not even warning. For a CLI that cuts releases, a mismatch between journal and code should fail closed with the diagnostic; the design should say so.
-- **The in-process test engine is the shape of the sparkles harness.** `InngestTestEngine.execute()` runs the plan/run/memoize loop without a server, and `steps` mocks by id. The design's journaling combinator over a `Ctx` row with `TestClock`/`SimNet`/`SimProc` is the same idea with better doubles; what Inngest lacks and the design should keep is crash-at-every-event-index and mutate-the-world-between-attempts.
+- **Name-keyed identity makes the append unconditional, and that is a real
+  simplification.** If keys are unique, the step's absence from the record is the
+  whole precondition; nothing needs to know how long the record is (§1, §9).
+- **Reject a re-save that carries different bytes under the same key.** Inngest's
+  save script returns an idempotent success when the data matches and a duplicate
+  error when it does not (§9). Four lines of script convert a silent overwrite into
+  a stopped run, and it is the strongest same-key-different-value stance surveyed.
+- **Write the result and its position in the completion order atomically.** The
+  step output, the stack entry and the pending-set removal are one script, so a
+  crash cannot leave a result recorded without its place in the order.
+- **Letting an operator replace a step's input and re-run from there is the most
+  useful recovery affordance in the survey** (§10), and it is the only instance of
+  it. Every other fork mechanism re-runs with whatever the record already holds,
+  which cannot fix a step that recorded the wrong thing because it was given the
+  wrong thing.
+- **Bulk re-run can replace a dead-letter queue.** A permanently failing run stays
+  failed and is re-run in bulk after the bug is fixed, rather than being parked in
+  a quarantine state someone must remember to drain (§10).
+- **A soft check that nobody implements is worse than no check.** The SDK
+  specification mandates a warning when step order changes and the current engine
+  raises none (§3). A library should either enforce its rule or drop it from the
+  specification.
+- **Requiring a timeout on an event wait forces the author to handle "never
+  arrives"** (§11). It is a small API decision that removes a whole class of stuck
+  runs.
+- **An opaque record costs inspectability.** The state lives under internal Redis
+  keys, so reading a run's history without the platform is unsupported — the
+  opposite trade from a library that keeps its record in queryable storage.
 
 ---
 
@@ -364,3 +505,10 @@ Pure replay. Each request re-runs the function from the top; cost is one functio
 [temporal]: ./temporal.md
 [index]: ./index.md
 [topic]: ../index.md
+[doc-bulk]: https://github.com/inngest/website/blob/16618171efb85870ffaa110366a054e703d42c3e/pages/docs/platform/manage/bulk-cancellation.mdx
+[doc-cancel]: https://github.com/inngest/website/blob/16618171efb85870ffaa110366a054e703d42c3e/pages/docs/guides/cancel-running-functions.mdx
+[doc-pause]: https://github.com/inngest/website/blob/16618171efb85870ffaa110366a054e703d42c3e/pages/docs/guides/pause-functions.mdx
+[doc-replay]: https://github.com/inngest/website/blob/16618171efb85870ffaa110366a054e703d42c3e/pages/docs/platform/replay.mdx
+[doc-rerun]: https://github.com/inngest/website/blob/16618171efb85870ffaa110366a054e703d42c3e/pages/docs/platform/manage/rerun-function-runs.mdx
+[doc-waitforevent]: https://github.com/inngest/website/blob/16618171efb85870ffaa110366a054e703d42c3e/pages/docs/reference/typescript/v3/functions/step-wait-for-event.mdx
+[lua-status]: https://github.com/inngest/inngest/blob/884e2ed1263524740ed04b3bcb56044e06af38cc/pkg/execution/state/redis_state/lua/setStatus.lua
