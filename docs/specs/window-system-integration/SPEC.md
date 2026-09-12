@@ -280,7 +280,11 @@ those fields as code points or native indices. Segments are ordered, non-overlap
 and may be coalesced when adjacent native spans have the same public style.
 
 The `sparkles:ui-app` adapter is the sole normalizer into `sparkles:input`: it applies
-cell metrics, scroll policy, and capability degradation once. Pure conversion helpers
+cell metrics, scroll policy, and capability degradation once.
+
+How queued events are merged, dropped or held back when a consumer cannot keep up is
+not yet a contract; the open questions and their recommended answers are in
+[event-delivery.md](./event-delivery.md) (`WSI-O9`). Pure conversion helpers
 live in `sparkles:input` so SDL and raylib compatibility producers use the same rules.
 
 ## 8. Typed native handles
