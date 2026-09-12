@@ -1112,6 +1112,10 @@
           {
             "text": "Open Issues",
             "link": "/specs/window-system-integration/open-issues"
+          },
+          {
+            "text": "Event Delivery Under Load",
+            "link": "/specs/window-system-integration/event-delivery"
           }
         ]
       },
