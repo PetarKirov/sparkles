@@ -6,7 +6,10 @@ force each one and a recommended answer. Accepted answers move into
 [SPEC.md](./SPEC.md) as requirements; this page keeps the reasoning. Index entry:
 `WSI-O9` in [open-issues.md](./open-issues.md)._
 
-**Status:** open. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
+**Status:** partly decided. `EQ1`–`EQ6`, `EQ8`, `EQ9` and `EQ13` were accepted on
+September 13, 2026 and are ready to move into [SPEC.md](./SPEC.md) as requirements;
+`EQ7` was reopened by those answers, and `EQ10`–`EQ12` and `EQ14` remain open with a
+standing recommendation. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
 the four backends' pumps). **Consumers in scope:** ordinary GUI applications,
 drawing applications that need every sample, and games that need per-frame sums and
 raw deltas at device rate. A decision that serves only one of the three is not
@@ -98,7 +101,10 @@ motion, text).
 _Recommendation:_ per family. Lifecycle, focus, discrete input and text pay in
 latency and, past the cap, memory or a counted drop, never merge. Motion pays in
 loss by merging, with history kept aside (EQ5).
-_Answer:_ open.
+**Accepted 2026-09-13:** per family. Lifecycle, focus, discrete input (keys,
+buttons, scroll steps) and text never merge — they pay in latency, and past
+capacity in the `EQ4` policy. Motion pays in loss by merging, with its samples kept
+in the `EQ5` ring.
 
 **EQ2 — What absorbs one whole Wayland dispatch?** `wl_display_dispatch_pending`
 cannot be stopped halfway, so backpressure in the pump bounds X11, Win32 and AppKit
@@ -107,13 +113,17 @@ _Options:_ capacity large enough for a socket buffer's worth; merging so that a
 dispatch's motion collapses to a handful of events; both.
 _Recommendation:_ both, with merging doing the work and capacity as margin: without
 merging no reasonable capacity is safe against an 8 kHz device and a stalled frame.
-_Answer:_ open.
+**Resolved 2026-09-13 by `EQ5` and `EQ9`:** merging collapses a dispatch's motion
+to one event per window and pointer, and the `EQ9` layout makes a capacity of
+roughly a thousand slots cost what 128 slots cost today. A flood of non-mergeable
+events still relies on capacity and the `EQ4` policy, which is now survivable.
 
 **EQ3 — Which of these goes: the cap, per-sample motion in the queue, or
 once-per-frame draining?** At 8 kHz the three cannot coexist at 128 slots.
 _Recommendation:_ per-sample motion leaves the queue (EQ5 puts samples in a side
 ring); the cap and per-frame draining stay.
-_Answer:_ open.
+**Resolved 2026-09-13 by `EQ5`:** per-sample motion leaves the queue for the ring.
+The cap and per-drain merging stay.
 
 **EQ4 — What is the overflow policy when everything else fails?**
 _Options:_ fatal sticky error (today); drop-oldest with a counter (Quake); drop-newest
@@ -124,7 +134,13 @@ _Recommendation:_ drop-oldest for coalescible kinds and drop-newest for discrete
 kinds is too clever; simpler is grow-once at `open` to a configured cap (EQ10) and,
 past it, drop-newest with a per-backend counter and one `EventsDropped` notice event
 per drain, so a consumer that cares can log or degrade. Never fatal.
-_Answer:_ open.
+**Accepted 2026-09-13:** past capacity the newest event is dropped and a
+per-backend counter increments; the drain synthesizes one `EventsDropped` notice
+carrying that count before the events it drains, then resets it. The notice is
+synthesized rather than queued because a full queue has no slot to give. Overflow
+is never fatal and never a sticky error. A pure motion flood cannot reach this path
+while its merge partner is still in the queue's trailing run; motion interleaved
+with anchoring events can, as can discrete input alone.
 
 ### What a motion event is
 
@@ -139,7 +155,12 @@ compile-time parameter defaulting to a few hundred samples, drop-oldest with a c
 since history is advisory. This is also the SoA move that keeps the 600-byte queue
 slot out of the high-rate path: a sample is position, delta, pressure, tilt and a
 timestamp, on the order of 48 bytes.
-_Answer:_ open.
+**Accepted 2026-09-13:** yes. One queued event per (window, pointer) carries the
+latest position, the summed relative delta and a sample count; the samples
+(position, delta, pressure, tilt, timestamp) live in a ring owned by the backend,
+keyed by (window, pointer), with a compile-time depth and drop-oldest on overflow,
+since history is advisory. This keeps the high-rate path out of the queue slot and
+is the SoA half of `EQ9`.
 
 **EQ6 — Do events carry a timestamp, and in which clock?** Resampling, velocity,
 gesture recognition and frame alignment need the device timestamp; every platform
@@ -148,14 +169,29 @@ microseconds, `GetMessageTime`, `NSEvent.timestamp`). Today only a sequence exis
 _Recommendation:_ yes, as a prerequisite for EQ5: platform time converted once by
 the backend into the loop's monotonic clock, with the raw platform value kept only
 where a protocol needs it back (Wayland serials are already handled separately).
-_Answer:_ open.
+**Accepted 2026-09-13** as a prerequisite of `EQ5`: both the queued event and the
+ring sample carry a timestamp, converted once by the backend from the platform's
+clock (X server time, Wayland's milliseconds and the relative pointer's
+microseconds, `GetMessageTime`, `NSEvent.timestamp`) into the loop's monotonic
+clock. Without it a consumer cannot align a merged event with the ring. Raw
+platform values are kept only where a protocol needs them back; Wayland serials
+remain separate.
 
 **EQ7 — When motion merges, which sequence survives, and does the event say how
 many samples it stands for?** Strictly increasing sequences are promised today;
 contiguity is not.
 _Recommendation:_ the merged event keeps the newest sequence and gains a `samples`
 count; contiguity is explicitly not promised.
-_Answer:_ open.
+_Reopened 2026-09-13._ Accepting `EQ5` exposed a sub-question the original
+recommendation got wrong. Merging by remove-and-append (what `pushCoalesced` does
+today) is O(trailing run) per event and keeps drain order strictly increasing;
+merging in place — updating the queued event's payload and leaving it where it sits,
+as AWT's `coalesceEvents` and Win32's synthesized `WM_MOUSEMOVE` do — is O(1) with a
+per-(window, pointer) slot index, but then the merged event either keeps its
+original sequence (drain order stays monotonic, the sequence no longer names the
+newest observation) or takes the newest one (and drain order stops being
+monotonic, breaking a promise consumers can already rely on). Both the cost and the
+ordering contract ride on this.
 
 **EQ8 — Does absolute `moved` coalesce by default?** Today it anchors the queue, so
 relative events can only merge within the run after the last absolute move, which
@@ -165,7 +201,10 @@ _Recommendation:_ yes, per (window, pointer), with the samples in the EQ5 ring. 
 default is lossy-with-history; a consumer that wants every sample reads the ring.
 Presses, releases, enter and leave still anchor, so the last position before a
 press is always delivered.
-_Answer:_ open.
+**Accepted 2026-09-13:** yes, per (window, pointer), with the samples in the `EQ5`
+ring, so the default is lossy-with-history and a drawing consumer reads the ring.
+Presses, releases, enter and leave still anchor the order, so the last position
+before a press is always delivered.
 
 ### Layout and knobs
 
@@ -176,7 +215,11 @@ _Recommendation:_ one or two cache lines per slot, with text and composition pay
 in a per-backend arena the drain borrows from (this also answers `WSI-O3`), and touch
 and tablet detail in the EQ5 ring. Decide the layout before the cap: 1,024 slots of
 64 bytes is the same memory as 128 of 600.
-_Answer:_ open.
+**Accepted 2026-09-13:** one or two cache lines per slot. Owned text and
+composition payloads move out of line (which is also the answer to `WSI-O3`), touch
+and tablet detail move into the `EQ5` ring, and the cap is decided afterwards:
+1,024 slots of 64 bytes is the memory 128 slots of 600 bytes cost today. What
+"out of line" does to `WindowEvent`'s Regularity is `EQ14`.
 
 **EQ10 — Which knobs are compile-time and which are runtime?** Candidates: capacity,
 history depth, motion coalescing, relative summing, overflow policy. The backends are
@@ -186,7 +229,10 @@ cost a branch on a path already doing a sum-type match.
 _Recommendation:_ capacity and history depth compile-time (they size inline storage);
 coalescing and summing runtime per window, default on; overflow policy fixed by the
 spec, not a knob.
-_Answer:_ open.
+**Open; recommendation stands.** Capacity and history depth compile-time, since
+they size inline storage; coalescing and relative summing runtime per window,
+default on; the `EQ4` overflow policy fixed by this specification rather than
+exposed as a knob.
 
 **EQ11 — Where does per-frame accumulation live?** Games should not read the queue.
 Something must offer "state since the last frame": pressed set, summed deltas, latest
@@ -195,7 +241,10 @@ _Options:_ `sparkles:wsi`; `sparkles:input`; the host in `sparkles:ui-app`.
 _Recommendation:_ a small accumulator type in `sparkles:input`, fed by draining the
 queue, so `sparkles:wsi` stays the lossless-as-possible boundary and the SDL and
 raylib producers can feed the same type.
-_Answer:_ open.
+**Recommendation stands; open pending `EQ10` and `EQ14`.** A small accumulator in
+`sparkles:input`, fed by draining the queue, keeps `sparkles:wsi` the
+lossless-as-possible boundary and lets the SDL and raylib producers feed the same
+type.
 
 **EQ12 — Does coalescing key on the drain or on the frame clock?** Chromium, GDK,
 Android and iOS merge per frame, which makes behaviour deterministic instead of
@@ -204,21 +253,47 @@ _Recommendation:_ on the drain, for now: the queue cannot assume a frame clock (
 headless or non-rendering consumer has none), and per-drain merging is what the
 platforms without a frame clock (AWT, macOS) do. Revisit when F04 lands, as a
 consumer-side choice.
-_Answer:_ open.
+**Open; recommendation stands.** Per-drain merging for now, because the queue
+cannot assume a frame clock and the platforms without one (AWT, macOS) merge per
+delivery. Revisit when `F04` lands, as a consumer-side choice rather than a queue
+policy.
 
 **EQ13 — How are touch contacts and tablet detail treated?** Touch floods are per
 contact; tablets add pressure and tilt.
 _Recommendation:_ the same as the mouse: one queued event per (window, contact)
 with the samples in the ring, keyed by pointer id, so a contact is a pointer.
+**Resolved 2026-09-13 by `EQ5`'s shape:** a touch contact is a pointer id, so a
+contact gets the same treatment as the mouse — one queued event per (window,
+contact) with the samples in that pointer's ring. Tablet pressure and tilt are
+sample fields, not queue fields.
+
+**EQ14 — Does a queued event still own its text, once text moves out of line?**
+`EQ9` moves owned text and composition payloads out of the slot, but
+[SPEC.md](./SPEC.md) §7 calls `WindowEvent` a lossless boundary "whose payloads own
+their small text and metadata", and the type is Regular: copyable, comparable,
+replayable into the recording backend. An arena the drain borrows from breaks that
+unless the borrow's validity is stated, and a recorded event that borrows is not
+replayable later.
+_Options:_ keep short text inline (a commit is usually a few bytes) and spill only
+long pre-edit and clipboard metadata to a per-backend arena valid until the next
+drain, with the event carrying a span; arena plus reference count, so a kept event
+stays valid; keep full ownership and shrink the slot by making the largest payload a
+heap-owned buffer, paying an allocation on the rare large commit.
+_Recommendation:_ inline-short-with-spill, and state the borrow's lifetime as
+"valid until the drain that delivered it returns"; a consumer keeping an event past
+that copies it through an explicit deep-copy the recording backend also uses.
 _Answer:_ open.
 
 ## 5. Dependencies between answers
 
-- EQ5 (side ring) requires EQ6 (timestamps) and settles EQ3; EQ8 assumes EQ5.
-- EQ9 (layout) should precede any change to the cap in EQ4 and EQ10.
-- EQ11 is independent of the queue's policy and can land first.
-- EQ2 is settled by EQ5 plus EQ8 for motion; discrete floods on Wayland remain
-  bounded only by capacity and the EQ4 policy.
+- `EQ5` required `EQ6` and settled `EQ3` and `EQ13`; `EQ8` rides on `EQ5`; together
+  with `EQ9` they settled `EQ2`.
+- `EQ7` must be answered before the merge is implemented: it fixes both the cost of
+  a merge and whether drained sequences stay strictly increasing.
+- `EQ9` precedes any change to the cap, and raises `EQ14`, which fixes what a
+  consumer may do with a delivered event.
+- `EQ11` is independent of the queue's policy and can land first.
+- `EQ12` can be revisited after `F04` without reopening anything above.
 
 ## 6. What changes when this is decided
 
