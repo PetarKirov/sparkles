@@ -11,11 +11,11 @@
   </p>
   <p align="center">
     <a href="https://github.com/PetarKirov/sparkles/actions/workflows/main-checks.yml"><img alt="Default branch status" src="https://img.shields.io/github/actions/workflow/status/PetarKirov/sparkles/main-checks.yml?branch=main&label=main&logo=github"></a>
-    <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Merged pull requests" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles-docs.pages.dev%2Fbadges%2Fmerged-prs.json&logo=github"></a>
-    <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Share of merged pull requests with green CI" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles-docs.pages.dev%2Fbadges%2Fmerged-green.json"></a>
+    <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Merged pull requests" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles.petar-kirov.dev%2Fbadges%2Fmerged-prs.json&logo=github"></a>
+    <a href="https://github.com/PetarKirov/sparkles/pulls?q=is%3Apr+is%3Amerged"><img alt="Share of merged pull requests with green CI" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fsparkles.petar-kirov.dev%2Fbadges%2Fmerged-green.json"></a>
     <a href="https://code.dlang.org/packages/sparkles"><img alt="Dub version" src="https://img.shields.io/dub/v/sparkles.svg"></a>
     <a href="https://code.dlang.org/packages/sparkles"><img alt="Dub downloads" src="https://img.shields.io/dub/dt/sparkles.svg"></a>
-    <a href="https://sparkles-docs.pages.dev/"><img alt="Docs" src="https://img.shields.io/badge/docs-sparkles--docs.pages.dev-blue"></a>
+    <a href="https://sparkles.petar-kirov.dev/"><img alt="Docs" src="https://img.shields.io/badge/docs-sparkles.petar--kirov.dev-blue"></a>
     <a href="LICENSE"><img alt="BSL-1.0" src="https://img.shields.io/badge/license-BSL--1.0-blue.svg"></a>
   </p>
 </p>
@@ -943,7 +943,7 @@ nix run .#ci -- --test
 
 ## Documentation
 
-Documentation (work in progress) is available at **[sparkles-docs.pages.dev](https://sparkles-docs.pages.dev/)**.
+Documentation (work in progress) is available at **[sparkles.petar-kirov.dev](https://sparkles.petar-kirov.dev/)**.
 
 ## License
 
