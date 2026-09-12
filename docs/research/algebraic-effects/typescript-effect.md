@@ -14,7 +14,7 @@ Effect is a production-focused TypeScript effect framework — a typed `Effect<A
 | License     | MIT                                                                                          |
 | Paradigm    | Effects-as-values; fiber runtime; typed errors + DI; **not** user-defined algebraic handlers |
 
-See also: sibling deep-dives [ZIO][scala-zio] and [Cats Effect][scala-cats-effect] (the two JVM systems Effect tracks most closely), the [comparison matrix][comparison], and the async-I/O cross-cut [Effect Systems & Event Loops][ae-event-loops] (which classifies Effect among the "fiber-runtime libraries" whose suspension is a runtime callback, not a language primitive).
+See also: the [`@effect/workflow` deep-dive][effect-workflow] in the [durable-execution][durable-execution] catalog, which covers Effect's durable-workflow layer; sibling deep-dives [ZIO][scala-zio] and [Cats Effect][scala-cats-effect] (the two JVM systems Effect tracks most closely), the [comparison matrix][comparison], and the async-I/O cross-cut [Effect Systems & Event Loops][ae-event-loops] (which classifies Effect among the "fiber-runtime libraries" whose suspension is a runtime callback, not a language primitive).
 
 ---
 
@@ -447,6 +447,8 @@ Effect documentation references:
 
 <!-- References -->
 
+[effect-workflow]: durable-execution/effect-workflow.md
+[durable-execution]: durable-execution/index.md
 [scala-zio]: scala-zio.md
 [scala-cats-effect]: scala-cats-effect.md
 [ZIO]: scala-zio.md

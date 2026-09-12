@@ -2344,6 +2344,147 @@
             ]
           },
           {
+            "text": "Durable Execution",
+            "link": "/research/algebraic-effects/durable-execution/",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Concepts & Vocabulary",
+                "link": "/research/algebraic-effects/durable-execution/concepts"
+              },
+              {
+                "text": "Comparison & Delta",
+                "link": "/research/algebraic-effects/durable-execution/comparison"
+              },
+              {
+                "text": "Engines & SDKs",
+                "collapsed": true,
+                "items": [
+                  {
+                    "text": "@effect/workflow",
+                    "link": "/research/algebraic-effects/durable-execution/effect-workflow"
+                  },
+                  {
+                    "text": "Temporal",
+                    "link": "/research/algebraic-effects/durable-execution/temporal"
+                  },
+                  {
+                    "text": "Restate",
+                    "link": "/research/algebraic-effects/durable-execution/restate"
+                  },
+                  {
+                    "text": "DBOS Transact",
+                    "link": "/research/algebraic-effects/durable-execution/dbos"
+                  },
+                  {
+                    "text": "Azure Durable Functions",
+                    "link": "/research/algebraic-effects/durable-execution/azure-durable-functions"
+                  },
+                  {
+                    "text": "Dapr Workflow & DTFx",
+                    "link": "/research/algebraic-effects/durable-execution/dapr-workflow"
+                  },
+                  {
+                    "text": "Inngest",
+                    "link": "/research/algebraic-effects/durable-execution/inngest"
+                  },
+                  {
+                    "text": "Cloudflare Workflows",
+                    "link": "/research/algebraic-effects/durable-execution/cloudflare-workflows"
+                  },
+                  {
+                    "text": "Vercel Workflow",
+                    "link": "/research/algebraic-effects/durable-execution/vercel-workflow"
+                  },
+                  {
+                    "text": "Resonate",
+                    "link": "/research/algebraic-effects/durable-execution/resonate"
+                  },
+                  {
+                    "text": "Golem",
+                    "link": "/research/algebraic-effects/durable-execution/golem"
+                  },
+                  {
+                    "text": "Trigger.dev",
+                    "link": "/research/algebraic-effects/durable-execution/trigger-dev"
+                  },
+                  {
+                    "text": "AWS Step Functions",
+                    "link": "/research/algebraic-effects/durable-execution/aws-step-functions"
+                  }
+                ]
+              },
+              {
+                "text": "Event Sourcing",
+                "collapsed": true,
+                "items": [
+                  {
+                    "text": "Akka / Pekko Persistence",
+                    "link": "/research/algebraic-effects/durable-execution/akka-pekko-persistence"
+                  },
+                  {
+                    "text": "Orleans",
+                    "link": "/research/algebraic-effects/durable-execution/orleans"
+                  },
+                  {
+                    "text": "KurrentDB",
+                    "link": "/research/algebraic-effects/durable-execution/kurrentdb"
+                  },
+                  {
+                    "text": "Marten",
+                    "link": "/research/algebraic-effects/durable-execution/marten"
+                  }
+                ]
+              },
+              {
+                "text": "Theory",
+                "collapsed": true,
+                "items": [
+                  {
+                    "text": "Durable Functions Semantics (OOPSLA 2021)",
+                    "link": "/research/algebraic-effects/durable-execution/burckhardt-durable-functions-semantics"
+                  },
+                  {
+                    "text": "Netherite (VLDB 2022)",
+                    "link": "/research/algebraic-effects/durable-execution/netherite"
+                  },
+                  {
+                    "text": "Sagas (1987)",
+                    "link": "/research/algebraic-effects/durable-execution/sagas"
+                  },
+                  {
+                    "text": "Compensation Calculi",
+                    "link": "/research/algebraic-effects/durable-execution/compensation-calculi"
+                  },
+                  {
+                    "text": "Write-Ahead Logging (ARIES)",
+                    "link": "/research/algebraic-effects/durable-execution/write-ahead-logging"
+                  },
+                  {
+                    "text": "Idempotence (Helland)",
+                    "link": "/research/algebraic-effects/durable-execution/idempotence"
+                  },
+                  {
+                    "text": "Deterministic Replay",
+                    "link": "/research/algebraic-effects/durable-execution/deterministic-replay"
+                  },
+                  {
+                    "text": "Replay vs Snapshot",
+                    "link": "/research/algebraic-effects/durable-execution/replay-vs-snapshot"
+                  },
+                  {
+                    "text": "Deterministic Simulation Testing",
+                    "link": "/research/algebraic-effects/durable-execution/deterministic-simulation-testing"
+                  },
+                  {
+                    "text": "Effect Handlers & Record/Replay",
+                    "link": "/research/algebraic-effects/durable-execution/effect-handlers-record-replay"
+                  }
+                ]
+              }
+            ]
+          },
+          {
             "text": "Other Implementations",
             "link": "/research/algebraic-effects/other-implementations"
           }
