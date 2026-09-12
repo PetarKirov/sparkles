@@ -236,6 +236,116 @@ Golem tests its runtime with real components and real crashes, not with a mocked
 
 There is no deterministic-simulation harness and no "crash at every index" sweep; determinism is assumed from the sandbox and checked by specific parity tests.
 
+### 9. Journal integrity and the single writer
+
+Golem is the only system in this survey that exposes a **durability barrier to the
+program itself**, which makes it the clearest statement of the write-ahead
+question anywhere in the catalog.
+
+**`oplog-commit` is an explicit flush, with a replication count.** The host
+function _"Blocks the execution until the oplog has been written to at least the
+specified number of replicas, or the maximum number of replicas if the requested
+number is higher"_ ([`golem-host.wit`][host-wit]). An author who is about to do
+something externally visible can therefore insist the record is durable first —
+turning the write-ahead discipline from an invariant the runtime hopes to maintain
+into an operation the program can demand. Every other system here decides that
+question on its users' behalf.
+
+**Atomic regions bound re-execution rather than preventing it.**
+`mark-begin-operation` returns an oplog index and `mark-end-operation` closes it;
+_"In case of a failure within the region selected by `mark-begin-operation` and
+`mark-end-operation` the whole region will be reexecuted on retry"_
+([`golem-host.wit`][host-wit]). So the unit of at-least-once is author-chosen,
+which is a different and more honest primitive than a transaction: it does not
+promise atomicity, it promises where re-execution restarts.
+
+**Single-writer is shard assignment.** An agent belongs to a shard, shards are
+assigned to worker executors by a shard manager, and the executor checks ownership
+before acting on an agent — `check_worker(agent_id)` on the `ShardService`, with
+shard assignment revocable and a not-ready state when no assignment is held
+([`shard.rs`][shard-rs]). A request for an agent the executor does not own is an
+error rather than a second writer.
+
+**Appends are positional by construction.** The oplog is an index-addressed
+sequence and entries are appended in execution order; there is no expected-version
+parameter because there is only one writer and one tail. `get-oplog-index` exposes
+that position to the program.
+
+**Torn writes and record identity** are the storage backend's concern — Redis and
+blob storage in the tested configuration — and the oplog format carries no
+per-entry checksum of its own. Nothing stamps which executor wrote an entry.
+
+### 10. Operator recovery and intervention
+
+Golem's recovery surface is the most unusual in the survey because the same
+primitive is available to the program and to the operator: moving the oplog
+position.
+
+**Reverting is a first-class operation with two targets.** `revert-agent` takes
+either `revert-to-oplog-index`, where _"The given index will be the last one to be
+kept"_, or `revert-last-invocations(u64)` ([`golem-host.wit`][host-wit]). The
+second is the operator-friendly form: undo the last N invocations without needing
+to know the log's internal numbering.
+
+**The program can do the same thing to itself.** `set-oplog-index` _"Makes the
+current agent travel back in time and continue execution from the given position
+in the persistent op log"_, and the SDK's infallible transaction variant uses
+exactly this to rewind after compensating (§4). A library that offers rewind only
+to operators has drawn the line somewhere Golem does not.
+
+**Forking is explicit and the program can tell which side it is on.** `fork`
+returns `original` or `forked` with the new agent's id, so a fork is usable as a
+programming construct rather than only as a recovery tool.
+
+**Crash simulation is a shipped command.** The CLI can interrupt a live agent and
+force replay, which means "does this program actually survive a crash here" is a
+question an operator can answer on a real deployment rather than only in a test
+harness.
+
+**The oplog is streamable and searchable**, including a query syntax, so "what did
+this agent do" is answerable without reading storage directly — the affordance
+several systems here lack.
+
+**Update is an intervention too** (§5): an automatic update replays the whole
+oplog under new code and fails the update if the replay diverges, and a
+snapshot-based update runs the component's own save and load pair. Both are queued
+like invocations and act on an idle agent.
+
+**What is missing is a dead-letter state.** A permanently failing agent retries
+under its policy and then becomes `failed`; there is no quarantine that preserves
+it for inspection while excluding it from retry.
+
+### 11. Suspension and external input
+
+**Promises are the external-input primitive, and they are host functions rather
+than a library.** `create-promise` mints an id, `get-promise` returns an awaitable
+handle — _"Can only be called in the same agent that orignally created the
+promise"_ — and `complete-promise` delivers a payload and _"Returns true if the
+promise was completed, false if the promise was already completed"_
+([`golem-host.wit`][host-wit]).
+
+**Duplicate completion is answered by the return value**, not by an error: the
+second completion simply reports that it lost. That is the cleanest duplicate-input
+contract in the survey, because the caller learns which one won.
+
+**The promise id is the address**, and it is a value the agent can hand to anything
+— an email, a webhook payload, another agent — which is what makes human-in-the-loop
+a use of the primitive rather than a pattern layered on top.
+
+**Waiting suspends the agent, and replay is how it resumes.** Because every host
+call is journaled, an agent that is waiting is simply an agent whose oplog ends at
+an await; reactivation re-instantiates the component and replays. There is no
+threshold and no in-memory fast path for short waits.
+
+**There is no separate persisted "suspended" status** distinct from idle: an agent
+not currently executing is not executing, whether because it finished a call or
+because it is awaiting a promise. The oplog tail says which.
+
+**A wait cannot time out on its own.** Nothing in the promise contract carries a
+deadline, so a bound has to be built from a sleep raced against the promise —
+which, since sleeps are journaled host calls, replays correctly but is the
+author's job to write.
+
 ---
 
 ## Strengths
@@ -273,16 +383,39 @@ There is no deterministic-simulation harness and no "crash at every index" sweep
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms `started` + `completed` as separate journal records.** Golem's `Start`/`End`/`Cancelled` triple, with the `End` pointing back at its `Start`, is the same shape as the sparkles design's two-phase entries, and it is what makes "crashed between send and response" a distinguishable state. Keep the split; add a `cancelled` terminal for a step abandoned by a race, which the design currently lacks.
-- **Argues against re-observing the world on replay, but only because Golem can afford to.** Inside a sandbox there are no observations that are not host calls, so "journal wins" is total. `release` runs against a real git repository and a real GitHub, so the design's observation-versus-decision split and its rule table are the right adaptation, not a deviation. Golem's `idempotent=false` mode ("fail rather than guess") is worth copying as the default for a `write-remote` whose completion is missing.
-- **Confirms the sandbox as the determinism story and shows what escapes it.** Golem enforces determinism for everything that crosses the boundary and explicitly lists what it cannot see: in-memory mutation and the _use_ of journaled values. For sparkles the capability row is the boundary; the design should state the same residual list rather than claim full enforcement.
-- **Provides the answer to question 5 the design has not written down.** Two modes, named: automatic (replay the old journal under new code, refuse on divergence, revert) and snapshot-based (old code exports `save`, new code exports `load`, the load runs read-only). `release` should adopt the first as its default test for a workflow edit and treat the second as the escape hatch for an incompatible refactor of the journal.
-- **Compensation stays explicit and LIFO, and the crash-safe version is missing everywhere.** Golem's SDK registers compensations on a transaction object and reverses them; its strong-rollback variant is unimplemented. This matches the design's explicit-only, scope-registered, LIFO compensations, and it is evidence that "compensate before retry, even after a crash" needs the compensations themselves to be journaled steps, which the design should say.
-- **`retry_from` and atomic regions are a cheaper model than per-step retry policies.** One index in the error record plus begin/end markers gives region retry without a policy per step; `release`'s "publish manifest" stage is exactly a region whose partial effects must be re-executed together.
-- **Time travel is a feature the design lacks.** `revert-agent --number-of-invocations 1` and a guest-side `set-oplog-index` are cheap once the journal is append-only; a `release --revert-to <index>` that truncates `journal.jsonl` (writing a `Revert` record rather than deleting) would give the operator an undo the four current resume mechanisms do not.
-- **Snapshots as a replay accelerator are not needed at `release`'s scale** (hundreds of events, not millions), which is a useful negative result: choose replay and spend the effort on the divergence classifier instead.
+- **Exposing a durability barrier to the program is the survey's most interesting
+  single idea** (§9). `oplog-commit(replicas)` lets an author insist the record is
+  durable to a chosen replication level before doing something externally visible,
+  which converts the write-ahead rule from a runtime invariant into a program-level
+  operation. Any library whose users perform irreversible effects should consider
+  offering it.
+- **Author-chosen re-execution boundaries beat implicit ones.** An atomic region
+  does not promise atomicity; it promises where a retry restarts (§9). That is a
+  weaker and more honest primitive than a transaction, and it is expressible
+  without a transactional store.
+- **Rewind should be available to the program, not only to operators** (§10).
+  Golem's `set-oplog-index` is what makes its compensating-transaction helper
+  possible, and it is the same mechanism an operator's revert uses.
+- **Prove compatibility by replay** (§5). Replaying an entire record under new code
+  and failing the upgrade unless every recorded result reproduces is the only
+  mechanism surveyed that decides code compatibility rather than asserting it.
+  It is expensive and it is correct.
+- **A duplicate external completion should report which one won.**
+  `complete-promise` returning false for an already-completed promise is a better
+  contract than silence or an error, because the loser learns its fate (§11).
+- **Journaling at the host-call boundary removes the naming problem and creates a
+  legibility problem.** There are no step names to collide, and equally no step
+  names to read: the record is a list of host calls, so the operator tooling has to
+  carry the interpretation (§1, §10).
+- **Replay cost is proportional to the record, and the record grows with every
+  poll.** Golem names the hazard itself — heartbeats and polling loops — and its
+  answer is an author-supplied snapshot (§7). Any library that journals at a fine
+  granularity inherits this.
+- **A sandbox makes determinism a non-question** (§3), and the price is that the
+  program must be compiled for the sandbox. That is a defensible trade for a
+  platform and usually not available to a library inside an existing language.
 
 ---
 
@@ -342,3 +475,4 @@ There is no deterministic-simulation harness and no "crash at every index" sweep
 [persistence-site]: https://learn.golem.cloud/v1.5/operate/persistence
 [dbos]: ./dbos.md
 [restate]: ./restate.md
+[shard-rs]: https://github.com/golemcloud/golem/blob/d43c34ddb6f99335ed2d43c13465377a0f474b37/golem-worker-executor/src/services/shard.rs

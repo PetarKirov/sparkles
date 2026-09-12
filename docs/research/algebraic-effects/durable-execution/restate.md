@@ -220,6 +220,116 @@ Pure **replay** at the invocation level, with suspension as a first-class outcom
 
 The supported path is **integration against a real server** via `@restatedev/restate-sdk-testcontainers`: `RestateTestEnvironment.start((server) => server.bind(router))` boots a `docker.io/restatedev/restate` container, registers the test endpoint, and `stateOf(objectDef, key)` returns a typed `StateProxy` to read and mutate virtual-object or workflow state through the admin API ([`packages/libs/restate-sdk-testcontainers/src/restate_test_environment.ts`][testenv], [`docs/develop/ts/testing.mdx`][doc-testing]). Two options target durability specifically: `alwaysReplay` (replay at every suspension point, dimension 3) and `disableRetries`, which sets `RESTATE_DEFAULT_RETRY_POLICY__MAX_ATTEMPTS=1` and `ON_MAX_ATTEMPTS=kill` so "failures surface immediately instead of hanging through retry backoff" ([`packages/libs/restate-sdk-testcontainers/src/restate_test_environment.ts`][testenv]). What is absent: there is no user-facing replayer that feeds a recorded journal to a handler without a server, no crash-injection API, and no "mutate the world between attempts" hook; the deterministic tests live below the SDK, in the shared core's own suite (`src/tests/run.rs`, `sleep.rs`, `suspensions.rs`, ...) which drives the VM with hand-built protocol messages ([`sdk-shared-core` tree at `v7.0.3`][core-tree]). The wasm bindings carry that VM into TypeScript but expose no test double for it ([`sdk-shared-core-wasm-bindings/src/lib.rs`][wasm-lib]).
 
+### 9. Journal integrity and the single writer
+
+Restate's integrity story is a log-replication story: the journal is state
+derived from a replicated log, and the guard is leadership of the partition that
+owns it.
+
+**A leader epoch fences the partition.** `LeaderEpoch` is a monotonic counter with
+an `INVALID` zero and an `INITIAL` one, advanced by `next()`
+([`identifiers.rs`][ids-rs]). Messages a partition produces can be deduplicated
+either independently of leadership or against it, and the two cases are named in
+the storage API: `Sn` is _"Sequence number to deduplicate messages … independent
+of the sender's leader epoch"_, while `Esn` carries an `EpochSequenceNumber` and
+is used _"to deduplicate messages being produced during a given leader epoch and
+fence off messages coming from an older leader epoch"_
+([`deduplication_table/mod.rs`][dedup-rs]). That is a fencing token in the
+textbook sense, and it is applied to inter-partition traffic rather than to
+individual journal appends.
+
+**The journal is not appended by the SDK at all.** The SDK proposes commands and
+the partition processor decides, applies them to the partition store, and streams
+the resulting journal back on the next attempt. There is therefore no
+client-visible expected-version check: the ordering guarantee comes from the log,
+and a losing writer is a deposed leader rather than a rejected append.
+
+**Torn writes are the storage engine's problem**, not the protocol's. The journal
+lives in RocksDB column families inside the partition store, so a half-written
+record is not a case the journal format has to describe — which is the same
+delegation Effect makes to SQL, reached by a different route.
+
+**Duplicate submissions are deduplicated by idempotency key**, with a retention
+period, and the resulting behaviour is a lookup that returns the original
+invocation's result rather than a second execution.
+
+**The one integrity check the SDK does perform is the journal-versus-code
+comparison** (§1, §2): each replayed command's header is compared with what the
+code now asks for, and a mismatch is `JOURNAL_MISMATCH` (RT0016). It protects
+against the program diverging, not against two writers.
+
+### 10. Operator recovery and intervention
+
+Restate has the broadest command-line surface in the survey, and its verbs are
+distinct operations with different consequences rather than aliases.
+
+**Six operations on a live invocation** ship as first-class CLI commands:
+`cancel`, `kill`, `pause`, `resume`, `purge` and `restart-as-new`
+([`kill.rs`][cli-kill], [`pause.rs`][cli-pause], [`purge.rs`][cli-purge],
+[`restart_as_new.rs`][cli-restart]). Each accepts an invocation id or a target
+prefix, so an operator can act on one invocation or on every invocation of a
+handler.
+
+**Cancel and kill differ in whether compensation runs.** Cancellation delivers a
+terminal error at the invocation's current await point, so the handler's `catch`
+blocks — which is where sagas live (§4) — execute. Kill stops the invocation
+without giving it that turn, and therefore skips compensation entirely. A tool
+that offers only one of these has made the choice for its users.
+
+**Pause and resume make "stopped, on purpose" a state.** This pairs with the
+per-handler mismatch policy, whose `pause` option parks an invocation whose code
+no longer matches its journal instead of failing it — so the operator's fix is to
+deploy corrected code and resume, with the journal intact.
+
+**`restart-as-new` is the fork affordance**, replaying the invocation as a fresh
+one rather than resuming the old journal.
+
+**Inspection is SQL.** The CLI's invocation listing and `describe` are queries
+over a DataFusion view of the partition stores, so an operator can filter
+invocations by status, target or age with a query rather than an API call.
+
+**`purge` removes a completed invocation's record**, which is the retention lever
+as well as the "forget this ever happened" lever.
+
+**What is not offered:** editing a journal entry's recorded value. The supported
+moves are re-run everything (`restart-as-new`), stop (`cancel`/`kill`), or wait
+for a fix (`pause`).
+
+### 11. Suspension and external input
+
+Suspension is a protocol message, and it carries the most structural description
+of a wait in the survey.
+
+**Suspending is explicit and describes the await point.** _"Implementations MUST
+send this message when suspending an invocation"_, and the message's payload is a
+`Future` tree: `waiting_completions`, `waiting_signals`, `waiting_named_signals`,
+`nested_futures` and a `combinator_type` ([`protocol.proto`][proto]). So the
+runtime learns not merely that the handler is blocked but the shape of what it is
+blocked on, including combinators over several waits. Nothing else surveyed tells
+the runtime that much.
+
+**The process genuinely ends.** After suspending, the SDK's handler invocation
+returns; the runtime re-invokes it and replays the journal when one of the
+awaited things arrives. There is no threshold and no held connection, which is
+what lets a handler wait for weeks on a serverless deployment.
+
+**The primitives** are `ctx.sleep` (a journaled timer), awakeables (a
+runtime-minted id the handler hands out and an external party completes),
+workflow promises (`ctx.promise`, named and durable per workflow), and calls to
+other handlers, which suspend the caller until the callee completes.
+
+**External input is addressed by an explicit token or a name.** An awakeable id is
+handed out by the handler; a workflow promise is addressed by name within the
+workflow's key. A completion that arrives before the handler awaits is already in
+the journal when it gets there; one that arrives twice is a duplicate
+notification for a `completion_id` that is already settled; one that never
+arrives leaves the invocation suspended until something else — a timeout the
+handler itself raced, or an operator — ends it.
+
+**Human-in-the-loop is the awakeable's primary use case**, and the fact that the
+token is a value the handler can put in an email or a webhook payload is what
+makes it one.
+
 ---
 
 ## Strengths
@@ -253,16 +363,37 @@ The supported path is **integration against a real server** via `@restatedev/res
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the journaled `started` + `completed` pair.** Restate's `RunCommand` (the intent) and `RunCompletion` (the stored result) are exactly that split, and the protocol's insistence that the result "won't be written to the journal immediately, but will appear later as a new notification" is the reason: the intent must be durable before the effect runs, or the effect is not attributable on replay. The `release` design should keep the two records as separate journal lines, not one line updated in place.
-- **Argues against relying on an args hash for identity.** Restate keys steps positionally and by a per-type header; the closest analogue to an args hash is `CallCommandMessage.parameter` equality, and even that is optional. The lesson for `release` is not "drop the hash" but "make the hash a _check_, not the _key_": name plus attempt counter finds the entry, the hash decides mismatch versus match, as `header_eq` does.
-- **Argues against `ctx.run`-style verbatim replay for world observations.** Restate has no re-observation path at all; a stale `git tag` list would replay as truth and a later `git push` would fail. The sparkles decision to re-observe and reconcile by a rule table is a real divergence from Restate, and this page is evidence that the divergence is needed for a CLI whose world is a git repository the user also edits by hand.
-- **Confirms that compensations belong to user code, but shows the cost of leaving them there.** Restate's saga is an array of closures; nothing checks LIFO or registration-before-action. The sparkles design's explicit, scope-registered, LIFO compensations are strictly stronger. Borrow Restate's one rule that the design lacks: register the compensation **before** running the action whose confirmation might be lost.
-- **Suggests a `pause` outcome for mismatch.** `onJournalMismatchErrors: "pause"` parks the invocation for inspection instead of retrying into the same error. `release` currently has no equivalent; a journal that does not match the code should stop with the journal intact and a diagnosable frontier, not loop.
-- **Warns about the `Sleep` precedent for header checks.** Restate excludes computed fields (`wake_up_time`) from equality because they legitimately differ per attempt. Any `release` op whose args include a timestamp, a temp path or a random suffix needs the same exclusion list, or every resume mismatches.
-- **Missing in Restate, present in the design: crash-at-every-index tests.** Restate's only SDK-level durability test is "run under a real server with `alwaysReplay`". The sparkles plan to crash after every journal event and resume, plus mutate-the-world between crash and resume, has no counterpart here and is the stronger oracle; keep it.
-- **Deployment pinning has a CLI analogue.** Restate pins each invocation to the deployment that wrote its journal. A `journal.jsonl` should record the `release` binary version (and the capability-row schema hash) that wrote it, so that a resume by a newer binary can refuse or migrate deliberately rather than mismatch by accident.
+- **Separating matching from checking is the right factoring.** Restate finds a
+  recorded entry by position and then compares its header, per command type, with
+  computed fields deliberately excluded (§1). Keying on a hash conflates two jobs;
+  keeping them apart lets the library report drift without changing which entry it
+  matched.
+- **A mismatch deserves more than one outcome.** `retry`, `pause` and `fail` are
+  configurable per handler (§2), and `pause` is the interesting one: it parks the
+  invocation with its journal intact so the fix is to deploy corrected code and
+  resume. A library with a single "fail" has thrown that recovery away.
+- **Describing the await point structurally is a better protocol than signalling
+  "blocked".** The suspension message carries a tree of what is awaited, including
+  combinators (§11), so the runtime can decide what to watch for. This is the most
+  informative wait description in the survey and costs one message type.
+- **Cancel and kill must be separate verbs** (§10), because one runs the handler's
+  compensation and the other does not. Restate makes the distinction at the
+  command line, where the operator can see it.
+- **Epoch-fenced deduplication is how a log-replicated system stays single-writer**
+  (§9): a sequence number qualified by the producer's leader epoch, so a deposed
+  leader's messages are recognised and dropped. A library over a plain file needs
+  the same idea in whatever form its storage allows.
+- **Pinning a deployment per invocation trades evolution for safety.** Immutable
+  deployments mean an in-flight program never meets new code, and the cost is that
+  old code must be kept alive as long as any invocation might resume into it (§5).
+- **Suspension without a threshold is achievable, and worth it.** Every wait ends
+  the invocation, short or long, so there is no second code path for "brief
+  waits" to get wrong.
+- **Testing against a real server rather than a mock** (§8) buys fidelity and
+  costs speed, and Restate's `alwaysReplay` knob shows the useful middle: force
+  the replay path on every step so the expensive case is the one under test.
 
 ---
 
@@ -364,3 +495,8 @@ The supported path is **integration against a real server** via `@restatedev/res
 [index]: ./index.md
 [effect]: ../typescript-effect.md
 [comparison]: ./comparison.md
+[cli-kill]: https://github.com/restatedev/restate/blob/fbead57b941912ae0095027ce1795b36917131c2/cli/src/commands/invocations/kill.rs
+[cli-pause]: https://github.com/restatedev/restate/blob/fbead57b941912ae0095027ce1795b36917131c2/cli/src/commands/invocations/pause.rs
+[cli-purge]: https://github.com/restatedev/restate/blob/fbead57b941912ae0095027ce1795b36917131c2/cli/src/commands/invocations/purge.rs
+[cli-restart]: https://github.com/restatedev/restate/blob/fbead57b941912ae0095027ce1795b36917131c2/cli/src/commands/invocations/restart_as_new.rs
+[dedup-rs]: https://github.com/restatedev/restate/blob/fbead57b941912ae0095027ce1795b36917131c2/crates/storage-api/src/deduplication_table/mod.rs
