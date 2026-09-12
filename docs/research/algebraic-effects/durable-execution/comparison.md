@@ -284,138 +284,86 @@ divergence detection, or any reconciliation with an externally mutable world.
 
 ---
 
-## Delta: where `sparkles` stands
+## Delta: what `sparkles` has today
 
-Two columns, because the design spans two layers: what
-[`sparkles:event-horizon`](../../../specs/event-horizon/SPEC.md) already
-provides, and what the [`release`](../../../specs/release/SPEC.md) tool does
-today.
+`sparkles` has no durable-execution layer. What it does have is the substrate
+one would be built on — [`sparkles:event-horizon`](../../../specs/event-horizon/SPEC.md)'s
+capability row — and measuring that against the consensus standard above shows
+which half of the problem is already solved.
 
-| Capability                        | `sparkles:event-horizon` today                                        | `release` today                                                                                       |
-| --------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Effect boundary                   | **present** — the `Ctx` capability row, handlers as values, `withCap` | absent; every effect is a direct call                                                                 |
-| Deterministic test doubles        | **present** — `TestClock`, `SimNet`, `SimProc`, `TestSched`           | absent                                                                                                |
-| Journal                           | absent                                                                | four partial substitutes: the `--stage` ladder, re-run-and-shrink, `plan.json`, the publish manifest  |
-| Step identity                     | absent                                                                | implicit: the tag name                                                                                |
-| Divergence detection              | absent                                                                | absent                                                                                                |
-| Suspension without continuations  | **present by construction** — every capability op is tail-resumptive  | n/a                                                                                                   |
-| Compensation                      | absent (structured-concurrency cancellation is not compensation)      | absent; a failed run leaves its tags standing                                                         |
-| Versioning against an old journal | absent                                                                | absent; `--plan` re-anchors by boundary SHA and refuses on drift                                      |
-| Projection                        | absent                                                                | absent; the UI prints inline                                                                          |
-| Crash testing                     | the seam exists; no harness                                           | absent                                                                                                |
-| **Reconciliation with the world** | absent                                                                | **partially present, and unique** — `--plan` drops already-created tags and re-anchors surviving ones |
+| Capability of the consensus standard    | `sparkles:event-horizon` today                                          |
+| --------------------------------------- | ----------------------------------------------------------------------- |
+| An effect boundary a handler can wrap   | **present** — the `Ctx` row, handlers as plain struct values, `withCap` |
+| Deterministic doubles for every effect  | **present** — `TestClock`, `SimNet`, `SimProc`, `TestSched`             |
+| Suspension without continuation capture | **present by construction** — every capability op is tail-resumptive    |
+| Structured cancellation                 | **present** — scopes, deadlines, the cancellation tree                  |
+| A journal, in any form                  | absent                                                                  |
+| Step identity and replay matching       | absent                                                                  |
+| Divergence detection                    | absent                                                                  |
+| Compensation                            | absent — structured-concurrency cancellation is not compensation        |
+| Versioning of code against a record     | absent                                                                  |
+| A projection with a recorded offset     | absent                                                                  |
+| Journal integrity and writer fencing    | absent                                                                  |
+| An operator surface over a run          | absent                                                                  |
+| Crash-and-resume testing                | the seam exists; no harness                                             |
 
-The last row is the finding that matters. `release`'s existing `--plan` resume
-already does something no surveyed engine does: it re-observes git and adjusts.
-The design's rule table generalizes it.
+The shape of the gap is worth naming. Every system in this survey had to build
+its own effect boundary and its own deterministic doubles, usually against a
+host language that fought it — Temporal patches a JavaScript isolate, Vercel
+runs a seeded `node:vm`, Golem needs a WebAssembly sandbox. That work is already
+done here and is the harder half. What is missing is the journal and everything
+that hangs off it, which is the part every surveyed system implements in a few
+thousand lines over a storage interface.
 
 ---
 
-## Questions for the `sparkles` design
+## Implications for a durable-execution library
 
-The catalog was commissioned to confirm, revise or reopen the decisions taken
-before it was written. Its verdicts:
+Reading the catalog as a whole, these are the decisions a library cannot avoid,
+each one a place where the surveyed systems genuinely diverge rather than
+converge. They are stated as open questions because the evidence does not settle
+them; a design must.
 
-**Confirmed.**
+1. **Is step identity positional, named, or derived?** Positional costs a patch
+   mechanism and makes every edit a compatibility event. Named costs a
+   uniqueness discipline and silently re-executes on a rename. The choice is
+   forced by whether the library expects its programs to be edited between a
+   crash and its resume — which, for a library used by developer tooling, it
+   should.
+2. **Is an argument mismatch a different step, or the same step reporting
+   drift?** [KurrentDB][kurrent] refuses it; [Restate] makes it a policy with
+   three outcomes. The two produce different behaviour on resume, and the
+   literature does not prefer either.
+3. **How much divergence is worth detecting?** [Deterministic record and
+   replay][replay] shows the ceiling: comparing the full machine state at every
+   event catches what an argument comparison cannot. A library must decide where
+   between "nothing" ([Cloudflare][cloudflare]) and "everything" (`rr`) it sits,
+   knowing that the cheap options miss a real class of silent wrongness.
+4. **May a durable program observe the world at all?** Every replay engine here
+   says no, and every one of them is a service whose effects are network calls
+   to systems that deduplicate. A library whose effects touch a local, mutable,
+   human-editable world has no prior art to copy and must invent a policy or
+   inherit the prohibition.
+5. **Is compensation a primitive or a pattern?** Three engines provide one; the
+   rest document a recipe. [Sagas][sagas] and [Cloudflare][cloudflare] together
+   show the recipe's specific failure — closures do not survive the process that
+   registered them — so a library that omits the primitive should at least
+   journal the registration.
+6. **How does code evolve against an old record?** The event stores answer with
+   a version per record and a read-time adapter; the workflow engines mostly
+   answer by pinning or by accumulating markers. [Golem]'s prove-by-replay is the
+   only mechanism that decides compatibility rather than asserting it.
+7. **What can a person do to a stuck run?** The answers range from nothing to
+   fork-from-step, redrive, and rewind-to-an-index. This is the dimension where
+   the field is least converged and where a library's choices leak most directly
+   into its consumers' operational story.
 
-- _Replay over snapshot._ Unanimous, and [replay-versus-snapshot][replay-vs-snapshot]
-  shows why continuation capture would be a dead end for a tool whose code
-  changes constantly.
-- _The journaling handler as the single impure boundary._ This is
-  [Burckhardt's][burckhardt] three-model stack; Theorem 6.4 and Lemma 6.7 give
-  the correctness claim a citable shape. A second, closer precedent exists:
-  Ramalingam and Vaswani's idempotence monad logs each effectful step under an
-  identifier plus a step counter and proves the translation failure-free modulo
-  retries (Theorem 3.9), with a compensation extension attached
-  ([effect handlers and record/replay][handlers]). Its proof puts the log in the
-  same atomic store as the effects, so it covers journal consistency and not the
-  outside world — but it is the nearest thing in the literature to what the
-  combinator claims.
-- _Capabilities as values, with no continuation capture._ Ahman and Bauer's
-  runners are exactly the `Ctx` row's shape — tail-resumptive handlers with a
-  finalisation-exactly-once theorem — which is also the precedent for
-  scope-registered LIFO compensations ([handlers]). Separately, Koppel, Scherer
-  and Solar-Lezama prove that replay from a recording _implements_ delimited
-  control, so refusing continuation capture costs no expressiveness.
-- _Compensations registered on a scope, LIFO, explicit-only._ Three engines and
-  both compensation sources agree on the shape, and no engine rolls back
-  automatically.
-- _One program for classic and split mode._ Every system has exactly one durable
-  program abstraction.
-- _Suspension without continuation capture._ Universal.
-- _Started-and-completed as a pair._ Universal, and required by [ARIES][wal].
-
-**Revised by the evidence.**
-
-- _"Every observation is re-observed on resume" is too broad._ [ARIES][wal]
-  consults the world only for work that started without completing; completed
-  work replays as a value. The rule table should be scoped to the interrupted
-  step and to the reconciliation the plan explicitly needs.
-- _Compensations must not be in-memory closures._ [Sagas][sagas] requires them
-  registered with name and arguments; [Cloudflare][cloudflare] demonstrates the
-  bug that results from closures. Journal the registration.
-- _The args hash should be a divergence check, not part of the key — but what a
-  mismatch means is now an open choice, not a detail._ [Restate] separates
-  matching from drift detection and excludes computed fields; [KurrentDB][kurrent]
-  takes the opposite line and refuses a mismatch outright as corrupted
-  idempotency. Keying on the hash makes every incidental argument change a new
-  step; refusing on mismatch makes it a stop. The design must say which, per op
-  kind.
-- _The args hash is a weaker oracle than assumed._ Per
-  [deterministic record and replay][replay], it only fires when the program
-  issues an op, so a program that consumes a replayed value differently and then
-  issues an identical op replays silently wrong. Hash decision inputs, not only
-  effect arguments.
-- _Concurrent compensations are structural, not interleaving-reversed._ The
-  [calculi][calculi] state this as a law.
-- _Side effects after a journaled write are not automatically at-least-once._
-  [Akka/Pekko][akka] documents its post-persist side effects as **at-most-once**
-  — they simply do not run if the process dies after the write — and pushes
-  at-least-once back into replayed state. A `started` record is what buys the
-  stronger guarantee, and it only does so if resume actually re-examines every
-  started-without-completed op.
-
-**Reopened.**
-
-- _Versioning_ was parked; it can no longer be. [Golem]'s prove-by-replay is a
-  genuinely better answer than patch markers for a tool whose journal lives days,
-  not years, and whose code changes between every run. The spec must choose.
-- _What "the UI is a projection" means for the final receipt._ [Helland][idempotence]'s
-  closing-stage ambiguity means the receipt must be derivable from the world, not
-  from the journal alone.
-- _Whether a `pause` outcome belongs beside fail and retry._ [Restate] has three
-  policies for a mismatch; the design has one.
-
-**Mechanisms worth adopting**, each already load-bearing somewhere:
-
-- **Append with an expected length.** [KurrentDB][kurrent]'s `ExpectedVersion`
-  is asserted per append and is a _different_ guard from its process-wide
-  exclusive lock. A `journal.jsonl` append that asserts "expected length N"
-  makes a second resume safe even when the lock file is stale, which a lock
-  alone does not.
-- **A run id on every line, plus a contiguity check.** [Akka/Pekko][akka]'s
-  `writerUuid` and its replay filter exist to detect two incarnations writing one
-  stream. The same check catches a journal that two `release` runs interleaved.
-- **A format version per line with a read-time adapter.** [Akka/Pekko][akka]'s
-  manifest plus `EventAdapter`, [Orleans]'s format key with forced re-snapshot,
-  [Marten]'s `type` column plus upcasters. This is the versioning tool the design
-  currently lacks entirely.
-- **Fold before write.** [Akka/Pekko][akka] applies an event to state before
-  appending it, so a record that the projection cannot consume never reaches the
-  journal.
-- **Atomic multi-record append.** [KurrentDB][kurrent] writes a batch across
-  streams atomically; the `started`/`completed` pair, or a step plus its
-  compensation registration, want the same treatment.
-- **An in-journal snapshot.** [Marten]'s `Compacted<T>` marks a fold point inside
-  the log rather than beside it — the shape `plan.json` and the publish manifest
-  should take once they become journal records.
-- **A hard stop when the projection throws.** [Orleans] swallows fold exceptions
-  and advances the version anyway, diverging silently. D's `pure` on the
-  projection plus a hard stop on a replay error is the opposite, and better.
-
-**Still parked** (they need the spec, not more research): the durable scope's
-API, the journal event schema field by field, and the `sparkles:effects`
-extraction boundary.
+**What no system in the survey provides**, and a library therefore cannot copy:
+reconciliation between a journal and an independently mutable world; an argument
+hash as part of step identity; crash-at-every-index testing as a shipped
+harness; and any correctness statement about replay that covers external
+effects — [Burckhardt et al.][burckhardt] and Ramalingam and Vaswani both
+deliberately exclude them.
 
 ---
 

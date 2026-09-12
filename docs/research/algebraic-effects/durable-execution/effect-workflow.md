@@ -381,6 +381,54 @@ expect(driver.requests.size).toEqual(9);
 
 Crash injection is done by `sharding.reset(requestId)` (clear the reply, mark unprocessed, force a replay) rather than by killing a process, and side-effect counting by a `Flags` map service. There is no crash-at-every-index sweep and no mutate-the-world-between-runs test; the replay tests target specific hazards the maintainers hit (child completing during parent cleanup, coalesced wake-ups, legacy envelopes).
 
+### 9. Journal integrity and the single writer
+
+The journal is a relational mailbox, so integrity is delegated to the database and to the cluster's ownership protocol rather than to any workflow-level scheme.
+
+**Duplicate appends are idempotent on the composed primary key.** A persisted request's `message_id` is `${entityType}/${entityId}/${tag}/${id}` ([`Envelope.ts`][envelope-ts]), the column carries `UNIQUE (message_id)`, and the Postgres insert is `ON CONFLICT (message_id) DO NOTHING` followed by a select of the existing row ([`SqlMessageStorage.ts`][sql-ts], `insertEnvelope`). Keys over 255 characters are SHA-256 hashed at the storage boundary. `saveRequest` therefore returns `SaveResult.Success` or `SaveResult.Duplicate`, and the `Duplicate` _"carries the original request ID and the last reply already received for the duplicated request"_ ([`MessageStorage.ts`][storage-ts]). No append is conditional on a journal version or length; the guard is the uniqueness of the step's name, not the journal's shape.
+
+**Intent is durable before the effect runs.** For a `Persisted` request the runner saves the envelope first and only then notifies the entity ([`Runners.ts`][runners-ts], `notifyWith`: _"after persisting the request, we need to check if the request is a duplicate"_). An activity therefore has a `messages` row before its body executes, and the `replies` row arrives afterwards; the pair is the write-ahead intent and its result. The two are written in separate transactions: `saveReply` updates `processed`/`last_reply_id` on the message and inserts the reply inside one `sql.withTransaction`, and `clearReplies` (reset) is likewise one transaction ([`SqlMessageStorage.ts`][sql-ts]). Wider atomicity is opt-in: `ClusterSchema.WithTransaction` on an activity wraps _"server writes with the configured storage transaction"_, so an activity's own SQL and its result row commit together when the driver supports it ([`ClusterSchema.ts`][clusterschema-ts]).
+
+**The single writer is the shard owner, enforced by a lease.** An execution id maps to one entity address and one shard; a shard is owned by the runner holding its lock in `RunnerStorage`, which _"records which runners are registered, whether they are healthy, which machine id a runner receives, and which shard locks are held by each runner"_ ([`RunnerStorage.ts`][runnerstorage-ts]). The SQL implementation takes a `cluster_locks` row per shard with `acquired_at`, refreshes it every `shardLockRefreshInterval` (default 10 seconds), and lets another runner take it over once `acquired_at` is older than `shardLockExpiration` (default 35 seconds); on Postgres and MySQL it additionally holds an advisory lock on a reserved connection ([`SqlRunnerStorage.ts`][sqlrunnerstorage-ts]; [`ShardingConfig.ts`][shardingconfig-ts]). On acquiring a shard the runner calls `storage.resetShards`, clearing every `last_read` so unprocessed messages are re-delivered to the new owner ([`Sharding.ts`][sharding-ts]).
+
+**Message delivery has its own read lease.** `unprocessedMessages` selects rows with `processed = FALSE AND (last_read IS NULL OR last_read < <ten minutes ago>)`, under `FOR UPDATE` on Postgres, and stamps `last_read` on the rows it takes ([`SqlMessageStorage.ts`][sql-ts]). A runner that dies mid-activity leaves the request unprocessed with a stale `last_read`; ten minutes later, or immediately after a shard hand-over resets the column, the next owner re-runs it. Within one runner, the workflow entity is registered with `concurrency: 2`, one slot for the run and one so that _"deferred completions [can] wake the active run"_, and a `resumeGate` semaphore serialises wakes ([`ClusterWorkflowEngine.ts`][cwe-ts]).
+
+**Torn writes and writer identity.** Because every record is a SQL row, there is no length prefix, checksum, or commit marker of its own; the database's transaction guarantees are the answer. Request and reply ids are snowflakes, _"built from a millisecond timestamp, a machine id, and a sequence number for that machine"_ ([`Snowflake.ts`][snowflake-ts]), so the writing runner is recoverable from any id, but nothing checks a writer id on read. The one generation-like mechanism is the abandon path: when a runner shuts down or loses a shard while a persisted request is in flight, the message is re-persisted and the local caller is interrupted with the `ClusterSchema.Abandon` annotation because _"the request will be served under the next owner"_ ([`Sharding.ts`][sharding-ts]); the workflow layer honours it by skipping finalizers (§4).
+
+### 10. Operator recovery and intervention
+
+The operator surface is the engine API plus whatever the operator can do to the SQL tables; there is no UI, no history query, and no step editor.
+
+**Lifecycle commands exist and are journaled.** `workflow.interrupt(executionId)` completes a durable deferred named `Workflow/InterruptSignal` for that execution; the next run of the body observes it and exits with an interrupt, which runs compensations and closes the instance scope ([`ClusterWorkflowEngine.ts`][cwe-ts], `interrupt`). The interrupt is itself a `deferred` request row, so it survives a crash and leaves a trace. `interruptUnsafe` additionally sends a cluster `Envelope.Interrupt` to the in-flight run, _"potentially ignoring compensation finalizers and orphaning child workflows"_ ([`WorkflowEngine.ts`][engine-ts]). `workflow.resume(executionId)` is only meaningful for a suspended run: it finds the `run` request's `Suspended` reply, calls `sharding.reset(requestId)` to delete that reply and mark the request unprocessed, then `pollStorage` re-delivers it. `WorkflowProxy.toRpcGroup` / `toHttpApiGroup` expose `execute`, `discard`, and `resume` over RPC and HTTP so an operator tool need not import the handler ([`WorkflowProxy.ts`][proxy-ts]).
+
+**Cancellation is distinct from failure, and pausing is a mode.** An interrupted execution's persisted result is `Complete` with an interrupt-only cause, which `poll` returns as such (the test _"interrupts a suspended workflow and runs compensation"_ asserts `value._tag === "Complete" && value.exit._tag === "Failure"` on the stored reply, [`ClusterWorkflowEngine.test.ts`][cluster-test]). `SuspendOnFailure` turns every failure into a `Suspended` result with the cause kept on the instance, so an operator can fix the world and call `resume` ([`Workflow.ts`][workflow-ts]).
+
+**Inspection is `poll` and the tables.** `poll(executionId)` returns `None`, `Suspended`, or `Complete` by reading the `run` request's last reply ([`ClusterWorkflowEngine.ts`][cwe-ts]). There is no API to list executions, page through an execution's activities, or stream its history; an operator who wants the sequence of steps queries `cluster_messages` and `cluster_replies` by `entity_id` directly. Cluster-level gauges (`effect_cluster_entities`, runners, healthy runners, acquired shards) exist for dashboards ([`ClusterMetrics.ts`][clustermetrics-ts]), but nothing workflow-specific.
+
+**Hand-supplying a result is possible only for deferreds.** `DurableDeferred.done` / `succeed` / `fail` take a token and write the deferred's exit from any process that has the engine ([`DurableDeferred.ts`][deferred-ts]); that is the designed human-input channel (§11) and doubles as the operator's lever for a stuck wait. An activity's stored result cannot be edited or skipped through the API; the only tools are `sharding.reset(requestId)` on the activity's request (re-run that attempt, used internally by `resetActivityAttempt`) and `MessageStorage.clearAddress` (drop every row for an execution, used to clear a durable clock on interrupt). Both delete rather than annotate, so an intervention on an activity is invisible afterwards, unlike an interrupt.
+
+**Resuming from a chosen point is not supported.** Replay always restarts the body from the top and consults every stored result; there is no fork-from-step, rewind-to-index, or checkpoint selection. Deleting rows by hand approximates "re-run from step N", at the cost of the audit trail.
+
+**Dead-lettering exists only in `DurableQueue`.** _"When an item exhausts its persisted queue attempts it is dead-lettered: the `DurableDeferred` never resolves and the workflow stays parked until the item is requeued out of band, while the id-based de-duplication prevents replays from resurrecting the failed item."_ ([`DurableQueue.ts`][queue-ts]). A workflow whose activity keeps dying has no quarantine state: with `CaptureDefects` on it completes with the defect; with it off, the run keeps failing at the entity until reset.
+
+### 11. Suspension and external input
+
+Waiting is the mechanism the whole layer is built around: everything that is not an activity's own body is a suspension on a named deferred.
+
+**The primitives** are `DurableDeferred.await` (a named, externally completable wait point), `DurableClock.sleep` (a deferred completed by a `DeliverAt`-scheduled clock message), child `Workflow.execute` (the parent parks until the child's `resume` message), `DurableDeferred.raceAll` / `Activity.raceAll` (first of several, recorded), and `DurableQueue.process` (hand work to a worker and park on the worker's token) ([`DurableDeferred.ts`][deferred-ts]; [`DurableClock.ts`][clock-ts]; [`DurableQueue.ts`][queue-ts]).
+
+**Waiting ends the run.** `await` registers the deferred's name in `instance.awaitedDeferreds`, asks the engine for a stored result, and on `None` calls `Workflow.suspend`, which self-interrupts the fiber ([`DurableDeferred.ts`][deferred-ts]). The run's persisted reply becomes `Suspended`, the entity is evicted after 10 seconds idle, and nothing is held in memory. The exception is the in-memory threshold: a `DurableClock.sleep` at or under 60 seconds is a live `Effect.sleep` inside an activity, so the fiber blocks and a crash during it re-sleeps from zero ([`DurableClock.ts`][clock-ts]). A caller that called `execute` without `discard` does hold a fiber: it loops on `run` with the `suspendedRetrySchedule` (default exponential from 200 ms capped at 30 seconds, unbounded) until the result is `Complete` ([`WorkflowEngine.ts`][engine-ts], `makeUnsafe`).
+
+**Suspended is a first-class persisted state.** `Workflow.Result` is the union `Complete | Suspended`, the `Suspended` schema carries an optional `cause`, and `poll` returns it to any caller ([`Workflow.ts`][workflow-ts]). The tests drive on it directly: `while (Option.isNone(result) || result.value._tag !== "Suspended") { … pollStorage … }` ([`ClusterWorkflowEngine.test.ts`][cluster-test]).
+
+**Addressing external input** is by name within an execution. A `Token` is the base64url encoding of `[workflowName, executionId, deferredName]`, produced inside the workflow by `DurableDeferred.token`, or outside from a payload by `tokenFromPayload` (which recomputes the execution id from the idempotency key) ([`DurableDeferred.ts`][deferred-ts]). Completing it is a persisted `deferred` request with `primaryKey: name`, so:
+
+- an input that arrives **twice** is a duplicate row and is ignored (the memory engine spells it out: `if (deferredResults.has(id)) return Effect.void`, [`WorkflowEngine.ts`][engine-ts]);
+- an input that arrives **early**, before the body reaches `await`, is simply found in storage when it does;
+- an input that **never** arrives leaves the execution `Suspended` indefinitely; there is no timeout parameter on `await`, and the only bound is a race against a `DurableClock` via `raceAll`, whose winner is then journaled.
+
+**Human approval is the documented pattern, not a special construct.** The v3 README's example forks a `DurableDeferred.succeed` with the token to stand in for an external system, then `await`s ([`packages/workflow/README.md`][v3-readme]); a real approval is the same token delivered through any channel to a process that has the `WorkflowEngine`. Rejection is `DurableDeferred.fail` with the deferred's typed error schema. `SuspendOnFailure` plus `resume` is the complementary operator-in-the-loop pattern for errors rather than decisions (§10).
+
 ---
 
 ## Strengths
@@ -417,16 +465,41 @@ Crash injection is done by `sharding.reset(requestId)` (clear the reply, mark un
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the replay model and the "activity = journal key" shape.** Effect journals `(name, attempt) → exit` and re-runs the body; the sparkles design journals `started` + `completed` per op keyed by name, attempt counter, and args hash. Effect's engine shows that name plus attempt is enough to _find_ a result; the args hash is what sparkles adds on top, and Effect's silence on changed inputs (§1, §2) is the argument for keeping it.
-- **Argues against relying on argument matching alone for world drift.** Effect has no reconciliation at all; sparkles' rule table for re-observed facts (tags, `HEAD`) is a genuine addition that Effect lacks. The Effect precedent worth copying is the discipline that anything the world decides goes _inside_ a journaled step (the `DateTime.now`-inside-an-activity test), which in sparkles terms means observations are ops on the row, not reads around it.
-- **Confirms explicit, LIFO, scope-registered compensation.** `withCompensation` is exactly "registered on a scope, LIFO, explicit-only". Effect also shows the two hazards sparkles must decide on: compensations are re-registered by replay rather than journaled, and a compensation that ran is not recorded. Journaling the compensation's own `started`/`completed` events, which the sparkles design implies by treating compensations as ops, closes both gaps.
-- **Confirms suspend-as-interrupt with no continuation capture.** Effect gets crash recovery, migration, and voluntary suspension from one mechanism, re-run-from-the-top, without capturing a stack. This is the same stance as `event-horizon`'s tail-resumptive-only capabilities: durability is obtained by re-execution plus memoization, so the deliberate absence of continuation capture is not a limitation for the `release` rewrite.
-- **What the design lacks that Effect has:** a `Suspended` result as a first-class, persisted outcome distinct from failure (the `release` confirmation gates are exactly suspension points, and the journal should record them as such, not as "not yet completed"); `SuspendOnFailure` as a mode ("stop, let the operator fix the world, resume"); and `CaptureDefects`, the decision that a crash is a journaled answer.
-- **What Effect lacks that the design should keep:** a versioning stance. Effect's answer to changed workflow code is "names still match or they do not"; sparkles' `--split` runs live an hour, and the code will change under them, so the crash-at-every-index tests should include a "code changed between crash and resume" axis that Effect's suite does not have.
-- **Testing: copy the row-count oracle, add the sweep.** Asserting the exact journal after each scenario, with one comment per expected row, is the cheapest strong oracle Effect uses; sparkles' `journal.jsonl` supports it directly. Effect's `TestClock` plus `pollStorage` driving corresponds to `TestClock` and `SimProc` on the `Ctx` row. The crash-at-every-event-index sweep and mutate-the-world tests the design already plans go beyond what Effect ships.
-- **Cost note for the UI-as-projection idea.** Effect's journal is an RPC mailbox and has no history-reading API; `poll` returns only the last result. The sparkles design's append-only `journal.jsonl` that the UI projects is a better artifact for a CLI, and nothing in Effect argues against it.
+- **Name plus attempt is enough to find a recorded result, and not enough to
+  notice that its inputs changed.** Effect proves the first half in production;
+  §1 and §2 show the second half is simply unaddressed. A library keying this way
+  inherits the blind spot and has to decide separately whether it cares.
+- **Compensation belongs on a scope and runs LIFO**, but Effect exposes two traps
+  in that design: the finalizers are re-registered by replay rather than
+  journaled, and a compensation that has run leaves no record behind. A library
+  offering the primitive should record both the registration and the run, or
+  accept that a crash mid-rollback cannot be resumed accurately.
+- **`Suspended` as a first-class persisted outcome, distinct from failure, is the
+  piece most systems omit.** It collapses voluntary waiting, crash recovery and
+  operator-driven pausing into one mechanism, and it is what lets a caller poll
+  for a definite answer instead of inferring one from absence.
+- **`SuspendOnFailure` and `CaptureDefects` are two orthogonal policy switches
+  worth copying.** The first turns a failure into a resumable pause; the second
+  decides whether a defect is a journaled answer or a lost run. Both are choices
+  a library should expose rather than hard-code.
+- **Its integrity story is entirely delegated** — a unique message id, an insert
+  that does nothing on conflict, a shard lease with a refresh interval, and a
+  ten-minute read lease on undelivered messages (§9). That is a clean design when
+  a relational store is a given; a library without one must supply the equivalent
+  of all four itself.
+- **There is no versioning stance at all.** Effect's answer to changed code is
+  that names either still match or they do not. For a library whose programs are
+  expected to be edited between a crash and its resume, this is the gap to close
+  rather than the precedent to follow.
+- **Its test oracle transfers directly:** assert the exact set of journal rows
+  after each scenario. It is cheap, and unlike a final-state assertion it catches
+  both a missing write and a duplicated one.
+- **A journal that cannot be read back is a real limitation.** `poll` returns only
+  the last result, and there is no history API (§10), so operators fall back to
+  querying tables by hand. A log that can be folded is strictly more useful, and
+  nothing about the replay model requires giving that up.
 
 ---
 
@@ -489,3 +562,9 @@ Crash injection is done by `sharding.reset(requestId)` (clear the reply, mark un
 [typescript-effect]: ../typescript-effect.md
 [index]: ./index.md
 [temporal]: ./temporal.md
+[clustermetrics-ts]: https://github.com/Effect-TS/effect/blob/657254b8218628b0116497d09aaf783cb88279f3/packages/effect/src/unstable/cluster/ClusterMetrics.ts
+[runnerstorage-ts]: https://github.com/Effect-TS/effect/blob/657254b8218628b0116497d09aaf783cb88279f3/packages/effect/src/unstable/cluster/RunnerStorage.ts
+[sharding-ts]: https://github.com/Effect-TS/effect/blob/657254b8218628b0116497d09aaf783cb88279f3/packages/effect/src/unstable/cluster/Sharding.ts
+[shardingconfig-ts]: https://github.com/Effect-TS/effect/blob/657254b8218628b0116497d09aaf783cb88279f3/packages/effect/src/unstable/cluster/ShardingConfig.ts
+[snowflake-ts]: https://github.com/Effect-TS/effect/blob/657254b8218628b0116497d09aaf783cb88279f3/packages/effect/src/unstable/cluster/Snowflake.ts
+[sqlrunnerstorage-ts]: https://github.com/Effect-TS/effect/blob/657254b8218628b0116497d09aaf783cb88279f3/packages/effect/src/unstable/cluster/SqlRunnerStorage.ts

@@ -274,6 +274,30 @@ The documented approach **does not exercise replay at all**: "you test orchestra
 
 The JS SDK does ship the pieces for history-driven tests — `DummyOrchestrationContext` (exported from `index.ts`) and `DurableOrchestrationInput`, whose constructor takes a `history: HistoryEvent[]` and defaults to a single `OrchestratorStartedEvent` ([`testingUtils.ts`][js-testing]) — and its own integration suite is exactly that: hand-built histories such as `GetSayHelloWithActivityReplayOne`, `GetFanOutFanInDiskUsagePartComplete`, `GetActivityThenWaitForEvent_EventBeforeActivityCompletion`, `GetTwoEarlyEventsSameName` fed to real orchestrators, asserting on the returned `actions` and on `isReplaying` ([`test/testobjects/testhistories.ts`][js-testhistories], [`test/integration/orchestrator-spec.ts`][js-orch-spec]). Nothing in the product generates those histories for a user, and nothing mutates the world between episodes.
 
+### 9. Journal integrity and the single writer
+
+Single-writer-ness is enforced at two levels in the Azure Storage provider, and neither is the append itself. The coarse level is **partition ownership**: every instance hashes to one control queue, and control queues are handed out to workers under blob leases (`-leases` container, `BlobPartitionLeaseManager`; an optional table-based partition manager), so "each orchestration or entity must only be processed by one worker at a time" ([Azure Storage provider][docs-azstorage]). While a worker holds a batch of messages for an instance it keeps them invisible by renewing their visibility timeout (`RenewTaskOrchestrationWorkItemLockAsync`, "Reset the visibility of the message to ensure it doesn't get picked up by anyone else" — [`AzureStorageOrchestrationService.cs`][dtfx-azs-service]).
+
+The fine level is a **conditional append**. `UpdateStateAsync` writes the episode's new events as a table transaction of `UpsertReplace` rows keyed `RowKey = sequenceNumber.ToString("X16")` plus `ExecutionId`, in chunks of at most 99 rows or 3 MB; every chunk also carries a `sentinel` row (`RowKey = "sentinel"`, `ExecutionId`, `IsCheckpointComplete`) submitted as `UpdateMerge` with the ETag the worker read at load time, or `Add` if no history existed ([`AzureTableTrackingStore.cs`][dtfx-azs-tracking]). A `PreconditionFailed` (ETag moved) or `Conflict` (someone else added the sentinel first) is logged as `SplitBrainDetected` and surfaced as `SessionAbortedException`: "Aborting execution due to conflicting completion of the work item by another worker" ([`AzureStorageOrchestrationService.cs`][dtfx-azs-service]). So the guard is per-instance and version-based (the sentinel's ETag stands in for an expected history length), independent of the lease, and it is what actually protects the history when a lease expires under a slow worker. Rows are `UpsertReplace` rather than `Add` precisely because "the orchestration episode gets replayed due to a commit failure in one of the steps below" — a torn checkpoint is repaired by re-running the episode and overwriting the same row keys, and the sentinel's `IsCheckpointComplete = false` marks the half-written state until the final chunk lands.
+
+The commit order is **not write-ahead**. `CompleteTaskOrchestrationWorkItemAsync` first enqueues the outbound activity, timer and orchestrator messages ("If a failure happens after this, duplicate messages will be written after the retry, but the results of those messages are expected to be de-dup'd later"), then commits the history ("This is the actual 'checkpoint'. Failures after this will result in a duplicate replay of the orchestration with no side-effects"), and only then deletes the triggering control-queue messages ("This is the final commit") ([`AzureStorageOrchestrationService.cs`][dtfx-azs-service]). Effects can therefore be launched whose intent is never journaled; the provider tolerates this because a duplicate activity message is dropped when its `TaskScheduledId` is not found in the reloaded history ([`OrchestrationSession.cs`][dtfx-azs-session]), and a response for an unknown instance is given "the benefit of the doubt" five dequeues before being treated as a "zombie event". There is no checksum on a row and no writer id beyond `ExecutionId`, which is checked on read (`GetHistoryEventsAsync` discards rows whose `ExecutionId` differs from the sentinel's) so that a `ContinueAsNew` generation never sees its predecessor's events ([`AzureTableTrackingStore.cs`][dtfx-azs-tracking]). The docs are explicit that this is eventual consistency and point at MSSQL and the Durable Task Scheduler for stronger guarantees ([docs][docs-orch]).
+
+### 10. Operator recovery and intervention
+
+The operator surface is the **instance management API**, exposed identically through the client binding, an HTTP webhook API (`/instances/{instanceId}/{terminate|suspend|resume|rewind|restart|raiseEvent/...}` — [`HttpApiHandler.cs`][ext-http]) and the `IDurableOrchestrationClient` interface (`GetStatusAsync`, `ListInstancesAsync`, `TerminateAsync`, `SuspendAsync`, `ResumeAsync`, `RewindAsync`, `RestartAsync`, `RaiseEventAsync`, `PurgeInstanceHistoryAsync` — [`IDurableOrchestrationClient.cs`][ext-client-iface]). Status queries return the full history on request (`showHistory`, `showHistoryOutput`) and a `RuntimeStatus` drawn from `Pending`, `Running`, `Completed`, `ContinuedAsNew`, `Failed`, `Canceled`, `Terminated`, `Suspended` ([instance management][docs-instances], [`OrchestrationRuntimeStatus.ts`][js-status]). The Azure Storage History table is itself readable with ordinary table tools, and the Durable Task Scheduler ships a management dashboard ([storage providers][docs-providers]).
+
+Every intervention is **a message in the same queue**, so it leaves a trace and takes effect asynchronously: "A terminated instance eventually transitions into the `Terminated` state. But this transition doesn't happen immediately. Rather, the terminate operation is queued in the task hub along with other operations for that instance" ([instance management][docs-instances]). Termination is not cancellation: "Instance termination doesn't currently propagate. Activity functions and sub-orchestrations run to completion, regardless of whether you end the orchestration instance that called them." Suspend and resume are `ExecutionSuspended` / `ExecutionResumed` history events ([`TaskHubClient.cs`][dtfx-hub-client]).
+
+**Rewind** is the one point-in-history recovery. `RewindAsync` "Rewinds the specified failed orchestration instance with a reason" ([`IDurableOrchestrationClient.cs`][ext-client-iface]); the Azure Storage implementation does not truncate the history but edits it in place: it finds the failed execution, rewrites each `TaskFailed` / `SubOrchestrationInstanceFailed` row and its matching `TaskScheduled` row to `EventType = GenericEvent` with `Reason = "Rewound: <original type>"` ("replay ignores row while dummy event preserves rowKey"), recurses into failed sub-orchestrations, resets the instance status and re-enqueues the deepest failed leaves ([`AzureTableTrackingStore.cs`][dtfx-azs-tracking]). The effect is that on the next replay the failed calls are re-scheduled with fresh ordinals while everything before them is kept. There is no API to edit a recorded result, skip a step, or supply a result by hand; no fork-from-index; and no quarantine state — an unprocessable instance either fails, is discarded as invalid ("Discarding execution results because the orchestration state is invalid" — [`AzureStorageOrchestrationService.cs`][dtfx-azs-service]) or sits in `Running` forever, which the versioning page lists as a real outcome of a bad deploy ([versioning][docs-versioning]).
+
+### 11. Suspension and external input
+
+Waiting primitives are durable timers, external events by name, sub-orchestration completion, entity calls (request-response via `EventSent` / `EventRaised`), and entity locks; all of them are ordinary open tasks, so a wait is not a distinct state — the orchestrator simply reaches the end of its history with tasks still open, returns, and "can be unloaded from memory" ([docs][docs-orch]). The extension makes that literal for out-of-process SDKs by awaiting `Task.Delay(Timeout.Infinite)` so DTFx sees an orchestrator blocked on its `TaskCompletionSource`s ([`OutOfProcOrchestrationShim.cs`][ext-shim]). No resources are held while waiting: "no billing charges are incurred while an orchestrator function is awaiting an external event task, no matter how long it waits" ([external events][docs-events]). The only threshold is the storage-provider cap on a single timer, worked around by `LongTimerTask`.
+
+External input is addressed by **instance ID plus event name**, never by a token: "The `eventName` must match on both the _sending_ and _receiving_ ends in order for the event to be processed." An event that arrives early "is added to an in-memory queue" and consumed when the orchestrator next waits for that name; the JS executor's `deferredTasks` FIFO is that queue on the SDK side. An event for an unknown instance "is discarded"; a duplicate is delivered twice ("at-least-once"), which is why the docs ask for a de-duplication ID in the payload ([external events][docs-events]). Waits never time out on their own; a timeout is a race the author writes, `Task.any([eventTask, timerTask])`, and is journaled as a `TimerCreated` / `TimerFired` pair, with the losing timer cancelled explicitly ([timers][docs-timers]).
+
+Human-in-the-loop is a documented first-class pattern built from exactly these pieces: "The orchestrator starts a durable timer and simultaneously waits for an external event from the person. If the person responds before the timer fires, the orchestrator processes the response. If the timer fires first, the orchestrator handles the timeout" ([human interaction][docs-human]). Separately from author-level waiting, **operator suspension** is a persisted state: `Suspended` is a `RuntimeStatus` a caller can observe, and while suspended DTFx queues every incoming event in `eventsWhileSuspended` (and parks any actions scheduled in that episode in `suspendedActionsMap`) until `ExecutionResumed` replays them in order ([`TaskOrchestrationContext.cs`][dtfx-context], [instance management][docs-instances]).
+
 ---
 
 ## Strengths
@@ -312,16 +336,35 @@ The JS SDK does ship the pieces for history-driven tests — `DummyOrchestration
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms name + attempt + args hash as the step key, and shows why each part matters.** DTFx's `NonDeterministicOrchestrationException` fires on ordinal/name/kind mismatch but never on argument drift; the sparkles design's args hash closes exactly the hole the versioning doc warns about ("the change is likely to be problematic" whenever the way a function is called changes). The attempt counter also removes DF's need to spend fresh ordinals on retries.
-- **Argues for order-independent keys under fan-out.** DF's `Task.all` works only because `trackOpenTask` fixes ordinals by construction order across a process boundary — a two-process invariant with hand-counted slots. A `release --split` fan-out keyed by stable names instead of sequence position avoids that entire class of bug.
-- **DF has no answer to "journal versus world"; sparkles' rule table is genuinely beyond it.** DF's stance — never observe, only replay frozen activity results, push idempotency to the user — is coherent but is the reason `release` cannot be a DF orchestration: git tags and `HEAD` _will_ move between crash and resume. Re-observe-and-reconcile is the right divergence; keep it, and keep it explicit per observation kind.
-- **Adopt the journaled clock and ID generator as capability-row values, not journal rows.** `currentUtcDateTime` and `newGuid` are pure functions of already-journaled data. The `isClock` cap under replay should return the timestamp of the current episode's `started` record rather than journaling every `now()`.
-- **Adopt instance-pinned versioning.** A `version` field in the journal header, read by the workflow to branch, plus a `CurrentOrOlder` refusal to resume a newer journal with older code, is cheap and is what DF converged on after side-by-side deployments proved heavyweight. The rule "keep old version code paths unchanged" transfers verbatim.
-- **Compensation: sparkles' scoped LIFO registry is more than DF offers, and DF's absence is a finding.** DF's `try/catch` + activity pattern shows the minimum; a registered compensation must itself be a journaled op so its execution survives a crash inside the compensating path, which DF gets for free only because the `catch` block replays.
-- **Testing: the SDK's own suite is the model, not the docs.** DF documents mock-the-context tests that never replay; its SDK privately tests with partial histories (`…PartComplete`, `…ReplayOne`, early-event cases). Sparkles' crash-at-every-event-index plus mutate-the-world tests are the exposed, generated form of what DF only hand-writes internally — and they are the only tests that would catch an ordinal/args mismatch.
-- **Journal intent, not decomposition.** `LongTimerTask` and `RetryableTask` write their sub-steps into the history, so the journal records how a storage limit was worked around rather than what the workflow asked for. Sparkles' `started`/`completed` records should be at the capability-op granularity, with any internal chunking invisible to the journal.
+- **Ordinal identity checked against name and kind, but never arguments**, is a
+  precise statement of how much a positional scheme can detect (§1). The error
+  message even asks the author whether the code changed, which is an admission
+  that the scheme cannot tell.
+- **A journaled clock and id generator can be pure functions of already-recorded
+  data rather than records of their own.** `currentUtcDateTime` is the episode's
+  start timestamp and `newGuid` is a version-5 UUID over instance, time and a
+  counter. That is an elegant reduction: two sources of nondeterminism removed
+  without adding a single journal entry.
+- **Instance-pinned versioning with a refusal to resume a newer record under older
+  code** is where this system converged after side-by-side task hubs proved
+  unwieldy (§5). The refusal is the load-bearing half.
+- **Record what the program asked for, not how the implementation coped.** Long
+  timers and retries are decomposed into sub-steps that appear in the history, so
+  the record describes a storage workaround rather than the author's intent. A
+  library should journal at the operation boundary its users can see.
+- **Entities show the opposite pole, in the same format.** They re-persist their
+  whole state after every batch, into the same history a replayed orchestration
+  uses, which demonstrates that snapshot and replay can share one record type.
+- **The gap between its documentation and its own tests is instructive** (§8). The
+  docs recommend mocking the context, which never exercises replay; the SDK's own
+  suite drives orchestrators against hand-built partial histories. The second is
+  the technique worth shipping to users.
+- **At-least-once delivery with user-supplied deduplication is the whole answer to
+  duplicate effects.** It works because every effect is a call to a service that
+  can deduplicate, which is an assumption a general library cannot make on its
+  users' behalf.
 
 ---
 
@@ -390,3 +433,12 @@ The JS SDK does ship the pieces for history-driven tests — `DummyOrchestration
 [dtfx-history-readme]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.Core/History/README.md
 [dtfx-context]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.Core/TaskOrchestrationContext.cs
 [dtfx-executor]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.Core/TaskOrchestrationExecutor.cs
+[docs-human]: https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-phone-verification
+[docs-instances]: https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-instance-management
+[dtfx-azs-service]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.AzureStorage/AzureStorageOrchestrationService.cs
+[dtfx-azs-session]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.AzureStorage/Messaging/OrchestrationSession.cs
+[dtfx-azs-tracking]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.AzureStorage/Tracking/AzureTableTrackingStore.cs
+[dtfx-hub-client]: https://github.com/Azure/durabletask/blob/b385165ac10ecebbf183fdfdb07db33307756792/src/DurableTask.Core/TaskHubClient.cs
+[ext-client-iface]: https://github.com/Azure/azure-functions-durable-extension/blob/2317b407104b657ada289122090b356d8f4e3539/src/WebJobs.Extensions.DurableTask/ContextInterfaces/IDurableOrchestrationClient.cs
+[ext-http]: https://github.com/Azure/azure-functions-durable-extension/blob/2317b407104b657ada289122090b356d8f4e3539/src/WebJobs.Extensions.DurableTask/HttpApiHandler.cs
+[js-status]: https://github.com/Azure/azure-functions-durable-js/blob/fcab779bf2bbe5c12f51969009b174c7c6476fdd/src/orchestrations/OrchestrationRuntimeStatus.ts

@@ -272,6 +272,30 @@ Two layers, both in the public repo. The user-facing layer is the `cloudflare:te
 
 What is absent: a crash-injection primitive. There is no "kill the engine after event N and resume" operation; the closest things are `restart({ from })` (which _erases_ rather than resumes) and the `unsafeAbort` used to tear down between tests. Durability across lifetimes is exercised indirectly (a `waitForEvent` test sends the event while the engine is not active; a stream test restarts and checks the chunk table) rather than swept.
 
+### 9. Journal integrity and the single writer
+
+The single writer is the actor, not a lock. Every instance is one Durable Object addressed by `idFromName(instanceId)` ([`binding.ts`][binding]), and "Durable Objects are single-threaded and cooperatively multi-tasked, just like code running in a web browser", each with "durable, transactional, and strongly consistent storage … accessible only within that object" ([`what-are-durable-objects.mdx`][do-concepts]). Two executions of the same instance therefore cannot exist: the platform routes every request for that id to the one live object. Inside the object, `init` returns early if `isRunning` is already set, so a `receiveEvent` or alarm arriving while `run` is in flight does not start a second `run` ([`engine.ts`][engine]). There is no lease, e-tag or expected-version guard on appends, because the design makes them unnecessary; the emulation's only durable constraint is `UNIQUE (action, entryType, hash)` on `priority_queue`, which is why a dynamic-delay retry entry cannot be re-added with a corrected timestamp ([`engine.ts`][engine], [`context.ts`][context]).
+
+The write discipline is intent-then-result, at attempt granularity. `ATTEMPT_START` is inserted into `states` and `attemptedCount` is bumped in `-metadata` _before_ the user callback runs; the value is put under `-value` only after it returns; `ATTEMPT_SUCCESS`/`STEP_SUCCESS` follow ([`context.ts`][context]). A crash between intent and result is what the dangling-`ATTEMPT_START` scan on replay is for ([§2](#2-journal-versus-world)). The log insert and the value put are separate operations (SQL `INSERT` versus KV `put`), so an intent and its result are not one atomic append; the two places the engine wraps writes in `storage.transaction` are the status transitions around `WORKFLOW_SUCCESS`/`FAILURE`, "to guarentee ordering with running setstatus call" ([`engine.ts`][engine]). Torn records are the storage engine's problem: SQLite-backed DO storage is transactional, and `abort` calls `storage.sync()` before tearing the object down ([`engine.ts`][engine]). Nothing in the record identifies which lifetime wrote it; there is no incarnation id or generation counter, and none is checked on read, which is consistent with the platform guaranteeing there is only ever one.
+
+Duplicate appends are idempotent on the cache key: a second `put` under `<hash>-<count>-value` overwrites the first, and the replay path never reaches the put once the key exists. At the API edge, `create({ id })` "Throws an error if the provided ID is already used by an existing instance that has not yet passed its retention limit", while `createBatch` "is idempotent and will not fail if an ID is already in use" ([`workers-api.mdx`][api]).
+
+### 10. Operator recovery and intervention
+
+The operator surface is the instance handle, mirrored by the CLI and the REST API: `pause`, `resume`, `terminate`, `restart` and `sendEvent` on `WorkflowInstance` ([`workers-api.mdx`][api]); `wrangler workflows instances {list, describe, pause, resume, restart, terminate, terminate-all, send-event, delete}` ([`wrangler/src/workflows/commands/instances/`][wrangler-instances]), each accepting `--local` against a `wrangler dev` session since April 1, 2026 ([`release-notes/workflows.yaml`][release-notes]); and, locally, the browser-based Local Explorer where one can "Inspect the step history and current status of each instance" and "Pause, resume, terminate, and restart instances" ([`local-development.mdx`][local-dev]).
+
+Resume-from-a-chosen-point is `restart({ from: { name, count?, type? } })`: "the cached results of every earlier step are reused, while the target step and any steps that follow it run again", and it "throws an error if no step matching `from` is found in the instance's execution history" ([`workers-api.mdx`][api]). The emulation implements it by scanning `states` for the n-th matching `STEP_START`/`SLEEP_START`/`WAIT_START`, collecting that group key and every later one, then deleting those groups' KV entries, their `states` rows, their stream chunks, and the whole `priority_queue` ([`restart.ts`][restart]). A plain `restart()` wipes everything and re-logs `WORKFLOW_QUEUED`/`WORKFLOW_START`; the docs' phrasing is "erase any intermediate state, and treat the Workflow as if it was run for the first time" ([`trigger-workflows.mdx`][trigger]). Intervention therefore does _not_ leave a trace in the journal: the erased rows are gone, and the surviving log reads as a first run. A `terminate` does leave `WORKFLOW_TERMINATED` with `trigger: { source: API }` ([`engine.ts`][engine]).
+
+Editing a recorded result by hand is not a production operation. `mockStepResult` and `mockStepError` exist only behind the `cloudflare:test` introspector ([§8](#8-testing)). Cancellation is distinct from failure in the status vocabulary (`terminated` versus `errored`, both terminal, both refused by `terminate` afterwards, [`workers-api.mdx`][api]), and in-flight work is handled differently by the two: `pause` waits for every running step to finish (`waitUntilNothingIsRunning`) and interrupts sleeps and waits through `pauseController`, while `terminate` aborts the object outright after optionally running rollbacks ([`engine.ts`][engine]). There is no dead-letter or quarantine state; an instance that cannot proceed is `errored`, retained for 3 or 30 days, and the only exits are `restart` or `delete` ([`limits.mdx`][limits]).
+
+### 11. Suspension and external input
+
+Three waiting primitives, all journaled: `step.sleep`/`step.sleepUntil` (a durable timer, up to 365 days), `step.waitForEvent(name, { type, timeout? })` (an external event, default timeout 24 hours, 1 second to 365 days), and, indirectly, a child workflow started from a step, which the parent "will not block waiting for" ([`workers-api.mdx`][api], [`events-and-parameters.mdx`][events], [`trigger-workflows.mdx`][trigger]). Human-in-the-loop approval is the documented use of `waitForEvent`, with a worked example that waits on `type: 'approval-for-ai-tagging'` and branches on `payload.approved` ([`wait-for-event.mdx`][wait-example]).
+
+Suspension is a first-class persisted state: `waiting` ("instance is hibernating and waiting for sleep or event to finish") sits beside `running`, `paused`, `queued` and the terminal states in `InstanceStatus`, is returned by `status()`, and is what frees the concurrency slot ([`workers-api.mdx`][api], [`limits.mdx`][limits]). The process does end: the engine "may hibernate and lose all in-memory state" when "there is no pending work" ([`rules-of-workflows.mdx`][rules]), and the wake is a DO alarm armed from the persisted `priority_queue`, after which `run` is replayed to the waiting call ([`timePriorityQueue.ts`][pq], [`engine.ts`][engine]). The docs note a threshold in the other direction: the transition to `waiting` "may not occur if the wait duration is very short" ([`limits.mdx`][limits]).
+
+External input is addressed by `type`, not by the step's name and not by a handed-out token; the engine keeps a FIFO per type (`eventMap`) and a waiter list per type, and the source carries a `TODO: This might need to be the name, not the event type` ([`context.ts`][context], [`engine.ts`][engine]). An event that arrives early is buffered and persisted under `EVENT_MAP\n<type>\n<i>` so it survives hibernation, and "will be buffered and delivered when the Workflow reaches the `waitForEvent` step with the matching `type`" ([`events-and-parameters.mdx`][events]). An event that arrives twice is two queue entries, consumed by two successive waits of that type. An event that never arrives ends in `WAIT_TIMED_OUT`, with the timeout error stored under the wait's `-error` key so replay re-throws it rather than waiting again; the timeout deadline itself is a `timeout` entry in `priority_queue`, and a test pins that an event sent after a wait timed out is not delivered to that stale waiter but to the next one ([`context.ts`][context], [`tests/engine.test.ts`][engine-test]). `sendEvent` "throws an exception if the Workflow is not running or is an errored state" ([`workers-api.mdx`][api]).
+
 ---
 
 ## Strengths
@@ -311,16 +335,33 @@ What is absent: a crash-injection primitive. There is no "kill the engine after 
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms name-plus-counter keying, and is the cleanest evidence for it.** Workflows keys by `sha1(name)-count` and gets reorder-safety and parallel-safety for free ([`context.ts`][context]); DBOS keys by position and pays with patches ([DBOS][dbos]). The `release` design's `name + attempt + args-hash` is the same idea with one addition Workflows lacks, the args hash, which is exactly what would catch the "reused name, different semantics" failure this subject cannot detect. Keep the args hash; it is the tripwire.
-- **Argues against nothing in the journal-wins rule, but shows what it costs without reconciliation.** Workflows never re-observes; its documented answer to "the world moved" is `restart({ from })` and its documented answer to "the step might have half-happened" is "check before charging" inside the step body ([`rules-of-workflows.mdx`][rules]). The design's observe-and-reconcile rule table for git tags and HEAD is a genuine addition over this subject, not a redundancy.
-- **Memoize failures too.** Workflows stores the terminal error under `-error` and re-throws it on replay so that `try...catch` control flow is stable ([`context.ts`][context]). The `journal.jsonl` `completed` record should carry the error outcome as a first-class variant, and replay should re-raise it rather than re-attempt, with an explicit operator action (the analogue of `restart({ from })`) to clear it.
-- **Adopt the persisted-config idea for retry budgets.** Storing the step's resolved config on first sight and preferring it on replay ([`context.ts`][context]) is a two-line rule that keeps a resumed run from behaving differently because someone edited a timeout between crash and resume. It is also a cheap place to detect drift: if the stored config and the code's config differ, log it.
-- **Record deadlines and re-arm them on resume.** The `priority_queue` table with absolute `target_timestamp` plus the alarm re-armed in `init` ([`timePriorityQueue.ts`][pq]) is the model for any wait in `release` (CI, tag propagation): journal the wake time, not the duration.
-- **The rollback re-collection trick is a warning.** Because compensations are closures, Workflows must _replay the workflow_ to rediscover them before it can run them, and a handler the new code no longer registers is a `RollbackMissing` halt ([`rollback.ts`][rollback], [`engine.ts`][engine]). The design's compensations-registered-on-a-scope are the same shape. Either journal the compensation as data (a command, not a closure) or accept that a compensation run after a code change is best-effort and test that path explicitly.
-- **Versioning is a gap here too, so the design cannot borrow an answer.** The only defence Workflows has is that name-keying makes most edits harmless. The design should still stamp the journal with a schema/code version, as DBOS does, because this subject shows what "no stamp" looks like in practice: an undocumented TODO ([`engine.ts`][engine]).
-- **What Workflows has that the design lacks:** instance ids as idempotency keys at `create` (refuse a duplicate run of the same release), a `restart({ from: { name, count } })` operator action that truncates the journal at a named step, `ctx.step.count`/`ctx.attempt` exposed to the step body, and a modifier-style test API (`mockStepResult`, `forceStepTimeout`, `disableSleeps`) installed before the run starts. The last is orthogonal to crash-at-every-index testing and worth having alongside it.
+- **Name plus occurrence count is the cleanest evidence for named identity.**
+  Reorder-safety and parallel-safety fall out of the key itself, with no patch
+  markers, no source hash and no rule about where an `await` may appear (§1, §6).
+- **Memoize failures, not only successes.** The terminal error is stored and
+  re-thrown on replay, so `try`/`catch` control flow is stable across resumes
+  (§1). A record that only holds successes changes the program's shape after a
+  crash.
+- **Persist the operation's resolved configuration on first sight and prefer it on
+  replay.** It is a two-line rule that stops a resumed run from behaving
+  differently because someone edited a retry budget in between (§5).
+- **Record absolute deadlines and re-arm the timer on resume.** The wake-up queue
+  stores target timestamps and the alarm is re-armed at initialisation (§11), so a
+  long outage does not restart every wait.
+- **Closure-based compensation is a trap, and this is the survey's clearest proof.**
+  Rollback handlers are stubs that do not survive a restart, so terminating a
+  hibernated instance with rollback must first replay the program just to
+  rediscover them — and a handler the new code no longer registers becomes a
+  missing-rollback error (§4). Registering compensations in the record avoids all
+  of this.
+- **An undocumented versioning story in a generally available product is itself a
+  finding** (§5). The only defence on offer is that name-keying makes most edits
+  harmless, which is true and is not a policy.
+- **Restart-from-a-named-step is the right shape for an operator action**, and
+  instance ids double as the idempotency key at creation (§10). Both are small
+  surfaces that a library can expose without committing to a UI.
 
 ---
 
@@ -392,3 +433,6 @@ What is absent: a crash-injection primitive. There is no "kill the engine after 
 [index]: ./index.md
 [effect]: ../typescript-effect.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
+[do-concepts]: https://github.com/cloudflare/cloudflare-docs/blob/96d90994571f3db1d4e6fd91820e700d52476e2b/src/content/docs/durable-objects/concepts/what-are-durable-objects.mdx
+[wait-example]: https://github.com/cloudflare/cloudflare-docs/blob/96d90994571f3db1d4e6fd91820e700d52476e2b/src/content/docs/workflows/examples/wait-for-event.mdx
+[wrangler-instances]: https://github.com/cloudflare/workers-sdk/tree/00ae21fa83754462721a52bcd1ff9b4fbc12f898/packages/wrangler/src/workflows/commands/instances

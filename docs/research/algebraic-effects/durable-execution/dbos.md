@@ -238,6 +238,50 @@ Two levels, documented on the [testing page][testing-site] ([`testing.md`][testi
 
 The library's own suite tests durability more directly. `oaoo.test.ts` runs a workflow twice under the same `workflowID` and asserts a step counter stayed at one ([`tests/oaoo.test.ts`][oaoo-test]). `recovery.test.ts` completes a workflow, resets its row to `PENDING` with `setWfAndChildrenToPending`, calls `recoverPendingWorkflows()` and checks that only un-checkpointed steps re-run and that `executor_id` is re-stamped ([`tests/recovery.test.ts`][recovery-test], [`tests/helpers.ts`][helpers]). `appversion.test.ts` restarts DBOS with a _different_ workflow class and asserts the pending row is not recovered ([`tests/appversion.test.ts`][appversion-test]). `patching.test.ts` covers patch-at-first and patch-at-last step; `concurrency.test.ts` runs the same step, transaction and `recv` concurrently under one ID ([`tests/patching.test.ts`][patching-test], [`tests/concurrency.test.ts`][concurrency-test]). Crash points are injected through `debugTriggerPoint(name)`, a named hook the system database calls at `DEBUG_TRIGGER_STEP_COMMIT` and which a test can make sleep, block or call back ([`src/debugpoint.ts`][debugpoint], [`src/system_database.ts`][sysdb]). A separate `chaos-tests` suite runs workflows, `recv`, events, schedules and queues while a `PostgresChaosMonkey` disrupts the database ([`chaos-tests/workflows.test.ts`][chaos]). There is no deterministic-simulation harness and no "crash at every step index" sweep; coverage of crash positions is by chosen debug points.
 
+### 9. Journal integrity and the single writer
+
+The journal is a set of Postgres rows, so torn writes, checksums and partial records are Postgres's problem, not the library's: a checkpoint is either a committed row or nothing. What DBOS engineers on top of that is _ownership_, at three grains.
+
+**Per step, the primary key is the guard.** The checkpoint insert is `INSERT … ON CONFLICT (workflow_uuid, function_id) DO UPDATE SET completed_at_epoch_ms = operation_outputs.completed_at_epoch_ms RETURNING completed_at_epoch_ms`; because the update is a no-op, `RETURNING` yields the timestamp already on disk, and a writer that sees a value other than the one it just supplied knows another execution got there first and throws `DBOSWorkflowConflictError` ([`src/system_database.ts`][sysdb]). The guard is the constraint itself, distinct from any lease. There is no expected-length or expected-version check on the history as a whole; each position is guarded independently, which is enough because positions are assigned deterministically. Duplicate appends are idempotent on `(workflow_uuid, function_id)`, and the docs are explicit that this is detection, not prevention: "steps get at-least-once guarantees and workflow outcomes are persisted exactly-once" ([`concurrent-executions.md`][concurrent]).
+
+**Per workflow, the `owner_xid` column decides who runs.** `insertWorkflowStatus` upserts the status row with the caller's transaction id; `#initWorkflowStatusInternal` then compares the row's `owner_xid` to its own and returns `shouldExecuteOnThisExecutor: ownerXid === resRow.owner_xid`, so of two concurrent `startWorkflow` calls with the same ID only the one whose upsert won executes and the other attaches to the handle ([`src/system_database.ts`][sysdb]). The same routine rejects a re-start with a different `name`, `class_name` or `config_name` with `DBOSConflictingWorkflowError` — the ID is bound to the function that first claimed it ([`src/system_database.ts`][sysdb]). The terminal write is guarded again: `#recordWorkflowOutcome` updates only a `PENDING` row, and the comment states the rule and its limit — "a run owns its workflow's outcome exactly as long as the row says that run is what the workflow is doing. (Note: this does not prevent a write when another concurrent execution is already running and the status is PENDING. However, both executions should be deterministic and idempotent.)" ([`src/system_database.ts`][sysdb]). Within one process, `runningWorkflowMap` refuses a second in-memory execution of the same ID ([`src/system_database.ts`][sysdb]).
+
+**Writer identity is recorded, and partly checked.** `workflow_status.executor_id` names the executor that last advanced the workflow and is re-stamped by whichever executor wins a step checkpoint; `operation_outputs.application_name` names the application ([`src/system_database.ts`][sysdb], [`system-tables.md`][systables]). Recovery filters on `executor_id`, `application_version` and `application_name`, so a stale writer's rows are simply not picked up by a peer ([`src/system_database.ts`][sysdb]). Nothing checks a writer id on the replay read of a step row; the row is trusted because the key matched.
+
+**Write-ahead is selective.** An ordinary step records its result _after_ the effect, with nothing on disk while it runs; the only "intent" is the `PENDING` status row plus the recorded inputs. Two exceptions record before the effect: `#durableSleep` writes the deadline before waiting, and a child-workflow start inserts the child's status row and then the parent's `child_workflow_id` row, both before the child runs ([`src/system_database.ts`][sysdb], [`src/dbos-executor.ts`][executor]). Atomic multi-record appends exist where they matter: `send` and `setEvent` insert their payload row and their checkpoint row in one transaction via `#runAndRecordResult`, `recv` marks the message `consumed` and checkpoints in one transaction, and a transactional step commits user SQL and its checkpoint together ([`src/system_database.ts`][sysdb]).
+
+### 10. Operator recovery and intervention
+
+This is DBOS's richest dimension: the history is a table, so intervention is `UPDATE` and `INSERT`, and every operation is exposed three ways — as `DBOS.*` methods, as `npx dbos workflow {list,get,steps,cancel,resume,fork,queue list}` CLI commands, and as HTTP routes on the admin server (`/workflows`, `/workflows/:id`, `/workflows/:id/steps`, `/cancel`, `/resume`, `/restart`, `/fork`) that the hosted Conductor console drives ([`workflow-management.md`][wf-mgmt], [`cli.md`][cli], [`src/adminserver.ts`][adminserver]).
+
+**Resume from a chosen point.** `DBOS.forkWorkflow(workflowID, startStep, options)` starts "a new execution of a workflow from a specific step": `bulkForkWorkflows` copies the `operation_outputs` rows with `function_id` below `startStep` (and the matching `workflow_events_history` values) under a fresh `workflow_uuid`, records `forked_from` on the child and `was_forked_from` on the parent, and runs the copy ([`methods.md`][methods], [`src/system_database.ts`][sysdb]). Options let the fork run on a different `applicationVersion` — "useful for 'patching' workflows that failed due to a bug in the previous application version" — be enqueued instead of started, and substitute `replacementChildren` so a forked parent re-attaches to forked children ([`methods.md`][methods]). The docs frame the use case as "recovering from outages in downstream services (by forking from the step that failed after the outage is resolved)" ([`workflow-management.md`][wf-mgmt]). The original run is untouched; the fork is a new row with a back-pointer.
+
+**Resume from where it stopped.** `DBOS.resumeWorkflow` sets a non-terminal row back to `ENQUEUED`, zeroes `recovery_attempts`, and so re-admits a `CANCELLED` or `MAX_RECOVERY_ATTEMPTS_EXCEEDED` workflow, or pulls an enqueued one ahead of its queue ([`src/system_database.ts`][sysdb], [`workflow-management.md`][wf-mgmt]).
+
+**Editing a recorded result is not supported.** No API rewrites an `operation_outputs` row; the documented path for "the step recorded the wrong thing" is fork from that step under fixed code ([`methods.md`][methods]). An operator with SQL access can of course edit the table, but nothing in the library models it.
+
+**Cancellation is a status, distinct from failure.** `cancelWorkflows` sets `status = 'CANCELLED'` and clears queue fields on any non-terminal row; the running execution notices at its next step boundary, because `checkIfCanceled` runs before every step and every retry attempt, and throws `DBOSWorkflowCancelledError` ([`src/system_database.ts`][sysdb], [`src/dbos-executor.ts`][executor]). An in-flight step is not interrupted: "cancelling it preempts its execution (interrupting it at the beginning of its next step)" ([`workflow-management.md`][wf-mgmt]). A workflow timeout is the same mechanism with a durable deadline, and cancels children too ([`workflow-tutorial.md`][wf-tutorial]). There is no pause state; the nearest is `DELAYED`, a queue state for a workflow not yet eligible to run, adjustable with a delay-until timestamp ([`src/dbos.ts`][dbos-ts]).
+
+**Inspection.** `listWorkflows` filters by status, name, version, time range, queue and GIN-indexed `attributes`; `listWorkflowSteps` returns the `operation_outputs` rows with outputs and errors deserialised; the console draws them as a trace timeline and can export a workflow, with children, into another application's system database "to examine and (using fork) reproduce a bug that originally occured in production" ([`workflow-management.md`][wf-mgmt], [`production/workflow-management.md`][prod-mgmt]). `workflow_events` and `streams` give a workflow a way to publish its own status for such a UI ([`workflow-communication.md`][wf-comm]).
+
+**Dead-lettering.** A workflow recovered more than `maxRecoveryAttempts` times is moved to `MAX_RECOVERY_ATTEMPTS_EXCEEDED` and stops being recovered; its handle rejects with `DBOSAwaitedWorkflowExceededMaxRecoveryAttempts`, and `resumeWorkflow` is the way out ([`src/dbos-executor.ts`][executor], [`tests/recovery.test.ts`][recovery-test]).
+
+**Traceability of intervention is partial.** Fork leaves `forked_from`/`was_forked_from`; cancel and resume mutate `status`, `updated_at` and `recovery_attempts` in place, so the fact of a resume is visible only as a reset counter and a newer timestamp, not as a history entry ([`src/system_database.ts`][sysdb]).
+
+### 11. Suspension and external input
+
+The waiting primitives are `DBOS.sleep`, `DBOS.recv` (messages by workflow ID and optional topic), `DBOS.getEvent` (key-value events published by another workflow), child completion via `handle.getResult()`, and `readStream` for a producer's incremental output ([`workflow-communication.md`][wf-comm]). Each is a step: sleep records its deadline, `recv`/`getEvent` reserve two positions (value and timeout deadline), and an in-workflow `getResult` is recorded under `DBOS.getResult` so the parent replays the child's outcome without re-awaiting ([`src/system_database.ts`][sysdb], [`src/workflow.ts`][workflow-ts]).
+
+**Waiting holds the process.** A waiting workflow is a live async function in a live Node process: `recv` registers a callback with the `LISTEN/NOTIFY` listener (a trigger on `notifications` fires `pg_notify` from inside the inserting transaction "so recv is never woken before its row commits"), then loops on `Promise.race` between that callback and a poll every `dbPollingIntervalEventMs` (10 s), falling back to polling alone where `LISTEN/NOTIFY` is unavailable ([`src/system_database.ts`][sysdb], [`migrations.ts`][migrations]). There is no threshold past which the runtime unloads the workflow; suspension across a process boundary happens only because a restart re-runs the function and the recorded deadline makes the resumed wait honour the original schedule ([`src/system_database.ts`][sysdb]). The human-in-the-loop page presents this as the design: "Because the workflow's progress is checkpointed and both the deadline and notification are stored in your database, this can safely wait for a long time" ([`hitl.md`][hitl]).
+
+**"Suspended" is not a persisted state.** A waiting workflow is `PENDING`, indistinguishable in `workflow_status` from one mid-step; the documented way to expose "waiting for approval" is for the workflow to `setEvent` its own status and for a UI to list `PENDING` workflows and read that event ([`hitl.md`][hitl]). `DELAYED` and `ENQUEUED` are persisted, but describe a workflow that has not started, not one that is waiting.
+
+**Addressing and duplicates.** Messages are addressed by destination workflow ID plus topic; `send` from outside a workflow accepts an `idempotencyKey` that becomes the `message_uuid`, and the insert is `ON CONFLICT (message_uuid) DO NOTHING`, so a duplicate send is dropped; a send from inside a workflow is itself a step and so exactly-once ([`src/system_database.ts`][sysdb], [`workflow-communication.md`][wf-comm]). An early message simply waits in `notifications` until a `recv` consumes it (`consumed = true`, oldest first); a message to a non-existent workflow fails the foreign key and throws `DBOSNonExistentWorkflowError` ([`src/system_database.ts`][sysdb]). Events are addressed by publisher ID plus key, upserted, and a `getEvent` that ran inside a workflow keeps the value it first saw ([`workflow-communication.md`][wf-comm]).
+
+**Timeouts are journaled.** `recv` and `getEvent` default to 60 s and return `null` on expiry; the deadline is written through `#durableSleep` at the reserved `timeoutFunctionID` before polling, so a restart resumes the same deadline rather than restarting the clock ([`src/system_database.ts`][sysdb], [`workflow-communication.md`][wf-comm]). Whether `null` is an error is left to the workflow.
+
+**Human approval** is a documented pattern rather than a primitive: publish `pending_approval` with `setEvent`, `recv` with a long timeout, and have an HTTP endpoint `send` the decision to the workflow ID ([`hitl.md`][hitl], [`hitl-site`][hitl-site]).
+
 ## Strengths
 
 - **One dependency.** A Postgres URL is the whole deployment; the schema, migrations and recovery all live in the SDK ([`migrations.ts`][migrations]).
@@ -271,16 +315,40 @@ The library's own suite tests durability more directly. `oaoo.test.ts` runs a wo
 | Workflow exceptions are terminal                                          | Uncaught errors are assumed to be bugs, not transients                                | No workflow-level retry policy                                                      |
 | Recovery = re-enqueue `PENDING` rows for this executor + version          | Single-node recovery needs no coordinator                                             | Fleets need executor IDs and Conductor (or manual reassignment)                     |
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the "journal wins; observations are steps" default, but shows its cost.** DBOS never re-observes the world; a recorded observation is truth on replay ([`docs/architecture.md`][arch]). The `release` design's rule table — re-observe git tags/HEAD and reconcile — is something DBOS explicitly does not have, and its substitute is a human running `forkWorkflow` from the step that saw the wrong world ([`workflow-management.md`][wf-mgmt]). That is evidence the reconciliation rule table is a real differentiator, not gold-plating, for a tool whose "world" (git, GitHub) is routinely edited between crash and resume.
-- **Argues for keying steps by name + args hash, against position.** DBOS pays for positional identity with patches, source-hash versions and the whole `Promise.allSettled` ordering rule ([`upgrading-workflows.md`][upgrading], [`workflow-tutorial.md`][wf-tutorial]). The proposed `name + attempt + args-hash` key sidesteps all three: reordering does not shift keys, changed inputs miss the journal instead of replaying stale output, and concurrent ops need no deterministic start order. Keep it, and add DBOS's cheap tripwire: on a key hit, also compare the recorded op _kind_ and fail loudly on mismatch (`DBOSUnexpectedStepError`'s job) ([`src/error.ts`][error]).
-- **Confirms "no built-in compensation"** is a defensible baseline — DBOS ships none and its users write `catch` branches ([`testing.md`][testing]) — but the design's LIFO-scoped explicit compensations are strictly more than DBOS offers, and DBOS gives no evidence either way about replaying compensations after a crash _during_ compensation. That case needs its own crash-at-every-index test.
-- **Adopt the run ID as an idempotency key.** `DBOS.startWorkflow({ workflowID })` plus the primary key on `workflow_status` makes "the same release run twice" a no-op rather than a double publish ([`workflow-tutorial.md`][wf-tutorial], [`src/dbos-executor.ts`][executor]). `release` should derive its journal identity from the target tag and refuse (or adopt) a second concurrent run — DBOS's parking rule is the model for "adopt".
-- **Stamp the journal with a code version, and gate resume on it.** `workflow_status.application_version` and the recovery `WHERE application_version = $5` are two lines that prevent the worst outcome, new code silently replaying old decisions ([`src/system_database.ts`][sysdb]). A hash of the workflow function's source is crude, but a hand-maintained schema version in `journal.jsonl`'s header is the same idea at zero cost.
-- **Record deadlines, not durations, for sleeps and timeouts** ([`src/system_database.ts`][sysdb]). If `release` ever waits (for CI, for a GitHub release to propagate), the journaled value should be the absolute wake time.
-- **The testing gap is the same as ours would be without the planned harness.** DBOS's durability tests reset a row to `PENDING` and re-run recovery, or inject a named debug point ([`tests/recovery.test.ts`][recovery-test], [`src/debugpoint.ts`][debugpoint]); there is no exhaustive crash-position sweep. The design's crash-at-every-event-index plus mutate-the-world tests would be strictly stronger, and the journal-as-a-file makes them cheap to run without a database.
-- **What DBOS has that the design lacks**: fork-from-step as a first-class operator action; a queryable history that outside tools can read; explicit zombie-run detection. The first maps directly onto `release`'s "resume from stage N after fixing the world" use case and is worth specifying as a journal truncation operation.
+- **Positional identity is a real cost, paid three times over.** DBOS needs patch
+  markers, a source-hash application version, and a rule forbidding racing
+  sub-sequences, all so that a counter keeps lining up (§1, §5, §6). Every one of
+  those mechanisms exists to defend the identity scheme rather than to serve the
+  program.
+- **Its cheap tripwire is worth copying whatever the key is.** On a hit, DBOS also
+  compares the recorded operation's name and fails loudly on a mismatch
+  (`DBOSUnexpectedStepError`). That is one comparison and it converts a class of
+  silent wrongness into a stopped run.
+- **Stamping the record with a code version, and filtering recovery on it, is two
+  lines that prevent the worst outcome:** new code silently replaying decisions
+  made by old code. A source hash is a crude way to derive the version, but the
+  mechanism is sound and cheaper than any patch-marker scheme.
+- **A caller-supplied run id as the idempotency key** turns "the same program
+  started twice" into a lookup rather than a double execution, and pairs with the
+  park-and-adopt rule for the loser (§9). A library that omits this pushes the
+  problem onto every consumer.
+- **Record deadlines, not durations.** DBOS stores absolute wake times, so a
+  replay after a long outage does not restart the clock.
+- **No compensation primitive is a defensible baseline**, and DBOS demonstrates
+  that a library can be widely used without one. What it also demonstrates is the
+  consequence: rollback logic lives in user `catch` blocks, and nothing records
+  that a rollback happened.
+- **Fork-from-step is the operator affordance a library should not skip.** DBOS
+  makes it first-class, and it is what a human reaches for when the recorded
+  world was wrong rather than the code (§10). A library whose only recovery is
+  "discard the journal" has made every such case destructive.
+- **A queryable history is part of the product, not an extra.** Because the journal
+  is ordinary SQL tables, outside tools inspect a run without the library's
+  cooperation. Any storage choice that forecloses this loses something real.
+
+---
 
 ## Sources
 
@@ -346,3 +414,10 @@ The library's own suite tests durability more directly. `oaoo.test.ts` runs a wo
 [index]: ./index.md
 [effect]: ../typescript-effect.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
+[adminserver]: https://github.com/dbos-inc/dbos-transact-ts/blob/8495c0060e55d303a38b030900bb1f0c9429f611/src/adminserver.ts
+[cli]: https://github.com/dbos-inc/dbos-docs/blob/28245d243740b0bfd684794476c31f9a62dbd6a2/docs/typescript/reference/cli.md
+[hitl]: https://github.com/dbos-inc/dbos-docs/blob/28245d243740b0bfd684794476c31f9a62dbd6a2/docs/ai/hitl.md
+[hitl-site]: https://docs.dbos.dev/ai/hitl
+[methods]: https://github.com/dbos-inc/dbos-docs/blob/28245d243740b0bfd684794476c31f9a62dbd6a2/docs/typescript/reference/methods.md
+[prod-mgmt]: https://github.com/dbos-inc/dbos-docs/blob/28245d243740b0bfd684794476c31f9a62dbd6a2/docs/production/workflow-management.md
+[workflow-ts]: https://github.com/dbos-inc/dbos-transact-ts/blob/8495c0060e55d303a38b030900bb1f0c9429f611/src/workflow.ts

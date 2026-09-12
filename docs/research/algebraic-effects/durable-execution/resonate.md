@@ -239,7 +239,38 @@ Three layers, each cited:
 - **Deterministic simulation of the SDK.** `sim/` runs a seeded LCG (`Random`), a `StepClock`, an in-memory `Server` (`src/network/local.ts`), and N `WorkerProcess`es under a tick loop with message drop/duplicate/delay/corruption and worker deactivate/activate probabilities, all drawn from the seed when unspecified ([`sim/main.ts`][sdk-sim-main], [`sim/src/simulator.ts`][sdk-sim], [`sim/src/server.ts`][sdk-sim-server]). `npm run dst:diff` runs the generator and async engines on the same `(seed, workload, faults)` and asserts convergence to the same canonical `debug.snap` — _"Strong oracle = promises + tasks + callbacks + root outcome"_ — reporting _"0 failures across 160+ seeds"_ ([`diff-testing.md`][sdk-diff-doc], [`sim/src/differential.ts`][sdk-sim-diff], [`tests/equivalence/oracle.ts`][sdk-oracle]). The docs add that CI runs each seed twice and diffs the logs, and that failures file GitHub issues with the repro command ([docs: how tested][docs-tested]).
 - **The legacy Go DST.** The Go server's `test/dst` (now in `resonate-legacy-server`) is a linearizability harness: a `Generator` produces requests per tick, a `Validator` per request kind advances a `Model` of promises/callbacks/schedules/tasks, and the operations are checked with `porcupine`; backchannel validators (`ValidateTasksWithSameRootPromiseId`, `ValidateNotify`, `ValidateTaskExpiry`) check the messages the server emitted ([`test/dst/dst.go`][go-dst], [`test/dst/model.go`][go-dst-model], [`test/dst/validator.go`][go-dst-validator]). The Rust rewrite replaced it with the oracle differential above.
 
-What is _not_ tested: crash-at-every-step of a user workflow against a mutated world. The SDK DST crashes workers at random ticks, which subsumes crash-at-every-index probabilistically, but the world it resumes into is the simulated server's own state, never an externally mutated one.
+What is _not_ tested: a user workflow resumed into a world that changed while it was down. The SDK DST crashes workers at random ticks, which covers crash-at-every-index probabilistically, but the state it resumes into is always the simulated server's own; nothing outside the promise store is modelled, so a step whose external effect half-happened is invisible to every layer.
+
+### 9. Journal integrity and the single writer
+
+The journal is a database, so torn lines, checksums and commit markers do not arise: every operation is one transaction, and _"state and messages commit together or not at all … here it is the `?` on `commit` and the fact that `emitted` never leaves this scope on the error path"_ ([`crates/resonate-server-sqlite/src/lib.rs`][srv-sqlite], `transact`). Multi-record atomicity is the norm rather than the exception: `task.fulfill` carries the `promise.settle` inside it, `task.suspend` carries the `promise.register_callback` list, `task.create` carries the `promise.create`, and the settlement chain's resumes and emitted messages land in the same transaction ([`recovery-protocol.mdx`][daa-spec-recovery]).
+
+The single-writer guard is the task `version`, and it is deliberately distinct from the lease. The lease (`lease_timeout_at`, `pid`, `ttl`, refreshed by `task.heartbeat`) decides _when_ a task may be re-dispatched; the version decides _whose writes count_. It increments only on `pending → acquired`, and every mutating task operation must present it: `task_fence_create`/`task_fence_settle` compute `fence_ok = task.state == Acquired && task.version == version` and answer `409` otherwise; `task_fulfill` is a single `UPDATE … WHERE id = ?1 AND task_version = ?2 AND task_state = 'acquired'` ([`crates/resonate-server-sqlite/src/lib.rs`][srv-sqlite]). The spec states the consequence ([`recovery-protocol.mdx`][daa-spec-recovery]): _"This guarantees a worker that has lost the lease cannot still effect a settle or a fulfill — the new version on the task means the late operation collides with whatever the successor is doing."_ Because the SDK routes every child `promise.create` and `promise.settle` through `task.fence` ([`src/util.ts`][sdk-util], `sendFenced`), a zombie worker cannot write _any_ record of the tree, not merely the root's. The writer's identity is persisted (`pid`, constrained by `well_formed_task_acquired_iff_has_pid` in the Postgres schema) but is not checked on writes — the version is the check; `pid` is for heartbeats and operators.
+
+Intent precedes effect. A child promise is created `pending` — durably, fenced — before the child body runs (`createSlotted` then `runWithRetry`, [`src/async/context.ts`][sdk-actx]); the result is a second write. A crash between the two leaves a pending child that the next pass finds and re-runs. Duplicate appends are idempotent on the promise id alone: a second `promise.create` returns the stored row, a second settle returns `200` with the existing terminal state, and neither compares payloads (§2).
+
+Two independent guards remain against concurrent _executions_ of one program: at the top, two `resonate.run("id", …)` calls share the root promise and, if it carries a target, only the first `task.acquire` at a given version wins; at the row level, SQLite serializes on one connection mutex and Postgres uses a single-round-trip CTE per transition ([`crates/resonate-sql/src/lib.rs`][srv-sql]). The Lean machine models each request as atomic; the TLA+ twin removes that and models the objects and the timer wheel as _"two stores, and nothing writes them together"_, with _"no fence"_ on purpose — _"put a compare-and-swap in first and the model can only confirm that a fence is sufficient. Left out, it has to say what goes wrong without one"_ ([`tlap/README.md`][lean-tlap]). Nothing identifies the _pass_ that wrote a record (no incarnation id on a promise), which is consistent with the model: a promise is a fact, not an event, and it has no author.
+
+### 10. Operator recovery and intervention
+
+The operator surface is the promise API itself, and it is deliberately small. Everything a human can do is a wire request the worker could also send; there is no separate administrative vocabulary for writes. The console's own read model says so ([`crates/resonate-core/src/ui.rs`][srv-ui]): _"No `ui.*` request mutates. The console's one write — cancel — is `promise.settle` with `rejected_canceled`, the real request."_
+
+What an operator can do, and how:
+
+- **Supply or override a result by hand.** `promise.settle` on any pending promise (`resonate promise resolve|reject|cancel <id>` in the CLI, [`crates/resonate-cli/src/lib.rs`][srv-cli]). Because the SDK dedups on id, hand-settling `wf:1.3` makes the next pass treat step three as done with that value. There is no edit of an already-settled promise: settle absorbs, and there is no delete.
+- **Cancel.** Settle to `rejected_canceled`; the awaiting `await` rejects and the parent decides. Cancellation is a distinct terminal state from `rejected` and `rejected_timedout`, so a caller can tell them apart, but nothing is done to in-flight work: a worker mid-pass finds out when its next fenced write returns the settled record.
+- **Pause and resume a task.** `task.halt` moves any task not yet fulfilled to `halted` and clears its deadlines; `task.continue` puts it back to `pending` with a fresh retry deadline, which re-dispatches it ([`crates/resonate-server-sqlite/src/lib.rs`][srv-sqlite], `task_halt`/`task_continue`). The Lean catalogue's algebraic note _"halt then continue equals release"_ is the intended semantics ([`spec/02-abstract/properties.lean`][lean-props]). `halted` is the closest thing to a quarantine state: the server will not redeliver it until someone says so.
+- **Inspect.** `promise.get`/`promise.search` (by state, tags, id regex), `task.get`/`task.search`, `schedule.search`, plus the console's `ui.executions.search` (roots, sorted, filtered by status/function/time) and `ui.execution.get` (one whole tree, up to `MAX_MAX_NODES = 5_000`) ([`crates/resonate-core/src/ui.rs`][srv-ui]). The console is compiled into the binary ([`README.md`][srv-readme]). `debug.snap` dumps the entire store, but only when the server runs with `debug` enabled.
+
+What an operator cannot do: resume from a chosen point, rewind, fork, or redrive from step _n_. There is no index to rewind to; the only lever is settling promises, which moves the frontier forward. Skipping a step means resolving its promise with a value you invent. Intervention is partially traceable: a hand-settled promise looks exactly like one a worker settled (same `value`, same `settled_at`; no actor field), while a halt/continue leaves no record at all once the task is fulfilled. Failed executions have no dead-letter: a root whose function keeps throwing is retried per its policy, then rejected, and stays as a `rejected` row until its timeout or forever.
+
+### 11. Suspension and external input
+
+Waiting is the model's native operation — a durable promise _is_ a suspension point — so the primitives are uniform: a remote call (`rpc`), a timer (`sleep`, a promise tagged `resonate:timer` whose own `timeout_at` resolves it), a latent promise (`ctx.promise()`, tagged `resonate:external`), and a detached child's handle. All four are the same thing on the server: a global-scope promise the parent registers a callback on ([`src/async/context.ts`][sdk-actx]). Human-in-the-loop is the documented use of the third ([`doc/knowledge.md`][sdk-knowledge]): _"Use `ctx.promise(...)` to create a promise that can be completed elsewhere. This is useful for interacting with external systems, or human based control gates"_ — the pattern is create the promise, `ctx.run(publish, p.id)` to hand the id out, then await it.
+
+When a pass hits a pending remote, the process does **not** block. The user-facing promise hangs, the pass ends, the SDK sends `task.suspend` with one `promise.register_callback` per awaited id, and the worker drops the frame — _"the parked frame (on suspend) is GC-collectible once this returns"_ ([`src/async/core.ts`][sdk-acore]). There is no threshold and no in-memory wait: every wait, however short, is a suspend and a later replay. The one exception is a remote that is already settled at suspend time, which the server answers with `300` and a preload so the worker resumes immediately without a round trip through `pending`. `suspended` is a first-class persisted task state, observable via `task.get`/`task.search`, and constrained: a suspended task has no lease, no deadlines and no resumes (`well_formed_task_suspended_is_cleared`, [`0001_initial.sql`][srv-pg-mig]).
+
+External input is addressed by promise id, and the id is the only capability: whoever knows `wf:1.3` can settle it. Input that arrives **twice** is absorbed (the second settle returns the existing record). Input that arrives **early**, before the promise exists, gets `404` and is lost — the spec's Lean handler returns `{ status := 404 }` on a missing object ([`external.lean`][lean-external]); there is no mailbox for unmatched signals. Input that **never** arrives is bounded by `timeout_at`: the promise settles `rejected_timedout` (or `resolved`, for a timer), `settled_at = timeout_at` by constraint, and the awaiter is resumed with a rejection. That deadline is a stored column, not a scheduler entry, so the timeout survives any restart and is applied lazily on the next touch or eagerly by the sweep for targeted promises. Attached children's deadlines are clamped to the parent's, so a parent cannot be kept alive by a child; detached ones are not ([`src/async/context.ts`][sdk-actx]). Callers outside the workflow wait the same way: `resonate.get(id)` returns a handle whose result is _"delivered via the durable-promise subscription, never via the in-memory frame"_, using `promise.register_listener` to have the server push an `unblock` message to an address ([`src/async/resonate.ts`][sdk-aresonate]).
 
 ---
 
@@ -279,16 +310,34 @@ What is _not_ tested: crash-at-every-step of a user workflow against a mutated w
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the journaling combinator as the single pure cast, and confirms replay over snapshot.** Resonate journals nothing but promise rows, re-runs the body, and dedups per step; the SDK's `Effects.promiseCreate` cache-then-fence is exactly the "started + completed" seam the design puts around each capability op. Its `preload` is a cheap idea worth stealing: hand the replaying function the settled entries for its branch up front so the first N steps are cache hits.
-- **Argues against name-plus-args-hash keys — partly.** Resonate keys steps by _position_ alone and pays for it with silent misattribution on any reorder (§2, §5). The design's `name + attempt + args-hash` key is strictly more informative: a hash mismatch is a detectable "the program changed" signal Resonate cannot produce. Keep the hash, and make a mismatch an explicit outcome (error, or re-execute-and-reconcile) rather than a dedup.
-- **Argues against treating observations as decisions.** `ctx.date.now()` is `ctx.run(Date.now)`: journaled once, replayed forever. For `release`, `git tag -l` and `HEAD` are the cases where that is wrong, which is why the design re-observes and reconciles by rule table. Resonate has no category for this; the closest thing is the lazy `try_timeout`, a single fact the server re-derives from the clock on every touch. The rule table is a genuine addition, not something to drop.
-- **Confirms that compensation must be explicit and belongs to the program, and adds a useful property.** Resonate's saga is `try/catch` over durable calls, but because compensations are themselves journaled steps, a crash during rollback resumes the rollback. The design's LIFO scope registry should preserve that: a compensation is an op through the row, journaled like any other, so `crash-during-compensation` is just another resume point.
-- **Warns about the concurrency key.** With position-based ids, `Promise.all` is safe only because ids are assigned in source order at issue time, and the runtime has to serialize creates and police stray awaits. The design's keys are name-based, so concurrent ops within one scope collide unless the attempt counter is per name and the ordering of _issuance_ is itself deterministic; write the crash test for two concurrent ops of the same name.
-- **Missing in the design: an interruption-tolerance statement and a lease.** Resonate's spec states the goal as an equivalence with an interruption-free run and derives its three preconditions from it; `release` should state the same thing for its journal (what "equivalent" means when confirmation gates re-ask). And `release` has no notion of two concurrent resumes of one run; a lock file with a fencing token is the one-process analogue of `task.acquire`'s version.
-- **Missing in the design: a fence between "the world moved" and "this run's writes".** Resonate fences every write with the task version. `release`'s equivalent is checking that the tag or GitHub release it is about to create is still absent at write time, not only at observe time — the reconciliation rule should run immediately before each irreversible op, not once at resume.
-- **Testing: adopt the two-oracle shape.** Resonate proves the SDK against the server's durable state (canonical snapshot + root outcome) and the server against a reference model. For `release`, the "canonical snapshot" is the journal plus the world (tags, releases, manifest); crash-at-every-index-then-resume should assert equality of that pair against an uninterrupted run, which is the interruption-tolerance equivalence made executable. Mutate-the-world-between-crash-and-resume is the case Resonate's DST never exercises and is the design's distinctive contribution.
+- **One primitive for four jobs is a genuine simplification.** Steps, waits,
+  external input and child calls are all durable promises, so there is one state
+  machine, one identity rule and one deduplication rule instead of four. A library
+  with separate machinery for each should be able to justify the extra concepts.
+- **Derived ids need no naming discipline and pay for it in legibility.** A key
+  like `root:1.2.3` is stable without asking the author for anything, but it is
+  opaque in the record and misattributes silently under a reorder (§1, §5).
+- **Fencing every write with the task version is what actually makes a second
+  executor safe.** A lease alone leaves a window; the fence closes it. Systems
+  that rely on ownership without fencing are trusting their lease timing.
+- **Stating the correctness goal explicitly is worth imitating.** Resonate's
+  specification defines correctness as equivalence to an interruption-free run and
+  derives its preconditions from that, rather than leaving "what replay
+  guarantees" implicit as most systems do.
+- **Because compensations are themselves journaled steps, a crash during rollback
+  resumes correctly.** This falls out of "everything is a promise" rather than
+  being designed, and it is the property the closure-based compensation designs
+  in this survey lack.
+- **Its testing is the strongest in the survey and sets the bar** (§8): a
+  machine-checked abstract machine with a catalogue of properties, differential
+  testing of the server against a reference model, and deterministic simulation of
+  the SDK with seeded faults. Any one of the three is more than most systems have.
+- **Journaling an observation as though it were a decision is the general trap.**
+  `ctx.date.now()` is a journaled step, so the first run's clock reading is truth
+  forever. That is correct for a timestamp and wrong for anything the outside
+  world may have changed, and the system offers no way to tell them apart.
 
 ---
 
@@ -352,3 +401,9 @@ What is _not_ tested: crash-at-every-step of a user workflow against a mutated w
 [temporal]: ./temporal.md
 [dbos]: ./dbos.md
 [index]: ./index.md
+[lean-tlap]: https://github.com/resonatehq/resonate-specification/blob/6b120adc47a45f5b2e796fede1ae6b245e1a6d66/tlap/README.md
+[sdk-aresonate]: https://github.com/resonatehq/resonate-sdk-ts/blob/a3a3ccf3f92c636afcf51d4f10c4ad44d2b5399b/src/async/resonate.ts
+[sdk-knowledge]: https://github.com/resonatehq/resonate-sdk-ts/blob/a3a3ccf3f92c636afcf51d4f10c4ad44d2b5399b/doc/knowledge.md
+[srv-cli]: https://github.com/resonatehq/resonate/blob/33c7a3f460fc10690b71aad77b06b15ecbc9b7b3/crates/resonate-cli/src/lib.rs
+[srv-sql]: https://github.com/resonatehq/resonate/blob/33c7a3f460fc10690b71aad77b06b15ecbc9b7b3/crates/resonate-sql/src/lib.rs
+[srv-ui]: https://github.com/resonatehq/resonate/blob/33c7a3f460fc10690b71aad77b06b15ecbc9b7b3/crates/resonate-core/src/ui.rs
