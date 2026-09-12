@@ -38,7 +38,7 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `libs/wired/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
+    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `libs/wired/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, `docs/research/algebraic-effects/durable-execution/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
     $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread)
     $(ITEM `--host-system aarch64-linux|x86_64-linux` — on macOS, re-exec the same mode inside an Apple `container` Linux VM, using the matching `packages.<system>.ci` store path bind-mounted from `/nix/store`. The Linux `ci` is realized from a git revision CI has built (`HEAD`, the merge-base with `origin/main`, then `origin/main`), never from the dirty tree; the tests run against the mounted working tree. See `docs/research/linux-on-macos/`)
@@ -206,7 +206,7 @@ struct CliParams
     @(Option(`audit-scope`, description: "With --audit-fences: which side of the config srcExclude split to census - site (default), all, or excluded."))
     string auditScope = "site";
 
-    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, libs/wired/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, the per-subject examples directories under docs/research/platform-ui-guidelines/, and the per-subject examples directories under docs/research/autological-artifacts/."))
+    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, libs/wired/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, docs/research/algebraic-effects/durable-execution/examples/*.d, the per-subject examples directories under docs/research/platform-ui-guidelines/, and the per-subject examples directories under docs/research/autological-artifacts/."))
     bool exampleFiles;
 
     @(Option(`build`, description: "Run dub build for each sub-package defined in the root dub.sdl."))
@@ -1080,6 +1080,7 @@ private string[] standaloneExampleGlobs()
         "docs/research/manim/examples/*.d",
         "docs/research/anchored-overlays/examples/*.d",
         "docs/research/property-tree/examples/*.d",
+        "docs/research/algebraic-effects/durable-execution/examples/*.d",
         "docs/research/platform-ui-guidelines/color-derivation/examples/*.d",
         "docs/research/platform-ui-guidelines/gnome/examples/*.d",
         "docs/research/platform-ui-guidelines/kde/examples/*.d",
