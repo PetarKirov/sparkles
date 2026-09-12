@@ -221,6 +221,107 @@ Replay is the default and the only built-in mechanism for **state**; **position*
 
 Two supported paths. In-process: `MiniNode` in [`MiniNode.cs`][mininode] boots a full `ClusterVNode` with `inMemDb = true` by default, and the server's own suites under `src/KurrentDB.Core.Tests` are written against it. The `--mem-db` option that backs it is deprecated: _"`--mem-db` has been deprecated as of version 25.1.0 and will be removed in a future version to allow us to simplify and unify some core code paths."_ ([db config][dbconfig]; `[Deprecated(...)]` on `MemDb` in [`ClusterVNodeOptions.cs`][vnodeopts]). Out-of-process: the official clients test against a container: _"Integration tests run against a server using Docker. Tests are written using TestContainers and require Docker to be installed."_ with the image chosen by `KURRENTDB_IMAGE` ([Java client][java-client]). There is no simulation of the log itself; the substrate is tested by running it.
 
+### 9. Journal integrity and the single writer
+
+KurrentDB is the purest statement of this dimension in the survey, because
+integrity of an append-only log is the whole product rather than a supporting
+concern.
+
+**Every append can be conditional, and the condition is the stream's length.**
+`ExpectedVersion` is compared against the stream's current version at commit time,
+and the decision procedure returns a typed outcome rather than a boolean — including
+`CorruptedIdempotency` when a re-submission matches an existing event id but not the
+position it should occupy ([`IndexWriter.cs`][indexwriter]). A library that appends
+to a file has the same option available: assert the expected length.
+
+**Idempotency comes in two strengths, and the weaker one is bounded.** With an
+explicit expected version, a re-append of the same event id at the same position is
+recognised and becomes a no-op. Without one, the check falls back to a cache of
+recent writes, which the source states plainly as a _"weak idempotency"_ check that
+looks only at recently written events ([`IndexWriter.cs`][indexwriter]). So
+unasserted appends buy convenience at the cost of a deduplication window, and the
+window is not documented as a guarantee.
+
+**The writer is fenced by a process-level mutex, and that is a different guard.**
+`ExclusiveDbLock` holds a named mutex over the database path
+([`ExclusiveDbLock.cs`][dblock]), which stops a second server instance opening the
+same files. It is orthogonal to `ExpectedVersion`: the lock keeps two processes
+apart, the expected version keeps two logical writers apart. Conflating them is a
+mistake a library can make and this design does not.
+
+**Records are committed in two parts, on purpose.** The transaction file holds
+prepare records followed by a commit record, so a partially written transaction is
+identifiable as one that never committed — the log format itself distinguishes
+"written" from "committed", which is the write-ahead discipline expressed in the
+storage layout rather than in a protocol.
+
+**Chunks carry a version and a minimum compatible version**, so an older server
+refuses a newer chunk format instead of misreading it (§5). That is the same idea as
+a per-record format key, applied at file granularity.
+
+**Nothing records which client wrote an event.** Identity in the record is the event
+id, the stream position and the global position; the writer is not part of it.
+
+### 10. Operator recovery and intervention
+
+The operator surface is broad, and its most interesting feature is that a consumer
+that cannot process a record has somewhere for it to go.
+
+**Parked messages are a real dead-letter queue.** A persistent subscription's
+consumer can negatively acknowledge with retry, park or skip; a parked message goes
+to its own stream, and `ReplayParkedMessages` and `ReplayParkedMessage` exist as
+server operations to put them back ([`PersistentSubscriptionService.cs`][psub-svc],
+[`ParkedMessageOperationResult.cs`][parked-result]). One record failing therefore
+does not stop the subscription or get silently dropped, and an operator can drain
+the parked stream after a fix. Very few systems in this survey have anywhere to put
+a poison record.
+
+**Projections can be reset**, which discards the projection's checkpoint and folded
+state and re-reads from the beginning — the read-model equivalent of a rebuild, and
+the reason a projection's output must be treated as derived rather than as truth.
+
+**Deletion comes in two strengths.** A soft delete makes a stream appear empty while
+its events remain until a scavenge, and a hard delete tombstones the stream so the
+name cannot be reused. Stream metadata adds `$maxCount` and a truncate-before marker
+for bounded retention.
+
+**Scavenging is the space-reclamation operation**, and it is deliberately separate
+from deletion: deleting marks, scavenging removes. That separation is what makes
+deletion cheap and reversible up to the point a scavenge runs.
+
+**Inspection is the product's strong suit.** Any stream can be read forwards or
+backwards, `$all` gives the global order, and system streams expose the store's own
+bookkeeping. Reading a record back needs no cooperation from whatever wrote it.
+
+**What is absent is anything about a computation.** There is no fork, no rewind of a
+program, no cancellation — because there is no program. The operator surface is over
+data, and that is the honest boundary of an event store.
+
+### 11. Suspension and external input
+
+**This dimension does not apply, and the reason is worth stating precisely.** An
+event store has no notion of a program that waits: it accepts appends and serves
+reads. Nothing suspends, nothing resumes, and there is no state meaning "blocked".
+
+**The nearest analogue is a subscription's checkpoint.** A catch-up subscription is
+a reader that remembers its position, so a consumer that dies resumes from its last
+recorded checkpoint rather than from the beginning. That is resumption of a _reader_
+rather than of a computation, and it is the mechanism a durable program's projection
+would use.
+
+**Persistent subscriptions move the checkpoint server-side** and add per-message
+acknowledgement, which converts the consumer's position from its own responsibility
+into shared state. The trade is that ordering is no longer guaranteed across
+consumers.
+
+**External input, from the store's point of view, is just an append.** Whether it
+came from a program, a person, or an integration is not modelled, and no record
+distinguishes them.
+
+**What a durable-execution layer would have to supply on top:** timers, a way to
+address a waiting computation, and a state distinguishing waiting from working. The
+store provides the record and the ordering, and nothing about the control flow.
+
 ---
 
 ## Strengths
@@ -256,16 +357,37 @@ Two supported paths. In-process: `MiniNode` in [`MiniNode.cs`][mininode] boots a
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the idempotence key shape, and sharpens it.** The design's `name + attempt + args hash` corresponds to KurrentDB's `EventId` with the position acting as the attempt. KurrentDB's strong rule matches **id and position**, never the body; so `journal.jsonl` entries should be matched on key and the args hash should be treated as part of the key (a mismatch is a `CorruptedIdempotency`-style refusal), not as data to reconcile.
-- **Confirms expected-version as the single-writer analogue, and shows it is a different tool from a lock file.** `ExclusiveDbLock` is the lock file (one process per database); `ExpectedVersion` is the per-append check that catches the case a lock file cannot: a second `release` run that read the same journal tail and both try to append. Appending to `journal.jsonl` with "expected length = N lines" is cheap and would make the resume path safe against a concurrent resume.
-- **Argues against `Any`-style appends anywhere in the journaling combinator.** KurrentDB's weak idempotency is a cache window. If the combinator ever appends without asserting the journal's current length, a retried step can be journaled twice. Always assert.
-- **Confirms "UI is a projection of the journal", with a concrete pattern for the projection's own state.** The catch-up subscription's client-held checkpoint plus `$ProjectionCheckpoint` (position **and** folded state) is the recorded-offset projection the design wants. The lesson is to checkpoint position always and state optionally, and to make the projection reset a soft-delete plus refold.
-- **Argues for atomic multi-record appends in the journal.** A `started`/`completed` pair, or a step plus the compensation it registers, should land as one write or not at all, the way `MultiStreamAppend` refuses a partial batch. A line-at-a-time `.jsonl` append needs an explicit batch boundary (one line holding several records, or a terminating marker) to get this.
-- **What the design lacks that KurrentDB has: link events and system projections.** `$et-` and `$ce-` streams re-slice the log by type and by category without copying. The `--split` mode's many chained releases are a category; a journal viewer that shows "all confirmation gates" or "all steps of release 3" is a link-event projection. Cheap to add once records carry a type and a category.
-- **What KurrentDB lacks that the design has: compensations and reconciliation.** KurrentDB has no compensation registry and no journal-versus-world rule table, because it never observes a world. Nothing here argues against those parts of the design; the event store is the substrate under them, not a replacement.
-- **Testing: the substrate is not simulated.** KurrentDB tests its log by running a real in-process node, and its clients by running a container. The design's crash-at-every-event-index tests are a layer above what any event store provides and should be kept; but the journal file itself deserves an in-process "node" (open, append with expected length, read from position) with its own tests, as `MiniNode` is to `ClusterVNode`.
+- **Assert the expected length on every append.** `ExpectedVersion` is compared at
+  commit and returns a typed decision rather than a boolean (§9), which is the same
+  option a library appending to a file has and usually declines to take.
+- **Keep the process lock and the append condition separate.** A named mutex over the
+  database stops a second process; the expected version stops a second logical
+  writer. They solve different problems, and a library that ships only a lock file
+  has solved the first.
+- **Unasserted appends should not exist in a durable path.** Without an expected
+  version, deduplication degrades to a recent-writes cache — a window rather than a
+  guarantee (§9). If the caller cannot state what it expects, the write should not be
+  idempotent by accident.
+- **A same-id-different-position re-submission is corruption, not a duplicate.**
+  Naming that case and refusing it is better than treating every repeat as benign.
+- **Distinguish written from committed in the format itself.** Prepare records
+  followed by a commit record make a partially written transaction identifiable
+  without a checksum, which is the write-ahead rule expressed as layout.
+- **A poison record needs somewhere to go** (§10). Parking a message that a consumer
+  cannot process, on its own stream, with an operation to replay it later, is the
+  dead-letter design most systems in this survey lack entirely.
+- **Separate marking from reclaiming.** Deleting a stream and scavenging the space
+  are different operations, which is what makes deletion cheap and recoverable up to
+  the scavenge.
+- **A reader's checkpoint is the projection primitive** (§11): the consumer records
+  its position and resumes from it. Any library building a read model over its record
+  needs exactly this, and nothing more.
+- **The boundary of an event store is instructive.** It provides the record and the
+  ordering and deliberately nothing about control flow — no timers, no addressing of a
+  waiting computation, no waiting state. Those are the durable-execution layer's job,
+  and seeing them absent here clarifies what that layer actually adds.
 
 ---
 
@@ -347,3 +469,5 @@ Two supported paths. In-process: `MiniNode` in [`MiniNode.cs`][mininode] boots a
 [idempotence]: ./idempotence.md
 [wal]: ./write-ahead-logging.md
 [index]: ./index.md
+[parked-result]: https://github.com/kurrent-io/KurrentDB/blob/38fc23c5e971ee186871c03ffe94526be07c556c/src/KurrentDB.Core/Services/PersistentSubscription/ParkedMessageOperationResult.cs
+[psub-svc]: https://github.com/kurrent-io/KurrentDB/blob/38fc23c5e971ee186871c03ffe94526be07c556c/src/KurrentDB.Core/Services/PersistentSubscription/PersistentSubscriptionService.cs

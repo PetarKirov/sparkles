@@ -189,6 +189,118 @@ Orleans refuses to choose, and the refusal is the finding. `StateStorage` is sna
 
 Integration-first, with in-memory storage and a real cluster in-process. `TestCluster` and the newer `InProcessTestCluster` ([testing][doc-testing], [`TestCluster.cs`][test-cluster]) start silos in the test process; the event-sourcing fixture registers all three providers plus `AddMemoryGrainStorageAsDefault` and a `FaultInjectionMemoryStorage` with a 15 ms latency ([`EventSourcingClusterFixture.cs`][es-fixture], [`FaultInjectionStorageProvider.cs`][fault-storage]). `Orleans.Journaling` tests run over `VolatileJournalStorageProvider` ([`VolatileJournalStorage.cs`][volatile], [`DurableStateAndTcsRecoveryTests.cs`][journaling-recovery-tests]) and check `Grain_State_Should_Persist_Between_Activations` ([`DurableGrainTests.cs`][durable-grain-tests]). The adaptor itself has unit tests that drive the protocol directly: a conditional range that observes the activation read advancing the version completes `false` and removes the whole range; a notification arriving during a blocked write is applied in the next worker cycle; a throwing view-changed callback is reported, not propagated ([`PrimaryBasedLogViewAdaptorTests.cs`][pbla-tests]). There is no crash-at-every-index harness and no deterministic scheduler; the `PersonGrainTests` comment above is the admission.
 
+### 9. Journal integrity and the single writer
+
+Orleans has the strongest runtime single-writer guarantee in the survey and,
+because it cannot rely on that guarantee alone, also ships one of its most
+interesting integrity tricks.
+
+**Single-writer is the activation, and it is a platform property.** A grain has at
+most one live activation cluster-wide, and the turn-based model means that
+activation processes one request at a time. So "two writers for one entity" is not
+an ordinary case; it is a failure of placement, which happens during a silo
+failure or a network partition.
+
+**The e-tag is the conditional guard.** Grain state is written through
+`IGrainStorage` with an e-tag carried in `GrainStateWithMetaData`; a write whose tag
+does not match the stored one is rejected, which is what turns a stale activation's
+write into an error rather than a lost update.
+
+**Lost acknowledgements get their own mechanism, and it is a bit vector.** The
+metadata carries a `WriteVector` whose _"Bits are toggled when writing, so that the
+retry logic can avoid appending an entry twice when retrying a failed append"_
+([`GrainStateWithMetaData.cs`][gswm]). The problem it solves is precisely
+the started-without-completed ambiguity: an append whose acknowledgement was lost
+cannot be distinguished from one that never landed, so the writer flips a bit,
+re-reads, and compares. That is a cheaper answer than a full intent record, and it
+works only because the write is an idempotent replacement of a single object
+rather than an append to a log.
+
+**The log-storage provider writes the whole event list as one object**, which makes
+every append atomic by construction and is also why the documentation warns it is
+not suitable for large streams (§7). Atomicity and scalability are traded directly
+against each other here.
+
+**The newer journaling package appends instead**, writing JSON Lines to an
+`IJournalStorage` with snapshot replacement, and it carries a per-entry format key
+so a change of encoding forces a fresh snapshot (§5).
+
+**No writer identity is recorded**, and nothing checks on read which activation
+produced an entry. The e-tag prevents the bad write; it leaves no trace that one
+was attempted.
+
+**Torn writes are the storage provider's problem**, as with every pluggable-provider
+design.
+
+### 10. Operator recovery and intervention
+
+Orleans is a framework rather than a platform, and its recovery surface is
+correspondingly thin — with one exception that is unusual enough to be worth
+naming.
+
+**Nothing forks, rewinds, or resets a grain's history.** Recovery means activation:
+read the state or replay the log, and continue. There is no operation that resumes
+from a chosen version with a new identity.
+
+**Retired state is quarantined rather than deleted.** The journaling package tracks
+states _"that are not registered via user-code anymore, until time-based purging
+has elapsed"_, with the note that _"Resurrecting of retired states is supported"_
+and a default grace period of seven days
+([`JournaledStateManager.cs`][jsm],
+[`JournaledStateManagerOptions.cs`][orl-journal-opts]). That is a genuine
+quarantine — the one mechanism in this survey that keeps a record the code no
+longer claims, on the assumption that the omission may have been a mistake.
+
+**Conditional events give the caller the decision.** A conditional `RaiseEvent`
+returns false when the version moved under it, so the grain's own code — not an
+operator — decides whether to retry, merge, or give up. Unconditional writes retry
+until they succeed.
+
+**Cancellation and pausing do not apply**, for the same reason as in Pekko: a grain
+is not a run with a lifecycle. Deactivation is invisible to correctness.
+
+**Inspection is programmatic.** `RetrieveConfirmedEvents` reads back a range for a
+grain that opts into it, and the log-consistency providers differ in whether the
+events are even retained to be read. There is no tool, no query surface, and no
+cross-grain listing.
+
+**A fold that throws is swallowed.** The runtime catches an exception from a
+transition method, logs it, and advances the version regardless — so a record the
+code can no longer apply produces a silently divergent state rather than a stopped
+grain. That is the most consequential absence on this dimension, because it means
+the failure is invisible exactly when an operator would most want to be told.
+
+### 11. Suspension and external input
+
+**A grain does not suspend, and the reason is the same as Pekko's:** it is an
+addressable entity that exists whether or not it is activated, so waiting is not a
+state it enters but the absence of a message. Activation on demand is the whole
+mechanism — _"actors are purely logical entities that always exist, virtually"_ —
+and replay happens when a message arrives, not when a wait ends.
+
+**Delayed confirmation is the nearest thing to a wait**, and it is about batching
+rather than about external input: a grain may accept several events before
+confirming them to storage, trading durability latency for throughput, with
+`TentativeState` exposing the unconfirmed view meanwhile.
+
+**Reentrancy is the concurrency knob, not a suspension model.** A `[Reentrant]`
+grain may interleave requests at await points, which is what allows a grain to make
+a call without blocking every other caller — but it is in-memory interleaving, and
+nothing about it is persisted.
+
+**External input is a grain call or a stream event**, addressed by grain id. Delivery
+semantics come from the messaging layer rather than from persistence, so duplicate
+and lost messages are the caller's problem in both directions.
+
+**There is no durable timer in the persistence model.** Reminders exist in the
+Orleans runtime and are durable, but they are a separate facility from event
+sourcing, so a journaled program that wants to wake later composes two mechanisms
+rather than using one.
+
+**Human-in-the-loop is not modelled.** An approval is a call to a grain, and the
+fact that one is outstanding is state the author writes like any other — the same
+conclusion the actor model reaches everywhere in this survey.
+
 ---
 
 ## Strengths
@@ -222,15 +334,39 @@ Integration-first, with in-memory storage and a real cluster in-process. `TestCl
 | `Orleans.Journaling`: append entries, snapshot on compaction or migration | Bounded recovery time with an append-only hot path                                           | The append-vs-snapshot policy is a `TODO`; snapshots are whole-journal `ReplaceAsync`                                           |
 | Transactions as prepared versions, not a journal                          | ACID across grains without a central coordinator                                             | Unknown outcome on non-abort failure; no history                                                                                |
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the per-checkout lock, and names its real job.** Orleans' single activation per grain is the same invariant as `release`'s one-writer-per-checkout: the lock is not a concurrency convenience, it is what makes "the journal is the only history" true. Orleans additionally shows what happens when the invariant is briefly violated (duplicate activations during a partition): the _storage_ e-tag catches it, not the lock. The sparkles journal should carry an e-tag-shaped fence too (journal length or last-entry hash checked on append), so a second `release` process on the same checkout is rejected at the write, not just at the lock file.
-- **`started`/`completed` is stronger than tentative/confirmed, and the difference is exactly the write vector.** Orleans has no "started" record; it needs the flip-bit trick to recover a lost ack because nothing durable says "I attempted this". The sparkles design's `started` entry _is_ that durable attempt marker, per op rather than per batch. Keep it. The flip bit is a reminder that `started` alone does not answer "did it land?" for an external effect; the reconciliation rule table still has to re-observe (does the tag exist? does the release exist?) for every `started`-without-`completed` op.
-- **Snapshot versus log: Orleans argues for journal-plus-projection, from both directions.** `StateStorage` shows what a snapshot-only design loses (history, `RetrieveConfirmedEvents`, radical state-class changes); `LogStorage` shows what a naïve log costs (whole-list I/O). The sparkles choice, an append-only `journal.jsonl` with the UI as a projection, is `Orleans.Journaling`'s shape, and that package's per-entry format key plus forced-snapshot-on-migration is the versioning mechanism the sparkles design currently lacks: record the producing code version on every entry, and treat a version mismatch on resume as "re-project, do not replay decisions".
-- **Argues against relying on discipline for purity of the fold.** Orleans documents that `Apply` must be pure, does not check it, and swallows its exceptions. The sparkles design's "journaling combinator is the single pure-cast" is the same bet in a language that can partly enforce it: make the projection and the replay-decode functions `pure` in D, and make a throw during replay a hard stop, not a logged warning.
-- **Conditional events are the model for confirmation gates and observations.** `RaiseConditionalEvent` is "apply this only if the world is still at the version I decided against"; that is precisely a re-observed observation with an expected value. The reconciliation rule table can be expressed as conditional appends: an observation entry records the expected world value, and resume re-observes and either confirms (`true`, continue) or fails the entry (`false`, re-ask), with the rule table deciding which of the two an observation kind gets.
-- **Missing in Orleans, present in the design: compensation and crash-at-every-index testing.** Orleans' event-sourcing layer has neither, and its transactions layer has undo but no history. The `PersonGrainTests` comment ("the interleaving … is nondeterministic") is the argument for sparkles' `TestClock`/`SimNet`/`SimProc` doubles: the crash-at-every-event-index harness only works because the capability row makes the schedule deterministic, which Orleans' in-process test cluster cannot offer.
-- **Do not copy the retry-forever default.** An unconditional Orleans write blocks the grain until storage returns; `release` has a human on the other end. Bounded retry with the journal recording the last attempt, then a confirmation gate, is the right translation.
+- **A bit vector is a cheap answer to the lost acknowledgement** (§9). Flipping a
+  bit before writing, then re-reading and comparing, lets a writer tell "my append
+  landed and the ack was lost" from "it never landed" — without an intent record.
+  It works only because the write replaces one object rather than appending, which
+  is precisely the trade a library makes when it chooses a log.
+- **An e-tag is the minimum conditional guard**, and it is orthogonal to whatever
+  runtime guarantee says there should only be one writer. Orleans has the strongest
+  such guarantee in the survey and still needs the e-tag.
+- **Quarantine a record the code no longer claims, rather than deleting it** (§10).
+  A retirement tracker with a grace period and explicit support for resurrection is
+  the only mechanism of its kind here, and it encodes a useful assumption: a state
+  that disappeared from the code may be a mistake rather than an intention.
+- **Swallowing a fold exception and advancing anyway is the wrong default** (§10).
+  It converts a record the code cannot apply into silent divergence. Making the
+  fold total, and treating a throw during replay as a hard stop, is the opposite
+  and better.
+- **Refusing to choose between snapshot and log has a real cost.** Three
+  log-consistency providers means three sets of semantics, and the documentation
+  has to warn that one of them is unsuitable for production (§7). A library is
+  better served by one mechanism plus a bounded replay than by a menu.
+- **A format key per record with a forced re-snapshot on change** is a compact
+  versioning mechanism (§5), and it is the piece the older provider lacks.
+- **Conditional writes that return a boolean, rather than throwing, put the merge
+  decision where the domain knowledge is** (§10) — in the program, not in the
+  storage layer or an operator's hands.
+- **Virtual, always-existing entities make suspension a non-concept** (§11), which
+  is elegant and means every waiting concern — timers, approvals, outstanding
+  requests — becomes state the author persists. A library that wants durable waits
+  must supply them; it will not get them from this model.
+
+---
 
 ## Sources
 
@@ -292,3 +428,4 @@ Integration-first, with in-memory storage and a real cluster in-process. `TestCl
 [temporal]: ./temporal.md
 [catalog-index]: ./index.md
 [topic-index]: ../index.md
+[orl-journal-opts]: https://github.com/dotnet/orleans/blob/cff49293e9132dc889428c376fffee4a4cc95653/src/Orleans.Journaling/JournaledStateManagerOptions.cs
