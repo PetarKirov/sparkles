@@ -181,6 +181,34 @@ Snapshot, unreservedly. What it buys: no determinism rules, no step API, arbitra
 
 Developer-facing testing is a dashboard form: pick a task, enter a JSON payload, press "Run test" ([`run-tests.mdx`][doc-tests-src]). There is no in-process test harness for a task function in the SDK. The engine itself is tested heavily against real Postgres and Redis via testcontainers: `checkpoints.test.ts`, `attemptFailures.test.ts`, `batchTriggerAndWait.test.ts` and dozens more under [`engine/tests/`][engine-tests], with a `RaceSimulationSystem` that lets a test park a code path at a named racepoint (`waitForRacepoint({ runId })` is called at the top of `blockRunWithWaitpoint`) to interleave transitions deterministically ([`raceSimulationSystem.ts`][engine-race], [`waitpointSystem.ts`][engine-waitpoint]). The crash-at-every-index style of test has no analogue because there is no index.
 
+### 9. Journal integrity and the single writer
+
+There is no journal of effects to keep intact; the durable artefacts are a CRIU image on disk and a Postgres status log. So the integrity question splits in two.
+
+**The image** has no integrity story visible in this repository: `TaskRunCheckpoint` stores a `type`, a `location` and an optional `imageRef`, and the checkpoint service behind `TRIGGER_CHECKPOINT_URL` is external to the tree ([`schema.prisma`][schema], [`apps/supervisor/src/env.ts`][sup-env]). Whether a torn image is detected before restore cannot be established from source; what the engine does know is that a `SUSPENDED` snapshot with no `checkpointId` is unrecoverable and throws rather than re-executing ([`waitpointSystem.ts`][engine-waitpoint]).
+
+**The status log** is engineered carefully, and its guards are worth listing because they are the closest thing the system has to a single-writer discipline. Every mutating transition runs inside `runLock.lock(name, [runId], …)`, a Redis Redlock lease ([`locking.ts`][engine-locking]); this is the process-level lock. Distinct from it, every transition names the snapshot it believes is current: `createCheckpoint` rejects a request whose `snapshotId` is neither the latest snapshot nor, for `QUEUED_EXECUTING`, the previous one ([`checkpointSystem.ts`][engine-checkpoint]); `heartbeatRun` stops extending the heartbeat when _"no longer the latest snapshot"_ and ignores a heartbeat whose `workerId` does not match the snapshot's ([`executionSnapshotSystem.ts`][engine-snapshot]). The snapshot rows form a chain through `previousSnapshotId`, carry the `workerId`/`runnerId` that produced them, and an invalid transition is kept as a row with `isValid: false` and an `error` so the failed attempt to move is itself recorded ([`schema.prisma`][schema]). The writer identity is therefore stored and checked on the heartbeat path.
+
+Write-ahead intent exists in one place: completing a waitpoint from the API path first arms a redelivery job (`ensureWaitpointCompleted`) via `enqueueOnce`, _"Armed BEFORE the first mutation, so a committed completion can never exist without a durable watcher"_; the replay is idempotent because the completion is a status-guarded update and `continueRunIfUnblocked` is debounced by job id ([`waitpointSystem.ts`][engine-waitpoint]). Duplicate appends elsewhere are keyed by `Waitpoint.idempotencyKey` (unique per environment) and `TaskRun.idempotencyKey` (unique per environment and task). Nothing is appended atomically across a step and its result, because there are no steps.
+
+### 10. Operator recovery and intervention
+
+The operator surface is the dashboard and the management API, and it operates on runs, never on points inside a run. A run can be cancelled (`runs.cancel`): execution stops, the run will not be retried, and in-progress children are cancelled too ([`runs.mdx`][doc-runs-src]); cancellation is a distinct final status (`CANCELED`) from failure, and `PENDING_CANCEL` is a first-class execution status ([`schema.prisma`][schema]). A run can be "replayed", which creates a **new** run with the same payload on the latest version ([`replaying.mdx`][doc-replay-src]); bulk replay and bulk cancel over a filter exist in the dashboard and SDK ([`bulk-actions.mdx`][doc-bulk-src]). A stuck run is handled by the platform, not the operator: a missing heartbeat for five minutes fails it with `TASK_RUN_STALLED_EXECUTING` ([`heartbeats.mdx`][doc-hb-src]), a queued run past its `ttl` becomes `EXPIRED`, and an out-of-memory crash becomes `CRASHED` ([`schema.prisma`][schema]).
+
+What does not exist: resuming from a chosen point, editing or supplying a recorded result by hand, skipping a step. There is no step to point at, and a CRIU image cannot be edited. The nearest affordance is completing a `MANUAL` waitpoint by hand through `POST /api/v1/waitpoints/tokens/{waitpointId}/complete`, which supplies the input a run is blocked on rather than a result it computed ([`management/waitpoints/complete.mdx`][doc-wpcomplete-src]). `TaskRunStatus.PAUSED` is declared as _"paused by the user, and can be resumed by the user"_ in the schema, but no documented user action produces it at this commit.
+
+Inspection is rich and traceable: `runs.retrieve` returns the run's status, attempts and output; the dashboard shows the OpenTelemetry trace and the snapshot chain's `description` strings; every operator action lands as a new `TaskRunExecutionSnapshot` row with a description, so intervention is visible after the fact ([`runs.mdx`][doc-runs-src], [`schema.prisma`][schema]). There is no dead-letter queue; the final statuses are the quarantine.
+
+### 11. Suspension and external input
+
+This is where Trigger.dev is richest, because the whole architecture is organised around the wait. The primitives are four `WaitpointType`s: `DATETIME` (`wait.for`, `wait.until`), `MANUAL` (`wait.forToken`, and `inputStream.wait()` built on it), `RUN` (`triggerAndWait`) and `BATCH` (`batchTriggerAndWait`) ([`schema.prisma`][schema], [`wait.mdx`][doc-wait-src]). A `Waitpoint` is a first-class row with a `status` of `PENDING` or `COMPLETED`, an `output`, and a join table to the runs it blocks; the run's own status while blocked is the user-visible `WAITING_TO_RESUME` and, internally, `EXECUTING_WITH_WAITPOINTS` or `SUSPENDED` ([`schema.prisma`][schema]). A caller can observe all of it through `runs.retrieve` and the waitpoint management API.
+
+Whether the process ends is a function of elapsed time, and the thresholds are documented rather than incidental: under 5 s a duration wait is a local `setTimeout` (`DURATION_WAIT_CHARGE_THRESHOLD_MS`, [`wait.ts`][sdk-wait]); above it the run is billed as waiting but the process is kept alive; at 60 s the process is checkpointed and its concurrency slot released ([`paused-execution-free.mdx`][doc-paused-src], [`queue-concurrency.mdx`][doc-qc-src]). `triggerAndWait` checkpoints as soon as the child is on a different queue, to avoid environment deadlock ([`queue-concurrency.mdx`][doc-qc-src]).
+
+External input is addressed by a token: `wait.createToken({ timeout })` returns an id that any party completes by SDK or HTTP; `wait.forToken(id)` blocks on it. The timeout is stored on the waitpoint itself as `completedAfter`, so it is durable, and it surfaces to the program as an `ok: false` result that `.unwrap()` turns into a thrown timeout error ([`wait-for-token.mdx`][doc-token-src], [`waitpointSystem.ts`][engine-waitpoint]). Input that arrives **twice** is absorbed by the status-guarded completion update, so the first writer's output wins ([`waitpointSystem.ts`][engine-waitpoint]). Input that arrives **early**, before the process has registered its resolver, is parked in the runtime: `waitpointsByResolverId` _"Stores waitpoints that arrive before their resolvers have been created"_ ([`sharedRuntimeManager.ts`][rt-shared]). Input that **never** arrives is the timeout's job; a token created without one waits indefinitely. Human-in-the-loop approval is the documented headline use of tokens, and the React `useWaitToken` hook exists for it ([`wait-for-token.mdx`][doc-token-src]).
+
+The constraint that shapes all of this is the single suspension point: because suspension means "freeze the process here", the runtime refuses a second concurrent wait outright ([`preventMultipleWaits.ts`][rt-prevent]). A replay system can afford several outstanding waits; a snapshot system needs exactly one place to stop.
+
 ---
 
 ## Strengths
@@ -215,17 +243,16 @@ Developer-facing testing is a dashboard form: pick a task, enter a JSON payload,
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Argues against the replay design's central bet, from the outside.** Trigger.dev shows that "durable" can mean "the OS keeps my stack" and that users will accept "retry re-runs everything" if child work is idempotent. `release` cannot take this road: it is a CLI on a developer's machine, not a CRIU-capable cluster, and its hour-long run is mostly waiting on git, GitHub and an LLM, none of which a process image can freeze. The snapshot option is closed for us; the catalog should record why, not just that.
-- **Confirms that the journal must key effects, not status.** Trigger.dev's status log is exactly what the design's `journal.jsonl` must **not** be: a list of transitions with human descriptions. It cannot answer "did the tag get pushed"; only an effect-keyed journal (name + attempt + args hash) can. The `TaskRunExecutionSnapshot.previousSnapshotId` chain is, however, a good model for the append-only link and the stale-writer check.
-- **Confirms the attempt counter in the key.** Trigger.dev's `"attempt"` idempotency scope is the same idea as the design's attempt counter: a retried step may legitimately want a fresh child while a resumed step wants the old one. The design should let a step choose which, per call, the way `scope` does.
-- **Warns about the "one wait at a time" cliff.** `preventMultipleWaits` exists because a snapshot needs one suspension point. A replay journal does not have that constraint, but the design's concurrent `--split` release chains still need a rule for how parallel ops are keyed; Trigger.dev's `batchIndex` ordering (results returned in submission order regardless of completion order) is the simplest correct answer.
-- **Its version story is a warning, not a model.** Locking a run to the code it started on is trivial when the state is a process image and impossible for `release`, whose journal must be read by newer code after a fix. The design's reconcile-by-rule-table is the right answer; Trigger.dev confirms that the only alternative is "start a new run".
-- **Missing in the design, present here: the snapshot-id guard.** Every write in the run engine names the snapshot it believes is current and is rejected otherwise. The journaling combinator should do the same: a resumed `release` should refuse to append if the journal's last event id is not the one it read at resume, which is the cheap defence against two resumes of the same run.
-- **Confirms "compensation is explicit-only", by having none.** Trigger.dev ships no saga primitive and its users cope with idempotency keys. The design's LIFO scope compensations are strictly more than this; the finding is that the absence is survivable only because every retry restarts from a clean slate, which `release` cannot afford (a half-published GitHub release is not idempotent).
-
----
+- **Snapshotting is a substrate choice, not a library choice.** Trigger.dev can skip step identity, determinism rules and history versioning only because it owns CRIU-capable hosts, a seccomp profile and a checkpoint service, and even then it cannot offer the feature to self-hosters ([`self-hosting/docker.mdx`][doc-selfhost-src]). A library that runs inside its consumer's process has no such lever; its durability must be a journal of effects. The subject is a clean demonstration of what that journal is buying.
+- **A status log is not an effect journal.** `TaskRunExecutionSnapshot` is well engineered (chained, writer-stamped, guarded by snapshot id, invalid moves recorded) and still cannot say whether any particular side effect happened; it records transitions of the run, not results of calls. A library should keep both and not confuse them: the run-state chain for liveness and operator visibility, the effect journal for resume.
+- **Guard every write with the last-seen record id, independently of the lease.** The engine's pattern is worth copying verbatim: a Redlock lease around each transition, plus a snapshot-id check inside it, so a slow writer that outlived its lease is still rejected ([`checkpointSystem.ts`][engine-checkpoint], [`executionSnapshotSystem.ts`][engine-snapshot]). A file-backed journal can do the same by conditioning an append on the expected length or last event id.
+- **Scope idempotency to the attempt, and let the caller choose.** The `"run"` / `"attempt"` / `"global"` scopes on `idempotencyKeys.create` are the smallest complete vocabulary for "should this retry reuse the old child or start a fresh one" ([`idempotency.mdx`][doc-idem-src]). A library's step key should expose the same three choices rather than baking one in.
+- **Model waits as first-class persisted records with a durable timeout.** The `Waitpoint` row (type, status, output, `completedAfter`, idempotency key, join table to blocked runs) is the most reusable design in the subject. Early input is parked until the waiter registers; duplicate input is absorbed by a status-guarded update; a timeout is data on the waitpoint, not a timer in a process ([`schema.prisma`][schema], [`sharedRuntimeManager.ts`][rt-shared], [`waitpointSystem.ts`][engine-waitpoint]). Any library that offers external events, tokens or approvals should land on this shape.
+- **Thresholds for "keep the process" versus "release it" belong in the design, not the deployment.** The 5 s billing line and the 60 s checkpoint line are documented constants that change what a wait costs and what it holds ([`paused-execution-free.mdx`][doc-paused-src]). A replay library has an analogous decision, whether a short wait yields to the loop or ends the execution, and should state it as plainly.
+- **Absence of memoization is a real cost, and the docs are honest about it.** "It starts from the beginning, but leverages cached results for completed subtasks" ([`how-it-works.mdx`][doc-hiw-src]) means every local side effect repeats on retry unless the developer moved it into a child task. A library with a step API is strictly more capable here; the trade is that it must then answer questions 1, 3 and 5, which Trigger.dev never has to.
+- **One outstanding wait is a snapshot constraint, not a general one.** `preventMultipleWaits` exists because a frozen process needs one stopping point ([`preventMultipleWaits.ts`][rt-prevent]). A replay library should not inherit the restriction; it should instead define how concurrently outstanding waits are keyed and ordered on resume, which the subject's `batchIndex` ordering answers for the batch case only.
 
 ## Sources
 
@@ -238,6 +265,8 @@ Developer-facing testing is a dashboard form: pick a task, enter a JSON payload,
 - [`internal-packages/run-engine/src/engine/systems/waitpointSystem.ts` — `blockRunWithWaitpoint`, `continueRunIfUnblocked`][engine-waitpoint]
 - [`internal-packages/run-engine/src/engine/systems/runAttemptSystem.ts` — `attemptFailed`, next attempt number, queue vs immediate retry][engine-attempt]
 - [`internal-packages/run-engine/src/engine/retrying.ts` — `RetryOutcome`][engine-retrying]
+- [`internal-packages/run-engine/src/engine/locking.ts` — Redlock `runLock`][engine-locking]
+- [`internal-packages/run-engine/src/engine/systems/executionSnapshotSystem.ts` — `createExecutionSnapshot`, `heartbeatRun`][engine-snapshot]
 - [`internal-packages/run-engine/src/engine/systems/raceSimulationSystem.ts` — racepoints for tests][engine-race]
 - [`internal-packages/run-engine/src/engine/tests/` — engine test suite][engine-tests] ([`checkpoints.test.ts`][engine-test-ckpt], [`attemptFailures.test.ts`][engine-test-fail], [`batchTriggerAndWait.test.ts`][engine-test-batch])
 - [`packages/core/src/v3/workers/taskExecutor.ts` — `#callRun`][core-executor]
@@ -260,6 +289,7 @@ Developer-facing testing is a dashboard form: pick a task, enter a JSON payload,
 - [Docs: Versioning][doc-versioning] ([source][doc-versioning-src]) · [Version skew protection][doc-skew-src] · [Replaying][doc-replay-src]
 - [Docs: Queue concurrency][doc-qc] ([source][doc-qc-src]) · [Triggering][doc-trigger-src]
 - [Docs: Run tests][doc-tests-src] · [Self-hosting with Docker][doc-selfhost-src] · [AI chat: how it works][doc-aichat-src]
+- [Docs: Runs][doc-runs-src] · [Bulk actions][doc-bulk-src] · [Heartbeats][doc-hb-src] · [Complete a waitpoint token][doc-wpcomplete-src]
 - Related: [Temporal][temporal] · [Inngest][inngest] · [catalog index][index] · [algebraic-effects topic][topic]
 
 <!-- References -->
@@ -275,6 +305,8 @@ Developer-facing testing is a dashboard form: pick a task, enter a JSON payload,
 [engine-waitpoint]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/systems/waitpointSystem.ts
 [engine-attempt]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/systems/runAttemptSystem.ts
 [engine-retrying]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/retrying.ts
+[engine-locking]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/locking.ts
+[engine-snapshot]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/systems/executionSnapshotSystem.ts
 [engine-race]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/systems/raceSimulationSystem.ts
 [engine-tests]: https://github.com/triggerdotdev/trigger.dev/tree/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/tests
 [engine-test-ckpt]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/internal-packages/run-engine/src/engine/tests/checkpoints.test.ts
@@ -317,6 +349,10 @@ Developer-facing testing is a dashboard form: pick a task, enter a JSON payload,
 [doc-tests-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/run-tests.mdx
 [doc-selfhost-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/self-hosting/docker.mdx
 [doc-aichat-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/ai-chat/how-it-works.mdx
+[doc-runs-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/runs.mdx
+[doc-bulk-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/bulk-actions.mdx
+[doc-hb-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/runs/heartbeats.mdx
+[doc-wpcomplete-src]: https://github.com/triggerdotdev/trigger.dev/blob/66ff818eb41fab762bd4f615a42d30b559db59f0/docs/management/waitpoints/complete.mdx
 [temporal]: ./temporal.md
 [inngest]: ./inngest.md
 [index]: ./index.md

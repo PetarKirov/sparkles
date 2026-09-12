@@ -250,9 +250,8 @@ event onto a freshly deserialized state equals folding it onto the live one.
 
 ### Journal versus world
 
-The question this catalog exists to answer for `sparkles`: when the recorded
-journal and the current state of the outside world disagree, which is
-authoritative?
+When the recorded journal and the current state of the outside world disagree,
+which is authoritative?
 
 Every replay engine surveyed answers **the journal**, and can do so only because
 it forbids the program from observing the world outside an activity. The world

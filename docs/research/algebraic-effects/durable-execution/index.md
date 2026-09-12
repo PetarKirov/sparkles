@@ -6,10 +6,13 @@ everything else. The technique sits directly downstream of algebraic effects —
 the journaling layer is a handler over an effect boundary — but it grew up in a
 different literature, and the two have barely met.
 
-This catalog exists to inform a concrete design: rewriting the
-[`release`](../../../specs/release/SPEC.md) tool as one durable program over
+The survey is deliberately application-neutral: it reads each system on its own
+terms and judges it by what its own users need. `sparkles` has no durable-
+execution layer today, and the gap between the state of the art and what
 [`sparkles:event-horizon`](../../../specs/event-horizon/SPEC.md)'s capability
-row, so that every significant step is a resumption point.
+row already provides is recorded in the [comparison][comparison]'s delta table —
+but no consumer's requirements shaped which questions were asked or which
+answers were judged good.
 
 **Last reviewed:** September 12, 2026.
 
