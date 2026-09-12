@@ -195,6 +195,118 @@ Both, layered. `Live` is pure replay and _"perfectly appropriate for short strea
 
 There is no in-memory store: the testing page's examples open a real `DocumentStore` against a connection string and the integration page starts PostgreSQL in Docker ([`docs/events/projections/testing.md`][doc-testing], [`docs/testing/integration.md`][doc-integration]). The recommended shape is _"integration ('social') testing as much as possible and test your projection code through Marten itself"_. For a live projection the test appends events and calls `AggregateStreamAsync`; for an inline one it loads the persisted document; for async ones it runs the daemon in `Solo` mode and waits for non-stale data. Because deciders return events, the decision logic itself is unit-testable without a database, which is the split Wolverine's guide argues for. Wolverine's tracked session closes the async gap: `InvokeMessageAndWaitAsync` _"will not return until the other messages that are routed locally are finished processing or the test times out"_ and aggregates any handler exceptions ([Wolverine testing guide][wolverine-testing]). Nothing resembles crash-at-every-index testing; the daemon's correctness under crashes rests on the compare-and-set progression write and on rebuilds being idempotent.
 
+### 9. Journal integrity and the single writer
+
+Marten's integrity story is PostgreSQL's, and its most valuable contribution to this
+survey is a precisely documented account of how an optimistic version check can
+still go wrong.
+
+**The conditional append is a version comparison, and the unique index enforces it.**
+A stream's expected version is checked at append time and violated appends raise
+`MT003`, with the `(stream_id, version)` unique index as the backstop (§1). This is
+the same mechanism as KurrentDB's expected version, expressed as a database
+constraint rather than as a storage decision.
+
+**The race that survives a version check is written down.** With `READ COMMITTED`
+isolation, _"two concurrent transactions both pass the version check before either
+commits, both call nextval(), and the loser fails with a 23505 duplicate key
+violation — leaving a permanent gap in `mt_events_sequence` that stalls
+`QueryForNonStaleData`"_ ([`EventGraph.cs`][event-graph]). The opt-in fix adds
+`FOR UPDATE` to the version select so the loser blocks, re-reads, and raises the
+concurrency error _"before any `nextval()` call"_. Two things are worth taking from
+this. First, an optimistic check under a weak isolation level is not sufficient on
+its own. Second, the damage was not a lost write but a **gap in the global
+sequence**, which broke a reader rather than a writer — an integrity failure one
+level removed from the append itself.
+
+**Exclusive writing is available as a distinct operation.**
+`FetchForExclusiveWriting` takes a lock rather than relying on the version check
+([`EventStore.WriteToAggregate.cs`][write-to-aggregate]), so a caller that would
+rather block than retry can say so. Offering both, as separate methods, is better
+than choosing for the caller.
+
+**Gaps are treated as possibly-temporary, which is the subtle part.** The async
+daemon's high-water detector holds at a gap rather than skipping it, because a gap
+may be an uncommitted transaction that is about to land
+([`GapDetector.cs`][gap-detector]). Only after a liveness probe establishes that no
+writer is going to fill it does the projection advance past it. A naive reader that
+treats "sequence number missing" as "nothing there" will silently skip events that
+commit a moment later.
+
+**Everything commits in one database transaction**, so a batch of events, the stream
+version bump and any inline projection update are atomic together — the strongest
+form of the multi-record append this survey looks for, obtained by having a real
+transaction available.
+
+**Torn writes do not exist as a concept**, and no writer identity is recorded: the
+row's provenance is whatever the application chose to put in it.
+
+### 10. Operator recovery and intervention
+
+Because the record is ordinary tables in a database the operator already
+administers, most of this dimension is answered by SQL — which is both the strength
+and the limit.
+
+**Rebuilding a projection is the primary operation.** The async daemon can rebuild a
+projection from scratch, discarding its documents and its checkpoint in
+`mt_event_progression` and refolding from the beginning. That is the operator action
+for "the read model is wrong", and it is safe precisely because projections are
+derived.
+
+**The journal itself is not rewritten, on principle.** The documentation argues the
+discipline directly: _"The best strategy is not to change the past data but
+compensate our mishaps. In Event Sourcing, that means appending the new event with
+correction."_ So there is no supported edit, no fork, and no rewind of a stream —
+the correction is a new event.
+
+**Archiving is the retention lever.** A stream can be archived, optionally into a
+separate table partition, which keeps it readable while removing it from the hot
+path.
+
+**Compaction is the in-journal snapshot.** `CompactStreamAsync` replaces a stream's
+prefix with a single compacted event at a version, with an archiver callback for the
+events it removes. It is explicitly irreversible, which makes it the one destructive
+operation in the model and the reason the callback exists.
+
+**A record the projection cannot apply is skipped and recorded.** The daemon's
+default is to skip the offending event and log it as a dead letter, rather than
+stalling the projection; during a rebuild the default is to pause instead. Two
+different policies for the same failure, chosen by context, is a distinction most
+systems do not draw.
+
+**Inspection is SQL, and that is the whole answer.** Any operator with database
+access can read `mt_events`, join against `mt_streams`, and inspect
+`mt_event_progression` to see how far each projection has advanced. No tool is
+needed and none is provided.
+
+**What is absent is anything about a computation**, exactly as with KurrentDB: no
+cancellation, no pausing a program, no resuming one from a point — because the
+library models data, not control flow.
+
+### 11. Suspension and external input
+
+**This dimension does not apply to the store**, and the boundary is the same one
+KurrentDB draws: Marten accepts appends and serves reads, and no program of its own
+waits for anything.
+
+**The async daemon is the one thing that resumes**, and it resumes as a reader. Its
+position lives in `mt_event_progression` and is advanced with a compare-and-set, so
+a daemon that dies continues from its recorded checkpoint rather than from the
+beginning. That is the projection-resumption primitive a durable-execution layer
+would build on, and it is the same shape as a catch-up subscription's checkpoint.
+
+**Waiting for a projection to catch up is exposed to callers**, because an inline
+projection is synchronous with the append while an async one is not; the library
+therefore offers a way to wait until the daemon has reached a given sequence. That
+is a _reader_ waiting on a _writer_, not a durable program waiting on the world.
+
+**External input is an append**, undistinguished from any other. Nothing models who
+produced an event or whether anything was waiting for it.
+
+**Timers and approvals are absent by design.** A durable delay, an addressable
+waiting computation, and a state meaning "blocked on input" would all have to come
+from a layer above — which is precisely the layer this catalog is about.
+
 ---
 
 ## Strengths
@@ -230,15 +342,37 @@ There is no in-memory store: the testing page's examples open a real `DocumentSt
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the single-writer guard, and shows a stronger form of it.** `FetchForWriting` reads the aggregate and the version it was read at in one round trip, and the append fails on `MT003` if the version moved. The `release` journal should carry the analogue: the journal's own "version" (its entry count, or the sequence of the last `completed` record) is read at resume and asserted at every append, so two resumed runs cannot both extend the same `journal.jsonl`. `FetchForExclusiveWriting` suggests the cheaper option for a CLI: take an exclusive lock on the journal file for the life of the run.
-- **Argues against re-observe-and-reconcile as the primary mechanism.** Marten has no reconciliation rule table because it has no external mutable truth: the world _is_ the journal. `release` cannot have that (git tags and GitHub releases are the world), but the lesson is to shrink the reconcilable surface: record each world observation as an event with its own identity so the reconciliation step is a diff between two typed facts, not a free-form rule per op.
-- **The progression table is the projection-offset pattern the design needs for its UI.** "UI is a projection of the journal" implies a checkpoint per consumer: `mt_event_progression` keyed by consumer name, advanced by compare-and-set, and reset on rebuild. A `release` UI projection that stores `last_seq_id` per view can be rebuilt from `journal.jsonl` at any time, which also makes the projection code's own evolution a non-event.
-- **The gap logic is the concrete answer to "which record identity can be trusted after a crash".** A crashed `release` run leaves a `started` record with no `completed`; Marten's dead-gap reasoning (hold, then prove no live writer, then skip and _log the exact range_) maps onto the `--split` case where a partially published release must be either completed or explicitly abandoned, and says the abandonment must be a journaled fact, not an inference.
-- **Upcasters are the versioning tool, and they should be pure and registered by type name.** Journal records in `release` should carry a `type` string decoupled from the D type name, and evolution should be a registered `old → new` function applied on read, never a rewrite of `journal.jsonl`. This is the design's biggest gap: the decided design keys records by name plus attempt plus args hash and says nothing about what happens when a step's args schema changes.
-- **Snapshots are caches, compaction is a policy.** Marten's `Compacted<T>` event is the model for a `--plan` file or publish manifest: a snapshot inserted _into_ the journal at a version, so replay can start from it, rather than a separate file the journal does not know about.
-- **What the design has that Marten lacks:** explicit compensations, attempt counters, and crash-at-every-index testing. Marten's error-handling story is skip-and-dead-letter, which is right for projections but not for a workflow that must undo a half-made GitHub release. Keep the compensation scope; borrow the checkpoint discipline.
+- **An optimistic version check is not sufficient under weak isolation** (§9), and
+  Marten documents the exact failure: two transactions pass the check, both take a
+  sequence number, and the loser's duplicate-key error leaves a permanent gap that
+  stalls readers. The fix is to make the check take a lock. Any library whose
+  conditional append is not genuinely atomic has this bug latent.
+- **The damage from that race was a gap in the global order, not a lost write.** An
+  integrity failure can surface one level removed from the append, in whatever reads
+  the record — which is an argument for testing the reader against a partially
+  written record, not only the writer.
+- **A gap must be treated as possibly-temporary.** Marten's high-water detector holds
+  at a gap until a liveness probe proves no writer will fill it (§9). A reader that
+  treats a missing position as "nothing there" silently skips records that commit a
+  moment later.
+- **Offer both optimistic and locking writes as separate operations** (§9). A caller
+  that would rather block than retry should be able to say so, rather than having the
+  library choose.
+- **Do not rewrite the record; append a correction** (§10). Marten argues this as
+  discipline, and it is the reason it needs no fork, rewind, or edit operation — the
+  correction is an ordinary event.
+- **Two failure policies for the same error, chosen by context**, is a distinction
+  worth copying: skip-and-dead-letter while running, pause while rebuilding (§10).
+- **An in-journal snapshot with a callback for what it removes** is the right shape
+  for compaction (§10): irreversible, explicit, and it hands the discarded prefix to
+  the application rather than dropping it.
+- **A projection's checkpoint advanced by compare-and-set** is the whole
+  projection-resumption primitive (§11), and it is all a read model needs.
+- **Keeping the record in the application's own database is a real trade.**
+  Inspection becomes free and requires no tooling; the library inherits schema
+  migration, retention and backup as its users' problems rather than its own.
 
 ---
 
@@ -298,3 +432,4 @@ There is no in-memory store: the testing page's examples open a real `DocumentSt
 [idempotence]: ./idempotence.md
 [wal]: ./write-ahead-logging.md
 [parent]: ../index.md
+[write-to-aggregate]: https://github.com/JasperFx/marten/blob/1850d2d4575af3c8d36acdb9d822794ee644e028/src/Marten/Events/EventStore.WriteToAggregate.cs

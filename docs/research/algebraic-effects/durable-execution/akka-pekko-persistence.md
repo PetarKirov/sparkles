@@ -206,7 +206,7 @@ Atomicity is the other lever: `Effect.persist(events)` becomes a single `AtomicW
 
 _Analogue: schema evolution of events._
 
-This is where the design is richest, and it is the dimension the sparkles design has least. The premise is stated up front:
+This is where Pekko's design is richest. The premise is stated up front:
 
 > _"Since events are never deleted, we need to have a way to be able to replay (read) old events, in such way that does not force the `PersistentActor` to be aware of all possible versions of an event that it may have persisted in the past. Instead, we want the Actors to work on some form of 'latest' version of the event and provide some means of either converting old 'versions' of stored events into this 'latest' event type, or constantly evolve the event definition - in a backwards compatible way - such that the new deserialization code can still read old events."_ — [`persistence-schema-evolution.md`][doc-schema-src]
 
@@ -255,7 +255,132 @@ It also verifies, by default, that every command, event and state survives a ser
 
 [`PersistenceTestKit`][tk-ptk] is the fault injector: `expectNextPersisted`, `expectNothingPersisted`, `persistedInStorage(persistenceId)`, `persistForRecovery`, and the failure knobs `failNextPersisted`, `failNextNPersisted`, `rejectNextPersisted`, `failNextRead`, plus a user-supplied `ProcessingPolicy` for arbitrary per-operation decisions ([`ProcessingPolicy.scala`][tk-policy]). Together they cover "crash the write at event _k_" and "the store rejects this event" without touching a real database.
 
-What is missing relative to the sparkles test plan: there is no built-in "crash at every event index and resume" driver (it is a short loop over `failNextNPersisted` + `restart`), and no notion of mutating the world between crash and resume, because the runtime has no world-observation step to mutate around.
+What is absent: there is no built-in "crash at every event index and resume" driver, though it is a short loop over `failNextNPersisted` plus `restart`; and there is no notion of mutating the outside world between crash and resume, because the runtime has no world-observation step to mutate around.
+
+### 9. Journal integrity and the single writer
+
+This is the dimension where Pekko is richest, and the only system in the survey
+that ships a **policy** for what to do when two writers are detected after the
+fact.
+
+**Overlapping writers are detected on replay, by design.** `ReplayFilter` exists to
+_"Detect corrupt event stream during replay. It uses the writerUuid and the
+sequenceNr in the replayed events to find events emitted by overlapping writers"_
+([`ReplayFilter.scala`][replayfilter]). Every persisted event carries the
+`writerUuid` of the actor incarnation that wrote it, so a stream containing events
+from two incarnations at overlapping sequence numbers is recognisable without any
+cooperation from the storage plugin.
+
+**Four policies, including a repair.** The filter's modes are `Fail`, `Warn`,
+`RepairByDiscardOld` and `Disabled`, with a sliding `windowSize` and a
+`maxOldWriters` bound ([`ReplayFilter.scala`][replayfilter]). `RepairByDiscardOld`
+is notable: the library will discard the losing writer's events and carry on. No
+other system surveyed offers an automatic repair for a split-brain record, and
+none offers the choice as configuration.
+
+**Appends are atomic in batches, and the batch is constrained.** `AtomicWrite`
+requires a non-empty payload and requires every event in it to share one
+`persistenceId` ([`Persistent.scala`][persistent]), so a batch is one
+aggregate's events and commits together or not at all. That is the primitive
+several replay engines lack: a way to write a group of records as a unit.
+
+**Sequence numbers are dense per persistence id**, so a gap is itself a detectable
+fault rather than an ordinary state. Positional identity (§1) depends on that
+density.
+
+**The write contract makes the ambiguous case explicit.** The journal plugin's
+`asyncWriteMessages` documentation requires that _"If there is uncertainty about if
+the messages were stored or not the `Future` must be completed with failure"_ — so
+a plugin must not report success it is unsure of, and the actor treats a failed
+write as fatal by default. This is the same distinction Temporal draws with
+`OperationPossiblySucceeded`, pushed down into the storage contract instead of up
+into recovery logic.
+
+**Single-writer at runtime is Cluster Sharding's job.** One entity id has one live
+activation in a shard region, and the documentation directs users to sharding
+precisely to obtain that guarantee. The `ReplayFilter` is the backstop for when it
+has not held.
+
+**Torn writes are the plugin's problem**, and because the plugin interface is the
+contract rather than a format, "what a partial record means" varies by backend —
+the cost of pluggability.
+
+### 10. Operator recovery and intervention
+
+Pekko is a library, not a platform, and this dimension is where that shows most
+starkly: there is essentially no operator surface, and the absence is structural
+rather than an oversight.
+
+**No fork, no rewind, no reset.** Nothing resumes an entity from a chosen sequence
+number with a fresh identity. The recovery model is "replay everything from the
+last snapshot", and the only lever over that is which snapshot exists.
+
+**Deletion is the one destructive lever, and it is a programmatic one.**
+`deleteMessages(toSequenceNr)` deletes events up to an inclusive upper bound
+([`Eventsourced.scala`][eventsourced]), and snapshots have a matching deletion
+plus `RetentionCriteria` for automatic pruning. These are calls the entity makes
+about itself, not commands an operator issues from outside.
+
+**Inspection is a query-side concern.** `persistence-query`'s
+`eventsByPersistenceId` and `currentEventsByPersistenceId` let an application read
+a stream back, so "what did this entity do" is answerable — but by writing a
+program, not by running a tool. Notably the `EventAdapter` is not applied on the
+query side, so a reader sees stored shapes rather than upcast ones.
+
+**Cancellation and pausing do not apply.** An entity is not a run with a lifecycle
+to interrupt; it is an actor that exists and processes messages. Stopping it is
+passivation, which is invisible to correctness, and there is no state meaning
+"deliberately stopped for an operator".
+
+**Dead-lettering is the actor system's generic mechanism**, not a persistence
+feature: a message to a stopped actor goes to dead letters, with no relationship
+to a record that cannot be applied. A failed recovery stops the actor.
+
+**The finding here is a real one about library scope.** Everything an operator
+might want — list runs, inspect one, resume from a point, park a broken one — is
+available in the platform systems and absent here, because those affordances
+require a component that outlives any one process. A library can supply the record
+and the replay; the surface over them is a separate product decision.
+
+### 11. Suspension and external input
+
+The concept does not transfer cleanly, and saying why is the finding.
+
+**An event-sourced actor never suspends in the durable sense.** It is alive,
+holding its folded state in memory, and it waits by simply not having received a
+message yet. There is no journal entry for "waiting", no resumption by replay, and
+no process that ends. Replay happens on _activation_, and activation is caused by a
+message arriving — so the mechanism a replay engine uses for waiting is, here, the
+mechanism for starting.
+
+**Waiting inside a command is `stash`.** `Effect.stash()` and
+`Effect.unstashAll()` ([`Effect.scala`][effect]) let a handler defer commands
+it is not ready for, and the runtime also stashes automatically during recovery,
+during a persist, and while a snapshot is in flight. The stash is bounded and
+in-memory, so it is a concurrency tool rather than a durability one — a crash loses
+whatever is stashed.
+
+**External input is an ordinary message**, addressed to the entity id through
+sharding. Delivery is at-most-once by default, which inverts the replay engines'
+assumption: there, a duplicate signal is the hazard; here, a lost message is.
+At-least-once has to be built, with the sender re-driving from its own persisted
+state.
+
+**Side effects after a write are documented as at-most-once.** _"Any side effects
+are executed on an at-most-once basis and will not be executed if the persist
+fails. Side effects are not run when the actor is restarted or started again after
+being stopped."_ So a `thenRun` is not a durable step: it is a best-effort action
+attached to a durable fact, and re-driving it is the author's job, keyed off state
+observed in `RecoveryCompleted`.
+
+**Timers are not durable.** Scheduled messages come from the actor system's timer
+facility and do not survive a restart, so a durable delay must be modelled as
+persisted state plus a re-scheduling decision taken on recovery. Several replay
+engines give durable timers away for free; here they are a design task.
+
+**Human-in-the-loop is not a pattern the documentation addresses**, which follows
+from the model: an approval is a message, and remembering that one is outstanding
+is state the author persists like any other.
 
 ---
 
@@ -297,16 +422,42 @@ What is missing relative to the sparkles test plan: there is no built-in "crash 
 
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the journal + snapshot + projection triad** as three views of one append-only stream keyed by a dense sequence number. Pekko's `eventsByPersistenceId` is the literal "UI as projection of the journal": same records, same order, live tail. The design should make `journal.jsonl` readable by a projection without the workflow's cooperation, exactly as the read journal is a plugin over the write journal.
-- **Argues against "side effects are at-least-once by default".** Pekko documents _at-most-once_ for `thenRun` and pushes at-least-once into the state. The `started`/`completed` pair the sparkles design journals is the right answer, but Pekko shows the failure mode it must cover: the crash between "journal acked `completed`" and "the callback that used it", which is why the reconciler on resume must be driven from the journal, not from in-memory continuations.
-- **Argues for splitting decisions from observations at the type level, not the naming level.** Pekko's whole determinism story is that the command handler (may observe the world, runs once) and the event handler (may not, runs on every recovery) have different _types_. The sparkles design's "decisions replay verbatim; observations are re-observed" is the same split expressed as a rule table over ops. Consider making it two op kinds in the capability row rather than two rows in a table.
-- **Adopt fold-before-write.** Pekko applies the event handler before persisting so an event the state cannot absorb never hits the journal. The sparkles journaling combinator should apply the `completed` record to the in-memory workflow state _before_ appending it, for the same reason.
-- **What it does that the design lacks: event adapters with a stored manifest.** The design has no versioning tool at all. Pekko's minimal, proven answer is a `manifest` string on every record plus an upcasting `fromJournal(payload, manifest): EventSeq` at the read boundary, so old journals are promoted to the current shape before the workflow sees them. That is cheaper than Temporal-style `patched` markers and fits a JSONL journal directly: put a `manifest` (or `v`) on every line and give the reader an adapter.
-- **What the design lacks and Pekko also lacks: compensation.** Neither has a runtime primitive; Pekko's honest position is that a saga is an entity whose state is the saga's progress. The sparkles LIFO scope registration is more than Pekko offers, but its compensations must themselves be journaled events (started/completed) or they inherit Pekko's at-most-once hole.
-- **The replay filter is worth copying as a check.** A `writerUuid` per run plus contiguous sequence numbers lets a resumed `release` detect that another run wrote into the same journal, and choose `fail` rather than silently interleaving. The design keys steps by name and attempt; add a run id per line.
-- **Testing shape to copy**: a test kit that runs the _real_ recovery path (`restart()`), a storage double that can fail or reject the _next_ write, and seeding the journal by hand (`initialize`, `persistForRecovery`) so "crash at every event index" is a loop, not a bespoke harness.
+- **Stamp every record with the identity of the incarnation that wrote it**, and
+  check it on read (§9). Pekko's `writerUuid` plus dense sequence numbers detects
+  two overlapping writers without help from storage, and it does so even when the
+  runtime guarantee that should have prevented it has already failed.
+- **Offer a policy for what to do about a detected split-brain, not just an error.**
+  `Fail`, `Warn`, `RepairByDiscardOld` and `Disabled` is a richer answer than any
+  other system gives, and the repair mode is evidence that "discard the losing
+  writer" is a defensible automatic choice in some deployments.
+- **A batch append primitive is worth having.** `AtomicWrite` commits several events
+  for one aggregate as a unit (§9), which is what an intent-and-result pair or a
+  step-plus-compensation registration wants and what most replay engines cannot
+  express.
+- **Push the ambiguity into the storage contract.** Requiring a plugin to fail when
+  it does not know whether a write landed puts the uncertainty where it originates,
+  rather than making every recovery path guess.
+- **Event adapters at the read boundary are the mature answer to schema evolution**
+  (§5), and the detail worth copying is that an adapter may split, drop or replace
+  one stored record. A read-time function is strictly more powerful than a version
+  branch inside the program.
+- **Fold before writing.** Applying an event to state before it is persisted means a
+  record the projection cannot consume never reaches the log.
+- **Post-write side effects are at-most-once, and a library should say so.** Pekko
+  documents that a `thenRun` does not re-run after a restart, which makes the
+  contrast explicit: durability of a _fact_ is not durability of the _action_
+  attached to it (§11). The stronger guarantee needs an intent record, not a
+  callback.
+- **Non-durable timers are a trap the model does not warn about.** Scheduled
+  messages are lost on restart, so a delay must be persisted state plus a
+  re-scheduling decision on recovery — something replay engines with durable timers
+  hand over for free.
+- **A library without an out-of-process component cannot have an operator surface**
+  (§10), and pretending otherwise is worse than the honest absence. Everything an
+  operator wants — list, inspect, resume-from, park — needs something that outlives
+  a single process.
 
 ---
 
@@ -358,3 +509,4 @@ What is missing relative to the sparkles test plan: there is no built-in "crash 
 [account-spec]: https://github.com/apache/pekko/blob/ce44fbe7a1ee2697c293e355064b7dd893914bca/cluster-sharding-typed/src/test/scala/docs/org/apache/pekko/cluster/sharding/typed/AccountExampleDocSpec.scala
 [temporal]: ./temporal.md
 [index]: ./index.md
+[eventsourced]: https://github.com/apache/pekko/blob/ce44fbe7a1ee2697c293e355064b7dd893914bca/persistence/src/main/scala/org/apache/pekko/persistence/Eventsourced.scala
