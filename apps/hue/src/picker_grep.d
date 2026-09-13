@@ -541,6 +541,56 @@ bool poolEligible(GrepMode mode) @safe pure nothrow @nogc
 bool modeImplemented(GrepMode mode) @safe pure nothrow @nogc
     => mode != GrepMode.regex;
 
+/**
+The mode a query asks for, chosen once from the query itself (`PKC9`).
+
+Regex metacharacters are the only signal: a query holding one is asking a
+regex question, and everything else is a literal. This returns the
+INTENDED mode without regard to whether its engine exists — the caller
+clamps with $(LREF modeImplemented), so the degradation is one visible
+decision at the call site rather than a classifier that quietly knows
+less than it should. The day `PKC16` lands, classification starts working
+with no change here.
+
+Deliberately not a guess at fuzziness. Fuzzy is where the ladder FALLS
+BACK to when a literal finds nothing, not something a query can look
+like: every string is a valid subsequence query, so a classifier that
+chose it would be choosing arbitrarily.
+*/
+GrepMode classifyQuery(scope const(char)[] query) @safe pure nothrow @nogc
+{
+    foreach (char c; query)
+        switch (c)
+        {
+        case '*', '+', '?', '[', ']', '(', ')':
+        case '{', '}', '|', '^', '$', '\\':
+            return GrepMode.regex;
+        default:
+            break;
+        }
+    return GrepMode.plain;
+}
+
+@("picker_grep.classifyQuery.metacharactersAskARegexQuestion")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(classifyQuery("Widget") == GrepMode.plain);
+    assert(classifyQuery("foo bar") == GrepMode.plain,
+        "`PKC17`: a space is a literal, not an operator");
+    assert(classifyQuery("foo.bar") == GrepMode.plain,
+        "`.` is far too common in real queries — paths, members, versions "
+        ~ "— to read as a metacharacter");
+    assert(classifyQuery("^struct") == GrepMode.regex);
+    assert(classifyQuery("Widget|Gadget") == GrepMode.regex);
+    assert(classifyQuery("get.*Name") == GrepMode.regex);
+    assert(classifyQuery("") == GrepMode.plain);
+
+    // The intended mode, unclamped. Today it routes to an engine that does
+    // not exist, which is the caller's decision to make, not this one's.
+    assert(!modeImplemented(classifyQuery("^struct")));
+}
+
 /// The mode's name, for the prompt's indicator (`PKL5`).
 string modeLabel(GrepMode mode) @safe pure nothrow @nogc
 {
@@ -550,6 +600,28 @@ string modeLabel(GrepMode mode) @safe pure nothrow @nogc
     case GrepMode.regex: return "regex";
     case GrepMode.fuzzy: return "fuzzy";
     }
+}
+
+/**
+The indicator, including `PKC9`'s rung when one was taken.
+
+Spelled as a transition rather than as its destination. `[fuzzy]` alone,
+over a query the reader typed as a literal, IS the silent
+re-interpretation `PKC9` exists to prevent — the results would be
+inexplicable and the label would look like a setting they had changed.
+*/
+string modeLabel(GrepMode mode, bool fellBack) @safe pure nothrow @nogc
+    => fellBack ? "plain \u2192 fuzzy" : modeLabel(mode);
+
+@("picker_grep.modeLabel.aRungIsShownAsATransition")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(modeLabel(GrepMode.plain, false) == "plain");
+    assert(modeLabel(GrepMode.fuzzy, false) == "fuzzy",
+        "a mode the reader chose is just that mode");
+    assert(modeLabel(GrepMode.fuzzy, true) == "plain \u2192 fuzzy",
+        "a mode hue chose says where it came from");
 }
 
 /// Bytes of context stored around a hit (`PKC11`). Chosen so a row stays
@@ -1660,10 +1732,22 @@ struct GrepFinder
     private AnalysisCase mode_;
     private size_t maxFileBytes_ = defaultMaxFileBytes;
     private GrepMode grepMode_;
+    private bool modePinned_;
+    private bool fellBack_;
 
     /// The active search mode (`PKL5`). Shown in the prompt, so a reader can
     /// always tell which question was asked.
     GrepMode grepMode() const @safe pure nothrow @nogc => grepMode_;
+
+    /// Whether this generation took `PKC9`'s one fallback rung. The prompt
+    /// renders it, because a query re-interpreted in silence produces a
+    /// result list nobody can explain.
+    bool fellBack() const @safe pure nothrow @nogc => fellBack_;
+
+    /// Whether `<S-Tab>` has claimed the mode. Classification is a default,
+    /// not an override: once a reader has said which question they are
+    /// asking, nothing re-decides it under them.
+    bool modePinned() const @safe pure nothrow @nogc => modePinned_;
 
     /**
     Advance to the next mode (`<S-Tab>`).
@@ -1676,6 +1760,8 @@ struct GrepFinder
     */
     void cycleMode() @safe nothrow
     {
+        modePinned_ = true;
+        fellBack_ = false;
         foreach (_; 0 .. GrepMode.max + 1)
         {
             grepMode_ = grepMode_ == GrepMode.max
@@ -1716,6 +1802,12 @@ struct GrepFinder
 
         root_ = root;
         paths_ = null;
+        // A fresh picker open classifies again (`PKC9`): the `<S-Tab>` pin
+        // is a session, not a setting. A mode chosen for one search should
+        // not silently govern the next one a reader opens.
+        modePinned_ = false;
+        fellBack_ = false;
+        grepMode_ = GrepMode.init;
         auto walk = globWalkGitRepository(root, includeGlobs, excludeGlobs);
         while (!walk.empty)
         {
@@ -1742,6 +1834,15 @@ struct GrepFinder
         needle_[0 .. needleLen_] = query[0 .. needleLen_];
         mode_ = policy.caseFor(query);
         found_ = 0;
+        fellBack_ = false;
+        // Classified once, here, from the query (`PKC9`) — and clamped, so
+        // an unwritten engine degrades to the literal scan rather than to an
+        // empty list. A pinned mode is the reader's, and is left alone.
+        if (!modePinned_)
+        {
+            const want = classifyQuery(query[0 .. needleLen_]);
+            grepMode_ = modeImplemented(want) ? want : GrepMode.plain;
+        }
         if (needleLen_ == 0)
         {
             scan_.cancel();
@@ -1762,8 +1863,23 @@ struct GrepFinder
     ScanStep step(size_t budget,
         scope bool delegate() @safe nothrow @nogc superseded = null) @system
     {
-        return scan_.step(budget,
+        const outcome = scan_.step(budget,
             (size_t index) => scanOne(index), superseded);
+
+        // `PKC9`'s one rung, and only one. A literal that found nothing over
+        // the whole corpus is re-asked as a subsequence — the answer fff
+        // gives, and the one a reader typing a half-remembered name wants —
+        // but never twice, never from a pinned mode, and never invisibly:
+        // `fellBack` reaches the prompt.
+        if (outcome == ScanStep.finished && found_ == 0 && !modePinned_
+            && !fellBack_ && grepMode_ != GrepMode.fuzzy && needleLen_ != 0)
+        {
+            fellBack_ = true;
+            grepMode_ = GrepMode.fuzzy;
+            scan_.begin(corpus_.length);
+            return ScanStep.progressed;
+        }
+        return outcome;
     }
 
     private size_t scanOne(size_t index) @trusted
@@ -1922,6 +2038,103 @@ unittest
     // otherwise return the whole tree.
     finder.begin("", SearchPolicy.init);
     assert(!finder.searching && finder.hitCount == 0);
+}
+
+@("picker_grep.finder.aLiteralThatFindsNothingFallsBackOnceAndSaysSo")
+@system
+unittest
+{
+    // `PKC9`'s ladder, end to end: classified plain, exhausted with nothing,
+    // re-asked as a subsequence, and the rung reported. Exactly one rung —
+    // a second would be a mode nobody chose, reached by a rule nobody saw.
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a.d"), "struct Widget\n");
+
+    GrepFinder finder;
+    finder.openCorpus(root);
+
+    static ScanStep drain(ref GrepFinder f) @system
+    {
+        ScanStep outcome;
+        size_t guard;
+        do
+        {
+            outcome = f.step(64);
+            assert(++guard < 1000, "the ladder looped instead of stopping");
+        }
+        while (outcome == ScanStep.progressed);
+        return outcome;
+    }
+
+    // A subsequence of `Widget`, a substring of nothing.
+    finder.begin("Wdgt", SearchPolicy.init);
+    assert(finder.grepMode == GrepMode.plain, "classified from the query");
+    assert(drain(finder) == ScanStep.finished);
+    assert(finder.fellBack, "the literal found nothing, so the rung was taken");
+    assert(finder.grepMode == GrepMode.fuzzy);
+    assert(finder.hitCount == 1, "and the subsequence answered");
+
+    // Nothing at all: the rung is taken once and the ladder stops. Without
+    // the `fellBack_` latch this is an infinite scan, not a wrong answer.
+    finder.begin("zzzz", SearchPolicy.init);
+    assert(drain(finder) == ScanStep.finished);
+    assert(finder.fellBack && finder.grepMode == GrepMode.fuzzy);
+    assert(finder.hitCount == 0);
+
+    // A literal that DOES find something never falls back — the rung is for
+    // an empty answer, not for a small one.
+    finder.begin("Widget", SearchPolicy.init);
+    assert(drain(finder) == ScanStep.finished);
+    assert(!finder.fellBack && finder.grepMode == GrepMode.plain);
+    assert(finder.hitCount == 1);
+}
+
+@("picker_grep.finder.aPinnedModeIsNeverReDecided")
+@system
+unittest
+{
+    // `<S-Tab>` is a reader saying which question they are asking. Neither
+    // classification nor the fallback rung may answer a different one.
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a.d"), "struct Widget\n");
+
+    GrepFinder finder;
+    finder.openCorpus(root);
+    assert(!finder.modePinned, "a fresh corpus classifies");
+
+    finder.cycleMode();
+    assert(finder.modePinned && finder.grepMode == GrepMode.fuzzy);
+
+    finder.begin("^struct", SearchPolicy.init);
+    assert(finder.grepMode == GrepMode.fuzzy,
+        "the metacharacter did not re-classify a pinned mode");
+
+    finder.cycleMode(); // back to plain, still pinned
+    assert(finder.grepMode == GrepMode.plain && finder.modePinned);
+    finder.begin("Wdgt", SearchPolicy.init);
+    ScanStep outcome;
+    do
+        outcome = finder.step(64);
+    while (outcome == ScanStep.progressed);
+    assert(!finder.fellBack && finder.hitCount == 0,
+        "a pinned plain stays empty rather than becoming fuzzy underneath");
+
+    // A fresh picker open classifies again: the pin is a session, not a
+    // setting.
+    finder.openCorpus(root);
+    assert(!finder.modePinned);
 }
 
 @("picker_grep.finder.binaryAndOversizeDocumentsAreSkipped")
