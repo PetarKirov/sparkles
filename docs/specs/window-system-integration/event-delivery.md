@@ -6,10 +6,10 @@ force each one and a recommended answer. Accepted answers move into
 [SPEC.md](./SPEC.md) as requirements; this page keeps the reasoning. Index entry:
 `WSI-O9` in [open-issues.md](./open-issues.md)._
 
-**Status:** partly decided. `EQ1`–`EQ6`, `EQ8`, `EQ9` and `EQ13` were accepted on
-September 13, 2026 and are ready to move into [SPEC.md](./SPEC.md) as requirements;
-`EQ7` was reopened by those answers, and `EQ10`–`EQ12` and `EQ14` remain open with a
-standing recommendation. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
+**Status:** partly decided. Every question except `EQ12` and `EQ14` was accepted on
+September 13, 2026 and is ready to move into [SPEC.md](./SPEC.md) as requirements.
+`EQ14` has a measured recommendation awaiting a decision; `EQ12` is deliberately
+deferred to `F04`. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
 the four backends' pumps). **Consumers in scope:** ordinary GUI applications,
 drawing applications that need every sample, and games that need per-frame sums and
 raw deltas at device rate. A decision that serves only one of the three is not
@@ -193,6 +193,12 @@ newest observation) or takes the newest one (and drain order stops being
 monotonic, breaking a promise consumers can already rely on). Both the cost and the
 ordering contract ride on this.
 
+**Accepted 2026-09-13:** merge in place and keep the original sequence. A
+per-(window, pointer) slot index makes a merge O(1), drained sequences stay
+strictly increasing, and the sequence names when the merged run started while the
+timestamp and the sample count name its newest observation. Contiguity of sequence
+numbers is still not promised.
+
 **EQ8 — Does absolute `moved` coalesce by default?** Today it anchors the queue, so
 relative events can only merge within the run after the last absolute move, which
 ties the relative stream's bound to the absolute rate. GDK and Qt merge moves by
@@ -229,10 +235,10 @@ cost a branch on a path already doing a sum-type match.
 _Recommendation:_ capacity and history depth compile-time (they size inline storage);
 coalescing and summing runtime per window, default on; overflow policy fixed by the
 spec, not a knob.
-**Open; recommendation stands.** Capacity and history depth compile-time, since
-they size inline storage; coalescing and relative summing runtime per window,
-default on; the `EQ4` overflow policy fixed by this specification rather than
-exposed as a knob.
+**Accepted 2026-09-13:** capacity and ring depth are compile-time, since they size
+inline storage; motion coalescing and relative summing are runtime, per window,
+defaulting to on, so a drawing view and a game view can differ in one process; the
+`EQ4` overflow policy is fixed by this specification rather than exposed as a knob.
 
 **EQ11 — Where does per-frame accumulation live?** Games should not read the queue.
 Something must offer "state since the last frame": pressed set, summed deltas, latest
@@ -241,10 +247,11 @@ _Options:_ `sparkles:wsi`; `sparkles:input`; the host in `sparkles:ui-app`.
 _Recommendation:_ a small accumulator type in `sparkles:input`, fed by draining the
 queue, so `sparkles:wsi` stays the lossless-as-possible boundary and the SDL and
 raylib producers can feed the same type.
-**Recommendation stands; open pending `EQ10` and `EQ14`.** A small accumulator in
-`sparkles:input`, fed by draining the queue, keeps `sparkles:wsi` the
-lossless-as-possible boundary and lets the SDL and raylib producers feed the same
-type.
+**Accepted 2026-09-13:** a small accumulator type in `sparkles:input`, fed by
+draining the queue. `sparkles:wsi` stays the boundary that loses as little as
+possible, the frame-shaped policy sits where the toolkit vocabulary already lives,
+and the SDL and raylib producers feed the same type, so a game reads one vocabulary
+whatever the backend.
 
 **EQ12 — Does coalescing key on the drain or on the frame clock?** Chromium, GDK,
 Android and iOS merge per frame, which makes behaviour deterministic instead of
@@ -267,31 +274,77 @@ contact gets the same treatment as the mouse — one queued event per (window,
 contact) with the samples in that pointer's ring. Tablet pressure and tilt are
 sample fields, not queue fields.
 
-**EQ14 — Does a queued event still own its text, once text moves out of line?**
-`EQ9` moves owned text and composition payloads out of the slot, but
-[SPEC.md](./SPEC.md) §7 calls `WindowEvent` a lossless boundary "whose payloads own
-their small text and metadata", and the type is Regular: copyable, comparable,
-replayable into the recording backend. An arena the drain borrows from breaks that
-unless the borrow's validity is stated, and a recorded event that borrows is not
-replayable later.
-_Options:_ keep short text inline (a commit is usually a few bytes) and spill only
-long pre-edit and clipboard metadata to a per-backend arena valid until the next
-drain, with the event carrying a span; arena plus reference count, so a kept event
-stays valid; keep full ownership and shrink the slot by making the largest payload a
-heap-owned buffer, paying an allocation on the rare large commit.
-_Recommendation:_ inline-short-with-spill, and state the borrow's lifetime as
-"valid until the drain that delivered it returns"; a consumer keeping an event past
-that copies it through an explicit deep-copy the recording backend also uses.
+**EQ14 — Does a queued event still own its text, once text leaves the 600-byte
+slot?** `EQ9` moves text out of the slot, but [SPEC.md](./SPEC.md) §3 calls events
+Regular values and §7 calls `WindowEvent` a lossless boundary "whose payloads own
+their small text and metadata". An arena the drain borrows from breaks both unless
+the borrow's lifetime is stated, and a recorded event that borrows cannot be
+replayed later.
+
+`SharedBuffer` — `sparkles:base`'s copy-on-write policy, inline up to `N` elements
+and a reference-counted heap block beyond it — was raised as the alternative to an
+arena and measured rather than argued. All figures below are from probes against
+the current tree.
+
+| Measurement          | Today                     | `SharedBuffer!(char, 16)`                                |
+| -------------------- | ------------------------- | -------------------------------------------------------- |
+| `CompositionEvent`   | 576 B                     | 80 B                                                     |
+| `TextCommittedEvent` | 264 B                     | 24 B                                                     |
+| `DataOfferEvent`     | 168 B                     | 32 B                                                     |
+| `WindowEvent` slot   | 600 B                     | 112 B, with the `EQ6` timestamp and `EQ7` count included |
+| queue of 1,024 slots | 614 KiB                   | 112 KiB — 1.5x today's 128-slot queue for 8x the depth   |
+| inline threshold     | 256 B / 512 B, truncating | 16 B, then a `pureMalloc` block                          |
+
+In its favour:
+
+- It keeps `WindowEvent` **Regular**, which §3 requires: copyable, comparable by
+  content, self-contained. There is no borrow lifetime to specify, no deep-copy step
+  before an event may be kept, and the recording backend replays events unchanged.
+- Growth, sharing and copy-on-write all work inside `@safe @nogc nothrow` (verified
+  by running one), because growth is `pureMalloc`, not the GC. Blocks of `char`
+  register no GC range, since that registration is guarded by `hasIndirections!T`.
+- Text of 16 bytes or fewer never allocates (measured: 16 inline, 17 on the heap),
+  so ordinary key text and most single-keystroke commits stay allocation-free.
+- It answers `WSI-O3` without inventing an arena, and removes today's silent
+  truncation of a pre-edit longer than 512 bytes.
+
+Against it:
+
+- **The reference count is a plain `size_t`, not atomic.** §3 confines WSI to the UI
+  thread and events are drained there, so in-contract use is sound — but §3 also
+  calls events Regular, and a consumer copying one to a worker thread would race on
+  that count. Accepting this means stating that an event's text is thread-confined
+  and that crossing a thread requires an explicit deep copy: a real restriction on a
+  value the specification currently calls Regular, and the main cost of the option.
+- **A dispatch-path allocation** for text over 16 bytes. `@nogc` permits it and no
+  current requirement forbids it; it happens on IME pre-edit updates and clipboard
+  MIME lists, never on motion or ordinary keys.
+- **Out of memory aborts.** `allocateBlock` asserts on a null return, so exhaustion
+  becomes an abort in a `checked` build rather than a typed error — a behaviour
+  change from text that was inline and could not fail.
+- **Growth is driven by external input.** A pre-edit is supplied by the IME and a
+  MIME list by the source client, so removing truncation removes a bound. A stated
+  maximum, above which the backend truncates and flags the event, has to come with
+  this option.
+
+_Options:_ `SharedBuffer!(char, 16)` per text payload, with a stated maximum and a
+thread-confinement rule; a per-backend arena the drain borrows from, with the borrow
+valid until the delivering drain returns; keep full inline ownership and shrink the
+slot some other way.
+_Recommendation:_ `SharedBuffer`. It is the only option of the three that keeps the
+Regularity §3 already promises, and it is measured at 112 bytes per slot with the
+timestamp included. Its cost is a documented thread-confinement rule for text plus a
+maximum length, both of which are one requirement each.
 _Answer:_ open.
 
 ## 5. Dependencies between answers
 
 - `EQ5` required `EQ6` and settled `EQ3` and `EQ13`; `EQ8` rides on `EQ5`; together
   with `EQ9` they settled `EQ2`.
-- `EQ7` must be answered before the merge is implemented: it fixes both the cost of
-  a merge and whether drained sequences stay strictly increasing.
+- `EQ7` fixed both the cost of a merge and the ordering contract; the slot index it
+  needs is the same one `EQ5` keys its ring by.
 - `EQ9` precedes any change to the cap, and raises `EQ14`, which fixes what a
-  consumer may do with a delivered event.
+  consumer may do with a delivered event and whether it may hand one to a thread.
 - `EQ11` is independent of the queue's policy and can land first.
 - `EQ12` can be revisited after `F04` without reopening anything above.
 
