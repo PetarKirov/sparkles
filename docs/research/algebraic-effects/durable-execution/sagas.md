@@ -159,25 +159,86 @@ Both, and the paper is the earliest clear statement of the trade. Save-points ar
 
 Absent. The paper contains no testing methodology, no fault-injection discussion and no experiments. Absence is the finding: the saga guarantee is stated as a property of the SEC's log protocol and assumed to hold.
 
+### 9. Journal integrity and the single writer
+
+**The saga's record lives in the same write-ahead log as the transactions it
+coordinates.** Begin-saga, begin-transaction, end-transaction and end-saga records
+are written to the database's own log, so the saga's progress is as durable as the
+sub-transactions themselves and needs no separate storage or consistency argument.
+That is a design a library over a database can copy exactly; one writing its own file
+must earn the property.
+
+**Compensation is registered at completion, with its name and arguments, in the log.**
+The paper is explicit that the compensating transaction's identity and inputs are
+recorded when the forward sub-transaction commits — which means a process that never
+saw the forward step can still run the compensation. This is the requirement
+closure-based designs in this survey violate, stated in 1987.
+
+**Recovery reads the log to decide what is outstanding**, exactly as a transaction
+manager does: a saga with a begin record and no end record is in flight, and its
+completed sub-transactions are those with end-transaction records.
+
+**Nothing addresses two coordinators.** The saga execution coordinator is assumed
+singular, and the paper offers no fencing token — reasonable for a component inside
+one database, and a gap for anything distributed.
+
+### 10. Operator recovery and intervention
+
+**A compensation that cannot complete is escalated, and the paper says so.** A
+compensating transaction is required to be retriable and is retried until it
+succeeds; where that is impossible, the paper's answer is an alternative
+compensation or human intervention. Making "stuck in rollback" an explicit terminal
+condition rather than an unbounded retry loop is the piece most systems in this
+survey lack.
+
+**Forward recovery is a first-class alternative to rolling back.** With save-points,
+a saga may resume the interrupted sub-transaction instead of compensating everything
+before it — which is the operator's usual preference and, in this paper, the default
+worth designing for rather than an exception.
+
+**Compensation code must outlive the saga that will need it.** The paper raises the
+problem of "saving code reliably": a compensation registered now may run after the
+program has changed, so the code must be stored or versioned alongside the record.
+That is the versioning question of §5, reached from the compensation side, and it is
+the reason a library should treat a registered compensation as data rather than as a
+reference to a function.
+
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms the journal-as-authority design.** The SEC log is exactly a `started` + `completed` journal with write-ahead command records; the release rewrite's `journal.jsonl` is the saga daemon's tables under another name. Its "scan the tables after a crash" recovery is the resume path the design already specifies.
-- **Confirms explicit, LIFO compensation, and sharpens _when_ to register.** The paper registers a compensation at `end-transaction`, with its arguments captured and logged at that moment. The sparkles design says compensations are registered on a scope, LIFO, explicit-only; the saga rule adds that registration should happen at step _completion_ with a stable name plus serialised arguments in the journal, not as a closure held in memory, so that a resumed process can run a compensation it never saw registered.
-- **Argues against compensating on every failure.** The paper's pure-forward mode (retry until success, no compensation) is a first-class recovery policy, and §9 recommends designing away user-initiated aborts so compensation is never needed. For `release`, most steps (tag, push, publish) are retriable-forward; the design should classify steps as forward-recoverable versus compensable rather than defaulting to backward recovery.
-- **Semantic undo means compensations must re-observe the world.** `Ci` reads current state, never the before-image. A compensation that deletes a tag must check the tag still points where the step left it; the design's "observations are re-observed and reconciled" rule must apply inside compensations too, not only on the forward path.
-- **The world-mutation test the design plans is the paper's own model.** "Other transactions might see the effects of a partial saga execution" is the assumption that makes crash-then-mutate-then-resume a necessary test, and the paper offers no test of its own. That gap is what the design's crash-at-every-event-index plus mutate-the-world tests fill.
-- **What the design lacks: a rule for a stuck compensation.** §6's "the system is stuck" case (a compensation that fails deterministically) has no answer in the current design. The paper's options are an alternate compensation or handing the saga to a human with a description of the error; the journal's UI projection should have a state for "compensation failed, needs operator", and `release` already has the confirmation-gate machinery to surface it.
-- **What the design lacks: the last step is exempt.** The final effect of a workflow needs no compensation because nothing after it can fail. Registering one anyway is dead code that can never be exercised by a test.
-- **Save-point cost supports "no continuation capture".** The paper's snapshots are expensive precisely because they capture arbitrary program state. The restricted model, where state is a step index, is what a tail-resumptive effect row with journaled ops amounts to. The `event-horizon` decision not to capture continuations is the 1987 restricted model, and this paper is the earliest argument for it.
+- **Register a compensation as data — name plus arguments — at the moment the forward
+  step completes, and record it.** A process that never executed the forward step must
+  be able to run the compensation, which a closure cannot support. This is the
+  paper's requirement and the survey contains a live example of the bug that follows
+  from ignoring it.
+- **Compensation is semantic, not physical.** It undoes the business effect and does
+  not restore a prior state, so a library must not promise rollback and must not
+  read before-images — the compensation sees the world as it is now.
+- **Prefer forward recovery.** Resuming the interrupted step is usually what an
+  operator wants, and treating backward recovery as the default makes rollback happen
+  when a retry would have done.
+- **Make "compensation failed" a terminal state with a human hand-off.** Retrying a
+  compensation forever and having no state for "this needs a person" are the same
+  mistake.
+- **A compensation must be retriable and must not itself be compensated.** That
+  constraint is what keeps rollback bounded, and it belongs in the library's contract
+  rather than in its documentation.
+- **The last step of a saga needs no compensation**, which is a small but real
+  simplification: nothing after it can fail and force a rollback.
+- **Compensation code must survive until it is needed** — the paper's "saving code
+  reliably" problem. A library whose registered compensations are references into a
+  binary that may be replaced has a versioning obligation it probably has not stated.
+- **Keeping the coordination record in the same log as the work** removes an entire
+  consistency argument. A library over a transactional store should take that; one
+  writing its own file must supply the equivalent.
 
 ---
 
 ## Sources
 
 - Garcia-Molina, H. and Salem, K., "Sagas", SIGMOD 1987: [DOI `10.1145/38713.38742`][doi]; the scanned PDF read for this page is the [Cornell CS 711 course mirror][pdf].
-- Related pages in this catalog: [Compensation calculi for long-running transactions][calculi], [catalog index][index], [`sparkles:event-horizon` spec][eh-spec], [`release` spec][release-spec].
+- Related pages in this catalog: [Compensation calculi for long-running transactions][calculi], [catalog index][index], [`sparkles:event-horizon` spec][eh-spec].
 
 <!-- References -->
 
@@ -186,4 +247,3 @@ Absent. The paper contains no testing methodology, no fault-injection discussion
 [calculi]: ./compensation-calculi.md
 [index]: ./index.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
-[release-spec]: ../../../specs/release/SPEC.md

@@ -149,25 +149,85 @@ ARIES checkpoints are not snapshots of data. A checkpoint records the transactio
 
 The paper's own validation method is the crash-during-restart scenario: §10.1 constructs a failure between the undo of `U1` and the write-back of the page, then asks what the _next_ restart sees. That construction, a crash at every point of recovery, not just of forward processing, is the test the CLR design exists to pass, and it is the one a durable program must run.
 
+### 9. Journal integrity and the single writer
+
+ARIES is the origin of this dimension, and almost every mechanism the surveyed
+systems use is a restatement of something in it.
+
+**The protocol rule is the whole of write-ahead:** a log record describing a change
+must reach stable storage before the changed page may replace its previous version
+on disk. Everything in this catalog that writes an intent before performing an
+effect is applying that rule to a different kind of change.
+
+**Redo is conditional on a token stamped in the world.** A log record's update is
+redone only when the affected page's `page_LSN` is less than the record's own LSN,
+which makes redo idempotent under arbitrarily many crashes without any bookkeeping
+about which passes have run. This is the mechanism a durable-execution layer lacks
+whenever the effect it performed leaves no trace of which record produced it: if the
+world can be stamped, reconciliation becomes a single comparison.
+
+**Undo is itself logged, and the log records are never undone.** A compensation log
+record is redo-only and carries an `UndoNxtLSN` pointer to the next record still to
+be undone, so a crash during rollback resumes rollback rather than restarting it,
+and the total logging stays bounded across repeated crashes. Every system in this
+survey that registers compensations without journaling them has given this up.
+
+**Recovery repeats history first, then undoes.** The analysis pass establishes what
+was in flight, the redo pass restores the state as of the crash including the effects
+of transactions that will be rolled back, and only then does undo run. The ordering
+is load-bearing: undo must operate against the state it originally saw.
+
+**The checkpoint is a bookkeeping record, not a copy of the data.** A fuzzy
+checkpoint writes the transaction table and the dirty-page table and bounds how far
+back the analysis pass must scan. A durable-execution layer's equivalent is a record
+naming the open scopes and the steps in flight — not a snapshot of the program's
+state.
+
+### 10. Operator recovery and intervention
+
+**Partial rollback is the one operator-adjacent affordance**, and it is expressed in
+the same machinery as recovery: a transaction may roll back to a savepoint rather
+than to its beginning, and the compensation log records written during that partial
+rollback are ordinary log records. So "undo the last N operations and continue" is
+not a special mode; it is the undo pass with a different stopping point. That is
+precisely the shape Golem's revert-to-an-index and Temporal's reset take, arrived at
+four decades earlier.
+
+**Nothing else in the paper addresses intervention**, and the absence is
+structural: the recovery manager's audience is the system, not a person.
+
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **The `started` record is the undo portion of the WAL rule.** ARIES forbids writing the page before the undo portion of its log record is on stable storage. The sparkles journal's `started` record plays that role for an effect launched through the capability row: it must be durably appended before `supervise` forks the child or the git tag is written. Appending to `journal.jsonl` is not enough; the record must be flushed, and a torn last line after a crash must read as "never started" rather than as a parse error. PostgreSQL protects each WAL record with a CRC for this reason; the journal needs a per-record length or checksum with the same effect.
-
-- **`completed` is the redo portion, and a step is promised only when it is stable.** ARIES gates commit on the redo portions reaching stable storage. In the design, the value a decision replays verbatim lives in `completed`; until that record is flushed, a resume must treat the step as in doubt. This confirms the started/completed pair and adds the flush points to it.
-
-- **Stamp the world with the step id wherever git allows it.** ARIES makes redo idempotent by putting the LSN in the page. The design's reconciliation rule table (tag exists on the boundary SHA means done, tag exists elsewhere means conflict) is a content comparison because a plain tag carries no journal identity. An annotated tag message and a GitHub release body can carry the run id and step id. With that stamp, "exists on the boundary SHA" becomes "exists and was written by this step", and a tag written by a human between crash and resume is distinguishable from the workflow's own. This is the single strongest thing the paper argues the design lacks.
-
-- **Repeat history before compensating; never compensate selectively.** Section 10.1 is a proof that skipping the replay of an abandoned scope's steps corrupts the state the compensations will run against. On resume, sparkles should replay the journal to the crash point in full, including steps of a scope that will then be compensated, and only then run the LIFO compensations. That confirms "explicit-only, LIFO on a scope" and rules out any shortcut that skips replaying a doomed scope.
-
-- **Compensations are CLRs: journaled, redo-only, with a resume pointer.** Each compensation execution must write its own `started`/`completed` records and record which registered compensation is next, so a crash mid-rollback resumes at the right one and never re-runs a completed compensation. Compensations are never compensated. The invariant to test: the number of compensation records after any number of crashes equals the number of compensations registered.
-
-- **Crash-at-every-index must index into the recovery phase.** The ARIES test is a crash during restart. The sparkles test plan says crash at every event index and resume; the indices must include every point inside a resume and inside a compensation run, otherwise the CLR discipline is untested exactly where the paper says it matters.
-
-- **The analysis pass is the model for the resume prologue.** Before touching the world, read the journal once and build two tables: open scopes with their next compensation, and steps that are `started` but not `completed`, which are the "dirty pages" that need re-observation. Only those steps consult the world; everything `completed` replays as a value. That is a smaller and better-defined reconciliation surface than "re-observe all observations".
-
-- **A fuzzy checkpoint record, not a snapshot, is the right compaction.** Nothing in `release` needs a materialized state; what a long journal needs is a record that lets resume skip reading the whole file. The ARIES checkpoint is exactly that record and nothing more.
+- **Write the intent before performing the effect, and make that the rule rather
+  than a convention.** Every durable-execution system that distinguishes started
+  from completed is applying the write-ahead protocol to effects instead of pages.
+- **Stamp the world with the record's identity where the world allows it.** Redo is
+  idempotent because the page carries the sequence number of the last record applied
+  to it, so reconciliation is one comparison. A library whose effects can carry a
+  step id — in a message, a tag, a record it writes — can have the same property, and
+  should take it.
+- **Only work that started without completing needs to consult the world.** The
+  analysis pass identifies exactly that set, and everything else is replayed as a
+  value. Re-observing indiscriminately is both slower and less defensible.
+- **Journal the compensation, and never compensate a compensation.** A redo-only
+  compensation record with a pointer to the next thing to undo makes rollback
+  resumable and keeps logging bounded across repeated crashes. Registering
+  compensations in memory gives up both properties.
+- **Repeat history before undoing.** Selective redo that skips the work about to be
+  rolled back corrupts the state undo runs against — a result the paper establishes
+  and a mistake a library can make by trying to be efficient.
+- **A checkpoint should record what is in flight, not what the state is.** The
+  transaction table and dirty-page table bound recovery without copying data, and the
+  analogue for a durable program is a record of open scopes and unfinished steps.
+- **Partial rollback to a savepoint is the undo pass with a stopping point** — which
+  means a library that journals compensations correctly gets operator-facing
+  "rewind N steps" for free, rather than needing a separate mechanism.
+- **A record format needs to say where a record ends.** The paper's recovery
+  argument assumes a log whose partial tail is detectable; a library appending lines
+  to a file must supply that itself, with a length prefix or a checksum, or a torn
+  last write becomes an ambiguous record rather than an absent one.
 
 ---
 
@@ -176,7 +236,7 @@ The paper's own validation method is the crash-during-restart scenario: §10.1 c
 - Mohan, Haderle, Lindsay, Pirahesh, Schwarz, "ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging", ACM TODS 17(1), 1992 — [DOI][aries-doi]; text read from the [Stanford CS345 mirror][aries-pdf] (sections cited: 1.1, 2, 3, 4.1–4.4, 6.2, 6.3, 10.1, 11, 12)
 - PostgreSQL 18 documentation, [§28.3 Write-Ahead Logging (WAL)][pg-wal-intro] and [§28.6 WAL Internals][pg-wal-internals]
 - Sibling: [Idempotence and the outside world (Helland)][idempotence], which takes the same rule to a world that has no `page_LSN`
-- [Durable-execution catalog index][index] · [Event Horizon spec][eh-spec] · [Release spec][release-spec]
+- [Durable-execution catalog index][index] · [Event Horizon spec][eh-spec]
 
 <!-- References -->
 
@@ -187,4 +247,3 @@ The paper's own validation method is the crash-during-restart scenario: §10.1 c
 [idempotence]: ./idempotence.md
 [index]: ./index.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
-[release-spec]: ../../../specs/release/SPEC.md

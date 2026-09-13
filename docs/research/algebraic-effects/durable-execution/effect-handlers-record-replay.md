@@ -18,7 +18,7 @@ No clone of Pyro, dscheck, `operational` or the effects bibliography exists unde
 
 Searching for "record and replay" against the effect-handlers literature turns up one exact match and several near misses. The exact match is not a paper but a library: Pyro's `poutine`, which its own documentation introduces as "a library of composable effect handlers for recording and modifying the behavior of Pyro programs" ([`docs/source/poutine.rst`][pyro-rst]), and which ships a `trace` handler that records every operation's inputs and outputs and a `replay` handler that answers a later run's operations from that record. The academic version of the same idea, in Haskell with algebraic effects, is Nguyen et al.'s `traceSamples` handler and the address-keyed `STrace` map it maintains. Both exist to make a stochastic program re-executable under a chosen set of answers, which is exactly what a durable workflow needs, but neither paper says anything about persistence, crashes or resumption.
 
-The `yallop/effects-bibliography` index, the community's canonical list, has no entry mentioning replay, record, durable, checkpoint or journal; its only entries near the topic are the probabilistic-programming ones (Nguyen et al. 2022, Pyro 2018, Moore and Gorinova's Edward2 paper) ([README at `08d791bf`][effbib-readme]). Burckhardt et al.'s related-work section, written by people who built the record/replay runtime, cites no effect-handler or continuation work at all; its closest citations are a serverless runtime that instruments storage accesses "to enable record/replay" and Ramalingam and Vaswani's λFAIL, which "proposes a semantics for distributed services that execute on top of reliable storage, also providing a compilation procedure using monads that guarantees correct execution in the presence of faults" ([paper][df-pdf], §7). That last citation is the closest thing to the sparkles design with a proof attached, and it is a monad, not a handler.
+The `yallop/effects-bibliography` index, the community's canonical list, has no entry mentioning replay, record, durable, checkpoint or journal; its only entries near the topic are the probabilistic-programming ones (Nguyen et al. 2022, Pyro 2018, Moore and Gorinova's Edward2 paper) ([README at `08d791bf`][effbib-readme]). Burckhardt et al.'s related-work section, written by people who built the record/replay runtime, cites no effect-handler or continuation work at all; its closest citations are a serverless runtime that instruments storage accesses "to enable record/replay" and Ramalingam and Vaswani's λFAIL, which "proposes a semantics for distributed services that execute on top of reliable storage, also providing a compilation procedure using monads that guarantees correct execution in the presence of faults" ([paper][df-pdf], §7). That last citation is the closest thing to a durable handler with a proof attached, and it is a monad, not a handler.
 
 ## Pyro `poutine`: the `trace` / `replay` pair
 
@@ -78,7 +78,7 @@ The paper proves correctness for the nondeterminism special case (Appendix A) an
 
 The closest formal result to a journaling combinator, and the one Burckhardt et al. cite. The setting is λFAIL, a lambda calculus with process failure, duplicate requests, a `RETRY` rule and single-store atomic transactions. Correctness is _failfree idempotence_: a program is correct iff its behaviour under the standard semantics (with failures and duplicates) is weakly bisimilar to its behaviour under an ideal semantics with neither (Definition 2.3). The authors' gloss: "if the system can produce a response r under the ideal semantics, then the system should be capable of producing the same response r under the standard semantics also … this progress guarantee holds provided requests are retried" ([paper][idem-pdf], §2.2).
 
-The construction is a monad that does what the sparkles design does ([paper][idem-pdf], §1):
+The construction is a monad that does what a journaling combinator does ([paper][idem-pdf], §1):
 
 > "Given a unique identifier associated with a computation, the monad essentially adds logging and checking to each effectful step in the workflow to ensure idempotance. … it does not assume the presence of dedicated storage for logs that can be accessed atomically with each transaction. The monad reuses the underlying store (in this case a key-value table) to simulate a distinct address space for logging."
 
@@ -112,7 +112,7 @@ eval (Ask question :>>= k) log (l:ls) = replay (k l) log ls   -- answer from log
 eval (Ask question :>>= k) log []     = return $ htmlQuestion log question
 ```
 
-This is a durable workflow in miniature: the program is re-run from the start on every request, positional matching against a log of answers, and the live operation fires exactly at the log's end. It also exhibits the two weaknesses the sparkles design must not repeat: identity is position only, and the log is the sole source of truth, with no notion of the world disagreeing with it.
+This is a durable workflow in miniature: the program is re-run from the start on every request, positional matching against a log of answers, and the live operation fires exactly at the log's end. It also exhibits the two limitations that recur across this literature: identity is position only, and the log is the sole source of truth, with no notion of the world disagreeing with it.
 
 ## Ahman and Bauer: runners (ESOP 2020)
 
@@ -189,15 +189,87 @@ The effects literature has both and prefers snapshot where it can: Unison serial
 
 Two patterns. A scheduler handler under model-checking search (dscheck) tests every interleaving. A replay handler tests reproducibility by construction: run under `trace`, run again under `replay`, compare (Pyro's own doctest does exactly this: `replayed_model(0.0) == old_trace.nodes["_RETURN"]["value"]`). The second is Burckhardt's Lemma 6.7 as an executable check.
 
-## Relevance to sparkles
+### 9. Journal integrity and the single writer
 
-- **The journaling combinator has a name in the literature: it is Pyro's `trace` and `replay` fused into one handler, or in Nguyen et al.'s terms a `State STrace` handler installed after each capability operation.** The `release` spec can describe it that way and cite both, rather than presenting it as novel. The fused form (one handler that replays while the log has entries and records once it runs out) is exactly Apfelmus's `eval` and Burckhardt's replay-then-record worker.
-- **The correctness statement to borrow is Ramalingam and Vaswani's, not only Burckhardt's.** Their Theorem 3.9 (the monadic translation is a failfree realisation of the original program) is the same shape as "the journaled workflow is observably the un-journaled workflow modulo retries", and it comes with the compensation extension the design also wants. The caveat to state alongside it: their proof puts the log in the same atomic store as the effects; `release`'s effects are `git` and GitHub, so the theorem covers the journal's own consistency and not the world's.
-- **Confirms named step keys with an args hash.** Every positional scheme surveyed breaks on code change; Pyro's named sites are the one scheme that does not, and its `RuntimeError` on a kind mismatch is the weakest useful divergence check. The design's stable name plus attempt counter plus args hash is strictly stronger than anything in the literature.
-- **Confirms "no continuation capture" costs nothing.** Thermometer continuations show replay _is_ a continuation implementation. The `Ctx` row with tail-resumptive capabilities is a runner in Ahman and Bauer's sense, and their finalisation theorem is the right precedent for LIFO compensations on a scope.
-- **Argues for making the compensation scope a journal entry.** Wu, Schrijvers and Hinze's point that scopes must be syntax, not handler nesting, translates directly: a `scope-opened` / `scope-closed` pair belongs in `journal.jsonl`, so a resume can rebuild the LIFO stack without re-running the scope's body.
-- **The design's "journal versus world" rule table and versioning story have no literature support and none against them.** Nothing surveyed re-observes the world or runs new code against old logs. Those two decisions are the design's own and should be tested as such.
-- **The test plan is already the literature's test plan.** "Run under trace, run under replay, compare" is Pyro's doctest and Burckhardt's Lemma 6.7; "own the scheduler and enumerate" is dscheck. Crash-at-every-index is Lemma 6.6 and has no effects-literature precedent, which is fine.
+**One source addresses it, and its answer is to make the question disappear.**
+Ramalingam and Vaswani put the step log and the effects in the _same_ transactional
+store, so appending the record and performing the work commit together. That is why
+their theorems can be stated at all: there is no window between intent and effect,
+because there is no separate store to be inconsistent with.
+
+**The consequence is a boundary on what the results cover.** Journal consistency is
+proved; the outside world is not in the model. A library whose effects reach beyond its
+own store cannot cite these theorems for those effects, which is the same limit
+[Burckhardt et al.][burckhardt] draw explicitly.
+
+**Everything else in this literature is in-memory.** Pyro's trace is a Python
+dictionary, the `operational` package's log is a value, and the thermometer-continuation
+construction re-runs within one process. None of them has a second writer, a crash, or
+a storage layer, so none of them has anything to say about fencing, torn records or
+lost acknowledgements. That is not a criticism — they are semantics and inference
+libraries — but it does mean the effects literature offers no prior art for this
+dimension.
+
+### 11. Suspension and external input
+
+**Scoped effects are the relevant result, and the requirement they impose is
+structural.** The scoped-effects line establishes that a construct delimiting a region
+of computation — `catch`, `local`, a resource bracket — cannot be expressed as an
+ordinary first-order operation; it needs the handler to see the scope as syntax. For a
+durable layer the consequence is direct: if a scope is to survive a crash, its opening
+and closing must be _records_, not stack structure, because the stack is what the crash
+destroys.
+
+**A scheduler handler is how the literature makes waiting deterministic.** `dscheck`
+handles the concurrency operations of a program under test and enumerates interleavings,
+which is the same technique a durable-execution test harness uses to make a wait
+deterministic — and, notably, neither `dscheck` nor any surveyed effect library persists
+the schedule it chose.
+
+**Runners give the closest thing to a lifecycle guarantee.** Ahman and Bauer's
+finalisation-exactly-once result is about releasing resources when a computation ends,
+however it ends, which is the property a compensation scope wants. It is stated for a
+single process and says nothing about resuming a finalisation that was interrupted
+partway.
+
+**Nothing in this literature models an external party.** There is no awaited token, no
+external completion and no notion of a computation that stops and is resumed by someone
+else — the handler always resumes its own continuation. Suspension across processes is
+absent, and so is everything that follows from it.
+
+---
+
+## Implications for a durable-execution library
+
+- **The journaling handler is a known pattern and can be named.** It is Pyro's `trace`
+  and `replay` pair fused into one handler, or equivalently a state handler carrying a
+  trace, keyed by a caller-supplied site name. A library implementing it is not
+  inventing a mechanism, and saying so accurately is better than claiming novelty.
+- **There is one usable correctness theorem, and it is not from the effects
+  literature.** Ramalingam and Vaswani prove their monadic translation failure-free
+  modulo retries, with a compensation extension attached. Cite it alongside
+  [Burckhardt's][burckhardt] transparency lemma, and cite the caveat too: both put the
+  log in the same store as the effects, so neither covers an external world.
+- **Refusing continuation capture costs no expressiveness.** Replay from a recording is
+  proved to implement delimited control, so a tail-resumptive-only design gives up
+  nothing a durable layer needs — an argument worth having in writing when someone
+  proposes serialising a stack.
+- **A capability row of tail-resumptive handlers is a runner**, and runners come with a
+  finalisation-exactly-once theorem. That is the precedent for scope-registered
+  compensation, and the gap it leaves — resuming an interrupted finalisation — is exactly
+  what journaling the compensation fixes.
+- **A compensation scope must be syntax the record can see.** The scoped-effects result
+  says a region-delimiting construct cannot be an ordinary first-order operation; the
+  durable corollary is that a scope's open and close must be journaled entries, because
+  the stack that would otherwise hold them is what a crash destroys.
+- **Named sites beat positional ones for surviving edits.** Pyro's addressing is the only
+  content-addressed scheme in this literature, and it is the only one under which a
+  changed program can still find its recorded answers.
+- **Two questions have no support and no counter-evidence here:** reconciling a record
+  against an independently mutable world, and running new code against an old record.
+  The literature is silent, so a library's choices on both are its own to justify.
+
+---
 
 ## Sources
 

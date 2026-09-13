@@ -118,16 +118,76 @@ This is the paper's central result and it is subtler than "replay". Orchestratio
 
 Not addressed; the paper's validation is proof, not test. What it leaves behind is nonetheless a test oracle: Lemma 6.7 says recording is transparent (run the workflow with and without the journal, compare observable output) and Lemma 6.6 says any prefix of a recording replays to the state the recording had at that point (cut the history anywhere, replay, continue, compare). Those two lemmas are exactly the properties an empirical harness can check.
 
-## Relevance to sparkles
+### 9. Journal integrity and the single writer
 
-- **Confirms the layering and names the theorem to aim at.** The decided design, one pure workflow function over the capability row with journaling as the single pure-cast, is the paper's three models with the runtime removed: the function under live capabilities is the high-level model, the journaling combinator is the recording execution, and the resume path is replay. The `release` spec can cite Theorems 5.3 and 6.4 for the shape of the correctness claim, and Lemma 6.7 (Transparency of Recording) as the property the journaling combinator must preserve: adding the journal must not change what the workflow does.
-- **Confirms "decisions replay verbatim, effects are suppressed".** Rule YOut is precisely "re-run the step, do not emit the effect, check the emitted message equals the recorded one". The args-hash in the sparkles step key is stronger than the implementation (sequence id plus name plus version, no argument check) and matches the calculus, where the whole message is compared.
-- **Cannot be cited for journal-versus-world reconciliation.** The paper's runtime owns the only state; git tags and HEAD are external, mutable by other actors, and the paper explicitly excludes external calls from its proved models because their duplication is observable. The "re-observe and reconcile by rule table" decision has no support here and no refutation either; it is outside the paper's universe. The one usable idea is the entity trick from question 7: an observation of the world can be recorded as a synthesized `in` entry, so the journal carries a snapshot of what was seen without pretending it caused it.
-- **Argues that `git push` and `gh release create` are at-least-once and must be made safe by the tool, not the journal.** The paper's exactly-once is internal-state-only; every external effect between a `started` entry and its `completed` entry may have happened zero or one times when the process died. The spec should say that explicitly and cite §5's exclusion as the reason a journal alone cannot promise more. Whether the design's "re-observe the world" answers this for tags (a tag either exists or not) is the question the rule table has to settle per effect.
-- **No work-item boundary exists in a CLI.** The paper's atomic unit is the work-item commit: state plus all outgoing messages land together or not at all. A single-process release tool has no such unit; it crashes between any two lines. Journaling `started` before and `completed` after each op is the right substitute, but the spec should not call it exactly-once, and the crash-at-every-event-index test is what stands in for S-Commit's atomicity.
-- **Compensation and versioning get nothing from this paper.** Both are absent. The LIFO explicit compensation scope and the versioning rules must be justified from the subject pages (Temporal, Restate, DBOS), not from here. `continue_as_new` is the one relevant pattern: `--split` mode's chain of releases maps naturally onto one orchestration per release with a truncated history at each boundary, which also bounds replay cost per §3.5.
-- **Determinism stays a discipline, and the paper says so.** With no continuation capture and every capability op tail-resumptive, sparkles' `Ctx` row already gives the structural half of the calculus's answer: the workflow cannot reach the world except through a handler that journals. The spec can cite Fig. 9's context-restriction table as the precedent for "an orchestration has no `call nX`", and the paper's own caveat on Lemma 6.5 as the reason a runtime divergence check (the sparkles args hash) is still required.
-- **The testing strategy is the paper's two lemmas turned into a harness.** "Run with and without the journal, compare" is Lemma 6.7; "cut the journal at every index and resume" is Lemma 6.6. The spec can cite them as the properties the tests check, even though the paper never tests anything.
+**The model has exactly one integrity mechanism, and it is a compare-and-swap.** A
+work item is processed by reading the entity's state, running the step, and
+committing the new state conditionally on the state it read. Two workers that both
+attempt the same work item are resolved by that conditional commit: one succeeds and
+the other's write is refused. There is no lease, no epoch and no writer identity —
+the atomicity of the commit is the whole guarantee.
+
+**The commit is atomic across state and outgoing messages**, which is what makes the
+model's exactly-once claim possible at all: a step's effect on the entity and the
+messages it emits become durable together, so a crash cannot leave one without the
+other. A library that cannot commit its record and its outgoing work as a unit
+cannot make this claim.
+
+**The proved guarantee stops at the boundary.** External calls are excluded from the
+formal treatment precisely because _"duplication of external calls (unlike internal
+calls) is observable"_. So the theorem covers the journal's own consistency, and a
+library that performs effects outside the model's store inherits at-least-once for
+those effects no matter what the proof says.
+
+### 11. Suspension and external input
+
+**External events are modelled, and they are part of the history.** An orchestration
+may wait for an event that another party raises, and the event's arrival is an
+incoming message recorded in the history like any other — so replay delivers it at
+the same point, and determinism is preserved across a wait of arbitrary length.
+
+**Waiting is not a state in the model.** An orchestration is a function being
+replayed; between events it is not running anywhere, and nothing in the semantics
+distinguishes "waiting for an event" from "waiting for an activity". The
+implementation's status vocabulary adds that distinction; the calculus does not need
+it.
+
+**Entities are the mechanism for input that must be remembered rather than awaited.**
+Where an orchestration waits, an entity accumulates: its whole state is snapshotted
+into the same history format, which is how the model expresses long-lived
+coordination without an unbounded replay.
+
+---
+
+## Implications for a durable-execution library
+
+- **The paper's three-model stack is the right way to describe a durable-execution
+  layer.** A high-level semantics where steps simply happen, a compute-and-storage
+  model, and a replay-based implementation, with theorems relating them, gives a
+  library a citable shape for its correctness claim instead of an informal promise.
+- **Lemma 6.7, transparency of recording, is the obligation a journaling handler
+  takes on:** running with recording enabled must be indistinguishable from running
+  without it, apart from the record. That is the property a library's test suite
+  should be checking, and it is stronger than "the program produced the right
+  answer".
+- **Lemmas 6.6 and 6.7 together are the crash-at-every-index test, as properties.**
+  The paper states them and proves them for a calculus; a library states them and
+  tests them for a program. Either way they are the same two claims.
+- **Exactly-once is a claim about internal state only.** External calls are excluded
+  from the proved models because duplicating them is observable. Any library
+  documentation that says "exactly once" without that qualifier is overclaiming.
+- **A conditional commit is sufficient for single-writer when the commit is atomic
+  across state and outgoing messages** (§9). That is a real design: it needs no lease
+  and no epoch, and it is available to any library over a transactional store.
+- **Determinism is the load-bearing assumption and the paper says where it comes
+  from.** It is easy to prove for a small calculus and must be obtained by discipline
+  in a real language — which is why the implementations in this survey all end up
+  substituting clocks and random sources rather than reasoning about them.
+- **Snapshotting state into the same record format as replayed steps** is the trick
+  the entity model uses, and it means a library needs one record type rather than two
+  to support both bounded replay and long-lived state.
+
+---
 
 ## Sources
 
@@ -135,7 +195,7 @@ Not addressed; the paper's validation is proof, not test. What it leaves behind 
 - Burckhardt, Chandramouli, Gillum, Justo, Kallas, McMahon, Meiklejohn, Zhu. "Netherite: Efficient Execution of Serverless Workflows". PVLDB 15(8), 2022. [PDF][netherite-vldb]; earlier version [arXiv:2103.00033][netherite-arxiv]. The paper's §7 and §8 cite this work for the backend design.
 - [`Azure/durabletask`][durabletask] at `b385165ac10ecebbf183fdfdb07db33307756792`: [`EventType.cs`][event-type] (the history event vocabulary), [`TaskOrchestrationContext.cs`][orch-ctx] (sequence-id replay matching and `NonDeterministicOrchestrationException`), [`OrchestrationContext.cs`][ctx] (`CurrentUtcDateTime`, `IsReplaying`).
 - [`microsoft/durabletask-netherite`][netherite-repo]: the sharded commit-log backend; see the sibling [Netherite][netherite] page.
-- Catalog context: [durable-execution index][index]; `sparkles:event-horizon` [spec][eh-spec]; `release` [spec][release-spec].
+- Catalog context: [durable-execution index][index]; `sparkles:event-horizon` [spec][eh-spec].
 
 <!-- References -->
 
@@ -152,4 +212,3 @@ Not addressed; the paper's validation is proof, not test. What it leaves behind 
 [netherite]: ./netherite.md
 [index]: ./index.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
-[release-spec]: ../../../specs/release/SPEC.md

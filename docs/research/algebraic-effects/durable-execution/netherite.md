@@ -182,15 +182,93 @@ The paper has no testing section; the engine has four hooks on `TestHooks` ([`Te
 
 `PersistStepsFirst` doubles as the A/B switch: the same suite runs with and without speculation. Fault injection is at the storage boundary, not at every event index, and there is no deterministic simulation of the transport.
 
-## Relevance to sparkles
+### 9. Journal integrity and the single writer
 
-- **Confirms the journal-plus-projection split, and names the invariant.** Netherite's partition state is "a deterministic function of the sequence of events", the checkpoint is a derived artifact with a recorded log position, and recovery is checkpoint plus log tail. That is the `journal.jsonl` plus materialized projection design, with one addition worth copying: the projection records the journal offset it reflects, and applying an event is idempotent by offset (`LastUpdate < NextCommitLogPosition`), so a partially stale projection is always safe to replay over.
-- **Speculation is the model for "started before the effect", but only for effects the engine owns.** Netherite runs the next step before the previous step's log write lands, and it is safe precisely because the outbox defers everything that leaves the partition until `ConfirmDurable`. For `release`, the analogue is to let pure decisions and reads proceed ahead of the `started` fsync, while a `git tag` or a GitHub publish is gated on the `started` record being durable. The paper's warning is the cost of getting this wrong: with speculation, re-execution after a crash can span several steps' external effects.
-- **Argues against re-observing the world as the primary reconciliation.** Netherite never asks the world; it makes every world-facing effect at-least-once and pushes deduplication to the receiver (dedup vector) or the application (§3.3.3). The `release` rule table that re-observes tags and HEAD is a stronger stance than Netherite's, justified because git and GitHub are queryable in a way an e-mail is not. Keep the rule table, but classify each op as "engine-dedupable" (idempotent tag create, manifest-keyed upload) or "application-dedupable" (LLM call, notification), and only the first class may run ahead of the journal write.
-- **Fingerprint the channel, not just the content.** The `InputQueueFingerprint` check is a cheap detector for "the world was replaced, not mutated": if the repository's remote URL or the target branch differs from what the journal recorded, the whole resume is suspect, before any per-op reconciliation runs.
-- **Positional identity is enough when there is one total order.** Netherite identifies steps by log position and cross-partition messages by origin position, with no name or arguments hash. `release` has one writer and one journal, so the name-plus-attempt-plus-args-hash key is doing double duty: matching (position would do) and drift detection (args hash). Separate the two concerns explicitly so a benign reordering does not read as corruption.
-- **The `ReplayChecker` is the test the design lacks.** Crash-at-every-index tests exercise recovery; Netherite additionally asserts on every event, in every test, that `serialize(project(state) + event) == serialize(deserialize(serialize(state)) + event)`. For sparkles that is a property test over the journaling combinator: applying an event to a freshly deserialized projection must equal applying it to the live one. It catches the class of bug where the projection carries state that is not in the journal.
-- **Missing from Netherite, present in the design:** compensations (LIFO scopes), versioning against old journals, and re-asked confirmation gates. The paper explicitly leaves all three to the layer above the engine, which is a reasonable division for an engine but not for a single-binary CLI that is both engine and application.
+Netherite is the paper in this catalog that treats the log as the product, and its
+integrity argument is the clearest statement of the write-ahead rule applied to a
+workflow engine.
+
+**The commit log is the single source of truth and the single writer is the partition
+owner.** Each partition is an event-sourced state machine, and its state is _"a
+deterministic function of the sequence of events that were processed"_. One host owns
+a partition, appends to its log, and applies events; nobody else writes it.
+
+**Applying an event is idempotent against the log position.** The state records how far
+it has been updated, and an event whose position is already reflected is skipped —
+which is exactly ARIES's `page_LSN` comparison, in an application-level state
+machine. Recovery therefore replays the log tail from the checkpoint without needing to
+know which of those events had already been applied.
+
+**Speculation is bounded by a rule about dependencies, not by a timer.** The engine
+executes ahead of the commit for latency, and _"The important bit is that the pipeline
+never commits a transition that has a dependency on an uncommitted transition."_ That
+is the precise condition under which running ahead of durability is safe, and it is
+the sentence a library should quote when deciding whether an effect may be issued
+before its intent has been flushed.
+
+**External effects are held back until the log is durable.** Outgoing messages and
+client responses are deferred until the commit confirms, so speculation is invisible
+outside the partition — while user activities are not, and are re-executed
+at-least-once after a crash. The asymmetry is the design: engine-owned effects get
+exactly-once, user effects do not.
+
+**Cross-partition duplicates are deduplicated by origin and position**, which is the
+same epoch-and-sequence idea Restate uses, at a different granularity.
+
+**The input queue is fingerprinted.** A change of input channel is detected by
+comparing a fingerprint rather than being silently absorbed — the one instance in the
+survey of validating that the record's _source_ is the one it was built from.
+
+### 10. Operator recovery and intervention
+
+**The paper offers nothing here, and says so by omission.** Its subject is the engine
+beneath a programming model, and every operator affordance — inspecting an
+orchestration, resetting one, cancelling one — belongs to the layer above. What it does
+provide is the substrate those affordances would need: a totally ordered log per
+partition, checkpoints that bound replay, and an idempotent apply.
+
+**The engine's own test hooks are the nearest thing**, and they are aimed at the
+implementation rather than at an operator: a replay checker that verifies the
+commutative diagram after every event, fault injectors for storage and checkpoints,
+and a read-only recovery tester. That is a strong internal toolkit and not an
+intervention surface.
+
+---
+
+## Implications for a durable-execution library
+
+- **Make the apply idempotent against the record's position.** Storing how far the
+  state reflects the log turns recovery into "replay the tail" with no bookkeeping
+  about which events were already applied — the same mechanism ARIES uses for pages,
+  and the reason a projection should carry its offset.
+- **Speculation is safe under a statable rule**, and the rule is not "wait a bit": never
+  commit a transition that depends on an uncommitted one (§9). A library deciding
+  whether an effect may run before its intent is durable should be able to state its
+  condition that precisely, or not speculate.
+- **Separate engine-owned effects from user-owned ones.** Netherite holds its own
+  outgoing messages until the log commits, and lets user activities run ahead and be
+  re-executed. Naming which effects get exactly-once and which get at-least-once is
+  more honest than a single guarantee for both.
+- **Fingerprint the record's source.** Detecting that the input channel changed, rather
+  than silently absorbing it, is the only instance in the survey of validating that a
+  record belongs to the world it was built from — and the analogue for a library is to
+  record which target its effects were aimed at.
+- **A checkpoint bounds replay and is not the truth.** The log stays authoritative and
+  the checkpoint is an optimisation with its own trigger thresholds (§7), which is the
+  relationship a library should keep.
+- **The replay checker is the best internal test in the survey.** Asserting that
+  serialising a freshly folded state equals serialising a deserialised state with the
+  event applied catches divergence between the in-memory and reconstructed paths, and
+  it runs on every event of an existing test suite rather than needing new fixtures.
+- **Per-step storage round trips are the thing to design away.** The paper's entire
+  motivation is that a step-per-round-trip engine is slow, and its answer is batching
+  under one log. A library appending to a local file gets this cheaply and should not
+  lose it by flushing per record without reason.
+- **Compensation and versioning are deliberately out of scope here** (§4, §5), which
+  is a reminder that an engine can be complete at its own level while leaving both
+  unanswered for the layer above.
+
+---
 
 ## Sources
 

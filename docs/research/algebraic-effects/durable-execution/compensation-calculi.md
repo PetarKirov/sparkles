@@ -131,7 +131,7 @@ The conclusion lists what the calculus abstracts away: _"we do not include usual
 
 ## Building on Quicksand (Helland, Campbell, CIDR 2009)
 
-Helland and Campbell are not writing about compensation calculi; they are writing about what happens to transactional guarantees when a system acknowledges work before its backup knows about it. Their vocabulary is nevertheless the one the sparkles design needs for question 2.
+Helland and Campbell are not writing about compensation calculi; they are writing about what happens to transactional guarantees when a system acknowledges work before its backup knows about it. Their vocabulary is nevertheless the one question 2 needs.
 
 The paper's arc: fault tolerance has always been _"a set of idempotent sub-algorithms"_ between which state crosses a failure boundary (§2.2, the river-crossing image: _"stepping across a river from rock to rock, always keeping one foot on solid ground"_). Once checkpointing to the backup becomes asynchronous (log shipping, §4.1), two things follow (abstract): _"Everything promised by the primary is probabilistic … Hence, nothing is guaranteed!"_ and _"Applications must ensure eventual consistency."_ §5 draws the consequence for replay:
 
@@ -186,7 +186,7 @@ Only Helland speaks to this, and he does so precisely: the identity of a unit of
 
 ### 2. Journal versus world
 
-This is where the three sources agree and where they sharpen the sparkles question. The calculi journal nothing about the world; the context `Γ` in Bruni's semantics, and the `cancel`/`independent` relations in cCSP, are _assumptions_ about what atomic activities do, supplied from outside. cCSP is blunt that the world cannot be captured: _"the real world cannot be check-pointed."_ Its cancellation semantics defines correctness _relative to a declared cancellation relation_, and the authors say so: _"The unrealism of this abstraction should be mitigated in engineering practice, by ensuring that failures with less desirable compensations are adequately rare."_ Helland then says what happens when the assumption fails: the journal is a _memory_, the action taken from it was a _guess_, and when the world is re-read and disagrees, the response is an _apology_, either code written for the anticipated cases or a human for the rest. On the concrete question of which wins, Helland is unambiguous: the world. A journal entry does not make the forklift un-run-over the book. What the journal is authoritative about is _what the program decided and did_; it is never authoritative about the world's current state, which must be re-observed.
+This is where the three sources agree, and where they sharpen the journal-versus-world question. The calculi journal nothing about the world; the context `Γ` in Bruni's semantics, and the `cancel`/`independent` relations in cCSP, are _assumptions_ about what atomic activities do, supplied from outside. cCSP is blunt that the world cannot be captured: _"the real world cannot be check-pointed."_ Its cancellation semantics defines correctness _relative to a declared cancellation relation_, and the authors say so: _"The unrealism of this abstraction should be mitigated in engineering practice, by ensuring that failures with less desirable compensations are adequately rare."_ Helland then says what happens when the assumption fails: the journal is a _memory_, the action taken from it was a _guess_, and when the world is re-read and disagrees, the response is an _apology_, either code written for the anticipated cases or a human for the rest. On the concrete question of which wins, Helland is unambiguous: the world. A journal entry does not make the forklift un-run-over the book. What the journal is authoritative about is _what the program decided and did_; it is never authoritative about the world's current state, which must be re-observed.
 
 ### 3. Determinism enforcement
 
@@ -214,18 +214,72 @@ The parallel laws are the finding. cCSP: `[(P ÷ P′ ‖ Q ÷ Q′) ; THROWW] =
 
 Absent in all three. The calculi offer proofs of adequacy in place of tests; Helland offers business judgement (_"What's your stomach for risk?"_, §5.5). Neither says how to test that a specific compensation actually cancels a specific forward action; cCSP's `cancel(A, A°)` is an axiom the programmer asserts.
 
+### 9. Journal integrity and the single writer
+
+**The calculi are silent, and the silence is principled.** cCSP and the sagas calculi
+are trace semantics over processes; they have no store, no log and therefore no
+integrity question. What they do supply is the constraint that makes the question
+matter: because _"the real world cannot be check-pointed"_, a compensation is
+reasoning about a world that has already been observed, so the record of what was
+done is the only thing the program has.
+
+**Helland's half of the page does bear on it**, through the requirement that a
+compensating message carry a uniquifier of its own. A compensation retried after a
+crash is a duplicate message like any other, and must be recognised as one — which
+means a library must give each compensation an identity, not only each forward step.
+
+### 10. Operator recovery and intervention
+
+**Abnormal termination is a distinct outcome, and that is the contribution.** In the
+sagas calculi a compensation that itself fails does not produce ordinary failure; it
+produces a separate abnormal result that the enclosing handler must deal with. A
+library that folds "the step failed" and "the rollback failed" into one error has
+lost the distinction an operator most needs.
+
+**Compensations are flat.** The calculi forbid compensating a compensation:
+rollback is retried forward, never itself rolled back. That is what keeps recovery
+bounded, and it is a rule a library must enforce rather than document.
+
+**Forward recovery is a separate operator.** cCSP's alternative construct resumes
+rather than rolls back, and it is distinct from compensation both syntactically and
+semantically — so "retry this step" and "undo everything before it" are different
+choices, available at the same point.
+
+**Helland's apology is the endpoint.** When neither forward nor backward recovery is
+available, the remaining move is outside the system: notify someone, and record that
+you did. That is the boundary of automated intervention, stated as a design
+position rather than as a failure.
+
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **Confirms LIFO, scope-triggered, explicit compensation.** The design's "registered on a scope, LIFO, explicit-only, run by the scope on failure" is exactly `[PP]` over `PP ; QQ` with `P ÷ Q` pairs. The one refinement both calculi insist on: register at the _completion_ of the forward op, so a crash mid-op leaves no compensation to run; the journal's `completed` record is the right place to carry the compensation's name and arguments.
-- **Argues against compensating in exact reverse of the observed order across concurrent steps.** If the release workflow ever fans out (publishing several chained releases in `--split` mode concurrently), the compensations of the fan-out should be a fan-out too, ordered only by the workflow's structure, and each branch's compensations must be independent of the others'. Recording the forward interleaving and reversing it is the policy the theory rejects.
-- **Argues for a separate failure channel for failed compensations.** Bruni's abnormal termination `⊞` and `try S with P` are the theory's answer to the Sagas paper's "the system is stuck". The journal needs a terminal state distinct from "compensated" for "compensation failed at step k", and the UI projection should render it as an operator-attention state, which is Helland's "send the problem to a human".
-- **Compensations must be flat.** `PGM-CMP`'s rule that a compensation installs no compensations and cannot terminate abnormally maps onto a constraint the journaling combinator can enforce: ops issued inside a compensation are journaled but may not register compensations, and a compensation is itself retried-forward, never compensated.
-- **Journal versus world is settled in the world's favour.** Helland gives the design its vocabulary: the journal is _memory_, every decision replayed from it is a _guess_ against a world that may have moved, and the reconciliation rule table is the _apology_ code for the anticipated cases. The design's "observations are re-observed and reconciled" is right; what it lacks is the third leg, the explicit human hand-off for a disagreement the rule table does not cover.
-- **Step identity: derive it from the request, not from the call site.** Helland's uniquifier must be a pure function of the request as the server sees it. The design's `name + attempt + args hash` key satisfies that if and only if the args hash covers everything that would make a retry a different request; a stable name plus counter alone is a call-site identity, which is the weaker of the two.
-- **What the design lacks: the self-cancellation obligation.** cCSP gives a compositional criterion, "each action paired with its compensation, compensations of parallel branches independent", under which a block is either its forward behaviour or nothing. The crash-at-every-index test checks that compensations _run_; it does not check that they _cancel_. A world-model test that asserts `C(forward ; compensation) = ⟨⟩` per pair, against `SimNet`/`SimProc` doubles, is the missing test.
-- **What the design lacks: a forward-recovery operator distinct from compensation.** `try S or P` is not `try S with P`. For `release`, an alternate publishing path (retry with a different remote, say) belongs in the forward pass and must be disabled once a compensation pass has begun.
+- **Compensations of concurrent steps are themselves concurrent, and their order does
+  not follow the observed interleaving.** The law is explicit, and it contradicts the
+  intuitive reading that rollback reverses the sequence things actually happened in.
+  A library that reverses an execution trace is implementing a different, stronger
+  and unnecessary guarantee.
+- **Register a compensation only when the forward action commits.** The pairing
+  operator installs the compensation at completion, which is the same conclusion the
+  Sagas paper reaches and the opposite of registering it optimistically before the
+  action runs.
+- **Sequential composition installs compensations in reverse, and that law is what
+  LIFO means.** Stating it as an algebraic property rather than as an implementation
+  detail is what makes it checkable.
+- **Compensation must be flat.** No compensating a compensation: rollback is retried
+  forward. A library that allows nesting here cannot bound its recovery.
+- **"The rollback failed" is a different outcome from "the step failed."** Give it a
+  distinct terminal state, because it is the case that requires a person.
+- **Forward recovery needs its own operator**, distinct from compensation and
+  available at the same point, so that retrying a step and undoing everything before
+  it are separate decisions rather than one policy.
+- **Correctness is relative to a declared cancellation relation.** The calculi make
+  `cancel(A, A°)` an axiom the programmer asserts, which means a library cannot verify
+  that a compensation actually compensates — it can only give the author a place to
+  say so, and a test harness a place to check it.
+- **The real world cannot be check-pointed**, so the record of what was done is the
+  only ground a compensation stands on. That is the argument for journaling effects
+  rather than state.
 
 ---
 
@@ -235,7 +289,7 @@ Absent in all three. The calculi offer proofs of adequacy in place of tests; Hel
 - Bruni, R., Melgratti, H., Montanari, U., "Theoretical foundations for compensations in flow composition languages", POPL 2005: [DOI `10.1145/1040305.1040323`][bruni-doi]; the author copy read for this page is linked from [Hernán Melgratti's publication page][bruni-pdf].
 - Bruni, R., Butler, M., Ferreira, C., Hoare, T., Melgratti, H., Montanari, U., "Comparing Two Approaches to Compensable Flow Composition", CONCUR 2005: [DOI `10.1007/11539452_30`][compare-doi] (cited as the follow-up; not read for this page).
 - Helland, P., Campbell, D., "Building on Quicksand", CIDR 2009: [arXiv `0909.1788`][helland-abs], [PDF][helland-pdf].
-- Related pages in this catalog: [Sagas (SIGMOD 1987)][sagas], [catalog index][index], [`sparkles:event-horizon` spec][eh-spec], [`release` spec][release-spec].
+- Related pages in this catalog: [Sagas (SIGMOD 1987)][sagas], [catalog index][index], [`sparkles:event-horizon` spec][eh-spec].
 
 <!-- References -->
 
@@ -249,4 +303,3 @@ Absent in all three. The calculi offer proofs of adequacy in place of tests; Hel
 [sagas]: ./sagas.md
 [index]: ./index.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
-[release-spec]: ../../../specs/release/SPEC.md

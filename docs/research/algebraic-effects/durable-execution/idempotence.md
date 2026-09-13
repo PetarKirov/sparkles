@@ -128,23 +128,72 @@ Helland's world has no rollback of effects, only forward messages. Compensation 
 
 The essays do not propose a method, but they specify the adversary: a transport that duplicates, reorders, delays by days, and delivers a retry to a fresh replica that has forgotten the first attempt. A durable-program test suite has to be that adversary. Crashing the workflow at every recorded event and resuming produces the duplicate-delivery case; mutating the world between crash and resume produces the amnesiac-partner case. The article's remark that these failures _"rarely crop up during testing"_ is the argument for making them the default test rather than an occasional one.
 
+### 9. Journal integrity and the single writer
+
+**The ambiguous window is named, and it is the paper's central concern.** A sender
+that has written its intent and not yet seen a reply cannot distinguish "the
+recipient acted and the acknowledgement was lost" from "the recipient never acted".
+Helland's answer is not to close the window — it cannot be closed — but to make the
+recipient remember, so that asking again is safe and returns the same answer.
+
+**The key must come from the caller, and must be a function of the request.** A
+uniquifier the sender generates and the receiver stores is what turns at-least-once
+delivery into effectively-once processing. This is the one source in the catalog
+arguing that the identity of a step should depend on what the step _is_, not merely
+on where it sits in a sequence.
+
+**The same answer must come back, not merely a success.** A duplicate must produce
+the response the original produced, which is a stronger requirement than
+idempotence in the arithmetic sense and is what makes a recorded decision
+replayable rather than merely repeatable.
+
+**There is no notion of writer fencing**, because the model has no shared log: each
+entity owns its own state and communicates by message. The single-writer problem is
+dissolved by partitioning rather than solved by a token.
+
+### 11. Suspension and external input
+
+**Entities communicate only by message, and that is the whole external-input model.**
+An activity spans two entities and exists to remember, on both sides, what has been
+sent and what has been acknowledged. A durable program waiting for an external party
+is, in these terms, an entity holding an activity open.
+
+**Messages may arrive more than once, out of order, or not at all**, and the paper
+treats all three as ordinary rather than exceptional — _"Each message is guaranteed
+to be delivered zero or more times!"_ A library whose external-input path assumes
+exactly-once delivery has assumed away the problem this literature exists to
+address.
+
+**A wait that cannot be resolved is escalated to a person.** Where the later
+compensation literature calls this an apology, Helland's framing is that the
+tentative/confirm/cancel protocol eventually runs out of automated moves and the
+remaining state is a business problem. That is the honest endpoint for a library
+too: some waits end in a human decision, and the record should be able to say so.
+
 ---
 
-## Relevance to sparkles
+## Implications for a durable-execution library
 
-- **The `started` record is Helland's "record consumption before processing", and it is the right choice for `release`.** He calls that option rare because a failure after it looks like non-delivery. In a durable workflow the runtime resumes, so the record is not a lost message but a resume point that says "in the point of confusion, go ask the world". That is exactly the design's observation-and-reconcile rule for a `started`-without-`completed` step, and the [ARIES page][wal] adds the flush discipline it needs.
-
-- **The reconciliation table is an activity keyed by the tag name, and the table's two rows are Helland's two outcomes.** A git tag name is the caller-generated key; the boundary SHA is the substantive content. "Tag exists on the boundary SHA, therefore done" is the recipient recognising its own earlier processing and returning the mimicked reply. "Tag exists elsewhere, therefore conflict" is a case Helland's model does not have: entity keys are unique by construction, so two messages with the same key and different content cannot occur. In `release` they can, because a human or another run shares the key space. The design is right to treat it as a stop, not a dedup hit, and the ARIES page's suggestion to stamp the tag annotation with the run and step id is what turns that ambiguity back into a key comparison.
-
-- **Store the reply, not just the fact.** Helland requires the recipient to return _the same reply_ on a duplicate. For `release`, the LLM-written notes, the suggested bump and the segmentation plan are replies that must be journaled in `completed` and replayed verbatim; re-deriving them on resume would give a different release than the one half-published. This confirms "decisions replay verbatim" and says why: a re-derived decision is a second, different message under the same key.
-
-- **Classify every outward effect as tentative or confirmed, and register compensations only for tentative ones.** A local tag and a draft GitHub release are tentative: they carry a right to cancel (delete). A pushed tag is confirmed the moment another clone can fetch it; a published release, a registry submission and a sent notification are money moved. The design's "explicit-only" compensation rule should be sharpened into a rule about which effects may appear in a compensable scope at all: confirming operations must be the last action of their scope, after which the scope has no cancel and the only recovery is forward. That ordering, tentative work first and one confirming act last, is the shape of `release --split`'s chain of segments if each segment ends in its publish.
-
-- **Compensations are messages with their own keys.** A `delete tag` compensation can be retried and must be journaled and matched like a forward step; Helland's model gives no special status to a cancel. This is the same conclusion the ARIES page reaches from the other direction (a CLR is a redo-only record with a resume pointer).
-
-- **The last message cannot be guaranteed, so the workflow's final act must not matter.** Helland's closing-stage ambiguity applies to a `release` run that ends by writing a receipt or posting a notification: a crash after the publish and before the receipt is indistinguishable, from outside, from a crash before the publish. The receipt must be derivable from the world (the tag and release exist) rather than be the thing that makes the release "done". The UI-as-projection-of-the-journal decision is compatible with this only if the projection also consults the world for the final step.
-
-- **Test the adversary Helland describes, not just the crash.** Crash-at-every-index gives duplicate delivery; mutate-the-world gives the amnesiac partner. The reorder case is missing from the design's test list. It applies whenever concurrent steps exist (question 6), and Helland's transport reorders by default, so the test harness should permute completion order of concurrent steps between crash and resume.
+- **Derive the step's key from the request, not from its position.** A uniquifier
+  that is a function of what is being asked is what makes a retry recognisable as the
+  same request, and it is the argument for putting the arguments — not just a name and
+  a counter — into the identity.
+- **A duplicate must return the same answer, not merely succeed.** This is stronger
+  than idempotence in the arithmetic sense, and it is exactly the property a replayed
+  decision needs: a re-derived answer under the same key is a different answer.
+- **The started-without-completed window cannot be closed, only made safe.** Design
+  the recipient to remember rather than trying to make the exchange atomic, which is
+  what every retry path in a durable-execution layer ultimately relies on.
+- **At-least-once delivery is the premise, not a degraded mode.** A library whose
+  external-input path assumes exactly-once has assumed away the problem.
+- **Some effects have no inverse, and the record should say which.** Money moved and
+  mail sent cannot be uncompensated, so a library offering compensation should let a
+  scope declare that its effects are beyond it — and then order those effects last.
+- **Reconciliation is an ordinary outcome, not a failure path.** Memories, guesses
+  and apologies is a better model for a program that touches a world it does not own
+  than a transaction that either commits or does not.
+- **A terminal state meaning "a person must decide" belongs in the vocabulary.**
+  Without it, an unresolvable wait is indistinguishable from a slow one.
 
 ---
 
@@ -153,7 +202,7 @@ The essays do not propose a method, but they specify the adversary: a transport 
 - Pat Helland, "Idempotence Is Not a Medical Condition", _ACM Queue_ 10(4), April 14, 2012 — [DOI][queue-doi] · [article][queue-2012] (read via the Internet Archive capture, since the publisher's site refuses non-browser clients; sections cited: "Messages, data, and transactions", "Knowing what you don't know when sending messages", "Zero or more times… guaranteed!", "Avoiding embarrassment when talking about idempotence", "The initiation-stage ambiguity", "The closing-stage ambiguity", "Conclusion")
 - Pat Helland, "Life beyond Distributed Transactions: an Apostate's Opinion", CIDR 2007, pp. 132–141 — [PDF][cidr-pdf] (sections cited: Abstract, 1, 2, 3, 5, 6, 7); reprinted as _ACM Queue_ 14(5), 2016 — [article][queue-2016]
 - Sibling: [Write-ahead logging (ARIES)][wal], the log discipline Helland's footnote 13 leans on
-- [Durable-execution catalog index][index] · [Event Horizon spec][eh-spec] · [Release spec][release-spec]
+- [Durable-execution catalog index][index] · [Event Horizon spec][eh-spec]
 
 <!-- References -->
 
@@ -164,4 +213,3 @@ The essays do not propose a method, but they specify the adversary: a transport 
 [wal]: ./write-ahead-logging.md
 [index]: ./index.md
 [eh-spec]: ../../../specs/event-horizon/SPEC.md
-[release-spec]: ../../../specs/release/SPEC.md
