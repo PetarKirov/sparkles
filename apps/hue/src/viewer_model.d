@@ -1232,7 +1232,16 @@ struct ViewerModel
                     contentCols = right;
             }
         }
-        if (cast(long) contentCols <= widthCols)
+        if (showPreview && preview.present)
+        {
+            // Markdown documents in preview mode are not supposed to have
+            // document-level horizontal scrollbars: prose, headings, quotes,
+            // and lists wrap to pane width, while tables and code blocks scroll
+            // internally within their own viewports.
+            contentCols = widthCols > 0 ? widthCols : 0;
+            hsb = hsb.scrolledTo(0);
+        }
+        else if (cast(long) contentCols <= widthCols)
             hsb = hsb.scrolledTo(0);
         rows = documentRows(tree, frames);
         targets = withTargets ? hoverTargets(tree, frames) : null;
@@ -2826,22 +2835,16 @@ terminal gets the destinations it needs to make the text clickable.
     vm.widthCols = 40;
     vm.applyTheme(0);
 
-    // A paragraph whose single 120-cell word cannot wrap. NOT a fence (its
-    // body scrolls its own viewport, `COD`) and NOT a table (a wide table now
-    // self-clips behind its framed viewport, `TBL7`) — an unbreakable prose
-    // run is what still widens the document.
+    // A raw document whose 120-cell line exceeds the 40-cell pane: the raw view
+    // widens the document and horizontal scroll reaches the content.
     string src;
     foreach (_; 0 .. 60)
         src ~= "a";
     foreach (_; 0 .. 60)
         src ~= "b";
-    auto md = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
-        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 120), inlines: [
-            MdInline(kind: MdInlineKind.text, span: Span(0, 120))]),
-    ]), src);
-    vm.setDocument("wide.md", "", src, null,
-        PreviewModel(present: true, doc: md), TwoslashReturn.init, "markdown");
-    assert(vm.hOverflows, "precondition: the content overflows the pane");
+    vm.setDocument("wide.txt", "", src, [HighlightEvent.sourceSpan(0, src.length)],
+        PreviewModel.init, TwoslashReturn.init, "text");
+    assert(vm.hOverflows, "precondition: the content overflows the pane in raw view");
 
     assert(vm.scrollHorizontal(8));
     assert(vm.hsb.offset == 8);
@@ -2864,6 +2867,18 @@ terminal gets the destinations it needs to make the text clickable.
     assert(vm.scrollEndHorizontal());
     assert(vm.hsb.offset == vm.contentCols - vm.widthCols);
     assert(!vm.scrollEndHorizontal(), "nothing to do twice");
+
+    // In contrast, markdown documents in preview mode never have document-level
+    // horizontal scrollbars (tables and code blocks scroll internally):
+    auto md = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 120), inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 120))]),
+    ]), src);
+    vm.setDocument("wide.md", "", src, null,
+        PreviewModel(present: true, doc: md), TwoslashReturn.init, "markdown");
+    assert(!vm.hOverflows, "markdown preview suppresses document-wide horizontal scroll");
+    assert(vm.contentCols == vm.widthCols);
+    assert(!vm.scrollHorizontal(8));
 
     // Content that fits scrolls nowhere, so the key stays unhandled instead
     // of redrawing for nothing.
