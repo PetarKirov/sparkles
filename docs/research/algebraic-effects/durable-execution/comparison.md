@@ -247,6 +247,173 @@ it only because their runtimes identify code by something stable.
 copy. The two gaps at the bottom are unsurprising: no engine re-observes the
 world, so no engine has a reason to test what happens when the world moved.
 
+### 9. Journal integrity: two guards, and most systems have both
+
+Every system that gets this right has **two distinct mechanisms at two scopes**, and
+conflating them is the characteristic mistake:
+
+| Scope                                 | Mechanism                                    | Examples                                                                                                                                                                                                                           |
+| ------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop a stale process writing at all   | lease, epoch, placement, mutex               | [Temporal]'s shard `RangeID` · [Restate]'s leader epoch · [Effect][effect-workflow]'s shard lock · [Orleans]/[Dapr][dapr] placement · [Inngest]'s queue lease · [KurrentDB][kurrent]'s database mutex · [Golem]'s shard assignment |
+| Make an individual append conditional | expected version, record version, unique key | [KurrentDB][kurrent]'s `ExpectedVersion` · [Temporal]'s `DBRecordVersion` · [Orleans]'s e-tag · [Marten]'s version guard · [Effect][effect-workflow]'s `UNIQUE (message_id)` · [Inngest]'s key-absence check                       |
+
+[KurrentDB][kurrent] is explicit that these are different tools — the mutex keeps two
+processes apart, the expected version keeps two logical writers apart — and [Orleans]
+demonstrates why both are needed: it has the strongest runtime single-writer guarantee
+in the survey, one live activation per id cluster-wide, and still needs an e-tag.
+
+**[Marten] documents the failure that survives only having the optimistic half.** Under
+`READ COMMITTED`, two transactions both pass the version check, both take a sequence
+number, and the loser's duplicate-key error leaves a permanent gap in the global
+sequence that stalls readers. The fix makes the check take a lock. The damage is worth
+noting: not a lost write, but a hole in the order that broke a _reader_.
+
+**The ambiguous window has four distinct answers.** A write whose acknowledgement was
+lost is indistinguishable from one that never landed, and the surveyed systems diverge
+on what to do:
+
+- [ARIES][wal] stamps the world: redo is conditional on the sequence number recorded on
+  the page itself, so the comparison is one integer and needs no bookkeeping.
+- [Temporal] models the uncertainty as a predicate, `OperationPossiblySucceeded`,
+  enumerating the errors that mean "definitely not committed" and treating everything
+  else as possibly committed.
+- [Orleans] flips a bit in a write vector, re-reads and compares — cheap, and available
+  only because its write replaces one object rather than appending.
+- [Helland][idempotence] makes the recipient remember, so asking again is safe and
+  returns the same answer.
+
+**Atomic multi-record append is available to anyone with a transaction, and to nobody
+else.** [Marten] commits events, the version bump and inline projections together;
+[Akka/Pekko][akka]'s `AtomicWrite` commits a batch for one persistence id;
+[KurrentDB][kurrent] writes across streams atomically; [Inngest] gets the same effect
+from a single Redis script covering the step result, the completion order and the
+counters. A library appending lines to a file has to build it.
+
+**Writer identity on the record is rare, and its absence is felt.**
+[Akka/Pekko][akka] stamps every event with the writing incarnation's `writerUuid` and
+ships four policies for what to do when replay detects overlapping writers — `Fail`,
+`Warn`, `RepairByDiscardOld`, `Disabled` — which is the only automatic split-brain repair
+in the survey. [Netherite] and [Restate] carry an origin and an epoch on
+inter-partition messages. Everyone else records nothing about who wrote an entry.
+
+**Two mechanisms have no second instance anywhere.** [Golem] exposes a durability
+barrier to the program: `oplog-commit(replicas)` blocks until the record has reached a
+chosen replication level, turning the write-ahead rule into an operation an author can
+demand. [Dapr][dapr] signs every history event with the sidecar's mTLS identity and
+verifies the chain on every load — and its documentation admits the cost, that rotating
+the root certificate invalidates every in-flight record with no re-sign path.
+
+**Torn records are almost universally delegated.** Every system over a database or a
+key-value store treats a partial write as the store's problem. Only two describe it in
+their own format: [KurrentDB][kurrent] writes prepare records followed by a commit
+record, so an uncommitted transaction is identifiable from the layout, and [ARIES][wal]
+requires a log whose partial tail is detectable at all.
+
+### 10. Operator recovery: the least converged dimension in the field
+
+Arranged by what a human can actually do, the systems fall into a clear ladder, and the
+top rung has exactly one occupant:
+
+| Rung                                     | Systems                                                                          |
+| ---------------------------------------- | -------------------------------------------------------------------------------- |
+| Nothing beyond restart                   | [Akka/Pekko][akka], [Orleans], [Netherite]                                       |
+| Inspect the record                       | [DBOS], [Marten], [KurrentDB][kurrent] (all: it is SQL or a stream)              |
+| Cancel or terminate                      | [Azure][azure], [Trigger.dev][trigger], [Effect][effect-workflow]                |
+| Cancel **and** terminate, distinctly     | [Temporal], [Restate]                                                            |
+| Pause and resume an in-flight run        | [Restate], [Dapr][dapr], [Inngest] (function-level)                              |
+| Fork, reset, or rewind to a chosen point | [Temporal], [Golem], [DBOS], [AWS Step Functions][asf], [Cloudflare][cloudflare] |
+| **Replace a step's input and re-run**    | **[Inngest] alone**                                                              |
+
+**Cancel-versus-terminate is a correctness distinction, not a convenience.** One gives
+the program a turn so its compensation runs; the other does not. [Temporal] and
+[Restate] make it explicit — Restate at the command line, where the operator can see it.
+[Dapr][dapr] has seven API verbs and no cancel counterpart to terminate, so an operator
+stop cannot run rollback at all.
+
+**Correcting a recorded value is almost unheard of.** Every fork mechanism re-runs a step
+with whatever the record already holds, which cannot fix a step that recorded the wrong
+thing because it was _given_ the wrong thing. [Inngest] is the exception: rerun-from-step
+reconstructs earlier steps as memoised state and, if the operator supplies replacement
+input, the selected step uses it.
+
+**A poison record needs somewhere to go, and mostly has nowhere.**
+[KurrentDB][kurrent] parks a message its consumer cannot process on a dedicated stream
+with a replay operation — the only real dead-letter design here.
+[Effect][effect-workflow] has one inside its durable queue and none for workflows.
+[Marten] skips and dead-letters while running but pauses while rebuilding, two policies
+for the same error chosen by context. [Orleans] quarantines state the code no longer
+claims for seven days, with explicit support for resurrecting it. [Inngest] argues the
+whole category away: a failing run stays failed and is re-run in bulk after the fix.
+
+**Intervention usually leaves no trace.** [AWS Step Functions][asf] appends an
+`ExecutionRedriven` event, so a human's action is part of the record.
+[Effect][effect-workflow]'s interrupt is a journaled request, but its activity reset
+deletes rows. Most systems intervene by deleting, which means the record cannot later
+explain itself.
+
+**[Deterministic record and replay][replay] proves the hard part is already built.**
+`rr` runs execution _backwards_ as a first-class, interactive operation, implemented by
+jumping to an earlier checkpoint and replaying forward — the same mechanism as a reset or
+a revert, generalised to arbitrary points. Any system that replays deterministically has
+most of this machinery and usually exposes none of it.
+
+**The library-versus-platform split explains the bottom of the ladder.** Every affordance
+here needs something that outlives one process. [Akka/Pekko][akka] and [Orleans] are
+libraries and have essentially none; the platforms have the most. That is a scope
+decision rather than an oversight, and a library that wants an operator surface is
+choosing to grow a component.
+
+### 11. Suspension: three models, and one informative protocol
+
+**How a program waits divides the catalog three ways.**
+
+| Model                | What happens to the process  | Systems                                                                         |
+| -------------------- | ---------------------------- | ------------------------------------------------------------------------------- |
+| Suspend by ending    | it exits; replay resumes it  | every replay engine                                                             |
+| Stay alive           | it keeps its state in memory | [Akka/Pekko][akka], [Orleans] — waiting is simply not having received a message |
+| Snapshot the process | it is frozen and thawed      | [Trigger.dev][trigger]                                                          |
+
+**"Suspended" is a persisted state in only two systems.**
+[Effect][effect-workflow] makes `Suspended` a first-class result alongside `Complete`,
+so a caller can poll for a definite answer; [Restate] makes it a protocol state.
+[Temporal] and [Dapr][dapr] leave a waiting execution indistinguishable from a working
+one — Dapr's `Suspended` status means operator-paused, not waiting-on-input. A caller
+that wants to know "is this blocked on me?" must read and interpret the record.
+
+**[Restate] has the most informative wait protocol in the survey.** Its suspension
+message carries a `Future` tree — awaited completions, awaited signals, named signals,
+nested futures and a combinator type — so the runtime learns the _shape_ of what is
+awaited, not merely that the handler stopped. That costs one message type.
+
+**External input is addressed four different ways**, and the choice decides who can
+complete a wait: a **token** the program hands out ([Effect][effect-workflow]'s
+`DurableDeferred`, [Restate]'s awakeables, [Golem]'s promises, [AWS][asf]'s task token),
+a **name** within the execution ([Temporal] signals, [Azure][azure] external events,
+[Dapr][dapr] raise-event), a **predicate over an event stream** ([Inngest]), or a
+**promise id derived from the call tree** ([Resonate]).
+
+**Duplicate arrival is handled in three incompatible ways.** [Golem] returns false to the
+loser, so it learns its fate — the cleanest contract here.
+[Effect][effect-workflow] silently ignores the second completion. [Temporal] appends a
+second history event and leaves deduplication to the program.
+
+**Only one system requires a timeout.** [Inngest]'s event wait will not compile without
+one, so "never arrives" is a case the author must handle.
+[Effect][effect-workflow]'s `await` has no timeout parameter at all, and [Golem]'s
+promises carry no deadline, so a bound must be built by racing a sleep.
+
+**A threshold below which a wait is held in memory is a recurring smell.**
+[Effect][effect-workflow] keeps sleeps under sixty seconds as live in-process sleeps, and
+[Trigger.dev][trigger] only checkpoints after sixty seconds of waiting. Both end up with
+two code paths where [Restate] and [Golem] have one, and the short path is the one that
+misbehaves under load.
+
+**Human-in-the-loop is a pattern in every system and a construct in none.** It is
+universally a timer raced against an external input, with the timer as escalation. The
+only variation is what the input channel is, and the systems whose token is an ordinary
+value — one that can go in an email or a webhook payload — make the pattern easiest to
+write.
+
 ---
 
 ## The consensus standard
@@ -262,10 +429,13 @@ A durable-execution system in 2026 is expected to provide:
 - suspension without continuation capture;
 - per-step retry with backoff, and a documented saga pattern for rollback;
 - some story for code evolution — pinning at minimum;
+- a guard that stops a stale process writing, and a conditional append;
+- at least cancel-or-terminate, and an inspectable record;
 - an in-process engine for tests.
 
 It is _not_ expected to provide compensation as a primitive, argument-level
-divergence detection, or any reconciliation with an externally mutable world.
+divergence detection, a distinct persisted state for waiting, a place to park a
+record it cannot process, or any reconciliation with an externally mutable world.
 
 ---
 
@@ -357,13 +527,25 @@ them; a design must.
    fork-from-step, redrive, and rewind-to-an-index. This is the dimension where
    the field is least converged and where a library's choices leak most directly
    into its consumers' operational story.
+8. **Which guards does the record get, and are they separate?** A lease that keeps
+   processes apart and a conditional append that keeps logical writers apart solve
+   different problems (§9), and [Marten] documents what happens when only the
+   optimistic half is present.
+9. **Is "waiting" a state the record can name?** Only two systems persist it (§11),
+   and without it a caller cannot distinguish a program blocked on input from one
+   making progress.
+10. **Where does a record the program cannot process go?** Most systems have no
+    answer; the ones that do split between parking it, quarantining it, and
+    re-running everything in bulk after a fix (§10).
 
 **What no system in the survey provides**, and a library therefore cannot copy:
 reconciliation between a journal and an independently mutable world; an argument
-hash as part of step identity; crash-at-every-index testing as a shipped
-harness; and any correctness statement about replay that covers external
-effects — [Burckhardt et al.][burckhardt] and Ramalingam and Vaswani both
-deliberately exclude them.
+hash as part of step identity; crash-at-every-index or mutate-the-world testing
+as a shipped harness; and any correctness statement about replay that covers
+external effects — [Burckhardt et al.][burckhardt] and Ramalingam and Vaswani both
+deliberately exclude them. One thing that _is_ provided, against expectation, is
+the ability to correct a recorded value: [Inngest] lets an operator supply
+replacement input for a step and re-run from it.
 
 ---
 

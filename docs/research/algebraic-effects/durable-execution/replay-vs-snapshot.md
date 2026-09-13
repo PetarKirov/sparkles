@@ -155,14 +155,109 @@ What each costs, from the sources:
 
 The sources converge on one rule: snapshotting is the right tool for **releasing resources during a wait** (Trigger.dev, and Termite's migration to a less loaded node), and replay is the right tool for **surviving a crash and a redeploy**, because a crash-plus-redeploy is precisely the situation where the code the snapshot points into no longer exists. Golem, which has both, uses the log as the source of truth and the snapshot as a validated cache of it.
 
-## Relevance to sparkles
+### 9. Journal integrity and the single writer
 
-- **Confirms the replay decision.** `sparkles:event-horizon` has no continuation capture by construction — the spec says every capability operation is "_tail-resumptive by construction (the only suspension is the fiber park inside an implementation, a scheduler service, never a reified continuation)_" ([SPEC §10.1][eh-spec]). Nothing in these sources gives a release tool a reason to revisit that. The `release` workflow is short (hours), its effects are few (tags, API calls, an editor session), and every one of them already crosses the capability row — the journal is small and the effect boundary already exists. That is the Flawless argument ("_the amount of data we need to persist minimal_") applied verbatim.
-- **Argues against a snapshot for the code-upgrade reason specifically.** The `release` binary is exactly the artifact being rebuilt between a crash and a resume: a snapshot of the old binary's stack would be as unusable as a Termite continuation against recompiled Gambit code, and D has no content-addressed code to fall back on the way Unison does. A journal survives a rebuild; Golem's divergence detection on automatic update is the test the resume path must implement — replay the old `journal.jsonl` under the new binary and fail loudly when a step's identity or arguments hash no longer match the recorded `started` event.
-- **The state-snapshot escape hatch is worth stealing.** Golem's manual update (`saveSnapshot` bytes handed to the new version's `loadSnapshot`) is the only mechanism in the set that crosses an _incompatible_ code change. For `release` the equivalent is the publish manifest and the `--plan <file>`: an explicit, versioned, application-level description of "where the release got to" that a newer binary can load without re-interpreting an older binary's journal. The design should keep the manifest as a first-class recovery input, not fold it into the journal.
-- **Determinism is a discipline here, not a sandbox.** Golem and Flawless get their determinism from WebAssembly; D does not. The pure-workflow-over-the-row design has to enforce it by construction (the journaling combinator is "the single pure-cast") and by the crash-at-every-event-index test. Trigger.dev's `io_uring` note is a reminder that the substrate itself is a source of non-capturability: it is irrelevant for replay, which is another point for replay on an `io_uring` loop.
-- **Termite's proxy trick has a replay analogue.** Termite makes unserializable resources (ports, devices) into processes so their reference is "_just a pid_". In a journal the analogue is that observations of the world (git `HEAD`, tags, the GitHub release list) are recorded as values, never as handles, and are re-observed and reconciled on resume — which is exactly the design's observation/decision split.
-- **Cloud Haskell's `Closure` is the shape of a journaled step.** A `Static` label plus an encoded environment is a stable name plus an arguments hash; that `unClosure` fails with a string on a missing label is the same failure a resume must raise when a journal names a step the new binary no longer has.
+**A snapshot system has no journal to keep intact, and that is its whole appeal on this
+dimension.** Trigger.dev's durable artifact is a process image, so there is no append
+protocol, no expected version, no torn record and no writer to fence. The integrity
+question becomes "is this image restorable", which is the kernel's problem rather than
+the library's.
+
+**The price is paid in what the image may contain.** Because the checkpointer cannot
+capture every kind of kernel object, the sandbox must forbid the ones it cannot —
+`io_uring` descriptors among them. So a snapshot system constrains what the program is
+allowed to do at all, where a journal system constrains only what it must route through
+the record. That is the trade stated precisely: snapshotting is transparent to the
+program's _logic_ and restrictive about its _resources_.
+
+**A continuation-shipping system needs identical code on both sides.** Termite can
+serialise a continuation because a frame is a procedure name plus a control-point index,
+and Unison because code is identified by content hash — in both cases the receiving
+runtime must already hold the exact code the frame points into. The integrity unit is
+therefore code identity, not a record version, and Cloud Haskell's refusal to serialise
+arbitrary closures is the honest version of the same constraint.
+
+**Golem's hybrid keeps the journal authoritative.** Its user-defined snapshot truncates
+the replay prefix but does not replace the oplog, so integrity remains the log's
+property and the snapshot is an optimisation — the same relationship `rr` keeps between
+its trace and its checkpoints.
+
+### 10. Operator recovery and intervention
+
+**Rewinding is available exactly where a journal exists.** Golem can revert to an oplog
+index or undo the last N invocations, because there is a record to move a pointer within.
+Trigger.dev cannot rewind at all: a process image is a single point, not a timeline, and
+the only moves are restore-it or start over. That is the sharpest practical consequence
+of the choice in this whole page.
+
+**A failed attempt in the snapshot model restarts the whole function.** There is no
+step memoisation, so "recover from step seven" is not expressible — the unit of recovery
+is the attempt. An operator's options are therefore to retry everything or to give up.
+
+**Versioning collapses into pinning.** A run is locked to the worker version it started
+on, and a restored image necessarily lands in the code it was captured from, so the
+question of new code meeting an old record cannot arise. This is genuinely simpler, and
+it means an in-flight run can never be fixed by deploying a correction.
+
+**Golem's automatic update is the opposite position**: replay the whole record under new
+code and refuse the upgrade if anything diverges. Only a journal makes that check
+possible.
+
+### 11. Suspension and external input
+
+**Snapshotting makes a wait free of determinism obligations**, which is the model's
+strongest selling point. Nothing is re-executed on resume, so the program may call the
+clock, the random source and the network anywhere, and a wait of arbitrary length costs
+only the image.
+
+**But the wait needs a threshold, and the threshold is a wart.** A checkpoint is only
+taken after a minimum wait, so short waits hold a container and a concurrency slot.
+Replay systems have no such split: every wait, short or long, ends the process the same
+way. One code path is easier to reason about than two.
+
+**Concurrent waits are restricted rather than journaled.** Because there is no record of
+which wait is outstanding, the runtime forbids a second concurrent wait and offers a
+batch primitive instead. A journal-based system needs no such rule: several outstanding
+waits are several records.
+
+**Continuation shipping turns a wait into a migration.** Termite's process migration is
+the same mechanism as its wait — serialise the continuation, send it elsewhere, resume —
+which is elegant and is exactly what makes it unusable across a code change.
+
+---
+
+## Implications for a durable-execution library
+
+- **Snapshotting removes the determinism obligation and adds a resource one.** A
+  restored image re-executes nothing, so the program may be arbitrarily impure; in
+  exchange the sandbox must forbid every kernel object the checkpointer cannot capture.
+  A library inside an existing language and runtime cannot usually make that trade.
+- **A journal buys the timeline; an image buys only a point.** Rewinding, forking,
+  resuming from a chosen step and proving new code against an old record all require a
+  record. Choosing a snapshot forecloses the entire operator dimension, which is the
+  cost most easily overlooked when the appeal is "no determinism rules".
+- **No continuation survives a code change**, and the two languages that can ship
+  continuations at all manage it only because they identify code by something stable —
+  a procedure name and control point, or a content hash. A library whose programs are
+  edited between crash and resume must replay.
+- **Serialisability of a function is not a structural property**, as the Cloud Haskell
+  paper puts it, which is why the honest designs admit only static labels plus an
+  explicit environment. Any scheme that promises to serialise arbitrary closures is
+  either restricting the language or lying.
+- **A state snapshot is neither of the two.** Golem's save-and-load pair is the
+  program's own state, not its stack, and it truncates a replay prefix rather than
+  replacing the record. That third option is the practical one for bounding replay cost,
+  and it is what event-sourced systems have always called a snapshot.
+- **Keep the record authoritative and the snapshot derived.** Golem and `rr` both do
+  this; it means a snapshot can be discarded, re-derived, or distrusted without losing
+  anything.
+- **A wait threshold is a design smell.** Splitting waits into "held in memory" and
+  "checkpointed" gives a system two code paths where a replay system has one, and the
+  short path is the one that will be wrong under load.
+- **Restricting concurrent waits is a symptom of having no record of them.** If
+  outstanding waits are records, several are no harder than one.
+
+---
 
 ## Sources
 

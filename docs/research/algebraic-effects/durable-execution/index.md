@@ -18,7 +18,7 @@ answers were judged good.
 
 ---
 
-## The eight questions this survey answers
+## The eleven questions this survey answers
 
 1. **How is an effectful step identified and matched on replay?** →
    [Comparison §1][cmp-1], and every deep-dive's Analysis §1.
@@ -40,6 +40,18 @@ answers were judged good.
 8. **How is a durable program tested?** → [Comparison §8][cmp-8],
    [deterministic simulation testing][dst], and the runnable
    [replay-journal example](./examples/replay-journal.d).
+9. **How is the record written safely, and what stops two writers corrupting it?**
+   → [Comparison §9][cmp-9], [ARIES][wal], [Marten], [Akka/Pekko][akka].
+10. **What can a person do to a run that is stuck, wrong, or diverged?** →
+    [Comparison §10][cmp-10], [Temporal], [Golem],
+    [deterministic record and replay][replay].
+11. **How does a program wait for something it did not invoke?** →
+    [Comparison §11][cmp-11], [Restate], [Effect][effect-workflow],
+    [Trigger.dev][trigger].
+
+The last three were added after a first pass over the finished catalog showed
+that every subject had an answer to them, scattered through the prose rather than
+asked uniformly.
 
 Start with [Concepts and Vocabulary][concepts] if the terms are unfamiliar: the
 field has no agreed names, and the same idea is a _step_, an _activity_, a
@@ -84,18 +96,18 @@ reading.
 
 ### Theory
 
-| Subject                                                | Year / venue          | Grounds questions | Link                 |
-| ------------------------------------------------------ | --------------------- | ----------------- | -------------------- |
-| Sagas (Garcia-Molina, Salem)                           | SIGMOD 1987           | 4                 | [sagas]              |
-| ARIES write-ahead logging (Mohan et al.)               | TODS 1992             | 1, 2, 4, 8        | [wal]                |
-| Compensation calculi (cCSP; Bruni et al.; Helland)     | 2005, 2005, 2009      | 2, 4, 6           | [calculi]            |
-| Idempotence and the outside world (Helland)            | CIDR 2007, Queue 2012 | 1, 2, 4           | [idempotence]        |
-| Durable Functions: Semantics for Stateful Serverless   | OOPSLA 2021           | 1, 2, 3, 6, 7     | [burckhardt]         |
-| Netherite: Efficient Execution of Serverless Workflows | VLDB 2022             | 2, 3, 7           | [Netherite]          |
-| Deterministic record and replay (rr and ancestors)     | 1987–2017             | 1, 3, 6, 7        | [replay]             |
-| Replay versus continuation snapshotting                | 2006–2026             | 5, 7              | [replay-vs-snapshot] |
-| Deterministic simulation testing                       | 2014–2026             | 3, 8              | [dst]                |
-| Effect handlers and record/replay                      | 2013–2022             | 1, 3, 4           | [handlers]           |
+| Subject                                                | Year / venue          | Grounds questions     | Link                 |
+| ------------------------------------------------------ | --------------------- | --------------------- | -------------------- |
+| Sagas (Garcia-Molina, Salem)                           | SIGMOD 1987           | 4, 9, 10              | [sagas]              |
+| ARIES write-ahead logging (Mohan et al.)               | TODS 1992             | 1, 2, 4, 8, 9, 10     | [wal]                |
+| Compensation calculi (cCSP; Bruni et al.; Helland)     | 2005, 2005, 2009      | 2, 4, 6, 9, 10        | [calculi]            |
+| Idempotence and the outside world (Helland)            | CIDR 2007, Queue 2012 | 1, 2, 4, 9, 11        | [idempotence]        |
+| Durable Functions: Semantics for Stateful Serverless   | OOPSLA 2021           | 1, 2, 3, 6, 7, 9, 11  | [burckhardt]         |
+| Netherite: Efficient Execution of Serverless Workflows | VLDB 2022             | 2, 3, 7, 9            | [Netherite]          |
+| Deterministic record and replay (rr and ancestors)     | 1987–2017             | 1, 3, 6, 7, 9, 10, 11 | [replay]             |
+| Replay versus continuation snapshotting                | 2006–2026             | 5, 7, 9, 10, 11       | [replay-vs-snapshot] |
+| Deterministic simulation testing                       | 2014–2026             | 3, 8, 9, 10           | [dst]                |
+| Effect handlers and record/replay                      | 2013–2022             | 1, 3, 4, 9, 11        | [handlers]           |
 
 ---
 
@@ -215,6 +227,9 @@ name.
 [cmp-5]: ./comparison.md#_5-versioning-pin-patch-or-prove
 [cmp-6]: ./comparison.md#_6-concurrency-identity-scheme-decides-the-difficulty
 [cmp-7]: ./comparison.md#_7-replay-or-snapshot-the-axis-is-narrower-than-it-looks
+[cmp-9]: ./comparison.md#_9-journal-integrity-two-guards-and-most-systems-have-both
+[cmp-10]: ./comparison.md#_10-operator-recovery-the-least-converged-dimension-in-the-field
+[cmp-11]: ./comparison.md#_11-suspension-three-models-and-one-informative-protocol
 [cmp-8]: ./comparison.md#_8-testing-one-excellent-suite-and-a-gap-every-system-shares
 [comparison]: ./comparison.md
 [concepts]: ./concepts.md

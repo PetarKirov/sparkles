@@ -96,15 +96,122 @@ rr serializes threads and logs the schedule; Instant Replay and RecPlay log the 
 
 rr is a pure replay system with `fork`-based checkpoints layered on top as a cache. The trace is the truth; a checkpoint is cheap (copy-on-write, under ten milliseconds), disposable, and only valid because replay to that point is deterministic. The hybrid shows that replay and snapshot are not a choice between two persistence models but a base and an optimization: a snapshot is always derivable from the log, and a log is never derivable from a snapshot.
 
-## Relevance to sparkles
+### 9. Journal integrity and the single writer
 
-- **The journal is a data-driven trace at capability-op granularity.** Every `Ctx` op logged with `started` plus `completed` is rr's system-call frame one level up: the value that crossed the boundary, keyed by position. rr confirms that this is sufficient _when the boundary is total_; the `release` design's re-observed world (tags, `HEAD`) is a declared leak with a reconciliation rule, which is the honest version of rr's "enlarge the recorded group".
-- **The args hash is a weak register comparison.** rr's divergence oracle is the full register file at every event; the design's is a hash of the op's arguments at each op. Both are fingerprints of the caller's state at the boundary, but rr's fires at scheduling events the code did not request, so it can catch a divergence in pure code that merely consumes results differently. The args hash cannot: a workflow that reads a replayed value, computes a different decision, and then issues the same next op with the same args replays cleanly and silently wrong. Naming this gap is the point; closing it would mean journaling decisions (the design already does, "decisions replay verbatim") and hashing the decision inputs, not only the op args.
-- **Detection over prevention.** rr does not try to make user code deterministic; it checks. The design's determinism between ops is by discipline (a pure workflow function with the journaling combinator as the single cast). rr says that is fine provided the check is dense: every op, every attempt, compared to the journal, with a loud abort rather than a best-effort continue.
-- **Order-driven replay of concurrent ops is enough, and it demands quiescence.** Instant Replay and RecPlay show a log of interaction order suffices when the parties are deterministic. `event-horizon`'s tail-resumptive ops with no continuation capture make each op a party that cannot interleave mid-op, which is the property the order log needs. Fan-out in `release --split` should journal completion order, as Temporal's history and Inngest's stack do, and the replay scheduler should advance only when every in-flight op is durably blocked, the `synctest` rule.
-- **Replay is the base; a checkpoint is a cache.** rr's `fork` checkpoints argue against choosing snapshot as the persistence model and for keeping the journal authoritative with an optional derived state cache when replay from the start becomes too slow. For a one-hour `release` run with tens of ops, replay from the start is the right default and a snapshot is premature.
-- **Score the journal on Chen's five axes.** Log size, record slowdown, replay slowdown, implementation cost, probe effect. The probe effect (journaling changes the program's timing) is the one the durable-execution literature rarely names, and it is real for `supervise`-driven child processes whose output timing depends on the parent's write latency.
-- **What rr has that the design lacks:** a `sched`-style record of _why_ the runtime advanced (timer fired, child exited, gate answered) alongside _what_ it returned, and a `desched`-style signal that a step the journal expected to complete has stalled, so the UI projection can distinguish "running" from "wedged".
+**The trace is written once, by one process, and never appended to again.** Recording
+and replay are separate phases with separate sessions, so the concurrency questions
+this dimension usually asks do not arise: there is no second writer because there is
+no writing during replay at all. That is a stronger position than any durable-execution
+system can take, and it is bought by giving up the thing they exist to do.
+
+**Integrity is checked by comparison, not by a token.** Replay re-executes the
+program and compares the full register state at every recorded event; a divergence
+aborts rather than being repaired. Where a durable-execution layer stamps a version on
+a record so a write can be refused, `rr` verifies after the fact that the
+re-derivation matched — a different and much more thorough answer to "is this record
+consistent with this program".
+
+**One thread runs at a time, and the schedule is part of the record.** _"The
+scheduler only runs during recording. During replay we're just replaying the recorded
+scheduling decisions."_ Ordering is therefore not an emergent property to be
+reconstructed; it is data.
+
+**Torn records are avoided by buffering, not detected.** The syscall buffer batches
+records and flushes them, which bounds the loss window but means a trace from a
+hard-killed recording is truncated rather than repaired.
+
+### 10. Operator recovery and intervention
+
+This is where `rr` is most unlike everything else in the catalog, and it is the
+strongest existence proof in the survey that rewinding a replayed execution is
+practical.
+
+**Execution runs backwards, as a first-class operation.** `ReplayTimeline` _"manages a
+set of ReplaySessions corresponding to different points in the same recording. It
+provides an API for explicitly managing checkpoints along this timeline and navigating
+to specific events"_, with an explicit `RunDirection` of `RUN_FORWARD` or
+`RUN_BACKWARD` and `reverse_continue` / `reverse_singlestep` entry points
+([`ReplayTimeline.h`][rr-timeline]). Backwards execution is implemented by jumping to
+an earlier checkpoint and replaying forward to the target — which is exactly the
+mechanism Golem's revert and Temporal's reset use, generalised to arbitrary points
+and made interactive.
+
+**Checkpoints are a cache over the record, not a substitute for it.** They are
+process forks taken along the timeline to make navigation cheap; the trace remains
+the authority, and a checkpoint can always be discarded and re-derived. That is the
+right relationship between a snapshot and a journal, demonstrated.
+
+**Progress is estimated so navigation can be planned.** The timeline carries a
+`Progress` measure that _"should roughly correlate to the time required to replay from
+the start of a session to the current point"_, which is what lets the tool decide
+where to place checkpoints rather than guessing.
+
+**The intervention is observation only.** Nothing lets an operator change a recorded
+value and continue — the trace is immutable, and a modified replay would simply
+diverge. Where Inngest lets a human substitute a step's input, `rr` cannot, because
+its whole guarantee is that replay reproduces the recording.
+
+### 11. Suspension and external input
+
+**Blocking is recorded, and the record has a name for it.** A desched event marks the
+point at which a buffered syscall was going to block, so replay knows the difference
+between a call that returned immediately and one that waited. A durable-execution
+layer that records only results loses that distinction: it knows what a step returned
+and not that the step was stuck.
+
+**There is no resumption across processes**, so suspension in the durable sense does
+not apply. A replay session is a live process that can be checkpointed and forked but
+not serialised and restored later.
+
+**External input is not awaited; it is replayed.** Everything crossing the recorded
+boundary — signals, syscall results, shared-memory reads — is in the trace, so during
+replay there is no external party and nothing to wait for. That is the clean version
+of the position every replay engine takes for activity results, applied to all input.
+
+**The clock-substitution idiom is the transferable part.** Go's synchronous-test
+facility and Tokio's paused time advance only when everything is durably blocked,
+which is the same rule a deterministic scheduler needs and the same rule a
+durable-execution test harness needs in order to compress virtual time safely.
+
+---
+
+## Implications for a durable-execution library
+
+- **Comparing full machine state at every event is the ceiling for divergence
+  detection**, and it shows how far below that ceiling an argument hash sits. A hash
+  fires only when the program issues an operation; a program that consumes a replayed
+  value differently and then issues an identical operation replays silently wrong.
+  Closing that gap means hashing the inputs to decisions, not only the arguments of
+  effects.
+- **Snapshots belong as a cache over the record, never as a substitute for it.** `rr`'s
+  checkpoints are forks placed along a timeline to make navigation cheap, and any one
+  of them can be discarded and re-derived from the trace. That is the relationship a
+  durable-execution layer should keep between a snapshot and its journal.
+- **Rewinding a replayed execution to an arbitrary point is practical.** Jump to an
+  earlier checkpoint and replay forward, which is what makes reverse execution work at
+  interactive speed (§10). A library that already replays deterministically has most of
+  this machinery and usually exposes none of it.
+- **Record why the runtime advanced, not only what it returned.** A desched event
+  marks a call that was about to block, which lets replay distinguish "returned
+  immediately" from "waited" (§11). A record of results alone cannot tell a stalled
+  program from a fast one.
+- **Order-driven recording is cheaper than data-driven and needs more from the
+  program.** Recording the order of interactions and re-deriving the values requires
+  every party to be deterministic; recording the values does not. A durable-execution
+  layer that journals results has chosen the expensive, permissive option, and should
+  know it made that choice.
+- **A total boundary makes the journal-versus-world question vanish**, and the cost is
+  visible in what `rr` has to do to keep it total: close leaks to the window system,
+  the audio server and the GPU by configuration or by enlarging the recorded group. A
+  library whose effects reach a world it cannot enclose does not have that option.
+- **Advance virtual time only when everything is durably blocked.** The rule Go's and
+  Tokio's test clocks follow is the one a deterministic test harness needs to compress
+  time without changing behaviour.
+- **Score the design on the survey's five axes** — log size, recording slowdown, replay
+  slowdown, implementation cost, and probe effect. The last matters most for a library
+  that supervises child processes, because recording changes their timing.
+
+---
 
 ## Sources
 

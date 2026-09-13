@@ -187,6 +187,69 @@ random** (Restate's `ctx.rand`).
 
 ---
 
+## Writers, integrity and intervention
+
+### Fencing token
+
+A value that identifies a writer's claim and increases monotonically, so a write
+carrying a stale one can be refused even if the writer has not noticed it lost its
+claim. [Temporal]'s shard `RangeID`, [Restate]'s `LeaderEpoch` and
+[Netherite]'s partition ownership are fencing tokens; a plain lock is not, because a
+process holding an expired lock still believes it holds one.
+
+### Lease
+
+A time-bounded claim on work or on a partition, refreshed while held and reclaimable
+once stale. [Effect][effect-workflow]'s shard locks and [Inngest]'s queue items are
+leased. A lease keeps processes apart; it does not by itself make an individual write
+conditional, which is why the careful designs have both.
+
+### Conditional append (expected version)
+
+An append that succeeds only if the record is in the state the writer believes it is
+in. [KurrentDB][kurrent]'s `ExpectedVersion`, [Temporal]'s `DBRecordVersion`,
+[Orleans]'s e-tag and [Marten]'s version guard are all this. Note that an optimistic
+version check is not sufficient under a weak isolation level — [Marten] documents the
+race where two writers both pass the check.
+
+### Atomic multi-record append
+
+Writing several records as one unit: an intent and its result, or a step and its
+compensation registration. Free for anything over a transaction
+([Marten], [Akka/Pekko][akka]'s `AtomicWrite`, [Inngest]'s single Redis script) and a
+build-it-yourself problem for anything appending to a file.
+
+### Durability barrier
+
+An operation that blocks until the record is durable, exposed to the program rather
+than managed for it. [Golem]'s `oplog-commit` is the only instance in this survey: it
+takes a replication count and returns when the log has reached it.
+
+### Dead letter (parking, quarantine)
+
+Somewhere to put a record or a run that cannot be processed, so it neither blocks the
+system nor disappears. [KurrentDB][kurrent] parks a message on its own stream with a
+replay operation; [Orleans] quarantines retired state for a grace period with
+resurrection supported; [Marten] skips and dead-letters while running but pauses
+during a rebuild. [Inngest] argues the category away, keeping failed runs failed and
+re-running them in bulk after a fix.
+
+### Fork, reset, redrive, rewind
+
+The family of operations that resume a run from somewhere other than where it stopped.
+[Temporal]'s reset takes an event id **and** a policy for which external inputs are
+reapplied afterwards; [Golem] reverts to an oplog index or undoes the last N
+invocations; [AWS Step Functions][asf] redrives from the failed state;
+[DBOS] forks from a step. `rr` generalises it: execution runs backwards by jumping to
+an earlier checkpoint and replaying forward ([deterministic record and replay][replay]).
+
+### Cancel versus terminate
+
+Two different ways to stop a run. Cancelling delivers something the program can
+observe, so its cleanup and compensation execute; terminating stops it without a turn.
+[Temporal] and [Restate] keep both; [Dapr][dapr] has only the abrupt one, which means
+an operator stop there cannot run rollback.
+
 ## Failure and rollback
 
 ### Compensation
@@ -320,3 +383,4 @@ primary citations. The terminology-fixing sources for this page are:
 [trigger]: ./trigger-dev.md
 [vercel]: ./vercel-workflow.md
 [wal]: ./write-ahead-logging.md
+[asf]: ./aws-step-functions.md

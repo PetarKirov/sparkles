@@ -120,15 +120,83 @@ The three answers to "how is a durable program tested" share a shape that the ca
 - **The seed is the bug report.** "you can reproduce this failure with seed=…"; `-s <seed> -b on`; the Antithesis input tree. Every failing run is a two-integer artifact (seed, commit).
 - **Coverage of the fault space is measured**, via `CODE_PROBE` counts per run, so a fault that never fires is visible as a number.
 
-## Relevance to sparkles
+### 9. Journal integrity and the single writer
 
-- **Confirms the row-of-capabilities design as the DST seam.** `sparkles:event-horizon` already has the three doubles DST needs: `TestClock` (virtual `now`, `sleep` parks a fiber on a deadline, `advance` wakes sleepers in deadline order, `advanceToNext` jumps to the next deadline), `SimNet` (in-memory pipes, `partition(a, b, severed)` as "the fault-injection knob") and `SimProc` (scripted `argv[0]` → stdout bytes + exit status, `ENOENT` when unscripted), all parked through the `isWaker` seam of `TestSched` (`libs/event-horizon/src/sparkles/event_horizon/clock.d`, `net.d`, `proc.d`, `testing.d`; spec §10.3 in `../../../specs/event-horizon/SPEC.md`). `advanceAndSettle` is `Sim2::runLoop` in miniature: settle, advance virtual time to the next deadline, repeat. That is exactly FoundationDB's time compression and TigerBeetle's "speed up time arbitrarily", and the workflow rewrite gets it for free by running under the row.
-- **The planned tests are the right two oracles, but they sample the wrong distribution.** "Crash at every event index then resume" enumerates crash points **between** journal events; "mutate the world between crash and resume" is a hand-written fault list. DST says the interesting crash points are **inside** an op: after `started` is appended but before the side effect, after the effect but before `completed`, during the append itself (a torn `journal.jsonl` line, per `AsyncFileNonDurable`), and during the compensation. Enumerating between-event indices proves the resume rule table; it does not exercise the durability of the append or the idempotency of the op.
-- **`TestSched` is FIFO and unseeded, which is a gap.** `enqueue`/`dequeue` in `testing.d` are a plain linked-list queue; there is no seed anywhere in `TestSched`, `TestClock`, `SimNet` or `SimProc`. FoundationDB's task queue is deterministic _and_ jittered by the seed (`MAX_RUNLOOP_SLEEP_DELAY`, buggified `delay`); TigerBeetle's latencies and drift are drawn per seed. The cheapest DST addition to event-horizon is a `seed` on `TestSched` that shuffles same-priority ready tasks and lets `SimNet`/`SimProc` draw latencies and failures from it, plus a `buggify(p)`-style probe in the journaling combinator so the seed decides where the crash lands.
-- **`SimProc` has no failure vocabulary.** It scripts a fixed stdout and exit status per command. DST's process double needs the `KillType` spectrum for the child (hung, killed by signal, partial stdout, exit after a delay) and for the parent (the `release` process dying while the child runs, which is where `supervise` §13.5 and compensations meet). Scripts should be drawn, not fixed: "with probability p this `git push` returns after the tag exists on the remote but reports failure."
-- **Add the unseed check.** Run the workflow twice under one seed and compare the journal bytes; any divergence is a nondeterminism leak (a wall-clock read, a map iteration order, an unjournaled observation) surfaced _before_ it becomes a replay mismatch in production. This is the one DST idea that directly tests question 3 rather than assuming it, and it costs one extra run per seed.
-- **Use exhaustive generation for the small crash spaces and seeds for the large ones.** TigerBeetle keeps both: `exhaustigen` enumerates every choice a short test makes, the VOPR samples the long runs. The crash-at-every-index test should be the exhaustive form over one op's internal crash sites (started/effect/completed/compensation, times torn/clean), and a seeded VOPR-style loop should sample crash schedules across a whole `--split` run.
-- **Argues against trusting the state-machine alone.** TigerBeetle's `StateChecker` is not the replicas' own consistency check; it is a global history that every replica is checked against, and the liveness phase is a second, separate oracle. The `release` analogue is an external model of the world (tags that should exist, releases that should be published, notes that should be attached) that the journal projection is compared to after every crash-and-resume, plus a "heal everything and require completion" phase at the end of every seeded run.
+This is the dimension deterministic simulation testing exists to attack, and its
+contribution is not a mechanism but a way of finding out whether yours works.
+
+**The disk is modelled as an adversary, not as storage.** Both FoundationDB's simulator
+and TigerBeetle's harness inject faults at the storage layer — torn writes, misdirected
+writes, bit rot, and writes that report success without landing — because those are the
+cases a recovery argument silently assumes away. A library that has reasoned carefully
+about its append protocol and never tested it against a torn last record has tested the
+happy path of exactly the code that exists to handle the unhappy one.
+
+**Crash points are inside operations, not between them.** The simulator can stop a
+process at any scheduling point, which includes the middle of a write sequence. That is
+strictly more than truncating a record after a complete entry, and it is where the
+interesting bugs in an intent-then-effect protocol live: after the intent is written but
+before it is flushed, after the flush but before the effect, after the effect but before
+the result.
+
+**Determinism is verified rather than assumed.** FoundationDB's unseed check re-runs a
+seed and compares, which mechanically detects a leak of real nondeterminism into code
+that was supposed to be deterministic. Every system in this survey that enforces
+determinism "by discipline" could have this check and none does.
+
+**The single-writer question is testable the same way.** A simulated partition that
+leaves two nodes believing they own the same shard is a scenario a seed can produce on
+demand, which turns a fencing argument into an experiment.
+
+### 10. Operator recovery and intervention
+
+**A seed is the bug report, and that is the transferable idea.** A failing run is
+reproduced exactly by its seed and commit, so a defect travels as two short strings
+rather than as a log. The analogue for a durable-execution layer is that a journal _is_
+a reproducer: handed the record, the library can re-derive the failure without the
+original environment.
+
+**Restart tests are the versioning experiment.** FoundationDB's paired save-and-kill
+then resume-with-a-newer-binary tests are the only mechanism in this catalog that
+actually exercises new code against an old record, rather than reasoning about whether
+it would work.
+
+**Otherwise the dimension does not apply.** These are test harnesses, not systems with
+operators; there is nothing to cancel, fork or inspect at runtime.
+
+---
+
+## Implications for a durable-execution library
+
+- **A capability row is already the seam a simulator needs.** Substituting the clock,
+  the process spawner and the network is most of what FoundationDB and TigerBeetle build
+  from scratch; a library whose effects all go through swappable handlers gets the
+  harness for free and should exploit it rather than testing against real services.
+- **Crash-at-every-record is a weak fault model.** It samples only the boundaries
+  between operations. The interesting failures in an intent-then-effect protocol are
+  inside one operation: after the intent is written, after it is flushed, after the
+  effect, before the result. A test that cannot reach those has not tested the recovery
+  code.
+- **Model the disk as an adversary.** Torn writes, misdirected writes and writes that
+  report success without landing are the cases a recovery argument assumes away, and a
+  simulated storage layer is how they get exercised.
+- **Verify determinism mechanically.** Run the same seed twice and compare the record
+  byte for byte. Every system in this survey that relies on discipline for determinism
+  could do this, and none does — it is the cheapest possible check on the assumption the
+  whole model rests on.
+- **Draw faults from a seed, and report the seed.** A reproducible failure is two short
+  strings rather than a log, and it makes an intermittent bug a fixable one.
+- **Add a liveness phase.** TigerBeetle heals every injected fault and then requires the
+  system to finish; without that, a harness proves only that nothing was corrupted, not
+  that anything completes.
+- **Exhaustive enumeration and seeded sampling are for different scales.** Enumerate
+  every crash point within one operation; sample schedules across a long program. Using
+  one technique for both wastes time at one end and misses cases at the other.
+- **Test new code against an old record deliberately.** The paired save-kill-resume
+  pattern is the only mechanism here that exercises the versioning question rather than
+  arguing about it.
+
+---
 
 ## Sources
 
