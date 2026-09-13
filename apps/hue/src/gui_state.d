@@ -369,10 +369,17 @@ struct GuiCapture
     string settings;
     /// ditto
     bool settingsSet;
+    /// `HUE_GUI_CRT`: force CRT shader effect on.
+    bool crt;
+    /// `HUE_GUI_CRT_TILT`: force CRT mouse tilt curvature on.
+    bool crtTilt;
+    /// `HUE_GUI_CRT_MAGNIFY`: force CRT mouse magnification on.
+    bool crtMagnify;
 
     /// ditto
     static GuiCapture fromEnv(scope string delegate(string, string) @safe get) @safe
     {
+
         import std.conv : to;
         import std.string : indexOf;
 
@@ -400,6 +407,10 @@ struct GuiCapture
         c.preview = get("HUE_GUI_PREVIEW", "");
         c.search = get("HUE_GUI_SEARCH", "");
         c.inspect = get("HUE_GUI_INSPECT", "").length != 0;
+        c.crt = get("HUE_GUI_CRT", "").length != 0;
+        c.crtTilt = get("HUE_GUI_CRT_TILT", "").length != 0;
+        c.crtMagnify = get("HUE_GUI_CRT_MAGNIFY", "").length != 0;
+
         const l = get("HUE_GUI_LANTERN", null);
         c.lanternSet = l !is null;
         c.lantern = l;
@@ -461,12 +472,16 @@ unittest
         "HUE_GUI_LANTERN": "",
         "HUE_GUI_HOVER": "3",
         "HUE_GUI_INSPECT": "1",
+        "HUE_GUI_CRT": "1",
+        "HUE_GUI_CRT_TILT": "1",
+        "HUE_GUI_CRT_MAGNIFY": "1",
         "HUE_GUI_POINTER": "123.5,456",
     ];
     c = GuiCapture.fromEnv(&get);
     assert(c.screenshotPath == "shot.png" && c.screenshotFrame == 40);
     assert(c.flash && c.initialTop == 120 && c.fontSizePx == 22);
     assert(c.preview == "0" && c.search == "needle" && c.inspect);
+    assert(c.crt && c.crtTilt && c.crtMagnify);
     assert(c.lanternSet && c.lantern.length == 0,
         "an empty lantern is SET (it shows the root listing)");
     assert(c.forceHover == 3);
