@@ -4121,6 +4121,60 @@ unittest
     assert(hits(256) == 1, "raising the cap reaches it");
 }
 
+@("workspace.aLiteralThatFindsNothingFallsBackVisibly")
+@system
+unittest
+{
+    // `PKC9`'s rung where a reader meets it: typed into the real prompt,
+    // read back off a real grid. The rung must be VISIBLE — a result list
+    // that answers a question nobody asked is the failure being prevented,
+    // and it is invisible to any assertion on `rowCount` alone.
+    import core.thread : Thread;
+    import std.algorithm.searching : canFind;
+    import std.file : rmdirRecurse, write;
+    import std.path : buildPath;
+
+    WorkspaceTui w;
+    const root = fixtureWorkspace(w, "hue-ws-grep-rung");
+    scope (exit) rmdirRecurse(root);
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    write(buildPath(root, "alpha.d"), "struct Widget\n");
+    write(buildPath(root, "beta.d"), "int unrelated;\n");
+
+    foreach (ch; " /")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+
+    // A substring of nothing; a subsequence of `Widget`.
+    foreach (ch; "Wdgt")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    foreach (_; 0 .. 100_000)
+    {
+        cast(void) w.pollAll();
+        if (!w.picker.get.busy)
+            break;
+        Thread.yield();
+    }
+
+    assert(w.picker.get.state.rowCount == 1,
+        "the rung was taken and the subsequence answered");
+
+    Grid g;
+    g.resize(100, 24);
+    w.paint(g);
+    string all;
+    foreach (y; 0 .. g.rows)
+        foreach (x; 0 .. g.cols)
+            all ~= g[cast(ushort) x, cast(ushort) y].grapheme;
+
+    assert(all.canFind("plain \u2192 fuzzy"),
+        "the prompt says the question changed, and which way");
+    assert(!all.canFind("[fuzzy]"),
+        "…rather than showing a mode the reader never chose");
+    assert(all.canFind("struct Widget"), "and the line it found is on screen");
+}
+
 @("workspace.leaderSlashGrepsAndCyclesItsMode")
 @system
 unittest

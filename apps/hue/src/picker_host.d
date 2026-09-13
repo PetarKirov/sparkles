@@ -395,7 +395,7 @@ struct PickerHost
         case PickerSource.grep:
             foreach (i, ranked; state.visible)
                 rows[i] = grep.rowText(ranked.corpusIndex);
-            mode = modeLabel(grep.grepMode);
+            mode = modeLabel(grep.grepMode, grep.fellBack);
             break;
         }
 
