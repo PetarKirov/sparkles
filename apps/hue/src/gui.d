@@ -2399,35 +2399,13 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
-        if (crt.enabled)
-        {
-            foreach (ref e; evBuf)
-            {
-                e.match!(
-                    (ref PointerEvent p) {
-                        const ui = crt.mapScreenToUi(cast(float) p.pos.x, cast(float) p.pos.y, geom.screenW, geom.screenH);
-                        p.pos = Point(cast(int) ui.x, cast(int) ui.y);
-                    },
-                    (ref WheelEvent w) {
-                        const ui = crt.mapScreenToUi(cast(float) w.pos.x, cast(float) w.pos.y, geom.screenW, geom.screenH);
-                        w.pos = Point(cast(int) ui.x, cast(int) ui.y);
-                    },
-                    (ref _) {}
-                );
-            }
-        }
-
         inp.fin = foldFrame(evBuf, inp.fin);
         // Deterministic GUI captures need to park the pointer on sub-cell
         // chrome without synthesising a live window-system event. Override
         // only the position; button levels and edges still come from the
         // folded stream.
         if (capture.pointerSet)
-        {
-            inp.fin.pos = crt.enabled
-                ? crt.mapScreenToUi(capture.pointer.x, capture.pointer.y, geom.screenW, geom.screenH)
-                : capture.pointer;
-        }
+            inp.fin.pos = capture.pointer;
         // The dock drains these real events below, after its current geometry
         // and content extents have been published. The frame fold above is a
         // read, not ownership transfer.
@@ -2682,6 +2660,12 @@ int runGui(GuiArgs guiArgs) @system
             // stops this running on Android, where the surface is already the
             // screen and the dance had nothing to act on.
             window.toggleFullscreen();
+        }
+
+        // F12 toggles the CRT post-processing shader; active in any input mode (`CRT7`).
+        if (keyBuf.hasKey(Key.f12))
+        {
+            crt.enabled = !crt.enabled;
         }
 
         // Hoisted out of the normal-mode branch below: the paint pass

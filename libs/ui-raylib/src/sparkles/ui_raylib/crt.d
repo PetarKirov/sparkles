@@ -194,10 +194,14 @@ void main()
     float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
     uv.x += jitter;
 
-    // Vector from mouse tip to fragment in screen pixels
-    vec2 pixelPos = vec2(fragTexCoord.x * resolution.x, fragTexCoord.y * resolution.y);
-    vec2 cursorDelta = vec2(pixelPos.x - mouse.x, mouse.y - pixelPos.y);
-    vec4 cursorCol = renderCursor(cursorDelta, cursorShape);
+    // Vector from mouse tip to fragment in texture space (UI pixels)
+    vec4 cursorCol = vec4(0.0);
+    if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
+    {
+        vec2 uiPixelPos = vec2(uv.x * resolution.x, uv.y * resolution.y);
+        vec2 cursorDelta = vec2(uiPixelPos.x - mouse.x, mouse.y - uiPixelPos.y);
+        cursorCol = renderCursor(cursorDelta, cursorShape);
+    }
 
     vec3 col = vec3(0.0);
     if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
@@ -514,10 +518,14 @@ void main()
     float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
     uv.x += jitter;
 
-    // Vector from mouse tip to fragment in screen pixels
-    vec2 pixelPos = vec2(fragTexCoord.x * resolution.x, fragTexCoord.y * resolution.y);
-    vec2 cursorDelta = vec2(pixelPos.x - mouse.x, mouse.y - pixelPos.y);
-    vec4 cursorCol = renderCursor(cursorDelta, cursorShape);
+    // Vector from mouse tip to fragment in texture space (UI pixels)
+    vec4 cursorCol = vec4(0.0);
+    if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
+    {
+        vec2 uiPixelPos = vec2(uv.x * resolution.x, uv.y * resolution.y);
+        vec2 cursorDelta = vec2(uiPixelPos.x - mouse.x, mouse.y - uiPixelPos.y);
+        cursorCol = renderCursor(cursorDelta, cursorShape);
+    }
 
     vec3 col = vec3(0.0);
     if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
@@ -1269,4 +1277,3 @@ unittest
     crt.setUiContext(ctx);
     assert(crt.uiContext.focusBox == r);
 }
-
