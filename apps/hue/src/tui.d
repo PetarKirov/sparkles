@@ -2220,9 +2220,17 @@ unittest
     t.width = 40;
     t.height = 8; // bodyRows = 6; the h-bar row is y == 6
     t.relayout();
+
+    // Markdown documents in preview mode suppress document-level horizontal scroll:
     t.setDocument("wide.md", src, null, PreviewModel(present: true, doc: doc),
         startPreview: true);
-    assert(t.vm.hOverflows(), "the 120-cell fence line overflows the pane");
+    assert(!t.vm.hOverflows(), "markdown preview suppresses horizontal scroll");
+
+    // In raw mode, overflowing lines report horizontal overflow and show the bar:
+    t.setDocument("wide.txt", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        startPreview: false);
+    assert(t.vm.hOverflows(), "the 120-cell line overflows the pane in raw view");
 
     // A press on the bar's row grabs it; the drag scrolls the columns and
     // owns the pointer; release ends the grab.
@@ -2711,15 +2719,18 @@ unittest
     // A wide unbreakable PARAGRAPH, repeated until the page is also tall, so
     // the two axes can be told apart. Not a fence (its body scrolls its own
     // viewport, `COD`) and not a table (it self-clips too, `TBL7`).
+    string line;
+    foreach (_; 0 .. 60)
+        line ~= "a";
+    foreach (_; 0 .. 60)
+        line ~= "b";
     string src;
-    foreach (_; 0 .. 60)
-        src ~= "a";
-    foreach (_; 0 .. 60)
-        src ~= "b";
-    MdBlock[] paras;
     foreach (_; 0 .. 20)
-        paras ~= MdBlock(kind: MdBlockKind.paragraph, span: Span(0, 120),
-            inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, 120))]);
+        src ~= line ~ "\n";
+    MdBlock[] paras;
+    foreach (li; 0 .. 20)
+        paras ~= MdBlock(kind: MdBlockKind.paragraph, span: Span(li * 121, li * 121 + 120),
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(li * 121, li * 121 + 120))]);
     auto doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: paras),
         src);
 
@@ -2732,9 +2743,17 @@ unittest
     t.width = 40;
     t.height = 8;
     t.relayout();
+
+    // In preview mode, markdown documents suppress document-level horizontal scroll:
     t.setDocument("wide.md", src, null, PreviewModel(present: true, doc: doc),
         startPreview: true);
-    assert(t.vm.hOverflows(), "precondition: the content overflows");
+    assert(!t.vm.hOverflows(), "markdown preview suppresses horizontal scroll");
+
+    // In raw mode, overflowing lines report horizontal overflow and allow wheel scroll:
+    t.setDocument("wide.txt", src,
+        [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+        startPreview: false);
+    assert(t.vm.hOverflows(), "precondition: the content overflows in raw view");
 
     assert(t.handle(Event(WheelEvent(dx: 6))));
     assert(t.vm.hsb.offset == 6, "a sideways notch scrolls sideways");

@@ -149,6 +149,92 @@ struct Window
     int height = defaultWindowRows;
 }
 
+/// CFG3 — CRT monitor shader configuration.
+@ConfigSection
+struct CrtConfig
+{
+    @Doc("Enable CRT monitor shader effect in GUI mode.")
+    @Label("enabled")
+    bool enabled;
+
+    @Doc("Tilt CRT monitor curvature towards the mouse cursor.")
+    @Label("mouse tilt")
+    bool tilt;
+
+    @Doc("Magnify CRT content under the mouse cursor.")
+    @Label("mouse magnify")
+    bool magnify;
+
+    @Doc("Screen curvature amount (0 for flat monitor).")
+    @Label("curvature")
+    @Range(0.0, 0.30, 0.01)
+    double curvature = 0.08;
+
+    @Doc("Scanline darkening intensity (0 to disable).")
+    @Label("scanlines")
+    @Range(0.0, 0.50, 0.02)
+    double scanlines = 0.12;
+
+    @Doc("RGB phosphor aperture grille mask intensity.")
+    @Label("phosphor mask")
+    @Range(0.0, 1.0, 0.05)
+    double mask = 1.0;
+
+    @Doc("Chromatic aberration color fringing.")
+    @Label("chromatic aberration")
+    @Range(0.0, 0.01, 0.0005)
+    double chromaticAberration = 0.0025;
+
+    @Doc("Vignette edge and corner darkening.")
+    @Label("vignette")
+    @Range(0.0, 0.50, 0.02)
+    double vignette = 0.12;
+
+    @Doc("Phosphor flicker and vertical roll bar intensity.")
+    @Label("flicker")
+    @Range(0.0, 0.05, 0.002)
+    double flicker = 0.007;
+
+    @Doc("Brightness boost to compensate for scanlines and phosphor mask.")
+    @Label("brightness")
+    @Range(0.80, 1.50, 0.05)
+    double brightness = 1.05;
+
+    @Doc("Magnification lens radius.")
+    @Label("lens radius")
+    @Range(0.05, 0.50, 0.01)
+    double lensRadius = 0.18;
+
+    @Doc("Magnification zoom power.")
+    @Label("lens power")
+    @Range(0.10, 0.80, 0.05)
+    double lensPower = 0.45;
+
+    @Doc("Enable CRT reaction to UI structure (hover, focus, selection, dividers).")
+    @Label("ui reactive")
+    bool uiReactive = true;
+
+    @Doc("Intensity of focused container cathode border halo.")
+    @Label("focus halo")
+    @Range(0.0, 2.0, 0.1)
+    double focusHalo = 1.0;
+
+    @Doc("Intensity of interactive hover phosphor excitation.")
+    @Label("hover glow")
+    @Range(0.0, 2.0, 0.1)
+    double hoverGlow = 1.0;
+
+    @Doc("Intensity of selection phosphor bloom and beam overdrive.")
+    @Label("selection bloom")
+    @Range(0.0, 2.0, 0.1)
+    double selectionBloom = 1.0;
+
+    @Doc("Intensity of dock divider cathode seam and tension.")
+    @Label("divider tension")
+    @Range(0.0, 2.0, 0.1)
+    double dividerTension = 1.0;
+}
+
 /// `CFG3`: theme, background mode, the font faces, the window.
 @ConfigSection
 struct Appearance
@@ -173,11 +259,13 @@ struct Appearance
     @Range(0, 400, 1)
     int height = 0;
 
+    CrtConfig crt;
     Fonts fonts;
     Window window;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // CFG4 — panes.
 // ─────────────────────────────────────────────────────────────────────────────
 

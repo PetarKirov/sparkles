@@ -188,17 +188,40 @@ struct RaylibCanvas
         applyScissor();
     }
 
+    /// Returns the accumulated geometric intersection of all active clips on the stack.
+    package static Rect effectiveClip(scope const(Rect)[] clips) pure nothrow @nogc @safe
+    {
+        if (!clips.length)
+            return Rect.init;
+        Rect eff = clips[0];
+        foreach (ref const c; clips[1 .. $])
+        {
+            eff = eff.intersection(c);
+            if (eff.empty)
+                break;
+        }
+        return eff;
+    }
+
+    private Rect effectiveClip() const pure nothrow @nogc @safe
+        => effectiveClip(clips);
+
     private void applyScissor() scope @system
     {
         EndScissorMode();
         if (!clips.length)
             return;
-        // The display list pushes pre-intersected effective rects, so the top
-        // of the stack is the active region — but an axis-only viewport
-        // (`clipX` without `clipY`) leaves the other axis UNBOUNDED (huge
-        // sentinels), so clamp to the window before pixel math or the
-        // scissor arithmetic overflows.
-        const r = clips[$ - 1];
+        // Intersect across the clip stack so nested child clips (e.g. wide tables
+        // or code blocks) stay strictly bounded by their enclosing viewports.
+        // An axis-only viewport (`clipX` without `clipY`) leaves the other axis
+        // unbounded, so clamp to the window before pixel math or scissor
+        // arithmetic overflows.
+        const r = effectiveClip();
+        if (r.empty)
+        {
+            BeginScissorMode(0, 0, 0, 0);
+            return;
+        }
         const sw = cast(float) GetScreenWidth();
         const sh = cast(float) GetScreenHeight();
         static float cl(float v, float lo, float hi) pure nothrow @nogc @safe
@@ -214,7 +237,6 @@ struct RaylibCanvas
         else
             BeginScissorMode(cast(int) x0, cast(int) y0,
                 cast(int)(x1 - x0), cast(int)(y1 - y0));
-
     }
 
     /**
@@ -720,4 +742,31 @@ unittest
     // Borders wider than the box do not invert it into negative geometry.
     foreach (e; borderEdges(0, 0, 2, 2, Insets.all(5)))
         assert(!e.empty || e.w <= 0 || e.h <= 0);
+}
+
+@("ui_raylib.raylib_canvas.effectiveClipIntersectsStack")
+@safe pure nothrow @nogc
+unittest
+{
+    // A single clip passes through as-is.
+    const Rect[1] c1 = [Rect(10, 5, 20, 30)];
+    assert(RaylibCanvas.effectiveClip(c1[]) == Rect(10, 5, 20, 30));
+
+    // Nested child clip is constrained within the parent's boundaries.
+    // e.g. Pass 1 of document horizontal scroll: parent clip covers gutter [0, 8),
+    // and an inner table op tries to push clip [0, 80). The effective clip MUST stay [0, 8).
+    const Rect[2] c2 = [Rect(0, 0, 8, 40), Rect(0, 5, 80, 20)];
+    assert(RaylibCanvas.effectiveClip(c2[]) == Rect(0, 5, 8, 20));
+
+    // Pass 2: parent clip covers scrolled content [10, 50). An inner table clip [0, 80)
+    // must be clamped to [10, 50).
+    const Rect[2] c3 = [Rect(10, 0, 40, 40), Rect(0, 5, 80, 20)];
+    assert(RaylibCanvas.effectiveClip(c3[]) == Rect(10, 5, 40, 20));
+
+    // Disjoint clips result in an empty rect.
+    const Rect[2] c4 = [Rect(0, 0, 10, 10), Rect(20, 20, 10, 10)];
+    assert(RaylibCanvas.effectiveClip(c4[]).empty);
+
+    // Empty stack returns empty rect.
+    assert(RaylibCanvas.effectiveClip(null).empty);
 }

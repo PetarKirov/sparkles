@@ -247,7 +247,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
         // px stroke the cell backend renders on its EDGE, which lands on
         // the row above or below rather than in the row itself, and shows
         // as a blank line.
-        const ruleCols = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
+        const ruleCols = geometry.panelCols > 4 ? geometry.panelCols - 4 : 1;
         char[] rule;
         foreach (_; 0 .. ruleCols)
             rule ~= "─";
@@ -382,7 +382,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     // the panel was shorter than the ranking.
     if (widest > state.viewCols)
     {
-        const track = geometry.panelCols > 2 ? geometry.panelCols - 2 : 1;
+        const track = geometry.panelCols > 4 ? geometry.panelCols - 4 : 1;
         body ~= scrollbar(builder, ScrollbarSpec(
             content: cast(long) widest,
             viewport: cast(long) state.viewCols,
@@ -417,7 +417,9 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             text: text("picker error: ", state.error.code),
             slot: Slot.error));
 
-    const filesPanel = titledPanel(builder, body, " Files ", geometry,
+    const filesTitle = (modeLabel.length > 0 || grepRows.length > 0)
+        ? " Grep " : " Files ";
+    const filesPanel = titledPanel(builder, body, filesTitle, geometry,
         focused: !previewFocused);
     uint root;
     final switch (preset)
