@@ -34,6 +34,7 @@ import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
     Mods, PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.input.frame : InputFrame, foldFrame;
+import sparkles.input.gesture : PointF;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
@@ -123,8 +124,9 @@ import sparkles.ui_app.backend : BackendPolicy;
 import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
-import sparkles.ui_raylib : namedKey, RaylibCanvas, traceLevelTag, traceLogTo,
+import sparkles.ui_raylib : CrtEffect, CrtUiContext, UiRect, namedKey, RaylibCanvas, traceLevelTag, traceLogTo,
     Window, WindowRequest, toRaylibCursor;
+
 
 // Live D types (`PRJ12`-`PRJ16`): the `twoslash-extract --serve` oracle beside
 // the window. A subprocess, never a link-time dependency (`PRJ13`).
@@ -384,8 +386,38 @@ int runGui(GuiArgs guiArgs) @system
     DsvModel dsvModel;
     bool dsvPalOpen;   // the columns palette (DSB3), modal while open
     uint dsvPalCursor; // ditto: the selected palette row
-    with (gs)
+    CrtEffect crt;
+    if (configStore !is null)
     {
+        crt.enabled = configStore.resolved.appearance.crt.enabled || capture.crt;
+        crt.tilt = configStore.resolved.appearance.crt.tilt || capture.crtTilt;
+        crt.magnify = configStore.resolved.appearance.crt.magnify || capture.crtMagnify;
+        crt.curvature = cast(float) configStore.resolved.appearance.crt.curvature;
+        crt.scanlines = cast(float) configStore.resolved.appearance.crt.scanlines;
+        crt.mask = cast(float) configStore.resolved.appearance.crt.mask;
+        crt.chromaticAberration = cast(float) configStore.resolved.appearance.crt.chromaticAberration;
+        crt.vignette = cast(float) configStore.resolved.appearance.crt.vignette;
+        crt.flicker = cast(float) configStore.resolved.appearance.crt.flicker;
+        crt.brightness = cast(float) configStore.resolved.appearance.crt.brightness;
+        crt.lensRadius = cast(float) configStore.resolved.appearance.crt.lensRadius;
+        crt.lensPower = cast(float) configStore.resolved.appearance.crt.lensPower;
+        crt.uiReactive = configStore.resolved.appearance.crt.uiReactive;
+        crt.focusHalo = cast(float) configStore.resolved.appearance.crt.focusHalo;
+        crt.hoverGlow = cast(float) configStore.resolved.appearance.crt.hoverGlow;
+        crt.selectionBloom = cast(float) configStore.resolved.appearance.crt.selectionBloom;
+        crt.dividerTension = cast(float) configStore.resolved.appearance.crt.dividerTension;
+    }
+    else
+    {
+        crt.enabled = capture.crt;
+        crt.tilt = capture.crtTilt;
+        crt.magnify = capture.crtMagnify;
+    }
+    PointF rawPointerPos;
+    with (gs)
+
+    {
+
     import std.string : toStringz;
     import std.process : environment;
     import std.conv : to, text;
@@ -466,8 +498,15 @@ int runGui(GuiArgs guiArgs) @system
         // window never read it: `search.smart_case` moved one of hue's three
         // searches, and this is one of the two lines that was missing.
         vm.searchPolicy = configStore.resolved.search.searchPolicy;
+        if (configStore.resolved.appearance.crt.enabled)
+            crt.enabled = true;
+        if (configStore.resolved.appearance.crt.tilt)
+            crt.tilt = true;
+        if (configStore.resolved.appearance.crt.magnify)
+            crt.magnify = true;
     }
     vm.tableOverflow = tableOverflow;
+
     vm.tableMaxLines = tableMaxLines;
     vm.fenceHotGlyphs = true; // resolves the semantic bar's hot thumb color
 
@@ -1009,6 +1048,23 @@ int runGui(GuiArgs guiArgs) @system
             return;
         vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
         vm.searchPolicy = configStore.resolved.search.searchPolicy;
+        crt.enabled = configStore.resolved.appearance.crt.enabled || capture.crt;
+        crt.tilt = configStore.resolved.appearance.crt.tilt || capture.crtTilt;
+        crt.magnify = configStore.resolved.appearance.crt.magnify || capture.crtMagnify;
+        crt.curvature = cast(float) configStore.resolved.appearance.crt.curvature;
+        crt.scanlines = cast(float) configStore.resolved.appearance.crt.scanlines;
+        crt.mask = cast(float) configStore.resolved.appearance.crt.mask;
+        crt.chromaticAberration = cast(float) configStore.resolved.appearance.crt.chromaticAberration;
+        crt.vignette = cast(float) configStore.resolved.appearance.crt.vignette;
+        crt.flicker = cast(float) configStore.resolved.appearance.crt.flicker;
+        crt.brightness = cast(float) configStore.resolved.appearance.crt.brightness;
+        crt.lensRadius = cast(float) configStore.resolved.appearance.crt.lensRadius;
+        crt.lensPower = cast(float) configStore.resolved.appearance.crt.lensPower;
+        crt.uiReactive = configStore.resolved.appearance.crt.uiReactive;
+        crt.focusHalo = cast(float) configStore.resolved.appearance.crt.focusHalo;
+        crt.hoverGlow = cast(float) configStore.resolved.appearance.crt.hoverGlow;
+        crt.selectionBloom = cast(float) configStore.resolved.appearance.crt.selectionBloom;
+        crt.dividerTension = cast(float) configStore.resolved.appearance.crt.dividerTension;
         if (!filePicker.empty)
         {
             filePicker.get.stepBudget =
@@ -1477,7 +1533,9 @@ int runGui(GuiArgs guiArgs) @system
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
         // frame from a clean state so the clear always covers the window.
+        crt.begin(screenW, screenH);
         window.resetClip();
+
         if (flashDebug)
             window.clear((frame / 30) % 2 == 0
                 ? RgbColor(70, 20, 20) : RgbColor(20, 20, 70));
@@ -2033,6 +2091,7 @@ int runGui(GuiArgs guiArgs) @system
             const pkX = (cellsW - pkPanel.width) / 2;
             const pkOriginX = pkX > 0 ? pkX : 0;
             window.resetClip();
+            chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset(); // sequential reuse of the guide's sink (`NFR2`)
             buildDisplayListInto(pkTree, pkFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
@@ -2096,6 +2155,7 @@ int runGui(GuiArgs guiArgs) @system
             const sX = (cellsW - sPanel.width) / 2;
             const sY = (cellsH - sPanel.height) / 2;
             window.resetClip();
+            chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset();
             // vm.palette for the same reason as the inspector's: the bar
             // must be the same chrome as every other bar in the window.
@@ -2136,9 +2196,122 @@ int runGui(GuiArgs guiArgs) @system
         }
 
         window.resetClip(); // never let a scissor survive the frame
+
+        if (crt.enabled && crt.uiReactive)
+        {
+            CrtUiContext uiCtx;
+
+            // 1. Focused container
+            if (settingsPane.active)
+            {
+                const cellsW = screenW / cellW;
+                const cellsH = screenH / cellH;
+                const sg = settingsGeometryFor(cellsW, cellsH);
+                auto sTree = settingsPane.buildView(sg);
+                auto sFrames = layout(sTree, Constraints(maxW: sg.panelCols));
+                const sPanel = sFrames[sTree.root].rect;
+                const sX = (cellsW - sPanel.width) / 2;
+                const sY = (cellsH - sPanel.height) / 2;
+                uiCtx.focusBox = UiRect(cast(float)(sX * cellW), cast(float)(sY * cellH),
+                    cast(float)(sPanel.width * cellW), cast(float)(sPanel.height * cellH));
+            }
+            else if (!filePicker.empty && filePicker.get.state.active)
+            {
+                const cellsW = screenW / cellW;
+                const cellsH = screenH / cellH;
+                const pkGeometry = pickerGeometryFor(cellsW, cellsH);
+                auto pkTree = filePicker.get.buildView(pkGeometry);
+                auto pkFrames = layout(pkTree, Constraints(maxW: 2 * pkGeometry.panelCols));
+                const pPanel = pkFrames[pkTree.root].rect;
+                const pkOriginX = (cellsW - pPanel.width) / 2;
+                const pkOriginY = (cellsH - pPanel.height) / 2;
+                uiCtx.focusBox = UiRect(cast(float)(pkOriginX * cellW), cast(float)(pkOriginY * cellH),
+                    cast(float)(pPanel.width * cellW), cast(float)(pPanel.height * cellH));
+            }
+            else if (pn.treeVisible && pn.treeFocused)
+            {
+                uiCtx.focusBox = UiRect(0, 0, cast(float) treePx(), cast(float) screenH);
+            }
+            else
+            {
+                const docLeft = treePx();
+                const dRight = docRight;
+                uiCtx.focusBox = UiRect(cast(float) docLeft, 0, cast(float)(dRight - docLeft), cast(float) screenH);
+            }
+
+            // 2. Dock split divider
+            if (pn.treeVisible && treePx() > 0)
+            {
+                uiCtx.splitDivider = UiRect(cast(float)(treePx() - 2), 0, 4.0f, cast(float) screenH);
+            }
+
+            // 3. Selection
+            if (pn.treeVisible && pn.treeFocused && pn.tree.sel >= 0
+                && pn.tree.sel >= pn.tree.top && pn.tree.sel < pn.tree.top + pn.tree.bodyRows)
+            {
+                const selY = hdrY + cellH + (pn.tree.sel - pn.tree.top) * cellH;
+                uiCtx.selectBox = UiRect(0, cast(float) selY, cast(float) treePx(), cast(float) cellH);
+            }
+            else if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
+            {
+                foreach (r; selectionRects(vm.tree, vm.frames, cast(size_t) drag.selMin(), cast(size_t) drag.selMax()))
+                {
+                    const selRow = r.y - vm.top;
+                    if (selRow >= 0 && selRow < screenH / cellH)
+                    {
+                        const sx = gutterPx + (r.x - dhx) * cellW;
+                        const sy = docY0 + selRow * cellH;
+                        uiCtx.selectBox = UiRect(cast(float) sx, cast(float) sy,
+                            cast(float)(r.width * cellW), cast(float) cellH);
+                        break;
+                    }
+                }
+            }
+
+            // 4. Hover rect
+            if (rawPointerPos.x >= 0 && rawPointerPos.x < screenW && rawPointerPos.y >= 0 && rawPointerPos.y < screenH)
+            {
+                if (pn.treeVisible && rawPointerPos.x < treePx() && rawPointerPos.y >= hdrY + cellH)
+                {
+                    const treeRow = (cast(int) rawPointerPos.y - hdrY - cellH) / cellH;
+                    if (treeRow >= 0 && treeRow < pn.tree.bodyRows && (treeRow + pn.tree.top) < cast(long) pn.tree.rows.length)
+                    {
+                        uiCtx.hoverBox = UiRect(0, cast(float)(hdrY + cellH + treeRow * cellH),
+                            cast(float) treePx(), cast(float) cellH);
+                    }
+                }
+                else if (rawPointerPos.y < hdrY + cellH)
+                {
+                    const btnCol = cast(int)(rawPointerPos.x / (6 * cellW));
+                    uiCtx.hoverBox = UiRect(cast(float)(btnCol * 6 * cellW), cast(float) hdrY,
+                        cast(float)(6 * cellW), cast(float) cellH);
+                }
+            }
+
+            // 5. Scrollbar thumb
+            foreach (ref const bf; pn.dock.bars)
+            {
+                if (bf.pane == docPane && bf.vLive && bf.vExtents.viewport > 0 && bf.vExtents.content > bf.vExtents.viewport)
+                {
+                    const sv = pn.dock.scrollOf(docPane);
+                    const trackH = bf.vTrack.height * cellH;
+                    import std.algorithm.comparison : max;
+                    const thumbH = max(cellH, cast(int)(trackH * (cast(float) bf.vExtents.viewport / bf.vExtents.content)));
+                    const maxOff = max(1L, bf.vExtents.content - bf.vExtents.viewport);
+                    const thumbY = bf.vTrack.y * cellH + cast(int)((trackH - thumbH) * (cast(float) sv.v.offset / maxOff));
+                    const sbX = bf.vTrack.x * cellW;
+                    uiCtx.scrollbarThumb = UiRect(cast(float) sbX, cast(float) thumbY, cast(float) cellW, cast(float) thumbH);
+                    break;
+                }
+            }
+
+            crt.setUiContext(uiCtx);
         }
+        }
+        crt.end(geom.screenW, geom.screenH, rawPointerPos.x, rawPointerPos.y);
         painted = true;
     }
+
 
     // What used to sit below `endFrame`, now that the bracket is the arm's.
     // Returns false when the capture is finished and the run is over.
@@ -2212,13 +2385,49 @@ int runGui(GuiArgs guiArgs) @system
         keyBuf.length = 0;
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
+
+        if (capture.pointerSet)
+            rawPointerPos = capture.pointer;
+        else
+        {
+            foreach (e; evBuf)
+            {
+                e.match!(
+                    (in PointerEvent p) { rawPointerPos = PointF(cast(float) p.pos.x, cast(float) p.pos.y); },
+                    (in _) {}
+                );
+            }
+        }
+
+        if (crt.enabled)
+        {
+            foreach (ref e; evBuf)
+            {
+                e.match!(
+                    (ref PointerEvent p) {
+                        const ui = crt.mapScreenToUi(cast(float) p.pos.x, cast(float) p.pos.y, geom.screenW, geom.screenH);
+                        p.pos = Point(cast(int) ui.x, cast(int) ui.y);
+                    },
+                    (ref WheelEvent w) {
+                        const ui = crt.mapScreenToUi(cast(float) w.pos.x, cast(float) w.pos.y, geom.screenW, geom.screenH);
+                        w.pos = Point(cast(int) ui.x, cast(int) ui.y);
+                    },
+                    (ref _) {}
+                );
+            }
+        }
+
         inp.fin = foldFrame(evBuf, inp.fin);
         // Deterministic GUI captures need to park the pointer on sub-cell
         // chrome without synthesising a live window-system event. Override
         // only the position; button levels and edges still come from the
         // folded stream.
         if (capture.pointerSet)
-            inp.fin.pos = capture.pointer;
+        {
+            inp.fin.pos = crt.enabled
+                ? crt.mapScreenToUi(capture.pointer.x, capture.pointer.y, geom.screenW, geom.screenH)
+                : capture.pointer;
+        }
         // The dock drains these real events below, after its current geometry
         // and content extents have been published. The frame fold above is a
         // read, not ownership transfer.
@@ -3051,6 +3260,8 @@ int runGui(GuiArgs guiArgs) @system
                         showToast(msg);
                     break;
                 case Command.formatWidthNarrower:
+
+
                     formatPreviewNudge(vm, -2);
                     break;
                 case Command.formatWidthWider:
@@ -3400,12 +3611,14 @@ int runGui(GuiArgs guiArgs) @system
 
         // The settings pane is modal: while it owns the pointer, the frame's
         // one shape call reports ITS bar machine, not the chrome beneath.
-        window.pointerShape(settingsPane.active
+        const curShape = settingsPane.active
             ? settingsPane.pointerShape()
             : pn.dock.shape(
                 rulerGrabbing ? PointerShape.ewResize
                 : vm.barGrabbing ? fenceShape : PointerShape.default_,
-                hoverShape()));
+                hoverShape());
+        window.pointerShape(curShape);
+        crt.pointerShape = curShape;
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
