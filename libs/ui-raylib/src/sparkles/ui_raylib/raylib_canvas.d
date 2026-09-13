@@ -770,4 +770,3 @@ unittest
     // Empty stack returns empty rect.
     assert(RaylibCanvas.effectiveClip(null).empty);
 }
-
