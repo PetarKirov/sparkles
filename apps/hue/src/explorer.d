@@ -451,6 +451,81 @@ struct ExplorerTui
         }
     }
 
+    /**
+    Everything a rebuild derives that is $(B not structure): the theme's
+    interaction colors, the open document's highlight, and the git-status
+    badges. Safe to run over the existing arena any number of times.
+
+    It is a method of its own because both of its inputs change while the
+    filesystem does not — a git-status snapshot landing, or the reader
+    switching theme — and re-walking a directory to repaint a letter is not
+    free where it matters most: a flat directory of 2662 entries costs ~40 ms
+    of `getdents`/`stat`, ten frame budgets, to arrive at the same tree.
+    */
+    void restyle() @system
+    {
+        // Interaction colors from the theme (the viewer's selection language).
+        const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
+        selBg = mix(pageBg, linkC, 0.35);
+        accent = linkC;
+        currentBg = mix(pageBg, linkC, 0.16);
+        sbTrack = mix(pageBg, linkC, 0.22);
+        sbThumb = mix(pageBg, linkC, 0.5);
+        palette = themeValue !is null ? themeValue.effectivePalette
+            : Palette.init;
+        palette.fg[Slot.track] = Color.fromRgb(sbTrack);
+        palette.fgAlpha[Slot.track] = 0xFF;
+        palette.fg[Slot.thumb] = Color.fromRgb(sbThumb);
+        palette.fgAlpha[Slot.thumb] = 0xFF;
+
+        // The open document keeps its highlight through rebuilds (XPL3).
+        if (current.length)
+            foreach (ref n; data.nodes)
+                if (n.value.path == current)
+                {
+                    n.value.labelFg = accent;
+                    n.value.hasLabelFg = true;
+                    n.value.rowBg = currentBg;
+                    n.value.hasRowBg = true;
+                }
+
+        // Git-status badges (XPF1): kick/harvest the async snapshot and stamp
+        // each node — the letter badge with its color, worst-wins on dirs
+        // (the map propagates), and a dimmed label on ignored rows. The
+        // result of an in-flight refresh lands on the next restyle (or the
+        // host's poll); manual refresh is `r`.
+        git.root = root;
+        git.ensureFresh();
+        git.poll();
+        const dimFg = mix(pageFg, pageBg, 0.55);
+        if (git.map.present)
+            foreach (ref n; data.nodes)
+            {
+                const st = git.map.statusOf(n.value.path, n.value.isDir);
+                n.value.gitSt = st;
+                const b = gitBadge(st);
+                n.value.badge = b.letter;
+                if (b.letter.length)
+                {
+                    n.value.badgeFg = b.fg;
+                    n.value.hasBadgeFg = true;
+                }
+                // Written on every pass, not only when dim applies: a second
+                // restyle over the same arena must be able to take a row OUT
+                // of the ignored state as well as put it in.
+                const ignored = st == GitStatus.ignored
+                    && n.value.path != current;
+                n.value.iconFg = ignored ? dimFg
+                    : n.value.isDir ? RgbColor(0xdc, 0xb6, 0x7a)
+                    : fsIcon(n.value.name).fg;
+                if (ignored)
+                {
+                    n.value.labelFg = dimFg;
+                    n.value.hasLabelFg = true;
+                }
+            }
+    }
+
     void rebuild() @system
     {
         data = TreeData!FsEntry.init;
@@ -501,59 +576,7 @@ struct ExplorerTui
         else
             addFiltered(root, uint.max);
 
-        // Interaction colors from the theme (the viewer's selection language).
-        const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
-        selBg = mix(pageBg, linkC, 0.35);
-        accent = linkC;
-        currentBg = mix(pageBg, linkC, 0.16);
-        sbTrack = mix(pageBg, linkC, 0.22);
-        sbThumb = mix(pageBg, linkC, 0.5);
-        palette = themeValue !is null ? themeValue.effectivePalette
-            : Palette.init;
-        palette.fg[Slot.track] = Color.fromRgb(sbTrack);
-        palette.fgAlpha[Slot.track] = 0xFF;
-        palette.fg[Slot.thumb] = Color.fromRgb(sbThumb);
-        palette.fgAlpha[Slot.thumb] = 0xFF;
-
-        // The open document keeps its highlight through rebuilds (XPL3).
-        if (current.length)
-            foreach (ref n; data.nodes)
-                if (n.value.path == current)
-                {
-                    n.value.labelFg = accent;
-                    n.value.hasLabelFg = true;
-                    n.value.rowBg = currentBg;
-                    n.value.hasRowBg = true;
-                }
-
-        // Git-status badges (XPF1): kick/harvest the async snapshot and stamp
-        // each node — the letter badge with its color, worst-wins on dirs
-        // (the map propagates), and a dimmed label on ignored rows. The
-        // result of an in-flight refresh lands on the next rebuild (or the
-        // host's poll); manual refresh is `r`.
-        git.root = root;
-        git.ensureFresh();
-        git.poll();
-        const dimFg = mix(pageFg, pageBg, 0.55);
-        if (git.map.present)
-            foreach (ref n; data.nodes)
-            {
-                const st = git.map.statusOf(n.value.path, n.value.isDir);
-                n.value.gitSt = st;
-                const b = gitBadge(st);
-                n.value.badge = b.letter;
-                if (b.letter.length)
-                {
-                    n.value.badgeFg = b.fg;
-                    n.value.hasBadgeFg = true;
-                }
-                if (st == GitStatus.ignored && n.value.path != current)
-                {
-                    n.value.labelFg = dimFg;
-                    n.value.hasLabelFg = true;
-                    n.value.iconFg = dimFg;
-                }
-            }
+        restyle();
 
         // A session tree is always fully expanded (`TVU6`): its whole purpose
         // is showing the shape of the change, and it is small by construction.
@@ -585,7 +608,7 @@ struct ExplorerTui
                     // Roll back the speculative subtree (append-only arena:
                     // truncate + unlink from the parent/sibling chain).
                     data.nodes = data.nodes[0 .. mark];
-                    unlink(parent, cast(uint) mark);
+                    data.dropLastChild(parent);
                     continue;
                 }
                 any = true;
@@ -597,24 +620,6 @@ struct ExplorerTui
             }
         }
         return any;
-    }
-
-    // Removes the (just-truncated) node `idx` from its parent's child chain.
-    private void unlink(uint parent, uint idx) @safe pure nothrow @nogc
-    {
-        auto head = parent == uint.max ? &data.firstRoot
-            : &data.nodes[parent].firstChild;
-        if (*head == idx)
-        {
-            *head = uint.max;
-            return;
-        }
-        for (auto at = *head; at != uint.max; at = data.nodes[at].nextSibling)
-            if (data.nodes[at].nextSibling == idx)
-            {
-                data.nodes[at].nextSibling = uint.max;
-                return;
-            }
     }
 
     void paint(ref Grid g) @system
@@ -1369,7 +1374,7 @@ unittest
     import core.thread : Thread;
     import core.time : msecs;
     import sparkles.build_primitives.git_env : runGit;
-    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : exists, mkdirRecurse, remove, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
     import sparkles.test_runner.skip : skipTest;
@@ -1415,7 +1420,13 @@ unittest
             break;
         Thread.sleep(1.msecs);
     }
-    x.rebuild(); // stamp from the harvested snapshot
+    if (!x.git.map.present)
+        skipTest("git status did not answer");
+    // Pin the harvested snapshot: `seed` refreshes the TTL, so nothing below
+    // can kick a second `git status` and stamp a map of a tree these
+    // assertions have since changed.
+    x.git.seed(x.git.map);
+    x.restyle(); // stamped by `restyle`, not `rebuild`
 
     GitStatus stOf(string name)
     {
@@ -1454,6 +1465,23 @@ unittest
     assert(x.sel != first, "a second change exists");
     x.jumpChange(-1);
     assert(x.sel == first);
+
+    // A file removed from disk is still a row after a restyle, because
+    // nothing re-listed the directory. A real rebuild is what notices.
+    remove(buildPath(root, "fresh.d"));
+    x.restyle();
+    bool has(string name)
+    {
+        foreach (ref const n; x.data.nodes)
+            if (n.value.name == name)
+                return true;
+        return false;
+    }
+
+    assert(has("fresh.d"), "restyle must not re-walk the filesystem");
+    x.rebuild();
+    assert(!has("fresh.d"), "a rebuild is what picks up the deletion");
+    assert(badgeOf("tracked.d") == "M", "and it still stamps the badges");
 }
 
 @("explorer.togglesRerootAndCloseAll")

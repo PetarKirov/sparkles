@@ -46,27 +46,70 @@ struct TreeData(T)
         uint parent = uint.max;
         uint firstChild = uint.max;
         uint nextSibling = uint.max;
+        /// The tail of `firstChild`'s sibling chain, so an append does not
+        /// have to walk to find it. Costs nothing: three `uint`s were already
+        /// padded out to four beside an aligned `T`.
+        uint lastChild = uint.max;
     }
 
     Node[] nodes;
     uint firstRoot = uint.max;
+    private uint lastRoot = uint.max;
 
-    /// Appends `value` under `parent` (`uint.max` = a new root); returns its index.
+    /**
+    Appends `value` under `parent` (`uint.max` = a new root); returns its index.
+
+    $(B Constant time.) Walking `firstChild`'s chain to find the tail made
+    filling one parent quadratic in its children — invisible on a source
+    directory, and 45 ms of stall on a flat directory of 2662 entries, which
+    is one whole frame budget spent on relinking a list the arena could have
+    remembered the end of.
+    */
     uint add(T value, uint parent = uint.max) pure nothrow
     {
         const idx = cast(uint) nodes.length;
         nodes ~= Node(value, parent);
+        // Taken after the append: growing the arena moves it.
         auto head = parent == uint.max ? &firstRoot : &nodes[parent].firstChild;
+        auto tail = parent == uint.max ? &lastRoot : &nodes[parent].lastChild;
         if (*head == uint.max)
             *head = idx;
         else
-        {
-            auto at = *head;
-            while (nodes[at].nextSibling != uint.max)
-                at = nodes[at].nextSibling;
-            nodes[at].nextSibling = idx;
-        }
+            nodes[*tail].nextSibling = idx;
+        *tail = idx;
         return idx;
+    }
+
+    /**
+    Detaches the most recently added child of `parent` (`uint.max` = a root),
+    for a caller about to truncate it — and everything added under it — off
+    the arena.
+
+    A speculative subtree is the only way a node leaves an append-only arena:
+    hue's filtered explorer adds a directory, fills it, and rolls the whole
+    thing back when nothing inside matched. The chain is singly linked, so
+    finding the dropped node's predecessor still walks the siblings that were
+    $(B kept) — the rollback stays proportional to what survives the filter,
+    never to what it rejected.
+    */
+    void dropLastChild(uint parent) pure nothrow @nogc
+    {
+        auto head = parent == uint.max ? &firstRoot : &nodes[parent].firstChild;
+        auto tail = parent == uint.max ? &lastRoot : &nodes[parent].lastChild;
+        const idx = *tail;
+        if (idx == uint.max)
+            return;
+        if (*head == idx)
+        {
+            *head = uint.max;
+            *tail = uint.max;
+            return;
+        }
+        auto at = *head;
+        while (nodes[at].nextSibling != idx)
+            at = nodes[at].nextSibling;
+        nodes[at].nextSibling = uint.max;
+        *tail = at;
     }
 
     /// `true` iff `idx` has at least one child.
@@ -305,6 +348,78 @@ version (unittest)
         t.add("docs");
         return t;
     }
+}
+
+/// The arena remembers where each child chain ends, so a wide parent fills in
+/// constant time per child. The check is the ORDER: a tail cache that drifts
+/// re-links a sibling behind the wrong node, and a walk of `nextSibling` is
+/// the only thing that notices.
+@("ui.tree_widget.aWideParentKeepsInsertionOrder")
+@safe unittest
+{
+    TreeData!int t;
+    const root = t.add(0);
+    enum n = 2000;
+    foreach (i; 1 .. n + 1)
+        t.add(i, root);
+
+    int seen;
+    for (auto at = t.nodes[root].firstChild; at != uint.max;
+        at = t.nodes[at].nextSibling)
+    {
+        ++seen;
+        assert(t.nodes[at].value == seen, "siblings must keep insertion order");
+    }
+    assert(seen == n, "every child must be reachable from the head");
+    assert(t.nodes[t.nodes[root].lastChild].value == n);
+
+    // Roots chain the same way, off the tree's own head/tail pair.
+    TreeData!int r;
+    foreach (i; 0 .. 5)
+        r.add(i);
+    int roots;
+    for (auto at = r.firstRoot; at != uint.max; at = r.nodes[at].nextSibling)
+        assert(r.nodes[at].value == roots++);
+    assert(roots == 5);
+}
+
+/// A rolled-back speculative subtree must leave the chain as if it had never
+/// been added — including its END, or the next sibling links behind a node
+/// that is no longer in the arena.
+@("ui.tree_widget.droppingTheLastChildRestoresTheTail")
+@safe unittest
+{
+    TreeData!int t;
+    const root = t.add(0);
+    t.add(1, root);
+    t.add(2, root);
+
+    // A speculative child, with a subtree of its own, rolled back whole.
+    const mark = t.nodes.length;
+    const spec = t.add(3, root);
+    t.add(30, spec);
+    t.nodes = t.nodes[0 .. mark];
+    t.dropLastChild(root);
+
+    // The survivor is the tail again, so the NEXT child lands after it.
+    t.add(4, root);
+    int[] chain;
+    for (auto at = t.nodes[root].firstChild; at != uint.max;
+        at = t.nodes[at].nextSibling)
+        chain ~= t.nodes[at].value;
+    assert(chain == [1, 2, 4], "the rollback must not orphan the survivors");
+
+    // Rolling back the only child empties the chain in both directions.
+    TreeData!int u;
+    const only = u.add(0);
+    const mark2 = u.nodes.length;
+    u.add(1, only);
+    u.nodes = u.nodes[0 .. mark2];
+    u.dropLastChild(only);
+    assert(!u.hasChildren(only));
+    u.add(2, only);
+    assert(u.nodes[u.nodes[only].firstChild].value == 2);
+    assert(u.nodes[only].nextSibling == uint.max);
 }
 
 @("ui.tree_widget.flattenHonorsDisclosure")

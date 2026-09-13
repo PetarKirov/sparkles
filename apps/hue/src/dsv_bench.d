@@ -496,7 +496,27 @@ private final class StageFixture
     benchIter({
         auto mb = Builder();
         blackBox(viewMarkdownInto(mb, fx.preview.doc, opt));
-    }, ["stage": "1-view", "scope": "window", "rows": "48"]);
+    }, ["stage": "1-view", "scope": "window", "rows": "48", "arena": "fresh"]);
+}
+
+/// Stage 1, with the arena kept (`DSN9`). Same tree, same nodes — the only
+/// difference is that the builder was not thrown away after the last frame,
+/// so the 3307 `Widget`s are written over storage the view already owns.
+@("dsv.bench.stage-viewMarkdown-retained")
+@benchmark @system unittest
+{
+    import sparkles.source_view.markdown : MdViewOptions, viewMarkdownInto;
+    import sparkles.ui.widget : Builder;
+
+    auto fx = new StageFixture;
+    MdViewOptions opt;
+    opt.maxWidth = 120;
+    opt.tableExtras = fx.preview.tableExtras;
+    auto mb = new Builder;
+    benchIter({
+        mb.reset();
+        blackBox(viewMarkdownInto(*mb, fx.preview.doc, opt));
+    }, ["stage": "1-view", "scope": "window", "rows": "48", "arena": "retained"]);
 }
 
 /// Stage 4 — `keyedRects`, one of the derived-data passes that run after the
