@@ -4218,6 +4218,27 @@ unittest
             after ~= g[cast(ushort) x, cast(ushort) y].grapheme;
     assert(after.canFind("[fuzzy]"), "and the indicator followed it");
     assert(!after.canFind("[plain]"));
+
+    // …and the mode CHANGES WHAT IS FOUND, which is the assertion this test
+    // was missing. It checked the indicator and stopped, so it passed over a
+    // `grepMode` the scan never read: `<S-Tab>` renamed the label and the
+    // literal scan ran regardless. `Wdgt` is a subsequence of `Widget` and a
+    // substring of nothing.
+    foreach (_; 0 .. "Widget".length)
+        assert(w.handle(Event(KeyEvent(key: Key.backspace))));
+    foreach (ch; "Wdgt")
+        assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    settle(w);
+    assert(w.picker.get.state.rowCount == 2,
+        "fuzzy admits the subsequence in both files — with the mode unread, "
+        ~ "the literal scan runs and finds neither");
+
+    assert(w.handle(Event(KeyEvent(key: Key.tab, mods: Mods(shift: true)))));
+    settle(w);
+    assert(w.picker.get.grep.grepMode == GrepMode.plain, "cycled back round");
+    assert(w.picker.get.state.rowCount == 0,
+        "and plain refuses the same query — the two modes disagree, which is "
+        ~ "the whole of what a mode is");
 }
 
 @("workspace.pickerListScrollsSidewaysToRevealADeepPath")

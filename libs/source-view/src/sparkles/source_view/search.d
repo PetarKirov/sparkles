@@ -143,9 +143,32 @@ bool startsWithFolded(scope const(char)[] hay, scope const(char)[] needle,
     if (mode == AnalysisCase.sensitive)
         return hay[0 .. needle.length] == needle;
     foreach (i, char n; needle)
-        if (foldAscii(hay[i]) != foldAscii(n))
+        if (!equalsFolded(hay[i], n, mode))
             return false;
     return true;
+}
+
+/**
+Whether two bytes are the same character under `mode`'s case rule.
+
+The single-byte half of $(LREF startsWithFolded), public for the same
+reason: grep's fuzzy mode admits a needle as a SUBSEQUENCE, which compares
+one byte at a time rather than a run, and it must reach that decision
+through this module rather than by folding on its own.
+*/
+bool equalsFolded(char a, char b, AnalysisCase mode) pure nothrow @nogc
+    => mode == AnalysisCase.sensitive ? a == b : foldAscii(a) == foldAscii(b);
+
+@("source_view.search.equalsFoldedIsTheByteHalfOfStartsWith")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(equalsFolded('a', 'A', AnalysisCase.simpleFold));
+    assert(!equalsFolded('a', 'A', AnalysisCase.sensitive));
+    assert(equalsFolded('a', 'a', AnalysisCase.sensitive));
+    // Non-ASCII is left alone, as `foldAscii` documents: a full Unicode fold
+    // can change a run's length, and the columns here are byte offsets.
+    assert(!equalsFolded('\xC3', '\xA9', AnalysisCase.fullFold));
 }
 
 /**
