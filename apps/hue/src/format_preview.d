@@ -1337,6 +1337,13 @@ bool formatPreviewRulerHits(ref const ViewerModel vm, double docCol) @safe pure 
 bool formatPreviewRulerDragging(ref const ViewerModel vm) @safe pure nothrow @nogc
     => vm.fmt !is null && vm.fmt.rulerDrag;
 
+/// `RUL3`: the ruler's claim on the frame's one pointer shape (`DCK15`) —
+/// `ew-resize` while it is armed or in flight, `default_` otherwise, so a
+/// closed preview composes away instead of being branched around.
+PointerShape formatPreviewRulerShape(ref const ViewerModel vm, double docCol)
+    @safe pure nothrow @nogc
+    => vm.fmt is null ? PointerShape.default_ : vm.fmt.rulerShape(docCol);
+
 /// The one pointer entry (`RUL2`); `true` when the ruler consumed the event.
 bool formatPreviewRulerPointer(ref ViewerModel vm, PointerAction action,
     double docCol) @system

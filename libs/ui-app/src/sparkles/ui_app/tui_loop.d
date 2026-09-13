@@ -34,7 +34,7 @@ module sparkles.ui_app.tui_loop;
 version (UiAppTui):
 version (Posix):
 
-import sparkles.base.term_control : PointerShape;
+import sparkles.base.term_control : cssName, PointerShape;
 import sparkles.input : Event, InputCapabilities, isEndOfInput, isNoEvent,
     NoEvent;
 import sparkles.ui.canvas : DrawOp;
@@ -126,7 +126,7 @@ struct TuiHost
             {
                 case __traits(getMember, PointerShape, m):
                     session.writeOutOfBand("\x1b]22;"
-                        ~ cast(string) __traits(getMember, PointerShape, m)
+                        ~ cssName(__traits(getMember, PointerShape, m))
                         ~ "\x1b\\");
                     return;
             }

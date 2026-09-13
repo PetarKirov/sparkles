@@ -40,7 +40,7 @@ import sparkles.input.events : Event, match, PointerAction, PointerButton,
 import sparkles.ui.components.scroll_view : AutoScroll, scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.state : CaptureState, FocusState, PressState,
+import sparkles.ui.state : CaptureState, composeShape, FocusState, PressState,
     scrollbarThumbIntersectsCell, SplitState;
 
 @safe:
@@ -1433,51 +1433,52 @@ struct DockContainer
     }
 
     /**
-    The one wanted pointer shape (`DCK9`). The pane shapes are supplied by
-    the host — only it knows what its panes' contents want — split into
-    the shape a live pane GRAB wants and the one a mere hover wants, so
-    the established precedence holds exactly: any grab (divider, re-dock or
-    pane) outranks every hover.
+    The one wanted pointer shape (`DCK9`, composed per `DCK15`).
 
-    A tab that has become a re-dock asks for `grabbing` for as long as it is
-    in flight, which is the one piece of feedback that distinguishes
-    "carrying a pane" from "clicked a tab and nothing happened". Merely
-    hovering a tab is deliberately left alone: a strip that changes the
-    cursor on approach reads as draggable content rather than as a control.
+    It used to take the pane shapes as two arguments — the one a live pane
+    GRAB wants and the one a mere hover wants — because that was the only way
+    to keep "any grab outranks every hover" true across affordances the
+    container cannot see. It no longer needs to: every grab the container owns
+    records its shape on the capture, so precedence is $(REF composeShape,
+    sparkles,ui,state)'s one comparison and what a caller passes is simply
+    $(I claims) — an ordered slice of shapes wanted by things that are painted
+    but are not the container's chrome (a host's own dragged ruler, a
+    content-level fence bar). A claim outranks the container's hover, which is
+    unobservable rather than a policy: chrome is the container's, so a claim's
+    region and a divider's cannot overlap.
+
+    A tab that has become a re-dock asks for `grabbing` for as long as it is in
+    flight, which is the one piece of feedback that distinguishes "carrying a
+    pane" from "clicked a tab and nothing happened" — now expressed as the
+    capture being reshaped when the drag crosses the threshold. Merely hovering
+    a tab is still deliberately left alone: a strip that changes the cursor on
+    approach reads as draggable content rather than as a control, and nothing
+    here declares a shape for one.
     */
-    PointerShape shape(PointerShape paneGrab = PointerShape.default_,
-        PointerShape paneHover = PointerShape.default_) const
+    PointerShape shape(scope const PointerShape[] claims...) const
         pure nothrow @nogc
+        => composeShape(capture, hoverShape(), claims);
+
+    /// `true` while any of the container's affordances holds the pointer — a
+    /// divider drag, a pane bar, a pressed tab, a re-dock in flight. One
+    /// question instead of a list every new affordance has to be added to,
+    /// which is `STM11`'s whole argument applied to the callers who need to
+    /// know THAT a drag is live rather than whose it is.
+    bool grabbing() const pure nothrow @nogc => !capture.isFree;
+
+    /// What the container's own chrome asks for under an unpressed pointer.
+    private PointerShape hoverShape() const pure nothrow @nogc
     {
-        if (resizing)
-            return dividerShape(dividers[dragDivider].axis);
-        if (redock.active)
-            return PointerShape.grabbing;
-        const sg = scrollShape(true);
-        if (sg != PointerShape.default_)
-            return sg;
-        if (paneGrab != PointerShape.default_)
-            return paneGrab;
         if (hoverDivider != uint.max)
             return dividerShape(dividers[hoverDivider].axis);
-        const sh = scrollShape(false);
-        return sh != PointerShape.default_ ? sh : paneHover;
-    }
-
-    private PointerShape scrollShape(bool grabs) const pure nothrow @nogc
-    {
         foreach (ref b; bars)
         {
             const i = paneScrollIndex(b.pane);
             if (i >= paneScrolls.length)
                 continue;
-            ref const view = paneScrolls[i].view;
-            if (grabs ? view.grabbing : view.shape() != PointerShape.default_)
-            {
-                const want = view.shape();
-                if (want != PointerShape.default_)
-                    return want;
-            }
+            const want = paneScrolls[i].view.shape();
+            if (want != PointerShape.default_)
+                return want;
         }
         return PointerShape.default_;
     }
@@ -1723,7 +1724,8 @@ struct DockContainer
                 dragDivider = idx;
                 drag = SplitState(axisOf(d.axis, Point(d.rect.x, d.rect.y)))
                     .started(axisOf(d.axis, cell.pos));
-                capture = capture.capturedBy(divCapBase + idx);
+                capture = capture.capturedBy(divCapBase + idx,
+                    dividerShape(d.axis));
                 return Route(RouteKind.container, 0, Event(cell));
             }
         }
@@ -1758,6 +1760,10 @@ struct DockContainer
                 if (far || redock.active)
                 {
                     redock.active = true;
+                    // The gesture changed character without changing owner
+                    // (`DCK15`): a click became a carry, and the closed hand
+                    // is what says so.
+                    capture = capture.reshaped(PointerShape.grabbing);
                     redock.pane = tabPressPane;
                     redock.target = 0;
                     redock.zone = DockZone.none;
@@ -2125,11 +2131,12 @@ version (unittest)
     assert(c.shape() == PointerShape.ewResize);
     // …but a live PANE grab outranks that hover (DCK9), and a divider drag
     // outranks everything.
-    assert(c.shape(PointerShape.nsResize) == PointerShape.nsResize);
+    assert(c.shape(PointerShape.nsResize) == PointerShape.nsResize,
+        "a claim outranks the container's own hover");
     c.handle(Event(PointerEvent(action: PointerAction.move,
         pos: Point(60, 5))));
     assert(c.shape() == PointerShape.default_);
-    assert(c.shape(PointerShape.default_, PointerShape.text)
+    assert(c.shape(PointerShape.text)
         == PointerShape.text);
 }
 
@@ -2148,18 +2155,18 @@ version (unittest)
 
     c.handle(Event(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: Point(70, 0))));
-    assert(c.shape(PointerShape.default_, PointerShape.text)
+    assert(c.shape(PointerShape.text)
         == PointerShape.text, "an armed tab is not yet a drag");
 
     c.handle(Event(PointerEvent(action: PointerAction.drag,
         pos: Point(70, 20))));
     assert(c.dragHint().active);
-    assert(c.shape(PointerShape.default_, PointerShape.text)
+    assert(c.shape(PointerShape.text)
         == PointerShape.grabbing);
 
     c.handle(Event(PointerEvent(action: PointerAction.release,
         button: PointerButton.left, pos: Point(70, 20))));
-    assert(c.shape(PointerShape.default_, PointerShape.text)
+    assert(c.shape(PointerShape.text)
         == PointerShape.text, "and the hand lets go on release");
 }
 
