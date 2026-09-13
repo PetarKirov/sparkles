@@ -541,6 +541,56 @@ bool poolEligible(GrepMode mode) @safe pure nothrow @nogc
 bool modeImplemented(GrepMode mode) @safe pure nothrow @nogc
     => mode != GrepMode.regex;
 
+/**
+The mode a query asks for, chosen once from the query itself (`PKC9`).
+
+Regex metacharacters are the only signal: a query holding one is asking a
+regex question, and everything else is a literal. This returns the
+INTENDED mode without regard to whether its engine exists — the caller
+clamps with $(LREF modeImplemented), so the degradation is one visible
+decision at the call site rather than a classifier that quietly knows
+less than it should. The day `PKC16` lands, classification starts working
+with no change here.
+
+Deliberately not a guess at fuzziness. Fuzzy is where the ladder FALLS
+BACK to when a literal finds nothing, not something a query can look
+like: every string is a valid subsequence query, so a classifier that
+chose it would be choosing arbitrarily.
+*/
+GrepMode classifyQuery(scope const(char)[] query) @safe pure nothrow @nogc
+{
+    foreach (char c; query)
+        switch (c)
+        {
+        case '*', '+', '?', '[', ']', '(', ')':
+        case '{', '}', '|', '^', '$', '\\':
+            return GrepMode.regex;
+        default:
+            break;
+        }
+    return GrepMode.plain;
+}
+
+@("picker_grep.classifyQuery.metacharactersAskARegexQuestion")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(classifyQuery("Widget") == GrepMode.plain);
+    assert(classifyQuery("foo bar") == GrepMode.plain,
+        "`PKC17`: a space is a literal, not an operator");
+    assert(classifyQuery("foo.bar") == GrepMode.plain,
+        "`.` is far too common in real queries — paths, members, versions "
+        ~ "— to read as a metacharacter");
+    assert(classifyQuery("^struct") == GrepMode.regex);
+    assert(classifyQuery("Widget|Gadget") == GrepMode.regex);
+    assert(classifyQuery("get.*Name") == GrepMode.regex);
+    assert(classifyQuery("") == GrepMode.plain);
+
+    // The intended mode, unclamped. Today it routes to an engine that does
+    // not exist, which is the caller's decision to make, not this one's.
+    assert(!modeImplemented(classifyQuery("^struct")));
+}
+
 /// The mode's name, for the prompt's indicator (`PKL5`).
 string modeLabel(GrepMode mode) @safe pure nothrow @nogc
 {
@@ -550,6 +600,28 @@ string modeLabel(GrepMode mode) @safe pure nothrow @nogc
     case GrepMode.regex: return "regex";
     case GrepMode.fuzzy: return "fuzzy";
     }
+}
+
+/**
+The indicator, including `PKC9`'s rung when one was taken.
+
+Spelled as a transition rather than as its destination. `[fuzzy]` alone,
+over a query the reader typed as a literal, IS the silent
+re-interpretation `PKC9` exists to prevent — the results would be
+inexplicable and the label would look like a setting they had changed.
+*/
+string modeLabel(GrepMode mode, bool fellBack) @safe pure nothrow @nogc
+    => fellBack ? "plain \u2192 fuzzy" : modeLabel(mode);
+
+@("picker_grep.modeLabel.aRungIsShownAsATransition")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(modeLabel(GrepMode.plain, false) == "plain");
+    assert(modeLabel(GrepMode.fuzzy, false) == "fuzzy",
+        "a mode the reader chose is just that mode");
+    assert(modeLabel(GrepMode.fuzzy, true) == "plain \u2192 fuzzy",
+        "a mode hue chose says where it came from");
 }
 
 /// Bytes of context stored around a hit (`PKC11`). Chosen so a row stays
@@ -620,7 +692,7 @@ struct GrepContext
 }
 
 /**
-Scan one document's bytes for a literal needle (`PKC17`).
+Scan one document's bytes for `needle` in `grep`'s mode.
 
 Fills `hits`/`contexts` in parallel and returns how many were written,
 stopping when either runs out — a document with more matches than the
@@ -631,18 +703,43 @@ Pure, `@nogc`, and clock-free: it can therefore run as a pool job
 (`PKC15`), and it does no I/O — acquiring the bytes is the caller's job
 (`PKC7`).
 
-`startsWithFolded` comes from `sparkles.source_view.search`: grep owns its
-scan, not its idea of what matches.
+The mode is a PARAMETER rather than a display state. It was the latter
+once: `GrepFinder.grepMode` was stored, shown in the prompt and cycled by
+`<S-Tab>`, and the scan never read it — so the indicator said `[fuzzy]`
+over results that were always the literal scan. A mode that only names
+itself is worse than one mode, because the label is believed.
+
+`startsWithFolded`/`equalsFolded` come from `sparkles.source_view.search`:
+grep owns its scan, not its idea of what matches.
 */
 size_t scanText(scope const(char)[] text, scope const(char)[] needle,
+    AnalysisCase mode, GrepMode grep, DocHandle doc,
+    scope GrepHit[] hits, scope GrepContext[] contexts)
+    @safe pure nothrow @nogc
+{
+    if (needle.length == 0 || needle.length > text.length)
+        return 0;
+    final switch (grep)
+    {
+    case GrepMode.plain:
+        return scanPlain(text, needle, mode, doc, hits, contexts);
+    case GrepMode.fuzzy:
+        return scanFuzzy(text, needle, mode, doc, hits, contexts);
+    case GrepMode.regex:
+        // `PKC16`'s bounded engine is unwritten. `modeImplemented` keeps
+        // `<S-Tab>` from stopping here, so this arm is the belt to that
+        // brace rather than a reachable path.
+        return 0;
+    }
+}
+
+/// `PKC17`: one literal needle, spaces included, every occurrence.
+private size_t scanPlain(scope const(char)[] text, scope const(char)[] needle,
     AnalysisCase mode, DocHandle doc,
     scope GrepHit[] hits, scope GrepContext[] contexts)
     @safe pure nothrow @nogc
 {
     import sparkles.source_view.search : startsWithFolded;
-
-    if (needle.length == 0 || needle.length > text.length)
-        return 0;
 
     size_t found;
     const room = hits.length < contexts.length ? hits.length : contexts.length;
@@ -694,6 +791,89 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
             }
             ++i;
         }
+    }
+    return found;
+}
+
+/**
+Subsequence admission: one hit per LINE that contains `needle`'s bytes in
+order, not necessarily adjacent.
+
+Per line rather than per occurrence, because a subsequence is a property
+of the line — "how many ways can these letters be found in it" is not a
+question a reader asked, and every answer would report the same line.
+
+The reported span is TIGHTENED before it is stored. A forward greedy match
+finds the earliest end; matching backwards from that end finds the latest
+start that still works, which is the shortest window containing the
+subsequence. Without it a single trailing letter drags the highlight
+across the whole line, and `GrepContext` carries one range rather than a
+position list, so a loose span is a highlight that says nothing.
+*/
+private size_t scanFuzzy(scope const(char)[] text, scope const(char)[] needle,
+    AnalysisCase mode, DocHandle doc,
+    scope GrepHit[] hits, scope GrepContext[] contexts)
+    @safe pure nothrow @nogc
+{
+    import sparkles.source_view.search : equalsFolded;
+
+    size_t found;
+    const room = hits.length < contexts.length ? hits.length : contexts.length;
+    uint line = 1;
+    size_t lineStart;
+    while (lineStart <= text.length && found < room)
+    {
+        const lineEnd = lineEndFrom(text, lineStart);
+        const lineText = text[lineStart .. lineEnd];
+
+        // Forward greedy: the earliest position at which the needle is
+        // exhausted. Leftmost-first, as every other admission here is.
+        size_t want;
+        size_t last = size_t.max;
+        foreach (at, char c; lineText)
+        {
+            if (equalsFolded(c, needle[want], mode))
+            {
+                ++want;
+                if (want == needle.length)
+                {
+                    last = at;
+                    break;
+                }
+            }
+        }
+
+        if (last != size_t.max)
+        {
+            // Backward greedy from `last`: the latest start that still
+            // admits the same subsequence.
+            size_t back = needle.length;
+            size_t first = last;
+            for (size_t at = last + 1; at-- > 0;)
+            {
+                if (equalsFolded(lineText[at], needle[back - 1], mode))
+                {
+                    --back;
+                    if (back == 0)
+                    {
+                        first = at;
+                        break;
+                    }
+                }
+            }
+
+            const span = last - first + 1;
+            hits[found] = GrepHit(doc: doc, line: line,
+                column: cast(uint)(first + 1), offset: lineStart + first,
+                kind: classifyLine(lineText, first, span));
+            contexts[found] = captureWindow(lineText, first, span);
+            ++found;
+        }
+
+        if (lineEnd >= text.length)
+            break;
+        lineStart = lineEnd + 1;
+        ++line;
     }
     return found;
 }
@@ -775,7 +955,7 @@ unittest
     static immutable text = "alpha beta\ngamma alpha\n    alpha indented\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    const n = scanText(text, "alpha", AnalysisCase.sensitive,
+    const n = scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]);
     assert(n == 3, "three occurrences");
 
@@ -801,7 +981,7 @@ unittest
     static immutable text = "\t\t    needle here\n";
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
-    const n = scanText(text, "needle", AnalysisCase.sensitive,
+    const n = scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]);
     assert(n == 1);
     assert(hits[0].column == 7, "6 bytes of indentation, so column 7");
@@ -827,7 +1007,7 @@ unittest
 
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
-    const n = scanText(text, "needle", AnalysisCase.sensitive,
+    const n = scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]);
     assert(n == 1);
     assert(hits[0].line == 1 && hits[0].column == 3001);
@@ -851,7 +1031,7 @@ unittest
     static immutable text = "alpha alpha\nalpha\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    const n = scanText(text, "alpha", AnalysisCase.sensitive,
+    const n = scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(7, 3), hits[], ctx[]);
     assert(n == 3);
 
@@ -861,6 +1041,77 @@ unittest
         "two hits on one line must not collide");
     assert(hits[1].fingerprint != hits[2].fingerprint);
     assert(hits[0].fingerprint != hits[2].fingerprint);
+}
+
+@("picker_grep.scan.fuzzyAdmitsASubsequenceAndPlainDoesNot")
+@safe pure nothrow @nogc
+unittest
+{
+    // The test this file was missing. `<S-Tab>` cycled `grepMode`, the
+    // prompt showed `[fuzzy]`, and the scan never read either — so a test
+    // asserting the INDICATOR passed over a mode that did nothing. Assert
+    // on what is found instead.
+    static immutable text = "struct Widget\n";
+    GrepHit[4] hits = void;
+    GrepContext[4] ctx = void;
+
+    assert(scanText(text, "Wdgt", AnalysisCase.sensitive, GrepMode.plain,
+        DocHandle(1, 1), hits[], ctx[]) == 0, "not a substring");
+    const n = scanText(text, "Wdgt", AnalysisCase.sensitive, GrepMode.fuzzy,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 1, "…but it is a subsequence");
+
+    // The span is tightened to `Widget`, not dragged from the line's start.
+    assert(hits[0].line == 1);
+    assert(hits[0].column == 8, "the W of Widget, 1-based");
+    assert(ctx[0].matchLen == 6, "W-i-d-g-e-t, not the whole line");
+}
+
+@("picker_grep.scan.fuzzyReportsOneHitPerLine")
+@safe pure nothrow @nogc
+unittest
+{
+    // A subsequence is a property of the LINE. Reporting every way the
+    // letters can be found would list one line many times, all identical
+    // to a reader, and `fingerprint()` mixes the column — so they would
+    // not even collapse.
+    static immutable text = "a b a b a b\nnothing here\nab\n";
+    GrepHit[8] hits = void;
+    GrepContext[8] ctx = void;
+
+    const n = scanText(text, "ab", AnalysisCase.sensitive, GrepMode.fuzzy,
+        DocHandle(1, 1), hits[], ctx[]);
+    assert(n == 2, "line 1 and line 3, once each");
+    assert(hits[0].line == 1 && hits[1].line == 3);
+    assert(ctx[0].matchLen == 3, "the tightened `a b`, not `a b a b a b`");
+}
+
+@("picker_grep.scan.fuzzyFollowsTheSameCaseRule")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable text = "struct Widget\n";
+    GrepHit[4] hits = void;
+    GrepContext[4] ctx = void;
+
+    assert(scanText(text, "wdgt", AnalysisCase.sensitive, GrepMode.fuzzy,
+        DocHandle(1, 1), hits[], ctx[]) == 0);
+    assert(scanText(text, "wdgt", AnalysisCase.simpleFold, GrepMode.fuzzy,
+        DocHandle(1, 1), hits[], ctx[]) == 1,
+        "fuzzy reaches the case rule through the same module plain does");
+}
+
+@("picker_grep.scan.regexAdmitsNothingUntilItsEngineExists")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable text = "struct Widget\n";
+    GrepHit[4] hits = void;
+    GrepContext[4] ctx = void;
+    assert(scanText(text, "Widget", AnalysisCase.sensitive, GrepMode.regex,
+        DocHandle(1, 1), hits[], ctx[]) == 0, "`PKC16` is unwritten");
+    assert(!modeImplemented(GrepMode.regex),
+        "…and `cycleMode` skips it, so nobody reaches that arm");
 }
 
 @("picker_grep.scan.foldingFollowsTheSharedCaseRule")
@@ -875,9 +1126,9 @@ unittest
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
 
-    assert(scanText(text, "alpha", AnalysisCase.simpleFold,
+    assert(scanText(text, "alpha", AnalysisCase.simpleFold, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]) == 3, "folded: all three");
-    assert(scanText(text, "alpha", AnalysisCase.sensitive,
+    assert(scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]) == 1, "sensitive: only the exact one");
 }
 
@@ -891,7 +1142,7 @@ unittest
     static immutable text = "if (foo bar)\nfoo = 1; bar = 2;\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    const n = scanText(text, "foo bar", AnalysisCase.sensitive,
+    const n = scanText(text, "foo bar", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]);
     assert(n == 1, "only the literal occurrence");
     assert(hits[0].line == 1);
@@ -906,18 +1157,18 @@ unittest
     static immutable text = "x\nx\nx\nx\nx\n";
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
-    assert(scanText(text, "x", AnalysisCase.sensitive,
+    assert(scanText(text, "x", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]) == 2, "stops at the caller's room");
 
     GrepHit[8] big = void;
     GrepContext[8] bigCtx = void;
-    assert(scanText(text, "x", AnalysisCase.sensitive,
+    assert(scanText(text, "x", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), big[], bigCtx[]) == 5);
 
     // Degenerate queries answer without scanning.
-    assert(scanText(text, "", AnalysisCase.sensitive,
+    assert(scanText(text, "", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), big[], bigCtx[]) == 0);
-    assert(scanText("ab", "abcdef", AnalysisCase.sensitive,
+    assert(scanText("ab", "abcdef", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), big[], bigCtx[]) == 0);
 }
 
@@ -1211,7 +1462,7 @@ unittest
     static immutable text = "struct Widget\n{\n    Widget other;\n}\n";
     GrepHit[8] hits;
     GrepContext[8] ctx;
-    const n = scanText(text, "Widget", AnalysisCase.sensitive,
+    const n = scanText(text, "Widget", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]);
     assert(n == 2);
 
@@ -1271,7 +1522,7 @@ unittest
 
     GrepHit[2] hits;
     GrepContext[2] ctx;
-    assert(scanText(text, "needle", AnalysisCase.sensitive,
+    assert(scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[]) == 1);
 
     assert(classifyContent(ctx[0].text) == ContentVerdict.text,
@@ -1303,7 +1554,7 @@ unittest
 
     auto found = new GrepHit[](hits);
     auto ctx = new GrepContext[](hits);
-    const n = scanText(buf, "ab", AnalysisCase.sensitive,
+    const n = scanText(buf, "ab", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), found, ctx);
     assert(n == hits, "every needle found");
     assert(found[0].line == 1 && found[$ - 1].line == 1, "all on one line");
@@ -1384,7 +1635,7 @@ version (unittest)
         }
 
         size_t run() @safe
-            => scanText(text, needle, AnalysisCase.sensitive,
+            => scanText(text, needle, AnalysisCase.sensitive, GrepMode.plain,
                 DocHandle(1, 1), hits, ctx);
 
         void check(ref size_t n) @safe
@@ -1481,10 +1732,22 @@ struct GrepFinder
     private AnalysisCase mode_;
     private size_t maxFileBytes_ = defaultMaxFileBytes;
     private GrepMode grepMode_;
+    private bool modePinned_;
+    private bool fellBack_;
 
     /// The active search mode (`PKL5`). Shown in the prompt, so a reader can
     /// always tell which question was asked.
     GrepMode grepMode() const @safe pure nothrow @nogc => grepMode_;
+
+    /// Whether this generation took `PKC9`'s one fallback rung. The prompt
+    /// renders it, because a query re-interpreted in silence produces a
+    /// result list nobody can explain.
+    bool fellBack() const @safe pure nothrow @nogc => fellBack_;
+
+    /// Whether `<S-Tab>` has claimed the mode. Classification is a default,
+    /// not an override: once a reader has said which question they are
+    /// asking, nothing re-decides it under them.
+    bool modePinned() const @safe pure nothrow @nogc => modePinned_;
 
     /**
     Advance to the next mode (`<S-Tab>`).
@@ -1497,6 +1760,8 @@ struct GrepFinder
     */
     void cycleMode() @safe nothrow
     {
+        modePinned_ = true;
+        fellBack_ = false;
         foreach (_; 0 .. GrepMode.max + 1)
         {
             grepMode_ = grepMode_ == GrepMode.max
@@ -1537,6 +1802,12 @@ struct GrepFinder
 
         root_ = root;
         paths_ = null;
+        // A fresh picker open classifies again (`PKC9`): the `<S-Tab>` pin
+        // is a session, not a setting. A mode chosen for one search should
+        // not silently govern the next one a reader opens.
+        modePinned_ = false;
+        fellBack_ = false;
+        grepMode_ = GrepMode.init;
         auto walk = globWalkGitRepository(root, includeGlobs, excludeGlobs);
         while (!walk.empty)
         {
@@ -1563,6 +1834,15 @@ struct GrepFinder
         needle_[0 .. needleLen_] = query[0 .. needleLen_];
         mode_ = policy.caseFor(query);
         found_ = 0;
+        fellBack_ = false;
+        // Classified once, here, from the query (`PKC9`) — and clamped, so
+        // an unwritten engine degrades to the literal scan rather than to an
+        // empty list. A pinned mode is the reader's, and is left alone.
+        if (!modePinned_)
+        {
+            const want = classifyQuery(query[0 .. needleLen_]);
+            grepMode_ = modeImplemented(want) ? want : GrepMode.plain;
+        }
         if (needleLen_ == 0)
         {
             scan_.cancel();
@@ -1583,8 +1863,23 @@ struct GrepFinder
     ScanStep step(size_t budget,
         scope bool delegate() @safe nothrow @nogc superseded = null) @system
     {
-        return scan_.step(budget,
+        const outcome = scan_.step(budget,
             (size_t index) => scanOne(index), superseded);
+
+        // `PKC9`'s one rung, and only one. A literal that found nothing over
+        // the whole corpus is re-asked as a subsequence — the answer fff
+        // gives, and the one a reader typing a half-remembered name wants —
+        // but never twice, never from a pinned mode, and never invisibly:
+        // `fellBack` reaches the prompt.
+        if (outcome == ScanStep.finished && found_ == 0 && !modePinned_
+            && !fellBack_ && grepMode_ != GrepMode.fuzzy && needleLen_ != 0)
+        {
+            fellBack_ = true;
+            grepMode_ = GrepMode.fuzzy;
+            scan_.begin(corpus_.length);
+            return ScanStep.progressed;
+        }
+        return outcome;
     }
 
     private size_t scanOne(size_t index) @trusted
@@ -1612,7 +1907,8 @@ struct GrepFinder
             return 0;
 
         const n = scanText(bytes, needle_[0 .. needleLen_], mode_,
-            doc.handle, hits_[found_ .. $], contexts_[found_ .. $]);
+            grepMode_, doc.handle, hits_[found_ .. $],
+            contexts_[found_ .. $]);
         found_ += n;
         return n;
     }
@@ -1742,6 +2038,103 @@ unittest
     // otherwise return the whole tree.
     finder.begin("", SearchPolicy.init);
     assert(!finder.searching && finder.hitCount == 0);
+}
+
+@("picker_grep.finder.aLiteralThatFindsNothingFallsBackOnceAndSaysSo")
+@system
+unittest
+{
+    // `PKC9`'s ladder, end to end: classified plain, exhausted with nothing,
+    // re-asked as a subsequence, and the rung reported. Exactly one rung —
+    // a second would be a mode nobody chose, reached by a rule nobody saw.
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a.d"), "struct Widget\n");
+
+    GrepFinder finder;
+    finder.openCorpus(root);
+
+    static ScanStep drain(ref GrepFinder f) @system
+    {
+        ScanStep outcome;
+        size_t guard;
+        do
+        {
+            outcome = f.step(64);
+            assert(++guard < 1000, "the ladder looped instead of stopping");
+        }
+        while (outcome == ScanStep.progressed);
+        return outcome;
+    }
+
+    // A subsequence of `Widget`, a substring of nothing.
+    finder.begin("Wdgt", SearchPolicy.init);
+    assert(finder.grepMode == GrepMode.plain, "classified from the query");
+    assert(drain(finder) == ScanStep.finished);
+    assert(finder.fellBack, "the literal found nothing, so the rung was taken");
+    assert(finder.grepMode == GrepMode.fuzzy);
+    assert(finder.hitCount == 1, "and the subsequence answered");
+
+    // Nothing at all: the rung is taken once and the ladder stops. Without
+    // the `fellBack_` latch this is an infinite scan, not a wrong answer.
+    finder.begin("zzzz", SearchPolicy.init);
+    assert(drain(finder) == ScanStep.finished);
+    assert(finder.fellBack && finder.grepMode == GrepMode.fuzzy);
+    assert(finder.hitCount == 0);
+
+    // A literal that DOES find something never falls back — the rung is for
+    // an empty answer, not for a small one.
+    finder.begin("Widget", SearchPolicy.init);
+    assert(drain(finder) == ScanStep.finished);
+    assert(!finder.fellBack && finder.grepMode == GrepMode.plain);
+    assert(finder.hitCount == 1);
+}
+
+@("picker_grep.finder.aPinnedModeIsNeverReDecided")
+@system
+unittest
+{
+    // `<S-Tab>` is a reader saying which question they are asking. Neither
+    // classification nor the fallback rung may answer a different one.
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a.d"), "struct Widget\n");
+
+    GrepFinder finder;
+    finder.openCorpus(root);
+    assert(!finder.modePinned, "a fresh corpus classifies");
+
+    finder.cycleMode();
+    assert(finder.modePinned && finder.grepMode == GrepMode.fuzzy);
+
+    finder.begin("^struct", SearchPolicy.init);
+    assert(finder.grepMode == GrepMode.fuzzy,
+        "the metacharacter did not re-classify a pinned mode");
+
+    finder.cycleMode(); // back to plain, still pinned
+    assert(finder.grepMode == GrepMode.plain && finder.modePinned);
+    finder.begin("Wdgt", SearchPolicy.init);
+    ScanStep outcome;
+    do
+        outcome = finder.step(64);
+    while (outcome == ScanStep.progressed);
+    assert(!finder.fellBack && finder.hitCount == 0,
+        "a pinned plain stays empty rather than becoming fuzzy underneath");
+
+    // A fresh picker open classifies again: the pin is a session, not a
+    // setting.
+    finder.openCorpus(root);
+    assert(!finder.modePinned);
 }
 
 @("picker_grep.finder.binaryAndOversizeDocumentsAreSkipped")
