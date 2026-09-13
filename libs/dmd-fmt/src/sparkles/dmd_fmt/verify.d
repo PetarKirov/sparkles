@@ -179,6 +179,70 @@ private Attachment[] docLex(const(char)[] source) @system
     }
 }
 
+/// The outcome of [formatVerified]: the text to write, or the reason not to.
+struct VerifiedFormat
+{
+    /// The formatted text — `null` when it did not verify. Never write a
+    /// null result anywhere: that is the whole point of the type.
+    string text;
+    /// Why it did not verify (`null` when it did).
+    VerifyReport report;
+
+    /// Whether `text` is safe to write.
+    bool ok() const @safe pure nothrow @nogc => report.ok;
+
+    /// The failure in one line, for a message; `null` when there is none.
+    string error() const @safe pure nothrow @nogc
+        => report.tokenError !is null ? report.tokenError : report.ddocError;
+}
+
+/**
+Format and verify in one step — the gate every writer goes through.
+
+A formatter that can lose a token must refuse to write when it has. Running
+[verifyFormat] beside the format call and $(I discarding the output on
+failure) is what makes that true; running it only in the test suite is what
+let a printer defect that dropped a braced block ship for weeks, because the
+`dmd-fmt` CLI formatted without ever asking.
+
+`formatOne` is any callable from `const(char)[]` to text, so a caller
+supplies the configuration by closing over it.
+*/
+VerifiedFormat formatVerified(F)(scope F formatOne, string source)
+if (is(typeof(formatOne(cast(const(char)[]) null)) : const(char)[]))
+{
+    VerifiedFormat result;
+    const formatted = formatOne(source).idup;
+    result.report = verifyFormat(source, formatted);
+    if (result.report.ok)
+        result.text = formatted;
+    return result;
+}
+
+@("verify.formatVerified.passes-a-layout-only-change")
+@system unittest
+{
+    const got = formatVerified(
+        (const(char)[] s) => cast(const(char)[])("int  a;\n"), "int a;\n");
+    assert(got.ok);
+    assert(got.text == "int  a;\n");
+    assert(got.error is null);
+}
+
+@("verify.formatVerified.refuses-a-lost-token")
+@system unittest
+{
+    // A formatter that drops the declaration it was handed. The text must
+    // come back null — a caller that writes `text` unconditionally then
+    // writes nothing rather than writing damage.
+    const got = formatVerified(
+        (const(char)[] s) => cast(const(char)[])("int a;\n"),
+        "int a;\nint b;\n");
+    assert(!got.ok);
+    assert(got.text is null);
+    assert(got.error !is null);
+}
+
 /// The outcome of [checkConvergence].
 struct Convergence
 {

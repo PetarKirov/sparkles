@@ -193,3 +193,57 @@ out (r; r > 0)
 ```
 
 :::
+
+## A `template` declaration ends at its own closing brace
+
+Only a function carries an `fbody` location, so a non-eponymous
+`template T(F) { … }` gets no body marker from the oracle and its brace is an ordinary bracket
+group. Nothing then closed the declaration frame, and it adopted every later declaration in the
+module — re-indenting them and fusing the `}` with the DDoc comment below it. A brace block sitting
+directly in a declaration frame is that declaration's body, marker or no marker.
+
+<!-- fmt id=P22 -->
+
+::: code-group
+
+```d [Before]
+template T(F)
+{
+        enum x = 1;
+}
+
+/// after
+struct After
+{
+  int a;
+}
+
+mixin template M()
+{
+    int y;
+}
+
+int last;
+```
+
+```d [After]
+template T(F)
+{
+    enum x = 1;
+}
+
+/// after
+struct After
+{
+    int a;
+}
+
+mixin template M()
+{
+    int y;
+}
+
+int last;
+```
+
+:::
