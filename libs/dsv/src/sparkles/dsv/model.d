@@ -12,7 +12,7 @@
 /// ([decodeCell]); a simple cell's text **is** its raw span ([cellRaw]).
 module sparkles.dsv.model;
 
-import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.buffer : HeapBuffer, SharedBuffer;
 
 /**
 A byte span into the borrowed source.
@@ -182,30 +182,42 @@ struct DsvDoc
     Dialect dialect;
 
     /**
-    The two arenas. `SharedBuffer` (`inline | heap`) — measured, not assumed.
+    The two arenas. `HeapBuffer` (heap only) — measured, not assumed.
 
-    Two alternatives were tried and both are recorded here so they are not
-    re-proposed. Over 8M isolated appends a reserved heap-only buffer looked
-    a third faster (47 ms against 68), and `Storage.unique` faster still
-    (43 ms), which is why they were tried at all.
+    These have no use for inline slots: they leave them on their first record
+    and never look at them again. What they get for giving them up is a buffer
+    with nothing to be ambiguous about — residency is the block pointer, so
+    the length word is a plain integer rather than one carrying a flag every
+    read has to mask off. Over ~9M appends that shows.
 
-    `Storage.unique` does not survive the `Expected` this parser returns
-    through: the payload is stored by a blit that does not neutralize its
-    source, so the original's destructor frees the block and the document
+    `Storage.unique` was tried and does not survive the `Expected` this parser
+    returns through: the payload is stored by a blit that does not neutralize
+    its source, so the original's destructor frees the block and the document
     reads back **empty**. Move-only payloads with destructors are not
     something that vocabulary supports today.
 
-    Heap-only residency, with and without a sampled `reserve`, measured
-    **worse in the real parser** — 126 ms and 163 ms against 110 ms for the
-    73 MB corpus. The isolated probe had measured single-element appends,
-    while the parser commits a record's cells with one `put`; the win it
-    predicted does not exist on the path actually taken. A microbenchmark
-    that does not match the production path is worth exactly nothing, and
-    this one cost a day.
+    Heap-only was tried once before and rejected — it measured 126 ms bare and
+    163 ms reserved, against 110 ms for `SharedBuffer`, on the 73 MB corpus.
+    That verdict was real and its cause was elsewhere: `reserve` allocated
+    through `makeArray`, which wrote `T.init` over the whole reservation, so
+    the 163 ms was mostly a 72 MB memset for capacity nobody had asked to be
+    initialised. With that fixed in `sparkles:base`, the three policies
+    re-measure (24 samples each, median of a 73 MB parse):
+
+    $(TABLE
+        $(TR $(TH policy) $(TH median))
+        $(TR $(TD `SharedBuffer`, reserved) $(TD 116.5 ms))
+        $(TR $(TD `HeapBuffer`, reserved) $(TD 109.0 ms))
+    )
+
+    The lesson the old note drew — that a microbenchmark not matching the
+    production path is worth nothing — still holds. The one it missed is that
+    a policy can measure badly for a reason that has nothing to do with the
+    policy, and rejecting it then hides the real defect behind a verdict.
     */
-    SharedBuffer!DsvRecord records;
+    HeapBuffer!DsvRecord records;
     /// ditto
-    SharedBuffer!DsvCell cells;
+    HeapBuffer!DsvCell cells;
 
     /// The widest record's cell count — the grid's column count (`DSM3`:
     /// a long record grows the grid).
@@ -573,7 +585,7 @@ void inferColumnTypes(Buf)(in DsvDoc doc, size_t sampleRecords, ref Buf types)
 void inferColumnTypesFrom(Buf)(in DsvDoc doc, size_t firstRecord,
     size_t sampleRecords, ref Buf types)
 {
-    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.base.buffer : HeapBuffer, SharedBuffer;
 
     // kindCounts[col * kinds + kind]
     enum kinds = 6;

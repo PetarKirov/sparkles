@@ -45,11 +45,10 @@ ParseExpected!DsvDoc parseDsv(const(char)[] source, in Dialect dialect)
     doc.source = source;
     doc.dialect = dialect;
 
-    // `BUF11`/`BUF13`: a heap-only buffer can be pre-sized, and pre-sizing is
-    // the entire reason these arenas are heap-only — an `inline | heap`
-    // policy carries a discriminant every append must test, and `reserve`
-    // cannot pre-grow it from empty. Measured over 8M appends: 68 ms grown
-    // from empty, 47 ms reserved and heap-only.
+    // `BUF11`: pre-sizing is the entire reason these arenas are heap-only.
+    // Any heap-capable buffer can be reserved now, but a heap-only one also
+    // carries no residency flag for the length word — and over ~9M appends
+    // that is worth 7% of the parse on its own.
     //
     // The estimate comes from a bounded head sample rather than the true
     // worst case (`cells <= bytes + 1`), which for a 73 MB document would

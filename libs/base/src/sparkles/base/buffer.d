@@ -14,7 +14,8 @@ import std.algorithm.comparison : max;
 import std.array : overlap;
 import std.range.primitives : ElementType, hasLength, hasSlicing, isInputRange;
 import std.experimental.allocator : makeArray, expandArray, dispose;
-import std.traits : hasIndirections;
+import std.traits : hasElaborateAssign, hasElaborateDestructor,
+    hasIndirections;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 
 import sparkles.test_runner.attributes : benchmark, betterC;
@@ -1112,10 +1113,50 @@ pure nothrow @nogc:
 
     static if (hasHeap)
     {
+    /**
+    Whether a fresh block must be written before the buffer may use it —
+    the predicate $(LREF Buffer.reserve)'s cost turns on, named so it can be
+    asserted rather than trusted to a comment.
+
+    Three things make an untouched slot unsafe, and `__traits(isPOD)` is not
+    the test for any of them (a `SumType` is POD and fails two):
+
+    $(UL
+        $(LI an elaborate ASSIGN — writing a slot for the first time still
+            reads what was there, since `opAssign` destroys the old value
+            before replacing it. A `SumType` destroys through its tag, and a
+            tag read out of recycled bytes names whichever member those bytes
+            spell.)
+        $(LI an elaborate DESTRUCTOR, which `dispose` runs over the whole
+            block. Implied by the assign clause today — D gives a struct with
+            a destructor elaborate assignment too — and stated anyway,
+            because the two are separate questions.)
+        $(LI indirections. The block is registered as a GC root, so an
+            untouched slot is a garbage pointer a conservative scan follows.)
+    )
+    */
+    private enum bool blockNeedsInit = hasIndirections!T
+        || hasElaborateAssign!T || hasElaborateDestructor!T;
+
     // Allocate a heap block for `blockCapacity` elements (refCount 1).
+    //
+    // Capacity beyond `length` is not part of the buffer's value (`BUF9`), so
+    // there is nothing to initialise it TO — and initialising it anyway is not
+    // free: `makeArray` writes `T.init` over every slot, which turns a
+    // `reserve` of 9M cells into a 72 MB memset and 18k first-touch faults
+    // before the caller has written a thing. That cost more than the growth
+    // path it was meant to replace, because `realloc` on a large block moves
+    // pages with `mremap` instead of faulting them in.
+    //
     private static T[] allocateBlock(size_t blockCapacity) @trusted
     {
-        T[] b = makeArray!T(Allocator.instance, blockCapacity);
+        static if (!blockNeedsInit)
+        {
+            auto raw = Allocator.instance.allocate(blockCapacity * T.sizeof);
+            T[] b = cast(T[]) raw;
+        }
+        else
+            T[] b = makeArray!T(Allocator.instance, blockCapacity);
         assert(b !is null, "Buffer: allocation failed");
         Allocator.instance.prefix(b).refCount = 1;
         addBlockRange(b);
@@ -2139,6 +2180,22 @@ unittest
         blackBox(reused.length);
     }, ["fill": "reserved+reused", "elements": "65536"]);
 
+    // The reservation on its own, at a size where what it does to the pages
+    // matters: 8M ints is 32 MB of address space, and writing `T.init` over
+    // all of it before the caller has stored anything is both a memset and
+    // 8k first-touch faults for capacity that is not part of the value.
+    benchIter({
+        Buffer!(int, 16) buf;
+        buf.reserve(8_000_000);
+        blackBox(buf.capacity);
+    }, ["fill": "reserve-only", "elements": "8M-reserved-untouched"]);
+
+    benchIter({
+        Buffer!(string, 4) buf;
+        buf.reserve(8_000_000);
+        blackBox(buf.capacity);
+    }, ["fill": "reserve-only", "elements": "8M-reserved-untouched-with-references"]);
+
     // An element type carrying a reference cannot grow in place: the block is
     // not GC-scanned, so `realloc` would move the elements into memory the
     // collector does not look at and free the old root before the new one is
@@ -2160,6 +2217,121 @@ unittest
             buf ~= words[i & 3];
         blackBox(buf.length);
     }, ["fill": "reserved", "elements": "65536-with-references"]);
+}
+
+/// A reservation must not write to what it reserved. Capacity beyond `length`
+/// is not part of the value (`BUF9`), so there is nothing to initialise it to,
+/// and initialising it anyway turns `reserve` from an `mmap` into an `mmap`
+/// plus a memset of the whole request.
+///
+/// The two element kinds that still need the write are guarded, and both are
+/// checked here, because getting either wrong is a memory-safety bug rather
+/// than a slow test.
+@("Buffer.reserve.doesNotInitialiseWhatItReserved")
+@system
+unittest
+{
+    // Fresh `mmap` memory is zero, and zero is a benign bit pattern for
+    // almost everything — a valid `SumType` tag, a null pointer, a plausible
+    // `int`. So an uninitialised block only misbehaves once the allocator
+    // starts handing back memory something else has used, which is why the
+    // hole this guards found the parallel test sweep and not this file.
+    // Dirty a block of the same size first and let it go, so the reservation
+    // below is handed something that is not zero.
+    static void poison(size_t bytes)
+    {
+        Buffer!(ubyte, 1) dirt;
+        dirt.reserve(bytes);
+        foreach (_; 0 .. bytes)
+            dirt ~= 0xAB;
+        dirt.clear(); // releases the block; the next request should reuse it
+    }
+
+    // An elaborate destructor runs over the whole block on dispose, so its
+    // slots must hold real objects, not whatever the allocator handed back.
+    // The destructor is its own oracle: it asserts it is looking at a value
+    // the program produced, which an uninitialised slot is not.
+    static struct Tracked
+    {
+        int x = 7;
+        ~this() @safe pure nothrow @nogc
+        {
+            assert(x == 7 || x == 1, "destroyed an uninitialised slot");
+        }
+    }
+    static assert(!hasIndirections!Tracked && hasElaborateDestructor!Tracked);
+
+    {
+        poison(64 * Tracked.sizeof);
+        Buffer!(Tracked, 2) buf;
+        buf.reserve(64);
+        assert(buf.onHeap && buf.capacity >= 64);
+        buf ~= Tracked(1);
+        assert(buf[0].x == 1);
+    }
+
+    // An elaborate `opAssign` is the subtler case, and the one a
+    // destructor-only guard lets through: writing a slot for the first time
+    // still reads what was there. A `SumType` destroys through its tag, so a
+    // tag out of fresh malloc'd bytes names whichever member they spell.
+    {
+        import std.sumtype : SumType, match;
+
+        alias Val = SumType!(int, double, bool, typeof(null));
+        // POD, and with no destructor — the two things a narrower guard
+        // would have checked. What makes it unsafe is the assignment.
+        static assert(__traits(isPOD, Val) && !hasElaborateDestructor!Val);
+        static assert(!hasIndirections!Val && hasElaborateAssign!Val);
+        static assert(Buffer!(Val, 2).blockNeedsInit, "elaborate assign");
+
+        poison(512 * Val.sizeof);
+        Buffer!(Val, 2) buf;
+        buf.reserve(512);
+        assert(buf.onHeap);
+        foreach (i; 0 .. 512)
+            buf ~= i % 2 ? Val(i) : Val(null);
+        size_t nulls;
+        foreach (ref v; buf[])
+            nulls += v.match!((in typeof(null)) => 1, _ => 0);
+        assert(nulls == 256);
+    }
+
+    // A `T` the collector chases through: the block is a GC root, so an
+    // uninitialised slot is a garbage pointer a conservative scan would
+    // follow. Reserve, collect, and read back through the survivors.
+    {
+        import core.memory : GC;
+
+        poison(4096 * string.sizeof);
+        Buffer!(string, 2) buf;
+        buf.reserve(4096);
+        buf ~= "alpha";
+        buf ~= "beta";
+        GC.collect();
+        assert(buf[] == ["alpha", "beta"]);
+    }
+
+    // Each clause of the predicate, stated directly. Two of them cannot be
+    // caught by running code: a garbage pointer in an unused slot is only
+    // followed by a conservative scan if it happens to look like a heap
+    // address, and the destructor clause is implied by the assign one today.
+    // So they are asserted where the decision is made.
+    static assert(Buffer!(string, 2).blockNeedsInit, "indirections");
+    static assert(Buffer!(Tracked, 2).blockNeedsInit, "elaborate destructor");
+    static assert(!Buffer!(int, 4).blockNeedsInit, "plain data needs nothing");
+    static assert(!Buffer!(double, 4).blockNeedsInit);
+
+    // And the case the guard exists to let through: a plain element type is
+    // reserved without being written to, and behaves exactly as before.
+    {
+        poison(1024 * int.sizeof);
+        Buffer!(int, 4) buf;
+        buf.reserve(1024);
+        assert(buf.onHeap && buf.empty && buf.capacity >= 1024);
+        foreach (i; 0 .. 1024)
+            buf ~= cast(int) i;
+        assert(buf[0] == 0 && buf[1023] == 1023);
+    }
 }
 
 @("Buffer.frontBack")
