@@ -139,3 +139,14 @@ apps/hue/twoslash
 # exist but the paper PDFs time out repeatedly on retrieval, so excluding the
 # host keeps the citations pointing at the primary source.
 ^https?://(www\.)?langsec\.org/
+
+# queue.acm.org (ACM Queue articles cited in
+# durable-execution/idempotence.md): ACM's Cloudflare challenge blocks automated
+# checkers with HTTP 403 (same as dl.acm.org and awards.acm.org).
+^https?://queue\.acm\.org/
+
+# eprints.soton.ac.uk (Southampton ePrints repository, cited in
+# durable-execution/compensation-calculi.md and
+# ui-backend-seam/functional-images.md): protected by Anubis anti-bot middleware
+# which returns HTTP 403 to automated checkers; valid canonical academic citations.
+^https?://eprints\.soton\.ac\.uk/
