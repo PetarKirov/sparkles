@@ -1928,13 +1928,59 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
             {
                 auto s = base;
                 s.fontRole = FontRole.code;
-                const t = sliceOf(src, inl.span);
-                if (t.length)
+                const raw = sliceOf(src, inl.span);
+                if (raw.length)
+                {
+                    import std.algorithm.searching : canFind;
+                    const bool hasNl = raw.canFind('\n') || raw.canFind('\r');
+                    const(char)[] t;
+                    if (hasNl)
+                    {
+                        char[] norm = new char[](raw.length);
+                        size_t len = 0;
+                        size_t i = 0;
+                        while (i < raw.length)
+                        {
+                            if (raw[i] == '\r' && i + 1 < raw.length && raw[i + 1] == '\n')
+                            {
+                                norm[len++] = ' ';
+                                i += 2;
+                            }
+                            else if (raw[i] == '\n' || raw[i] == '\r')
+                            {
+                                norm[len++] = ' ';
+                                ++i;
+                            }
+                            else
+                            {
+                                norm[len++] = raw[i];
+                                ++i;
+                            }
+                        }
+                        t = norm[0 .. len];
+                    }
+                    else
+                        t = raw;
+
+                    // CommonMark 6.3: If the resulting string begins and ends
+                    // with a space, but does not consist entirely of spaces, a
+                    // single leading and trailing space are removed.
+                    if (t.length >= 2 && t[0] == ' ' && t[$ - 1] == ' ')
+                    {
+                        bool allSpaces = true;
+                        foreach (char c; t)
+                            if (c != ' ') { allSpaces = false; break; }
+                        if (!allSpaces)
+                            t = t[1 .. $ - 1];
+                    }
+
+                    const bool hasSpace = t.canFind(' ');
                     spans ~= TextSpan(t, Slot.chip, s,
-                        paintBackground: true, noBreak: true,
+                        paintBackground: true, noBreak: !hasSpace,
                         fg: vt !is null ? vt.codeFg : RgbColor.init,
                         hasFg: vt !is null,
                         srcStart: inl.span.start, srcEnd: inl.span.end);
+                }
                 break;
             }
             case link:
@@ -3005,6 +3051,26 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
     foreach (ref const s; plain)
         assert(s.linkId == 0);
 }
+
+@("md.render_widgets.codeSpanWrappingAndNormalization")
+@safe unittest
+{
+    const src = "The `short` and `long command with multiple words` and `multi\nline\r\ncode` done";
+    // single-word: noBreak = true
+    MdInline shortInl = {kind: MdInlineKind.codeSpan, span: Span(5, 10)}; // "short"
+    // multi-word: noBreak = false (can wrap at spaces)
+    MdInline longInl = {kind: MdInlineKind.codeSpan, span: Span(17, 49)}; // "long command with multiple words"
+    // multiline: newlines normalized to spaces, noBreak = false
+    MdInline mlInl = {kind: MdInlineKind.codeSpan, span: Span(56, 72)}; // "multi\nline\r\ncode"
+
+    TextSpan[] spans;
+    inlinesToSpans([shortInl, longInl, mlInl], src, TextStyle.init, Slot.inherit, spans);
+    assert(spans.length == 3);
+    assert(spans[0].text == "short" && spans[0].noBreak);
+    assert(spans[1].text == "long command with multiple words" && !spans[1].noBreak);
+    assert(spans[2].text == "multi line code" && !spans[2].noBreak);
+}
+
 
 /**
 The hyperlink id survives the WHOLE pipeline, not just the span mapper.
