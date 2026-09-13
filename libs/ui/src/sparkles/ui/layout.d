@@ -71,12 +71,64 @@ enum bool isTextMeasure(T) = __traits(compiles, (ref T m) {
 
 static assert(isTextMeasure!CellMeasure);
 
+/**
+Which widget nodes this frame lays out but does not place in their hosts'
+flow (`LYR7`), index-parallel to `tree.nodes`.
+
+It lives here rather than beside the arena that produces it, because
+`layout` must not depend on the overlay module: `overlay.place` already depends
+on this one's `Frame`, and the pair would be a cycle.
+
+An overlay must be excluded from its host's natural-size measurement and
+placement, or an open dropdown resizes or displaces the box it hangs off. The
+exclusion is by $(B membership) — the same rule as visibility — so a node is out
+of flow exactly while a record names it, and the layout walk needs no notion of
+what an overlay is.
+*/
+struct OutOfFlow
+{
+    /// One flag per node index; a shorter slice means "the rest are in flow".
+    const(bool)[] hoisted;
+
+    /// Whether node `i` is hoisted this frame.
+    bool opIndex(uint i) const scope @safe pure nothrow @nogc
+        => i < hoisted.length && hoisted[i];
+
+    /// Whether anything is hoisted at all — the fast path for the overwhelming
+    /// majority of frames, which have no overlays.
+    bool any() const scope @safe pure nothrow @nogc
+    {
+        foreach (h; hoisted)
+            if (h)
+                return true;
+        return false;
+    }
+}
+
 /// Lays `tree` out within `c`, returning a `Frame` per node. An unbounded axis
 /// (`int.max`, the default) sizes the root to its content; a bounded one is the
 /// viewport the root resolves against (`fit` clamps, `grow` fills, `percent`
 /// takes its share). Text runs are measured through `tm`.
 Frame[] layout(TM = CellMeasure)(
     in WidgetTree tree, in Constraints c = Constraints.init, TM tm = TM.init)
+if (isTextMeasure!TM)
+    => layout(tree, OutOfFlow.init, c, tm);
+
+/**
+As above, with `out_` naming the nodes this frame hoists out of their hosts'
+flow (`LYR7`).
+
+A hoisted node still lays out — its subtree needs frames, and the placement
+solve needs its measured size — but it contributes nothing to its host's natural
+extent and takes no share of its host's leftover, so an open dropdown cannot
+resize or displace the box it hangs off. Where it $(I lands) is not decided here;
+the overlay pass translates the subtree once the solve has answered.
+
+Hoisting is deliberately not `Visibility.collapsed` reused. Collapsed means zero
+extent and no frames worth having; hoisted means full extent somewhere else.
+*/
+Frame[] layout(TM = CellMeasure)(in WidgetTree tree, in OutOfFlow out_,
+    in Constraints c = Constraints.init, TM tm = TM.init)
 if (isTextMeasure!TM)
 {
     const n = tree.nodes.length;
@@ -90,6 +142,13 @@ if (isTextMeasure!TM)
     // A `collapsed` child is removed from flow (LAY11): zero extent, no gap.
     bool isCollapsed(uint ci)
         => tree.nodes[ci].visibility == Visibility.collapsed;
+
+    // A hoisted child is removed from its host's flow (LYR7) but keeps its
+    // extent: it is measured and laid out, just not accumulated or placed here.
+    bool isHoisted(uint ci) => out_[ci];
+
+    // What a host's flow arithmetic must skip, for either reason.
+    bool outOfFlow(uint ci) => isCollapsed(ci) || isHoisted(ci);
 
     // The offset aligning a child within `slack` leftover cells (LAY8).
     static int alignOffset(Alignment a, int slack)
@@ -166,6 +225,15 @@ if (isTextMeasure!TM)
                 extents[k] = 0; // out of flow: no extent, no gap
                 continue;
             }
+            if (isHoisted(ci))
+            {
+                // Its own natural extent, and no contribution to `used`: the
+                // host must size as though the overlay were not there.
+                const spec_ = horizontal
+                    ? tree.nodes[ci].width : tree.nodes[ci].height;
+                extents[k] = spec_.clamp(horizontal ? natW[ci] : natH[ci]);
+                continue;
+            }
             const child = tree.nodes[ci];
             const spec = horizontal ? child.width : child.height;
             const natural = horizontal ? natW[ci] : natH[ci];
@@ -196,7 +264,7 @@ if (isTextMeasure!TM)
             foreach (k, ci; children)
             {
                 const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                if (spec.kind != SizeSpec.Kind.grow || isCollapsed(ci))
+                if (spec.kind != SizeSpec.Kind.grow || outOfFlow(ci))
                     continue;
                 const weight = spec.value > 0 ? spec.value : 1;
                 const share = leftover * weight / totalWeight;
@@ -209,7 +277,7 @@ if (isTextMeasure!TM)
                 if (remainder == 0)
                     break;
                 const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                if (spec.kind != SizeSpec.Kind.grow || isCollapsed(ci))
+                if (spec.kind != SizeSpec.Kind.grow || outOfFlow(ci))
                     continue;
                 extents[k] = spec.clamp(extents[k] + 1);
                 remainder--;
@@ -293,15 +361,15 @@ if (isTextMeasure!TM)
                 bool first = true;
                 foreach (ci; node.children)
                 {
-                    if (isCollapsed(ci))
+                    if (outOfFlow(ci))
                         continue;
                     content += natW[ci] + (first ? 0 : node.gap);
                     first = false;
                 }
                 break;
-            case column, stack, panel, popup:
+            case column, stack, panel:
                 foreach (ci; node.children)
-                    if (!isCollapsed(ci) && natW[ci] > content)
+                    if (!outOfFlow(ci) && natW[ci] > content)
                         content = natW[ci];
                 break;
         }
@@ -335,6 +403,15 @@ if (isTextMeasure!TM)
                 if (isCollapsed(ci))
                 {
                     allocWidth(ci, 0);
+                    continue;
+                }
+                if (isHoisted(ci))
+                {
+                    // Sized by its own spec against its own natural width: it
+                    // is not inside this content box any more, so resolving it
+                    // against one would cap an overlay at its host's width.
+                    allocWidth(ci, resolveNatural(tree.nodes[ci].width,
+                        natW[ci]));
                     continue;
                 }
                 const child = tree.nodes[ci];
@@ -405,22 +482,22 @@ if (isTextMeasure!TM)
                 break;
             case row:
                 foreach (ci; node.children)
-                    if (!isCollapsed(ci) && natH[ci] > content)
+                    if (!outOfFlow(ci) && natH[ci] > content)
                         content = natH[ci];
                 break;
             case column:
                 bool first = true;
                 foreach (ci; node.children)
                 {
-                    if (isCollapsed(ci))
+                    if (outOfFlow(ci))
                         continue;
                     content += natH[ci] + (first ? 0 : node.gap);
                     first = false;
                 }
                 break;
-            case stack, panel, popup:
+            case stack, panel:
                 foreach (ci; node.children)
-                    if (!isCollapsed(ci) && natH[ci] > content)
+                    if (!outOfFlow(ci) && natH[ci] > content)
                         content = natH[ci];
                 break;
         }
@@ -458,7 +535,7 @@ if (isTextMeasure!TM)
                 bool first = true;
                 foreach (ci; node.children)
                 {
-                    if (isCollapsed(ci))
+                    if (outOfFlow(ci))
                         continue;
                     used += alloW[ci] + (first ? 0 : node.gap);
                     first = false;
@@ -470,6 +547,15 @@ if (isTextMeasure!TM)
                     if (isCollapsed(ci))
                     {
                         place(ci, Point(contentX, contentY), 0);
+                        continue;
+                    }
+                    if (isHoisted(ci))
+                    {
+                        // Laid out, but not placed by this flow: the overlay
+                        // pass translates the subtree once the solve answers,
+                        // and the cursor does not advance past it (`LYR7`).
+                        place(ci, Point(contentX, contentY),
+                            resolveNatural(tree.nodes[ci].height, natH[ci]));
                         continue;
                     }
                     if (!first)
@@ -495,7 +581,7 @@ if (isTextMeasure!TM)
                 bool first = true;
                 foreach (k, ci; node.children)
                 {
-                    if (isCollapsed(ci))
+                    if (outOfFlow(ci))
                         continue;
                     used += heights[k] + (first ? 0 : node.gap);
                     first = false;
@@ -509,6 +595,15 @@ if (isTextMeasure!TM)
                         place(ci, Point(contentX, contentY), 0);
                         continue;
                     }
+                    if (isHoisted(ci))
+                    {
+                        // Laid out, but not placed by this flow: the overlay
+                        // pass translates the subtree once the solve answers,
+                        // and the cursor does not advance past it (`LYR7`).
+                        place(ci, Point(contentX, contentY),
+                            resolveNatural(tree.nodes[ci].height, natH[ci]));
+                        continue;
+                    }
                     if (!first)
                         y += node.gap;
                     first = false;
@@ -519,12 +614,21 @@ if (isTextMeasure!TM)
                 }
                 break;
             }
-            case stack, panel, popup:
+            case stack, panel:
                 foreach (ci; node.children)
                 {
                     if (isCollapsed(ci))
                     {
                         place(ci, Point(contentX, contentY), 0);
+                        continue;
+                    }
+                    if (isHoisted(ci))
+                    {
+                        // Laid out, but not placed by this flow: the overlay
+                        // pass translates the subtree once the solve answers,
+                        // and the cursor does not advance past it (`LYR7`).
+                        place(ci, Point(contentX, contentY),
+                            resolveNatural(tree.nodes[ci].height, natH[ci]));
                         continue;
                     }
                     const child = tree.nodes[ci];
@@ -750,7 +854,7 @@ string dumpTree(in WidgetTree tree, in Frame[] frames)
 
     auto b = Builder();
     const t = b.add(Widget(kind: WidgetKind.text, text: "hello")); // 5×1
-    const panel = b.container(WidgetKind.popup, [t],
+    const panel = b.container(WidgetKind.panel, [t],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(panel);
 
@@ -1050,4 +1154,80 @@ string dumpTree(in WidgetTree tree, in Frame[] frames)
     auto frames = layout(tree, Constraints.init, DoubleWide());
     assert(frames[t].rect.width == 6);
     assert(frames[row].rect.width == 6);
+}
+
+/**
+Moves the subtree rooted at `node` by `delta`, in place.
+
+The overlay pass's second half: a hoisted subtree is laid out by the ordinary
+walk (so its extent is real and its descendants have frames) and then $(I moved)
+to wherever the placement solve put it. Translating beats re-laying-out because
+the size is already correct — only the origin was never decided by the host.
+*/
+void translateSubtree(in WidgetTree tree, uint node, in Point delta,
+    scope Frame[] frames) pure nothrow @nogc
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    if (delta == Point.init)
+        return;
+
+    void walk(uint idx)
+    {
+        frames[idx].rect.origin = frames[idx].rect.origin + delta;
+        foreach (ci; tree.nodes[idx].children)
+            walk(ci);
+    }
+
+    walk(node);
+}
+
+@("ui.layout.hoistedNodesLeaveTheirHostsFlow")
+@safe unittest
+{
+    // `LYR7`. An open dropdown must not resize or displace the box it hangs
+    // off — which is what happens when an overlay is an ordinary child, and is
+    // why every application floated its own popups instead.
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    uint[] build(ref Builder b)
+    {
+        const label = b.add(Widget(kind: WidgetKind.text, text: "menu"));
+        const panel = b.add(Widget(kind: WidgetKind.text,
+            text: "a very much wider dropdown surface"));
+        return [label, panel];
+    }
+
+    auto b = Builder();
+    auto kids = build(b);
+    auto tree = b.finish(b.container(WidgetKind.column, kids));
+
+    // In flow, the host takes the overlay's width and stacks its height.
+    const inFlow = layout(tree);
+    assert(inFlow[tree.root].rect.width == 34);
+    assert(inFlow[tree.root].rect.height == 2);
+
+    // Hoisted, the host measures as though only the label were there…
+    auto flags = new bool[](tree.nodes.length);
+    flags[kids[1]] = true;
+    const hoisted = layout(tree, OutOfFlow(flags));
+    assert(hoisted[tree.root].rect.width == 4, "the host sizes to its label");
+    assert(hoisted[tree.root].rect.height == 1, "and does not stack the panel");
+
+    // …while the overlay itself is still fully laid out, at its own natural
+    // size rather than capped to the host it is no longer inside. Without
+    // that, an overlay would be clamped to the width of the button it hangs
+    // off — which is the bug, one layer down.
+    assert(hoisted[kids[1]].rect.width == 34);
+    assert(hoisted[kids[1]].rect.height == 1);
+
+    // Hoisting is not `collapsed` reused: collapsed means no extent worth
+    // having, hoisted means full extent somewhere else.
+    Widget gone = tree.nodes[kids[1]];
+    gone.visibility = Visibility.collapsed;
+    auto b2 = Builder();
+    const l2 = b2.add(tree.nodes[kids[0]]);
+    const p2 = b2.add(gone);
+    auto t2 = b2.finish(b2.container(WidgetKind.column, [l2, p2]));
+    assert(layout(t2)[p2].rect.width == 0);
 }

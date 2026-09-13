@@ -43,6 +43,7 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Rect;
 import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.overlay.arena : hoistedBy, OverlayArena, placeOverlays;
 import sparkles.ui.style : Palette, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.widget : WidgetTree;
@@ -141,12 +142,36 @@ laid-out rect through the host's canvas.
 */
 enum bool hasPaintPhase(A) = __traits(hasMember, A, "paint");
 
+/**
+The overlays this component wants this frame, probed the way `theme` is.
+
+A component declares `OverlayArena overlays(in WidgetTree)` when it has anchored
+surfaces, and one without it pays nothing and reads exactly as before — the same
+optional-member bargain $(LREF frameTheme) makes, and the same one
+$(REF isCanvas, sparkles,ui,canvas) makes for `pushClip`.
+
+It takes the $(B built tree) rather than being called before `view`, because a
+record has to name the node it emits and only the tree knows the indices. A
+component resolves its own nodes by `Widget.key`, which it chose — so it never
+has to thread indices out of its view.
+*/
+OverlayArena frameOverlays(A)(ref A app, in WidgetTree tree)
+{
+    static if (__traits(compiles, { OverlayArena a = app.overlays(tree); }))
+        return app.overlays(tree);
+    else
+        return OverlayArena.init;
+}
+
 /// What one frame's `view` + layout produced — kept for the draw phase, which
 /// runs later in the same frame (never across frames).
 struct FrameSnapshot
 {
     WidgetTree tree; ///
     Frame[] frames;  ///
+    /// This frame's overlays, with each record's geometry solved. Empty for a
+    /// component that declares none.
+    OverlayArena overlays;
 }
 
 /**
@@ -179,9 +204,24 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
     if (snap.tree.nodes.length == 0)
         return;
 
-    snap.frames = layout(snap.tree, Constraints(sz.width, sz.height));
-    buildDisplayListInto(snap.tree, snap.frames, frame.palette, frame.pageFg,
-        frame.pageBg, h.ops());
+    // The overlay pass, in its one place (`PLC12`): hoist what the arena names
+    // out of its hosts' flow, lay the tree out, solve each record against the
+    // surface, then emit the arena after the root walk (`LYR7`, `LYR8`). A
+    // component with no overlays takes an empty arena through all three and
+    // lays out exactly as it did before.
+    auto arena = frameOverlays(app, snap.tree);
+    snap.frames = layout(snap.tree, hoistedBy(arena, snap.tree.nodes.length),
+        Constraints(sz.width, sz.height));
+    snap.overlays = placeOverlays(snap.tree, snap.frames, arena,
+        Rect(0, 0, sz.width, sz.height));
+    // The solve handed back, for a component that routes against it. The pair
+    // is deliberately symmetric — `overlays` declares what it wants, this says
+    // what it got — because a component cannot re-derive the geometry: it has
+    // no frames until the host has laid out, and by then the frame is here.
+    static if (__traits(compiles, app.overlaysSolved(snap.overlays)))
+        app.overlaysSolved(snap.overlays);
+    buildDisplayListInto(snap.tree, snap.frames, snap.overlays, frame.palette,
+        frame.pageFg, frame.pageBg, h.ops());
 }
 
 /**
@@ -583,4 +623,108 @@ unittest
     auto rec = runAppRecorded(app, RunConfig.init, [charEvent('t')]);
     foreach (ref f; rec.frames)
         assert(f.ops[0].visual.bg == configured.pageBg);
+}
+
+@("ui_app.run_app.frameOverlaysIsOptional")
+@safe unittest
+{
+    // The optional-member bargain: a component with no anchored surfaces is
+    // unchanged and pays nothing, exactly as one with no `theme` member is.
+    import sparkles.ui.overlay.arena : OverlayRecord;
+
+    static struct Plain
+    {
+        WidgetTree view(ref int) => WidgetTree.init;
+    }
+
+    static struct WithOverlays
+    {
+        WidgetTree view(ref int) => WidgetTree.init;
+        OverlayArena overlays(in WidgetTree tree)
+        {
+            OverlayArena a;
+            a.push(OverlayRecord(node: 1));
+            return a;
+        }
+    }
+
+    Plain plain;
+    WithOverlays fancy;
+    assert(frameOverlays(plain, WidgetTree.init).empty);
+    assert(frameOverlays(fancy, WidgetTree.init).length == 1);
+}
+
+@("ui_app.run_app.anOverlayIsHoistedPlacedAndEmittedByTheFramePass")
+@safe unittest
+{
+    // `POP8`: the whole pipeline, headless, with no backend at all — which is
+    // what makes an overlay assertable in a test rather than in a screenshot.
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.overlay.anchor : Anchor;
+    import sparkles.ui.overlay.arena : OverlayRecord;
+    import sparkles.ui.state : Timeline;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+    import sparkles.ui_app.record : RecordingHost;
+
+    enum size_t keyTrigger = 41, keyCard = 42;
+
+    static struct MenuApp
+    {
+        WidgetTree view(ref RecordingHost h)
+        {
+            auto b = Builder();
+            const trigger = b.add(Widget(kind: WidgetKind.text, text: "File",
+                key: keyTrigger));
+            const item = b.add(Widget(kind: WidgetKind.text, text: "Open"));
+            const card = b.add(Widget(kind: WidgetKind.panel, children: [item],
+                key: keyCard));
+            return b.finish(b.container(WidgetKind.column, [trigger, card]));
+        }
+
+        void handle(ref RecordingHost, in Event) {}
+
+        OverlayArena overlays(in WidgetTree tree)
+        {
+            OverlayArena a;
+            foreach (i, ref const n; tree.nodes)
+                if (n.key == keyCard)
+                    a.push(OverlayRecord(node: cast(uint) i,
+                        anchor: Anchor.ofKey(keyTrigger),
+                        life: Timeline(phase: Timeline.Phase.hold)));
+            return a;
+        }
+    }
+
+    MenuApp app;
+    RecordingHost h;
+    FrameSnapshot snap;
+    presentApp(app, h, AppTheme.init, snap);
+
+    assert(snap.overlays.length == 1);
+    const g = snap.overlays[0].resolved;
+    assert(g.paintable, "it resolved against its trigger");
+    assert(g.rect.y == 1, "and hangs on the row below it");
+
+    // The host measured as though the overlay were not there — the property
+    // `LYR7` exists for, and the one an application cannot fake from outside.
+    assert(snap.frames[snap.tree.root].rect.height == 1);
+    assert(snap.frames[snap.tree.root].rect.width == 4);
+
+    // And the overlay is still painted, once, after everything else.
+    size_t hits, firstAt = h.ops().ops.length;
+    foreach (i, op; h.ops().ops)
+        if (op.kind == OpKind.textRun && op.text == "Open")
+        {
+            ++hits;
+            if (firstAt == h.ops().ops.length)
+                firstAt = i;
+        }
+    assert(hits == 1, "emitted by the arena, not by the root walk as well");
+    // The trigger it is anchored to painted BEFORE it: paint order is the
+    // whole of "in front" here, so this is the top layer, mechanically.
+    bool sawTrigger;
+    foreach (op; h.ops().ops[0 .. firstAt])
+        if (op.kind == OpKind.textRun && op.text == "File")
+            sawTrigger = true;
+    assert(sawTrigger, "the page painted first, the overlay last");
 }

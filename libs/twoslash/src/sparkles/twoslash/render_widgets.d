@@ -30,7 +30,7 @@ module sparkles.twoslash.render_widgets;
 import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.source_view.code : applyTints, CodeViewOptions;
-import sparkles.source_view.markdown : MdViewTheme;
+import sparkles.source_view.markdown : FenceScroll, MdViewTheme;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, Span;
@@ -43,8 +43,12 @@ import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
-import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
-import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
+import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size, SizeSpec;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.overlay.anchor : AnchorRect;
+import sparkles.ui.overlay.place : Align, OverlayGeometry, place, Placement, Side;
+import sparkles.ui.style : BorderStyle, BoxSide, Decoration, FontRole,
+    opposite, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
@@ -441,54 +445,175 @@ Builds a floating hover/query popup for node `nodeIndex` of `tw`: a `popup` pane
 hovered token) — the tree is laid out at the origin.
 */
 /**
-The width to hand $(LREF HoverViewOptions): the theme's ceiling, narrowed to the
-room actually left at the anchor, with a floor.
+The size $(B bound) to build a hover popup within — the theme's ceilings,
+narrowed to the boundary the popup must live inside, floored at the theme's
+minimums.
 
-Both backends need the same decision, and it is a decision — not a measurement
-— so it lives beside the view rather than being re-derived per backend.
-`available` is the cells between the anchor and the far edge; a non-positive
-value means the caller could not work it out and gets the ceiling.
+A bound, not a size: the popup's real extent comes from `layout()` working
+inside this, so a view still never invents a width (`LAY10`). It is derived from
+the $(B boundary) alone, deliberately — the room left at the anchor is the
+solve's business, and the three hosts each computing their own `available`
+(`grid.cols - anchor`, `width - rect.x - 1`, an anchor-relative pixel edge) is
+half of the divergence `PLC4` retires.
 */
-int effectivePopupWidth(in Palette pal, int available) @safe pure nothrow @nogc
+Size popupBound(in Palette pal, in Rect boundary) @safe pure nothrow @nogc
 {
-    if (available <= 0)
-        return pal.popupMaxWidth;
-    const room = available < pal.popupMinWidth ? pal.popupMinWidth : available;
-    return room < pal.popupMaxWidth ? room : pal.popupMaxWidth;
+    static int fit(int ceiling, int room, int floor)
+    {
+        const capped = room < ceiling ? room : ceiling;
+        return capped < floor ? floor : capped;
+    }
+
+    return Size(
+        fit(pal.popupMaxWidth, boundary.width, pal.popupMinWidth),
+        fit(pal.popupMaxHeight, boundary.height, pal.popupMinHeight));
 }
 
 /**
-Where to start drawing a popup of `width` anchored at `anchor`, so it stays
-inside `extent`.
+Where a twoslash hover popup goes — the placement policy, spelled $(B once).
 
-It $(I shifts) rather than shrinks: a popup narrowed to fit under a token near
-the right edge would wrap its signature into a column two words wide, which
-reads worse than the same popup slid left. Clamped at 0 so a popup wider than
-the pane still starts on screen.
+This is what replaced `clampOrigin`, and the replacement is the point. That
+function was one axis, one direction, against one scalar extent, clamped to `0`,
+called from three sites that disagreed about the boundary (the whole grid, the
+pane width, an anchor-relative pixel edge), about the vertical offset and about
+whether to clip at all. Three applications were each guessing at a behavior the
+toolkit did not define — `PRN8` violated in the most expensive way.
+
+The clamp is to `boundary`, never to zero (`PLC4`). Zero is only correct when
+the boundary starts at the surface origin, which a pane in a split does not.
+
+$(B On `PLC9`.) The side is chosen here from the $(I measured) content rather
+than from a bound. That is honest for today's popup, whose height is whatever
+its content measures — there is no height budget to hand `layout()` yet, so a
+decide-then-measure pass would have nothing to decide. It becomes load-bearing
+when the popup body scrolls, and the two-pass shape is already expressible:
+solve once against $(LREF popupBound), lay out inside the result, then solve
+again with `lastGoodSide` pinned so the second pass cannot re-collide.
 */
-int clampOrigin(int anchor, int width, int extent) @safe pure nothrow @nogc
+OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
+    in Size content, in Rect boundary) @safe pure nothrow @nogc
+    => place(popupPlacement(pal, boundary), anchor, content, boundary);
+
+/// ditto — the second pass, with the budget pass's side pinned so it cannot
+/// re-collide and cannot oscillate between two sides that each fit only the
+/// other's measurement.
+OverlayGeometry placeHoverPopup(in Palette pal, in AnchorRect anchor,
+    in Size content, in Rect boundary, in OverlayGeometry budget)
+    @safe pure nothrow @nogc
 {
-    const over = anchor + width - extent;
-    const shifted = over > 0 ? anchor - over : anchor;
-    return shifted < 0 ? 0 : shifted;
+    auto req = popupPlacement(pal, boundary);
+    req.lastGoodSide = budget.side;
+    req.haveLastGood = budget.paintable;
+    return place(req, anchor, content, boundary);
 }
 
-@("render_widgets.effectivePopupWidth.ceilingRoomAndFloor")
+/// The popup's placement request, spelled once for both passes.
+private Placement popupPlacement(in Palette pal, in Rect boundary)
+    @safe pure nothrow @nogc
+{
+    auto req = Placement.init;
+    req.minSize = Size(pal.popupMinWidth, pal.popupMinHeight);
+    req.maxSize = popupBound(pal, boundary);
+    // A hover popup hangs directly below the token it describes, with no gap
+    // of its own: `TRG12` makes zero cells the default precisely so the pointer
+    // can travel into the popup without crossing a corridor that belongs to
+    // nobody. The caret's one cell of clearance is not such a corridor — it is
+    // part of the popup, and the solve folds it in before testing the fit.
+    req.side = Side.bottom;
+    req.alignment = Align.start;
+    req.arrow = true;
+    return req;
+}
+
+/**
+The room the popup may claim, decided $(B before) it is built (`PLC9`).
+
+Ask the solve where a popup of the largest permitted size would go: whatever it
+answers is the room this anchor actually has, on the side it actually has it.
+Building the view at $(LREF popupBound) instead — the boundary's own size —
+overstates the room whenever the anchor sits low in the pane, and the surplus
+does not vanish quietly. The tree is laid out taller than the box the solve
+later hands back, so the tail is clipped away unreachably, the viewport
+measurement counts rows nobody can see, and the bar beside it runs off the
+bottom edge describing a viewport that is not there.
+
+Feed $(LREF OverlayGeometry.rect)'s size to `HoverViewOptions.maxWidth` /
+`maxHeight`, then place the laid-out tree with the $(B five)-argument
+$(LREF placeHoverPopup) so the second pass keeps this pass's side.
+*/
+OverlayGeometry popupBudget(in Palette pal, in AnchorRect anchor,
+    in Rect boundary) @safe pure nothrow @nogc
+    => placeHoverPopup(pal, anchor, popupBound(pal, boundary), boundary);
+
+@("render_widgets.popupBudget.theRoomIsTheAnchorsNotThePanes")
 @safe pure nothrow @nogc unittest
 {
     const pal = Palette.init;
-    assert(effectivePopupWidth(pal, 0) == pal.popupMaxWidth, "unknown room ⇒ ceiling");
-    assert(effectivePopupWidth(pal, 500) == pal.popupMaxWidth, "the ceiling holds");
-    assert(effectivePopupWidth(pal, 40) == 40, "room narrower than the ceiling wins");
-    assert(effectivePopupWidth(pal, 3) == pal.popupMinWidth, "never below the floor");
+    const pane = Rect(0, 0, 80, 24);
+
+    // High in the pane: everything below the token, less its caret's row.
+    const high = popupBudget(pal,
+        AnchorRect(primary: Rect(4, 0, 6, 1), live: true), pane);
+    assert(high.paintable);
+    assert(high.rect.height <= popupBound(pal, pane).height);
+    assert(high.rect.bottom <= pane.bottom);
+
+    // Low in the pane: it may not, and the difference is exactly the rows a
+    // view built against `popupBound` would have laid out into nothing.
+    const low = popupBudget(pal,
+        AnchorRect(primary: Rect(4, 18, 6, 1), live: true), pane);
+    assert(low.paintable);
+    assert(low.rect.height < high.rect.height, "the room is the anchor's");
+    assert(low.rect.bottom <= pane.bottom, "and it stays inside the pane");
 }
 
-@("render_widgets.clampOrigin.shiftsRatherThanOverhangs")
+@("render_widgets.popupBound.ceilingRoomAndFloor")
 @safe pure nothrow @nogc unittest
 {
-    assert(clampOrigin(10, 20, 100) == 10, "it fits — leave it at the anchor");
-    assert(clampOrigin(90, 20, 100) == 80, "overhang shifts left, exactly flush");
-    assert(clampOrigin(5, 200, 100) == 0, "wider than the pane still starts on screen");
+    const pal = Palette.init;
+    const wide = popupBound(pal, Rect(0, 0, 500, 400));
+    assert(wide.width == pal.popupMaxWidth, "the ceiling holds");
+    assert(wide.height == pal.popupMaxHeight);
+
+    const narrow = popupBound(pal, Rect(0, 0, 40, 10));
+    assert(narrow.width == 40, "room narrower than the ceiling wins");
+    assert(narrow.height == 10);
+
+    const tiny = popupBound(pal, Rect(0, 0, 3, 1));
+    assert(tiny.width == pal.popupMinWidth, "never below the floor");
+    assert(tiny.height == pal.popupMinHeight);
+}
+
+@("render_widgets.placeHoverPopup.clampsToThePaneNotToColumnZero")
+@safe pure nothrow @nogc unittest
+{
+    // The regression `clampOrigin` could not express. In a split, the viewer
+    // pane does not start at column 0 — and `clampOrigin(anchor, w, extent)`
+    // clamped to `0`, so a popup wider than the room jumped across the divider
+    // and painted over the explorer. Three call sites, three boundaries, one
+    // shared bug.
+    const pal = Palette.init;
+    const pane = Rect(30, 0, 50, 24);          // the viewer, right of a divider
+    const anchor = AnchorRect(primary: Rect(74, 4, 4, 1), live: true);
+
+    const g = placeHoverPopup(pal, anchor, Size(60, 6), pane);
+    assert(g.rect.x >= pane.x, "it stays inside the pane");
+    assert(g.rect.x != 0, "column 0 is in the EXPLORER, not the viewer");
+    // One row below the token's own row, plus the caret's clearance. `TRG12`
+    // forbids an invented corridor between anchor and popup; the caret's row
+    // is not one, since it is part of the popup and the solve folds it in
+    // before testing the fit.
+    assert(g.rect.y == 6, "below the token, with room for its caret");
+    assert(g.arrowVisible, "and the caret points back at what it describes");
+
+    // The old rule, reproduced, so the difference is visible rather than
+    // described. `clampOrigin` took the far edge as a bare scalar and floored
+    // at `0`: it has no way to express a boundary whose LEFT edge is 30, so it
+    // slides the popup to column 20 — inside the explorer, across the divider.
+    const over = 74 + 60 - 80;
+    const oldRule = 74 - over < 0 ? 0 : 74 - over;
+    assert(oldRule == 20 && oldRule < pane.x, "the old rule left the pane");
+    assert(g.rect.x == pane.x, "the solve stops at the boundary it was given");
 }
 
 /**
@@ -506,6 +631,65 @@ struct HoverViewOptions
     /// `min(Palette.popupMaxWidth, room at the anchor)` — the view never
     /// invents a width (`LAY10`).
     int maxWidth = 0;
+
+    /**
+    The rows the placement solve granted this popup; `0` leaves it unbounded,
+    which is what every caller got before this existed.
+
+    A ddoc-heavy hover measures whatever it measures, and an unbounded popup
+    simply runs off the surface — the reader loses the end of the sentence and
+    has no way to reach it. Bounded, the body scrolls instead.
+    */
+    int maxHeight = 0;
+
+    /// The body's vertical scroll offset, in rows. The HOST owns the machine
+    /// (`SCV1`); the view only reads the offset, so one value serves a cell
+    /// backend and a pixel one unchanged.
+    long scrollOffset;
+
+    /// The body's $(B horizontal) offset, in cells, for content that neither
+    /// wraps nor scrolls itself — a wide table, say.
+    long scrollOffsetX;
+
+    /**
+    How far every fenced code block in this popup is scrolled sideways.
+
+    A fence is its OWN horizontal viewport: it clips its long lines rather than
+    overflowing its parent, which is right for a document and is why the body's
+    own horizontal offset never reaches one. So the offset has to go where the
+    clip is, and $(LREF markdownDocsRows) hands it to each fence it finds.
+
+    One offset for every fence in the popup, not one per fence: a hover shows
+    one example at a time, and per-fence state would need hit-testing rows the
+    host does not keep between frames — for a surface that is rebuilt whenever
+    the pointer moves.
+    */
+    int fenceScrollX;
+
+    /**
+    Last frame's measurement, so this frame can draw bars.
+
+    The extents come from `layout`, and the bars are part of the tree `layout`
+    measures — so a bar can only ever describe the frame before it. That is the
+    same one-frame lag every hit rect already has, and the reason a host feeds
+    the numbers back rather than the view discovering them.
+    */
+    long barContent;
+    long barViewport;   /// ditto
+    long barContentX;   /// ditto — the widest fence, and the room it has
+    long barViewportX;  /// ditto
+    long barOffsetX;    /// ditto — the fence offset the thumb reports
+
+    /**
+    Whether to reveal the close affordance — the host says so when the pointer
+    is over the popup.
+
+    Its column is reserved $(B always), so revealing it does not reflow the
+    signature the reader is looking at. That is the bargain the gallery's
+    terminal tab list already makes for its own ✕, and the reason a
+    hover-revealed control can sit inside content at all.
+    */
+    bool showClose;
 
     /// The signature as resolved syntax-colored spans (`signatureSpans`).
     TextSpan[] sigSpans;
@@ -539,6 +723,59 @@ struct HoverViewOptions
 /// popups a frame may hold.
 size_t abbrevKey(size_t nodeKey, size_t region) @safe pure nothrow @nogc
     => ((nodeKey + 1) << 20) | (region + 1);
+
+/**
+The region reserved for the popup's own close affordance.
+
+A click on the ✕ resolves through the $(B same) `Widget.key` channel a collapsed
+run does, so a backend decodes one lookup rather than growing a second way for a
+click inside a popup to mean something.
+*/
+private enum size_t closeRegion = 0xF_FFFE;
+
+/// The key the close affordance carries.
+size_t popupCloseKey(size_t nodeKey) @safe pure nothrow @nogc
+    => abbrevKey(nodeKey, closeRegion);
+
+/// Whether `key` names a close affordance rather than a collapsible run.
+bool isPopupCloseKey(size_t key) @safe pure nothrow @nogc
+    => key != 0 && abbrevRegion(key) == closeRegion;
+
+/// ditto — the popup's own scrollbars, which a host must be able to grab.
+private enum size_t vBarRegion = 0xF_FFFD;
+private enum size_t hBarRegion = 0xF_FFFC;   /// ditto
+
+/**
+Which of the popup's scrollbars a `Widget.key` names, if either.
+
+A bar is a $(B control), not decoration: a reader who can see that a popup
+scrolls reaches for its thumb. Naming the bars through the same key channel the
+✕ and the collapsed runs already use means a host decodes one lookup for every
+click inside a popup, and gets the bar's rect from the same `keyTargets` list —
+which is what a grab needs, because a thumb drag is track-relative.
+*/
+enum PopupBar : ubyte
+{
+    none,       /// the key names something else
+    vertical,   /// the body's rows
+    horizontal, /// the fences' columns
+}
+
+/// ditto
+PopupBar popupBarOf(size_t key) @safe pure nothrow @nogc
+{
+    if (key == 0)
+        return PopupBar.none;
+    const r = abbrevRegion(key);
+    return r == vBarRegion ? PopupBar.vertical
+        : r == hBarRegion ? PopupBar.horizontal : PopupBar.none;
+}
+
+/// ditto — the key a given bar carries.
+size_t popupBarKey(size_t nodeKey, PopupBar bar) @safe pure nothrow @nogc
+in (bar != PopupBar.none)
+    => abbrevKey(nodeKey,
+        bar == PopupBar.vertical ? vBarRegion : hBarRegion);
 
 /// The region a `Widget.key` names, undoing `abbrevKey`. Backends resolve a
 /// click to a key and index `ExpandedRegions` — which is per signature — with
@@ -642,28 +879,346 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     const structured = node.signature != SignatureLayout.init;
     uint[] sigRows = signatureBlock(b, node, hit, opts, sigStyle, sigWidth, sigWrap);
 
-    uint[] sections = [popupSection(b, sigRows, divider: false)];
-    // Functions only: the producer reports effects for nothing else, and a
-    // variable's lone `@system` rides in its text where it was written.
+    // The HEADER is the signature plus, for a function, the effect chips that
+    // qualify it. `@safe pure nothrow @nogc` is part of what the signature SAYS
+    // — a reader scrolled past it has lost half the declaration — so the two
+    // are pinned together and the rule goes after them, not between them.
+    uint[] header = [popupHeaderRow(b, sigRows, opts)];
     if (structured && node.signature.effects != Effects.init)
-        sections ~= popupSection(b,
-            effectChips(b, node.signature.effects, hit, opts.unicode),
-            divider: true);
-    if (docsRows.length)
-        sections ~= popupSection(b, docsRows, divider: true);
-    if (tagRows.length)
-        sections ~= popupSection(b, tagRows, divider: true);
+        header ~= popupSection(b,
+            effectChips(b, node.signature.effects, hit, opts.unicode));
 
-    const col = b.container(WidgetKind.column, sections);
+    // Everything below the header, each section preceded by its own rule.
+    uint[] rest;
+    if (docsRows.length)
+        rest ~= popupSection(b, docsRows);
+    if (tagRows.length)
+    {
+        if (rest.length)
+            rest ~= popupRule(b);   // examples above, `@returns` below
+        rest ~= popupSection(b, tagRows);
+    }
+
     // The cap is a clamp on a `fit` box, so the popup still shrinks to its
     // content — it just stops growing past the room the backend reported.
     auto width = SizeSpec.fit_;
     if (opts.maxWidth > 0)
         width.max = opts.maxWidth;
-    const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
-        width: width, padding: Insets(1, 0, 1, 0), paintBackground: true,
-        decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
+
+    // The header never scrolls. It is the thing the reader anchored on, and
+    // scrolling it out of view is the same failure as overflowing the surface —
+    // the popup is still on screen and still useless. So the shell splits: a
+    // pinned header, its rule, and everything else inside a viewport.
+    // What the header costs the body: its rows, the rule under it, and the
+    // popup's own vertical padding. Counted rather than assumed, because the
+    // effect chips add a row only for a function.
+    const headerRows = cast(int) header.length + (rest.length ? 1 : 0) + 2;
+    const bodyRows = popupBodyRows(opts, headerRows);
+    auto body = popupBody(b, rest, opts, bodyRows);
+    if (body != invalidNode)
+        body = withScrollbars(b, body, opts, bodyRows);
+    uint[] stack = header;
+    if (rest.length)
+        stack ~= popupRule(b);
+    stack ~= body == invalidNode ? rest : [body];
+    const col = b.container(WidgetKind.column, stack);
+
+    auto height = SizeSpec.fit_;
+    if (opts.maxHeight > 0)
+        height.max = opts.maxHeight;
+    const popup = b.add(Widget(kind: WidgetKind.panel, slot: Slot.surface,
+        width: width, height: height, padding: Insets(1, 0, 1, 0),
+        paintBackground: true, decoration: surfaceDeco(arrow: true),
+        children: [col], hitId: hit));
     return b.finish(popup);
+}
+
+/**
+The header's first row: the signature, and the close affordance beside it.
+
+The ✕ sits in the popup's top-right corner and its column is reserved whether or
+not it shows, so revealing it on hover cannot reflow the declaration underneath.
+It carries a `Widget.key` rather than a hit id because a click inside a popup is
+already decoded through keys, and one channel is enough.
+*/
+private uint popupHeaderRow(ref Builder b, uint[] sigRows,
+    in HoverViewOptions opts)
+{
+    const sig = b.add(Widget(kind: WidgetKind.column, children: sigRows,
+        width: SizeSpec.grow(), stretch: true));
+    const lane = opts.showClose
+        ? b.add(Widget(kind: WidgetKind.text, text: "✕", slot: Slot.muted,
+            key: popupCloseKey(opts.nodeKey)))
+        : b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
+    return b.add(Widget(kind: WidgetKind.row, children: [sig, lane],
+        width: SizeSpec.grow(), stretch: true, gap: 1,
+        padding: Insets(0, 1, 0, 1)));
+}
+
+/**
+Points the popup's caret at what it describes.
+
+The view declares that it $(I wants) a caret; where that caret goes is the
+solve's answer, because it depends on which side the popup was placed on and how
+far along that edge the anchor fell. So the tree is built first, placed, and
+then told — between `layout` and the display list, which is the only window in
+which both facts exist.
+
+Without this a popup's caret sits wherever its `Decoration` was authored — cell
+one of the top edge, always — so it pointed at the popup's own left corner
+rather than at the token the reader was hovering.
+*/
+void applyPopupArrow(ref WidgetTree tree, in OverlayGeometry g)
+    @safe pure nothrow @nogc
+{
+    if (!tree.nodes.length)
+        return;
+    auto n = &tree.nodes[tree.root];
+    n.decoration.arrow = g.arrowVisible;
+    // The OPPOSITE edge. `OverlayGeometry.side` names the edge of the ANCHOR
+    // the popup attached to; `Decoration.arrowSide` names the edge of the BOX
+    // the caret hangs off, and a popup hanging BELOW its anchor wears its
+    // caret on its own TOP edge. Passing the side through unchanged points
+    // every caret at the wrong edge, silently — the two enums are the same
+    // type, so nothing complains.
+    n.decoration.arrowSide = g.side.opposite;
+    n.decoration.arrowOffset = g.arrowCell;
+}
+
+/// Not a node index any builder can return.
+private enum uint invalidNode = uint.max;
+
+/**
+`view` with the bars its scrollable axes call for (`SCV`).
+
+$(B A container that scrolls says so.) A viewport with no bar gives a reader no
+way to know there is more, and no way to tell how much — which is the whole
+complaint a clipped surface answers. The rows are the caller's measurement from
+the previous frame, because the extents come from `layout` and the bars are
+built before it; a first frame therefore shows none, and every frame after it
+shows the truth.
+
+The vertical bar rides a one-column gutter beside the body; the horizontal one a
+one-row gutter beneath it. Both are $(B reserved unconditionally) while their
+axis can scroll, so the body does not reflow as the reader moves through it.
+*/
+private uint withScrollbars(ref Builder b, uint view, in HoverViewOptions opts,
+    int bodyRows)
+{
+    import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec;
+    import sparkles.ui.state : ScrollAxis;
+
+    uint out_ = view;
+
+    if (opts.barContent > opts.barViewport && bodyRows > 0)
+    {
+        // The track is the BODY's rows, which is what the bar stands beside.
+        // A zero here is not a default — `scrollbar` reads it as the widget's
+        // extent along its own axis, so the bar laid out one column wide and
+        // zero rows tall: present in the tree, absent from the screen, and
+        // absent from `keyTargets` too, because an empty rect is not hittable.
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: opts.barContent, viewport: opts.barViewport,
+            offset: opts.scrollOffset, axis: ScrollAxis.vertical,
+            paintsIdleTrack: true,
+            key: popupBarKey(opts.nodeKey, PopupBar.vertical)), bodyRows);
+        out_ = b.add(Widget(kind: WidgetKind.row, children: [out_, bar],
+            width: SizeSpec.grow()));
+    }
+
+    if (opts.barContentX > opts.barViewportX)
+    {
+        const bar = scrollbar(b, ScrollbarSpec(
+            content: opts.barContentX, viewport: opts.barViewportX,
+            offset: opts.barOffsetX, axis: ScrollAxis.horizontal,
+            paintsIdleTrack: true,
+            key: popupBarKey(opts.nodeKey, PopupBar.horizontal)), 1);
+        // Its track is the popup's INTERIOR WIDTH, which no one knows before
+        // layout: the shell is a `fit` box that shrinks to its content and
+        // only caps at `maxWidth`. So the bar is told to grow instead, and the
+        // width it ends up with is the one the display list paints and the one
+        // a grab measures against — the same rect, by construction.
+        b.nodes[bar].width = SizeSpec.grow();
+        out_ = b.add(Widget(kind: WidgetKind.column, children: [out_, bar],
+            width: SizeSpec.grow()));
+    }
+    return out_;
+}
+
+/**
+How many rows the body gets: the cap, less the pinned header and the popup's own
+padding. Zero when nothing capped the popup, which is also "there is no
+viewport".
+
+Computed $(B once) and handed to both the viewport and its bar. They must agree
+on it exactly — the bar stands beside the body and a track of a different length
+is a thumb that lies about where it is.
+*/
+private int popupBodyRows(in HoverViewOptions opts, int headerRows)
+    @safe pure nothrow @nogc
+{
+    if (opts.maxHeight <= 0)
+        return 0;
+    // A floor of one keeps the viewport representable on a surface too short to
+    // be useful, where the solve has already reported `refused` or `shrunk`.
+    return opts.maxHeight - headerRows > 1 ? opts.maxHeight - headerRows : 1;
+}
+
+/**
+The popup's scrolling body: everything below the signature, inside a clipped
+viewport with a bar beside it.
+
+Returns $(LREF invalidNode) when there is nothing to scroll — an unbounded
+popup, or one whose whole content is its signature — so the caller keeps the
+flat shell it had. A viewport that can never scroll is a gutter of wasted
+columns and a clip nobody needs.
+
+The engine does the arithmetic: a clipped axis keeps its children $(B natural)
+(`layout`'s `noShrink` rule), so after one `layout()` the viewport's own frame
+is the viewport and its child's frame is the full content extent. Neither is
+guessed, and neither costs a second pass.
+*/
+private uint popupBody(ref Builder b, uint[] rest, in HoverViewOptions opts,
+    int rows)
+{
+    if (rows <= 0 || rest.length == 0)
+        return invalidNode;
+
+    const content = b.container(WidgetKind.column, rest);
+    // Clipped on BOTH axes. The vertical clip is what makes the body a
+    // viewport; the horizontal one is what makes wide content that does not
+    // clip itself reachable instead of merely truncated.
+    const view = b.add(Widget(
+        kind: WidgetKind.column,
+        children: [content],
+        height: SizeSpec.fixed(rows),
+        width: SizeSpec.grow(),
+        clipX: true,
+        clipY: true,
+        childOffset: Point(cast(int) opts.scrollOffsetX,
+            cast(int) opts.scrollOffset),
+    ));
+    return view;
+}
+
+/**
+What the popup's body can scroll over, read off the laid-out tree.
+
+Deliberately not a `Widget.key`: `keyTargets` is the channel a click uses to
+name a collapsed signature run, and keying the shell would put two more entries
+in it — so "which run did I click" would stop meaning what it says. The body is
+found structurally instead, as the one clipped container the shell builds.
+
+`content` is the natural extent of what is inside the viewport and `viewport`
+is the rows it shows, both straight from `frames`: a clipped axis keeps its
+children natural (`layout`'s `noShrink` rule), so one `layout()` answers both
+and neither is guessed.
+*/
+struct PopupScroll
+{
+    long content;   /// rows the body would need
+    long viewport;  /// rows it has
+    long contentX;  /// cells its widest row would need
+    long viewportX; /// cells it has
+    /// The widest fenced code block, and the room it has. A fence clips its own
+    /// long lines rather than overflowing the body, so its overflow is
+    /// invisible to the pair above and has to be reported separately.
+    long fenceContentX;
+    /// ditto
+    long fenceViewportX;
+
+@safe pure nothrow @nogc const:
+
+    /// Whether there is anything to scroll vertically — the test a host makes
+    /// before spending a gutter column on a bar.
+    bool live() => content > viewport;
+    /// Whether the BODY overflows sideways. Prose wraps and a fence clips
+    /// itself, so this is about the rest: a wide table, mostly.
+    bool liveX() => contentX > viewportX;
+    /// Whether a fence overflows sideways — the usual reason a hover needs a
+    /// horizontal bar at all.
+    bool liveFenceX() => fenceContentX > fenceViewportX;
+    /// The furthest a fence may be scrolled.
+    long maxFenceX() => liveFenceX ? fenceContentX - fenceViewportX : 0;
+}
+
+/// ditto
+PopupScroll popupScrollExtents(in WidgetTree tree, in Frame[] frames)
+    @safe pure nothrow @nogc
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    PopupScroll sc;
+
+    // The body is at a KNOWN position — the shell builds it as the last child
+    // of the popup's column — so it is found structurally rather than by a
+    // `Widget.key`. Keying it would add an entry to `keyTargets`, which is the
+    // channel a click uses to name a collapsed signature run, and "which run
+    // did I click" would stop meaning what it says.
+    //
+    // $(B Through the gutters.) Once the body scrolls, `withScrollbars` wraps
+    // it — a row beside the vertical bar, a column above the horizontal one —
+    // so the column's last child is a wrapper, not the viewport. Both wrappers
+    // carry the viewport as their FIRST child, so the descent finds it either
+    // way. Stopping at the wrapper is what made the measurement collapse to
+    // zero on every frame a bar was up, which unbuilt the bar on the next one:
+    // the popup flickered between having a bar and having none, and a fence's
+    // sideways extent went with it.
+    const root = tree.nodes[tree.root];
+    uint body_ = uint.max;
+    if (root.children.length == 1)
+    {
+        const col = tree.nodes[root.children[0]];
+        if (col.children.length)
+        {
+            uint at = col.children[$ - 1];
+            // At most the two gutters, so a malformed tree cannot loop.
+            foreach (_; 0 .. 3)
+            {
+                if (tree.nodes[at].clipY && tree.nodes[at].children.length == 1)
+                {
+                    body_ = at;
+                    break;
+                }
+                if (tree.nodes[at].children.length == 0)
+                    break;
+                at = tree.nodes[at].children[0];
+            }
+        }
+    }
+    if (body_ != uint.max)
+    {
+        const inner = tree.nodes[body_].children[0];
+        sc.content = frames[inner].rect.height;
+        sc.viewport = frames[body_].rect.height;
+        sc.contentX = frames[inner].rect.width;
+        sc.viewportX = frames[body_].rect.width;
+    }
+
+    // Every other clipping node is content that scrolls itself — a fence, a
+    // table. The widest overflow is what a horizontal bar would represent.
+    //
+    // A fence's viewport holds ONE CHILD PER LINE, not a single content node:
+    // its extent is the widest of them. Demanding a lone child (which is what
+    // the popup body happens to have) matched no fence at all, so the sideways
+    // extent read zero and a fence that plainly ran off the edge reported
+    // nothing to scroll.
+    foreach (i, ref const n; tree.nodes)
+    {
+        if (i == body_ || !n.clipX || n.children.length == 0)
+            continue;
+        const have = frames[i].rect.width;
+        int want;
+        foreach (c; n.children)
+            if (frames[c].rect.width > want)
+                want = frames[c].rect.width;
+        if (want - have > sc.fenceContentX - sc.fenceViewportX)
+        {
+            sc.fenceContentX = want;
+            sc.fenceViewportX = have;
+        }
+    }
+    return sc;
 }
 
 /// The signature as rows: structural breaking when the producer described this
@@ -884,14 +1439,53 @@ private uint chipWidget(ref Builder b, string text, Slot slot, size_t hit)
 /// (`6px 8px` in the CSS) and, when `divider`, a 1px top border that — because the
 /// section stretches to the popup width and the popup has no horizontal padding —
 /// spans border-to-border as the section separator.
-private uint popupSection(ref Builder b, uint[] rows, bool divider)
+private uint popupSection(ref Builder b, uint[] rows)
     => b.add(Widget(kind: WidgetKind.column, children: rows, stretch: true,
-        padding: Insets(0, 1, 0, 1),
-        decoration: divider
-            ? Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
-                borderStyle: BorderStyle.solid, borderSlot: Slot.border) : Decoration.init));
+        padding: Insets(0, 1, 0, 1)));
+
+/**
+A full-width horizontal rule — the popup's section divider.
+
+$(B A one-row box with a BOTTOM border), which is the only spelling a cell
+backend can draw: a cell has an underline attribute and no overline, so a
+top-only border renders as nothing at all there. The dividers were top borders
+on the following section, so they had never appeared in the terminal — only in
+the GUI and HTML, where a top border is a real edge. This is the same widget
+$(REF viewMarkdownInto, sparkles,source_view,markdown) emits for a `---`
+thematic break, for the same reason.
+*/
+private uint popupRule(ref Builder b)
+    => b.add(Widget(kind: WidgetKind.box, stretch: true,
+        height: SizeSpec.fixed(1),
+        decoration: Decoration(borderWidth: Insets(0, 0, M.borderWidth, 0),
+            borderStyle: BorderStyle.solid, borderSlot: Slot.border)));
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
+
+/**
+Every fence in `doc`, at one shared horizontal offset.
+
+A fence clips its own long lines, so the offset must reach the fence's viewport
+rather than the popup's — and the view addresses fences by their body's source
+start, which only the parsed document knows.
+*/
+private FenceScroll[] fenceScrollsOf(in MdDoc doc, int x) @safe
+{
+    if (x == 0)
+        return null;   // the common case allocates nothing
+
+    FenceScroll[] out_;
+    void walk(in MdBlock blk)
+    {
+        if (blk.kind == MdBlockKind.codeFence)
+            out_ ~= FenceScroll(bodyStart: blk.codeBody.start, x: x);
+        foreach (ref const c; blk.children)
+            walk(c);
+    }
+
+    walk(doc.root);
+    return out_;
+}
 
 /// Renders `docs` (JSDoc markdown) into wrapped, inline-styled widget rows via the
 /// `sparkles:syntax` `MdDoc` model. Empty parse (no grammar) ⇒ plain-line fallback.
@@ -906,14 +1500,19 @@ private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
         return plainDocsRows(b, docs, hit);
     // The shared composable markdown view — "JSDoc renders through the same
     // markdown view" — with the popup's docs face/slot/width and hit identity.
-    // The docs metric is a preferred measure; the room the backend reported
-    // wins when it is narrower.
-    const docsWidth = maxWidth > 0 && maxWidth < M.docsMaxWidth
-        ? maxWidth : M.docsMaxWidth;
+    //
+    // ONE wrap width for the whole popup. `docsMaxWidth` is a readable prose
+    // measure and it used to narrow this section further, so the description
+    // wrapped at 56 columns while the `@tag` rows beside it took the popup's
+    // full interior — two measures in one surface, which reads as a bug rather
+    // than as typography. The metric now caps a popup nobody sized (the
+    // unbounded path); a popup the solve sized wraps everything to it.
+    const docsWidth = maxWidth > 0 ? maxWidth : M.docsMaxWidth;
     return [viewMarkdownInto(b, doc, MdViewOptions(
         maxWidth: docsWidth, hitId: hit,
         baseStyle: docsBase(), proseSlot: Slot.docs,
-        theme: opts.mdTheme, fenceRenderer: opts.fenceRenderer))];
+        theme: opts.mdTheme, fenceRenderer: opts.fenceRenderer,
+        fenceScrolls: fenceScrollsOf(doc, opts.fenceScrollX)))];
 }
 /// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
 /// so a `\n` reads as a line break instead of a tofu glyph.
@@ -1796,4 +2395,625 @@ version (unittest)
             return;
         }
     assert(false, "no hover underline was drawn");
+}
+
+@("render_widgets.viewHoverPopup.aLongDdocIsBoundedAndScrolls")
+@safe unittest
+{
+    // The failure this fixes: a ddoc-heavy hover measured whatever it measured
+    // and ran off the surface, so the reader lost the end of the sentence with
+    // no way to reach it. Bounded, the body scrolls — and the SIGNATURE does
+    // not, because scrolling away the thing the reader anchored on is the same
+    // failure wearing a different hat.
+    import sparkles.ui.layout : layout;
+
+    string docs;
+    foreach (i; 0 .. 60)
+        docs ~= "A paragraph of documentation that goes on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int veryDocumented(int a)", docs: docs),
+    ]);
+
+    // Unbounded: the popup is as tall as its content, which is the bug.
+    const tall = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 48));
+    auto tallFrames = layout(tall);
+    const tallRows = tallFrames[tall.root].rect.height;
+    assert(tallRows > 40, "an unbounded popup grows without limit");
+    assert(!popupScrollExtents(tall, tallFrames).live,
+        "and has no viewport, so there is nothing to scroll");
+
+    // Bounded: capped at the budget, with the overflow inside a viewport.
+    const capped = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 48, maxHeight: 12));
+    auto frames = layout(capped);
+    assert(frames[capped.root].rect.height == 12, "capped at the budget");
+
+    const sc = popupScrollExtents(capped, frames);
+    assert(sc.live, "there is more body than viewport");
+    // The budget less what the header costs it: one signature row, the rule
+    // under it, and the popup's own two rows of vertical padding. (No effect
+    // chips here — this node carries no `SignatureLayout`.)
+    assert(sc.content > sc.viewport && sc.viewport == 12 - 4,
+        "the viewport is the budget less the header, its rule and the padding");
+
+    // The signature is still on the FIRST row of the surface, at every offset:
+    // it is outside the viewport, so scrolling cannot take it away.
+    const scrolled = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 48, maxHeight: 12, scrollOffset: 20));
+    auto sf = layout(scrolled);
+    assert(sf[scrolled.root].rect.height == 12, "still capped");
+    const sc2 = popupScrollExtents(scrolled, sf);
+    assert(sc2.content == sc.content && sc2.viewport == sc.viewport,
+        "the offset moves the body; it does not resize it");
+}
+
+@("render_widgets.viewHoverPopup.theRuleIsARowEveryBackendCanDraw")
+@safe unittest
+{
+    // A cell has an underline attribute and NO overline, so a top-only border
+    // draws nothing at all in a terminal. The section dividers were top borders
+    // on the following section, so they had never appeared there — only in the
+    // GUI and HTML, where a top border is a real edge. A rule is a one-row box
+    // with a BOTTOM border, which every backend can draw.
+    import sparkles.ui.layout : layout;
+
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: "Some prose.\n",
+            tags: [["returns", "a number"]]),
+    ]);
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44));
+    auto f = layout(t);
+
+    size_t rules, topOnly;
+    foreach (i, ref const n; t.nodes)
+    {
+        const w = n.decoration.borderWidth;
+        if (w.bottom > 0 && w.top == 0 && w.left == 0 && w.right == 0
+            && n.decoration.borderStyle == BorderStyle.solid)
+        {
+            ++rules;
+            assert(f[i].rect.height == 1, "a rule is one row");
+        }
+        if (w.top > 0 && w.left == 0 && w.right == 0 && w.bottom == 0)
+            ++topOnly;
+    }
+    assert(topOnly == 0, "no divider may be a top border: cells cannot draw one");
+    // One under the header, one between the docs and the `@tag` rows.
+    assert(rules == 2, "a rule under the header, and one before the tags");
+}
+
+@("render_widgets.viewHoverPopup.theHeaderIsTheSignatureAndItsAttributes")
+@safe unittest
+{
+    // `@safe pure nothrow @nogc` is part of what the signature SAYS — a reader
+    // who has scrolled past it has lost half the declaration — so the chips are
+    // pinned with it and the rule goes AFTER them.
+    import sparkles.ui.layout : layout;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    SignatureLayout sig;
+    sig.effects = Effects(trust: "@safe", isPure: true);
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs, signature: sig),
+    ]);
+
+    // The rule's row is fixed while the body scrolls under it, and it sits
+    // BELOW the chips rather than between them and the signature.
+    static int ruleRow(in WidgetTree t, in Frame[] f)
+    {
+        int found = -1;
+        foreach (i, ref const n; t.nodes)
+        {
+            const w = n.decoration.borderWidth;
+            if (w.bottom > 0 && w.top == 0 && w.left == 0 && w.right == 0
+                && n.decoration.borderStyle == BorderStyle.solid
+                && (found < 0 || f[i].rect.y < found))
+                found = f[i].rect.y;
+        }
+        return found;
+    }
+
+    int firstRow = -1;
+    foreach (off; [0, 4, 11, 30])
+    {
+        const t = viewHoverPopup(tw, 0,
+            HoverViewOptions(maxWidth: 44, maxHeight: 14, scrollOffset: off));
+        auto f = layout(t);
+        const row = ruleRow(t, f);
+        assert(row > 1, "the rule is below BOTH header rows");
+        if (firstRow < 0)
+            firstRow = row;
+        assert(row == firstRow, "and does not move as the body scrolls");
+        assert(popupScrollExtents(t, f).live,
+            "…while the body under it really is scrolling");
+    }
+}
+
+
+@("render_widgets.viewHoverPopup.everySectionWrapsToOneWidth")
+@safe unittest
+{
+    // The description used to be narrowed to `docsMaxWidth` while the `@tag`
+    // rows beside it took the popup's full interior, so one surface showed two
+    // wrap widths — which reads as a bug rather than as typography.
+    import sparkles.ui.layout : layout;
+
+    // Prose and a tag, both long enough to wrap at any sane width.
+    enum long_ = "one two three four five six seven eight nine ten eleven "
+        ~ "twelve thirteen fourteen fifteen sixteen seventeen eighteen";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: long_ ~ "\n",
+            tags: [["returns", long_]]),
+    ]);
+
+    // A popup far wider than the old 56-column prose measure.
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 96));
+    auto f = layout(t);
+
+    // The widest laid-out row of each section, which is what a reader compares.
+    int docsRight, tagRight;
+    foreach (i, ref const n; t.nodes)
+    {
+        if (n.kind != WidgetKind.text && n.kind != WidgetKind.rich)
+            continue;
+        const r = f[i].rect.right;
+        // The `@returns` row is the one carrying the tag's own name run.
+        if (n.text == "returns")
+            tagRight = tagRight > r ? tagRight : r;
+    }
+    foreach (i, ref const n; t.nodes)
+        if (n.wrap != TextWrap.none && f[i].rect.width > docsRight)
+            docsRight = f[i].rect.width;
+
+    assert(docsRight > 56,
+        "prose is no longer clamped to the standalone docs measure");
+    assert(docsRight <= 96, "and still fits the popup the solve sized");
+}
+
+@("render_widgets.viewHoverPopup.theRuleActuallyPaintsInATerminal")
+@safe unittest
+{
+    // The bug this whole shape fixes: the dividers were TOP borders, which a
+    // cell backend cannot draw at all — a cell has an underline attribute and
+    // no overline — so the terminal showed a popup with no separators while
+    // the GUI showed them. Asserting the widget tree is not enough; the rule
+    // has to reach a grid.
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: "Some prose about it.\n",
+            tags: [["returns", "a number"]]),
+    ]);
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+    auto f = layout(t);
+
+    const bg = RgbColor(0x1a, 0x1b, 0x26), fg = RgbColor(0xc0, 0xc0, 0xc0);
+    const pal = defaultTwoslashPalette(schemeForBackground(bg));
+    auto grid = CellGrid(48, cast(int) f[t.root].rect.height + 2, fg, bg);
+    paint(grid, buildDisplayList(t, f, pal, fg, bg));
+
+    // Count rows made of the box-drawing horizontal — the rule's glyph.
+    size_t ruleRows;
+    foreach (y; 0 .. grid.height)
+    {
+        size_t run;
+        foreach (x; 0 .. grid.width)
+            if (grid.cells[y * grid.width + x].glyph == '─')
+                ++run;
+        if (run >= 8)
+            ++ruleRows;
+    }
+    // The popup's own top and bottom border, plus the two internal rules.
+    assert(ruleRows >= 4,
+        "the section dividers must reach the grid, not only the widget tree");
+}
+
+@("render_widgets.viewHoverPopup.aScrollableBodyShowsItsBars")
+@safe unittest
+{
+    // `SCV`: a container that scrolls says so. A viewport with no bar gives a
+    // reader no way to know there is more and no way to tell how much, which
+    // is the whole complaint a clipped surface answers.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : WidgetKind;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    static size_t bars(in WidgetTree t)
+    {
+        size_t n;
+        foreach (ref const w; t.nodes)
+            if (w.kind == WidgetKind.scrollbar)
+                ++n;
+        return n;
+    }
+
+    // Frame one: the host has measured nothing yet, so there is no bar to draw
+    // — the extents come from `layout`, and the bars are part of what it
+    // measures. One frame of lag, the same every hit rect already has.
+    const first = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12));
+    assert(bars(first) == 0);
+
+    // Frame two, with last frame's measurement fed back.
+    auto f1 = layout(first);
+    const sc = popupScrollExtents(first, f1);
+    assert(sc.live, "the body does overflow");
+
+    const second = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44,
+        maxHeight: 12, barContent: sc.content, barViewport: sc.viewport));
+    assert(bars(second) == 1, "a vertical bar, because the body scrolls");
+
+    // And it REACHES THE GRID. A bar in the widget tree is not a bar a reader
+    // can see: this one laid out one column wide and zero rows tall, because
+    // `scrollbar`'s track argument is the widget's extent along its own axis
+    // and the shell passed nothing. It was in the tree, in the display list,
+    // and nowhere on the screen — which is exactly how it was reported.
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+
+    auto f3 = layout(second);
+    const bg = RgbColor(0x1a, 0x1b, 0x26), fg = RgbColor(0xc0, 0xc0, 0xc0);
+    const pal = defaultTwoslashPalette(schemeForBackground(bg));
+    auto grid = CellGrid(60, cast(int) f3[second.root].rect.height + 2, fg, bg);
+    paint(grid, buildDisplayList(second, f3, pal, fg, bg));
+
+    size_t thumbCells;
+    foreach (ref const c; grid.cells)
+        if (c.glyph == '\u2588')   // the default thumb block
+            ++thumbCells;
+    assert(thumbCells > 0, "the bar must be painted, not merely built");
+
+    // A popup that fits shows none: a gutter spent on a bar nobody can use is
+    // a column stolen from the text.
+    const short_ = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: "One line.\n"),
+    ]);
+    const fits = viewHoverPopup(short_, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12));
+    auto f2 = layout(fits);
+    assert(!popupScrollExtents(fits, f2).live);
+    assert(bars(fits) == 0);
+}
+
+@("render_widgets.viewHoverPopup.theCloseLaneIsReservedAndRevealed")
+@safe unittest
+{
+    // The gallery's terminal tab list makes this bargain and it is the reason a
+    // hover-revealed control can sit inside content at all: the column is
+    // reserved WHETHER OR NOT the ✕ shows, so revealing it cannot reflow the
+    // declaration the reader is looking at.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : keyAt, keyTargets;
+
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int reduce(int[] r)", docs: "Some prose.\n"),
+    ]);
+
+    const idle = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, nodeKey: 1));
+    const hot = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, nodeKey: 1, showClose: true));
+    auto fi = layout(idle), fh = layout(hot);
+
+    assert(fi[idle.root].rect == fh[hot.root].rect,
+        "revealing the ✕ must not move or resize the popup");
+
+    // It is clickable through the SAME key channel a collapsed run uses, so a
+    // backend decodes one lookup rather than growing a second.
+    const targets = keyTargets(hot, fh);
+    size_t found;
+    foreach (t; targets)
+        if (isPopupCloseKey(t.key))
+            found = t.key;
+    assert(found == popupCloseKey(1));
+    assert(!isPopupCloseKey(abbrevKey(1, 0)),
+        "and a collapsed run is not mistaken for it");
+
+    // Idle, there is nothing to click.
+    foreach (t; keyTargets(idle, fi))
+        assert(!isPopupCloseKey(t.key));
+
+    // It sits in the top-right corner: the popup's first content row, at its
+    // right edge rather than after the signature text.
+    foreach (t; targets)
+        if (isPopupCloseKey(t.key))
+        {
+            assert(t.rect.y == fh[hot.root].rect.y + 1, "the top row");
+            assert(t.rect.right >= fh[hot.root].rect.right - 2,
+                "hard against the right edge");
+        }
+}
+
+@("render_widgets.applyPopupArrow.pointsAtTheTokenNotAtTheCorner")
+@safe unittest
+{
+    // The caret must point at what the popup describes. Left to the view's own
+    // `Decoration` it sat at cell one of the top edge, always — aimed at the
+    // popup's left corner, wherever the token actually was.
+    import sparkles.ui.canvas : arrowCellOf, arrowFits;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : BoxSide, defaultTwoslashPalette,
+        schemeForBackground;
+    import sparkles.base.term_color : RgbColor;
+
+    const pal = defaultTwoslashPalette(
+        schemeForBackground(RgbColor(0x1a, 0x1b, 0x26)));
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int reduce(int[] r)", docs: "Some prose.\n"),
+    ]);
+
+    // The same popup against three anchors at different columns. The caret
+    // must move with the anchor, not stay put.
+    int[] cells;
+    foreach (ax; [4, 30, 60])
+    {
+        auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+        auto f = layout(tree);
+        const anchor = AnchorRect(primary: Rect(ax, 3, 6, 1), live: true);
+        const g = placeHoverPopup(pal, anchor, f[tree.root].rect.size,
+            Rect(0, 0, 100, 30));
+        assert(g.paintable && g.arrowVisible);
+        applyPopupArrow(tree, g);
+
+        const deco = tree.nodes[tree.root].decoration;
+        assert(deco.arrow && deco.arrowSide == BoxSide.top,
+            "it hangs below, so its caret is on its own top edge");
+
+        // The caret's absolute cell is the anchor's centre, or as near as the
+        // edge allows — never the corner.
+        const box = Rect(g.rect.x, g.rect.y, g.rect.width, g.rect.height);
+        assert(arrowFits(box, deco.arrowSide, deco.arrowOffset));
+        const at = arrowCellOf(box, deco.arrowSide, deco.arrowOffset);
+        const centre = ax + 3;
+        assert(at.x >= box.x + 1 && at.x <= box.right - 2, "inside the edge");
+        assert(at.x == centre || at.x == box.x + 1 || at.x == box.right - 2,
+            "the anchor's centre, or the nearest legal cell to it");
+        cells ~= at.x;
+    }
+
+    // The ABSOLUTE cell tracks the anchor. The overlay-local offset does not
+    // have to: a start-aligned popup moves WITH its anchor, so the caret keeps
+    // the same distance from the popup's left edge — which is the anchor's
+    // centre, correctly.
+    assert(cells[0] < cells[1] && cells[1] < cells[2]);
+
+    // Where the popup cannot follow — an anchor near the right edge slides it
+    // left — the local offset moves instead, and still lands on the anchor.
+    auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+    auto f = layout(tree);
+    const edge = AnchorRect(primary: Rect(90, 3, 6, 1), live: true);
+    const g = placeHoverPopup(pal, edge, f[tree.root].rect.size,
+        Rect(0, 0, 100, 30));
+    assert(g.paintable && g.arrowVisible);
+    applyPopupArrow(tree, g);
+    const box = Rect(g.rect.x, g.rect.y, g.rect.width, g.rect.height);
+    const at = arrowCellOf(box, tree.nodes[tree.root].decoration.arrowSide,
+        tree.nodes[tree.root].decoration.arrowOffset);
+    assert(box.x < 90, "the popup slid left to stay inside");
+    assert(at.x == 93 || at.x == box.right - 2,
+        "and the caret stayed on the token, not on the popup's edge");
+}
+
+@("render_widgets.applyPopupArrow.theCaretReachesTheGridAboveItsAnchor")
+@safe unittest
+{
+    // Through a real grid, because the last two caret defects were both
+    // invisible in the widget tree: the offset was right and the EDGE was
+    // wrong, which type-checks because both are `BoxSide`.
+    import sparkles.base.term_color : RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+
+    const bg = RgbColor(0x1a, 0x1b, 0x26), fg = RgbColor(0xc0, 0xc0, 0xc0);
+    const pal = defaultTwoslashPalette(schemeForBackground(bg));
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int reduce(int[] r)", docs: "Some prose.\n"),
+    ]);
+
+    auto tree = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 40));
+    auto f = layout(tree);
+    const anchor = AnchorRect(primary: Rect(20, 2, 6, 1), live: true);
+    const g = placeHoverPopup(pal, anchor, f[tree.root].rect.size,
+        Rect(0, 0, 80, 30));
+    assert(g.paintable);
+    applyPopupArrow(tree, g);
+
+    auto grid = CellGrid(80, 30, fg, bg);
+    paint(grid, buildDisplayList(tree, f, pal, fg, bg));
+
+    // The tree lays out at the ORIGIN; only the host translates it to where
+    // the solve put it. So the caret is checked against the tree's own frame,
+    // and the anchor-tracking is the previous test's job.
+    const box = f[tree.root].rect;
+    const off = tree.nodes[tree.root].decoration.arrowOffset;
+
+    size_t found;
+    foreach (y; 0 .. grid.height)
+        foreach (x; 0 .. grid.width)
+            if (grid.cells[y * grid.width + x].glyph == '┴')
+            {
+                ++found;
+                assert(y == box.y, "on the popup's own top row — the edge "
+                    ~ "facing the anchor; `┬` would be the opposite one");
+                assert(x == box.x + off, "at the cell the solve chose");
+            }
+    assert(found == 1, "exactly one caret");
+
+    // And translated by the host, that cell lands on the token.
+    assert(g.rect.x + off >= 20 && g.rect.x + off <= 26);
+}
+
+@("render_widgets.popupScrollExtents.theBarSurvivesTheFrameThatDrawsIt")
+@safe unittest
+{
+    // The measurement and the bar are a FEEDBACK LOOP: the bar is built from
+    // last frame's extents, and the extents are read off this frame's layout.
+    // A measurement that only works while the bar is absent therefore unbuilds
+    // the bar it just caused — the popup flickers, and on a terminal that
+    // repaints per event the reader simply never sees one.
+    //
+    // Two frames prove nothing here. The loop has period two, and the second
+    // frame is exactly the one that looked right.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : WidgetKind;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    static size_t bars(in WidgetTree t)
+    {
+        size_t n;
+        foreach (ref const w; t.nodes)
+            if (w.kind == WidgetKind.scrollbar)
+                ++n;
+        return n;
+    }
+
+    PopupScroll sc;
+    foreach (frame; 0 .. 6)
+    {
+        const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44,
+            maxHeight: 12, barContent: sc.content, barViewport: sc.viewport));
+        auto f = layout(t);
+        const now = popupScrollExtents(t, f);
+        if (frame > 0)
+        {
+            assert(bars(t) == 1, "the bar must survive its own frame");
+            assert(now.live, "and the measurement must survive the bar");
+            // Not merely live: STILL THE SAME. A gutter costs the body a
+            // column, never a row, so the vertical extents may not drift.
+            assert(now.content == sc.content && now.viewport == sc.viewport,
+                "a settled popup must measure the same every frame");
+        }
+        sc = now;
+    }
+}
+
+@("render_widgets.popupScrollExtents.aFenceReportsItsSidewaysOverflow")
+@system unittest
+{
+    // A fence's viewport holds ONE CHILD PER LINE. Reading its content extent
+    // as "the width of its only child" matched no fence at all, so a code
+    // block that plainly ran off the popup's edge reported nothing to scroll
+    // — and a sideways wheel notch fell through to the document underneath.
+    import sparkles.ui.layout : layout;
+    import std.process : environment;
+
+    // The fence only becomes a viewport once markdown has parsed it, which
+    // needs the grammar bundle.
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("SPARKLES_TS_GRAMMAR_PATH unset");
+        return;
+    }
+    auto registry = GrammarRegistry.fromEnvironment();
+
+    // MORE THAN ONE LINE, deliberately: a one-line fence has a one-child
+    // viewport and would pass under the very rule this test exists to reject.
+    const wide = "auto x = someFunction(withArguments, thatGoOn, andOn, forever);";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, text: "int f(int a)",
+            docs: "Prose.\n\n```d\nvoid main()\n{\n    " ~ wide
+                ~ "\n}\n```\n"),
+    ]);
+
+    auto t = viewHoverPopup(tw, 0, registry, HoverViewOptions(maxWidth: 44,
+        maxHeight: 12));
+    auto f = layout(t);
+    const sc = popupScrollExtents(t, f);
+    assert(sc.liveFenceX, "the fence is wider than the popup lets it be");
+    assert(sc.maxFenceX > 0);
+    // The reported extent is the LINE's, not the viewport's: a bar built from
+    // it must describe how far the code actually runs.
+    assert(sc.fenceContentX >= cast(long) wide.length - 4,
+        "the widest line, not the room it was given");
+}
+
+@("render_widgets.popupBarOf.theBarsAreNamedAndDistinct")
+@safe unittest
+{
+    // A bar is a control, so a host must be able to say "the press landed on
+    // the vertical thumb" — and must NOT mistake it for a collapsed run,
+    // which is what an unnamed bar in a key-decoded surface becomes.
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : keyTargets;
+    import sparkles.ui.widget : WidgetKind;
+
+    string docs;
+    foreach (i; 0 .. 40)
+        docs ~= "A paragraph that runs on for a while.\n\n";
+    const tw = TwoslashReturn(code: "x", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1,
+            text: "int f(int a)", docs: docs),
+    ]);
+
+    const first = viewHoverPopup(tw, 0,
+        HoverViewOptions(maxWidth: 44, maxHeight: 12, nodeKey: 7));
+    auto f1 = layout(first);
+    const sc = popupScrollExtents(first, f1);
+    const t = viewHoverPopup(tw, 0, HoverViewOptions(maxWidth: 44,
+        maxHeight: 12, nodeKey: 7,
+        barContent: sc.content, barViewport: sc.viewport));
+
+    foreach (ref const w; t.nodes)
+        if (w.kind == WidgetKind.scrollbar)
+            assert(popupBarOf(w.key) == PopupBar.vertical,
+                "the bar must name itself");
+
+    // And through the channel a host actually reads: a rect, so a grab can be
+    // track-relative, from the same list the ✕ comes out of.
+    auto targets = keyTargets(t, layout(t));
+    bool sawBar;
+    foreach (ref const kt; targets)
+        if (popupBarOf(kt.key) == PopupBar.vertical)
+        {
+            sawBar = true;
+            assert(kt.rect.height > 1, "a track has rows to grab along");
+        }
+    assert(sawBar, "the bar reaches keyTargets");
+
+    // The three reserved meanings stay apart: a bar is not the ✕, and neither
+    // is a collapsed run — the host's fallback arm toggles a region for any
+    // key it does not recognise, so an overlap silently expands a signature.
+    assert(!isPopupCloseKey(popupBarKey(7, PopupBar.vertical)));
+    assert(!isPopupCloseKey(popupBarKey(7, PopupBar.horizontal)));
+    assert(popupBarOf(popupCloseKey(7)) == PopupBar.none);
+    assert(popupBarOf(abbrevKey(7, 0)) == PopupBar.none);
+    assert(popupBarKey(7, PopupBar.vertical)
+        != popupBarKey(7, PopupBar.horizontal));
 }

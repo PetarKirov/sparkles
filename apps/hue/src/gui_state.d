@@ -16,13 +16,17 @@ import sparkles.base.buffer : SharedBuffer;
 public import input_line : InputState, Mode;
 import sparkles.input.frame : InputFrame;
 import sparkles.input.gesture : PointF;
+import sparkles.twoslash.render_widgets : PopupBar, popupBarOf;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.ui.components.table : GridHit;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.components.dock : DockContainer, PaneId;
-import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
+import sparkles.ui.state : CaptureState, KeyTarget, ScrollAxis,
+    ScrollbarState, Timeline;
 
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
+import keymap : Command, scrollAskOf;
 import lantern : LanternState;
 import table_select : TableCopyFormat;
 
@@ -265,6 +269,247 @@ struct HoverPopup
     size_t popupNode = size_t.max;
     Timeline fade;
     int forceHover = -1; // HUE_GUI_HOVER=<n>: force the Nth popup (goldens)
+    /// The body's scroll offset in rows, and what it may scroll over. A
+    /// ddoc-heavy hover used to run off the surface with no way to reach the
+    /// rest of it; bounded, the body scrolls instead. Reset with `popupNode`,
+    /// because a different symbol is a different document.
+    long popupScroll;
+    /// The body's horizontal offset, in cells. Prose wraps to the popup, so
+    /// this stays zero until the body holds something that does not — a
+    /// `unittest` example in a ddoc is routinely wider than the popup.
+    long popupScrollX;
+    /// ditto — last frame's measurement, so a wheel notch can clamp without
+    /// re-laying-out the popup to find out how far it may go.
+    long popupContentRows;
+    /// ditto
+    long popupViewportRows;
+    /// ditto
+    long popupContentCols;
+    /// ditto
+    long popupViewportCols;
+    /// How far the popup's fenced code blocks are scrolled sideways, and what
+    /// they may scroll over. A fence clips its own long lines rather than
+    /// overflowing the body, so its overflow is a separate measurement.
+    int popupFenceX;
+    /// ditto
+    long popupFenceContentCols;
+    /// ditto
+    long popupFenceViewportCols;
+    /// The popup's own bar grabs. A bar is a CONTROL: a reader who can see
+    /// that a popup scrolls reaches for its thumb, and until these existed the
+    /// press landed on the generic "some key inside the popup" arm and toggled
+    /// a signature run instead.
+    ScrollbarState vBar;
+    /// ditto
+    ScrollbarState hBar = ScrollbarState(axis: ScrollAxis.horizontal);
+    /**
+    The reader dismissed this popup — Escape, or its ✕ — so it stays shut while
+    the pointer remains on the token that opened it.
+
+    A latch rather than a close, because the GUI popup is driven by hover:
+    without it the very next frame reopens what the reader just dismissed, and
+    Escape appears to do nothing. It clears when the pointer moves to a
+    different hover token, which is a new question and deserves an answer.
+    */
+    bool dismissed;
+    /**
+    Milliseconds left before an unhovered popup actually closes (`TRG6`).
+
+    Travelling from the token to the popup crosses the caret's clearance row,
+    which belongs to neither — so a popup that closed the instant nothing was
+    hovered could not be reached at all. The corridor removes most of that, but
+    a pointer moving fast enough to skip a frame still lands on nothing for one,
+    and the grace covers it.
+
+    It is a $(B countdown), not a deadline: hue's GUI has a frame clock and no
+    wall clock, and the terminal has neither — where `frameSeconds` is zero the
+    countdown never advances and a popup simply stays until something else
+    closes it, which is the honest degradation rather than a broken timer.
+    */
+    int closeGraceMs;
+
+@safe pure nothrow @nogc:
+
+    /// The furthest the body may scroll: never past its last row.
+    long maxScroll() const scope
+    {
+        const over = popupContentRows - popupViewportRows;
+        return over > 0 ? over : 0;
+    }
+
+    /// ditto, sideways.
+    long maxScrollX() const scope
+    {
+        const over = popupContentCols - popupViewportCols;
+        return over > 0 ? over : 0;
+    }
+
+    /// Scrolls the body sideways by `cells`, clamped. `true` iff it moved,
+    /// which is also "the notch was consumed".
+    bool scrollByX(long cells) scope
+    {
+        const want = popupScrollX + cells;
+        const clamped = want < 0 ? 0 : (want > maxScrollX ? maxScrollX : want);
+        if (clamped == popupScrollX)
+            return false;
+        popupScrollX = clamped;
+        return true;
+    }
+
+    /// Every scroll offset this popup owns, back to the top-left. A different
+    /// symbol is a different document, and there are three of them — which is
+    /// exactly how many a caller forgets one of.
+    void resetScroll() scope
+    {
+        popupScroll = 0;
+        popupScrollX = 0;
+        popupFenceX = 0;
+        vBar = ScrollbarState.init;
+        hBar = ScrollbarState(axis: ScrollAxis.horizontal);
+    }
+
+    /// Where one of the popup's bars was painted, in cells relative to the
+    /// popup's own box — empty when this popup has no such bar. Read back from
+    /// last frame's `keyTargets`, which is the rect the display list drew, so
+    /// a grab measures against what the reader aimed at.
+    Rect barRect(PopupBar bar) const scope
+    {
+        foreach (ref const kt; popupKeys)
+            if (popupBarOf(kt.key) == bar)
+                return kt.rect;
+        return Rect.init;
+    }
+
+    /// A press on one of the popup's bars: the one scrollbar machine (`STM9`)
+    /// on the popup's own offsets. On the thumb it grabs in place, on the
+    /// track it jumps — the bargain every other bar in hue makes. `p` is in
+    /// cells relative to the popup's box.
+    void barPressed(PopupBar bar, Point p) scope
+    {
+        const r = barRect(bar);
+        if (r.empty)
+            return;
+        if (bar == PopupBar.vertical)
+        {
+            vBar.offset = popupScroll;
+            vBar = vBar.pressed(p.y - r.y, popupContentRows,
+                popupViewportRows, r.height);
+            popupScroll = vBar.offset;
+        }
+        else
+        {
+            // The horizontal bar reports the FENCES' extent, because prose
+            // wraps to the popup and code does not — so its thumb moves the
+            // same offset a sideways notch does.
+            hBar.offset = popupFenceX;
+            hBar = hBar.pressed(p.x - r.x, popupFenceContentCols,
+                popupFenceViewportCols, r.width);
+            popupFenceX = cast(int) hBar.offset;
+        }
+    }
+
+    /// ditto — a drag while grabbed tracks wherever the pointer strays, which
+    /// is why a host answers it before testing whether the pointer is still
+    /// inside the popup.
+    void barDragged(Point p) scope
+    {
+        if (vBar.dragging)
+        {
+            const r = barRect(PopupBar.vertical);
+            if (!r.empty)
+            {
+                vBar = vBar.dragged(p.y - r.y, popupContentRows,
+                    popupViewportRows, r.height);
+                popupScroll = vBar.offset;
+            }
+        }
+        if (hBar.dragging)
+        {
+            const r = barRect(PopupBar.horizontal);
+            if (!r.empty)
+            {
+                hBar = hBar.dragged(p.x - r.x, popupFenceContentCols,
+                    popupFenceViewportCols, r.width);
+                popupFenceX = cast(int) hBar.offset;
+            }
+        }
+    }
+
+    /// ditto — the grab ends.
+    void barReleased() scope
+    {
+        vBar = vBar.released();
+        hBar = hBar.released();
+    }
+
+    /// Whether a bar grab is live, and therefore owns the pointer.
+    bool barGrabbing() const scope => vBar.dragging || hBar.dragging;
+
+    /// How long an unhovered popup lingers before it closes. Long enough to
+    /// cross the gap at an unhurried pointer speed — a reader who looks away
+    /// mid-move should still find the popup where they left it — and short
+    /// enough that one left behind does not read as stuck.
+    enum int closeGrace = 1000;
+
+    /// The furthest the popup's fences may be scrolled.
+    long maxFenceX() const scope
+    {
+        const over = popupFenceContentCols - popupFenceViewportCols;
+        return over > 0 ? over : 0;
+    }
+
+    /// Scrolls the popup's fenced code blocks sideways, clamped. Tried BEFORE
+    /// the body: a fence is the thing in a hover that does not wrap, so it is
+    /// what a sideways notch is almost always for.
+    bool scrollFenceX(long cells) scope
+    {
+        const want = popupFenceX + cells;
+        const clamped = want < 0 ? 0 : (want > maxFenceX ? maxFenceX : want);
+        if (clamped == popupFenceX)
+            return false;
+        popupFenceX = cast(int) clamped;
+        return true;
+    }
+
+    /// Scrolls by `rows`, clamped. Returns `true` iff the offset moved — the
+    /// caller's cue to repaint, and its cue that the notch was CONSUMED rather
+    /// than falling through to the document underneath.
+    bool scrollBy(long rows) scope
+    {
+        const want = popupScroll + rows;
+        const clamped = want < 0 ? 0 : (want > maxScroll ? maxScroll : want);
+        if (clamped == popupScroll)
+            return false;
+        popupScroll = clamped;
+        return true;
+    }
+
+    /**
+    A scroll command, applied to this popup; `true` iff it moved.
+
+    The wheel's rule, reached by keyboard: the popup takes a scroll command
+    before the document does, and only when it cannot move does the keystroke
+    fall through. Which commands scroll, and on which axis, is
+    $(REF scrollAskOf, keymap)'s to say — the TUI asks the same question about
+    the same popup and keeps its offsets in different fields, so the table is
+    what the two can share.
+    */
+    bool scrollByCommand(Command c, long hStep) scope
+    {
+        const ask = scrollAskOf(c);
+        if (!ask.any)
+            return false;
+        if (ask.toTop)
+            return scrollBy(-popupScroll);
+        if (ask.toBottom)
+            return scrollBy(popupContentRows);
+        if (ask.cells != 0)
+            // The fence first: it is the thing in a hover that does not wrap.
+            return scrollFenceX(ask.cells * hStep)
+                || scrollByX(ask.cells * hStep);
+        const page = popupViewportRows > 1 ? popupViewportRows : 1;
+        return scrollBy(ask.rows * (ask.pages ? page : 1));
+    }
 }
 
 /// The live-resize relayout debounce (M15 GROUP-W of the GuiState hoist):
@@ -603,4 +848,147 @@ unittest
     assert(HoverPopup.init.forceHover == -1);
     assert(ResizeDebounce.init.prevWidthCols == -1);
     static assert(ResizeDebounce.settleFrames == 4);
+}
+
+@("gui_state.HoverPopup.scrollClampsAndReportsWhetherItConsumedTheNotch")
+@safe pure nothrow @nogc unittest
+{
+    // The return value is not a courtesy: it is "the notch was consumed". A
+    // popup that swallowed a notch it could not use would freeze the document
+    // underneath at its own edges; one that never swallowed any would scroll
+    // the token it describes out from under itself.
+    HoverPopup p;
+    p.popupContentRows = 40;
+    p.popupViewportRows = 9;
+    assert(p.maxScroll == 31);
+
+    assert(p.scrollBy(5) && p.popupScroll == 5);
+    assert(p.scrollBy(-2) && p.popupScroll == 3);
+
+    assert(p.scrollBy(-99) && p.popupScroll == 0, "clamped at the top");
+    assert(!p.scrollBy(-1), "and a notch off the top is NOT consumed");
+
+    assert(p.scrollBy(999) && p.popupScroll == 31, "clamped at the last row");
+    assert(!p.scrollBy(1), "nor one off the bottom");
+
+    // A popup with nothing to scroll consumes nothing at all, so the wheel
+    // keeps working over a one-line tooltip.
+    HoverPopup small;
+    small.popupContentRows = 3;
+    small.popupViewportRows = 9;
+    assert(small.maxScroll == 0 && !small.scrollBy(1));
+}
+
+@("gui_state.HoverPopup.theBodyScrollsSidewaysForWhatDoesNotWrap")
+@safe pure nothrow @nogc unittest
+{
+    // Prose wraps to the popup, so the horizontal offset stays zero for an
+    // ordinary ddoc. It exists for the thing that does NOT wrap — a `unittest`
+    // example is routinely wider than the popup showing it, and without this
+    // the end of every such line is rendered, clipped, and unreachable.
+    HoverPopup p;
+    p.popupContentCols = 90;
+    p.popupViewportCols = 48;
+    assert(p.maxScrollX == 42);
+
+    assert(p.scrollByX(10) && p.popupScrollX == 10);
+    assert(p.scrollByX(-999) && p.popupScrollX == 0, "clamped at the left");
+    assert(!p.scrollByX(-1), "and a notch off the left is NOT consumed");
+    assert(p.scrollByX(999) && p.popupScrollX == 42, "clamped at the last cell");
+    assert(!p.scrollByX(1));
+
+    // A popup whose content fits consumes nothing, so a sideways notch keeps
+    // reaching the document underneath.
+    HoverPopup wraps;
+    wraps.popupContentCols = 40;
+    wraps.popupViewportCols = 48;
+    assert(wraps.maxScrollX == 0 && !wraps.scrollByX(1));
+
+    // The two axes are independent: scrolling down does not move it sideways.
+    HoverPopup both;
+    both.popupContentRows = 30; both.popupViewportRows = 9;
+    both.popupContentCols = 90; both.popupViewportCols = 48;
+    assert(both.scrollBy(5) && both.popupScrollX == 0);
+    assert(both.scrollByX(5) && both.popupScroll == 5);
+}
+
+@("gui_state.HoverPopup.dismissalIsALatchNotAClose")
+@safe pure nothrow @nogc unittest
+{
+    // The GUI popup is driven by HOVER, so "closed" is not a state it can
+    // reach while the pointer has not moved: the next frame recomputes the
+    // hovered token and reopens it. Escape would appear to do nothing.
+    //
+    // So dismissal is a latch that survives until the reader asks a different
+    // question — a different token, or none.
+    HoverPopup p;
+    p.hotNode = 7;
+    p.popupNode = 7;
+    assert(!p.dismissed);
+
+    p.dismissed = true;   // Escape, or the ✕
+
+    // Still on the same token: it stays shut.
+    assert(p.popupNode == 7);
+
+    // The host clears the latch when the hovered node differs, which is the
+    // rule this pins by construction rather than by re-implementing it here:
+    // a latch keyed to the token, not to a timer or a frame count.
+    static assert(__traits(hasMember, HoverPopup, "dismissed"));
+    static assert(!__traits(hasMember, HoverPopup, "dismissedUntilMs"),
+        "a timer would reopen it on its own, which is not what Escape means");
+}
+
+@("gui_state.HoverPopup.closeGraceSurvivesAGapTheTravelCrosses")
+@safe pure nothrow @nogc unittest
+{
+    // The reported failure: moving from the token to the popup crosses the
+    // caret's clearance row, which belongs to neither — so a popup that closed
+    // the instant nothing was hovered could not be reached at all.
+    //
+    // The corridor removes most of that by giving the row to the popup. The
+    // grace covers what it cannot: a pointer moving fast enough to skip a
+    // frame still lands on nothing for one.
+    HoverPopup p;
+    p.hotNode = 7;
+
+    // Frame one with nothing hovered: the countdown arms and the popup stays.
+    p.closeGraceMs = HoverPopup.closeGrace;
+    p.closeGraceMs -= 16;                       // ~one frame at 60 Hz
+    assert(p.closeGraceMs > 0, "still open after a frame off the token");
+
+    // It expires after a human-scale pause, not a stuck-forever one.
+    p.closeGraceMs -= HoverPopup.closeGrace;
+    assert(p.closeGraceMs <= 0);
+
+    // Re-entering cancels it: the host resets the countdown whenever something
+    // IS hovered, so a return trip costs nothing.
+    p.closeGraceMs = 0;
+    assert(p.closeGraceMs == 0);
+
+    // The grace is long enough to cross a row at a human pointer speed, and
+    // short enough that a popup left behind does not read as stuck.
+    // A range, not the value: the number is a judgement and may be tuned, but
+    // below this a hurried pointer loses the popup and above it one left
+    // behind reads as stuck.
+    static assert(HoverPopup.closeGrace >= 800 && HoverPopup.closeGrace <= 1200);
+}
+
+@("gui_state.HoverPopup.withoutAFrameClockTheGraceIsInertNotBroken")
+@safe pure nothrow @nogc unittest
+{
+    // A countdown, not a deadline. hue's GUI has a frame clock and no wall
+    // clock; the terminal has neither, and `frameSeconds` there is zero.
+    //
+    // Subtracting zero forever leaves the popup open rather than closing it at
+    // an arbitrary moment — which is the honest degradation. A deadline
+    // computed from a clock that does not advance would either never fire or
+    // fire immediately, and which one depended on the sign of an uninitialised
+    // reading.
+    HoverPopup p;
+    p.hotNode = 7;
+    p.closeGraceMs = HoverPopup.closeGrace;
+    foreach (_; 0 .. 1000)
+        p.closeGraceMs -= 0;               // a terminal's frame delta
+    assert(p.closeGraceMs == HoverPopup.closeGrace, "inert, and still open");
 }

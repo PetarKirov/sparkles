@@ -24,17 +24,18 @@ import std.array : appender;
 import std.conv : to;
 
 import sparkles.base.term_color : Color;
-import sparkles.input : charEvent, Event;
+import sparkles.input : charEvent, Event, match, PointerAction, PointerButton,
+    PointerEvent;
 import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.render : paintFull;
-import sparkles.ui.geometry : Size;
+import sparkles.ui.geometry : Point, Size;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_tui.grid_canvas : paintGrid;
 
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
 import gallery : Gallery;
-import state : GalleryState;
+import state : GalleryState, Region;
 
 @safe:
 
@@ -43,8 +44,99 @@ struct RenderRequest
 {
     size_t page;         /// index into the catalog
     string keys;         /// keystrokes delivered before the frame is taken
+    /**
+    A pointer script, in cells, delivered after `keys`.
+
+    Space-separated words, each a verb and a `col,row`: `m12,4` move,
+    `p12,4` press, `r12,4` release, `R20,12` right-press, `X20,12`
+    right-release.
+
+    `POP8` asks that every overlay behavior be assertable headlessly, and a
+    key-only recorder cannot reach half of them: a context menu opens on a
+    right-press and a hovercard on a click, so neither is expressible as a
+    keystroke at all.
+    */
+    string pointer;
     int width = 96;      /// surface width in cells
     int height = 32;     /// surface height in cells
+}
+
+/**
+`script` as pointer events. A malformed word is skipped rather than fatal —
+this is a debugging affordance, and a typo should cost the event it names, not
+the frame.
+*/
+Event[] pointerScript(string script)
+{
+    import std.algorithm.iteration : splitter;
+    import std.conv : to;
+    import std.string : indexOf;
+
+    Event[] out_;
+    foreach (word; script.splitter(' '))
+    {
+        if (word.length < 4)
+            continue;
+        const verb = word[0];
+        const rest = word[1 .. $];
+        const comma = rest.indexOf(',');
+        if (comma <= 0 || comma + 1 >= rest.length)
+            continue;
+        int x, y;
+        try
+        {
+            x = rest[0 .. comma].to!int;
+            y = rest[comma + 1 .. $].to!int;
+        }
+        catch (Exception)
+            continue;
+
+        PointerEvent p;
+        p.pos = Point(x, y);
+        switch (verb)
+        {
+            case 'm': p.action = PointerAction.move; break;
+            case 'p':
+                p.action = PointerAction.press;
+                p.button = PointerButton.left;
+                break;
+            case 'r':
+                p.action = PointerAction.release;
+                p.button = PointerButton.left;
+                break;
+            case 'R':
+                p.action = PointerAction.press;
+                p.button = PointerButton.right;
+                break;
+            case 'X':
+                p.action = PointerAction.release;
+                p.button = PointerButton.right;
+                break;
+            default: continue;
+        }
+        out_ ~= Event(p);
+    }
+    return out_;
+}
+
+@("ui_gallery.render.pointerScriptDecodesEveryVerb")
+@safe unittest
+{
+    const evs = pointerScript("m1,2 p3,4 r3,4 R10,20 X10,20");
+    assert(evs.length == 5);
+
+    PointerEvent[] ps;
+    foreach (e; evs)
+        e.match!((in PointerEvent p) { ps ~= p; }, (in _) {});
+    assert(ps.length == 5);
+    assert(ps[0].action == PointerAction.move && ps[0].pos == Point(1, 2));
+    assert(ps[1].action == PointerAction.press
+        && ps[1].button == PointerButton.left);
+    assert(ps[3].button == PointerButton.right && ps[3].pos == Point(10, 20));
+
+    // A typo costs its own event and nothing else.
+    assert(pointerScript("m1,2 zzz p3,4").length == 2);
+    assert(pointerScript("m1 mx,y m,4").length == 0);
 }
 
 /// The frame `req` describes, as ANSI — the same bytes the terminal backend
@@ -108,11 +200,22 @@ string gridText(in Grid grid)
 /// terminal's own painter rather than a lookalike.
 Grid renderGrid(in RenderRequest req)
 {
-    auto app = Gallery(GalleryState(page: req.page));
+    // `--render` names a page, so the keyboard starts IN it. A page's own
+    // bindings are reachable only from the content region — that is the
+    // "page gets first refusal" rule — so a render that stayed in the nav
+    // list would silently drop every key `--keys` delivered, which is exactly
+    // what it did: `--keys "o"` on the Overlays page did nothing at all.
+    auto app = Gallery(GalleryState(page: req.page, region: Region.content));
 
     Event[] script;
     foreach (dchar c; req.keys)
         script ~= charEvent(c);
+    // After the keys, so a script can open a page with a keystroke and then
+    // point at what it opened.
+    // `.idup` because `req` arrives `in` (scope const) and `splitter` does not
+    // accept a scope range under dip1000 — the clash AGENTS.md records. One
+    // copy of a CLI string, once per render.
+    script ~= pointerScript(req.pointer.idup);
 
     const size = Size(req.width, req.height);
     auto rec = runAppRecorded(app, RunConfig.init, script,
@@ -210,4 +313,191 @@ Grid renderGrid(in RenderRequest req)
 
     const text = gridText(g);
     assert(text == "日本語ab\n", "the row is neither padded nor truncated");
+}
+
+@("ui_gallery.render.anOpenOverlayReachesTheFrame")
+@safe unittest
+{
+    // `POP8`: an anchored surface, asserted headlessly through the recorder
+    // with no backend at all — which is the whole reason the arena is a value
+    // the frame pass threads rather than something a backend owns.
+    import sparkles.input : charEvent;
+    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.style : BoxSide;
+    import sparkles.ui_app.host : RunConfig;
+    import sparkles.ui_app.run_app : runAppRecorded;
+
+    import gallery : Gallery;
+    import registry : pageIndexOf;
+    import state : Region;
+
+    Gallery app;
+    app.s.page = pageIndexOf("Overlays");
+    app.s.region = Region.content;
+
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui_app.record : RecordingHost;
+
+    auto rec = runAppRecorded(app, RunConfig.init, [charEvent('o')],
+        (ref RecordingHost h) { h.size = Size(110, 60); h.frameSeconds = 0; });
+
+    assert(rec.frames.length >= 2, "one frame before the key, one after");
+    const before = rec.frames[0].ops;
+    const after = rec.frames[$ - 1].ops;
+
+    static bool paints(in typeof(before) ops, string needle)
+    {
+        foreach (op; ops)
+            if (op.kind == OpKind.textRun && op.text == needle)
+                return true;
+        return false;
+    }
+
+    // The host must be probing for exactly the signature the component
+    // declares — a typo here is silent, because the introspection simply
+    // finds nothing and the component renders with no overlays.
+    import sparkles.ui.overlay.arena : OverlayArena;
+    import sparkles.ui.widget : WidgetTree;
+    static assert(__traits(compiles, {
+        OverlayArena a = app.overlays(WidgetTree.init);
+    }));
+    static assert(__traits(compiles, app.overlaysSolved(OverlayArena.init)));
+    assert(app.s.overlays.open, "the key opened the dropdown");
+    assert(app.s.overlayGeometry.paintable,
+        "and the solve placed it — a refused solve paints nothing");
+
+    assert(!paints(before, "gruvbox"), "nothing is open before the key");
+    assert(paints(after, "gruvbox"),
+        "the dropdown's rows reach the frame once it opens");
+
+    // `PLC10` end to end: the caret is on the edge the SOLVE resolved, not on
+    // a hard-coded top. The view only declares that it wants one — where it
+    // goes depends on where the overlay was actually placed, which is the
+    // datum four backends used to guess at independently.
+    const g = app.s.overlayGeometry;
+    assert(g.arrowVisible, "the dropdown asked for a caret and got a cell");
+    assert(g.arrowCell >= 1 && g.arrowCell <= g.rect.width - 2,
+        "strictly inside the edge — never on a corner glyph");
+    assert(g.side == BoxSide.bottom,
+        "it hangs below its trigger, so its caret is on its own TOP edge");
+}
+
+@("ui_gallery.render.aContextMenuOpensWhereTheRightPressLanded")
+@safe unittest
+{
+    // `POP8` again, for a surface no keystroke can reach — which is the whole
+    // reason `--pointer` exists. And `ANC4`/`ANC5`: the anchor is the 1x1 cell
+    // the press landed on, latched at PRESS because the terminal reports no
+    // key release to latch at.
+    import registry : pageIndexOf;
+    import state : Region;
+
+    Gallery app;
+    app.s.page = pageIndexOf("Overlays");
+    app.s.region = Region.content;
+
+    auto script = pointerScript("R34,12");
+    auto rec = runAppRecorded(app, RunConfig.init, script,
+        (ref RecordingHost h) { h.size = Size(100, 40); h.frameSeconds = 0; });
+
+    assert(app.s.overlays.open, "the right-press opened it");
+    assert(app.s.overlays.at == Point(34, 12), "anchored where it landed");
+
+    const g = app.s.overlayGeometry;
+    assert(g.paintable);
+    // One row below the anchor cell, not two: the extra row is the caret's
+    // clearance, which is a placement INPUT (`PLC10`) folded in before the
+    // constraint test — not a gap anybody typed.
+    assert(g.rect.y == 14, "below the pressed cell, plus the caret's row");
+    assert(g.arrowVisible, "and its caret points back at the press");
+
+    import sparkles.ui.canvas : OpKind;
+    bool sawItem;
+    foreach (op; rec.frames[$ - 1].ops)
+        if (op.kind == OpKind.textRun && op.text == "Rename")
+            sawItem = true;
+    assert(sawItem, "its rows reached the frame");
+}
+
+@("ui_gallery.render.anOverlayEscapesTheSectionThatOpenedIt")
+@safe unittest
+{
+    // The V1 gate, as a painted frame: an overlay is not clipped by the box it
+    // was opened from. On a single-surface backend that is not a z-index, it is
+    // emission order — the arena is emitted after the root walk's clips close,
+    // so the surface simply paints over whatever is under it (`LYR8`).
+    import registry : pageIndexOf;
+    import sparkles.ui.overlay.place : Fit;
+    import state : Region;
+
+    Gallery app;
+    app.s.page = pageIndexOf("Overlays");
+    app.s.region = Region.content;
+
+    auto rec = runAppRecorded(app, RunConfig.init, pointerScript("R34,12"),
+        (ref RecordingHost h) { h.size = Size(100, 40); h.frameSeconds = 0; });
+
+    const g = app.s.overlayGeometry;
+    assert(g.paintable);
+
+    // The bordered section that opened it ends at row 15. A five-row menu
+    // anchored inside it cannot fit, so if it is not clipped it must extend
+    // past that edge — and it does, because it is not inside that box at all.
+    assert(g.rect.bottom > 15,
+        "the menu extends past the section that opened it");
+    assert(g.fit != Fit.shrunk, "and it was not squeezed to fit inside one");
+
+    import sparkles.ui.canvas : OpKind;
+    size_t rows;
+    foreach (op; rec.frames[$ - 1].ops)
+        if (op.kind == OpKind.textRun
+            && (op.text == "Open" || op.text == "Rename" || op.text == "Delete"))
+            ++rows;
+    assert(rows == 3, "and every row of it survived, unclipped");
+}
+
+@("ui_gallery.render.dismissalRunsThroughTheToolkitEvaluator")
+@safe unittest
+{
+    // `DSM1`/`DSM2` with a real consumer: the page states a policy word, the
+    // router offers a cause, and the toolkit answers with a reason the page
+    // records. Nothing here paraphrases the requirement in an `if`.
+    import registry : pageIndexOf;
+    import state : CloseReason, Region;
+
+    Gallery app;
+    app.s.page = pageIndexOf("Overlays");
+    app.s.region = Region.content;
+
+    // `DSM9` first, because it is the one that bites: the press that OPENS a
+    // menu is delivered against the frame before the menu existed, so an
+    // evaluator without the one-frame exemption would close it on the same
+    // press and the menu would never appear at all.
+    auto opened = runAppRecorded(app, RunConfig.init, pointerScript("R34,12"),
+        (ref RecordingHost h) { h.size = Size(100, 40); h.frameSeconds = 0; });
+    assert(app.s.overlays.open, "opened, and not closed by its own press");
+    assert(app.s.overlayGeometry.paintable);
+
+    // A later press outside it closes it, and the reason travelled from the
+    // toolkit rather than being invented at the call site.
+    Gallery two;
+    two.s.page = pageIndexOf("Overlays");
+    two.s.region = Region.content;
+    auto closed = runAppRecorded(two, RunConfig.init,
+        pointerScript("R34,12 p70,30"),
+        (ref RecordingHost h) { h.size = Size(100, 40); h.frameSeconds = 0; });
+    assert(!two.s.overlays.open, "the outside press dismissed it");
+    assert(two.s.overlays.lastReason == CloseReason.pressOutside,
+        "and named why");
+
+    import sparkles.ui.canvas : OpKind;
+    static bool paints(in typeof(closed.frames[0].ops) ops, string needle)
+    {
+        foreach (op; ops)
+            if (op.kind == OpKind.textRun && op.text == needle)
+                return true;
+        return false;
+    }
+    assert(paints(opened.frames[$ - 1].ops, "Rename"), "on screen while open");
+    assert(!paints(closed.frames[$ - 1].ops, "Rename"), "and gone once closed");
 }

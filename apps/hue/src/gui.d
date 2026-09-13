@@ -95,7 +95,8 @@ import sparkles.source_view.markdown : FenceScroll, OverflowPolicy,
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
-import sparkles.twoslash.render_widgets : abbrevRegion, viewHoverPopup;
+import sparkles.twoslash.render_widgets : abbrevRegion,
+    isPopupCloseKey, popupBarOf, viewHoverPopup;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 // The shared visual language: the twoslash palette is the single source for the
@@ -106,6 +107,7 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, Visual,
 import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
+import sparkles.ui.overlay.anchor : AnchorRect;
 import sparkles.ui.canvas : DrawOp, LineStyle, match, OpKind, RuleEdge,
     Scrollbar;
 import sparkles.ui.cmd_buffer : CmdBufferT;
@@ -1685,8 +1687,33 @@ int runGui(GuiArgs guiArgs) @system
         if (vm.showPreview && vm.tw.code.length && tsCache !is null)
         {
             const mp = inp.fin.pos;
+            // `MDL1`: an open popup BLOCKS what is painted under it, so it is
+            // tested FIRST and the document is not consulted at all while the
+            // pointer is inside it. Testing the document first and falling back
+            // to the popup looks equivalent and is not: a hover token that the
+            // popup happens to cover would steal the pointer through it, and
+            // reading a long ddoc means moving across exactly such tokens —
+            // so the popup swapped for whatever it was covering, mid-sentence.
+            // `TRG12`'s corridor. The popup sits one row below its token to
+            // leave room for the caret, and that row belongs to neither — so
+            // the pointer travelling into the popup crosses ground nobody
+            // owns, and the popup closes under it. The corridor gives that row
+            // to the popup: an extra entry carrying the overlay's own id, which
+            // is exactly what the requirement asks for.
+            const corridor = cellH;
+            // A live bar grab keeps the popup: a thumb drag routinely leaves
+            // the box it is scrolling, and closing under the pointer mid-drag
+            // is the one thing a grab exists to prevent.
+            const overPopup = pop.hotNode != 0 && pop.havePopup
+                && (pop.barGrabbing
+                    || (mp.x >= pop.hotPopup.x
+                        && mp.x <= pop.hotPopup.x + pop.hotPopup.width
+                        && mp.y >= pop.hotPopup.y - corridor
+                        && mp.y <= pop.hotPopup.y + pop.hotPopup.height));
             size_t overNode = 0;
-            if (mp.x >= gutterPx)
+            if (overPopup)
+                overNode = pop.hotNode; // it keeps the pointer while it is open
+            else if (mp.x >= gutterPx)
             {
                 const off = sourceOffsetAt(vm.tree, vm.frames,
                     Point(contentColOf(cast(int) mp.x, gutterPx, cellW, dhx, pinned),
@@ -1697,10 +1724,38 @@ int runGui(GuiArgs guiArgs) @system
                             && off < cast(long)(n.start + n.length))
                             overNode = ni + 1;
             }
-            if (overNode == 0 && pop.hotNode != 0 && pop.havePopup
-                && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
-                && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
-                overNode = pop.hotNode; // still over the open popup → keep it open
+            // A notch over the popup scrolls the POPUP. Without this it falls
+            // through to the document, which scrolls the token the popup
+            // describes out from under it — the popup stays put and the thing
+            // it is about walks away (`LYR5`'s wheel arm, hand-routed here
+            // until the popup joins the arena).
+            if (overPopup && inp.fin.wheelCells != 0)
+            {
+                cast(void) pop.scrollBy(inp.fin.wheelCells);
+                inp.fin.wheelCells = 0;
+            }
+            // Sideways, for the fence a ddoc example puts in it: prose wraps
+            // to the popup, so the only thing that overflows is code, and the
+            // end of a wide line is otherwise unreachable.
+            if (overPopup && inp.fin.wheelCellsX != 0)
+            {
+                // The fence first: it is the thing in a hover that does not
+                // wrap, so a sideways notch is almost always for it. Only once
+                // it is at its edge does the body take the rest.
+                if (!pop.scrollFenceX(inp.fin.wheelCellsX))
+                    cast(void) pop.scrollByX(inp.fin.wheelCellsX);
+                inp.fin.wheelCellsX = 0;
+            }
+            // A dismissed popup stays shut while the pointer is still on the
+            // token that opened it. Without the latch the next frame reopens
+            // what the reader just dismissed, and Escape appears to do nothing.
+            if (pop.dismissed)
+            {
+                if (overNode != pop.popupNode || overNode == 0)
+                    pop.dismissed = false;   // a different token is a new question
+                else
+                    overNode = 0;
+            }
             bool forced = false;
             if (pop.forceHover >= 0)
             {
@@ -1713,6 +1768,20 @@ int runGui(GuiArgs guiArgs) @system
                         break;
                     }
             }
+            // `TRG6`'s cool-down. Nothing is hovered, but a popup is open:
+            // hold it for a moment rather than closing on the frame the
+            // pointer happened to be between things. Re-entering cancels.
+            if (overNode == 0 && pop.hotNode != 0 && !pop.dismissed)
+            {
+                if (pop.closeGraceMs <= 0)
+                    pop.closeGraceMs = HoverPopup.closeGrace;
+                pop.closeGraceMs -= frameMs(window.frameSeconds);
+                if (pop.closeGraceMs > 0)
+                    overNode = pop.hotNode;   // still open, still reachable
+            }
+            else
+                pop.closeGraceMs = 0;
+
             if (overNode != pop.hotNode)
                 pop.fade = Timeline.init;
             pop.hotNode = overNode;
@@ -1754,23 +1823,37 @@ int runGui(GuiArgs guiArgs) @system
                     const ua = cast(ubyte)(pop.fade.alphaPercent(fadeCfg) * 255 / 100);
                     for (int i = 0; i + 2 <= hw; i += 4)
                         chrome.fillPixels(hx + i, uy, 2, 1, uv.fg, ua);
-                    // Room from the anchor to the document pane's right edge,
-                    // in cells — the popup is capped to it and, failing that,
-                    // slid left inside it.
-                    const availCells = (screenW - cast(int) rightPad - hx) / cellW;
+                    // The document pane, in its own cell space: origin at the
+                    // pane's left edge and first document row, so the popup is
+                    // bounded by the PANE and cannot slide across the explorer
+                    // divider — which clamping at pixel zero used to allow.
+                    const paneX0 = treePx();
+                    const paneCols = (screenW - cast(int) rightPad - paneX0) / cellW;
+                    const boundary = Rect(0, 0, paneCols, docRows);
+                    const anchor = AnchorRect(
+                        primary: Rect((hx - paneX0) / cellW,
+                            cast(int)(r.y - vm.top), r.width, 1),
+                        live: true);
                     // A different token is a different question: drop what the
                     // last popup had opened.
                     if (pop.popupNode != pop.hotNode)
                     {
                         pop.expandedRegions = null;
+                        // A different symbol is a different document: its
+                        // scroll offsets are not this one's.
+                        pop.resetScroll();
                         pop.popupNode = pop.hotNode;
                     }
                     pop.hotPopup = drawPopup(fonts, buf, vm.tw, pop.hotNode - 1,
-                        cast(float) hx, cast(float)(hy + cellH),
+                        anchor, boundary,
+                        cast(float) paneX0, cast(float) docY0,
                         cellW, cellH, vm.current, *tsCache,
                         defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        vm.pageFg, vm.pageBg, availCells,
-                        pop.expandedRegions, pop.popupKeys);
+                        vm.pageFg, vm.pageBg,
+                        pop.expandedRegions, pop, overPopup, pop.popupKeys,
+                        pop.popupContentRows, pop.popupViewportRows,
+                        pop.popupContentCols, pop.popupViewportCols,
+                        pop.popupFenceContentCols, pop.popupFenceViewportCols);
                     // Zero width ⇒ a lazy node drew no popup (nothing to keep
                     // the pointer inside yet).
                     pop.havePopup = pop.hotPopup.width > 0;
@@ -2757,6 +2840,14 @@ int runGui(GuiArgs guiArgs) @system
                 if (st.kind != LtnStepKind.execute)
                     continue;
                 const kc = st.cmd;
+                // An open popup takes a scroll command before the document
+                // does — the wheel's rule, reached by keyboard. Offered
+                // BEFORE the switch rather than inside each arm, so a command
+                // added later cannot quietly scroll the document out from
+                // under a popup the reader is reading.
+                if (pop.hotNode != 0 && pop.havePopup
+                    && pop.scrollByCommand(kc.cmd, vm.hScrollStep))
+                    continue;
                 final switch (kc.cmd)
                 {
                 case Command.none:
@@ -3795,16 +3886,43 @@ int runGui(GuiArgs guiArgs) @system
             // A click on a collapsed `\u2026` in the open popup opens that one run.
             // The popup's geometry is last frame's, which is what the reader
             // aimed at; keys are cell-relative to the box.
+            // Escape dismisses an open popup before anything else claims it
+            // — `INP13`'s close request, resolved innermost-first. It is
+            // checked here rather than in the keymap because a hover popup is
+            // not a mode, so nothing else would know to yield to it.
+            if (pop.hotNode != 0 && pop.havePopup && keyBuf.hasKey(Key.escape))
+                pop.dismissed = true;
+
+            // A bar grab OWNS the pointer, like every other scrollbar grab
+            // here: the drag tracks wherever the pointer strays, so it is
+            // answered before the inside-the-popup test rather than after it.
             bool popupClicked;
-            if (pop.havePopup && pop.popupKeys.length && clickPressed()
+            if (pop.barGrabbing)
+            {
+                popupClicked = true;
+                if (inp.fin.leftDown)
+                    pop.barDragged(Point(
+                        cast(int)((mp.x - pop.hotPopup.x) / cellW),
+                        cast(int)((mp.y - pop.hotPopup.y) / cellH)));
+                else
+                    pop.barReleased();
+            }
+            else if (pop.havePopup && pop.popupKeys.length && clickPressed()
                 && mp.x >= pop.hotPopup.x && mp.x <= pop.hotPopup.x + pop.hotPopup.width
                 && mp.y >= pop.hotPopup.y && mp.y <= pop.hotPopup.y + pop.hotPopup.height)
             {
                 popupClicked = true; // never a selection, hit or miss
-                const k = keyAt(pop.popupKeys,
-                    Point(cast(int)((mp.x - pop.hotPopup.x) / cellW),
-                        cast(int)((mp.y - pop.hotPopup.y) / cellH)));
-                if (k != 0)
+                const local = Point(cast(int)((mp.x - pop.hotPopup.x) / cellW),
+                    cast(int)((mp.y - pop.hotPopup.y) / cellH));
+                const k = keyAt(pop.popupKeys, local);
+                if (isPopupCloseKey(k))
+                    pop.dismissed = true;   // the ✕ in its top-right corner
+                // Before the generic arm below, which toggles a signature run
+                // for any key it does not recognise — so an unhandled press on
+                // a bar would expand a collapsed run instead of scrolling.
+                else if (const bar = popupBarOf(k))
+                    pop.barPressed(bar, local);
+                else if (k != 0)
                 {
                     const r = abbrevRegion(k);
                     pop.expandedRegions[r] = !pop.expandedRegions.get(r, false);
@@ -4086,14 +4204,25 @@ private size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
 /// painted through `RaylibCanvas`. The type signature renders as resolved
 /// syntax-colored spans (`signatureSpans`) inside the widget model itself, so
 /// nothing overpaints the toolkit's output.
+/// The popup is placed in CELLS, like every other backend, and converted to
+/// pixels exactly once — at canvas construction. It used to clamp in pixel
+/// space against an anchor-relative edge, which is why it and the two TUI sites
+/// disagreed about the boundary as well as about the arithmetic (`PLC4`).
+/// `anchor` and `boundary` are cells relative to `originX`/`originY`.
 private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf,
-    in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
+    in TwoslashReturn tw, size_t nodeIndex, in AnchorRect anchor,
+    in Rect boundary, float originX, float originY, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
-    RgbColor pageFg, RgbColor pageBg, int availCells,
-    ExpandedRegions expanded, out KeyTarget[] keys) @system
+    RgbColor pageFg, RgbColor pageBg,
+    ExpandedRegions expanded, in HoverPopup pop, bool showClose,
+    out KeyTarget[] keys,
+    out long contentRows, out long viewportRows,
+    out long contentCols, out long viewportCols,
+    out long fenceContentCols, out long fenceViewportCols) @system
 {
-    import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
-        HoverViewOptions, signatureSpans;
+    import sparkles.twoslash.render_widgets : HoverViewOptions,
+        applyPopupArrow, placeHoverPopup, popupBound, popupBudget,
+        popupScrollExtents, signatureSpans;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
@@ -4106,8 +4235,23 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     import sparkles.source_view.markdown : highlightedFenceRenderer,
         MdViewTheme;
 
+    // `PLC9`, decide then measure: the room is THIS ANCHOR's, not the pane's.
+    // Built against the pane, a popup on a token near the bottom lays out
+    // taller than the box the solve later hands back — the tail is clipped
+    // away unreachably, and the bar beside it describes a viewport that is
+    // not on the screen.
+    const budget = popupBudget(pal, anchor, boundary);
+    const bound = budget.paintable ? budget.rect.size
+        : popupBound(pal, boundary);
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry,
-        HoverViewOptions(maxWidth: effectivePopupWidth(pal, availCells),
+        HoverViewOptions(maxWidth: bound.width, maxHeight: bound.height,
+            scrollOffset: pop.popupScroll, scrollOffsetX: pop.popupScrollX,
+            fenceScrollX: pop.popupFenceX,
+            barContent: pop.popupContentRows,
+            barViewport: pop.popupViewportRows,
+            barContentX: pop.popupFenceContentCols,
+            barViewportX: pop.popupFenceViewportCols,
+            barOffsetX: pop.popupFenceX, showClose: showClose,
             sigSpans: sig, expanded: expanded, nodeKey: nodeIndex + 1,
             mdTheme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(&cache,
@@ -4116,31 +4260,51 @@ private PixelRect drawPopup(ref FontSet fonts, ref SharedBuffer!(char, 4096) buf
     // arrived yet) views as an EMPTY tree — there is nothing to lay out, and
     // the zero rect tells the caller there is no popup to keep the pointer in.
     if (!tree.nodes.length)
-        return PixelRect(x, y, 0, 0);
+        return PixelRect(originX, originY, 0, 0);
     auto frames = layout(tree);
+    const box = frames[tree.root].rect;
+    // The second pass, with the budget's side pinned so it cannot re-collide
+    // against a measurement the first pass has not seen.
+    const placed = placeHoverPopup(pal, anchor, box.size, boundary, budget);
+    if (!placed.paintable)
+        return PixelRect(originX, originY, 0, 0);
+
+    // Between `layout` and the display list — the only window in which both
+    // the popup's measured box and its resolved side exist, and therefore the
+    // only place the caret can be aimed at the token it describes.
+    applyPopupArrow(tree, placed);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-    // A popup anchored near the right edge slides left rather than being
-    // squeezed into a two-word column. `availCells` was measured from the
-    // anchor, so the window edge is `x + availCells` cells out.
-    const box = frames[tree.root].rect;
-    const px = availCells > 0
-        ? cast(float) clampOrigin(cast(int) x, box.width * cellW,
-            cast(int) x + availCells * cellW)
-        : x;
+    // The one cell → pixel conversion in the whole path.
+    const px = originX + placed.rect.x * cellW;
+    const py = originY + placed.rect.y * cellH;
 
-    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, y);
+    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, px, py);
     paint(canvas, ops);
 
     // Where each collapsible run landed, in cells relative to the popup — the
     // caller turns a click into the region under it.
     keys = keyTargets(tree, frames);
 
+    // What the body may scroll over, measured off the frames just laid out —
+    // so a wheel notch next frame clamps against a real extent rather than
+    // re-laying-out the popup to ask.
+    const sc = popupScrollExtents(tree, frames);
+    contentRows = sc.content;
+    viewportRows = sc.viewport;
+    contentCols = sc.contentX;
+    viewportCols = sc.viewportX;
+    fenceContentCols = sc.fenceContentX;
+    fenceViewportCols = sc.fenceViewportX;
+
     // The popup's on-screen rect (px), for the caller's pointer hysteresis —
     // the drawn rect, not the anchor, or the pointer leaves a shifted popup
     // the moment it moves onto it.
-    return PixelRect(px, y, cast(float)(box.width * cellW),
-        cast(float)(box.height * cellH));
+    // The PLACED box, not the laid-out one: they agree now that the view is
+    // built inside the budget, and where they ever disagree the reader's
+    // pointer must follow what was drawn.
+    return PixelRect(px, py, cast(float)(placed.rect.width * cellW),
+        cast(float)(placed.rect.height * cellH));
 }
 
 

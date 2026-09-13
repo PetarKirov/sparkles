@@ -13,7 +13,9 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
-import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
+import sparkles.ui.overlay.arena : hoistedBy, OverlayArena;
+import sparkles.ui.style : BoxSide, opposite, Palette, resolveVisual, Slot,
+    Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
@@ -54,18 +56,89 @@ slice of it. This is the ownership question
 */
 void buildDisplayListInto(Sink)(in WidgetTree tree, in Frame[] frames,
     in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref Sink ops)
-if (__traits(compiles, (ref Sink s) {
-    s.fillRect(Rect.init);
-    s.textRun(Rect.init, "x");
-    s.pushClip(Rect.init);
-    s.popClip();
-}))
+if (isDisplayListSink!Sink)
 {
     emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops);
 }
 
+/**
+As above, with this frame's overlay arena emitted $(B after) the root walk
+(`LYR8`).
+
+That ordering is the whole of the top layer on a single-surface backend: there
+is no z coordinate anywhere, so "in front" means "later in the display list",
+and ops appended after the root walk's balanced pops land $(B unclipped) — they
+cannot be scissored by a viewport the overlay escaped.
+
+The consequence worth stating: this needs $(B no new backend capability).
+`isCanvas` is unchanged, no canvas gains an operation, and the clip pair was
+already an optional introspected capability. A top layer is a property of
+emission order, not of the drawing vocabulary.
+
+Records are emitted in arena order, so index order is paint order, and only
+those whose anchor resolved and whose clock still shows them
+(`OverlayRecord.contributesPaint`). An overlay animating out still paints here;
+what it stops contributing is hit entries, one walk over (`LYR10`).
+*/
+void buildDisplayListInto(Sink)(in WidgetTree tree, in Frame[] frames,
+    in OverlayArena arena, in Palette pal, in RgbColor pageFg,
+    in RgbColor pageBg, ref Sink ops)
+if (isDisplayListSink!Sink)
+{
+    const hoisted = hoistedBy(arena, tree.nodes.length);
+    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops,
+        hoisted.hoisted);
+    foreach (i; 0 .. arena.length)
+    {
+        const rec = arena[i];
+        if (!rec.contributesPaint || rec.node >= tree.nodes.length)
+            continue;
+        emit(tree, rec.node, frames, pal, pageFg, pageBg, unclipped(), ops,
+            hoisted.hoisted, ArrowOverride(active: true,
+                visible: rec.resolved.arrowVisible,
+                // The OPPOSITE edge: `side` names the edge of the ANCHOR the
+                // overlay attached to, and the caret hangs off the edge of the
+                // BOX that faces it. Both are `BoxSide`, so passing one for the
+                // other type-checks and points every caret the wrong way.
+                side: rec.resolved.side.opposite,
+                cell: rec.resolved.arrowCell));
+    }
+}
+
+/// ditto
+DrawOp[] buildDisplayList(in WidgetTree tree, in Frame[] frames,
+    in OverlayArena arena, in Palette pal, in RgbColor pageFg,
+    in RgbColor pageBg)
+{
+    GcCmdBuffer buf;
+    buildDisplayListInto(tree, frames, arena, pal, pageFg, pageBg, buf);
+    return buf.ops.dup;
+}
+
+/// What both builders accept: anything that takes the four primitives they
+/// emit. Named once so the two overloads cannot drift apart.
+enum bool isDisplayListSink(Sink) = __traits(compiles, (ref Sink s) {
+    s.fillRect(Rect.init);
+    s.textRun(Rect.init, "x");
+    s.pushClip(Rect.init);
+    s.popClip();
+});
+
+/// The caret the placement solve resolved, applied to an overlay's own node as
+/// it is emitted. A view declares `Decoration.arrow` — that it $(I wants) one —
+/// and the solve decides which edge and which cell; this is where the two meet
+/// (`PLC10`). Applied at the subtree root only, never to a descendant.
+private struct ArrowOverride
+{
+    bool active;   /// there is a solved caret to apply
+    bool visible;  /// …and it has a legal cell; else the caret is suppressed
+    BoxSide side;
+    int cell;
+}
+
 private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref Sink ops)
+    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref Sink ops,
+    scope const(bool)[] hoisted = null, ArrowOverride arrow = ArrowOverride.init)
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
@@ -96,6 +169,18 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     }
     Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
     applyOverrides(vis, node);
+
+    // The caret's edge and cell come from the solve, never from the view: a
+    // view declares that it WANTS one, and where it goes depends on which side
+    // the overlay was actually placed on (`PLC10`). `arrowVisible` false means
+    // there is no legal cell, so the caret is suppressed rather than clamped
+    // onto a corner glyph (`PLC11`).
+    if (arrow.active)
+    {
+        vis.arrow = vis.arrow && arrow.visible;
+        vis.arrowSide = arrow.side;
+        vis.arrowOffset = arrow.cell;
+    }
 
     // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
     // the decoration independently (a box can have a border but no fill — the
@@ -206,7 +291,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             break;
         case box:
             break; // background (if any) already emitted
-        case row, column, stack, panel, popup:
+        case row, column, stack, panel:
             // A clipping container brackets its children in scissor ops. The
             // pushed rect is the *effective* clip — this node's padded content
             // box on each clipped axis, already intersected with the ancestor
@@ -216,7 +301,17 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             if (clips)
                 ops.pushClip(childClip);
             foreach (child; node.children)
-                emit(tree, child, frames, pal, pageFg, pageBg, childClip, ops);
+            {
+                // A hoisted child is emitted by the arena pass instead, after
+                // this walk closes its clips (`LYR8`). Emitting it here too
+                // would paint it twice — and, worse, paint it INSIDE the
+                // viewport it was hoisted out of, which is the scissoring the
+                // top layer exists to escape.
+                if (child < hoisted.length && hoisted[child])
+                    continue;
+                emit(tree, child, frames, pal, pageFg, pageBg, childClip, ops,
+                    hoisted);
+            }
             if (clips)
                 ops.popClip();
             break;
@@ -236,7 +331,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     const sig = b.add(Widget(kind: WidgetKind.text, text: "title: string", slot: Slot.code));
     const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.", slot: Slot.docs));
     const col = b.container(WidgetKind.column, [sig, docs]);
-    const popup = b.container(WidgetKind.popup, [col],
+    const popup = b.container(WidgetKind.panel, [col],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(popup);
 
@@ -300,7 +395,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     auto b = Builder();
     const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.", slot: Slot.docs,
         textStyle: TextStyle(fontRole: FontRole.docs, fontScale: 80, italic: true)));
-    const popup = b.container(WidgetKind.popup, [docs],
+    const popup = b.container(WidgetKind.panel, [docs],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true,
         decoration: Decoration(borderWidth: Insets.all(1), borderStyle: BorderStyle.solid,
             borderRadius: 4, shadow: true));
@@ -458,7 +553,7 @@ unittest
 
     auto b = Builder();
     const t = b.add(Widget(kind: WidgetKind.text, text: "hi", slot: Slot.code));
-    const box = b.container(WidgetKind.popup, [t], slot: Slot.surface,
+    const box = b.container(WidgetKind.panel, [t], slot: Slot.surface,
         padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(box);
 
@@ -563,4 +658,116 @@ unittest
 
     assert(trackFgOf(true) == border, "an owned rule is border-coloured");
     assert(trackFgOf(false) == track, "a lane bar keeps the track slot");
+}
+
+@("ui.display_list.overlayOpsLandAfterTheRootWalkAndUnclipped")
+@safe unittest
+{
+    // `LYR8`. On a single-surface backend there is no z coordinate: "in front"
+    // means "later in the display list". So the top layer is entirely a
+    // property of emission order — and the second half of the claim is that ops
+    // appended after the root walk's balanced pops land UNCLIPPED, so an
+    // overlay cannot be scissored by the viewport it escaped.
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.overlay.anchor : Anchor;
+    import sparkles.ui.overlay.arena : hoistedBy, OverlayArena, OverlayRecord,
+        placeOverlays;
+    import sparkles.ui.state : Timeline;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // A two-row clipping viewport over a six-row document, plus an overlay
+    // anchored to the document's first row.
+    auto b = Builder();
+    uint[] rows;
+    foreach (i; 0 .. 6)
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: "row", key: 100 + i));
+    const doc = b.add(Widget(kind: WidgetKind.column, children: rows));
+    const viewport = b.add(Widget(kind: WidgetKind.column, children: [doc],
+        height: SizeSpec.fixed(2), clipY: true));
+    const card = b.add(Widget(kind: WidgetKind.panel, slot: Slot.surface,
+        paintBackground: true,
+        children: [b.add(Widget(kind: WidgetKind.text, text: "card"))]));
+    auto tree = b.finish(b.container(WidgetKind.stack, [viewport, card]));
+
+    OverlayArena a;
+    a.push(OverlayRecord(node: card, anchor: Anchor.ofKey(100),
+        life: Timeline(phase: Timeline.Phase.hold)));
+
+    auto frames = layout(tree, hoistedBy(a, tree.nodes.length));
+    const solved = placeOverlays(tree, frames, a, Rect(0, 0, 40, 12));
+    assert(solved[0].resolved.paintable);
+
+    const ops = buildDisplayList(tree, frames, solved, Palette.init,
+        RgbColor(0, 0, 0), RgbColor(0xFF, 0xFF, 0xFF));
+
+    // The overlay's content appears EXACTLY once. The root walk skips a
+    // hoisted node precisely so it is not painted twice — once inside the clip
+    // it was hoisted out of, and once above it. (The probe is the text run:
+    // `Palette.init` gives `Slot.surface` no background, so the panel emits no
+    // fill at all — a distinction worth knowing before writing a paint test.)
+    size_t hits, firstAt = ops.length;
+    foreach (i, op; ops)
+        if (op.kind == OpKind.textRun && op.text == "card")
+        {
+            ++hits;
+            if (firstAt == ops.length)
+                firstAt = i;
+        }
+    assert(hits == 1, "hoisted once, emitted once");
+
+    // Every clip the root walk opened is closed before the overlay begins.
+    // That is what "lands unclipped" means, mechanically.
+    int depth;
+    foreach (op; ops[0 .. firstAt])
+    {
+        if (op.kind == OpKind.pushClip)
+            ++depth;
+        else if (op.kind == OpKind.popClip)
+            --depth;
+    }
+    assert(depth == 0, "the overlay starts outside every viewport");
+
+    // And no clip opens after it: the top layer is last, and unscissored.
+    foreach (op; ops[firstAt .. $])
+        assert(op.kind != OpKind.pushClip, "nothing clips the top layer");
+}
+
+@("ui.display_list.anOverlayNotShowingIsWhollyAbsent")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.overlay.arena : hoistedBy, OverlayArena, OverlayRecord;
+    import sparkles.ui.state : Timeline;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const label = b.add(Widget(kind: WidgetKind.text, text: "menu"));
+    const card = b.add(Widget(kind: WidgetKind.panel, slot: Slot.surface,
+        paintBackground: true,
+        children: [b.add(Widget(kind: WidgetKind.text, text: "card"))]));
+    auto tree = b.finish(b.container(WidgetKind.column, [label, card]));
+
+    const fg = RgbColor(0, 0, 0), bg = RgbColor(0xFF, 0xFF, 0xFF);
+
+    // A record whose clock has not started: hoisted out of flow, and not
+    // emitted by the arena either — so the surface is wholly absent rather
+    // than painted somewhere harmless (`LYR9`).
+    OverlayArena idle;
+    idle.push(OverlayRecord(node: card));
+    auto idleFrames = layout(tree, hoistedBy(idle, tree.nodes.length));
+    const idleOps = buildDisplayList(tree, idleFrames, idle, Palette.init, fg, bg);
+    foreach (op; idleOps)
+        assert(!(op.kind == OpKind.textRun && op.text == "card"),
+            "an overlay that is not showing is absent, not merely invisible");
+
+    // One fading OUT still paints (`LYR10`) — it is on screen, and only its
+    // hit entries are withdrawn.
+    OverlayArena fading;
+    fading.push(OverlayRecord(node: card,
+        life: Timeline(phase: Timeline.Phase.fadeOut)));
+    auto fadeFrames = layout(tree, hoistedBy(fading, tree.nodes.length));
+    const fadeOps = buildDisplayList(tree, fadeFrames, fading, Palette.init, fg, bg);
+    assert(fadeOps.length > idleOps.length, "still painted");
+    assert(!fading[0].contributesHits, "but no longer hit-testable");
 }
