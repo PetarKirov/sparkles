@@ -255,6 +255,10 @@ allowed to adapt an impure handler call to that surface. No blanket `@trusted`
 template or freely callable “make any function pure” helper is permitted.
 
 The bridge is conditional on [M0's feasibility gate](./PLAN.md#m0-purity-and-protocol-feasibility).
+The [M0 investigation](./m0.md) is complete and the full boundary has not passed:
+the tested weak-purity cast preserved calls, but lacks the required general
+semantic justification, and the current supervisor does not satisfy the
+proposed live-handler attributes. The alternative in M0 §5 remains a proposal.
 A cast is not a proof of soundness. If it cannot be justified under supported D
 compiler semantics, the pure direct-style API is blocked and this contract must
 be revised before implementation proceeds. A passing compiler probe alone is
@@ -443,11 +447,16 @@ maxDelay:duration)`. Counts include attempt zero; `maxAttempts >= 1`;
 delays are nonnegative and `multiplier >= 1`. Backoff saturates at `maxDelay`,
 with checked arithmetic. Jitter, when used, is a separate recorded random draw.
 The registry fixes which domain-error tags are retryable; the manifest pins it.
-Eligible domain errors are retried internally before `call` returns, up to
+For ordinary activities, eligible domain errors are retried internally before
+`call` returns, up to
 `maxAttempts`. If automatic scheduling is interrupted by an operator pause,
 `retry` can schedule the still-eligible next attempt. An exhausted retry budget
 returns the last domain error to the program; starting more work after a terminal
 failure requires a fork, not an unbounded operator retry.
+Compensation domain failures instead pause for explicit retry (§9), using the
+same attempt/deadline records and remaining budget. No retry command can exceed
+the policy or run limits. An exhausted compensation budget leaves the sweep
+paused for diagnosis; it does not authorize another effect.
 
 | Vocabulary           | Wire values                                                                                                      |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -497,7 +506,8 @@ transaction ID lookup, never by assuming that nothing was stored.
 | Result plus scheduled retry               | Replay the failed attempt internally, honor persisted deadline, advance to the recorded attempt |
 | Incompatible args, kind, version or order | Pause as drift; do not invoke                                                                   |
 
-A retryable result without its next `RetryScheduled` is a valid crash prefix.
+A retryable ordinary-activity result without its next `RetryScheduled` is a
+valid crash prefix.
 The engine must apply the same retry policy before returning that result to
 the program, commit the missing deadline, and continue or suspend. Computing
 that deadline uses a host clock sample whose decision is persisted in
@@ -695,6 +705,11 @@ authenticates and authorizes senders. Tokens are 128-bit host-generated unique
 values persisted before use; a detected collision is rejected before publication.
 
 Deadline resolution and delivery are serialized by the writer. At adjudication,
+an already committed cancellation or termination excludes further acceptance.
+An unresolved wait is cancelled by a single transaction containing the operator
+command, `WaitResolved` and the cancelled `Result`. If input resolved first,
+its result remains unchanged and cancellation is delivered at the next program
+boundary. Termination leaves no input-accepting wait. Otherwise,
 the host clock is sampled: if `now >= deadline`, the deadline wins, including
 an input first processed after that instant. Otherwise a valid input wins.
 The chosen winner and result commit together; once committed the clock is not

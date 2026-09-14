@@ -1,16 +1,25 @@
 # `sparkles:effects` — Delivery plan
 
 Companion to [SPEC.md](./SPEC.md). This is a specification delivery, not an
-implementation. All implementation milestones below remain unstarted. Each
+implementation. M0's bounded investigation is complete with its acceptance gate
+unmet; M1–M7 remain unstarted. Each
 milestone must be independently green and retain its gate evidence here; a site
 build does not establish protocol or compiler correctness.
 
 ## M0 — Purity and protocol feasibility {#m0-purity-and-protocol-feasibility}
 
+**Investigated; gate not passed.** [M0 evidence](./m0.md) records 80 successful
+compiler/runtime checks, both live-supervision attribute checks, generated-code
+inspection and five protocol walkthroughs. No optimizer failure was observed in
+the tested weak-purity bridge. The general semantic justification remains
+unproved, and live supervision fails the required attribute checks. The
+proposed pure request/data boundary awaits user acceptance. M1/M2 are independent;
+M3 onward remain gated.
+
 Before building around the direct-style `pure` API, establish whether its single
 journaling bridge is sound under supported D compiler semantics. This milestone
 is an implementation prerequisite, not permission to implement during the
-specification task.
+original specification task. The user subsequently authorized M0's experiments.
 
 The bounded experiment must test a mutable, opaque row with a handler reached
 only inside the bridge. Test both LDC and DMD in debug and checked builds, with
@@ -159,15 +168,15 @@ EFF4–EFF5, EFF14–EFF16, EFF23–EFF29.
 
 ## Evidence and remaining risks
 
-| Item                           | Status      | Evidence or next gate                                                                                                 |
-| ------------------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------- |
-| Four policy forks              | Accepted    | User accepted all four recommendations on September 14, 2026; SPEC §3                                                 |
-| Existing substrate             | Inspected   | Baseline `2ef4d520d`; capability/proc/supervise sources and event-horizon module map                                  |
-| Pure direct-style bridge       | Unproven    | M0; no implementation or compiler experiment performed in this docs task                                              |
-| Replay protocol                | Proposed    | SPEC requirements; M0 walkthrough and M3–M5 implementation evidence remain required                                   |
-| External-effect equivalence    | Conditional | Only under each operation's explicit recovery/deduplication assumptions                                               |
-| File-store power-loss behavior | Unproven    | M6; process-kill testing alone is insufficient                                                                        |
-| Publication checks             | Passed      | In-tree sidebar check (1,373 pages), formatting, local links and pinned URLs; full site build with an 8 GiB Node heap |
+| Item                           | Status         | Evidence or next gate                                                                                                                                 |
+| ------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Four policy forks              | Accepted       | User accepted all four recommendations on September 14, 2026; SPEC §3                                                                                 |
+| Existing substrate             | Inspected      | Baseline `2ef4d520d`; capability/proc/supervise sources and event-horizon module map                                                                  |
+| Pure direct-style bridge       | Gate unmet     | [M0](./m0.md): 80 checks pass, but general semantic justification and live-handler attributes do not meet the gate                                    |
+| Replay protocol                | Walked through | [M0 §4](./m0.md#_4-protocol-walkthroughs): five traces; wait-cancel ordering and compensation retry clarified; implementation evidence still required |
+| External-effect equivalence    | Conditional    | Only under each operation's explicit recovery/deduplication assumptions                                                                               |
+| File-store power-loss behavior | Unproven       | M6; process-kill testing alone is insufficient                                                                                                        |
+| Publication checks             | Passed         | In-tree sidebar check (1,373 pages), formatting, local links and pinned URLs; full site build with an 8 GiB Node heap                                 |
 
 Publication validation on September 14, 2026: `dub run :ci --
 --check-docs-sidebar` passed, as did the applicable pre-commit formatting,
@@ -176,7 +185,18 @@ docs:build` passed after the default 4 GiB Node heap exhausted during rendering.
 The existing source-listing generator reported `twoslash-extract` status -11 for
 `libs/ui/src/sparkles/ui/layout.d` and omitted that listing; that is a degraded
 source-listing result, not an effects-spec failure or a successful extraction.
-Future API fences are explicitly skipped, so no compiler correctness is claimed.
+Future API fences are explicitly skipped. The M0 experiment's compiler evidence
+is separately scoped in [m0.md](./m0.md); it is not a conformance claim for the
+future API.
+
+M0 validation also passed the final 80-case matrix, the live-surface probe under
+both compilers, and the in-tree sidebar check (1,376 Markdown files checked).
+The full docs build passed with the same 8 GiB Node heap. In this build the
+source-listing extractor additionally omitted
+`docs/specs/effects/experiments/m0/live_surface.d` after status -11, despite its
+successful compilation and execution under both compilers. This is recorded as
+a documentation-extraction limitation; it does not weaken the compiler probe's
+assertions or count as successful source extraction.
 
 No milestone is complete merely because a source file exists or a publication
 check passes. The implementation owner records configurations, skipped cases,
