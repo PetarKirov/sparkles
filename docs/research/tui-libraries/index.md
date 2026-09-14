@@ -2,6 +2,14 @@
 
 A breadth-first survey of terminal user interface (TUI) libraries across programming languages. This catalog covers rendering models, architecture patterns, and abstraction levels to inform the design of TUI capabilities for Sparkles.
 
+## Focused surveys
+
+- [Text sizing][text-sizing]: OSC 66 protocol semantics, ten implementation studies,
+  capability negotiation, retained multicell rendering, and a cross-stack Sparkles
+  baseline and proposal. Reviewed September 14, 2026.
+
+[text-sizing]: ./text-sizing/index.md
+
 ## Rust
 
 | Library                   | Rendering Model | Architecture    | Abstraction | Status       | Links                                                                                        |
