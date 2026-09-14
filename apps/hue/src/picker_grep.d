@@ -20,7 +20,12 @@ would one get at it".
 module picker_grep;
 
 import sparkles.base.text.analysis : AnalysisCase;
-import sparkles.fuzzy : CandidateId, RankedResult, ScoreBreakdown;
+import sparkles.base.unique : makeUnique, Unique;
+import sparkles.fuzzy : CandidateId, DefaultFuzzyCaps, FuzzyLimits,
+    MatchConfig, MatcherWorkspace, matchText, parseQuery, QueryCase,
+    typoBudget,
+    typoBudget,
+    QueryParseOptions, QueryStorage, RankedResult, ScoreBreakdown, Scoring;
 import sparkles.source_view.search : SearchPolicy;
 
 import grep_classify : classifyLine, HitKind;
@@ -692,6 +697,79 @@ struct GrepContext
 }
 
 /**
+The parsed query and the matcher scratch fuzzy mode needs.
+
+Held by the finder and passed into every scan, so a test reaches the fuzzy
+arm the way a keystroke does. It is a parameter rather than a global
+because `PKC15` wants this scan on a worker, and a worker needs its own
+scratch — one of these per thread, not one per process.
+
+Heap-owned by its holder: `MatcherWorkspace` is bounded at 1 MiB and a
+test worker's stack is 512 KiB.
+
+The query is prepared ONCE per generation, which is also what the engine
+wants: `prepareText` caches the decode, the smart-case probe and the
+Unicode analysis per query rather than per candidate.
+*/
+struct GrepEngine
+{
+    private char[DefaultFuzzyCaps.maxQueryBytes] prompt_ = void;
+    private size_t promptLen_;
+    private QueryStorage!DefaultFuzzyCaps query_;
+    private MatcherWorkspace!DefaultFuzzyCaps workspace_;
+    private AnalysisCase caseMode_;
+    private bool ready_;
+
+    /// Parse `query` for the generation about to start. A query the engine
+    /// refuses leaves fuzzy mode admitting nothing, which is the same
+    /// degradation an unwritten engine gets (`PKC16`) and for the same
+    /// reason: a mode that cannot answer must not pretend to.
+    void prepare(scope const(char)[] query, AnalysisCase mode)
+        @safe pure nothrow @nogc
+    {
+        ready_ = false;
+        promptLen_ = query.length < prompt_.length
+            ? query.length : prompt_.length;
+        if (promptLen_ == 0)
+            return;
+        prompt_[0 .. promptLen_] = query[0 .. promptLen_];
+        caseMode_ = mode;
+        caseMode_ = mode;
+        // hue resolved smart case already, from `SearchSettings` — so the
+        // rule is STATED rather than left to the engine's own derivation.
+        // Otherwise `search.smartCase = false` would govern grep's plain
+        // mode and not its fuzzy one, and the same query would fold
+        // differently depending on which rung of the ladder answered it.
+        QueryParseOptions options;
+        final switch (mode)
+        {
+        case AnalysisCase.sensitive:
+            options.caseMode = QueryCase.sensitive;
+            break;
+        case AnalysisCase.simpleFold:
+            options.caseMode = QueryCase.simpleFold;
+            break;
+        case AnalysisCase.fullFold:
+            options.caseMode = QueryCase.fullFold;
+            break;
+        }
+        // Parsed from the engine's OWN buffer, so the storage borrows a
+        // lifetime it cannot outlive — it is the same object.
+        auto parsed = parseQuery!DefaultFuzzyCaps(prompt_[0 .. promptLen_],
+            options);
+        if (parsed.hasError)
+            return;
+        // `-dip1000` sees a `return scope` value stored into `this` and
+        // cannot know the borrowed slice is a member of the same `this`.
+        () @trusted { query_ = parsed.value; }();
+        ready_ = true;
+    }
+
+    /// Whether the last `prepare` produced a usable query.
+    bool ready() const @safe pure nothrow @nogc => ready_;
+}
+
+/**
 Scan one document's bytes for `needle` in `grep`'s mode.
 
 Fills `hits`/`contexts` in parallel and returns how many were written,
@@ -714,8 +792,8 @@ grep owns its scan, not its idea of what matches.
 */
 size_t scanText(scope const(char)[] text, scope const(char)[] needle,
     AnalysisCase mode, GrepMode grep, DocHandle doc,
-    scope GrepHit[] hits, scope GrepContext[] contexts)
-    @safe pure nothrow @nogc
+    scope GrepHit[] hits, scope GrepContext[] contexts,
+    ref GrepEngine engine) @safe pure nothrow @nogc
 {
     if (needle.length == 0 || needle.length > text.length)
         return 0;
@@ -724,7 +802,7 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
     case GrepMode.plain:
         return scanPlain(text, needle, mode, doc, hits, contexts);
     case GrepMode.fuzzy:
-        return scanFuzzy(text, needle, mode, doc, hits, contexts);
+        return scanFuzzy(text, doc, hits, contexts, engine);
     case GrepMode.regex:
         // `PKC16`'s bounded engine is unwritten. `modeImplemented` keeps
         // `<S-Tab>` from stopping here, so this arm is the belt to that
@@ -796,26 +874,110 @@ private size_t scanPlain(scope const(char)[] text, scope const(char)[] needle,
 }
 
 /**
-Subsequence admission: one hit per LINE that contains `needle`'s bytes in
-order, not necessarily adjacent.
+A necessary condition for fuzzy admission, cheap enough to run per line.
 
-Per line rather than per occurrence, because a subsequence is a property
-of the line — "how many ways can these letters be found in it" is not a
-question a reader asked, and every answer would report the same line.
+Admission needs `LCS(needle, line) + budget >= n` (`docs/specs/fuzzy/SPEC.md`
+§4.1). An LCS is bounded above by the number of needle characters the line
+can supply at all, ignoring order — so a line supplying fewer than
+`n - budget` of them cannot be admitted, and the DP need not run.
 
-The reported span is TIGHTENED before it is stored. A forward greedy match
-finds the earliest end; matching backwards from that end finds the latest
-start that still works, which is the shortest window containing the
-subsequence. Without it a single trailing letter drags the highlight
-across the whole line, and `GrepContext` carries one range rather than a
-position list, so a loose span is a highlight that says nothing.
+This filter may only ever say "certainly not"; a false reject is a hit the
+picker never shows. Two cases it therefore declines to judge, passing the
+line through to the engine:
+
+$(UL
+$(LI a non-ASCII byte on either side — the engine matches analyzed units,
+    and a multi-byte scalar is not a byte; and)
+$(LI `fullFold`, under which a non-ASCII scalar may fold onto an ASCII one
+    and supply a character this count cannot see.)
+)
+
+It exists because the DP costs about 25x the literal sweep, measured:
+5.8 MB/s against 142 MB/s in `picker_grep.scan.bench`. Fuzzy walks the
+whole corpus — it is the zero-hit fallback (`PKC9`), so by construction the
+tree it walks is one the literal found nothing in.
+
+That is also why the miss case is the one to optimise, and it is the one
+that benefits most: 45 ms to 840 µs over the same corpus, 5.8 MB/s to
+312 MB/s. A missing line is refused as soon as its remaining bytes cannot
+supply the shortfall, where the literal sweep must still visit every
+position. The hit case, which must run the DP wherever the filter passes,
+goes 45 ms to 6.1 ms.
 */
-private size_t scanFuzzy(scope const(char)[] text, scope const(char)[] needle,
-    AnalysisCase mode, DocHandle doc,
-    scope GrepHit[] hits, scope GrepContext[] contexts)
-    @safe pure nothrow @nogc
+private bool mayAdmit(scope const(char)[] line, scope const(char)[] needle,
+    AnalysisCase mode) @safe pure nothrow @nogc
 {
     import sparkles.source_view.search : equalsFolded;
+
+    if (mode == AnalysisCase.fullFold)
+        return true;
+
+    ubyte[128] want;
+    foreach (char c; needle)
+    {
+        if (cast(ubyte) c >= 128)
+            return true;
+        const key = mode == AnalysisCase.sensitive ? c : foldByte(c);
+        if (want[key] == ubyte.max)
+            return true; // a needle repeating one byte 255 times: give up
+        ++want[key];
+    }
+
+    const budget = typoBudget(needle.length, DefaultFuzzyCaps.maxTypos);
+    if (needle.length <= budget)
+        return true;
+    const need = needle.length - budget;
+
+    size_t supplied;
+    foreach (char c; line)
+    {
+        if (cast(ubyte) c >= 128)
+            return true;
+        const key = mode == AnalysisCase.sensitive ? c : foldByte(c);
+        if (want[key] != 0)
+        {
+            --want[key];
+            if (++supplied >= need)
+                return true;
+        }
+    }
+    return false;
+}
+
+/// ASCII fold, matching `equalsFolded`'s non-sensitive arm.
+private char foldByte(char c) @safe pure nothrow @nogc
+    => (c >= 'A' && c <= 'Z') ? cast(char)(c + 32) : c;
+
+/**
+Fuzzy admission, per LINE, through `sparkles:fuzzy` (`PKC1`).
+
+The engine's rule and no other: typos are needle-side deletions with the
+budget `docs/specs/fuzzy/SPEC.md` §4.1 derives, and a line is admitted
+when `LCS + budget >= n`. This scan does NOT decide what matches — it
+decides which text to ask about, and where to put the answer.
+
+That distinction was got wrong once, at real cost. A hand-rolled
+subsequence admission shipped here, which is the engine's rule with the
+budget forced to zero: the picker's file list admitted `Wigdet` against
+`widget.d` while its content search refused it. One product, one word
+"fuzzy", two answers. `matchText` exists so this arm cannot have its own
+opinion again.
+
+Per line rather than per occurrence, because admission is a property of
+the line — the engine returns one canonical witness for a text, not an
+enumeration of the ways it could match.
+
+The highlight comes from that witness. `matcherRanges` yields merged,
+sorted byte ranges; `GrepContext` carries one span, so the stored range
+is the witness's extent — `firstByte` to `endByte`, which the engine
+already computed and which no local tightening can improve on.
+*/
+private size_t scanFuzzy(scope const(char)[] text, DocHandle doc,
+    scope GrepHit[] hits, scope GrepContext[] contexts,
+    ref GrepEngine engine) @safe pure nothrow @nogc
+{
+    if (!engine.ready_)
+        return 0;
 
     size_t found;
     const room = hits.length < contexts.length ? hits.length : contexts.length;
@@ -826,43 +988,31 @@ private size_t scanFuzzy(scope const(char)[] text, scope const(char)[] needle,
         const lineEnd = lineEndFrom(text, lineStart);
         const lineText = text[lineStart .. lineEnd];
 
-        // Forward greedy: the earliest position at which the needle is
-        // exhausted. Leftmost-first, as every other admission here is.
-        size_t want;
-        size_t last = size_t.max;
-        foreach (at, char c; lineText)
+        // `PKC11`'s bound, applied before the DP rather than after it: a
+        // line longer than the stored window is asked about through the
+        // window it would be shown in, so the row cannot claim a match a
+        // reader is never given the bytes to see. It also keeps the text
+        // inside `maxDpUnits`, which is what that 512 was chosen for.
+        const asked = lineText.length > windowBytes
+            ? lineText[0 .. windowBytes] : lineText;
+
+        if (!mayAdmit(asked, engine.prompt_[0 .. engine.promptLen_],
+                engine.caseMode_))
         {
-            if (equalsFolded(c, needle[want], mode))
-            {
-                ++want;
-                if (want == needle.length)
-                {
-                    last = at;
-                    break;
-                }
-            }
+            if (lineEnd >= text.length)
+                break;
+            lineStart = lineEnd + 1;
+            ++line;
+            continue;
         }
 
-        if (last != size_t.max)
+        auto outcome = matchText(engine.query_, asked, MatchConfig.init,
+            Scoring.init, FuzzyLimits.init, engine.workspace_);
+        if (outcome.hasValue && outcome.value.admitted)
         {
-            // Backward greedy from `last`: the latest start that still
-            // admits the same subsequence.
-            size_t back = needle.length;
-            size_t first = last;
-            for (size_t at = last + 1; at-- > 0;)
-            {
-                if (equalsFolded(lineText[at], needle[back - 1], mode))
-                {
-                    --back;
-                    if (back == 0)
-                    {
-                        first = at;
-                        break;
-                    }
-                }
-            }
-
-            const span = last - first + 1;
+            const first = outcome.value.firstByte;
+            const end = outcome.value.endByte;
+            const span = end > first ? end - first : 1;
             hits[found] = GrepHit(doc: doc, line: line,
                 column: cast(uint)(first + 1), offset: lineStart + first,
                 kind: classifyLine(lineText, first, span));
@@ -955,8 +1105,10 @@ unittest
     static immutable text = "alpha beta\ngamma alpha\n    alpha indented\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 3, "three occurrences");
 
     // 1-based line and 1-based BYTE column, both true to the source.
@@ -981,8 +1133,10 @@ unittest
     static immutable text = "\t\t    needle here\n";
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 1);
     assert(hits[0].column == 7, "6 bytes of indentation, so column 7");
 
@@ -1007,8 +1161,10 @@ unittest
 
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 1);
     assert(hits[0].line == 1 && hits[0].column == 3001);
 
@@ -1031,8 +1187,10 @@ unittest
     static immutable text = "alpha alpha\nalpha\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(7, 3), hits[], ctx[]);
+        DocHandle(7, 3), hits[], ctx[], engine);
     assert(n == 3);
 
     assert(hits[0].line == hits[1].line, "same line…");
@@ -1041,6 +1199,54 @@ unittest
         "two hits on one line must not collide");
     assert(hits[1].fingerprint != hits[2].fingerprint);
     assert(hits[0].fingerprint != hits[2].fingerprint);
+}
+
+@("picker_grep.mayAdmit.neverRejectsWhatTheEngineWouldAdmit")
+@system
+unittest
+{
+    // The prefilter's whole licence is that it only ever says "certainly
+    // not". A differential run is the only honest way to hold it to that:
+    // for every pair, if the engine admits, the filter must have let it
+    // through. A filter tested only on its own terms tests its author's
+    // idea of the admission rule, which is the mistake this file already
+    // made once.
+    static immutable string[10] lines = [
+        "struct Widget", "    auto widget = makeWidget();", "int unrelated;",
+        "WIDGET_MAX", "w i d g e t", "wget", "", "a", "ab",
+        "// the wide gate",
+    ];
+    static immutable string[6] needles =
+        ["Widget", "widget", "wdgt", "WIDGET", "ab", "zzz"];
+    static immutable AnalysisCase[2] modes =
+        [AnalysisCase.sensitive, AnalysisCase.simpleFold];
+
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
+
+    size_t filtered;
+    foreach (mode; modes)
+        foreach (needle; needles)
+        {
+            engine.prepare(needle, mode);
+            foreach (lineText; lines)
+            {
+                const passes = mayAdmit(lineText, needle, mode);
+                auto outcome = matchText(engine.query_, lineText,
+                    MatchConfig.init, Scoring.init, FuzzyLimits.init,
+                    engine.workspace_);
+                const admitted = outcome.hasValue && outcome.value.admitted;
+                assert(!admitted || passes,
+                    "the prefilter rejected a line the engine admits: "
+                    ~ needle ~ " / " ~ lineText);
+                if (!passes)
+                    ++filtered;
+            }
+        }
+
+    assert(filtered != 0,
+        "a filter that never filters is not being exercised — this test "
+        ~ "would pass against `return true;`");
 }
 
 @("picker_grep.scan.fuzzyAdmitsASubsequenceAndPlainDoesNot")
@@ -1054,11 +1260,14 @@ unittest
     static immutable text = "struct Widget\n";
     GrepHit[4] hits = void;
     GrepContext[4] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
 
     assert(scanText(text, "Wdgt", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]) == 0, "not a substring");
+        DocHandle(1, 1), hits[], ctx[], engine) == 0, "not a substring");
+    engine.prepare("Wdgt", AnalysisCase.sensitive);
     const n = scanText(text, "Wdgt", AnalysisCase.sensitive, GrepMode.fuzzy,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 1, "…but it is a subsequence");
 
     // The span is tightened to `Widget`, not dragged from the line's start.
@@ -1078,9 +1287,12 @@ unittest
     static immutable text = "a b a b a b\nnothing here\nab\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
 
+    engine.prepare("ab", AnalysisCase.sensitive);
     const n = scanText(text, "ab", AnalysisCase.sensitive, GrepMode.fuzzy,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 2, "line 1 and line 3, once each");
     assert(hits[0].line == 1 && hits[1].line == 3);
     assert(ctx[0].matchLen == 3, "the tightened `a b`, not `a b a b a b`");
@@ -1093,12 +1305,21 @@ unittest
     static immutable text = "struct Widget\n";
     GrepHit[4] hits = void;
     GrepContext[4] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
 
-    assert(scanText(text, "wdgt", AnalysisCase.sensitive, GrepMode.fuzzy,
-        DocHandle(1, 1), hits[], ctx[]) == 0);
-    assert(scanText(text, "wdgt", AnalysisCase.simpleFold, GrepMode.fuzzy,
-        DocHandle(1, 1), hits[], ctx[]) == 1,
-        "fuzzy reaches the case rule through the same module plain does");
+    // `WIDGET`, not `wdgt`: the typo budget (§4.1) is 1 for a four-unit
+    // needle, so a case-sensitive `wdgt` is STILL admitted on d-g-t alone.
+    // A discriminator has to be a query the budget cannot rescue — six
+    // units, of which case-sensitivity leaves only `W` matchable.
+    engine.prepare("WIDGET", AnalysisCase.sensitive);
+    assert(scanText(text, "WIDGET", AnalysisCase.sensitive, GrepMode.fuzzy,
+        DocHandle(1, 1), hits[], ctx[], engine) == 0);
+    engine.prepare("WIDGET", AnalysisCase.simpleFold);
+    assert(scanText(text, "WIDGET", AnalysisCase.simpleFold, GrepMode.fuzzy,
+        DocHandle(1, 1), hits[], ctx[], engine) == 1,
+        "hue's configured rule reaches the engine — it does not re-derive "
+        ~ "smart case and disagree with the plain arm");
 }
 
 @("picker_grep.scan.regexAdmitsNothingUntilItsEngineExists")
@@ -1108,8 +1329,10 @@ unittest
     static immutable text = "struct Widget\n";
     GrepHit[4] hits = void;
     GrepContext[4] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     assert(scanText(text, "Widget", AnalysisCase.sensitive, GrepMode.regex,
-        DocHandle(1, 1), hits[], ctx[]) == 0, "`PKC16` is unwritten");
+        DocHandle(1, 1), hits[], ctx[], engine) == 0, "`PKC16` is unwritten");
     assert(!modeImplemented(GrepMode.regex),
         "…and `cycleMode` skips it, so nobody reaches that arm");
 }
@@ -1125,11 +1348,13 @@ unittest
     static immutable text = "Alpha\nalpha\nALPHA\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
 
     assert(scanText(text, "alpha", AnalysisCase.simpleFold, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]) == 3, "folded: all three");
+        DocHandle(1, 1), hits[], ctx[], engine) == 3, "folded: all three");
     assert(scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]) == 1, "sensitive: only the exact one");
+        DocHandle(1, 1), hits[], ctx[], engine) == 1, "sensitive: only the exact one");
 }
 
 @("picker_grep.scan.spacesArePartOfTheNeedle")
@@ -1142,8 +1367,10 @@ unittest
     static immutable text = "if (foo bar)\nfoo = 1; bar = 2;\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "foo bar", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 1, "only the literal occurrence");
     assert(hits[0].line == 1);
 }
@@ -1157,19 +1384,23 @@ unittest
     static immutable text = "x\nx\nx\nx\nx\n";
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     assert(scanText(text, "x", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]) == 2, "stops at the caller's room");
+        DocHandle(1, 1), hits[], ctx[], engine) == 2, "stops at the caller's room");
 
     GrepHit[8] big = void;
     GrepContext[8] bigCtx = void;
+    auto bigEngineOwner = makeUnique!GrepEngine();
+    ref GrepEngine bigEngine() => bigEngineOwner.get();
     assert(scanText(text, "x", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), big[], bigCtx[]) == 5);
+        DocHandle(1, 1), big[], bigCtx[], bigEngine) == 5);
 
     // Degenerate queries answer without scanning.
     assert(scanText(text, "", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), big[], bigCtx[]) == 0);
+        DocHandle(1, 1), big[], bigCtx[], bigEngine) == 0);
     assert(scanText("ab", "abcdef", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), big[], bigCtx[]) == 0);
+        DocHandle(1, 1), big[], bigCtx[], bigEngine) == 0);
 }
 
 @("picker_grep.mode.regexIsNotPoolEligibleYet")
@@ -1462,8 +1693,10 @@ unittest
     static immutable text = "struct Widget\n{\n    Widget other;\n}\n";
     GrepHit[8] hits;
     GrepContext[8] ctx;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "Widget", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]);
+        DocHandle(1, 1), hits[], ctx[], engine);
     assert(n == 2);
 
     assert(hits[0].kind == HitKind.definition, "line 1 declares it");
@@ -1522,8 +1755,10 @@ unittest
 
     GrepHit[2] hits;
     GrepContext[2] ctx;
+    auto engineOwner = makeUnique!GrepEngine();
+    ref GrepEngine engine() => engineOwner.get();
     assert(scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), hits[], ctx[]) == 1);
+        DocHandle(1, 1), hits[], ctx[], engine) == 1);
 
     assert(classifyContent(ctx[0].text) == ContentVerdict.text,
         "a window sliced mid-character is invalid UTF-8");
@@ -1554,8 +1789,9 @@ unittest
 
     auto found = new GrepHit[](hits);
     auto ctx = new GrepContext[](hits);
+    auto engineOwner = makeUnique!GrepEngine();
     const n = scanText(buf, "ab", AnalysisCase.sensitive, GrepMode.plain,
-        DocHandle(1, 1), found, ctx);
+        DocHandle(1, 1), found, ctx, engineOwner.get);
     assert(n == hits, "every needle found");
     assert(found[0].line == 1 && found[$ - 1].line == 1, "all on one line");
     assert(found[$ - 1].column > found[0].column, "columns advance");
@@ -1581,6 +1817,16 @@ unittest
     registerScanCase("many-lines", "wrapped", wrappedCorpus(), "ab", true);
     registerScanCase("one-long-line", "minified", minifiedCorpus(), "ab", true);
     registerScanCase("no-match", "wrapped", wrappedCorpus(), "zzzz", false);
+    // The fuzzy arm runs `sparkles:fuzzy`'s DP once per LINE where plain
+    // sweeps bytes, so the two are not comparable a priori — which is the
+    // reason to measure rather than reason about it. The miss case is the
+    // one that matters: fuzzy is reached as the zero-hit fallback (`PKC9`),
+    // so the tree it walks is by definition one the literal found nothing
+    // in.
+    registerScanCase("fuzzy-many-lines", "wrapped", wrappedCorpus(), "ab",
+        true, GrepMode.fuzzy);
+    registerScanCase("fuzzy-no-match", "wrapped", wrappedCorpus(), "zzzz",
+        false, GrepMode.fuzzy);
 }
 
 version (unittest)
@@ -1624,19 +1870,25 @@ version (unittest)
         GrepHit[] hits;
         GrepContext[] ctx;
         bool expectHits;
+        GrepMode mode;
 
-        this(char[] text, string needle, bool expectHits) @safe
+        this(char[] text, string needle, bool expectHits, GrepMode mode) @safe
         {
             this.text = text;
             this.needle = needle;
             this.expectHits = expectHits;
+            this.mode = mode;
             this.hits = new GrepHit[](8192);
             this.ctx = new GrepContext[](8192);
+            this.engine = new GrepEngine;
+            this.engine.prepare(needle, AnalysisCase.sensitive);
         }
 
+        GrepEngine* engine;
+
         size_t run() @safe
-            => scanText(text, needle, AnalysisCase.sensitive, GrepMode.plain,
-                DocHandle(1, 1), hits, ctx);
+            => scanText(text, needle, AnalysisCase.sensitive, mode,
+                DocHandle(1, 1), hits, ctx, *engine);
 
         void check(ref size_t n) @safe
         {
@@ -1647,9 +1899,9 @@ version (unittest)
 
     /// Register one case, owning its own corpus and result bank.
     private void registerScanCase(string name, string shape, char[] text,
-        string needle, bool expectHits) @safe
+        string needle, bool expectHits, GrepMode mode = GrepMode.plain) @safe
     {
-        auto c = new ScanCase(text, needle, expectHits);
+        auto c = new ScanCase(text, needle, expectHits, mode);
         benchCase(name: name,
             labels: ["shape": shape, "outcome": expectHits ? "hits" : "miss"],
             timed: &c.run,
@@ -1732,6 +1984,7 @@ struct GrepFinder
     private AnalysisCase mode_;
     private size_t maxFileBytes_ = defaultMaxFileBytes;
     private GrepMode grepMode_;
+    private Unique!GrepEngine engine_;
     private bool modePinned_;
     private bool fellBack_;
 
@@ -1848,6 +2101,12 @@ struct GrepFinder
             scan_.cancel();
             return;
         }
+        // One parse per generation, which is also what the engine wants:
+        // it caches the decode, the smart-case probe and the Unicode
+        // analysis per query rather than per candidate.
+        if (engine_.empty)
+            engine_ = makeUnique!GrepEngine();
+        engine_.get.prepare(needle_[0 .. needleLen_], mode_);
         scan_.begin(corpus_.length);
     }
 
@@ -1908,7 +2167,7 @@ struct GrepFinder
 
         const n = scanText(bytes, needle_[0 .. needleLen_], mode_,
             grepMode_, doc.handle, hits_[found_ .. $],
-            contexts_[found_ .. $]);
+            contexts_[found_ .. $], engine_.get);
         found_ += n;
         return n;
     }
