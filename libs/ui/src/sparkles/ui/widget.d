@@ -16,6 +16,7 @@ interleave in the arena.
 module sparkles.ui.widget;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_control : PointerShape;
 import sparkles.ui.canvas : LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
@@ -82,6 +83,26 @@ struct Widget
     Alignment alignX;                /// children's horizontal alignment (`LAY8`)
     Alignment alignY;                /// children's vertical alignment (`LAY8`)
     Visibility visibility;           /// tri-state visibility (`LAY11`)
+    /**
+    The pointer shape this element asks for while the pointer is over it
+    (`DCK15`) — a divider's `ew-resize`, a link's `pointer`, a bar's axis
+    shape. `default_` (the zero value) declares nothing, which is the norm.
+
+    A $(B declaration), not a decision: the element states what it wants and
+    $(REF shapeAt, sparkles,ui,state) takes the topmost declaration under the
+    pointer, from the same derived per-frame data routing already consumes.
+    That is `MDL1`'s sanctioned precedent — "a behavior value declared on the
+    node, carried into the derived targets" — applied to the cursor, and it is
+    what removes the need for anyone to hold a list of things that want one.
+
+    A common prop rather than part of the payload sum (`UI-O2`), and
+    deliberately not in `Visual`: a shape the theme resolved (`THM3`) would
+    make the cursor a matter of appearance, which it is not.
+
+    It sits here, between the layout props and the payload, because that is
+    where the arena had room — see the size assert below.
+    */
+    PointerShape pointerShape;
 
     const(char)[] text;      /// `text` payload (borrowed — must outlive the tree)
     TextSpan[] spans;        /// `rich` payload: styled spans of one run
@@ -159,6 +180,17 @@ struct Widget
     /// full-width section dividers); the child's descendants stay left-aligned.
     bool stretch;
 }
+
+// The arena is flat and rebuilt every frame, so a node's width is a real cost,
+// and 256 is a boundary worth keeping rather than a number that happened to
+// hold. Nothing pinned it before, which is how a field could have widened every
+// node in every tree without anyone noticing; `pointerShape` is placed in an
+// existing padding hole precisely because this assert made the alternative
+// visible. It is also why `PointerShape` had to stop being `enum : string`: a
+// 16-byte slice for that field would have cost 6% of every node — including the
+// overwhelming majority that declare no shape at all.
+static assert(Widget.sizeof == 256,
+    "a widget outgrew its cache-friendly size; check what was added");
 
 /// A complete widget tree: the arena plus the index of the root node.
 struct WidgetTree

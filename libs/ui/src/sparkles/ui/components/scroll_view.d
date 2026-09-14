@@ -366,7 +366,10 @@ pure nothrow @nogc:
                 e.viewport, e.track, e.minExtent)
                 : bar.pressed(p.trackPos, e.content, e.viewport, e.track,
                     e.minExtent);
-            capture = capture.capturedBy(capId);
+            // The grab carries its own axis shape (`DCK15`), so the cursor
+            // follows the gesture off the track instead of being recomposed
+            // from whatever the pointer strays over.
+            capture = capture.capturedBy(capId, bar.shape());
         }
         else if (bar.dragging)
             bar = p.released
