@@ -21,12 +21,13 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
+import sparkles.ui.canvas : arrowCellOf, arrowFits, DrawOp, isCanvas,
+    LineStyle, RuleEdge, Scrollbar,
     visualOf;
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.state : scrollbarThumb;
-import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.ui.style : BorderStyle, BoxSide, Visual;
 
 /// The idle scrollbar rail thickness for a cell extent, in device pixels.
 int railIdlePx(int cellExtent) @safe pure nothrow @nogc
@@ -277,8 +278,8 @@ struct RaylibCanvas
         // Border and popup arrow.
         if (v.border.any)
             drawBorder(x, y, w, h, v);
-        if (v.arrow)
-            drawArrow(x, y, v);
+        if (v.arrow && arrowFits(r, v.arrowSide, v.arrowOffset))
+            drawArrow(r, v);
     }
 
     /// Draws `text` at `at`, selecting the real bold/italic/strike/underline face
@@ -466,25 +467,68 @@ struct RaylibCanvas
         }
     }
 
-    /// Draws the popup arrow/tail: a small upward triangle off the box's top edge
-    /// at `arrowOffset` cells, filled with the surface color and outlined in the
-    /// border color (approximating the CSS 6×6 rotated-square notch).
-    private void drawArrow(float boxX, float boxY, in Visual v) @system
+    /**
+    Draws the arrow/tail: a small triangle pointing out of the box, off the edge
+    the placement solve resolved, filled with the surface colour and outlined in
+    the border colour (approximating the CSS 6×6 rotated-square notch).
+
+    This backend used to measure the offset from the box's outer origin while
+    both cell backends measured from one cell in, so for the same input it drew
+    the caret a cell to their left. The cell now comes from the toolkit's single
+    definition, so the three cannot disagree again (`PLC10`).
+    */
+    private void drawArrow(in Rect r, in Visual v) @system
     {
         const asz = cellH / 3 < 4 ? 4.0f : cast(float)(cellH / 3);
-        const cx = boxX + v.arrowOffset * cellW + cellW * 0.5f;
-        const apex = Vector2(cx, boxY - asz);
-        const left = Vector2(cx - asz, boxY + 1); // +1: overlap the border so the
-        const right = Vector2(cx + asz, boxY + 1); // notch merges into the surface
-        // Screen space is y-down, so apex→left→right is the counter-clockwise
-        // winding raylib needs (apex→right→left is culled as a back face).
+        const cell = arrowCellOf(r, v.arrowSide, v.arrowOffset);
+        const cx = px(cell.x) + cellW * 0.5f;
+        const cy = py(cell.y) + cellH * 0.5f;
+
+        // The caret's base sits on the box's outer edge and its apex `asz`
+        // beyond it; the base overlaps by a pixel so the notch merges into the
+        // surface rather than leaving a seam.
+        Vector2 apex, a, b;
+        final switch (v.arrowSide)
+        {
+            case BoxSide.top:
+                const e = py(r.y);
+                apex = Vector2(cx, e - asz);
+                a = Vector2(cx - asz, e + 1); b = Vector2(cx + asz, e + 1);
+                break;
+            case BoxSide.bottom:
+                const e = py(r.bottom);
+                apex = Vector2(cx, e + asz);
+                a = Vector2(cx - asz, e - 1); b = Vector2(cx + asz, e - 1);
+                break;
+            case BoxSide.left:
+                const e = px(r.x);
+                apex = Vector2(e - asz, cy);
+                a = Vector2(e + 1, cy - asz); b = Vector2(e + 1, cy + asz);
+                break;
+            case BoxSide.right:
+                const e = px(r.right);
+                apex = Vector2(e + asz, cy);
+                a = Vector2(e - 1, cy - asz); b = Vector2(e - 1, cy + asz);
+                break;
+        }
+
+        // Screen space is y-down, so raylib culls a clockwise triangle as a
+        // back face. Rather than hand-deriving the winding for each of four
+        // sides — and getting one of them wrong invisibly — derive it.
+        if ((a.x - apex.x) * (b.y - apex.y) - (b.x - apex.x) * (a.y - apex.y) > 0)
+        {
+            const t = a;
+            a = b;
+            b = t;
+        }
+
         if (v.hasBg)
-            DrawTriangle(apex, left, right, rlBg(v));
+            DrawTriangle(apex, a, b, rlBg(v));
         if (v.border.any)
         {
             const c = rlBorder(v);
-            DrawLineEx(left, apex, 1, c);
-            DrawLineEx(apex, right, 1, c);
+            DrawLineEx(a, apex, 1, c);
+            DrawLineEx(apex, b, 1, c);
         }
     }
 

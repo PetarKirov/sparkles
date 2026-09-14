@@ -49,7 +49,7 @@ if (isOutputRange!(Writer, char))
         ~ ".spk-text,.spk-rich,.spk-glyph{white-space:pre;font-family:ui-monospace,monospace}"
         ~ ".spk-row{display:flex;flex-direction:row;align-items:flex-start}"
         ~ ".spk-column{display:flex;flex-direction:column}"
-        ~ ".spk-stack,.spk-panel,.spk-popup{position:relative;display:flex;flex-direction:column}"
+        ~ ".spk-stack,.spk-panel{position:relative;display:flex;flex-direction:column}"
         ~ ".spk-clip-x{overflow-x:hidden}.spk-clip-y{overflow-y:hidden}"
         ~ ".spk-hidden{visibility:hidden}.spk-collapsed{display:none}"
         // Tier-0 interactivity (INP tier 0), no script:
@@ -150,7 +150,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx)
             break;
         case line, scrollbar, box:
             break;
-        case row, column, stack, panel, popup:
+        case row, column, stack, panel:
             foreach (child; node.children)
                 emitNode(w, tree, child);
             break;
@@ -298,7 +298,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     Widget sig = Widget(kind: WidgetKind.rich, slot: Slot.code, hitId: 3,
         spans: [TextSpan("const", Slot.docs), TextSpan(" x")]);
     const t = b.add(sig);
-    const popup = b.container(WidgetKind.popup, [t],
+    const popup = b.container(WidgetKind.panel, [t],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(popup);
 
@@ -306,7 +306,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     renderWidgetHtmlClasses(w, tree);
     const html = w[];
 
-    assert(html.canFind(`<div class="spk spk-popup spk-surface"`));
+    assert(html.canFind(`<div class="spk spk-panel spk-surface"`));
     assert(html.canFind(`<span class="spk spk-rich spk-code spk-hit"`));
     assert(html.canFind(`<span class="spk-docs">const</span>`));
     assert(html.canFind("padding:1lh 1ch 1lh 1ch"));

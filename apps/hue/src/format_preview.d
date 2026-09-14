@@ -908,12 +908,18 @@ unittest
     svc.submit(FormatRequest(source: "one\n", path: "x.txt", width: 80,
         formatter: reg.candidatesFor("txt")[0]));
 
+    // Five seconds, not one. The worker spawns an external process, and the
+    // suite runs its tests in PARALLEL — so a budget tight enough to fail under
+    // contention is a test that reports the machine rather than the code. It
+    // did exactly that: the run stayed green until two unrelated tests were
+    // added elsewhere and the scheduling shifted. Fewer, longer waits also cost
+    // less than spinning.
     FormatCompletion c;
-    foreach (_; 0 .. 500)
+    foreach (_; 0 .. 1000)
     {
         if (svc.tryTake(c))
             break;
-        Thread.sleep(2.msecs);
+        Thread.sleep(5.msecs);
     }
     assert(c.ok, "worker never completed: " ~ c.error.message);
     assert(c.width == 80);

@@ -38,7 +38,8 @@ import sparkles.input : cellPointer, InputCapabilities, mousePointer,
     PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
-import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
+import sparkles.ui.widget : HitBehavior, TextSpan, Visibility, WidgetKind,
+    WidgetTree;
 
 @safe:
 
@@ -48,6 +49,9 @@ struct HoverTarget
 {
     Rect rect;
     size_t hitId;
+    /// Whether this entry hides the ones painted before it (`MDL1`). A trailing
+    /// field, so every positional construction still compiles.
+    HitBehavior behavior;
 }
 
 /**
@@ -71,11 +75,14 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         if (node.visibility != Visibility.visible)
             return;
         const rect = frames[idx].rect;
-        if (node.hitId != 0)
+        // A blocking node earns an entry even without an id: a scrim is not
+        // hit-testable in its own right, it exists to stop the walk. Its entry
+        // reports `hitId == 0`, which is already "never hot".
+        if (node.hitId != 0 || node.hit != HitBehavior.normal)
         {
             const visible = rect.intersection(clip);
             if (!visible.empty)
-                targets ~= HoverTarget(visible, node.hitId);
+                targets ~= HoverTarget(visible, node.hitId, node.hit);
         }
         const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
@@ -99,6 +106,9 @@ struct KeyTarget
 {
     Rect rect;
     size_t key;
+    /// ditto — `MDL1`'s cut must reach this list too. A modal surface that
+    /// blocks hover but not clicks is worse than one that blocks neither.
+    HitBehavior behavior;
 }
 
 /// ditto
@@ -112,11 +122,11 @@ KeyTarget[] keyTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         if (node.visibility != Visibility.visible)
             return;
         const rect = frames[idx].rect;
-        if (node.key != 0)
+        if (node.key != 0 || node.hit != HitBehavior.normal)
         {
             const visible = rect.intersection(clip);
             if (!visible.empty)
-                targets ~= KeyTarget(visible, node.key);
+                targets ~= KeyTarget(visible, node.key, node.hit);
         }
         // Clipped exactly as the display list scissors, so an element scrolled
         // out of a viewport can no more be clicked than painted.
@@ -129,12 +139,44 @@ KeyTarget[] keyTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
     return targets;
 }
 
+/**
+Where a hit walk over `targets` must $(B start) for a point at `p` (`MDL1`).
+
+Pointer modality is a filter over the derived list rather than a mode somebody
+sets: the answer is "the highest blocking entry containing the point", and
+everything painted before it is unreachable. Because index order is paint order,
+that is an index, and both walks below simply begin there.
+
+Spelled once and generic over the two target types on purpose. `hoverTargets`
+and `keyTargets` are independent walks, so a cut applied to one of them leaves a
+modal surface that blocks hover and not clicks — which is not a weaker modality
+but an incoherent one.
+
+`wheel` exempts `blockPointerExceptWheel`, the surface that dims a page without
+freezing its scroll.
+*/
+size_t blockingFloor(T)(scope const T[] targets, in Point p, bool wheel = false)
+    pure nothrow @nogc
+{
+    size_t floor;
+    foreach (i, ref const t; targets)
+    {
+        if (t.behavior == HitBehavior.normal || !t.rect.contains(p))
+            continue;
+        if (wheel && t.behavior == HitBehavior.blockPointerExceptWheel)
+            continue;
+        floor = i;  // the blocker itself stays reachable; what is under it does not
+    }
+    return floor;
+}
+
 /// The topmost keyed element at `p`, or 0 for none. Later targets win: a child
-/// paints over its parent, so it should also take the click.
+/// paints over its parent, so it should also take the click. A blocking entry
+/// hides everything painted before it (`MDL1`).
 size_t keyAt(in KeyTarget[] targets, Point p) pure nothrow @nogc
 {
     size_t hit;
-    foreach (t; targets)
+    foreach (t; targets[blockingFloor(targets, p) .. $])
         if (t.rect.contains(p))
             hit = t.key;
     return hit;
@@ -161,7 +203,7 @@ struct HoverState
         const size_t previous = hot;
         size_t found;
         if (ev.action != PointerAction.leave)
-            foreach (t; targets)
+            foreach (t; targets[blockingFloor(targets, ev.pos) .. $])
                 if (t.hitId != 0 && t.rect.contains(ev.pos))
                     found = t.hitId; // later target wins → topmost
         hot = found;
@@ -228,6 +270,58 @@ unittest
     // The unkeyed container contributes nothing, even though it is hit-testable.
     foreach (t; targets)
         assert(t.key != 0);
+}
+
+@("ui.state.blockingFloor.cutsBothListsIdentically")
+@safe unittest
+{
+    // `MDL1`. The requirement is explicit that a change to `HoverState.update`
+    // alone is not sufficient, and this is why: the two lists are separate
+    // walks, so a modal surface cut into one of them blocks hover and not
+    // clicks — an incoherent modality rather than a weaker one.
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const under = b.add(Widget(kind: WidgetKind.text, text: "page-under",
+        hitId: 7, key: 101));
+    // A scrim: no id and no key of its own, painted after the page. It exists
+    // only to stop the walk, which is why the entry cannot be gated on an id.
+    const scrim = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(4),
+        height: SizeSpec.fixed(1), hit: HitBehavior.blockPointer));
+    auto tree = b.finish(b.container(WidgetKind.stack, [under, scrim]));
+    auto frames = layout(tree);
+
+    const hovers = hoverTargets(tree, frames);
+    const keys = keyTargets(tree, frames);
+    assert(hovers.length == 2 && keys.length == 2,
+        "the scrim earns an entry despite carrying neither id nor key");
+
+    HoverState h;
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(1, 0)), hovers);
+    assert(!h.isHot(7), "the page under a scrim is not hoverable");
+    assert(keyAt(keys, Point(1, 0)) == 0, "nor clickable");
+
+    // Off the scrim, the page is reachable again — modality is a filter over
+    // this frame's list, not a mode anyone has to remember to clear.
+    HoverState h2;
+    h2.update(PointerEvent(action: PointerAction.move, pos: Point(6, 0)), hovers);
+    assert(h2.isHot(7));
+    assert(keyAt(keys, Point(6, 0)) == 101);
+
+    // The wheel exemption: same geometry, one flag, and the scroll underneath
+    // keeps working.
+    auto b2 = Builder();
+    const u2 = b2.add(Widget(kind: WidgetKind.text, text: "page-under",
+        hitId: 7));
+    const s2 = b2.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(4),
+        height: SizeSpec.fixed(1), hit: HitBehavior.blockPointerExceptWheel));
+    auto t2 = b2.finish(b2.container(WidgetKind.stack, [u2, s2]));
+    auto f2 = layout(t2);
+    const hv2 = hoverTargets(t2, f2);
+    assert(blockingFloor(hv2, Point(1, 0)) == 1, "blocked for the pointer");
+    assert(blockingFloor(hv2, Point(1, 0), true) == 0, "not for the wheel");
 }
 
 @("ui.state.hoverTargets.pipelineRoundTrip")
@@ -351,7 +445,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
                 break;
             case glyph, line, scrollbar, box:
                 break;
-            case row, column, stack, panel, popup:
+            case row, column, stack, panel:
                 foreach (ci; node.children)
                     walk(ci);
                 break;
@@ -422,19 +516,20 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
 }
 
 /**
-Char-precise selection geometry: the 1-row cell rects covering source bytes
-`[lo, hi)` in a laid-out tree — the paint side of the identity channel, one
-rect per covered span segment per wrapped row (same placement rules as
-$(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
+The one walk behind $(LREF selectionRects) and $(LREF clippedSelectionRects):
+finds every 1-row cell rect covering source bytes `[lo, hi)` and hands each to
+`sink.row(rect, clip)` together with the clip its node inherited.
+
+The byte→column arithmetic exists exactly once. The two public producers differ
+only in what they do with `clip` — which is the whole of `ANC3`'s distinction,
+and not a reason for two copies of a span scan (`PRN8`).
 */
-Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
-    size_t lo, size_t hi)
+private void emitSelection(Sink)(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi, ref Sink sink)
 {
     import sparkles.ui.geometry : cellsOf;
 
-    Rect[] result;
-
-    void checkRow(scope const TextSpan[] spans, int x, int y)
+    void checkRow(scope const TextSpan[] spans, int x, int y, in Rect clip)
     {
         foreach (ref const s; spans)
         {
@@ -452,34 +547,122 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
                     const c0 = cast(int) cellsOf(s.text[0 .. bStart]);
                     const c1 = cast(int) cellsOf(s.text[0 .. bEnd]);
                     if (c1 > c0)
-                        result ~= Rect(x + c0, y, c1 - c0, 1);
+                        sink.row(Rect(x + c0, y, c1 - c0, 1), clip);
                 }
             }
             x += w;
         }
     }
 
-    void walk(uint idx)
+    void walk(uint idx, in Rect clip)
     {
         const node = tree.nodes[idx];
         if (node.visibility != Visibility.visible)
             return;
-        const inner = frames[idx].rect.deflate(node.padding);
+        const rect = frames[idx].rect;
+        const inner = rect.deflate(node.padding);
         if (node.kind == WidgetKind.rich)
         {
             if (frames[idx].spanLines.length)
                 foreach (li, line; frames[idx].spanLines)
                     checkRow(line, inner.x + (li ? node.hangIndent : 0),
-                        inner.y + cast(int) li);
+                        inner.y + cast(int) li, clip);
             else
-                checkRow(node.spans, inner.x, inner.y);
+                checkRow(node.spans, inner.x, inner.y, clip);
         }
+        const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
-            walk(ci);
+            walk(ci, childClip);
     }
 
-    walk(tree.root);
-    return result;
+    walk(tree.root, unclipped());
+}
+
+/**
+Char-precise selection geometry: the 1-row cell rects covering source bytes
+`[lo, hi)` in a laid-out tree — the paint side of the identity channel, one
+rect per covered span segment per wrapped row (same placement rules as
+$(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
+
+Deliberately $(B not) clip-aware: a tint is culled by the display list's own
+scissor anyway, so narrowing here would buy nothing and would change what a
+selection paints. A caller that needs to know whether the range is actually on
+screen — an $(I anchor), which must not be positioned against a rect scrolled
+out of its viewport — wants $(LREF clippedSelectionRects) instead (`ANC3`).
+*/
+Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi)
+{
+    static struct All
+    {
+        Rect[] result;
+        void row(in Rect r, in Rect) { result ~= r; }
+    }
+
+    All sink;
+    emitSelection(tree, frames, lo, hi, sink);
+    return sink.result;
+}
+
+/**
+The answer to "where is the source range `[lo, hi)`, and is any of it visible?"
+(`ANC3`).
+
+$(LREF selectionRects)' clip-aware sibling, in $(LREF KeyLookup)'s vocabulary
+and for the same reason: an empty result has two causes a caller must not
+conflate. The range may name nothing in this tree, or it may name text that
+scrolled entirely out of a clipping ancestor — and an anchor resolved through
+the unclipped producer happily positions an overlay against a rect that is not
+on screen. `clampOrigin`'s clamp-to-zero used to mask that at hue's TUI popup
+sites by dragging the result back into view; the placement solve that replaced
+it does not, so the honest producer is the one an anchor must use.
+*/
+struct RangeLookup
+{
+    /// The clip-intersected rects, in paint order. Empty when the range named
+    /// nothing $(I and) when everything it named is clipped away; `clipped`
+    /// tells those apart.
+    Rect[] rects;
+    /// How many rects the range covered before the clip was applied.
+    size_t count;
+    /// The range covered something and every part of it is clipped away — a
+    /// $(B hide) verdict, not a close one (`DSM8`).
+    bool clipped;
+
+// `scope` because `rects` is a slice: under `-preview=in` a caller's
+// `in RangeLookup` is `scope const`, and a non-`scope` member function on it is
+// rejected in `@safe` code. `KeyLookup` needs no such thing — it is all value
+// types — which is why the two structs' labels differ.
+@safe pure nothrow @nogc const scope:
+
+    /// The range resolved and some of it is on screen: `rects` is usable.
+    bool ok() => rects.length != 0;
+    /// The range named nothing in this tree.
+    bool missing() => count == 0;
+}
+
+/// ditto
+RangeLookup clippedSelectionRects(in WidgetTree tree, in Frame[] frames,
+    size_t lo, size_t hi)
+in (frames.length == tree.nodes.length,
+    "frames must be the layout of exactly this tree")
+{
+    static struct Clipped
+    {
+        RangeLookup found;
+        void row(in Rect r, in Rect clip)
+        {
+            ++found.count;
+            const visible = r.intersection(clip);
+            if (!visible.empty)
+                found.rects ~= visible;
+        }
+    }
+
+    Clipped sink;
+    emitSelection(tree, frames, lo, hi, sink);
+    sink.found.clipped = sink.found.count != 0 && sink.found.rects.length == 0;
+    return sink.found;
 }
 
 @("ui.state.selectionRects.charPrecise")
@@ -503,6 +686,70 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
     assert(rects.length == 2);
     assert(rects[0] == Rect(2, 0, 3, 1)); // "pha"
     assert(rects[1] == Rect(0, 1, 2, 1)); // "be"
+}
+
+@("ui.state.clippedSelectionRects.agreesWithTheUnclippedOneWhenNothingClips")
+@safe unittest
+{
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap;
+
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("alpha beta", srcStart: 50, srcEnd: 60),
+    ]);
+    para.width.max = 5;
+    const t = b.add(para);
+    auto tree = b.finish(b.container(WidgetKind.column, [t]));
+    auto frames = layout(tree);
+
+    // With no clipping ancestor the two producers must not disagree — the
+    // clipped one is a narrowing, not a second definition of the geometry.
+    const hit = clippedSelectionRects(tree, frames, 52, 58);
+    assert(hit.rects == selectionRects(tree, frames, 52, 58));
+    assert(hit.ok && !hit.clipped && hit.count == 2);
+
+    const nothing = clippedSelectionRects(tree, frames, 900, 910);
+    assert(nothing.missing && !nothing.clipped && !nothing.ok,
+        "a range naming nothing is missing, never clipped");
+}
+
+@("ui.state.clippedSelectionRects.scrolledOutIsNotGone")
+@safe unittest
+{
+    // `ANC3`, the range half. An anchor resolved through the unclipped
+    // producer positions an overlay against a row that is not on screen —
+    // which hue's TUI popup did, with `clampOrigin`'s clamp-to-zero hiding it
+    // by dragging the result back into view.
+    import sparkles.ui.geometry : Point, SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    uint[] rows;
+    foreach (i; 0 .. 4)
+        rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan("word", srcStart: i * 10, srcEnd: i * 10 + 4),
+        ]));
+    const inner = b.add(Widget(kind: WidgetKind.column, children: rows));
+    // A two-row viewport scrolled down by three: only the last row is visible.
+    const vp = b.add(Widget(kind: WidgetKind.column, children: [inner],
+        height: SizeSpec.fixed(2), clipY: true, childOffset: Point(0, 3)));
+    auto tree = b.finish(vp);
+    auto frames = layout(tree);
+
+    const shown = clippedSelectionRects(tree, frames, 30, 34);
+    assert(shown.ok && !shown.clipped, "the visible row resolves normally");
+
+    const scrolledOut = clippedSelectionRects(tree, frames, 0, 4);
+    assert(scrolledOut.count == 1 && scrolledOut.clipped);
+    assert(!scrolledOut.ok && !scrolledOut.missing,
+        "found, but nothing of it is on screen — not the same as absent");
+
+    // The unclipped producer cannot tell the two apart: it answers a full,
+    // usable-looking rect for the row that is scrolled away. That is the gap.
+    assert(selectionRects(tree, frames, 0, 4).length == 1);
 }
 
 /// A keyed node's identity + laid-out geometry (see $(LREF keyedRects)).

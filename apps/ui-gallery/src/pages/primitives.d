@@ -97,7 +97,7 @@ uint view(ref Builder b, in GalleryState s)
         ),
     )));
     overlays ~= specimen(b, "popup", b.add(Widget(
-        kind: WidgetKind.popup,
+        kind: WidgetKind.panel,
         children: [b.add(Widget(
             kind: WidgetKind.column,
             children: [label(b, "floats, with", Slot.code), label(b, "a shadow", Slot.docs)],

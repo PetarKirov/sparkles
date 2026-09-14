@@ -39,6 +39,7 @@ import sparkles.input.events : Event, match, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
 import sparkles.ui.components.scroll_view : AutoScroll, scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
+import sparkles.ui.overlay.arena : OverlayArena, OverlayBand, OverlayId;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.state : CaptureState, FocusState, PressState,
     scrollbarThumbIntersectsCell, SplitState;
@@ -959,6 +960,19 @@ struct Route
     PaneId pane;
     Event event;    /// translated into the target pane's coordinate space
     bool relayout;  /// geometry changed; the host re-arranges its panes
+    /**
+    The overlay offered this event $(B first) (`LYR5`, `LYR11`), or the null
+    handle.
+
+    A trailing field rather than a new `RouteKind`, so every `final switch` over
+    the kind and every positional construction in the repository keeps
+    compiling — and because an overlay route is not an alternative to a pane
+    route, it is a $(B first refusal) in front of one. The host offers the event
+    to the overlay; an unbound key falls THROUGH to `pane` in the same tick
+    rather than being swallowed, which is what stops an open popup from silently
+    breaking every document binding.
+    */
+    OverlayId overlay;
 }
 
 /**
@@ -971,6 +985,21 @@ per event, then applies the returned $(LREF Route).
 struct DockContainer
 {
     DockLayout layout;
+
+    /**
+    This frame's top layers (`LYR1`, `LYR5`) — the rung `DCK13`'s precedence
+    reserved and left empty.
+
+    $(B Frame-built): the host assigns it after building its view, and it is
+    never mutated across frames. That is what makes cascading dismissal a
+    truncation rather than a graph edit, and what dissolves the reopen-during-
+    dismissal re-check (`DSM6`).
+
+    An overlay is routed to the pane that geometrically contains it, so an
+    application handles overlay events through the pane it already routes to,
+    with `Route.overlay` naming which surface got first refusal.
+    */
+    OverlayArena overlays;
     /// Derived by $(LREF arrange) — the host paints from these. Owned as
     /// one value because they are one answer, invalidated together.
     DockFrames frames;
@@ -1656,6 +1685,19 @@ struct DockContainer
                 // the focused one takes it — a wheel is never dropped.
                 PaneId pane;
                 const wp = pointToCells(w.pos);
+                // An overlay under the pointer takes the notch first (`LYR5`).
+                // Without this a wheel over a popup falls through and scrolls
+                // the document out from under it — the popup stays put and the
+                // thing it describes moves away.
+                const over = overlays.hitAt(wp);
+                if (over.valid)
+                {
+                    WheelEvent q = w;
+                    q.pos = wp;
+                    r = Route(RouteKind.pane, overlayPane(over), Event(q),
+                        overlay: over);
+                    return;
+                }
                 if (!paneAtIncludingScroll(wp, pane))
                 {
                     if (!paneFrames.length)
@@ -1667,12 +1709,32 @@ struct DockContainer
                 r = Route(RouteKind.pane, pane, Event(q));
             },
             (_) {
-                // Keys and everything else with no position of its own go
-                // to the focused pane; the host decides globals first.
+                // Keys and everything else with no position of its own go to
+                // the focused pane; the host decides globals first. An overlay
+                // on the `popup` band is offered it FIRST (`LYR11`) — and the
+                // route still names the pane, so a key it does not bind falls
+                // through in the same tick instead of vanishing.
                 if (paneFrames.length)
-                    r = Route(RouteKind.pane, focused, e);
+                    r = Route(RouteKind.pane, focused, e,
+                        overlay: overlays.topmost(OverlayBand.popup));
             });
         return r;
+    }
+
+    /// The pane an overlay belongs to: the one containing its resolved rect's
+    /// origin, or the focused pane when it escaped every pane (which is legal —
+    /// escaping is the point). Never `0`-as-a-guess: an overlay must reach a
+    /// handler, or it would be routed nowhere and appear frozen.
+    private PaneId overlayPane(OverlayId h) const pure nothrow @nogc
+    {
+        const i = overlays.indexOf(h);
+        if (i < overlays.length)
+        {
+            PaneId pane;
+            if (paneAt(overlays[i].resolved.rect.origin, pane))
+                return pane;
+        }
+        return focused;
     }
 
     private bool paneAtIncludingScroll(in Point p, out PaneId pane)
@@ -1728,7 +1790,25 @@ struct DockContainer
             }
         }
 
-        // 3. A tab strip is chrome over the pane below it, so it is tested
+        // 3. Top layers (`LYR5`), front-to-back. BELOW capture — a drag that
+        //    began outside an overlay keeps it (`LYR6`), and `CaptureState`'s
+        //    no-transfer rule gains no exemption here — but ABOVE every
+        //    positional test, including the tab strip: an open context menu
+        //    drawn over a tab must take the click.
+        //
+        //    Required for POSITIONAL routing, not merely for the non-positional
+        //    decisions. `paneAt` resolves the pane BY RECT, so an overlay that
+        //    geometrically escapes its pane would otherwise be handed to the
+        //    neighbour and never reach its own target list.
+        if (capture.isFree)
+        {
+            const over = overlays.hitAt(cell.pos);
+            if (over.valid)
+                return Route(RouteKind.pane, overlayPane(over), Event(cell),
+                    overlay: over);
+        }
+
+        // 4. A tab strip is chrome over the pane below it, so it is tested
         //    before the positional query. Press ARMS the tab, a release
         //    over the SAME tab activates it (STM10) — a press that slides
         //    off cancels, which an `if (clicked && inRect)` never does.
@@ -3120,4 +3200,109 @@ version (unittest)
     c.layout.nodes[x].weight = -3;
     c.arrange(Rect(0, 0, 100, 40));
     assert(c.paneExtent(main_) == 39 && c.paneExtent(aux) == 39);
+}
+
+@("ui.components.dock.anOverlayEscapingItsPaneStillTakesTheClick")
+@safe unittest
+{
+    // `LYR5`, and the reason the rung is needed for POSITIONAL routing rather
+    // than only for the non-positional decisions. The catalog's claim that
+    // appending overlay targets last already gives correct precedence was
+    // REFUTED here: `paneAt` resolves the pane by rect before any tree's hit
+    // list is consulted, so an overlay that geometrically escapes its pane is
+    // routed to the neighbour and never reaches its own targets.
+    import sparkles.ui.overlay.arena : OverlayRecord;
+    import sparkles.ui.state : Timeline;
+
+    DockContainer dock;
+    const left = dock.layout.addLeaf(1);
+    const right = dock.layout.addLeaf(2);
+    dock.layout.root = dock.layout.addSplit(DockAxis.horizontal, [left, right]);
+    dock.focused = 1;
+    dock.arrange(Rect(0, 0, 40, 10));
+
+    // A popup owned by the LEFT pane, drawn across the divider into the right.
+    auto rec = OverlayRecord(node: 0, life: Timeline(phase: Timeline.Phase.hold));
+    rec.resolved.rect = Rect(14, 2, 16, 3);   // starts left, ends right
+    const id = dock.overlays.push(rec);
+    assert(id.valid);
+
+    // A press inside the popup but geometrically over the RIGHT pane.
+    const inside = Point(26, 3);
+    PaneId byRect;
+    assert(dock.paneAt(inside, byRect) && byRect == 2,
+        "by rect alone this belongs to the neighbouring pane");
+
+    const r = dock.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: inside)));
+    assert(r.overlay == id, "the overlay gets first refusal, not the neighbour");
+
+    // A press outside it routes normally — the rung is a filter, not a grab.
+    const away = dock.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(34, 8))));
+    assert(!away.overlay.valid && away.kind == RouteKind.pane);
+}
+
+@("ui.components.dock.captureStillWinsOverTheTopLayer")
+@safe unittest
+{
+    // `LYR6`. The rung sits BELOW pointer capture, and `CaptureState`'s
+    // no-transfer rule gains no exemption for overlays: a drag that began
+    // outside an overlay keeps the pointer until it releases, even when it
+    // strays over one. Without this a divider drag would be stolen mid-gesture
+    // by whatever the pointer happened to cross.
+    import sparkles.ui.overlay.arena : OverlayRecord;
+    import sparkles.ui.state : Timeline;
+
+    DockContainer dock;
+    const left = dock.layout.addLeaf(1);
+    const right = dock.layout.addLeaf(2);
+    dock.layout.root = dock.layout.addSplit(DockAxis.horizontal, [left, right]);
+    dock.focused = 1;
+    dock.arrange(Rect(0, 0, 40, 10));
+
+    auto rec = OverlayRecord(node: 0, life: Timeline(phase: Timeline.Phase.hold));
+    rec.resolved.rect = Rect(0, 0, 40, 10);   // covering everything
+    dock.overlays.push(rec);
+
+    // Grab the divider first, then drag across the overlay.
+    const dx = dock.dividers.length ? dock.dividers[0].rect.x : 20;
+    dock.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(dx, 5))));
+    assert(!dock.capture.isFree, "the divider took the capture");
+
+    const dragged = dock.handle(Event(PointerEvent(action: PointerAction.move,
+        pos: Point(24, 5))));
+    assert(!dragged.overlay.valid,
+        "the drag owns the pointer; the overlay it crosses does not get it");
+    assert(dragged.kind == RouteKind.container);
+}
+
+@("ui.components.dock.keysGetFirstRefusalAndFallThrough")
+@safe unittest
+{
+    // `LYR11`. An overlay sees the key first, but the route still names the
+    // focused pane — so a key the overlay does not bind reaches the document
+    // in the same tick. A design that returned an overlay-only route would
+    // silently break every binding while a popup was open.
+    import sparkles.input : Key, KeyEvent;
+    import sparkles.ui.overlay.arena : OverlayBand, OverlayRecord;
+    import sparkles.ui.state : Timeline;
+
+    DockContainer dock;
+    dock.layout.root = dock.layout.addLeaf(1);
+    dock.focused = 1;
+    dock.arrange(Rect(0, 0, 40, 10));
+
+    const bare = dock.handle(Event(KeyEvent(key: Key.escape)));
+    assert(bare.kind == RouteKind.pane && !bare.overlay.valid);
+
+    auto rec = OverlayRecord(band: OverlayBand.popup, node: 0,
+        life: Timeline(phase: Timeline.Phase.hold));
+    const id = dock.overlays.push(rec);
+
+    const offered = dock.handle(Event(KeyEvent(key: Key.escape)));
+    assert(offered.overlay == id, "offered to the overlay first");
+    assert(offered.kind == RouteKind.pane && offered.pane == dock.focused,
+        "and still routed onward, so an unbound key is not swallowed");
 }
