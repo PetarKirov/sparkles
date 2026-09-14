@@ -954,6 +954,10 @@
           {
             "text": "Delivery Plan",
             "link": "/specs/effects/PLAN"
+          },
+          {
+            "text": "M0 Feasibility",
+            "link": "/specs/effects/m0"
           }
         ]
       },
