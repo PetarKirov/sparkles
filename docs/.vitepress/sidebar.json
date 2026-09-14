@@ -898,6 +898,20 @@
         ]
       },
       {
+        "text": "Effects",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/effects/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/effects/PLAN"
+          }
+        ]
+      },
+      {
         "text": "Event Horizon",
         "collapsed": true,
         "items": [
