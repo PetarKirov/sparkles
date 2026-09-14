@@ -234,6 +234,29 @@ Multiple-part admission ANDs the parts. Their score is the floor of the
 arithmetic mean of part scores; their positions are the sorted union of
 canonical witness ranges.
 
+### 4.4 Subjects without a path
+
+`match` is `matchText` plus a filename. `matchText` admits and scores one
+borrowed text through the same typo budget, the same cursor DP and the same
+canonical witness; `match` validates a `CandidateView`, delegates, and then
+decides the two path-derived fields — `allInFilename`, which is exactly
+`firstByte >= filenameOffset`, and `exactFilename`.
+
+The split exists because not every subject is a path. A content line has no
+filename half, and matching one through `match` means inventing a
+`filenameOffset` of 0 — under which every byte lies "in the filename" and
+`rank` pays a bonus for it. hue's picker forbids that
+([`PKC1`](../hue/picker.md)), and while the only admission entry point took a
+`CandidateView`, obeying it meant writing a second matcher. One did get
+written, and the file list and the content search stopped agreeing about
+what "fuzzy" means.
+
+So the rule is one implementation with the path semantics **above** it rather
+than inside it. Through `matchText`, `allInFilename` and `exactFilename` are
+always false: they are questions about a path, and there is no path. The
+capacity bound `validateCandidate` supplied is re-stated on the text, so an
+oversize input is an error value rather than an analyzer run.
+
 ## 5. Ranking score
 
 ### 5.1 Matcher workspace and arithmetic
@@ -394,15 +417,15 @@ between candidate-sized pure calls and uses release publication/acquire reads.
 
 The package module re-exports these areas:
 
-| Area     | Principal symbols                                                                                      |
-| -------- | ------------------------------------------------------------------------------------------------------ |
-| Analysis | `AnalysisProfile`, `TextUnit`, `AnalysisWorkspace`, `analyzeText`                                      |
-| Query    | `QueryStorage`, `QueryView`, `FuzzyError`, `parseQuery`, `CandidateView`, `evaluateConstraints`        |
-| Glob     | `GlobProgram`, `GlobProgramView`, `GlobMatchWorkspace`, `compileGlob`, `globMatch`                     |
-| Match    | `DefaultFuzzyCaps`, `FuzzyLimits`, `Scoring`, `MatcherWorkspace`, `MatchOutcome`, `match`, `positions` |
-| Rank     | `RankContext`, `ScoreBreakdown`, `RankedResult`, `rank`, `TopK`                                        |
-| History  | `StableId`, `FrecencyTable`, `ComboTable`, `accessScore`, `modificationScore`                          |
-| Search   | `SearchCursor`, `SearchLimits`, `SearchStatus`, `SearchAccumulator`, `searchChunk`                     |
+| Area     | Principal symbols                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------- |
+| Analysis | `AnalysisProfile`, `TextUnit`, `AnalysisWorkspace`, `analyzeText`                                                   |
+| Query    | `QueryStorage`, `QueryView`, `FuzzyError`, `parseQuery`, `CandidateView`, `evaluateConstraints`                     |
+| Glob     | `GlobProgram`, `GlobProgramView`, `GlobMatchWorkspace`, `compileGlob`, `globMatch`                                  |
+| Match    | `DefaultFuzzyCaps`, `FuzzyLimits`, `Scoring`, `MatcherWorkspace`, `MatchOutcome`, `match`, `matchText`, `positions` |
+| Rank     | `RankContext`, `ScoreBreakdown`, `RankedResult`, `rank`, `TopK`                                                     |
+| History  | `StableId`, `FrecencyTable`, `ComboTable`, `accessScore`, `modificationScore`                                       |
+| Search   | `SearchCursor`, `SearchLimits`, `SearchStatus`, `SearchAccumulator`, `searchChunk`                                  |
 
 The [API reference](../../libs/fuzzy/reference/api.md) documents ownership,
 errors, attributes, complexity, and capacities for these entry points. Public

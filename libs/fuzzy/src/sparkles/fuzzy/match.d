@@ -186,19 +186,71 @@ FuzzyExpected!MatchOutcome match(Caps = DefaultFuzzyCaps)(
     auto checkedLimits = validateLimits!Caps(limits);
     if (checkedLimits.hasError)
         return fuzzyErr!MatchOutcome(checkedLimits.error.code);
-    auto checkedScoring = validateScoring!Caps(scoring, checkedLimits.value);
-    if (checkedScoring.hasError)
-        return fuzzyErr!MatchOutcome(checkedScoring.error.code);
-    if (config.maxTypos > Caps.maxTypos)
-        return fuzzyErr!MatchOutcome(FuzzyErrorCode.invalidConfiguration,
-            config.maxTypos);
     auto checkedCandidate = validateCandidate!Caps(candidate,
         checkedLimits.value);
     if (checkedCandidate.hasError)
         return fuzzyErr!MatchOutcome(checkedCandidate.error.code,
             checkedCandidate.error.offset, checkedCandidate.error.context);
 
-    auto prepared = prepareText(query, candidate, checkedLimits.value,
+    auto result = matchText(query, candidate.path, config, scoring, limits,
+        workspace);
+    if (result.hasError)
+        return result;
+
+    // The two path-derived fields, restored above the text core. Both are
+    // decidable from what the core already produced: `firstByte` is the
+    // minimum witness start across every part, so "every unit lies in the
+    // filename" is exactly "the earliest one does".
+    auto outcome = result.value;
+    outcome.allInFilename = outcome.kind != MatchKind.rejected
+        && workspace.partCount != 0
+        && outcome.firstByte >= candidate.filenameOffset;
+    outcome.exactFilename = outcome.kind != MatchKind.rejected
+        && exactFilename(workspace, candidate.filenameOffset);
+    return fuzzyOk(outcome);
+}
+
+/**
+Admit and score one borrowed TEXT, with no path semantics of any kind.
+
+The same cursor DP, the same typo budget and the same canonical witness as
+$(LREF match) — this is where both of them live, and `match` is this
+function plus a filename. What it does not have is a `CandidateView`: no
+path, no filename boundary, no git status, and therefore no filename bonus
+reachable by construction rather than by care.
+
+That matters to any caller whose subject is not a path. hue's grep source
+searches CONTENT lines, which have no filename half; matching them through
+`match` would mean inventing a `filenameOffset` of 0 and having every line
+report `allInFilename`. The picker spec forbids exactly that
+(`docs/specs/hue/picker.md` `PKC1`), and before this entry point existed
+the only way to obey it was to write a second admission rule — which is
+how the file list and the content search came to disagree about what
+"fuzzy" means.
+
+`MatchOutcome.allInFilename` and `.exactFilename` are always false here;
+they are questions about a path, and there is no path.
+*/
+FuzzyExpected!MatchOutcome matchText(Caps = DefaultFuzzyCaps)(
+    in QueryStorage!Caps query, scope const(char)[] text,
+    MatchConfig config, Scoring scoring, FuzzyLimits limits,
+    ref MatcherWorkspace!Caps workspace) @safe pure nothrow @nogc
+{
+    auto checkedLimits = validateLimits!Caps(limits);
+    if (checkedLimits.hasError)
+        return fuzzyErr!MatchOutcome(checkedLimits.error.code);
+    auto checkedScoring = validateScoring!Caps(scoring, checkedLimits.value);
+    if (checkedScoring.hasError)
+        return fuzzyErr!MatchOutcome(checkedScoring.error.code);
+    if (config.maxTypos > Caps.maxTypos)
+        return fuzzyErr!MatchOutcome(FuzzyErrorCode.invalidConfiguration,
+            config.maxTypos);
+    if (text.length > checkedLimits.value.maxCandidateBytes
+        || text.length > Caps.maxCandidateBytes)
+        return fuzzyErr!MatchOutcome(FuzzyErrorCode.candidateTooLong,
+            text.length);
+
+    auto prepared = prepareText(query, text, checkedLimits.value,
         workspace);
     if (prepared.hasError)
         return fuzzyErr!MatchOutcome(prepared.error.code,
@@ -210,7 +262,6 @@ FuzzyExpected!MatchOutcome match(Caps = DefaultFuzzyCaps)(
     outcome.effectiveParts = workspace.partCount;
     outcome.analyzedUnits = workspace.candidateAnalysis.output.length;
     outcome.droppedParts = query.fuzzyParts.length - workspace.partCount;
-    outcome.allInFilename = workspace.partCount != 0;
     outcome.queryContainsSeparator = queryHasSeparator(workspace);
     workspace.rangeCount = 0;
 
@@ -257,7 +308,7 @@ FuzzyExpected!MatchOutcome match(Caps = DefaultFuzzyCaps)(
                 workspace);
         }
         scoreSum += partScore;
-        collectWitness(candidate.filenameOffset, outcome, workspace);
+        collectWitness(outcome, workspace);
     }
 
     sortAndMergeRanges(workspace);
@@ -266,7 +317,6 @@ FuzzyExpected!MatchOutcome match(Caps = DefaultFuzzyCaps)(
         outcome.score = 1;
     outcome.kind = usedFallback ? MatchKind.matchedFallback
         : MatchKind.matched;
-    outcome.exactFilename = exactFilename(workspace, candidate.filenameOffset);
     if (outcome.firstByte == size_t.max)
         outcome.firstByte = 0;
     return fuzzyOk(outcome);
@@ -310,7 +360,7 @@ FuzzyExpected!size_t positions(Caps = DefaultFuzzyCaps, size_t N)(
 }
 
 private FuzzyExpected!void prepareText(Caps)(in QueryStorage!Caps query,
-    in CandidateView candidate, in FuzzyLimits limits,
+    scope const(char)[] text, in FuzzyLimits limits,
     ref MatcherWorkspace!Caps workspace) @safe pure nothrow @nogc
 {
     // The query is immutable across a whole generation of candidates, so its
@@ -328,7 +378,7 @@ private FuzzyExpected!void prepareText(Caps)(in QueryStorage!Caps query,
     AnalysisOptions options = workspace.candidateOptions;
     if (query.profile.kind == AnalysisProfileKind.generalLanguage)
         options.stopwords = query.profile.stopwords;
-    auto candidateResult = analyzeText(candidate.path, options,
+    auto candidateResult = analyzeText(text, options,
         workspace.candidateAnalysis);
     if (!candidateResult.succeeded)
         return analysisFailure(false, candidateResult.error,
@@ -730,9 +780,8 @@ private bool sequencesEqual(scope const(TextUnit)[] left,
     return true;
 }
 
-private void collectWitness(Caps)(size_t filenameOffset,
-    ref MatchOutcome outcome, ref MatcherWorkspace!Caps workspace)
-    @safe pure nothrow @nogc
+private void collectWitness(Caps)(ref MatchOutcome outcome,
+    ref MatcherWorkspace!Caps workspace) @safe pure nothrow @nogc
 {
     foreach (i; 0 .. workspace.witnessCount)
     {
@@ -742,8 +791,6 @@ private void collectWitness(Caps)(size_t filenameOffset,
             outcome.firstByte = unit.sourceStart;
         if (unit.sourceEnd > outcome.endByte)
             outcome.endByte = unit.sourceEnd;
-        if (unit.sourceStart < filenameOffset)
-            outcome.allInFilename = false;
         workspace.ranges[workspace.rangeCount++] = TextRange(
             unit.sourceStart, unit.sourceEnd);
     }
@@ -832,6 +879,108 @@ unittest
     candidate.path = "abdc";
     result = match(query.value, candidate, workspace);
     assert(result.hasValue && result.value.admitted && result.value.typos == 1);
+}
+
+@("fuzzy.matchText.agreesWithMatchOnEveryTextItShares")
+@safe pure nothrow @nogc
+unittest
+{
+    // The whole point of the entry point: one admission rule. If these two
+    // can disagree on any text, a caller without a path has to write its own
+    // matcher — which is exactly what hue's grep source did, and how its
+    // file list and its content search came to admit different things.
+    static immutable string[7] texts = [
+        "xxabdyy", "xxabyy", "abxd", "abdc", "abcd", "", "aaaabbbbccccdddd",
+    ];
+    auto query = parseQuery("abcd");
+    assert(query.hasValue);
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+
+    foreach (text; texts)
+    {
+        CandidateView candidate;
+        candidate.path = text;
+        candidate.filenameOffset = 0;
+        auto viaPath = match(query.value, candidate, workspace);
+        auto viaText = matchText(query.value, text, MatchConfig.init,
+            Scoring.init, FuzzyLimits.init, workspace);
+        assert(viaPath.hasValue == viaText.hasValue);
+        if (!viaPath.hasValue)
+            continue;
+        assert(viaPath.value.kind == viaText.value.kind);
+        assert(viaPath.value.typos == viaText.value.typos);
+        assert(viaPath.value.firstByte == viaText.value.firstByte);
+        assert(viaPath.value.endByte == viaText.value.endByte);
+        assert(viaPath.value.score == viaText.value.score);
+    }
+}
+
+@("fuzzy.matchText.hasNoFilenameToBeInside")
+@safe pure nothrow @nogc
+unittest
+{
+    // `PKC1`'s objection, answered by construction. Through `match` a text
+    // with `filenameOffset == 0` reports `allInFilename`, which `rank` pays
+    // a bonus for — the reason a content line may not be ranked as a
+    // candidate. Through `matchText` the question cannot be asked.
+    auto query = parseQuery("abcd");
+    assert(query.hasValue);
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+
+    CandidateView candidate;
+    candidate.path = "xxabdyy";
+    candidate.filenameOffset = 0;
+    auto viaPath = match(query.value, candidate, workspace);
+    assert(viaPath.hasValue && viaPath.value.allInFilename,
+        "every byte of a zero-offset path is 'in the filename'");
+
+    auto viaText = matchText(query.value, "xxabdyy", MatchConfig.init,
+        Scoring.init, FuzzyLimits.init, workspace);
+    assert(viaText.hasValue && viaText.value.admitted);
+    assert(!viaText.value.allInFilename && !viaText.value.exactFilename,
+        "there is no path here, so neither question has an answer");
+}
+
+@("fuzzy.matchText.witnessRangesAreTheHighlight")
+@safe pure nothrow @nogc
+unittest
+{
+    // The canonical witness supplies the highlight, merged and sorted
+    // (§4.3). A caller needing to paint a match reads these rather than
+    // deriving a span of its own.
+    auto query = parseQuery("abcd");
+    assert(query.hasValue);
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+
+    auto result = matchText(query.value, "xxabdyy", MatchConfig.init,
+        Scoring.init, FuzzyLimits.init, workspace);
+    assert(result.hasValue && result.value.admitted);
+    auto ranges = matcherRanges(workspace);
+    assert(ranges.length != 0);
+    assert(ranges[0].start == result.value.firstByte);
+    assert(ranges[$ - 1].end == result.value.endByte);
+}
+
+@("fuzzy.matchText.refusesTextLongerThanItsCapacity")
+@safe pure nothrow @nogc
+unittest
+{
+    // `match` got this from `validateCandidate`, which `matchText` does not
+    // run. The bound has to be re-stated here or an oversize text reaches
+    // the analyzer instead of an error value.
+    auto query = parseQuery("abcd");
+    assert(query.hasValue);
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+
+    char[DefaultFuzzyCaps.maxCandidateBytes + 1] huge = 'a';
+    auto result = matchText(query.value, huge[], MatchConfig.init,
+        Scoring.init, FuzzyLimits.init, workspace);
+    assert(result.hasError);
+    assert(result.error.code == FuzzyErrorCode.candidateTooLong);
 }
 
 @("fuzzy.match.smartCaseUnicodeAndPositions")
