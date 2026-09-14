@@ -10,7 +10,8 @@ import sparkles.fuzzy.common : AnalysisProfileKind, CandidateView,
     DefaultFuzzyCaps, FuzzyErrorCode, FuzzyExpected, FuzzyLimits, TextRange,
     fuzzyErr, fuzzyOk, isPathSeparator, typoBudget, validateCandidate,
     validateLimits;
-import sparkles.fuzzy.query : QueryParseOptions, QueryStorage, parseQuery;
+import sparkles.fuzzy.query : QueryCase, QueryParseOptions, QueryStorage,
+    parseQuery, resolveQueryCase;
 
 import sparkles.test_runner.attributes : benchmark;
 
@@ -154,6 +155,7 @@ struct MatcherWorkspace(Caps = DefaultFuzzyCaps)
     private size_t cachedPartCount;
     private size_t cachedLimitFuzzyParts;
     private size_t cachedLimitQueryUnits;
+    private QueryCase cachedCaseMode;
     private AnalysisOptions candidateOptions;
     private bool queryPrepared_;
 
@@ -418,8 +420,11 @@ private FuzzyExpected!void prepareQuery(Caps)(in QueryStorage!Caps query,
     final switch (query.profile.kind)
     {
     case AnalysisProfileKind.codePath:
-        options = AnalysisOptions.codePath(sensitive
-            ? AnalysisCase.sensitive : AnalysisCase.simpleFold);
+        // The query's own rule, not a second derivation of it: the candidate
+        // must be analyzed the way the query was, or the two unit streams
+        // fold differently and the DP compares incomparable things.
+        options = AnalysisOptions.codePath(
+            resolveQueryCase(query.caseMode, sensitive));
         break;
     case AnalysisProfileKind.generalLanguage:
         options = AnalysisOptions.generalLanguage(query.profile.stopwords);
@@ -457,8 +462,13 @@ private FuzzyExpected!void prepareQuery(Caps)(in QueryStorage!Caps query,
     final switch (query.profile.kind)
     {
     case AnalysisProfileKind.codePath:
-        workspace.candidateOptions = AnalysisOptions.codePath(sensitive
-            ? AnalysisCase.sensitive : AnalysisCase.simpleFold);
+        // The SAME resolution the query units were analyzed under, twenty
+        // lines up. Deriving it a second time here is how the two streams
+        // came apart: a stated `sensitive` rule left the query preserving
+        // case while the candidate folded, so `widget` matched `WIDGET_MAX`
+        // and admission was asymmetric in a way no single-sided test sees.
+        workspace.candidateOptions = AnalysisOptions.codePath(
+            resolveQueryCase(query.caseMode, sensitive));
         rememberPreparedQuery(query, limits, workspace);
         break;
     case AnalysisProfileKind.generalLanguage:
@@ -476,7 +486,11 @@ private bool queryPreparationReusable(Caps)(in QueryStorage!Caps query,
         || query.profile.kind != AnalysisProfileKind.codePath
         || query.fuzzyParts.length != workspace.cachedPartCount
         || limits.maxFuzzyParts != workspace.cachedLimitFuzzyParts
-        || limits.maxQueryUnits != workspace.cachedLimitQueryUnits)
+        || limits.maxQueryUnits != workspace.cachedLimitQueryUnits
+        // The case rule is part of the analysis, not just of the comparison:
+        // the cached units were folded (or not) under it. Two queries with
+        // identical bytes and different rules are different preparations.
+        || query.caseMode != workspace.cachedCaseMode)
         return false;
     size_t at;
     foreach (i, text; query.fuzzyParts)
@@ -512,6 +526,7 @@ private void rememberPreparedQuery(Caps)(in QueryStorage!Caps query,
     workspace.cachedPartCount = query.fuzzyParts.length;
     workspace.cachedLimitFuzzyParts = limits.maxFuzzyParts;
     workspace.cachedLimitQueryUnits = limits.maxQueryUnits;
+    workspace.cachedCaseMode = query.caseMode;
     workspace.queryPrepared_ = true;
 }
 
@@ -914,6 +929,75 @@ unittest
         assert(viaPath.value.endByte == viaText.value.endByte);
         assert(viaPath.value.score == viaText.value.score);
     }
+}
+
+@("fuzzy.matchText.aStatedCaseRuleGovernsBothSidesOfTheComparison")
+@safe pure nothrow @nogc
+unittest
+{
+    // A LOWERCASE query is the discriminator. An uppercase one is already
+    // sensitive under smart case, so a test using `WIDGET` passes whether
+    // the stated rule reaches the engine or not — which is how a half-wired
+    // policy shipped here once: the query analyzed sensitive, the candidate
+    // folded, and `widget` matched `WIDGET_MAX` in "case-sensitive" mode.
+    QueryParseOptions strictOpts;
+    strictOpts.caseMode = QueryCase.sensitive;
+    auto strictQuery = parseQuery!DefaultFuzzyCaps("widget", strictOpts);
+    auto smartQuery = parseQuery!DefaultFuzzyCaps("widget");
+    assert(strictQuery.hasValue && smartQuery.hasValue);
+
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+
+    auto strict = matchText(strictQuery.value, "WIDGET_MAX", MatchConfig.init,
+        Scoring.init, FuzzyLimits.init, workspace);
+    assert(strict.hasValue && !strict.value.admitted,
+        "a stated sensitive rule must reach BOTH analyses");
+
+    // Smart case over the same lowercase query folds, and admits.
+    auto smart = matchText(smartQuery.value, "WIDGET_MAX", MatchConfig.init,
+        Scoring.init, FuzzyLimits.init, workspace);
+    assert(smart.hasValue && smart.value.admitted,
+        "…and the default is unchanged");
+}
+
+@("fuzzy.matchText.theCaseRuleIsPartOfThePreparationCacheKey")
+@safe pure nothrow @nogc
+unittest
+{
+    // The preparation cache holds ANALYZED units, and the case rule decided
+    // how they were folded. Keyed on content alone, the same bytes under a
+    // second rule silently reuse the first rule's units — and the second
+    // answer is the first one, which is the worst shape a cache bug takes:
+    // right on its own, wrong only in sequence.
+    QueryParseOptions sensitiveOpts;
+    sensitiveOpts.caseMode = QueryCase.sensitive;
+    QueryParseOptions foldedOpts;
+    foldedOpts.caseMode = QueryCase.simpleFold;
+
+    auto sensitiveQuery = parseQuery!DefaultFuzzyCaps("WIDGET", sensitiveOpts);
+    auto foldedQuery = parseQuery!DefaultFuzzyCaps("WIDGET", foldedOpts);
+    assert(sensitiveQuery.hasValue && foldedQuery.hasValue);
+
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+
+    auto strict = matchText(sensitiveQuery.value, "struct Widget",
+        MatchConfig.init, Scoring.init, FuzzyLimits.init, workspace);
+    assert(strict.hasValue && !strict.value.admitted,
+        "case-sensitive `WIDGET` finds only the `W`, which the budget "
+        ~ "cannot rescue over six units");
+
+    // Same bytes, same workspace, different rule — right after the miss.
+    auto folded = matchText(foldedQuery.value, "struct Widget",
+        MatchConfig.init, Scoring.init, FuzzyLimits.init, workspace);
+    assert(folded.hasValue && folded.value.admitted,
+        "the second rule was answered with the first rule's analysis");
+
+    // …and back, so the cache is not merely one-directional.
+    auto again = matchText(sensitiveQuery.value, "struct Widget",
+        MatchConfig.init, Scoring.init, FuzzyLimits.init, workspace);
+    assert(again.hasValue && !again.value.admitted);
 }
 
 @("fuzzy.matchText.hasNoFilenameToBeInside")

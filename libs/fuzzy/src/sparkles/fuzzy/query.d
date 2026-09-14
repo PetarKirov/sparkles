@@ -205,11 +205,80 @@ struct QueryDiagnostics
 }
 
 /// Query parsing policy.
+/**
+How a query's case rule is decided.
+
+`smart` is the historical behaviour and the default: sensitive when the
+query holds an uppercase cased character, folded otherwise, derived inside
+the engine from the query text.
+
+The other three are a caller stating the rule outright, because smart case
+is a *policy* and an application may already own it. hue resolves
+`search.smartCase` / `search.unicodeCaseFold` into one `SearchPolicy` that
+its in-document search obeys; if the engine re-derived its own answer, the
+same query would fold differently depending on which of hue's searches ran
+it — the divergence `matchText` was added to stop, arriving by another
+door.
+*/
+enum QueryCase : ubyte
+{
+    smart,
+    sensitive,
+    simpleFold,
+    fullFold,
+}
+
+/// Resolve `mode` against a query that does or does not contain uppercase.
+AnalysisCase resolveQueryCase(QueryCase mode, bool containsUppercase)
+    @safe pure nothrow @nogc
+{
+    final switch (mode)
+    {
+    case QueryCase.smart:
+        return containsUppercase ? AnalysisCase.sensitive
+            : AnalysisCase.simpleFold;
+    case QueryCase.sensitive: return AnalysisCase.sensitive;
+    case QueryCase.simpleFold: return AnalysisCase.simpleFold;
+    case QueryCase.fullFold: return AnalysisCase.fullFold;
+    }
+}
+
+@("fuzzy.query.resolveQueryCasePolicy")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(resolveQueryCase(QueryCase.smart, true) == AnalysisCase.sensitive);
+    assert(resolveQueryCase(QueryCase.smart, false) == AnalysisCase.simpleFold);
+    // A stated rule ignores the query, which is the whole point of stating it.
+    assert(resolveQueryCase(QueryCase.simpleFold, true)
+        == AnalysisCase.simpleFold);
+    assert(resolveQueryCase(QueryCase.sensitive, false)
+        == AnalysisCase.sensitive);
+    assert(resolveQueryCase(QueryCase.fullFold, true) == AnalysisCase.fullFold);
+}
+
+@("fuzzy.query.aStatedCaseRuleReachesAdmission")
+@safe pure nothrow @nogc
+unittest
+{
+    // The rule has to survive parsing, or `caseMode` is a field nobody reads
+    // — which is how every other seam in this area failed.
+    QueryParseOptions folded;
+    folded.caseMode = QueryCase.simpleFold;
+    auto q = parseQuery!DefaultFuzzyCaps("Widget", folded);
+    assert(q.hasValue && q.value.caseMode == QueryCase.simpleFold);
+
+    auto smart = parseQuery!DefaultFuzzyCaps("Widget");
+    assert(smart.hasValue && smart.value.caseMode == QueryCase.smart);
+}
+
 struct QueryParseOptions
 {
     AnalysisProfile profile = AnalysisProfile.codePath();
     PathFlavor pathFlavor = PathFlavor.unix;
     FuzzyLimits limits;
+    /// Whose decision the case rule is. Defaults to the engine's own.
+    QueryCase caseMode = QueryCase.smart;
 }
 
 private struct StoredGlob
@@ -236,6 +305,7 @@ struct QueryStorage(Caps = DefaultFuzzyCaps)
     private Location location_;
     private QueryDiagnostics diagnostics_;
     private AnalysisProfile profile_;
+    private QueryCase caseMode_;
     private PathFlavor pathFlavor_;
 
     const(char)[] source() const return scope @safe pure nothrow @nogc
@@ -251,6 +321,9 @@ struct QueryStorage(Caps = DefaultFuzzyCaps)
         => diagnostics_;
     AnalysisProfile profile() const return scope @safe pure nothrow @nogc
         => profile_;
+
+    /// Whose decision the case rule is (see $(LREF QueryCase)).
+    QueryCase caseMode() const @safe pure nothrow @nogc => caseMode_;
     PathFlavor pathFlavor() const @safe pure nothrow @nogc => pathFlavor_;
     bool hasFuzzyParts() const @safe pure nothrow @nogc
         => fuzzyPartCount_ != 0;
@@ -381,6 +454,7 @@ private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
     QueryStorage!Caps query;
     query.source_ = source;
     query.profile_ = options.profile;
+    query.caseMode_ = options.caseMode;
     query.pathFlavor_ = options.pathFlavor;
 
     size_t at;
@@ -536,8 +610,8 @@ private FuzzyExpected!void diagnoseFuzzyParts(Caps)(
     final switch (query.profile_.kind)
     {
     case AnalysisProfileKind.codePath:
-        analysisOptions = AnalysisOptions.codePath(sensitive
-            ? AnalysisCase.sensitive : AnalysisCase.simpleFold);
+        analysisOptions = AnalysisOptions.codePath(
+            resolveQueryCase(query.caseMode_, sensitive));
         break;
     case AnalysisProfileKind.generalLanguage:
         analysisOptions = AnalysisOptions.generalLanguage(
