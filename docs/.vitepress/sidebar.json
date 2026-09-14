@@ -4234,6 +4234,91 @@
             "link": "/research/tui-libraries/"
           },
           {
+            "text": "Text Sizing",
+            "link": "/research/tui-libraries/text-sizing/",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Concepts",
+                "link": "/research/tui-libraries/text-sizing/concepts"
+              },
+              {
+                "text": "Protocol and Terminals",
+                "collapsed": true,
+                "items": [
+                  {
+                    "text": "Kitty",
+                    "link": "/research/tui-libraries/text-sizing/kitty"
+                  },
+                  {
+                    "text": "Ghostty",
+                    "link": "/research/tui-libraries/text-sizing/ghostty"
+                  },
+                  {
+                    "text": "foot",
+                    "link": "/research/tui-libraries/text-sizing/foot"
+                  }
+                ]
+              },
+              {
+                "text": "Libraries",
+                "collapsed": true,
+                "items": [
+                  {
+                    "text": "libvaxis",
+                    "link": "/research/tui-libraries/text-sizing/libvaxis"
+                  },
+                  {
+                    "text": "OpenTUI",
+                    "link": "/research/tui-libraries/text-sizing/opentui"
+                  },
+                  {
+                    "text": "Blessed (Python)",
+                    "link": "/research/tui-libraries/text-sizing/blessed"
+                  },
+                  {
+                    "text": "wcwidth",
+                    "link": "/research/tui-libraries/text-sizing/wcwidth"
+                  }
+                ]
+              },
+              {
+                "text": "Applications",
+                "collapsed": true,
+                "items": [
+                  {
+                    "text": "presenterm",
+                    "link": "/research/tui-libraries/text-sizing/presenterm"
+                  },
+                  {
+                    "text": "osc66",
+                    "link": "/research/tui-libraries/text-sizing/osc66"
+                  },
+                  {
+                    "text": "mdfried",
+                    "link": "/research/tui-libraries/text-sizing/mdfried"
+                  }
+                ]
+              },
+              {
+                "text": "Comparison",
+                "link": "/research/tui-libraries/text-sizing/comparison"
+              },
+              {
+                "text": "Sparkles Baseline",
+                "link": "/research/tui-libraries/text-sizing/sparkles-baseline"
+              },
+              {
+                "text": "Sparkles Proposal",
+                "link": "/research/tui-libraries/text-sizing/sparkles-proposal"
+              },
+              {
+                "text": "Validation",
+                "link": "/research/tui-libraries/text-sizing/validation"
+              }
+            ]
+          },
+          {
             "text": "Ratatui (Rust)",
             "link": "/research/tui-libraries/ratatui"
           },
