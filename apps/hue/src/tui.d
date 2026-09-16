@@ -22,7 +22,8 @@ import table_select : serializeTable, TableCopyFormat, TableRegion;
 import dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
 import input_line : InputState, Mode;
-import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
+import keymap : Binding, bindingsAt, Command, InputMode, KeyContext,
+    scrollAskOf;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
@@ -40,7 +41,8 @@ version (unittest) import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
+import sparkles.twoslash.render_widgets : abbrevRegion, isPopupCloseKey,
+    PopupBar, popupBarOf, viewHoverPopup, viewTwoslashDocument;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
@@ -51,9 +53,9 @@ import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
-    ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt,
-    Timeline;
+import sparkles.ui.state : DisclosureState, DocRow, HoverTarget, keyAt,
+    KeyTarget, keyTargets, ScrollAxis, ScrollbarState, scrollbarThumb,
+    Selection, selectionRects, sourceOffsetAt, Timeline;
 import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
     TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
@@ -305,6 +307,199 @@ struct PreviewTui
     // Which collapsed runs of the focused popup's signature are open. Per
     // popup: moving to another node asks a fresh question.
     private ExpandedRegions hoverExpanded;
+    /// The hover popup's body offset in rows, and last frame's measurement of
+    /// what it may scroll over. A ddoc-heavy hover used to run off the pane
+    /// with no way to reach the rest of it.
+    private long hoverScroll;
+    /// The body's horizontal offset, in cells: prose wraps to the popup, so
+    /// only a fenced example overflows sideways — and its tail is otherwise
+    /// unreachable.
+    private long hoverScrollX;
+    /// ditto
+    private long hoverContentRows;
+    /// ditto
+    private long hoverViewportRows;
+    /// ditto
+    private long hoverContentCols;
+    /// ditto
+    private long hoverViewportCols;
+    /// How far the popup's fenced code blocks are scrolled sideways, and what
+    /// they may scroll over — a fence clips its own long lines rather than
+    /// overflowing the body, so its overflow is a separate measurement.
+    private int hoverFenceX;
+    /// ditto
+    private long hoverFenceContentCols;
+    /// ditto
+    private long hoverFenceViewportCols;
+    /// Where the popup was last painted, and what its rows mean — so a click
+    /// on the ✕ lands and so the pointer resting on it reveals one at all.
+    private Rect hoverPopupRect;
+    /// ditto
+    private KeyTarget[] hoverPopupKeys;
+    /// Whether the pointer is inside `hoverPopupRect`. One frame stale, like
+    /// every hit rect.
+    private bool hoverPointerInside;
+    /// The popup's own bar grabs. A bar is a CONTROL: a reader who can see
+    /// that a popup scrolls reaches for its thumb, and until these existed
+    /// the press landed on the generic "some key inside the popup" arm and
+    /// toggled a signature run instead.
+    private ScrollbarState hoverVBar;
+    /// ditto
+    private ScrollbarState hoverHBar = ScrollbarState(axis: ScrollAxis.horizontal);
+
+    /// Every scroll offset the open popup owns, back to the top-left. A
+    /// different symbol is a different document, and there are three of them —
+    /// which is exactly how many a caller forgets one of.
+    private void resetHoverScroll() @safe pure nothrow @nogc
+    {
+        hoverScroll = 0;
+        hoverScrollX = 0;
+        hoverFenceX = 0;
+        hoverVBar = ScrollbarState.init;
+        hoverHBar = ScrollbarState(axis: ScrollAxis.horizontal);
+    }
+
+    /// Where the popup's `bar` was painted, in GRID cells — empty when this
+    /// popup has no such bar. Read back from last frame's `keyTargets`, which
+    /// is the same rect the display list drew, so a grab measures against
+    /// what the reader aimed at.
+    private Rect hoverBarRect(PopupBar bar) const @safe pure nothrow @nogc
+    {
+        foreach (ref const kt; hoverPopupKeys)
+            if (popupBarOf(kt.key) == bar)
+                return Rect(hoverPopupRect.x + kt.rect.x,
+                    hoverPopupRect.y + kt.rect.y, kt.rect.width, kt.rect.height);
+        return Rect.init;
+    }
+
+    /// A press on one of the popup's bars: the one scrollbar machine (`STM9`),
+    /// on the popup's own offsets. On the thumb it grabs in place, on the
+    /// track it jumps — the same bargain every other bar in hue makes.
+    private void hoverBarPressed(PopupBar bar, Point p) @safe pure nothrow @nogc
+    {
+        const r = hoverBarRect(bar);
+        if (r.empty)
+            return;
+        if (bar == PopupBar.vertical)
+        {
+            hoverVBar.offset = hoverScroll;
+            hoverVBar = hoverVBar.pressed(p.y - r.y, hoverContentRows,
+                hoverViewportRows, r.height);
+            hoverScroll = hoverVBar.offset;
+        }
+        else
+        {
+            // The horizontal bar reports the FENCES' extent, because prose
+            // wraps to the popup and code does not — so its thumb moves the
+            // same offset a sideways notch does.
+            hoverHBar.offset = hoverFenceX;
+            hoverHBar = hoverHBar.pressed(p.x - r.x, hoverFenceContentCols,
+                hoverFenceViewportCols, r.width);
+            hoverFenceX = cast(int) hoverHBar.offset;
+        }
+    }
+
+    /// ditto — a drag while grabbed tracks wherever the pointer strays, which
+    /// is why it is answered before the inside-the-popup test.
+    private void hoverBarDragged(Point p) @safe pure nothrow @nogc
+    {
+        if (hoverVBar.dragging)
+        {
+            const r = hoverBarRect(PopupBar.vertical);
+            if (!r.empty)
+            {
+                hoverVBar = hoverVBar.dragged(p.y - r.y, hoverContentRows,
+                    hoverViewportRows, r.height);
+                hoverScroll = hoverVBar.offset;
+            }
+        }
+        if (hoverHBar.dragging)
+        {
+            const r = hoverBarRect(PopupBar.horizontal);
+            if (!r.empty)
+            {
+                hoverHBar = hoverHBar.dragged(p.x - r.x, hoverFenceContentCols,
+                    hoverFenceViewportCols, r.width);
+                hoverFenceX = cast(int) hoverHBar.offset;
+            }
+        }
+    }
+
+    /// Scrolls the popup's fences sideways, clamped; `true` iff it moved.
+    private bool scrollHoverFenceX(long cells) @safe pure nothrow @nogc
+    {
+        const over = hoverFenceContentCols - hoverFenceViewportCols;
+        const maxOff = over > 0 ? over : 0;
+        const want = hoverFenceX + cells;
+        const clamped = want < 0 ? 0 : (want > maxOff ? maxOff : want);
+        if (clamped == hoverFenceX)
+            return false;
+        hoverFenceX = cast(int) clamped;
+        return true;
+    }
+
+    /// Scrolls the open popup's body by `rows`, clamped; `true` iff it moved —
+    /// which is also "the notch was consumed", so it does not also scroll the
+    /// document the popup is describing.
+    private bool scrollHoverPopup(long rows) @safe pure nothrow @nogc
+    {
+        const over = hoverContentRows - hoverViewportRows;
+        const maxOff = over > 0 ? over : 0;
+        const want = hoverScroll + rows;
+        const clamped = want < 0 ? 0 : (want > maxOff ? maxOff : want);
+        if (clamped == hoverScroll)
+            return false;
+        hoverScroll = clamped;
+        return true;
+    }
+
+    /// ditto, sideways.
+    private bool scrollHoverPopupX(long cells) @safe pure nothrow @nogc
+    {
+        const over = hoverContentCols - hoverViewportCols;
+        const maxOff = over > 0 ? over : 0;
+        const want = hoverScrollX + cells;
+        const clamped = want < 0 ? 0 : (want > maxOff ? maxOff : want);
+        if (clamped == hoverScrollX)
+            return false;
+        hoverScrollX = clamped;
+        return true;
+    }
+
+    /**
+    A scroll command, offered to an open popup before the document.
+
+    The same rule the wheel already follows: the innermost surface under the
+    reader wins, and only when it cannot move does the keystroke reach the
+    document (`LYR5`'s arm, hand-routed until the popup joins the arena).
+
+    Without it the popup is scrollable by wheel and inert to the keyboard —
+    and a reader who opened it with `p` never touched the mouse. Which
+    commands scroll, and on which axis, is $(REF scrollAskOf, keymap)'s to
+    say: the GUI answers the same question about the same popup, and two
+    spellings of one table drift where no test can see it.
+    */
+    private bool scrollHoverByCommand(Command c, long hStep)
+        @safe pure nothrow @nogc
+    {
+        if (hoverSel < 0)
+            return false;
+        const ask = scrollAskOf(c);
+        if (!ask.any)
+            return false;
+        if (ask.toTop)
+            return scrollHoverPopup(-hoverScroll);
+        if (ask.toBottom)
+            return scrollHoverPopup(hoverContentRows);
+        if (ask.cells != 0)
+            // The fence first, exactly as sideways notches are routed: a fence
+            // is the thing in a hover that does not wrap, so it is what a
+            // sideways key is almost always for.
+            return scrollHoverFenceX(ask.cells * hStep)
+                || scrollHoverPopupX(ask.cells * hStep);
+        const page = hoverViewportRows > 1 ? hoverViewportRows : 1;
+        return scrollHoverPopup(ask.rows * (ask.pages ? page : 1));
+    }
 
     // ── the model's vocabulary, forwarded (IXB5) ─────────────────────────────
     // The old field names keep working for the methods below and every host
@@ -482,6 +677,12 @@ struct PreviewTui
         const dx = w.dx + (w.mods.shift ? w.dy : 0);
         if (dx != 0)
         {
+            // An open popup takes a sideways notch before the document. The
+            // fence first: it is the thing in a hover that does not wrap, so
+            // the notch is almost always for it.
+            if (hoverSel >= 0
+                && (scrollHoverFenceX(dx) || scrollHoverPopupX(dx)))
+                return true;
             const fb = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
             if (fb != size_t.max && vm.scrollFence(fb, dx))
                 return true;
@@ -493,6 +694,12 @@ struct PreviewTui
         }
         if (w.mods.shift)
             return true; // a shifted notch never scrolls vertically
+        // An open popup takes the notch before the document does. Otherwise it
+        // falls through and scrolls the token the popup describes out from
+        // under it: the popup stays put and the thing it is about walks away.
+        // (`LYR5`'s wheel arm, hand-routed until the popup joins the arena.)
+        if (hoverSel >= 0 && scrollHoverPopup(w.dy))
+            return true;
         // A vertical notch over a TALL fence or table scrolls it until its
         // edge; only then does it reach the document (the COD6/TBL8 rule).
         const fbV = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
@@ -673,6 +880,7 @@ struct PreviewTui
         dsvCopy = DsvCopy.init;
         tableFmt = TableCopyFormat.tsv;
         hoverSel = -1;
+        resetHoverScroll();
         sel = Selection!long.cleared;
         inp.mode = Mode.normal;
         inp.query.clear();
@@ -702,6 +910,7 @@ struct PreviewTui
     {
         tw = tw_;
         hoverSel = -1;
+        resetHoverScroll();
         showPreview = tw.code.length != 0 || model.present;
         relayout(); // clamps the scroll to the document view's row count
     }
@@ -991,33 +1200,65 @@ struct PreviewTui
         import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
         import sparkles.source_view.markdown : highlightedFenceRenderer,
             MdViewTheme;
-        import sparkles.twoslash.render_widgets : clampOrigin,
-            effectivePopupWidth, HoverViewOptions, signatureSpans;
+        import sparkles.twoslash.render_widgets : HoverViewOptions,
+            applyPopupArrow, placeHoverPopup, popupBound, popupBudget,
+            popupScrollExtents, signatureSpans;
         import sparkles.ui.geometry : Rect;
+        import sparkles.ui.overlay.anchor : AnchorRect;
+        import sparkles.ui.state : clippedSelectionRects;
         import sparkles.ui.widget : TextSpan;
 
         const n = tw.nodes[hoverNodes[hoverSel]];
-        auto rs = selectionRects(mdTree, mdFrames, n.start, n.start + n.length);
-        if (!rs.length)
+        // Through the CLIP-AWARE producer (`ANC3`). The unclipped one answers a
+        // full, usable-looking rect for a token that has scrolled out of the
+        // body — and `clampOrigin`'s floor at zero used to drag the popup back
+        // into view, which hid the mistake. The solve will not.
+        const hit = clippedSelectionRects(mdTree, mdFrames, n.start,
+            n.start + n.length);
+        if (!hit.ok)
             return;
+        auto rs = hit.rects;
         // With a grammar cache the signature renders as resolved-color spans
         // inside the widget model (the same mapping the GUI uses).
         TextSpan[] sig = cache !is null
             ? signatureSpans(*cache, tw.effectiveLanguage,
                 (() @trusted => &vm.current)(), pageFg,
                 withoutQuickinfoPrefix(n.text)) : null;
-        // The room actually left at the anchor, capped by the theme's ceiling.
-        // Without this the popup grows to whatever the signature measures and
-        // walks off the pane.
+        // The body region the document occupies, in GRID cells — the boundary
+        // the popup must stay inside, supplied as data (`PLC3`). Row 0 is the
+        // header bar and the last two rows are chrome, so neither is room.
         const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
-        const avail = width - rs[0].x - 1;
+        const hx = vm.hOverflows() ? cast(int) vm.hsb.offset : 0;
+        const boundary = Rect(originX, 1, width, bodyRows());
+        // The token's own cell, in GRID coordinates — the same transform the
+        // document itself is painted through at `originX - hx, 1 - top`. The
+        // popup used to skip `hx`, so a sideways-scrolled document anchored its
+        // popup a scroll-offset away from the token it described.
+        const anchor = AnchorRect(
+            primary: Rect(originX - hx + rs[0].x, cast(int)(1 - top + rs[0].y),
+                rs[0].width, 1),
+            live: true);
+        // `PLC9`, decide then measure: the room is THIS ANCHOR's, not the
+        // pane's. Built against the pane, a popup on a token near the bottom
+        // lays out taller than the box the solve later hands back — the tail
+        // is clipped away unreachably and the bar beside it describes a
+        // viewport that is not on the screen.
+        const budget = popupBudget(pal, anchor, boundary);
+        const bound = budget.paintable ? budget.rect.size
+            : popupBound(pal, boundary);
         // Through the *registry* overload: the ddoc is markdown, and without
         // it the popup shows `### Examples` and fence markers as literal text
         // while the document one pane over renders them properly. The theme
         // and fence highlighter are the same ones the preview uses, so a
         // documented unittest arrives with its `unittest` fence label.
         auto opts = HoverViewOptions(
-            maxWidth: effectivePopupWidth(pal, avail), sigSpans: sig,
+            maxWidth: bound.width, maxHeight: bound.height,
+            scrollOffset: hoverScroll, scrollOffsetX: hoverScrollX,
+            fenceScrollX: hoverFenceX, showClose: hoverPointerInside,
+            barContent: hoverContentRows, barViewport: hoverViewportRows,
+            barContentX: hoverFenceContentCols,
+            barViewportX: hoverFenceViewportCols, barOffsetX: hoverFenceX,
+            sigSpans: sig,
             expanded: hoverExpanded, nodeKey: hoverNodes[hoverSel] + 1,
             mdTheme: MdViewTheme.derive(vm.current, pageFg, pageBg),
             fenceRenderer: highlightedFenceRenderer(cache,
@@ -1030,18 +1271,37 @@ struct PreviewTui
         if (!tree.nodes.length)
             return;
         auto frames = layout(tree);
-        auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
+        // What the body may scroll over, measured off the frames just laid
+        // out — so a wheel notch clamps against a real extent next frame.
+        const sc = popupScrollExtents(tree, frames);
+        hoverContentRows = sc.content;
+        hoverViewportRows = sc.viewport;
+        hoverContentCols = sc.contentX;
+        hoverViewportCols = sc.viewportX;
+        hoverFenceContentCols = sc.fenceContentX;
+        hoverFenceViewportCols = sc.fenceViewportX;
 
-        // Keep it inside the pane on both axes: shift left rather than shrink
-        // when it would overhang the right edge (a narrower popup would only
-        // move the problem into the text), and clip so it can never spill
-        // across the divider into the explorer — `paintGrid` clips in
-        // canvas-local cells, so the rect is expressed relative to the origin.
-        const box = frames[tree.root].rect;
-        const ox = clampOrigin(rs[0].x, box.width, width);
-        const oy = cast(int)(rs[0].y - top + 2);
-        paintGrid(g, pageBg, ops, originX + ox, oy,
-            Rect(-ox, -oy, width, height));
+        // The second pass, with the budget's side pinned so it cannot
+        // re-collide against a measurement the first pass has not seen.
+        const placed = placeHoverPopup(pal, anchor,
+            frames[tree.root].rect.size, boundary, budget);
+        if (!placed.paintable)
+            return;
+        // Between `layout` and the display list — the only window in which the
+        // popup's measured box and its resolved side both exist, and therefore
+        // the only place the caret can be aimed at the token it describes.
+        applyPopupArrow(tree, placed);
+        auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
+        // `paintGrid` clips in canvas-local cells. The solve guarantees the
+        // rect is inside `boundary` unless it reports `overflowing`, so this is
+        // the honest ceiling rather than the defensive one it replaces.
+        // Kept for the next frame's pointer work: where it landed, and where
+        // its clickable parts are within it.
+        hoverPopupRect = placed.rect;
+        hoverPopupKeys = keyTargets(tree, frames);
+        paintGrid(g, pageBg, ops, placed.rect.x, placed.rect.y,
+            Rect(boundary.x - placed.rect.x, boundary.y - placed.rect.y,
+                boundary.width, boundary.height));
     }
 
     // Paint a one-row chrome bar (the shared WGT17 headerBar view) at grid row
@@ -1520,11 +1780,19 @@ struct PreviewTui
         if (e.key == Key.escape && hoverSel >= 0 && !lantern.active)
         {
             hoverSel = -1;
+            resetHoverScroll();
             return true;
         }
 
         const st = ltnStep(lantern, e, keyContext());
         if (st.kind != LtnStepKind.execute)
+            return true;
+
+        // An open popup takes a scroll command before the document does — the
+        // wheel's rule, reached by keyboard. It is offered BEFORE the switch
+        // rather than inside each arm so a command added later cannot quietly
+        // scroll the document out from under a popup.
+        if (scrollHoverByCommand(st.cmd.cmd, vm.hScrollStep))
             return true;
 
         final switch (st.cmd.cmd)
@@ -1631,6 +1899,7 @@ struct PreviewTui
                 if (hoverNodes.length)
                 {
                     hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
+                    resetHoverScroll();
                     hoverExpanded = null;
                 }
                 break;
@@ -1788,6 +2057,67 @@ struct PreviewTui
     {
         const rows = bodyRows();
 
+        // The popup, first: while it is open it BLOCKS what is painted under
+        // it (`MDL1`), so a press inside it is never the document's. The rect
+        // is last frame's, which is what the reader aimed at.
+        // `TRG12`'s corridor: the popup sits one row below its token to leave
+        // room for the caret, and that row belongs to neither. Giving it to the
+        // popup is what lets the pointer travel into it without crossing ground
+        // nobody owns.
+        const corridorRect = hoverPopupRect.empty ? hoverPopupRect
+            : Rect(hoverPopupRect.x, hoverPopupRect.y - 1,
+                hoverPopupRect.width, hoverPopupRect.height + 1);
+        const insidePopup = hoverSel >= 0 && !corridorRect.empty
+            && corridorRect.contains(e.pos);
+        // A grab counts as inside: the ✕ is revealed on hover, and a thumb
+        // drag routinely leaves the box it is scrolling.
+        hoverPointerInside = insidePopup || hoverVBar.dragging
+            || hoverHBar.dragging;
+        // A bar grab OWNS the pointer, like every other scrollbar grab here:
+        // the drag tracks wherever the pointer strays, so it is answered
+        // before the inside-the-popup test rather than after it.
+        if (hoverVBar.dragging || hoverHBar.dragging)
+        {
+            if (e.action == PointerAction.release)
+            {
+                hoverVBar = hoverVBar.released();
+                hoverHBar = hoverHBar.released();
+                return true;
+            }
+            if (e.action == PointerAction.drag)
+            {
+                hoverBarDragged(e.pos);
+                return true;
+            }
+        }
+        if (insidePopup && e.button == PointerButton.left
+            && e.action == PointerAction.press)
+        {
+            const k = keyAt(hoverPopupKeys,
+                Point(e.pos.x - hoverPopupRect.x, e.pos.y - hoverPopupRect.y));
+            if (isPopupCloseKey(k))
+            {
+                hoverSel = -1;
+                resetHoverScroll();
+                return true;
+            }
+            // Before the generic arm below, which toggles a signature run for
+            // any key it does not recognise — so an unhandled bar press would
+            // expand a collapsed run instead of scrolling.
+            if (const bar = popupBarOf(k))
+            {
+                hoverBarPressed(bar, e.pos);
+                return true;
+            }
+            if (k != 0)
+            {
+                const r = abbrevRegion(k);
+                hoverExpanded[r] = !hoverExpanded.get(r, false);
+                return true;
+            }
+            return true;   // a press inside the popup is the popup's
+        }
+
         // The format-preview ruler (`RUL2`/`RUL6`): pane cell → document
         // column is the only TUI-side arithmetic; tolerance, drag state and
         // the clamp are the session's (`RUL8`). A bare move — which every
@@ -1906,11 +2236,13 @@ struct PreviewTui
                             hoverSel = hoverSel == cast(int) i
                                 ? -1 : cast(int) i;
                             hoverExpanded = null;
+                            resetHoverScroll();
                             return true;
                         }
                 if (hoverSel >= 0)
                 {
-                    hoverSel = -1; // a click elsewhere dismisses the popup
+                    hoverSel = -1;
+                    resetHoverScroll();  // a click elsewhere dismisses the popup
                     return true;
                 }
             }
@@ -2697,6 +3029,191 @@ unittest
         if (row(cast(ushort) y).canFind("const b: any"))
             sawSig = true;
     assert(!sawSig, "popup dismissed");
+}
+
+@("tui.keys.anOpenPopupTakesTheScrollBeforeTheDocument")
+@system
+unittest
+{
+    import sparkles.syntax : LabelSet;
+    import sparkles.twoslash.protocol : Node;
+
+    // A hover whose ddoc is far taller than the popup may be. The popup is
+    // reached with `p`, which means it was reached WITHOUT a pointer — so a
+    // reader who cannot scroll it by keyboard cannot scroll it at all.
+    string docs;
+    foreach (i; 0 .. 60)
+        docs ~= "Paragraph " ~ cast(char)('a' + (i % 26)) ~ ".\n";
+    const code = "const b = a\n";
+    TwoslashReturn tw = {code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0,
+            character: 6, text: "const b: any", docs: docs),
+    ]};
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("x.twoslash.json", code,
+        [HighlightEvent.sourceSpan(0, code.length)], PreviewModel.init,
+        startPreview: true, tw);
+
+    Grid g;
+    g.resize(60, 20);
+    t.paint(g);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'p')));
+    t.paint(g);   // the paint that MEASURES: the extents are last frame's
+    assert(t.hoverContentRows > t.hoverViewportRows,
+        "the fixture must overflow, or this proves nothing");
+
+    const docTop = t.top;
+    assert(t.handle(Event(KeyEvent(key: Key.char_, ch: 'j'))));
+    assert(t.hoverScroll > 0, "the popup scrolled");
+    assert(t.top == docTop, "and the document under it did not");
+
+    // A page, then back to the top: the absolute asks reach the popup too.
+    // `viewPageDown` and `viewTop` are the two the signed-count path cannot
+    // express, so they are the two most likely to be left behind.
+    assert(t.handle(Event(KeyEvent(key: Key.pageDown))));
+    assert(t.hoverScroll > 1, "a page is more than a line");
+    assert(t.handle(Event(KeyEvent(key: Key.home))));
+    assert(t.hoverScroll == 0, "and Home is the popup's top, not the file's");
+    assert(t.top == docTop);
+}
+
+@("tui.pointer.thePopupsBarIsGrabbable")
+@system
+unittest
+{
+    import sparkles.syntax : LabelSet;
+    import sparkles.twoslash.protocol : Node;
+
+    // A bar a reader can see is a bar a reader will reach for. Until it was
+    // named, a press on it fell through to "some key inside the popup" and
+    // toggled a signature run — the one thing a scrollbar must never do.
+    string docs;
+    foreach (i; 0 .. 60)
+        docs ~= "Paragraph " ~ cast(char)('a' + (i % 26)) ~ ".\n";
+    const code = "const b = a\n";
+    TwoslashReturn tw = {code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0,
+            character: 6, text: "const b: any", docs: docs),
+    ]};
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 20);
+    t.setDocument("x.twoslash.json", code,
+        [HighlightEvent.sourceSpan(0, code.length)], PreviewModel.init,
+        startPreview: true, tw);
+
+    Grid g;
+    g.resize(60, 20);
+    t.paint(g);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'p')));
+    t.paint(g);   // measures
+    t.paint(g);   // and now the bar exists, because the measurement fed it
+
+    const bar = t.hoverBarRect(PopupBar.vertical);
+    assert(!bar.empty, "the popup shows a vertical bar");
+    assert(bar.height > 2, "with a track to grab along");
+
+    // A press near the bottom of the track jumps there; the drag follows.
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press,
+        pos: Point(bar.x, bar.y + bar.height - 1))));
+    assert(t.hoverScroll > 0, "the press moved the popup, not the document");
+    assert(t.hoverVBar.dragging, "and the grab is live");
+
+    // Back to the top, from OUTSIDE the popup: a grab owns the pointer.
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(0, bar.y))));
+    assert(t.hoverScroll == 0, "the drag tracked the pointer off the bar");
+
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(0, bar.y))));
+    assert(!t.hoverVBar.dragging);
+}
+
+@("tui.pointer.aFenceInAPopupGetsAHorizontalBar")
+@system
+unittest
+{
+    import sparkles.syntax : GrammarRegistry, LabelSet;
+    import sparkles.syntax.ts.injection : TsConfigCache;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.twoslash.protocol : Node;
+    import std.process : environment;
+
+    // The reported case, end to end: a ddoc example wider than the popup. It
+    // needs the grammar bundle, because a fence only becomes a scrolling
+    // viewport once markdown has parsed it — without one the docs fall back to
+    // plain lines and there is no fence to scroll.
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+    {
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+        return;
+    }
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+
+    const code = "const b = a\n";
+    TwoslashReturn tw = {code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0,
+            character: 6, text: "const b: any",
+            docs: "Prose.\n\n```d\nvoid main()\n{\n"
+                ~ "    auto x = someFunction(withArguments, thatGoOn, andOn,"
+                ~ " andOnAndOn, forever);\n}\n```\n"),
+    ]};
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = labels;
+    t.names = names[];
+    t.themes = themes[];
+    t.cache = &cache;
+    t.resize(60, 20);
+    t.setDocument("x.twoslash.json", code,
+        [HighlightEvent.sourceSpan(0, code.length)], PreviewModel.init,
+        startPreview: true, tw);
+
+    Grid g;
+    g.resize(60, 20);
+    t.paint(g);
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'p')));
+    t.paint(g);   // measures
+    assert(t.hoverFenceContentCols > t.hoverFenceViewportCols,
+        "the fence runs off the popup, which is the whole fixture");
+    t.paint(g);   // and now the bar exists, because the measurement fed it
+
+    const bar = t.hoverBarRect(PopupBar.horizontal);
+    assert(!bar.empty, "a fence that overflows gets a bar");
+    assert(bar.width > 2, "with a track to grab along");
+
+    // A sideways notch reaches the fence rather than the document under it.
+    const docCol = t.vm.hsb.offset;
+    assert(t.handle(Event(WheelEvent(dx: 3, pos: Point(bar.x, bar.y)))));
+    assert(t.hoverFenceX > 0, "the fence scrolled");
+    assert(t.vm.hsb.offset == docCol, "and the document did not");
+
+    // And so does its thumb: a press near the right end of the track.
+    t.hoverFenceX = 0;
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press,
+        pos: Point(bar.x + bar.width - 1, bar.y))));
+    assert(t.hoverFenceX > 0, "the bar is a control, not a readout");
+    assert(t.hoverHBar.dragging);
+    t.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(bar.x, bar.y))));
 }
 
 @("tui.wheel.horizontalNotchesAndShiftScrollSideways")

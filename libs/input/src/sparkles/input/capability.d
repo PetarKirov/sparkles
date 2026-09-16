@@ -77,6 +77,34 @@ struct InputCapabilities
     */
     bool keyRelease = false;
 
+    /**
+    A gesture recognizer is $(B wired) on this target (`TRG2`).
+
+    Not implied by the tier, and not by `maxPointers` either: the recognizer
+    that turns contacts into a long-press or a pinch exists in one backend, and
+    a target with a touchscreen but no recognizer reports contacts nobody
+    interprets. A consumer choosing what to substitute for an unavailable
+    trigger cannot resolve the long-press rule without knowing.
+
+    $(B Defaults to `false`), for `keyRelease`'s reason: an undeclared target
+    is one nobody has wired, and a consumer that assumed otherwise would offer
+    an affordance that never fires.
+    */
+    bool gestures = false;
+
+    /**
+    Bare-motion reporting is on — the target sends pointer moves with no button
+    held (`TRG11`).
+
+    $(B Defaults to `false`.) A terminal only sends motion under DEC 1003, which
+    a host opts into; without it there is no motion stream at all, so
+    hover-intent machinery — a corridor, a direction latch, a warm-up keyed to
+    the pointer resting — has nothing to run on. The distinction that matters is
+    that such machinery must then be $(B absent), not degraded: a component that
+    computes intent from events it never receives simply never opens.
+    */
+    bool motion = false;
+
     // The module-level block above does not reach inside an aggregate.
 @safe pure nothrow @nogc:
 
@@ -154,4 +182,23 @@ unittest
     // A window target opts in by declaring it.
     enum windowWithReleases = InputCapabilities(keyRelease: true);
     assert(windowWithReleases.keyRelease);
+}
+
+@("input.capability.additiveAxesDefaultOff")
+@safe pure nothrow @nogc unittest
+{
+    // `gestures` and `motion` join `keyRelease` in defaulting to `false`, and
+    // for the same reason: each names an EXTRA event stream rather than a
+    // refinement of one that already arrives. A consumer that assumed a
+    // default of `true` would offer an affordance the target never fires, and
+    // the failure is silent — nothing happens, and nothing says why.
+    const undeclared = InputCapabilities.init;
+    assert(!undeclared.keyRelease && !undeclared.gestures && !undeclared.motion);
+
+    // They are independent of the tier and of each other: a touchscreen with a
+    // digitizer but no recognizer reports contacts nobody interprets.
+    auto touch = InputCapabilities(hover: false, maxPointers: 10);
+    assert(!touch.gestures, "contacts are not gestures");
+    touch.gestures = true;
+    assert(touch.gestures && !touch.motion);
 }

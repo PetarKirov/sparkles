@@ -54,7 +54,45 @@ enum WidgetKind : ubyte
     column, /// vertical container (children top→bottom, `gap` between)
     stack,  /// overlay container (children share the origin; z = order)
     panel,  /// a `box` container with padding + a slot background/border
-    popup,  /// a `panel` that floats (shadow, detached from flow)
+}
+
+// There is deliberately no `popup` kind (`POP6`). One existed and promised
+// "a `panel` that floats (shadow, detached from flow)" while no `case popup:`
+// appeared anywhere under `libs/ui/src` — every walk grouped it with `stack`,
+// it was laid out at the position its parent gave it, it contributed to its
+// parent's extent like any other child, and the semantic HTML target emitted it
+// `position:relative`. A kind whose doc comment describes behaviour the toolkit
+// does not implement is an interface that lies (`PRN8`), and three applications
+// each wrote their own floating in its absence.
+//
+// An overlay is now a record in the frame's arena naming an ordinary `panel`,
+// and the shadow is a `Decoration` the view asks for — the shipped truth, said
+// once. See $(MREF sparkles,ui,overlay).
+
+/**
+Whether a node stops the hit walk from seeing what is behind it (`MDL1`).
+
+Pointer modality is a $(B hit-list filter), not a mode: declared here on the
+node, carried into the derived target lists, and applied as "find the highest
+blocking entry containing the point and ignore everything below it". Stating it
+as data rather than as a flag on some open-overlay stack is what keeps it
+honest — every subject in the catalog that cached stack-derived blocking as a
+mutable flag shipped a defect from it (`MDL2`).
+
+The cut must be applied to $(B both) derived lists. `hoverTargets` and the
+parallel `keyTargets`/`keyAt` are two independent walks, so filtering only the
+first leaves a modal surface that blocks hover and not clicks.
+*/
+enum HitBehavior : ubyte
+{
+    /// Transparent to the walk: entries behind this one stay reachable.
+    normal,
+    /// Nothing below this node in paint order may be hit. A modal overlay and
+    /// its scrim.
+    blockPointer,
+    /// As `blockPointer`, but wheel events still reach what is underneath —
+    /// a surface that dims the page without freezing its scroll.
+    blockPointerExceptWheel,
 }
 
 /// One styled span of a $(D WidgetKind.rich) run (`WGT6`) — defined in
@@ -67,7 +105,7 @@ construction reads declaratively:
 ---
 Widget(kind: WidgetKind.text, text: "title: string", slot: Slot.code)
 ---
-Containers (`row`/`column`/`stack`/`panel`/`popup`) address their children
+Containers (`row`/`column`/`stack`/`panel`) address their children
 through the `children` index list; leaves leave it empty.
 */
 struct Widget
@@ -116,6 +154,14 @@ struct Widget
 
     uint[] children;         /// child node indices (empty for leaves)
     size_t hitId;            /// hover/hit id (0 = not hit-testable)
+    /// Whether this node hides what is painted behind it from the hit walks
+    /// (`MDL1`). Defaults to transparent, so every existing tree is unchanged.
+    HitBehavior hit;
+    /// Whether this node takes part in the focus order (`MDL4`), keyed by
+    /// `hitId`. Sparkles owns no focus order of its own — `FocusState`
+    /// traverses a caller-supplied array — so this is what lets one be
+    /// $(I derived) from a tree instead of hand-written beside it.
+    bool focusable;
     /// Element identity (`WGT5`; 0 = anonymous): the renderer's per-element
     /// state store is addressed by this key, so scroll offsets, focus and
     /// animation phase survive a rebuild. $(B Identity) decides "is this the
@@ -137,7 +183,7 @@ struct Widget
     /// ditto
     bool clipY;
 
-    bool paintBackground;    /// fill `slot`'s background (box/panel/popup)
+    bool paintBackground;    /// fill `slot`'s background (box/panel)
 
     /// The theme's syntax channel at node level (the widget twin of
     /// `TextSpan.fg`): $(B resolved) colors that bypass slot resolution, for
@@ -177,7 +223,7 @@ then a container over the child-index list:
 auto b = Builder();
 const sig  = b.add(Widget(kind: WidgetKind.text, text: "title: string", slot: Slot.code));
 const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.",     slot: Slot.docs));
-const panel = b.container(WidgetKind.popup, [sig, docs],
+const panel = b.container(WidgetKind.panel, [sig, docs],
     slot: Slot.surface, padding: Insets.all(1));
 auto tree = b.finish(panel);
 ---
@@ -224,13 +270,13 @@ struct Builder
     auto b = Builder();
     const sig = b.add(Widget(kind: WidgetKind.text, text: "title: string", slot: Slot.code));
     const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.", slot: Slot.docs));
-    const panel = b.container(WidgetKind.popup, [sig, docs],
+    const panel = b.container(WidgetKind.panel, [sig, docs],
         slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
     auto tree = b.finish(panel);
 
     assert(tree.nodes.length == 3);
     assert(tree.root == panel);
-    assert(tree.rootNode.kind == WidgetKind.popup);
+    assert(tree.rootNode.kind == WidgetKind.panel);
     assert(tree.rootNode.children == [sig, docs]);
     assert(tree.nodes[sig].slot == Slot.code);
     assert(tree.nodes[docs].slot == Slot.docs);

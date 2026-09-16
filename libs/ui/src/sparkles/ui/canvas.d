@@ -51,7 +51,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : Point, Rect, Size, cellsOf;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.base.term_style : UnderlineStyle;
-import sparkles.ui.style : BoxBorder, FontRole, Shadow, Slot, Visual;
+import sparkles.ui.style : BoxBorder, BoxSide, FontRole, Shadow, Slot, Visual;
 
 /// How a $(LREF Line)'s stroke is drawn.
 enum LineStyle : ubyte
@@ -138,13 +138,109 @@ struct BoxChrome
     BoxBorder border;   /// resolved box border
     int borderRadius;   /// corner radius in px (0 = square)
     Shadow shadow;      /// resolved drop shadow
-    bool arrow;         /// draw a popup arrow/tail off the top edge?
-    int arrowOffset;    /// arrow offset from the left, in cells
+    bool arrow;         /// draw a popup arrow/tail off this box?
+    BoxSide arrowSide;  /// which edge it hangs off, resolved by the solve
+    int arrowOffset;    /// its cell along that edge — see $(LREF arrowCellOf)
 
     /// Whether any of it would actually paint — the test the display list
     /// makes before spending an arena slot.
     bool any() const @safe pure nothrow @nogc
         => border.any || shadow.any || arrow || borderRadius > 0;
+}
+
+/**
+Where a box's arrow/tail actually goes — the $(B one) definition, shared by
+every backend (`PLC10`).
+
+There were four. Both cell backends measured from `x0 + 1`, the raylib backend
+from the box's outer origin (so it drew the caret one cell left of them for the
+same input), and the HTML emitter wrote `arrowOffset + 1` in `ch`. None of them
+clamped: `arrowOffset >= width - 2` silently overwrote a corner glyph, because
+`Decoration.arrow` was documented "backends place it" and no producer existed
+to place it.
+
+`offset` is overlay-local from the box origin along `side`'s edge, border inset
+included, so the legal interval is `[1, extent - 2]` — exactly what
+$(REF place, sparkles,ui,overlay,place) emits as `OverlayGeometry.arrowCell`.
+*/
+Point arrowCellOf(in Rect box, BoxSide side, int offset) @safe pure nothrow @nogc
+in (arrowFits(box, side, offset), "the caret must be inside the edge")
+{
+    final switch (side)
+    {
+        case BoxSide.top:    return Point(box.x + offset, box.y);
+        case BoxSide.bottom: return Point(box.x + offset, box.bottom - 1);
+        case BoxSide.left:   return Point(box.x, box.y + offset);
+        case BoxSide.right:  return Point(box.right - 1, box.y + offset);
+    }
+}
+
+/**
+Is there a legal cell for the caret at all?
+
+Two ways there is not one. An edge shorter than three cells has no interior, so
+the interval `[1, len - 2]` $(B inverts) — and a clamp trusted to cope with that
+silently returns `max` and lands the caret on a corner (`ANC4`). And a box
+thinner than two cells across has no edge distinct from its opposite one, so a
+tail hung off it points out of a line rather than out of a box.
+
+The honest answer in both cases is that there is no arrow, and the caller
+suppresses it rather than drawing one somewhere wrong (`PLC11`).
+*/
+bool arrowFits(in Rect box, BoxSide side, int offset) @safe pure nothrow @nogc
+{
+    const vertical = side == BoxSide.top || side == BoxSide.bottom;
+    const len = vertical ? box.width : box.height;
+    const across = vertical ? box.height : box.width;
+    return len >= 3 && across >= 2 && offset >= 1 && offset <= len - 2;
+}
+
+/// The box-drawing junction for a caret on `side`: the notch points $(I out) of
+/// the box, so a tail on the top edge is `┴`.
+dchar arrowGlyphOf(BoxSide side) @safe pure nothrow @nogc
+{
+    final switch (side)
+    {
+        case BoxSide.top:    return '┴';
+        case BoxSide.bottom: return '┬';
+        case BoxSide.left:   return '┤';
+        case BoxSide.right:  return '├';
+    }
+}
+
+@("ui.canvas.arrowCellOf.staysStrictlyInsideTheEdge")
+@safe pure nothrow @nogc unittest
+{
+    // The defect this retires: nothing clamped `arrowOffset` against the box,
+    // so an offset at or past `width - 1` overwrote a corner glyph.
+    const box = Rect(10, 4, 6, 3);   // corners at x 10 and 15, y 4 and 6
+
+    assert(arrowFits(box, BoxSide.top, 1));
+    assert(arrowFits(box, BoxSide.top, 4));
+    assert(!arrowFits(box, BoxSide.top, 5), "that is the corner");
+    assert(!arrowFits(box, BoxSide.top, 0), "so is that");
+
+    assert(arrowCellOf(box, BoxSide.top, 1) == Point(11, 4));
+    assert(arrowCellOf(box, BoxSide.bottom, 4) == Point(14, 6));
+    assert(arrowCellOf(box, BoxSide.left, 1) == Point(10, 5));
+    assert(arrowCellOf(box, BoxSide.right, 1) == Point(15, 5));
+
+    // An edge with no interior inverts the legal interval. There is no clamp
+    // that copes with that, so there is no arrow.
+    const thin = Rect(0, 0, 2, 2);
+    assert(!arrowFits(thin, BoxSide.top, 1));
+    assert(!arrowFits(Rect(0, 0, 1, 9), BoxSide.left, 1));
+}
+
+@("ui.canvas.arrowGlyphOf.pointsOutOfTheBox")
+@safe pure nothrow @nogc unittest
+{
+    // A tail on the TOP edge points up, so it is the junction whose stem is
+    // missing upward: `┴`. Getting this backwards draws a box with a dent.
+    assert(arrowGlyphOf(BoxSide.top) == '┴');
+    assert(arrowGlyphOf(BoxSide.bottom) == '┬');
+    assert(arrowGlyphOf(BoxSide.left) == '┤');
+    assert(arrowGlyphOf(BoxSide.right) == '├');
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +595,8 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
     => BoxChrome(border: v.border, borderRadius: v.borderRadius,
-        shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset);
+        shadow: v.shadow, arrow: v.arrow, arrowSide: v.arrowSide,
+        arrowOffset: v.arrowOffset);
 
 /// `ink` back as a `Visual`, for the canvas primitives that take one.
 Visual visualOf(in Ink ink) @safe pure nothrow @nogc

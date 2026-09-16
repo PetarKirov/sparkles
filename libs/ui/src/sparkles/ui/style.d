@@ -104,6 +104,41 @@ enum BorderStyle : ubyte
     dashed, /// a dashed rule (available; unused by twoslash today)
 }
 
+/// A box edge, in CSS order. This is the toolkit's $(I one) side vocabulary
+/// ($(REF PRN8, docs,specs,ui,principles)): `sparkles.ui.overlay.place.Side` is
+/// an alias of it, so a placement solve's resolved side and the edge a backend
+/// draws an arrow on cannot drift into two enums that disagree.
+enum BoxSide : ubyte
+{
+    top,    /// the box's top edge
+    right,  /// the box's right edge
+    bottom, /// the box's bottom edge
+    left,   /// the box's left edge
+}
+
+/// The edge opposite `s` — what a placement flip mirrors to (`PLC6`).
+BoxSide opposite(BoxSide s) @safe pure nothrow @nogc
+    => cast(BoxSide)((s + 2) & 3);
+
+/// Whether `s` is a vertical edge, i.e. whether flipping it moves the box on
+/// the $(I y) axis.
+bool isVertical(BoxSide s) @safe pure nothrow @nogc
+    => s == BoxSide.top || s == BoxSide.bottom;
+
+@("ui.style.BoxSide.oppositeIsAnInvolution")
+@safe pure nothrow @nogc unittest
+{
+    static foreach (s; [BoxSide.top, BoxSide.right, BoxSide.bottom, BoxSide.left])
+    {
+        assert(s.opposite.opposite == s, "opposite must be its own inverse");
+        assert(s.opposite != s, "no edge is its own opposite");
+        assert(s.isVertical == s.opposite.isVertical, "a flip keeps the axis");
+    }
+    assert(BoxSide.top.opposite == BoxSide.bottom);
+    assert(BoxSide.left.opposite == BoxSide.right);
+    assert(BoxSide.top.isVertical && !BoxSide.left.isVertical);
+}
+
 /// Which font family a text run wants. The concrete faces live in the backend
 /// (`sparkles:raylib-text`'s `FontSet`, the browser's monospace/sans stacks);
 /// the model only names the role — CSS `--twoslash-code-font` (mono / `inherit`)
@@ -163,8 +198,15 @@ struct Visual
     BoxBorder border;     /// resolved box border (default: none)
     int borderRadius;     /// corner radius in px (0 = square corners)
     Shadow shadow;        /// resolved drop shadow (default: none)
-    bool arrow;           /// draw a popup arrow/tail off this box's top edge?
-    int arrowOffset;      /// arrow horizontal offset from the left, in cells
+    bool arrow;           /// draw a popup arrow/tail off this box?
+    /// Which edge the tail hangs off. Resolved by the placement solve
+    /// ($(REF place, sparkles,ui,overlay,place)) and carried here, so a backend
+    /// draws what it is told rather than assuming `top` (`PLC10`).
+    BoxSide arrowSide;
+    /// The tail's cell along `arrowSide`'s edge, measured from the box origin
+    /// with the border inset included — so the legal interval is
+    /// `[1, extent - 2]` and a caret can never land on a corner glyph (`ANC4`).
+    int arrowOffset;
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
@@ -188,8 +230,14 @@ struct Decoration
     Slot borderSlot = Slot.border;  /// palette slot the border color comes from
     int borderRadius;               /// corner radius in px
     bool shadow;                    /// draw the palette's popup drop shadow?
-    bool arrow;                     /// draw a popup arrow/tail (backends place it)
-    int arrowOffset;                /// arrow horizontal offset from the left, in cells
+    /// Draw a popup arrow/tail? The resolved side and the clamped cell come
+    /// from the placement solve; a backend draws what it is told and never
+    /// picks an edge of its own (`PLC10`).
+    bool arrow;
+    BoxSide arrowSide;              /// which edge the tail hangs off (`PLC10`)
+    /// The tail's cell along `arrowSide`'s edge, from the box origin, border
+    /// inset included. Legal interval `[1, extent - 2]` (`ANC4`).
+    int arrowOffset;
 }
 
 /// A widget's declared text style — font role, relative size, weight/italic/
@@ -241,10 +289,27 @@ struct Palette
     /// Continuation indent, in cells, for a signature broken across rows.
     int sigIndent = 4;
 
-    /// The narrowest a hover popup may be squeezed to. Below this a popup
-    /// stops informing and starts shredding words, so a backend with less room
-    /// than this shifts the popup instead of shrinking it further.
+    /// The tallest a hover popup may grow, in rows. Like `popupMaxWidth` this
+    /// is a ceiling handed to the placement solve as a size $(I bound), never a
+    /// height: the side is chosen from the bound before the content is measured
+    /// (`PLC9`), and content beyond what the solve grants scrolls rather than
+    /// overflowing the surface.
+    int popupMaxHeight = 24;
+
+    /// The narrowest a hover popup may be squeezed to. Below this a popup stops
+    /// informing and starts shredding words.
+    ///
+    /// This is the floor of the placement solve's $(I last) step. The fixed
+    /// precedence is **flip, then slide, then resize** (`PLC5`): a popup that
+    /// does not fit first tries the opposite side of its anchor, then slides
+    /// along the edge, and only then gives up extent — down to this floor, and
+    /// no further. A solve that still cannot fit reports `refused` instead of
+    /// returning a width nobody can read.
     int popupMinWidth = 24;
+
+    /// The shortest a hover popup may be squeezed to, in rows: a border pair
+    /// and one row of content. `PLC5`'s resize floors here on the other axis.
+    int popupMinHeight = 3;
 
     // Sub-cell chrome geometry, in device px, authored to match `twoslash.css`
     // (the CSS-lockstep test guards these against the stylesheet). The TUI cell
@@ -263,6 +328,9 @@ struct Palette
     dchar caretGlyph = '^';   /// query caret marker (the `^` twoslash draws)
     dchar arrowGlyph = '─';   /// leader from a meta line up to its column
     dchar queryGlyph = '│';   /// vertical connector under a `^?` query
+    /// The close affordance on a persistent overlay. A theme that cannot render
+    /// `×` overrides it, the same way `theme.d`'s border charsets do.
+    dchar closeGlyph = '×';
 }
 
 /// Light or dark color scheme — only the popup surface and docs text differ (the
@@ -464,6 +532,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
     }
 
     v.arrow = deco.arrow;
+    v.arrowSide = deco.arrowSide;
     v.arrowOffset = deco.arrowOffset;
 
     // Text chrome.

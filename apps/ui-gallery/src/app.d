@@ -58,6 +58,13 @@ struct Params
         ~ "e.g. ']]j'."))
     string keys;
 
+    @(Option("pointer|P", description:
+        "With --render: a pointer script delivered after --keys, in cells. "
+        ~ "Space-separated, verb then col,row: m move, p press, r release, "
+        ~ "R right-press, X right-release. A context menu opens on a "
+        ~ "right-press, so no keystroke can reach one."))
+    string pointer;
+
     @(Option("term-tab-glyphs", description:
         "The Terminal page's narrow tab list, one glyph per position — "
         ~ "overrides the default circled-number series."))
@@ -105,6 +112,7 @@ int main(string[] args)
         const req = RenderRequest(
             page: pageIndexOf(cli.page),
             keys: cli.keys,
+            pointer: cli.pointer,
             width: cli.windowWidth,
             height: cli.windowHeight,
         );
