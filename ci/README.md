@@ -168,6 +168,19 @@ Three findings are worth not rediscovering:
   are in effect rather than trusting that they are. (Note `nix store info`
   writes its report to stderr — read `--json` on stdout instead.)
 
+### What still does not work in a blocked-egress container
+
+`ci --verify` / the `verify-md-examples` hook. A markdown example is a dub
+single-file program whose inline recipe pulls registry packages, and dub
+resolves those **transitively at build time** — `vibe-container`, for one,
+appears in no tracked file at all. The seeding step above works from
+`dub.selections.json`, so it cannot know about them in advance, and each one
+is another blocked `code.dlang.org` zip.
+
+Commit with `SKIP=verify-md-examples` there, and let CI — which has open
+egress — be what actually verifies the examples. The same goes for the
+networked `lychee` hook.
+
 One consequence to know: `nix ... --inputs-from .` (which `ci_nix_run` uses)
 rejects a shallow git input with "has a commit hash but no branch/tag name". So
 under the rewrite, reach for a tool via `nix develop` rather than `ci_nix_run`.
