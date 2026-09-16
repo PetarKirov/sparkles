@@ -162,6 +162,30 @@ PickerGeometry pickerGeometryFor(int screenCols, int screenRows)
     return PickerGeometry(panelCols: cols, panelRows: rows);
 }
 
+/// The row the picker's panel pair is painted at: one down from the top, not
+/// vertically centred. It is an enum so that every consumer — the painter and
+/// the GUI's CRT halo among them — states the same row; two sites deriving it
+/// independently is exactly how the halo came to sit below the panel.
+enum int pickerOriginRow = 1;
+
+/// The column the picker's panel pair is painted at: centred, and never
+/// negative on a screen narrower than the pair.
+int pickerOriginCol(int screenCols, int panelPairCols) @safe pure nothrow @nogc
+{
+    const x = (screenCols - panelPairCols) / 2;
+    return x > 0 ? x : 0;
+}
+
+@("picker_view.pickerOriginCol.centresAndClamps")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(pickerOriginCol(100, 80) == 10);
+    assert(pickerOriginCol(100, 101) == 0); // narrower than the pair
+    assert(pickerOriginCol(0, 40) == 0);
+    assert(pickerOriginRow == 1);
+}
+
 /// The preview panel's content rect after layout (`Rect.init` when the
 /// preset has no preview panel).
 Rect pickerPreviewRect(in WidgetTree tree, scope const(Frame)[] frames)
