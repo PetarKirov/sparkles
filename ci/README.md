@@ -58,6 +58,7 @@ PR — which gets no secrets — still run the pipeline.
 | `nix-install.sh`             | Installs Nix if absent; re-exports `PATH` when a cached `/nix` was restored              |
 | `nix-configure.sh`           | Writes `nix.conf` + `netrc`; adds the job user to `trusted-users` on daemon installs     |
 | `nix-devshell.sh`            | Builds a devShell (fail-fast), then exports it to later steps via direnv                 |
+| `prepare-cloud-env.sh`       | One-line setup for an ephemeral agent container: Nix, reachable inputs, toolchain        |
 | `with-cachix.sh`             | Runs a command under `cachix watch-exec`, pushing paths as they are built                |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
@@ -87,7 +88,78 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 | `docs.yml` `deploy`                 | —                                    | GitHub Actions only (see below)                                          |
 | `release.yml` `notify-dub-registry` | `notify-dub-registry`                |                                                                          |
 | `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                                          |
+| `cloud-env` (native, restricted)    | —                                    | Bootstraps its own toolchain, so it deliberately skips `setup-nix`       |
 | `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed               |
+
+## `prepare-cloud-env.sh` — ephemeral agent containers
+
+An agent container (Claude Code on the web, and anything comparable) clones the
+repo into a box with no D toolchain and an egress policy this flake was never
+written against. Point its setup script at one line:
+
+```bash
+/home/user/sparkles/ci/prepare-cloud-env.sh
+```
+
+It delegates to `nix-install.sh` and `nix-configure.sh`, and adds the four
+things such a container needs that a CI runner does not: Nix on PATH for
+_non-interactive_ shells, a `flake.lock` whose inputs resolve over the git
+protocol, the project's Cachix caches, and dub registry packages seeded from
+git. The reasoning for each is in the script's header comment.
+
+### Choosing a devShell
+
+`CI_DEVSHELL` names the shell to prebuild and wrap. It defaults to `default` —
+the quiet one, because `full`'s `figlet` banner would pollute stdout captured by
+an agent.
+
+```bash
+ci/prepare-cloud-env.sh                        # devShells.default (quiet)
+CI_DEVSHELL=full ci/prepare-cloud-env.sh       # + figlet banner, for humans
+CI_DEVSHELL=ci   ci/prepare-cloud-env.sh       # the CI floor, smallest closure
+```
+
+Re-running with a different `CI_DEVSHELL` is how you switch: the environment
+snapshot and every wrapper are regenerated against whichever shell was named, so
+the second run repoints `dub`, `ldc2` and friends at that shell's closure. The
+run is otherwise idempotent — Nix, the lock rewrite and the seeded packages are
+all reused.
+
+### Other knobs
+
+| Variable              | Effect                                                                     |
+| --------------------- | -------------------------------------------------------------------------- |
+| `CI_DEVSHELL`         | devShell to prebuild and wrap (default `default`)                          |
+| `CI_WRAP_BIN`         | Where wrappers go. Defaults to `/usr/local/bin`, else `~/.local/bin`       |
+| `CI_FORCE_GIT_INPUTS` | Rewrite `flake.lock` even where the tarball endpoints work; `0` forces off |
+| `CI_FORCE_GIT_DEPS`   | Same, for seeding dub registry packages from git                           |
+
+The two `CI_FORCE_*` knobs exist for the `cloud-env` CI job. A hosted runner has
+open egress, so the script's own probes would take the fast native paths and the
+workarounds would never run; forcing them exercises both without needing a proxy
+that blocks `codeload.github.com`.
+
+### Why the workarounds are shaped the way they are
+
+Two findings are worth not rediscovering:
+
+- **Binary caches cannot serve flake inputs.** With all three substituters
+  configured and Nix's fetcher cache cleared, a `builtins.fetchTree` on a
+  `github`-typed input still goes straight to `codeload` and fails in 0.33s —
+  it never consults a substituter. Flake inputs are fetched at evaluation time; caches
+  serve derivation outputs, and an input is not one. (A warm fetcher cache makes
+  this look like it works, because a git checkout and a release tarball of the
+  same rev have the same NAR hash.)
+
+- **`shallow` carries the win.** Per repo a tarball is ~1.7× faster than a git
+  fetch (1.26s vs 2.22s median, same rev, caches cleared between runs). But
+  `shallow = true` is worth far more than that: nixpkgs is 66 MiB in 8s shallow
+  against 2.69 GiB full. It has to be a lock _attribute_ — inside `flake.lock`
+  the `url` is taken literally, so `?shallow=1` is parsed as part of the URL.
+
+One consequence to know: `nix ... --inputs-from .` (which `ci_nix_run` uses)
+rejects a shallow git input with "has a commit hash but no branch/tag name". So
+under the rewrite, reach for a tool via `nix develop` rather than `ci_nix_run`.
 
 ## Switching the primary provider
 
