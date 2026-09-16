@@ -141,7 +141,7 @@ that blocks `codeload.github.com`.
 
 ### Why the workarounds are shaped the way they are
 
-Two findings are worth not rediscovering:
+Three findings are worth not rediscovering:
 
 - **Binary caches cannot serve flake inputs.** With all three substituters
   configured and Nix's fetcher cache cleared, a `builtins.fetchTree` on a
@@ -156,6 +156,17 @@ Two findings are worth not rediscovering:
   `shallow = true` is worth far more than that: nixpkgs is 66 MiB in 8s shallow
   against 2.69 GiB full. It has to be a lock _attribute_ — inside `flake.lock`
   the `url` is taken literally, so `?shallow=1` is parsed as part of the URL.
+
+- **An untrusted user's substituter list is discarded, not merged.** A
+  multi-user daemon ignores `substituters` and `trusted-public-keys` coming
+  from a user who is not in `trusted-users` — and the symptom is not an error.
+  The build just proceeds from source: LDC, DMD, dub, every tree-sitter
+  grammar, about an hour. `nix-configure.sh` has a step for this but skips it
+  under GitHub Actions, where it assumes `cachix/install-nix-action` arranged
+  trust; `prepare-cloud-env.sh` is the caller that breaks that assumption, so
+  it does the step itself for any daemon install and then _asserts_ the caches
+  are in effect rather than trusting that they are. (Note `nix store info`
+  writes its report to stderr — read `--json` on stdout instead.)
 
 One consequence to know: `nix ... --inputs-from .` (which `ci_nix_run` uses)
 rejects a shallow git input with "has a commit hash but no branch/tag name". So

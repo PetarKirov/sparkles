@@ -181,16 +181,76 @@ fi
 # --- 3. nix.conf -----------------------------------------------------------
 #
 # flake.nix's nixConfig names this project's two Cachix caches. Without them a
-# container builds LDC, DMD, ghostty and tree-sitter from source, which is
-# hours. Both levers are pulled: accept-flake-config so flake.nix stays the
-# source of truth, and the explicit lists so this still works if the container
-# user is untrusted and the flake's config is ignored.
+# container builds LDC, DMD, dub, the tree-sitter grammars and ghostty from
+# source, which is hours rather than minutes.
 
 export NIX_ACCEPT_FLAKE_CONFIG=1
 export NIX_SUBSTITUTERS='https://sparkles.cachix.org https://dlang-community.cachix.org'
 export NIX_TRUSTED_PUBLIC_KEYS='sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ='
 
 "$here/nix-configure.sh"
+
+# --- 3b. Make those caches actually apply ----------------------------------
+#
+# A multi-user daemon does not merge an untrusted user's `substituters` and
+# `trusted-public-keys` — it discards them. So everything nix-configure.sh just
+# wrote is advisory until this user is in `trusted-users`, and the symptom is
+# not an error: the build simply proceeds from source, for about an hour.
+#
+# nix-configure.sh has this step but skips it when it detects GitHub Actions,
+# because there it assumes `cachix/install-nix-action` already arranged trust.
+# This script is the one caller that breaks that assumption: an agent container
+# has no action, and the `cloud-env` CI job deliberately does not use it either
+# (bootstrapping without it is the thing under test). So do it here, for any
+# daemon install, whatever the provider.
+
+if [ "${NIX_REMOTE:-}" != local ] && [ -S /nix/var/nix/daemon-socket/socket ]; then
+  if ! grep -qE "^trusted-users .*\b$(id -un)\b" /etc/nix/nix.conf 2>/dev/null; then
+    ci_group 'Adding this user to trusted-users (daemon install)'
+
+    # Written system-wide as well as per-user: the system file is authoritative
+    # no matter who asks, so the caches apply even on the first evaluation
+    # after this, before any re-login.
+    {
+      printf 'trusted-users = root %s\n' "$(id -un)"
+      printf 'extra-substituters = %s\n' "$NIX_SUBSTITUTERS"
+      printf 'extra-trusted-public-keys = %s\n' "$NIX_TRUSTED_PUBLIC_KEYS"
+    } | sudo tee -a /etc/nix/nix.conf >/dev/null
+
+    if [ "$(uname -s)" = Darwin ]; then
+      sudo launchctl kickstart -k system/org.nixos.nix-daemon || true
+    else
+      sudo systemctl restart nix-daemon || true
+    fi
+
+    ci_endgroup
+  fi
+fi
+
+# --- 3c. Prove it, rather than assume it -----------------------------------
+#
+# This is a hard failure on purpose. The alternative — which is what actually
+# happened the first time this job ran — is a silent hour of compiling LDC and
+# DMD that ends in a cancelled job and no stated reason. Failing here names the
+# cause in one line.
+
+ci_group 'Verifying the caches are in effect'
+effective_substituters=$(nix config show substituters 2>/dev/null || echo '')
+printf 'substituters: %s\n' "$effective_substituters"
+# --json, because plain `nix store info` writes its report to stderr.
+printf 'trusted user: %s\n' "$(nix store info --json 2>/dev/null | sed -n 's/.*"trusted":\([a-z0-9]*\).*/\1/p')"
+
+case "$effective_substituters" in
+  *sparkles.cachix.org*) ;;
+  *)
+    ci_die "sparkles.cachix.org is not an effective substituter.
+        On a daemon install this means $(id -un) is not in trusted-users, so
+        nix discarded the substituter list nix-configure.sh wrote, and every
+        derivation would be built from source. Add the user to trusted-users
+        in /etc/nix/nix.conf."
+    ;;
+esac
+ci_endgroup
 
 # --- 4. Prebuild the devShell ----------------------------------------------
 #

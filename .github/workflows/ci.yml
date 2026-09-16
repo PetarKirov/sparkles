@@ -661,9 +661,11 @@ jobs:
           - mode: restricted
             force: '1'
     runs-on: ubuntu-latest
-    # Cold: installs Nix, resolves 33 flake inputs and builds devShells.ci from
-    # the caches. The `restricted` leg additionally clones every input over git.
-    timeout-minutes: 45
+    # Cold: installs Nix, resolves 33 flake inputs and substitutes devShells.ci.
+    # The `restricted` leg additionally clones every input over git. This is
+    # minutes *provided the Cachix caches apply* — the script asserts that, so a
+    # regression fails fast here rather than compiling LDC and DMD until the cap.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -700,6 +702,20 @@ jobs:
           echo "ldc2: $(command -v ldc2)"
           dub --version
           ldc2 --version | head -n1
+
+      # The failure this job was written to catch second: the script can look
+      # like it worked while every derivation was built from source, because a
+      # daemon silently discards an untrusted user's substituter list. That is
+      # an hour of compiling, not an error. Assert the caches are in effect.
+      - name: Project caches are actually in effect
+        run: |
+          substituters=$(nix config show substituters)
+          echo "substituters: $substituters"
+          echo "trusted user: $(nix store info --json)"
+          case "$substituters" in
+            *sparkles.cachix.org*) ;;
+            *) echo "::error::sparkles.cachix.org is not an effective substituter"; exit 1 ;;
+          esac
 
       - name: Tests actually run
         run: dub test :base
