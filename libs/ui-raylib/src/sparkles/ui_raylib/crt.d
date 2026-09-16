@@ -200,9 +200,11 @@ void main()
     float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
     uv.x += jitter;
 
-    // Vector from mouse tip to fragment in texture space (UI pixels)
+    // Vector from mouse tip to fragment in texture space (UI pixels).
+    // A negative cursorShape means the window system is drawing the pointer
+    // itself (`PTR1`) and the shader must not draw a second one.
     vec4 cursorCol = vec4(0.0);
-    if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
+    if (cursorShape >= 0.0 && uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
     {
         vec2 uiPixelPos = vec2(uv.x * resolution.x, uv.y * resolution.y);
         vec2 cursorDelta = vec2(uiPixelPos.x - mouse.x, mouse.y - uiPixelPos.y);
@@ -530,9 +532,11 @@ void main()
     float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
     uv.x += jitter;
 
-    // Vector from mouse tip to fragment in texture space (UI pixels)
+    // Vector from mouse tip to fragment in texture space (UI pixels).
+    // A negative cursorShape means the window system is drawing the pointer
+    // itself (`PTR1`) and the shader must not draw a second one.
     vec4 cursorCol = vec4(0.0);
-    if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
+    if (cursorShape >= 0.0 && uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
     {
         vec2 uiPixelPos = vec2(uv.x * resolution.x, uv.y * resolution.y);
         vec2 cursorDelta = vec2(uiPixelPos.x - mouse.x, mouse.y - uiPixelPos.y);
@@ -708,6 +712,7 @@ struct CrtEffect
     private bool magnify_;
     private bool cursorHidden_;
     private PointerShape shape_ = PointerShape.default_;
+    private bool systemPointer_;
     private float lastMouseX_ = 0;
     private float lastMouseY_ = 0;
 
@@ -786,6 +791,20 @@ struct CrtEffect
 
     /// ditto
     void pointerShape(PointerShape s) @safe pure nothrow @nogc { shape_ = s; }
+
+    /**
+    Whether the window system's own pointer is left visible instead of being
+    hidden in favour of the in-shader cursor (`PTR1`).
+
+    Set, `begin` stops hiding the compositor cursor and `end` stops drawing the
+    software one, so the pointer is a flat sprite $(B on) the glass rather than
+    one drawn inside the tube. The host is then responsible for translating
+    input out of screen space — see $(LREF mapPointerToUi).
+    */
+    bool systemPointer() const @safe pure nothrow @nogc => systemPointer_;
+
+    /// ditto
+    void systemPointer(bool on) @safe pure nothrow @nogc { systemPointer_ = on; }
 
     /// Screen curvature amount (0 for flat monitor).
     float curvature() const @safe pure nothrow @nogc => curvature_;
@@ -907,6 +926,59 @@ struct CrtEffect
     }
 
     /**
+    The curvature step alone, in normalized y-flipped coordinates: `curve()`
+    from the shader, and nothing else. `mx`/`my` are the apex the tilt bends
+    around, ignored when tilt is off.
+    */
+    private void curveStep(float nx, float ny, float mx, float my,
+        out float uvX, out float uvY) const @safe pure nothrow @nogc
+    {
+        const apexX = tilt_ ? mx : 0.5f;
+        const apexY = tilt_ ? my : 0.5f;
+        const k = tilt_ ? curvature_ * 0.625f : curvature_;
+        const ccX = nx - apexX;
+        const ccY = ny - apexY;
+        const dist = ccX * ccX + ccY * ccY;
+        uvX = (nx + ccX * (dist * k) - 0.5f) * 1.06f + 0.5f;
+        uvY = (ny + ccY * (dist * k) - 0.5f) * 1.06f + 0.5f;
+    }
+
+    /**
+    The UI point the $(B OS pointer) at a screen position is sitting on — what
+    `appearance.pointer.mode = system` routes input through (`PTR2`).
+
+    Magnification is deliberately $(B not) applied. The lens is centred on the
+    pointer's own UI position and leaves that point fixed, so for the pointer
+    itself the lens cancels exactly; running it here would instead measure the
+    displacement from the $(I previous) frame's centre. Tilt does not cancel —
+    its apex is that same position — so it is resolved by iterating the map to
+    its fixed point, which converges in a couple of steps at any curvature the
+    settings allow.
+    */
+    PointF mapPointerToUi(float screenX, float screenY, int screenW, int screenH)
+        const @safe pure nothrow @nogc
+    {
+        if (!enabled_ || screenW <= 0 || screenH <= 0)
+            return PointF(screenX, screenY);
+
+        const nx = screenX / cast(float) screenW;
+        const ny = (cast(float) screenH - screenY) / cast(float) screenH;
+
+        float mx = lastMouseX_ / cast(float) screenW;
+        float my = (cast(float) screenH - lastMouseY_) / cast(float) screenH;
+
+        float uvX, uvY;
+        curveStep(nx, ny, mx, my, uvX, uvY);
+        if (tilt_)
+            foreach (_; 0 .. 3)
+            {
+                curveStep(nx, ny, uvX, uvY, uvX, uvY);
+            }
+
+        return PointF(uvX * cast(float) screenW, (1.0f - uvY) * cast(float) screenH);
+    }
+
+    /**
     Translates a screen device pixel coordinate to the corresponding unwarped UI
     pixel coordinate rendered under that screen location.
     */
@@ -923,28 +995,8 @@ struct CrtEffect
 
         float aspect = cast(float) screenW / cast(float) screenH;
 
-        // Curvature transformation
         float uvX, uvY;
-        if (tilt_)
-        {
-            float ccX = nx - mx;
-            float ccY = ny - my;
-            float dist = ccX * ccX + ccY * ccY;
-            float curX = nx + ccX * (dist * curvature_ * 0.625f);
-            float curY = ny + ccY * (dist * curvature_ * 0.625f);
-            uvX = (curX - 0.5f) * 1.06f + 0.5f;
-            uvY = (curY - 0.5f) * 1.06f + 0.5f;
-        }
-        else
-        {
-            float ccX = nx - 0.5f;
-            float ccY = ny - 0.5f;
-            float dist = ccX * ccX + ccY * ccY;
-            float curX = nx + ccX * (dist * curvature_);
-            float curY = ny + ccY * (dist * curvature_);
-            uvX = (curX - 0.5f) * 1.06f + 0.5f;
-            uvY = (curY - 0.5f) * 1.06f + 0.5f;
-        }
+        curveStep(nx, ny, mx, my, uvX, uvY);
 
         // Lens magnification around the mouse, in texture space — the same
         // order the shader applies it in, so this stays its exact inverse-free
@@ -1022,28 +1074,26 @@ struct CrtEffect
 
     /**
     Begins off-screen capture into the render texture if CRT mode is enabled.
-    Hides the desktop compositor cursor while CRT mode is active.
+    Hides the desktop compositor cursor while CRT mode is active, unless
+    $(LREF systemPointer) asks for it to be left alone (`PTR1`).
     Must be paired with $(LREF end).
     */
     void begin(int screenW, int screenH) @system
     {
-        if (enabled_)
+        // The compositor cursor is hidden only while the shader is drawing one
+        // in its place; the two conditions are the same condition, so a mode
+        // switch mid-run restores it on the very next frame.
+        const wantHidden = enabled_ && !systemPointer_;
+        if (wantHidden != cursorHidden_)
         {
-            if (!cursorHidden_)
-            {
+            if (wantHidden)
                 HideCursor();
-                cursorHidden_ = true;
-            }
-        }
-        else
-        {
-            if (cursorHidden_)
-            {
+            else
                 ShowCursor();
-                cursorHidden_ = false;
-            }
-            return;
+            cursorHidden_ = wantHidden;
         }
+        if (!enabled_)
+            return;
 
         ensureShader();
         if (!shaderLoaded)
@@ -1095,14 +1145,17 @@ struct CrtEffect
         }
         if (cursorShapeLoc >= 0)
         {
-            float sc = 0.0f;
-            switch (shape_) with (PointerShape)
-            {
-                case text:     sc = 1.0f; break;
-                case pointer:  sc = 2.0f; break;
-                case ewResize: sc = 3.0f; break;
-                default:       sc = 0.0f; break;
-            }
+            // `PTR1`: negative means the window system's pointer is the only
+            // one on screen, and the shader must draw none.
+            float sc = -1.0f;
+            if (!systemPointer_)
+                switch (shape_) with (PointerShape)
+                {
+                    case text:     sc = 1.0f; break;
+                    case pointer:  sc = 2.0f; break;
+                    case ewResize: sc = 3.0f; break;
+                    default:       sc = 0.0f; break;
+                }
             SetShaderValue(shader, cursorShapeLoc, &sc, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         }
         if (curvatureLoc >= 0)
@@ -1375,4 +1428,76 @@ unittest
         crt.magnify = true;
         assert(miss(crt.mapScreenToUi(best.x, best.y, w, h), mouse) < 0.5f);
     }
+}
+
+/**
+The pointer map is the lens's fixed point and the tilt's (`PTR2`).
+
+`mapPointerToUi` answers "which UI point is the OS pointer sitting on", and both
+mouse-driven distortions are centred on that same answer — which is why neither
+may be applied to it naively. The lens leaves its own centre alone, so it must
+cancel exactly; the tilt's apex is that centre, so the map must be a fixed point
+of itself. Testing those two properties is testing that the self-reference was
+resolved rather than papered over with the previous frame's value.
+*/
+@("ui_raylib.crt.mapPointerToUi.resolvesTheDistortionsCentredOnIt")
+@system
+unittest
+{
+    import std.math : abs;
+
+    enum int w = 1000, h = 720;
+    enum PointF probe = PointF(820, 560);
+
+    static float miss(in PointF a, in PointF b)
+    {
+        const dx = a.x - b.x, dy = a.y - b.y;
+        return abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+    }
+
+    CrtEffect crt;
+    crt.enabled = true;
+    crt.curvature = 0.25f;
+    crt.lensRadius = 0.30f;
+    crt.lensPower = 0.55f;
+    crt.pointerPos = PointF(640, 300);
+
+    // The lens cancels: magnifying does not move the point the pointer is on.
+    crt.tilt = false;
+    crt.magnify = false;
+    const flat = crt.mapPointerToUi(probe.x, probe.y, w, h);
+    crt.magnify = true;
+    assert(miss(crt.mapPointerToUi(probe.x, probe.y, w, h), flat) < 0.01f);
+
+    // It is a real warp, not a no-op that would satisfy the above vacuously.
+    assert(miss(flat, probe) > 4.0f);
+
+    // Tilt bends around the pointer, so the map must reproduce itself when its
+    // own answer is fed back as that apex.
+    crt.tilt = true;
+    const tilted = crt.mapPointerToUi(probe.x, probe.y, w, h);
+    crt.pointerPos = tilted;
+    assert(miss(crt.mapPointerToUi(probe.x, probe.y, w, h), tilted) < 0.5f,
+        "the tilt apex did not converge");
+
+    // ...and it converges from a badly wrong starting point, too — the apex is
+    // seeded with the previous frame's pointer, which after a jump is stale.
+    crt.pointerPos = PointF(10, 700);
+    assert(miss(crt.mapPointerToUi(probe.x, probe.y, w, h), tilted) < 1.0f);
+}
+
+@("ui_raylib.crt.systemPointer.suppressesTheShaderCursor")
+@system
+unittest
+{
+    CrtEffect crt;
+    assert(!crt.systemPointer, "hue draws its own cursor by default");
+    crt.systemPointer = true;
+    assert(crt.systemPointer);
+
+    // Disabled, the map is the identity in either mode: with no warp on screen
+    // the two spaces are the same one.
+    crt.pointerShape = PointerShape.text;
+    const p = crt.mapPointerToUi(123, 456, 800, 600);
+    assert(p.x == 123 && p.y == 456);
 }
