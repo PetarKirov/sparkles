@@ -31,8 +31,9 @@ import sparkles.raylib_text : displayMetrics, DisplayMetrics, FontSet,
 // applies the notch multiplier itself (INP12).
 import sparkles.base.term_control : PointerShape;
 import sparkles.code_instrumentation : CoveragePlan;
-import sparkles.input.events : Event, Key, KeyEvent, linesPerNotch, match,
-    Mods, PointerAction, PointerButton, PointerEvent, WheelEvent;
+import sparkles.input.events : Event, FocusEvent, GestureEvent, Key, KeyEvent,
+    linesPerNotch, match, Mods, Point, PointerAction, PointerButton,
+    PointerEvent, WheelEvent;
 import sparkles.input.frame : InputFrame, foldFrame;
 import sparkles.input.gesture : PointF;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
@@ -41,6 +42,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
     pickerPreviewRect;
+import pointer_map : PointerCapture, PointerRoute;
 import sparkles.ui_tui : Cell, Grid;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
@@ -137,7 +139,7 @@ import live_types : applyTip, LiveTypesSession;
 // the two entry points a navigation reload needs.
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
-import settings : HueConfig, searchPolicy;
+import settings : HueConfig, PointerMode, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, hueApplyRules, SettingsPane;
@@ -407,12 +409,16 @@ int runGui(GuiArgs guiArgs) @system
         crt.hoverGlow = cast(float) configStore.resolved.appearance.crt.hoverGlow;
         crt.selectionBloom = cast(float) configStore.resolved.appearance.crt.selectionBloom;
         crt.dividerTension = cast(float) configStore.resolved.appearance.crt.dividerTension;
+        crt.systemPointer = capture.pointerMode.length
+            ? capture.pointerMode == "system"
+            : configStore.resolved.appearance.pointer.mode == PointerMode.system;
     }
     else
     {
         crt.enabled = capture.crt;
         crt.tilt = capture.crtTilt;
         crt.magnify = capture.crtMagnify;
+        crt.systemPointer = capture.pointerMode == "system";
     }
     PointF rawPointerPos;
     with (gs)
@@ -1066,6 +1072,9 @@ int runGui(GuiArgs guiArgs) @system
         crt.hoverGlow = cast(float) configStore.resolved.appearance.crt.hoverGlow;
         crt.selectionBloom = cast(float) configStore.resolved.appearance.crt.selectionBloom;
         crt.dividerTension = cast(float) configStore.resolved.appearance.crt.dividerTension;
+        crt.systemPointer = capture.pointerMode.length
+            ? capture.pointerMode == "system"
+            : configStore.resolved.appearance.pointer.mode == PointerMode.system;
         if (!filePicker.empty)
         {
             filePicker.get.stepBudget =
@@ -1184,6 +1193,86 @@ int runGui(GuiArgs guiArgs) @system
     // The frame's geometry, computed by the view half and read by the paint
     // half. One value, because the two halves are now separate callbacks.
     FrameGeom geom;
+
+    // `PTR2`/`PTR3`: with the window system drawing the pointer, input arrives
+    // in SCREEN space while the UI lives in texture space, so every position
+    // has to be translated — and the positions that translate to nothing (the
+    // bezel the warp leaves) have to be ruled on. Both happen HERE, at the one
+    // seam every consumer reads through: `rawPointerPos`, the frame fold and
+    // the dock's own drain all take `evBuf`, so a translation applied per
+    // consumer is three chances for them to disagree about where the mouse is.
+    //
+    // `geom` is the previous frame's, which is the right one: it describes the
+    // image the user is actually pointing at.
+    PointerCapture ptrCapture;
+
+    /// The UI point a physical screen position is over (`PTR2`) — the identity
+    /// while hue draws its own cursor, since then the two spaces are the same.
+    PointF pointerToUi(PointF p)
+    {
+        if (!crt.enabled || !crt.systemPointer || geom.screenW <= 0 || geom.screenH <= 0)
+            return p;
+        return crt.mapPointerToUi(p.x, p.y, geom.screenW, geom.screenH);
+    }
+
+    bool admitEvent(in Event e, out Event admitted)
+    {
+        admitted = e;
+        if (!crt.enabled || !crt.systemPointer || geom.screenW <= 0 || geom.screenH <= 0)
+            return true;
+
+        const w = geom.screenW, h = geom.screenH;
+        Point toUi(in Point p)
+        {
+            const u = crt.mapPointerToUi(cast(float) p.x, cast(float) p.y, w, h);
+            return Point(cast(int) u.x, cast(int) u.y);
+        }
+
+        bool keep = true;
+        e.match!(
+            (in PointerEvent p) {
+                const d = ptrCapture.route(p.action, toUi(p.pos), w, h);
+                PointerEvent q = p;
+                q.pos = d.pos;
+                final switch (d.route)
+                {
+                case PointerRoute.deliver:
+                    ptrCapture.noteDelivered(q.action, q.button);
+                    break;
+                case PointerRoute.leave:
+                    q.action = PointerAction.leave;
+                    q.button = PointerButton.none;
+                    break;
+                case PointerRoute.drop:
+                    keep = false;
+                    break;
+                }
+                admitted = Event(q);
+            },
+            (in WheelEvent wv) {
+                const d = ptrCapture.routeWheel(toUi(wv.pos), w, h);
+                WheelEvent q = wv;
+                q.pos = d.pos;
+                keep = d.route == PointerRoute.deliver;
+                admitted = Event(q);
+            },
+            (in GestureEvent g) {
+                const d = ptrCapture.routeWheel(toUi(g.pos), w, h);
+                GestureEvent q = g;
+                q.pos = d.pos;
+                keep = d.route == PointerRoute.deliver;
+                admitted = Event(q);
+            },
+            (in FocusEvent f) {
+                // Releases do not arrive for a window that lost the focus
+                // mid-drag, so the level would stay down forever.
+                if (!f.focused)
+                    ptrCapture.reset();
+            },
+            (in _) {}
+        );
+        return keep;
+    }
 
     // Whether a frame has been painted. The post-present tail below belongs to
     // the PREVIOUS frame — the host owns the bracket, so what used to run right
@@ -2394,8 +2483,10 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
 
+        // `HUE_GUI_POINTER` parks the PHYSICAL pointer — it stands in for a
+        // window-system event nobody sent — so it is translated like one.
         if (capture.pointerSet)
-            rawPointerPos = capture.pointer;
+            rawPointerPos = pointerToUi(capture.pointer);
         else
         {
             foreach (e; evBuf)
@@ -2413,7 +2504,7 @@ int runGui(GuiArgs guiArgs) @system
         // only the position; button levels and edges still come from the
         // folded stream.
         if (capture.pointerSet)
-            inp.fin.pos = capture.pointer;
+            inp.fin.pos = pointerToUi(capture.pointer);
         // The dock drains these real events below, after its current geometry
         // and content extents have been published. The frame fold above is a
         // read, not ownership transfer.
@@ -4253,7 +4344,11 @@ int runGui(GuiArgs guiArgs) @system
                 h.skipFrame();
             }
         },
-        (ref h, in Event e) { evBuf ~= e; },
+        (ref h, in Event e) {
+            Event admitted;
+            if (admitEvent(e, admitted))
+                evBuf ~= admitted;
+        },
         (ref h) { paintWindowFrame(geom); },
         setupPhase,
     )(cfg, policy))
