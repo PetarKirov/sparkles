@@ -80,24 +80,28 @@ float sdBox(vec2 p, vec2 b)
 
 vec2 curve(vec2 coord, vec2 m, float isTilt, vec2 res)
 {
-    if (isTilt > 0.5)
-    {
-        // When tilt is enabled, the apex of the curvature follows the mouse m.
-        // Directly under the mouse (coord == m), curvature distortion is zero.
-        // When m is at one of the four corners, that corner appears straightened out,
-        // while the opposite side curves away.
-        vec2 cc = coord - m;
-        float dist = dot(cc, cc);
-        vec2 uv = coord + cc * (dist * uCurvature * 0.625);
-        return (uv - 0.5) * 1.06 + 0.5;
-    }
-    else
-    {
-        vec2 cc = coord - 0.5;
-        float dist = dot(cc, cc);
-        vec2 uv = coord + cc * (dist * uCurvature);
-        return (uv - 0.5) * 1.06 + 0.5;
-    }
+    // The apex the bend is centred on. With tilt it follows the mouse, so the
+    // surface is flat directly under the pointer and the far side curves away;
+    // with the mouse in a corner that corner straightens out.
+    vec2 apex = (isTilt > 0.5) ? m : vec2(0.5);
+    float k = (isTilt > 0.5) ? uCurvature * 0.625 : uCurvature;
+
+    vec2 cc = coord - apex;
+    float dist = dot(cc, cc);
+    vec2 uv = coord + cc * (dist * k);
+
+    // Fit the tube to the screen (`CRT10`). The bend pushes a point at radius r
+    // out by (1 + k*r*r), so an edge midpoint — at r = 1/2 — lands at
+    // (1 + k/4); scaling by the reciprocal puts it back exactly on the screen
+    // edge, at ANY curvature, and leaves a flat screen (k = 0) a 1:1 blit.
+    // The corners sit at a larger radius, still overhang, and are cut: that is
+    // the rounded tube face, and the only part of the window left imageless.
+    //
+    // Exact with tilt off, which is the model the fit is stated for. An apex
+    // that is not the centre deforms the four edges by different amounts, and
+    // one scalar cannot seat all four at once.
+    float fit = 1.0 / (1.0 + k * 0.25);
+    return (uv - 0.5) * fit + 0.5;
 }
 
 vec4 renderCursor(vec2 p, float shape)
@@ -412,24 +416,28 @@ float sdBox(vec2 p, vec2 b)
 
 vec2 curve(vec2 coord, vec2 m, float isTilt, vec2 res)
 {
-    if (isTilt > 0.5)
-    {
-        // When tilt is enabled, the apex of the curvature follows the mouse m.
-        // Directly under the mouse (coord == m), curvature distortion is zero.
-        // When m is at one of the four corners, that corner appears straightened out,
-        // while the opposite side curves away.
-        vec2 cc = coord - m;
-        float dist = dot(cc, cc);
-        vec2 uv = coord + cc * (dist * uCurvature * 0.625);
-        return (uv - 0.5) * 1.06 + 0.5;
-    }
-    else
-    {
-        vec2 cc = coord - 0.5;
-        float dist = dot(cc, cc);
-        vec2 uv = coord + cc * (dist * uCurvature);
-        return (uv - 0.5) * 1.06 + 0.5;
-    }
+    // The apex the bend is centred on. With tilt it follows the mouse, so the
+    // surface is flat directly under the pointer and the far side curves away;
+    // with the mouse in a corner that corner straightens out.
+    vec2 apex = (isTilt > 0.5) ? m : vec2(0.5);
+    float k = (isTilt > 0.5) ? uCurvature * 0.625 : uCurvature;
+
+    vec2 cc = coord - apex;
+    float dist = dot(cc, cc);
+    vec2 uv = coord + cc * (dist * k);
+
+    // Fit the tube to the screen (`CRT10`). The bend pushes a point at radius r
+    // out by (1 + k*r*r), so an edge midpoint — at r = 1/2 — lands at
+    // (1 + k/4); scaling by the reciprocal puts it back exactly on the screen
+    // edge, at ANY curvature, and leaves a flat screen (k = 0) a 1:1 blit.
+    // The corners sit at a larger radius, still overhang, and are cut: that is
+    // the rounded tube face, and the only part of the window left imageless.
+    //
+    // Exact with tilt off, which is the model the fit is stated for. An apex
+    // that is not the centre deforms the four edges by different amounts, and
+    // one scalar cannot seat all four at once.
+    float fit = 1.0 / (1.0 + k * 0.25);
+    return (uv - 0.5) * fit + 0.5;
 }
 
 vec4 renderCursor(vec2 p, float shape)
@@ -939,8 +947,11 @@ struct CrtEffect
         const ccX = nx - apexX;
         const ccY = ny - apexY;
         const dist = ccX * ccX + ccY * ccY;
-        uvX = (nx + ccX * (dist * k) - 0.5f) * 1.06f + 0.5f;
-        uvY = (ny + ccY * (dist * k) - 0.5f) * 1.06f + 0.5f;
+        // `CRT10`: seat the texture's edge midpoints on the screen's edges —
+        // see the shader's `curve`, of which this is the twin.
+        const fit = 1.0f / (1.0f + k * 0.25f);
+        uvX = (nx + ccX * (dist * k) - 0.5f) * fit + 0.5f;
+        uvY = (ny + ccY * (dist * k) - 0.5f) * fit + 0.5f;
     }
 
     /**
@@ -1500,4 +1511,51 @@ unittest
     crt.pointerShape = PointerShape.text;
     const p = crt.mapPointerToUi(123, 456, 800, 600);
     assert(p.x == 123 && p.y == 456);
+}
+
+/**
+The tube is fitted to the screen at every curvature (`CRT10`).
+
+The bend pushes a point at radius `r` out by `(1 + k·r²)`, so the midpoint of
+each edge — at `r = ½` — lands at `(1 + k/4)`, and scaling by that reciprocal
+seats it exactly on the screen edge. The old fixed `1.06` was a fit for one
+curvature and no other: it left a 20 px band of nothing along every edge even
+on a flat screen, and swallowed a third of the window at the top of the range.
+
+The corners, at a larger radius, still overhang and are cut — that is the
+rounded face of the tube, and it should be the only part of the window without
+an image.
+*/
+@("ui_raylib.crt.curve.seatsEachEdgeMidpointOnItsScreenEdge")
+@system
+unittest
+{
+    import std.math : abs;
+
+    enum int w = 1000, h = 720;
+
+    CrtEffect crt;
+    crt.enabled = true;
+    crt.tilt = false; // the fit is stated for a centred apex
+
+    foreach (curv; [0.0f, 0.08f, 0.25f, 0.5f, 1.0f])
+    {
+        crt.curvature = curv;
+
+        // Each screen edge midpoint reads the corresponding texture edge.
+        assert(abs(crt.mapScreenToUi(w / 2.0f, 0, w, h).y - 0) < 0.5f);
+        assert(abs(crt.mapScreenToUi(w / 2.0f, h, w, h).y - h) < 0.5f);
+        assert(abs(crt.mapScreenToUi(0, h / 2.0f, w, h).x - 0) < 0.5f);
+        assert(abs(crt.mapScreenToUi(w, h / 2.0f, w, h).x - w) < 0.5f);
+
+        // ...so there is no dead band anywhere along an edge's middle.
+        assert(crt.mapScreenToUi(w / 2.0f, 0.5f, w, h).y >= 0);
+
+        // A flat screen is a 1:1 blit: no curvature, and so nothing cut.
+        const corner = crt.mapScreenToUi(0, 0, w, h);
+        if (curv == 0)
+            assert(corner.x >= 0 && corner.y >= 0, "a flat tube fills the window");
+        else
+            assert(corner.x < 0 || corner.y < 0, "a curved tube rounds its corners");
+    }
 }
