@@ -192,7 +192,7 @@ struct CrtConfig
 
     @Doc("Screen curvature amount (0 for flat monitor).")
     @Label("curvature")
-    @Range(0.0, 0.30, 0.01)
+    @Range(0.0, 1.0, 0.01)
     double curvature = 0.08;
 
     @Doc("Scanline darkening intensity (0 to disable).")
