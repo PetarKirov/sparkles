@@ -168,9 +168,18 @@ void main()
     vec2 uv = fragTexCoord;
     float lensRim = 0.0;
 
+    vec2 m = mouse / resolution;
+    uv = curve(uv, m, mouseTilt, resolution);
+
+    // The lens is applied in TEXTURE space, after curvature, so that its centre
+    // is the very point the software cursor is drawn at (`CRT6`): the cursor
+    // lands where the final `uv` equals the mouse's UI position, and
+    // `uv = m + delta * factor` leaves exactly that point fixed. Centring the
+    // lens in screen space instead put it wherever curvature had *not* yet
+    // displaced the pointer, so the two drifted apart the further the mouse
+    // travelled from the middle of the screen.
     if (mouseMagnify > 0.5)
     {
-        vec2 m = mouse / resolution;
         float aspect = resolution.x / resolution.y;
         vec2 delta = uv - m;
         vec2 aspectDelta = vec2(delta.x * aspect, delta.y);
@@ -186,9 +195,6 @@ void main()
             lensRim = smoothstep(0.90, 0.97, normDist) * smoothstep(1.0, 0.97, normDist);
         }
     }
-
-    vec2 m = mouse / resolution;
-    uv = curve(uv, m, mouseTilt, resolution);
 
     // Subtle horizontal sync micro-jitter
     float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
@@ -492,9 +498,18 @@ void main()
     vec2 uv = fragTexCoord;
     float lensRim = 0.0;
 
+    vec2 m = mouse / resolution;
+    uv = curve(uv, m, mouseTilt, resolution);
+
+    // The lens is applied in TEXTURE space, after curvature, so that its centre
+    // is the very point the software cursor is drawn at (`CRT6`): the cursor
+    // lands where the final `uv` equals the mouse's UI position, and
+    // `uv = m + delta * factor` leaves exactly that point fixed. Centring the
+    // lens in screen space instead put it wherever curvature had *not* yet
+    // displaced the pointer, so the two drifted apart the further the mouse
+    // travelled from the middle of the screen.
     if (mouseMagnify > 0.5)
     {
-        vec2 m = mouse / resolution;
         float aspect = resolution.x / resolution.y;
         vec2 delta = uv - m;
         vec2 aspectDelta = vec2(delta.x * aspect, delta.y);
@@ -510,9 +525,6 @@ void main()
             lensRim = smoothstep(0.90, 0.97, normDist) * smoothstep(1.0, 0.97, normDist);
         }
     }
-
-    vec2 m = mouse / resolution;
-    uv = curve(uv, m, mouseTilt, resolution);
 
     // Subtle horizontal sync micro-jitter
     float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
@@ -881,6 +893,20 @@ struct CrtEffect
     }
 
     /**
+    The pointer position last presented through $(LREF end), in UI pixels —
+    the point both the lens and the software cursor are centred on.
+    */
+    PointF pointerPos() const @safe pure nothrow @nogc
+        => PointF(lastMouseX_, lastMouseY_);
+
+    /// ditto
+    void pointerPos(PointF p) @safe pure nothrow @nogc
+    {
+        lastMouseX_ = p.x;
+        lastMouseY_ = p.y;
+    }
+
+    /**
     Translates a screen device pixel coordinate to the corresponding unwarped UI
     pixel coordinate rendered under that screen location.
     */
@@ -896,24 +922,6 @@ struct CrtEffect
         float my = (cast(float) screenH - lastMouseY_) / cast(float) screenH;
 
         float aspect = cast(float) screenW / cast(float) screenH;
-
-        // Lens magnification around mouse
-        if (magnify_)
-        {
-            float dx = (nx - mx) * aspect;
-            float dy = ny - my;
-            import std.math : sqrt, pow;
-            float dist = cast(float) sqrt(dx * dx + dy * dy);
-            float radius = lensRadius_;
-            if (dist < radius)
-            {
-                float normDist = dist / radius;
-                float z = cast(float) sqrt(1.0f - normDist * normDist);
-                float factor = 1.0f - lensPower_ * cast(float) pow(z, 1.4f);
-                nx = mx + (nx - mx) * factor;
-                ny = my + (ny - my) * factor;
-            }
-        }
 
         // Curvature transformation
         float uvX, uvY;
@@ -936,6 +944,26 @@ struct CrtEffect
             float curY = ny + ccY * (dist * curvature_);
             uvX = (curX - 0.5f) * 1.06f + 0.5f;
             uvY = (curY - 0.5f) * 1.06f + 0.5f;
+        }
+
+        // Lens magnification around the mouse, in texture space — the same
+        // order the shader applies it in, so this stays its exact inverse-free
+        // twin. Applying it before curvature made the two disagree.
+        if (magnify_)
+        {
+            float dx = (uvX - mx) * aspect;
+            float dy = uvY - my;
+            import std.math : sqrt, pow;
+            float dist = cast(float) sqrt(dx * dx + dy * dy);
+            float radius = lensRadius_;
+            if (dist < radius)
+            {
+                float normDist = dist / radius;
+                float z = cast(float) sqrt(1.0f - normDist * normDist);
+                float factor = 1.0f - lensPower_ * cast(float) pow(z, 1.4f);
+                uvX = mx + (uvX - mx) * factor;
+                uvY = my + (uvY - my) * factor;
+            }
         }
 
         float uiX = uvX * cast(float) screenW;
@@ -1276,4 +1304,75 @@ unittest
     ctx.focusBox = r;
     crt.setUiContext(ctx);
     assert(crt.uiContext.focusBox == r);
+}
+
+/**
+The magnifier lens is centred on the software cursor (`CRT6`).
+
+The shader draws the cursor at the fragment whose $(I final) `uv` equals the
+mouse's UI position, and applies the lens to that same `uv` — which leaves that
+point fixed. So the screen point that resolves to the mouse must be the one the
+lens is built around, whether magnification is on or off.
+
+Applying the lens before curvature instead centred it on the screen point the
+mouse had not yet been displaced from, and the pointer drifted out of the circle
+the further it travelled from the middle of the screen.
+*/
+@("ui_raylib.crt.magnifierLensIsCentredOnTheCursor")
+@system
+unittest
+{
+    import std.math : abs;
+
+    enum int w = 800, h = 600;
+
+    CrtEffect crt;
+    crt.enabled = true;
+    crt.curvature = 0.25f;  // well past the default, so a drift is visible
+    crt.lensRadius = 0.22f;
+    crt.lensPower = 0.55f;
+
+    // Off-centre in both axes: the bug is invisible at the screen's middle.
+    const mouse = PointF(624, 168);
+
+    static float miss(in PointF got, in PointF want)
+    {
+        const dx = got.x - want.x, dy = got.y - want.y;
+        return abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+    }
+
+    foreach (tilt; [false, true])
+    {
+        crt.tilt = tilt;
+        crt.pointerPos = mouse;
+
+        // Find the screen point that renders the mouse's own UI pixel: a
+        // coarse sweep, then a refinement around the best cell.
+        crt.magnify = false;
+        auto best = PointF(mouse.x, mouse.y);
+        float bestMiss = float.max;
+        for (float y = 0; y < h; y += 2)
+            for (float x = 0; x < w; x += 2)
+            {
+                const d = miss(crt.mapScreenToUi(x, y, w, h), mouse);
+                if (d < bestMiss) { bestMiss = d; best = PointF(x, y); }
+            }
+        for (float dy = -2; dy <= 2; dy += 0.125f)
+            for (float dx = -2; dx <= 2; dx += 0.125f)
+            {
+                const p = PointF(best.x + dx, best.y + dy);
+                const d = miss(crt.mapScreenToUi(p.x, p.y, w, h), mouse);
+                if (d < bestMiss) { bestMiss = d; best = p; }
+            }
+        assert(bestMiss < 0.5f, "no screen point renders the mouse's UI pixel");
+
+        // Curvature really does displace the cursor — otherwise the assertion
+        // below would hold for the broken ordering too.
+        assert(miss(best, mouse) > 4.0f);
+
+        // Turning the lens on must not move that point: the cursor sits at the
+        // centre of the circle.
+        crt.magnify = true;
+        assert(miss(crt.mapScreenToUi(best.x, best.y, w, h), mouse) < 0.5f);
+    }
 }
