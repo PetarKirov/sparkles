@@ -39,7 +39,8 @@ import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
-import picker_view : pickerGeometryFor, pickerPreviewRect;
+import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
+    pickerPreviewRect;
 import sparkles.ui_tui : Cell, Grid;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
@@ -2088,8 +2089,7 @@ int runGui(GuiArgs guiArgs) @system
             auto pkFrames = layout(pkTree,
                 Constraints(maxW: 2 * pkGeometry.panelCols));
             const pkPanel = pkFrames[pkTree.root].rect;
-            const pkX = (cellsW - pkPanel.width) / 2;
-            const pkOriginX = pkX > 0 ? pkX : 0;
+            const pkOriginX = pickerOriginCol(cellsW, pkPanel.width);
             window.resetClip();
             chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset(); // sequential reuse of the guide's sink (`NFR2`)
@@ -2097,7 +2097,8 @@ int runGui(GuiArgs guiArgs) @system
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                 ltnOps);
             auto pkCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                cast(float)(pkOriginX * cellW), cast(float) cellH);
+                cast(float)(pkOriginX * cellW),
+                cast(float)(pickerOriginRow * cellH));
             paint(pkCanvas, ltnOps[]);
 
             const hole = pickerPreviewRect(pkTree, pkFrames);
@@ -2106,7 +2107,7 @@ int runGui(GuiArgs guiArgs) @system
                 auto paneGrid = &filePickerDoc.paint(hole.width, hole.height);
                 blitPaneGrid(*paneGrid,
                     cast(float)((pkOriginX + hole.x) * cellW),
-                    cast(float)((1 + hole.y) * cellH));
+                    cast(float)((pickerOriginRow + hole.y) * cellH));
 
                 // The preview's bar is the pane's OWN machine (`vm.scroll`),
                 // drawn through the same animated px painter as the document
@@ -2210,9 +2211,13 @@ int runGui(GuiArgs guiArgs) @system
                 auto sTree = settingsPane.buildView(sg);
                 auto sFrames = layout(sTree, Constraints(maxW: sg.panelCols));
                 const sPanel = sFrames[sTree.root].rect;
+                // The origin is the paint site's, clamp included — a halo
+                // computed from an unclamped centring sits off the panel it
+                // is meant to outline.
                 const sX = (cellsW - sPanel.width) / 2;
                 const sY = (cellsH - sPanel.height) / 2;
-                uiCtx.focusBox = UiRect(cast(float)(sX * cellW), cast(float)(sY * cellH),
+                uiCtx.focusBox = UiRect(cast(float)((sX > 0 ? sX : 0) * cellW),
+                    cast(float)((sY > 0 ? sY : 0) * cellH),
                     cast(float)(sPanel.width * cellW), cast(float)(sPanel.height * cellH));
             }
             else if (!filePicker.empty && filePicker.get.state.active)
@@ -2223,9 +2228,12 @@ int runGui(GuiArgs guiArgs) @system
                 auto pkTree = filePicker.get.buildView(pkGeometry);
                 auto pkFrames = layout(pkTree, Constraints(maxW: 2 * pkGeometry.panelCols));
                 const pPanel = pkFrames[pkTree.root].rect;
-                const pkOriginX = (cellsW - pPanel.width) / 2;
-                const pkOriginY = (cellsH - pPanel.height) / 2;
-                uiCtx.focusBox = UiRect(cast(float)(pkOriginX * cellW), cast(float)(pkOriginY * cellH),
+                // ditto, and the picker is centred horizontally but pinned one
+                // row down, not centred vertically — both from the shared
+                // origin the paint site above uses.
+                const pkOriginX = pickerOriginCol(cellsW, pPanel.width);
+                uiCtx.focusBox = UiRect(cast(float)(pkOriginX * cellW),
+                    cast(float)(pickerOriginRow * cellH),
                     cast(float)(pPanel.width * cellW), cast(float)(pPanel.height * cellH));
             }
             else if (pn.treeVisible && pn.treeFocused)

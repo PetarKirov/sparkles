@@ -36,6 +36,7 @@ import sparkles.ui_tui : Grid;
 
 import document : Document;
 import live_types : applyTip, LiveTypesSession;
+import picker_view : pickerOriginRow;
 import tui : PreviewTui;
 
 /// The host's own document loader — the same delegate `hue view` loads with.
@@ -313,7 +314,7 @@ struct PickerDocPane
     */
     static Rect barRectCells(in Rect track, int originX, int holeX, int holeY)
         @safe pure nothrow @nogc
-        => Rect(originX + holeX + track.x, 1 + holeY + track.y,
+        => Rect(originX + holeX + track.x, pickerOriginRow + holeY + track.y,
             track.width, track.height);
 
     /**
