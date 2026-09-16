@@ -634,6 +634,94 @@ jobs:
   # Actions is the primary provider (it currently is); CircleCI's equivalent is
   # `ci/circleci: ci`. Switching providers is that single change — see
   # ci/README.md § Switching the primary provider.
+  # `ci/prepare-cloud-env.sh` is the one-line setup an ephemeral agent container
+  # runs (Claude Code on the web, and anything comparable). It is the only entry
+  # point here that bootstraps its *own* toolchain, so it cannot be covered by
+  # the jobs above — they all start from `setup-nix`, which is exactly the state
+  # the script exists to create. Hence a job that deliberately does not use it:
+  # bare `actions/checkout`, no Nix, no caches, nothing on PATH.
+  #
+  # The `restricted` leg is the point of the matrix. A hosted runner has open
+  # egress, so the script's probes would take the fast native paths and the two
+  # workarounds that make an agent container work at all — the flake.lock
+  # github:→git+https rewrite, and seeding dub registry packages from git —
+  # would never execute. CI_FORCE_GIT_INPUTS / CI_FORCE_GIT_DEPS force them, so
+  # both paths are exercised without needing a proxy that blocks codeload.
+  cloud-env:
+    name: cloud-env (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # What a container with open egress gets: tarball flake inputs and a
+          # plain `dub` registry fetch.
+          - mode: native
+            force: '0'
+          # What an agent container actually gets.
+          - mode: restricted
+            force: '1'
+    runs-on: ubuntu-latest
+    # Cold: installs Nix, resolves 33 flake inputs and builds devShells.ci from
+    # the caches. The `restricted` leg additionally clones every input over git.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # No setup-nix, no cache restore, no devshell: proving the script needs
+      # none of them is the test.
+      - name: Assert the runner starts clean
+        run: |
+          if command -v nix >/dev/null 2>&1; then
+            echo "::error::nix is already on PATH; this job must start without it"
+            exit 1
+          fi
+          if command -v dub >/dev/null 2>&1; then
+            echo "::error::dub is already on PATH; this job must start without it"
+            exit 1
+          fi
+
+      - name: Run the setup script
+        run: ci/prepare-cloud-env.sh
+        env:
+          # The CI floor — smallest closure, and the shell this repo's own jobs
+          # use. Also covers the documented CI_DEVSHELL override.
+          CI_DEVSHELL: ci
+          CI_FORCE_GIT_INPUTS: ${{ matrix.force }}
+          CI_FORCE_GIT_DEPS: ${{ matrix.force }}
+
+      # A separate step on purpose: the script exports PATH through `ci_export`,
+      # so this only passes if that export actually reached $GITHUB_ENV — the
+      # failure mode the script exists to prevent (a toolchain that works in the
+      # setup shell and nowhere else).
+      - name: Toolchain survives into a later step
+        run: |
+          echo "dub: $(command -v dub)"
+          echo "ldc2: $(command -v ldc2)"
+          dub --version
+          ldc2 --version | head -n1
+
+      - name: Tests actually run
+        run: dub test :base
+
+      - name: Re-running is idempotent
+        run: ci/prepare-cloud-env.sh
+        env:
+          CI_DEVSHELL: ci
+          CI_FORCE_GIT_INPUTS: ${{ matrix.force }}
+          CI_FORCE_GIT_DEPS: ${{ matrix.force }}
+
+      # The rewrite is a local accommodation. If it ever reaches a commit, every
+      # other consumer of this lock gets shallow git inputs and the `--inputs-from`
+      # resolution that `ci_nix_run` depends on stops working.
+      - name: flake.lock is not modified in a way that could be committed
+        run: |
+          if [ -n "$(git diff --name-only -- flake.lock)" ]; then
+            echo "::error::flake.lock shows as modified; the skip-worktree guard did not hold"
+            git diff --stat -- flake.lock
+            exit 1
+          fi
+
   ci:
     name: CI
     needs:
@@ -644,6 +732,7 @@ jobs:
       - nix-build-android
       - lint
       - docs
+      - cloud-env
     if: always()
     runs-on: ubuntu-latest
     steps:

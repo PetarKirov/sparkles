@@ -33,9 +33,23 @@
 # toolchain exist.
 #
 # Environment:
-#   CI_DEVSHELL   devShell to prebuild and wrap. Default `default` — the quiet
-#                 one, because a `figlet` banner would pollute captured stdout.
-#   CI_WRAP_BIN   Where to write wrappers. Default /usr/local/bin.
+#   CI_DEVSHELL         devShell to prebuild and wrap. Default `default` — the
+#                       quiet one, because a `figlet` banner would pollute
+#                       captured stdout. See "Choosing a devShell" below.
+#   CI_WRAP_BIN         Where to write wrappers. Defaults to /usr/local/bin when
+#                       that is writable, else ~/.local/bin.
+#   CI_FORCE_GIT_INPUTS Rewrite flake.lock even where the tarball endpoints are
+#                       reachable. This is how CI exercises the blocked-egress
+#                       path on a runner with open egress; `0` forces it off.
+#   CI_FORCE_GIT_DEPS   The same, for seeding dub registry packages from git.
+#
+# Choosing a devShell:
+#
+#     CI_DEVSHELL=full ci/prepare-cloud-env.sh   # interactive, with the banner
+#     CI_DEVSHELL=ci   ci/prepare-cloud-env.sh   # the CI floor, smallest closure
+#
+# The wrappers are regenerated against whichever shell was named, so re-running
+# with a different CI_DEVSHELL switches the toolchain the container resolves.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -44,7 +58,15 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 repo=$(cd "$here/.." && pwd)
 devshell=${CI_DEVSHELL:-default}
-wrap_bin=${CI_WRAP_BIN:-/usr/local/bin}
+# /usr/local/bin is on PATH unconditionally, which is the whole point — but a
+# CI runner runs unprivileged, so fall back rather than fail.
+if [ -n "${CI_WRAP_BIN:-}" ]; then
+  wrap_bin=$CI_WRAP_BIN
+elif mkdir -p /usr/local/bin 2>/dev/null && [ -w /usr/local/bin ]; then
+  wrap_bin=/usr/local/bin
+else
+  wrap_bin=$HOME/.local/bin
+fi
 profile=/nix/var/nix/profiles/sparkles-devshell
 
 cd "$repo"
@@ -101,13 +123,17 @@ done
 
 # --- 2. Reachable flake inputs ---------------------------------------------
 
-tarball_status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
-  https://codeload.github.com/NixOS/nixpkgs/tar.gz/master 2>/dev/null || echo 000)
+if [ -n "${CI_FORCE_GIT_INPUTS:-}" ]; then
+  ci_is_true "$CI_FORCE_GIT_INPUTS" && tarball_status=forced || tarball_status=200
+else
+  tarball_status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+    https://codeload.github.com/NixOS/nixpkgs/tar.gz/master 2>/dev/null || echo 000)
+fi
 
 if [ "$tarball_status" = 200 ]; then
   printf 'GitHub tarball egress is available; leaving flake.lock alone.\n'
 else
-  ci_group "Rewriting locked github: inputs to git+https (codeload returned $tarball_status)"
+  ci_group "Rewriting locked github: inputs to git+https (codeload: $tarball_status)"
 
   # The pristine lock comes from git, not from a backup file: a backup taken on
   # a re-run would capture a lock this script had already rewritten, and the
@@ -222,13 +248,17 @@ rm -f "$wrap_bin/ci"
 # live in is itself a dub package, and it cannot resolve `expected` until this
 # has run.
 
-registry_status=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 25 \
-  https://code.dlang.org/packages/expected/0.4.1.zip 2>/dev/null || echo 000)
+if [ -n "${CI_FORCE_GIT_DEPS:-}" ]; then
+  ci_is_true "$CI_FORCE_GIT_DEPS" && registry_status=forced || registry_status=200
+else
+  registry_status=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 25 \
+    https://code.dlang.org/packages/expected/0.4.1.zip 2>/dev/null || echo 000)
+fi
 
 if [ "$registry_status" = 200 ]; then
   printf 'The dub registry is directly reachable; not seeding local packages.\n'
 else
-  ci_group "Seeding registry dependencies from git (registry zip returned $registry_status)"
+  ci_group "Seeding registry dependencies from git (registry zip: $registry_status)"
 
   dub_src=${XDG_CACHE_HOME:-$HOME/.cache}/sparkles/dub-src
   plan=$(mktemp)
@@ -239,6 +269,7 @@ else
   # below only has to clone. Only the sub-packages actually built here: the
   # research examples under docs/ pull a long tail (pyd, objective-d, numem,
   # icu, …) that no test run touches.
+  # shellcheck disable=SC2016  # single-quoted on purpose: this is Python source.
   git ls-files 'libs/*/dub.selections.json' 'apps/*/dub.selections.json' \
     | python3 -c '
 import json, sys, urllib.request
@@ -313,9 +344,17 @@ for name, version in sorted(wanted.items()):
   ci_endgroup
 fi
 
+# A fallback wrap_bin is not necessarily on PATH. `ci_export` also writes it to
+# $GITHUB_ENV / $BASH_ENV, so later CI steps inherit it.
+case ":$PATH:" in
+  *":$wrap_bin:"*) ;;
+  *) ci_export PATH "$wrap_bin:$PATH" ;;
+esac
+
 ci_group 'Verification'
 dub --version
 ldc2 --version | head -n1
 ci_endgroup
 
-printf '\nReady. Try: dub test :base\n'
+printf '\nReady (devShell .#%s, wrappers in %s). Try: dub test :base\n' \
+  "$devshell" "$wrap_bin"
