@@ -179,6 +179,64 @@ deadlines become a coalesced `FrameReady` event. Event Horizon `Ticker` is used 
 where the platform has no usable frame signal or a caller explicitly asks for a capped
 cadence. Missed frame ticks are skipped, never replayed.
 
+### 4.5 Event delivery under load
+
+A consumer that drains slowly must not be able to stop the loop. The rationale,
+measurements and rejected alternatives are in
+[event-delivery.md](./event-delivery.md); the obligations are here.
+
+**ED1: Bounded queue.** Each backend owns one event queue whose capacity is fixed at
+compile time. Exceeding it must not fail the dispatch, the loop, or any command.
+
+**ED2: Motion merges in place.** While coalescing is enabled for a window, a pointer
+motion event must merge into the queued motion event of the same window and pointer,
+if one is still queued, by updating that event in place: latest position, summed
+relative delta, newest timestamp, and a sample count incremented by one. The merged
+event keeps its original sequence and its position in the queue. A press, release,
+enter, or leave for that pointer ends the run, so the last position before a press is
+always delivered.
+
+**ED3: Samples are kept beside the queue.** Each (window, pointer) has a sample ring
+of compile-time depth holding timestamp, position, relative delta, pressure and tilt.
+A merged event's samples must be readable there in arrival order. The ring drops its
+oldest sample when full; history is advisory and its loss is not an error.
+
+**ED4: Only motion merges.** Lifecycle, focus, keyboard, text, composition, scroll,
+touch, output, clipboard and popup events must never be merged, superseded or
+reordered. Surface metrics, move and expose keep the latest-observation merge they
+already have.
+
+**ED5: Overflow is counted, not fatal.** When the queue is full, the arriving event is
+dropped and a per-backend counter is incremented. The next drain must deliver one
+`EventsDropped` event carrying that count before any other event and then reset the
+counter. The counter is synthesized at drain time because a full queue has no slot to
+give. Overflow must never set a sticky error, and must never be reported as a
+dispatch or loop failure.
+
+**ED6: Drain order.** Sequence numbers delivered by one drain must be strictly
+increasing. Contiguity is explicitly not promised: merging and `ED5` both leave gaps.
+
+**ED7: Timestamps.** Every event and every sample carries the platform's event time
+converted once by the backend into the loop's monotonic clock. An event the platform
+supplies no time for carries the time it was observed.
+
+**ED8: Text storage and its lifetime.** Event text is held in a copy-on-write buffer
+that stores up to 16 bytes inline and allocates beyond that, so `WindowEvent` stays a
+Regular value that may be copied, compared and replayed. Its reference count is not
+atomic: an event's text is confined to the WSI thread, and handing an event to another
+thread requires a deep copy. Text is bounded at 64 KiB; a backend receiving more must
+truncate at a UTF-8 boundary and set the event's `truncated` flag rather than grow.
+
+**ED9: What is configurable.** Queue capacity and ring depth are compile-time
+parameters because they size inline storage. Motion coalescing and relative summing
+are runtime switches per window, enabled by default, so one process may serve a
+drawing view and a game view differently. The `ED5` policy is not configurable.
+
+**ED10: No frame policy below the boundary.** WSI does not accumulate per-frame input
+state. The pressed set, summed deltas and latest position for a frame are assembled by
+a `sparkles:input` accumulator fed from a drain, so the SDL and raylib producers reach
+the same vocabulary.
+
 ## 5. Core values
 
 ### 5.1 Geometry and scale
@@ -283,8 +341,7 @@ The `sparkles:ui-app` adapter is the sole normalizer into `sparkles:input`: it a
 cell metrics, scroll policy, and capability degradation once.
 
 How queued events are merged, dropped or held back when a consumer cannot keep up is
-not yet a contract; the open questions and their recommended answers are in
-[event-delivery.md](./event-delivery.md) (`WSI-O9`). Pure conversion helpers
+specified in [§4.5](#_4-5-event-delivery-under-load) (`ED1`–`ED10`). Pure conversion helpers
 live in `sparkles:input` so SDL and raylib compatibility producers use the same rules.
 
 ## 8. Typed native handles

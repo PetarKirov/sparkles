@@ -6,10 +6,10 @@ force each one and a recommended answer. Accepted answers move into
 [SPEC.md](./SPEC.md) as requirements; this page keeps the reasoning. Index entry:
 `WSI-O9` in [open-issues.md](./open-issues.md)._
 
-**Status:** partly decided. Every question except `EQ12` and `EQ14` was accepted on
-September 13, 2026 and is ready to move into [SPEC.md](./SPEC.md) as requirements.
-`EQ14` has a measured recommendation awaiting a decision; `EQ12` is deliberately
-deferred to `F04`. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
+**Status:** decided and specified. Every question except `EQ12` was accepted between
+September 13 and 17, 2026 and is now [SPEC.md](./SPEC.md) §4.5 (`ED1`–`ED10`); this
+page keeps the reasoning, the measurements and the rejected alternatives. `EQ12` is
+deliberately deferred to `F04`. The contract is not yet implemented. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
 the four backends' pumps). **Consumers in scope:** ordinary GUI applications,
 drawing applications that need every sample, and games that need per-frame sums and
 raw deltas at device rate. A decision that serves only one of the three is not
@@ -335,7 +335,12 @@ _Recommendation:_ `SharedBuffer`. It is the only option of the three that keeps 
 Regularity §3 already promises, and it is measured at 112 bytes per slot with the
 timestamp included. Its cost is a documented thread-confinement rule for text plus a
 maximum length, both of which are one requirement each.
-_Answer:_ open.
+
+**Accepted 2026-09-17:** `SharedBuffer!(char, 16)` for every text payload, with the
+two costs written down as obligations: text is confined to the WSI thread and
+crossing a thread requires a deep copy, and text is bounded at 64 KiB, above which a
+backend truncates at a UTF-8 boundary and sets the event's `truncated` flag. See
+`ED8`.
 
 ## 5. Dependencies between answers
 
@@ -348,12 +353,24 @@ _Answer:_ open.
 - `EQ11` is independent of the queue's policy and can land first.
 - `EQ12` can be revisited after `F04` without reopening anything above.
 
-## 6. What changes when this is decided
+## 6. What this became, and what is left
 
-SPEC §4 gains the delivery contract (requirement IDs for capacity, merge rules,
-overflow observation and timestamps), §7 gains the sample ring and the timestamp,
-and the conformance suite gains a flood property per backend: N native motions
-injected faster than the drain must end with the sum of deltas intact, the ring
-holding the last `depth` samples, no sticky error, and the drop counter at zero;
-a second property overflows discrete input and requires the counter and the notice.
-`comparison.md` records the lanes.
+The accepted answers are [SPEC.md](./SPEC.md) §4.5, `ED1`–`ED10`. Implementing them
+is a separate slice, and the work each requirement implies is:
+
+| Requirement  | Work                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `ED2`, `ED3` | a per-(window, pointer) slot index and sample ring in `sparkles.wsi.loop`, and the merge rewritten from remove-and-append |
+| `ED5`        | an `EventsDropped` payload, a per-backend counter, and a drain that emits it first                                        |
+| `ED7`        | a timestamp on `WindowEvent`, and the four backends' clock conversions                                                    |
+| `ED8`        | `InlineBuffer` to `SharedBuffer` in three payloads, a `truncated` flag, and the 64 KiB bound                              |
+| `ED9`        | capacity and depth as template parameters; two per-window switches                                                        |
+| `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                         |
+
+The conformance suite gains two properties per backend. A motion flood injects more
+samples than the queue holds, faster than the drain, and requires the summed delta to
+be intact, the ring to hold the last `depth` samples, drain order to increase, and the
+drop counter to stay at zero. A discrete flood overflows with non-mergeable events and
+requires the counter and the `EventsDropped` notice, with the loop still running. Both
+are expressible on every backend, since each driver can already inject motion and
+clicks. `comparison.md` records the lanes.
