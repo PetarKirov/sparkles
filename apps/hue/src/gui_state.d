@@ -375,6 +375,10 @@ struct GuiCapture
     bool crtTilt;
     /// `HUE_GUI_CRT_MAGNIFY`: force CRT mouse magnification on.
     bool crtMagnify;
+    /// `HUE_GUI_POINTER_MODE`: force `appearance.pointer.mode` (`software` or
+    /// `system`) — the golden harness cannot reach the config layer, and the
+    /// two modes render a different cursor, or none (`PTR1`).
+    string pointerMode;
 
     /// ditto
     static GuiCapture fromEnv(scope string delegate(string, string) @safe get) @safe
@@ -410,6 +414,7 @@ struct GuiCapture
         c.crt = get("HUE_GUI_CRT", "").length != 0;
         c.crtTilt = get("HUE_GUI_CRT_TILT", "").length != 0;
         c.crtMagnify = get("HUE_GUI_CRT_MAGNIFY", "").length != 0;
+        c.pointerMode = get("HUE_GUI_POINTER_MODE", "");
 
         const l = get("HUE_GUI_LANTERN", null);
         c.lanternSet = l !is null;
@@ -475,6 +480,7 @@ unittest
         "HUE_GUI_CRT": "1",
         "HUE_GUI_CRT_TILT": "1",
         "HUE_GUI_CRT_MAGNIFY": "1",
+        "HUE_GUI_POINTER_MODE": "system",
         "HUE_GUI_POINTER": "123.5,456",
     ];
     c = GuiCapture.fromEnv(&get);
@@ -482,6 +488,7 @@ unittest
     assert(c.flash && c.initialTop == 120 && c.fontSizePx == 22);
     assert(c.preview == "0" && c.search == "needle" && c.inspect);
     assert(c.crt && c.crtTilt && c.crtMagnify);
+    assert(c.pointerMode == "system");
     assert(c.lanternSet && c.lantern.length == 0,
         "an empty lantern is SET (it shows the root listing)");
     assert(c.forceHover == 3);

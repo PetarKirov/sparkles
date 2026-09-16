@@ -149,6 +149,31 @@ struct Window
     int height = defaultWindowRows;
 }
 
+/// `CFG3`/`PTR1`: which pointer the window shows, and therefore which
+/// coordinate space pointer input arrives in.
+enum PointerMode : ubyte
+{
+    /// hue draws the pointer itself. Under the CRT shader it is drawn inside
+    /// the tube, warped and magnified with the content it sits on, and pointer
+    /// motion stays linear in UI coordinates.
+    software,
+    /// The window system draws its own pointer — its theme, its size, and
+    /// visible to screen recorders and accessibility tools. Input is then
+    /// translated out of screen space, so motion is linear on the glass
+    /// instead, and the bezel the warp leaves has no UI under it.
+    system,
+}
+
+/// `CFG3`/`PTR1`: the pointer. A section of its own so later pointer settings
+/// (trails, size, hide-while-typing) have somewhere to land.
+@ConfigSection
+struct PointerConfig
+{
+    @Doc("Which pointer to show: software (drawn by hue, warped with the screen) or system.")
+    @Label("mode")
+    PointerMode mode = PointerMode.software;
+}
+
 /// CFG3 — CRT monitor shader configuration.
 @ConfigSection
 struct CrtConfig
@@ -260,6 +285,7 @@ struct Appearance
     int height = 0;
 
     CrtConfig crt;
+    PointerConfig pointer;
     Fonts fonts;
     Window window;
 }
