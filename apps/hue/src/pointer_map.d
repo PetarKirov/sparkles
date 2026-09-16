@@ -6,9 +6,10 @@ input arrives in $(B screen) space while the UI lives in texture space. The host
 translates each event's position through
 $(REF CrtEffect.mapPointerToUi, sparkles,ui_raylib,crt) — and then has to answer
 what happens to the positions that translate to nothing, because a warped image
-does not fill its window: the overscan and the barrel bulge leave a bezel whose
-pixels have no UI point under them at all (14.9% of the window at the default
-curvature, 38.4% at the maximum).
+does not fill its window: the tube's rounded corners leave the window's own
+corners with no UI point under them at all (1.2% of the window at the default
+curvature, 7.7% at the maximum — the edges themselves are seated flush by
+`CRT10`, so the dead area is corners only).
 
 This module is that answer, and only that answer: the geometry is the canvas
 backend's and the plumbing is the frame loop's, but $(B what a click in the
