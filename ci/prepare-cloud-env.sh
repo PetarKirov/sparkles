@@ -67,7 +67,11 @@ elif mkdir -p /usr/local/bin 2>/dev/null && [ -w /usr/local/bin ]; then
 else
   wrap_bin=$HOME/.local/bin
 fi
-profile=/nix/var/nix/profiles/sparkles-devshell
+# Under the user's own state directory, not /nix/var/nix/profiles: that one is
+# root-owned, so an unprivileged CI runner cannot create a link in it. Nix
+# registers a profile outside that directory through gcroots/auto, so this is
+# still a GC root.
+profile=${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/sparkles-devshell
 
 cd "$repo"
 
@@ -208,19 +212,32 @@ if [ "${NIX_REMOTE:-}" != local ] && [ -S /nix/var/nix/daemon-socket/socket ]; t
   if ! grep -qE "^trusted-users .*\b$(id -un)\b" /etc/nix/nix.conf 2>/dev/null; then
     ci_group 'Adding this user to trusted-users (daemon install)'
 
+    # Root already, sudo otherwise, and neither is a hard failure: the check
+    # in 3c reports what a missing cache actually costs, which is a better
+    # message than `sudo: command not found` from the middle of a pipeline.
+    if [ "$(id -u)" = 0 ]; then
+      as_root() { "$@"; }
+    elif ci_have sudo; then
+      as_root() { sudo "$@"; }
+    else
+      as_root() { return 1; }
+    fi
+
     # Written system-wide as well as per-user: the system file is authoritative
-    # no matter who asks, so the caches apply even on the first evaluation
-    # after this, before any re-login.
-    {
+    # no matter who asks, so the caches apply on the very next evaluation,
+    # before any re-login.
+    if {
       printf 'trusted-users = root %s\n' "$(id -un)"
       printf 'extra-substituters = %s\n' "$NIX_SUBSTITUTERS"
       printf 'extra-trusted-public-keys = %s\n' "$NIX_TRUSTED_PUBLIC_KEYS"
-    } | sudo tee -a /etc/nix/nix.conf >/dev/null
-
-    if [ "$(uname -s)" = Darwin ]; then
-      sudo launchctl kickstart -k system/org.nixos.nix-daemon || true
+    } | as_root tee -a /etc/nix/nix.conf >/dev/null; then
+      if [ "$(uname -s)" = Darwin ]; then
+        as_root launchctl kickstart -k system/org.nixos.nix-daemon || true
+      else
+        as_root systemctl restart nix-daemon || true
+      fi
     else
-      sudo systemctl restart nix-daemon || true
+      ci_notice 'could not write /etc/nix/nix.conf; the cache check below will say whether that matters'
     fi
 
     ci_endgroup
@@ -259,6 +276,7 @@ ci_endgroup
 # *this* script rather than surfacing later as a missing binary.
 
 ci_group "Building devShell .#$devshell"
+mkdir -p "$(dirname "$profile")"
 nix develop --profile "$profile" ".#$devshell" -c true
 ci_endgroup
 
