@@ -93,6 +93,7 @@ Non-copyable: two handles to one window would let a stale copy close it.
 struct Window
 {
     private bool opened;
+    private bool pointerVisible_ = true;
     // Geometry saved across a fullscreen toggle, so the caller does not carry
     // four ints it has no other use for.
     private int savedX, savedY, savedW, savedH;
@@ -239,6 +240,30 @@ struct Window
 
     /// The pointer shape the application wants right now.
     void pointerShape(PointerShape s) @system => SetMouseCursor(toRaylibCursor(s));
+
+    /**
+    Whether the window system draws its own pointer over this window (`PTR1`).
+
+    Idempotent, and the window owns the state: whether a cursor is on screen is
+    a property of the window, not of whatever happens to be drawing one in its
+    place. A post-processing pass that renders a cursor itself asks for this to
+    be false, but it is not the pass's state to keep — a pass that is disabled,
+    reconfigured or destroyed between frames would otherwise have to remember
+    to put the cursor back.
+    */
+    void pointerVisible(bool on) @system
+    {
+        if (on == pointerVisible_)
+            return;
+        pointerVisible_ = on;
+        if (on)
+            ShowCursor();
+        else
+            HideCursor();
+    }
+
+    /// ditto
+    bool pointerVisible() const @system => pointerVisible_;
 
     /// Puts `text` on the system clipboard. Unbounded — a copied selection may
     /// be a whole document.
