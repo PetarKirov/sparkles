@@ -235,6 +235,21 @@ struct CrtConfig
     @Range(0.10, 0.80, 0.05)
     double lensPower = 0.45;
 
+    @Doc("Bloom strength: how much of the blurred bright pass is added back (0 disables the passes).")
+    @Label("bloom")
+    @Range(0.0, 1.5, 0.05)
+    double bloomIntensity = 0.35;
+
+    @Doc("Luminance above which a pixel blooms.")
+    @Label("bloom threshold")
+    @Range(0.0, 1.0, 0.05)
+    double bloomThreshold = 0.65;
+
+    @Doc("Gaussian tap spacing, in half-resolution texels.")
+    @Label("bloom radius")
+    @Range(0.5, 8.0, 0.5)
+    double bloomRadius = 2.0;
+
     @Doc("Enable CRT reaction to UI structure (hover, focus, selection, dividers).")
     @Label("ui reactive")
     bool uiReactive = true;

@@ -25,349 +25,46 @@ struct CrtUiContext
     UiRect scrollbarThumb;
 }
 
-version (Android)
-{
-    private enum crtFragmentShader = q{
+/**
+The one GLSL prologue per dialect, and the one shader body they share.
+
+The two variants used to be a 330-line verbatim copy differing in seventeen
+lines, only one of which any given build compiles — so a typo in the Android
+copy was discoverable only by building an APK and running it on a device. The
+differences are all spellings the GLSL preprocessor can absorb, so they live in
+the prologue and the body is written once.
+*/
+private enum glslPrologue = q{
+#version 330
+
+in vec2 fragTexCoord;
+in vec4 fragColor;
+out vec4 finalColor;
+
+#define SAMPLE texture
+#define OUT_COLOR finalColor
+};
+
+/// ditto
+private enum glslPrologueEs = q{
 #version 100
 precision mediump float;
 
 varying vec2 fragTexCoord;
 varying vec4 fragColor;
 
-uniform sampler2D texture0;
-uniform vec4 colDiffuse;
-uniform vec2 resolution;
-uniform float time;
-uniform vec2 mouse;
-uniform float mouseTilt;
-uniform float mouseMagnify;
-uniform float cursorShape;
-uniform float uCurvature;
-uniform float uScanlines;
-uniform float uMask;
-uniform float uChromaAberration;
-uniform float uVignette;
-uniform float uFlicker;
-uniform float uBrightness;
-uniform float uLensRadius;
-uniform float uLensPower;
-
-uniform float uUiReactive;
-uniform float uFocusHalo;
-uniform float uHoverGlow;
-uniform float uSelectionBloom;
-uniform float uDividerTension;
-uniform vec4 uFocusRect;
-uniform vec4 uHoverRect;
-uniform vec4 uSelectRect;
-uniform vec4 uSplitDivider;
-uniform vec4 uScrollbarThumb;
-
-float sdBox(vec2 p, vec2 b)
-{
-    vec2 d = abs(p) - b;
-    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0);
-}
-
-vec2 curve(vec2 coord, vec2 m, float isTilt, vec2 res)
-{
-    // The apex the bend is centred on. With tilt it follows the mouse, so the
-    // surface is flat directly under the pointer and the far side curves away;
-    // with the mouse in a corner that corner straightens out.
-    vec2 apex = (isTilt > 0.5) ? m : vec2(0.5);
-    float k = (isTilt > 0.5) ? uCurvature * 0.625 : uCurvature;
-
-    vec2 cc = coord - apex;
-    float dist = dot(cc, cc);
-    vec2 uv = coord + cc * (dist * k);
-
-    // Fit the tube to the screen (`CRT10`). The bend pushes a point at radius r
-    // out by (1 + k*r*r), so an edge midpoint — at r = 1/2 — lands at
-    // (1 + k/4); scaling by the reciprocal puts it back exactly on the screen
-    // edge, at ANY curvature, and leaves a flat screen (k = 0) a 1:1 blit.
-    // The corners sit at a larger radius, still overhang, and are cut: that is
-    // the rounded tube face, and the only part of the window left imageless.
-    //
-    // Exact with tilt off, which is the model the fit is stated for. An apex
-    // that is not the centre deforms the four edges by different amounts, and
-    // one scalar cannot seat all four at once.
-    float fit = 1.0 / (1.0 + k * 0.25);
-    return (uv - 0.5) * fit + 0.5;
-}
-
-vec4 renderCursor(vec2 p, float shape)
-{
-    if (shape > 0.5 && shape < 1.5)
-    {
-        // I-beam
-        if (abs(p.x) > 5.0 || abs(p.y) > 9.0)
-            return vec4(0.0);
-
-        bool stem = (abs(p.x) <= 1.5 && abs(p.y) <= 7.5);
-        bool topBar = (abs(p.x) <= 4.0 && p.y >= -8.0 && p.y <= -5.5);
-        bool botBar = (abs(p.x) <= 4.0 && p.y >= 5.5 && p.y <= 8.0);
-
-        bool stemFill = (abs(p.x) <= 0.5 && abs(p.y) <= 6.5);
-        bool topFill = (abs(p.x) <= 3.0 && p.y >= -7.0 && p.y <= -6.5);
-        bool botFill = (abs(p.x) <= 3.0 && p.y >= 6.5 && p.y <= 7.0);
-
-        if (stemFill || topFill || botFill)
-            return vec4(1.0, 1.0, 1.0, 1.0);
-        if (stem || topBar || botBar)
-            return vec4(0.0, 0.0, 0.0, 1.0);
-        return vec4(0.0);
-    }
-    else if (shape > 2.5)
-    {
-        // EW-resize <->
-        if (abs(p.x) > 9.5 || abs(p.y) > 5.5)
-            return vec4(0.0);
-
-        bool hLine = (abs(p.y) <= 1.5 && abs(p.x) <= 6.5);
-        bool leftArrow = (p.x <= -2.5 && p.x >= -7.5 && abs(p.y) <= (-p.x - 2.5));
-        bool rightArrow = (p.x >= 2.5 && p.x <= 7.5 && abs(p.y) <= (p.x - 2.5));
-
-        bool hFill = (abs(p.y) <= 0.5 && abs(p.x) <= 5.5);
-        bool lFill = (p.x <= -3.0 && p.x >= -6.5 && abs(p.y) <= (-p.x - 3.5));
-        bool rFill = (p.x >= 3.0 && p.x <= 6.5 && abs(p.y) <= (p.x - 3.5));
-
-        if (hFill || lFill || rFill)
-            return vec4(1.0, 1.0, 1.0, 1.0);
-        if (hLine || leftArrow || rightArrow)
-            return vec4(0.0, 0.0, 0.0, 1.0);
-        return vec4(0.0);
-    }
-    else
-    {
-        // Default Arrow
-        if (p.x < -0.5 || p.x > 13.5 || p.y < -0.5 || p.y > 19.5)
-            return vec4(0.0);
-
-        bool inHead = (p.x >= 0.0 && p.y >= 0.0 && p.y <= 14.5 && p.x <= p.y && (p.y - p.x * 0.35) <= 12.0);
-        bool inStem = (p.x >= 3.0 && p.x <= 7.5 && p.y >= 9.0 && p.y <= 17.5);
-
-        bool inHeadFill = (p.x >= 1.0 && p.y >= 1.5 && p.y <= 13.0 && p.x <= (p.y - 0.5) && (p.y - p.x * 0.35) <= 10.5);
-        bool inStemFill = (p.x >= 4.0 && p.x <= 6.5 && p.y >= 10.0 && p.y <= 16.5);
-
-        if (inHeadFill || inStemFill)
-            return vec4(1.0, 1.0, 1.0, 1.0);
-        if (inHead || inStem)
-            return vec4(0.0, 0.0, 0.0, 1.0);
-
-        return vec4(0.0);
-    }
-}
-
-void main()
-{
-    vec2 uv = fragTexCoord;
-    float lensRim = 0.0;
-
-    vec2 m = mouse / resolution;
-    uv = curve(uv, m, mouseTilt, resolution);
-
-    // The lens is applied in TEXTURE space, after curvature, so that its centre
-    // is the very point the software cursor is drawn at (`CRT6`): the cursor
-    // lands where the final `uv` equals the mouse's UI position, and
-    // `uv = m + delta * factor` leaves exactly that point fixed. Centring the
-    // lens in screen space instead put it wherever curvature had *not* yet
-    // displaced the pointer, so the two drifted apart the further the mouse
-    // travelled from the middle of the screen.
-    if (mouseMagnify > 0.5)
-    {
-        float aspect = resolution.x / resolution.y;
-        vec2 delta = uv - m;
-        vec2 aspectDelta = vec2(delta.x * aspect, delta.y);
-        float dist = length(aspectDelta);
-        float radius = uLensRadius;
-
-        if (dist < radius)
-        {
-            float normDist = dist / radius;
-            float z = sqrt(max(0.0, 1.0 - normDist * normDist));
-            float factor = 1.0 - uLensPower * pow(z, 1.4);
-            uv = m + delta * factor;
-            lensRim = smoothstep(0.90, 0.97, normDist) * smoothstep(1.0, 0.97, normDist);
-        }
-    }
-
-    // Subtle horizontal sync micro-jitter
-    float jitter = sin(uv.y * 120.0 + time * 30.0) * 0.00025;
-    uv.x += jitter;
-
-    // Vector from mouse tip to fragment in texture space (UI pixels).
-    // A negative cursorShape means the window system is drawing the pointer
-    // itself (`PTR1`) and the shader must not draw a second one.
-    vec4 cursorCol = vec4(0.0);
-    if (cursorShape >= 0.0 && uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
-    {
-        vec2 uiPixelPos = vec2(uv.x * resolution.x, uv.y * resolution.y);
-        vec2 cursorDelta = vec2(uiPixelPos.x - mouse.x, mouse.y - uiPixelPos.y);
-        cursorCol = renderCursor(cursorDelta, cursorShape);
-    }
-
-    vec3 col = vec3(0.0);
-    if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0)
-    {
-        vec2 cornerSmooth = smoothstep(vec2(0.0), vec2(0.012), uv) *
-                            smoothstep(vec2(0.0), vec2(0.012), vec2(1.0) - uv);
-        float corner = cornerSmooth.x * cornerSmooth.y;
-
-        vec2 cc = uv - 0.5;
-        float caStrength = uChromaAberration + (uChromaAberration * 0.2) * sin(time * 3.0);
-        if (lensRim > 0.0)
-            caStrength += 0.002 * lensRim;
-
-        vec2 ca = cc * caStrength;
-        float r = texture2D(texture0, uv + ca).r;
-        float g = texture2D(texture0, uv).g;
-        float b = texture2D(texture0, uv - ca).b;
-        col = vec3(r, g, b);
-
-        col += vec3(0.12) * lensRim;
-        col *= corner;
-
-        if (uUiReactive > 0.5)
-        {
-            // 1. Focus Box Cathode Border Halation & Beam Sharpening
-            if (uFocusRect.z > 0.0 && uFocusHalo > 0.0)
-            {
-                vec2 p = (uv - uFocusRect.xy) * resolution;
-                vec2 b = uFocusRect.zw * resolution;
-                float dist = sdBox(p, b);
-
-                if (dist > -3.0 && dist < 14.0)
-                {
-                    float pulse = 0.85 + 0.15 * sin(time * 3.5);
-                    float halo = exp(-abs(dist) * 0.28) * uFocusHalo * 0.22 * pulse;
-                    col += vec3(0.25, 0.55, 0.85) * halo;
-                }
-
-                if (dist <= 0.0)
-                {
-                    col = mix(col, col * 1.03 + vec3(0.01), 0.5);
-                }
-            }
-
-            // 2. Hover Box Phosphor Excitation
-            if (uHoverRect.z > 0.0 && uHoverGlow > 0.0)
-            {
-                vec2 p = (uv - uHoverRect.xy) * resolution;
-                vec2 b = uHoverRect.zw * resolution;
-                float dist = sdBox(p, b);
-
-                if (dist <= 10.0)
-                {
-                    float surge = exp(-max(dist, 0.0) * 0.35) * (dist < 0.0 ? 0.14 : 0.07) * uHoverGlow;
-                    col += col * surge + vec3(0.02, 0.03, 0.04) * surge;
-
-                    float edge = exp(-abs(dist) * 0.5) * uHoverGlow * 0.12;
-                    col.r += edge * 0.04;
-                    col.b += edge * 0.06;
-                }
-            }
-
-            // 3. Selection Phosphor Overdrive & Horizontal Bloom
-            if (uSelectRect.z > 0.0 && uSelectionBloom > 0.0)
-            {
-                vec2 p = (uv - uSelectRect.xy) * resolution;
-                vec2 b = uSelectRect.zw * resolution;
-                float dist = sdBox(p, b);
-
-                if (dist <= 0.0)
-                {
-                    col += col * (0.16 * uSelectionBloom);
-                }
-                else if (abs(p.y) <= b.y && dist < 10.0)
-                {
-                    float hBleed = exp(-dist * 0.35) * 0.10 * uSelectionBloom;
-                    col += col * hBleed;
-                }
-            }
-
-            // 4. Dock Split Divider ("Cathode Seam & Tension")
-            if (uSplitDivider.z > 0.0 && uDividerTension > 0.0)
-            {
-                vec2 p = (uv - uSplitDivider.xy) * resolution;
-                vec2 b = uSplitDivider.zw * resolution;
-                float dist = sdBox(p, b);
-
-                if (abs(dist) < 2.5)
-                {
-                    float seam = (1.0 - abs(dist) / 2.5) * 0.12 * uDividerTension;
-                    col *= (1.0 - seam);
-                }
-                else if (dist >= 0.0 && dist < 6.0)
-                {
-                    float halo = exp(-dist * 0.55) * 0.05 * uDividerTension;
-                    col += vec3(0.02, 0.04, 0.06) * halo;
-                }
-            }
-
-            // 5. Scrollbar Thumb Flare
-            if (uScrollbarThumb.z > 0.0)
-            {
-                vec2 p = (uv - uScrollbarThumb.xy) * resolution;
-                vec2 b = uScrollbarThumb.zw * resolution;
-                float dist = sdBox(p, b);
-
-                if (dist <= 4.0)
-                {
-                    float flare = exp(-max(dist, 0.0) * 0.6) * 0.08;
-                    col += col * flare + vec3(0.03) * flare;
-                }
-            }
-        }
-    }
-
-    // Composite shader-rendered cursor
-    if (cursorCol.a > 0.0)
-        col = mix(col, cursorCol.rgb, cursorCol.a);
-
-    // Scanlines
-    float scanline = sin(fragTexCoord.y * resolution.y * 3.14159265);
-    col *= (1.0 - uScanlines) + uScanlines * (scanline * scanline);
-
-    // Vertical roll hum bar
-    float roll = 0.5 + 0.5 * sin(fragTexCoord.y * 5.0 - time * 2.2);
-    col *= (1.0 - uFlicker * 5.7) + (uFlicker * 5.7) * roll;
-
-    // Phosphor decay flicker
-    float flicker = (1.0 - uFlicker) + uFlicker * sin(time * 70.0);
-    col *= flicker;
-
-    // RGB phosphor triad mask
-    float pixelX = floor(fragTexCoord.x * resolution.x);
-    float subpixel = mod(pixelX, 3.0);
-    vec3 triad = vec3(0.88);
-    if (subpixel < 1.0) triad = vec3(1.05, 0.88, 0.88);
-    else if (subpixel < 2.0) triad = vec3(0.88, 1.05, 0.88);
-    else triad = vec3(0.88, 0.88, 1.05);
-    col *= mix(vec3(1.0), triad, uMask);
-
-    // Vignette
-    if (uVignette > 0.001)
-    {
-        float vig = 16.0 * fragTexCoord.x * fragTexCoord.y * (1.0 - fragTexCoord.x) * (1.0 - fragTexCoord.y);
-        vig = clamp(pow(vig, uVignette), 0.0, 1.0);
-        col *= vig;
-    }
-
-    // Gamma / contrast boost
-    col = pow(col, vec3(0.95)) * uBrightness;
-
-    gl_FragColor = vec4(col, 1.0) * fragColor * colDiffuse;
-}
+#define SAMPLE texture2D
+#define OUT_COLOR gl_FragColor
 };
-}
+
+/// The dialect this build compiles for.
+version (Android)
+    private enum activePrologue = glslPrologueEs;
 else
-{
-    private enum crtFragmentShader = q{
-#version 330
+    private enum activePrologue = glslPrologue;
 
-in vec2 fragTexCoord;
-in vec4 fragColor;
-
+/// The CRT shader's uniform block — shared, so a new uniform is declared once.
+private enum crtUniforms = q{
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform vec2 resolution;
@@ -386,6 +83,9 @@ uniform float uBrightness;
 uniform float uLensRadius;
 uniform float uLensPower;
 
+uniform sampler2D texture1;
+uniform float uBloomIntensity;
+
 uniform float uUiReactive;
 uniform float uFocusHalo;
 uniform float uHoverGlow;
@@ -397,8 +97,10 @@ uniform vec4 uSelectRect;
 uniform vec4 uSplitDivider;
 uniform vec4 uScrollbarThumb;
 
-out vec4 finalColor;
+};
 
+/// The CRT shader body, written once for both dialects.
+private enum crtShaderBody = q{
 float sdBox(vec2 p, vec2 b)
 {
     vec2 d = abs(p) - b;
@@ -555,12 +257,19 @@ void main()
             caStrength += 0.002 * lensRim;
 
         vec2 ca = cc * caStrength;
-        float r = texture(texture0, uv + ca).r;
-        float g = texture(texture0, uv).g;
-        float b = texture(texture0, uv - ca).b;
+        float r = SAMPLE(texture0, uv + ca).r;
+        float g = SAMPLE(texture0, uv).g;
+        float b = SAMPLE(texture0, uv - ca).b;
         col = vec3(r, g, b);
 
         col += vec3(0.12) * lensRim;
+
+        // `CRT3`: the separable-blurred bright pass, added back. Sampled at the
+        // SAME warped `uv` as the content, so the glow curves with the tube
+        // instead of floating flat above it.
+        if (uBloomIntensity > 0.0)
+            col += SAMPLE(texture1, uv).rgb * uBloomIntensity;
+
         col *= corner;
 
         if (uUiReactive > 0.5)
@@ -692,10 +401,73 @@ void main()
     // Gamma / contrast boost
     col = pow(col, vec3(0.95)) * uBrightness;
 
-    finalColor = vec4(col, 1.0) * fragColor * colDiffuse;
+    OUT_COLOR = vec4(col, 1.0) * fragColor * colDiffuse;
 }
 };
+
+/// The composed fragment shader this build loads.
+private enum crtFragmentShader = activePrologue ~ crtUniforms ~ crtShaderBody;
+
+/**
+The bloom shader body (`CRT3`): one program, three passes, selected by
+`uBloomPass`.
+
+Separable, because a radius-`r` gaussian costs `2r` taps in two passes instead
+of `r*r` in one; and at half resolution, because bloom is low-frequency by
+definition and the halving is four times less work nobody can see.
+*/
+private enum bloomShaderBody = q{
+uniform sampler2D texture0;
+uniform vec4 colDiffuse;
+uniform vec2 resolution;
+uniform float uBloomPass;
+uniform float uBloomThreshold;
+uniform float uBloomRadius;
+
+// A 9-tap gaussian, normalized. Weights are the row of Pascal's triangle that
+// approximates sigma ~ 2 closely enough for a glow nobody measures.
+const float w0 = 0.2270270270;
+const float w1 = 0.1945945946;
+const float w2 = 0.1216216216;
+const float w3 = 0.0540540541;
+const float w4 = 0.0162162162;
+
+void main()
+{
+    vec2 uv = fragTexCoord;
+
+    if (uBloomPass < 0.5)
+    {
+        // Bright-pass extraction: keep only what is above the threshold, and
+        // keep it smoothly, so a pixel drifting across the cut does not pop.
+        vec3 c = SAMPLE(texture0, uv).rgb;
+        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        float keep = smoothstep(uBloomThreshold, uBloomThreshold + 0.25, lum);
+        OUT_COLOR = vec4(c * keep, 1.0);
+        return;
+    }
+
+    // Blur, along whichever axis this pass owns.
+    vec2 dir = (uBloomPass < 1.5) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec2 step1 = dir * uBloomRadius / resolution;
+
+    vec3 sum = SAMPLE(texture0, uv).rgb * w0;
+    sum += SAMPLE(texture0, uv + step1 * 1.0).rgb * w1;
+    sum += SAMPLE(texture0, uv - step1 * 1.0).rgb * w1;
+    sum += SAMPLE(texture0, uv + step1 * 2.0).rgb * w2;
+    sum += SAMPLE(texture0, uv - step1 * 2.0).rgb * w2;
+    sum += SAMPLE(texture0, uv + step1 * 3.0).rgb * w3;
+    sum += SAMPLE(texture0, uv - step1 * 3.0).rgb * w3;
+    sum += SAMPLE(texture0, uv + step1 * 4.0).rgb * w4;
+    sum += SAMPLE(texture0, uv - step1 * 4.0).rgb * w4;
+
+    OUT_COLOR = vec4(sum, 1.0);
 }
+};
+
+/// ditto
+private enum bloomFragmentShader = activePrologue ~ bloomShaderBody;
+
 
 /**
 Manages the CRT post-processing effect.
@@ -717,10 +489,25 @@ struct CrtEffect
     private float vignette_ = 0.12f;
     private float flicker_ = 0.007f;
     private float brightness_ = 1.05f;
+    private float bloomIntensity_ = 0.35f;
+    private float bloomThreshold_ = 0.65f;
+    private float bloomRadius_ = 2.0f;
 
     private bool shaderLoaded;
     private Shader shader;
     private RenderTexture2D target;
+    // `CRT3`: the half-resolution ping-pong the three bloom passes bounce
+    // between. Half because bloom is low-frequency by definition.
+    private RenderTexture2D bloomA;
+    private RenderTexture2D bloomB;
+    private bool bloomLoaded;
+    private Shader bloomShader;
+    private int bloomPassLoc = -1;
+    private int bloomThresholdLoc = -1;
+    private int bloomRadiusLoc = -1;
+    private int bloomResLoc = -1;
+    private int bloomTexLoc = -1;
+    private int bloomIntensityLoc = -1;
     private int resLoc = -1;
     private int timeLoc = -1;
     private int mouseLoc = -1;
@@ -864,6 +651,25 @@ struct CrtEffect
     /// ditto
     void lensPower(float v) @safe pure nothrow @nogc { proj_.lensPower = v; }
 
+    /// Bloom strength: how much of the blurred bright pass is added back
+    /// (`CRT3`). Zero disables the passes entirely, not merely their result.
+    float bloomIntensity() const @safe pure nothrow @nogc => bloomIntensity_;
+
+    /// ditto
+    void bloomIntensity(float v) @safe pure nothrow @nogc { bloomIntensity_ = v; }
+
+    /// Luminance above which a pixel blooms.
+    float bloomThreshold() const @safe pure nothrow @nogc => bloomThreshold_;
+
+    /// ditto
+    void bloomThreshold(float v) @safe pure nothrow @nogc { bloomThreshold_ = v; }
+
+    /// Gaussian tap spacing, in half-resolution texels.
+    float bloomRadius() const @safe pure nothrow @nogc => bloomRadius_;
+
+    /// ditto
+    void bloomRadius(float v) @safe pure nothrow @nogc { bloomRadius_ = v; }
+
     /// Whether CRT reacts to UI structure (focus, hover, selection, dividers).
     bool uiReactive() const @safe pure nothrow @nogc => uiReactive_;
 
@@ -957,7 +763,84 @@ struct CrtEffect
             selectRectLoc = GetShaderLocation(shader, "uSelectRect".ptr);
             splitDividerLoc = GetShaderLocation(shader, "uSplitDivider".ptr);
             scrollbarThumbLoc = GetShaderLocation(shader, "uScrollbarThumb".ptr);
+            bloomIntensityLoc = GetShaderLocation(shader, "uBloomIntensity".ptr);
+            bloomTexLoc = GetShaderLocation(shader, "texture1".ptr);
         }
+
+        bloomShader = LoadShaderFromMemory(null, bloomFragmentShader.ptr);
+        bloomLoaded = IsShaderValid(bloomShader);
+        if (bloomLoaded)
+        {
+            bloomPassLoc = GetShaderLocation(bloomShader, "uBloomPass".ptr);
+            bloomThresholdLoc = GetShaderLocation(bloomShader, "uBloomThreshold".ptr);
+            bloomRadiusLoc = GetShaderLocation(bloomShader, "uBloomRadius".ptr);
+            bloomResLoc = GetShaderLocation(bloomShader, "resolution".ptr);
+        }
+    }
+
+    /**
+    Runs the three bloom passes (`CRT3`) and leaves the result in `bloomA`.
+
+    Bright-pass extract into A, blur A horizontally into B, blur B vertically
+    back into A — the separable pair, at half resolution. Returns false when
+    bloom is off or unavailable, in which case the composite skips it.
+    */
+    private bool runBloomPasses(int screenW, int screenH) @system
+    {
+        if (!bloomLoaded || bloomIntensity_ <= 0)
+            return false;
+
+        const bw = screenW / 2, bh = screenH / 2;
+        if (bw <= 0 || bh <= 0)
+            return false;
+
+        ensureBloomTargets(bw, bh);
+        if (bloomA.id == 0 || bloomB.id == 0)
+            return false;
+
+        float[2] res = [cast(float) bw, cast(float) bh];
+        if (bloomResLoc >= 0)
+            SetShaderValue(bloomShader, bloomResLoc, res.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC2);
+        if (bloomThresholdLoc >= 0)
+            SetShaderValue(bloomShader, bloomThresholdLoc, &bloomThreshold_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+        if (bloomRadiusLoc >= 0)
+            SetShaderValue(bloomShader, bloomRadiusLoc, &bloomRadius_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+
+        void pass(float which, ref RenderTexture2D from, ref RenderTexture2D into)
+        {
+            if (bloomPassLoc >= 0)
+                SetShaderValue(bloomShader, bloomPassLoc, &which, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+            BeginTextureMode(into);
+            BeginShaderMode(bloomShader);
+            DrawTexturePro(
+                from.texture,
+                Rectangle(0, 0, cast(float) from.texture.width, cast(float) -from.texture.height),
+                Rectangle(0, 0, cast(float) into.texture.width, cast(float) into.texture.height),
+                Vector2(0, 0), 0.0f, Color(255, 255, 255, 255));
+            EndShaderMode();
+            EndTextureMode();
+        }
+
+        pass(0.0f, target, bloomA);  // bright-pass extract
+        pass(1.0f, bloomA, bloomB);  // blur horizontally
+        pass(2.0f, bloomB, bloomA);  // blur vertically
+        return true;
+    }
+
+    private void ensureBloomTargets(int w, int h) @system
+    {
+        static void fit(ref RenderTexture2D rt, int w, int h)
+        {
+            if (rt.id != 0 && (rt.texture.width != w || rt.texture.height != h))
+            {
+                UnloadRenderTexture(rt);
+                rt = RenderTexture2D.init;
+            }
+            if (rt.id == 0)
+                rt = LoadRenderTexture(w, h);
+        }
+        fit(bloomA, w, h);
+        fit(bloomB, w, h);
     }
 
     private void ensureTarget(int w, int h) @system
@@ -1005,6 +888,10 @@ struct CrtEffect
         proj_.pointer = PointF(mouseX, mouseY);
 
         EndTextureMode();
+
+        // `CRT3`: the bloom chain runs on the captured frame, before the
+        // composite that reads its result.
+        const hasBloom = runBloomPasses(screenW, screenH);
 
         if (resLoc >= 0)
         {
@@ -1104,6 +991,14 @@ struct CrtEffect
             SetShaderValue(shader, scrollbarThumbLoc, b.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC4);
         }
 
+        if (bloomIntensityLoc >= 0)
+        {
+            const bi = hasBloom ? bloomIntensity_ : 0.0f;
+            SetShaderValue(shader, bloomIntensityLoc, &bi, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+        }
+        if (hasBloom && bloomTexLoc >= 0)
+            SetShaderValueTexture(shader, bloomTexLoc, bloomA.texture);
+
         BeginShaderMode(shader);
         DrawTextureRec(
             target.texture,
@@ -1121,6 +1016,22 @@ struct CrtEffect
         {
             UnloadRenderTexture(target);
             target = RenderTexture2D.init;
+        }
+        if (bloomA.id != 0)
+        {
+            UnloadRenderTexture(bloomA);
+            bloomA = RenderTexture2D.init;
+        }
+        if (bloomB.id != 0)
+        {
+            UnloadRenderTexture(bloomB);
+            bloomB = RenderTexture2D.init;
+        }
+        if (bloomLoaded)
+        {
+            UnloadShader(bloomShader);
+            bloomShader = Shader.init;
+            bloomLoaded = false;
         }
         if (shaderLoaded)
         {
