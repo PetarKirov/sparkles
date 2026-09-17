@@ -481,6 +481,9 @@ struct CrtEffect
     private CrtProjection proj_;
     private PointerShape shape_ = PointerShape.default_;
     private bool systemPointer_;
+    // `DBG1`: a golden capture of an ANIMATED effect is only reproducible if
+    // its clock is. Negative means live.
+    private float pinnedTime_ = -1;
 
 
     private float scanlines_ = 0.12f;
@@ -593,6 +596,20 @@ struct CrtEffect
     */
     bool drawsOwnPointer() const @safe pure nothrow @nogc
         => proj_.enabled && !systemPointer_;
+
+    /**
+    Pins the shader clock, so a golden capture of an animated effect is
+    reproducible (`DBG1`).
+
+    Four terms are driven by time — the sync jitter, the roll bar, the phosphor
+    flicker and the focus pulse — so two runs of one binary cannot otherwise
+    produce the same bytes, and every byte-comparison oracle over a CRT frame
+    is uninformative. Negative restores the live clock.
+    */
+    void pinnedTime(float seconds) @safe pure nothrow @nogc { pinnedTime_ = seconds; }
+
+    /// ditto
+    float pinnedTime() const @safe pure nothrow @nogc => pinnedTime_;
 
     /// ditto
     void systemPointer(bool on) @safe pure nothrow @nogc { systemPointer_ = on; }
@@ -900,7 +917,7 @@ struct CrtEffect
         }
         if (timeLoc >= 0)
         {
-            float t = cast(float) GetTime();
+            float t = pinnedTime_ >= 0 ? pinnedTime_ : cast(float) GetTime();
             SetShaderValue(shader, timeLoc, &t, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         }
         if (mouseLoc >= 0)
@@ -996,10 +1013,11 @@ struct CrtEffect
             const bi = hasBloom ? bloomIntensity_ : 0.0f;
             SetShaderValue(shader, bloomIntensityLoc, &bi, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         }
+        BeginShaderMode(shader);
+        // AFTER `BeginShaderMode`: a sampler binding attaches to the active
+        // program, so setting it beforehand binds into whatever was last bound.
         if (hasBloom && bloomTexLoc >= 0)
             SetShaderValueTexture(shader, bloomTexLoc, bloomA.texture);
-
-        BeginShaderMode(shader);
         DrawTextureRec(
             target.texture,
             Rectangle(0, 0, cast(float) target.texture.width, cast(float) -target.texture.height),
