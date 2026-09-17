@@ -42,7 +42,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
     pickerPreviewRect;
-import sparkles.input.surface : PointerCapture, PointerRoute;
+import sparkles.input.surface : admitOntoSurface, PointerCapture;
 import sparkles.ui_tui : Cell, Grid;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
@@ -1168,14 +1168,6 @@ int runGui(GuiArgs guiArgs) @system
     // image the user is actually pointing at.
     PointerCapture ptrCapture;
 
-    /// The UI point a physical screen position is over (`PTR2`) — the identity
-    /// while hue draws its own cursor, since then the two spaces are the same.
-    PointF pointerToUi(PointF p)
-    {
-        if (!crt.enabled || !crt.systemPointer || geom.screenW <= 0 || geom.screenH <= 0)
-            return p;
-        return crt.mapPointerToUi(p.x, p.y, geom.screenW, geom.screenH);
-    }
 
     bool admitEvent(in Event e, out Event admitted)
     {
@@ -1189,51 +1181,7 @@ int runGui(GuiArgs guiArgs) @system
             const u = crt.mapPointerToUi(cast(float) p.x, cast(float) p.y, w, h);
             return Point(cast(int) u.x, cast(int) u.y);
         }
-
-        bool keep = true;
-        e.match!(
-            (in PointerEvent p) {
-                const d = ptrCapture.route(p.action, toUi(p.pos), w, h);
-                PointerEvent q = p;
-                q.pos = d.pos;
-                final switch (d.route)
-                {
-                case PointerRoute.deliver:
-                    ptrCapture.noteDelivered(q.action, q.button);
-                    break;
-                case PointerRoute.leave:
-                    q.action = PointerAction.leave;
-                    q.button = PointerButton.none;
-                    break;
-                case PointerRoute.drop:
-                    keep = false;
-                    break;
-                }
-                admitted = Event(q);
-            },
-            (in WheelEvent wv) {
-                const d = ptrCapture.routeWheel(toUi(wv.pos), w, h);
-                WheelEvent q = wv;
-                q.pos = d.pos;
-                keep = d.route == PointerRoute.deliver;
-                admitted = Event(q);
-            },
-            (in GestureEvent g) {
-                const d = ptrCapture.routeWheel(toUi(g.pos), w, h);
-                GestureEvent q = g;
-                q.pos = d.pos;
-                keep = d.route == PointerRoute.deliver;
-                admitted = Event(q);
-            },
-            (in FocusEvent f) {
-                // Releases do not arrive for a window that lost the focus
-                // mid-drag, so the level would stay down forever.
-                if (!f.focused)
-                    ptrCapture.reset();
-            },
-            (in _) {}
-        );
-        return keep;
+        return admitOntoSurface(ptrCapture, &toUi, e, admitted, w, h);
     }
 
     // Whether a frame has been painted. The post-present tail below belongs to
@@ -2445,10 +2393,25 @@ int runGui(GuiArgs guiArgs) @system
         foreach (e; evBuf)
             e.match!((in KeyEvent k) { keyBuf ~= k; }, (in _) {});
 
-        // `HUE_GUI_POINTER` parks the PHYSICAL pointer — it stands in for a
-        // window-system event nobody sent — so it is translated like one.
+        // `HUE_GUI_POINTER` parks the PHYSICAL pointer. It stands in for a
+        // window-system event nobody sent, so it is SYNTHESIZED as one and put
+        // through `admitEvent` like any other — routing included, not just the
+        // coordinate map (`PTR4`). Routed to `leave` or dropped, it leaves the
+        // previous position standing, which is what an unreachable park means.
         if (capture.pointerSet)
-            rawPointerPos = pointerToUi(capture.pointer);
+        {
+            Event parked;
+            const synthetic = Event(PointerEvent(PointerAction.move,
+                PointerButton.none,
+                Point(cast(int) capture.pointer.x, cast(int) capture.pointer.y)));
+            if (admitEvent(synthetic, parked))
+                parked.match!(
+                    (in PointerEvent p) {
+                        if (p.action != PointerAction.leave)
+                            rawPointerPos = PointF(cast(float) p.pos.x, cast(float) p.pos.y);
+                    },
+                    (in _) {});
+        }
         else
         {
             foreach (e; evBuf)
@@ -2466,7 +2429,7 @@ int runGui(GuiArgs guiArgs) @system
         // only the position; button levels and edges still come from the
         // folded stream.
         if (capture.pointerSet)
-            inp.fin.pos = pointerToUi(capture.pointer);
+            inp.fin.pos = rawPointerPos;
         // The dock drains these real events below, after its current geometry
         // and content extents have been published. The frame fold above is a
         // read, not ownership transfer.
