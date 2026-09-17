@@ -152,6 +152,7 @@ import blob_paths :
     parseBlobRefs, resolveClone;
 import sparkles.docs.sidebar : loadDocsConfig, loadSidebar, sidebarDataPath;
 import docs_sidebar : checkDocsSidebar;
+import spec_evidence : Citation, citationsIn, unresolvedCitations;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
@@ -278,6 +279,10 @@ struct CliParams
         ~ "sidebar link resolves to a page. Respects srcExclude; the home page "
         ~ "(docs/index.md) is always considered linked."))
     bool checkDocsSidebar;
+
+    @(Option(`check-spec-evidence`,
+        description: "Verify every symbol a spec's evidence column cites resolves in the tree."))
+    bool checkSpecEvidence;
 
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
@@ -420,6 +425,7 @@ enum ProgramMode
     checkCommitScope,
     checkVcsUrls,
     checkDocsSidebar,
+    checkSpecEvidence,
     checkBlobPaths,
     ciStats,
     mirrorChecks,
@@ -558,6 +564,9 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.checkDocsSidebar)
         return runCheckDocsSidebar();
+
+    if (mode == ProgramMode.checkSpecEvidence)
+        return runCheckSpecEvidence();
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -821,6 +830,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.checkDocsSidebar)
         return ProgramMode.checkDocsSidebar;
 
+    if (cli.checkSpecEvidence)
+        return ProgramMode.checkSpecEvidence;
+
     if (cli.checkBlobPaths)
         return ProgramMode.checkBlobPaths;
 
@@ -845,6 +857,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkCommitScope:   return "--check-commit-scope";
         case ProgramMode.checkVcsUrls:       return "--check-vcs-urls";
         case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
+        case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1415,6 +1428,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkCommitScope:
             case ProgramMode.checkVcsUrls:
             case ProgramMode.checkDocsSidebar:
+            case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
                 break;
@@ -2028,6 +2042,84 @@ private int runCheckBlobPaths(string[] files, string cloneRoot)
 /// (pages → sidebar and sidebar → pages). Invoked by the pre-commit
 /// `check-docs-sidebar` hook. Returns 0 when both directions are clean, 1
 /// when pages are missing from the sidebar or sidebar links are dangling.
+
+/++
+`--check-spec-evidence`: every symbol a spec's evidence column cites must exist.
+
+Whole-tree, like `--check-docs-sidebar`: a requirement's traceability claim is
+not a property of the diff that touched it, and the rows that rot are precisely
+the ones nobody is editing.
++/
+private int runCheckSpecEvidence()
+{
+    import std.file : readText;
+    import std.path : buildPath, extension;
+    import std.string : splitLines;
+
+    const repoRoot = detectRepoRoot();
+
+    const specs = execute(["git", "-C", repoRoot, "ls-files", "--", "docs/specs"]);
+    if (specs.status != 0)
+    {
+        error(i"Failed to enumerate spec files with git ls-files");
+        return 1;
+    }
+
+    const srcList = execute(["git", "-C", repoRoot, "ls-files"]);
+    if (srcList.status != 0)
+    {
+        error(i"Failed to enumerate D sources with git ls-files");
+        return 1;
+    }
+
+    // Paths resolve against every tracked file; identifiers only against D
+    // sources, whose contents are the only ones worth reading for a symbol.
+    string[] paths;
+    string[string] sources;
+    foreach (rel; splitLines(srcList.output))
+    {
+        const path = rel.strip;
+        if (path.length == 0)
+            continue;
+        paths ~= path;
+        if (path.extension != ".d")
+            continue;
+        try
+            sources[path] = readText(buildPath(repoRoot, path));
+        catch (Exception)
+        {
+        }
+    }
+
+    Citation[] cites;
+    size_t files;
+    foreach (rel; splitLines(specs.output))
+    {
+        const path = rel.strip;
+        if (path.length == 0 || path.extension != ".md")
+            continue;
+        ++files;
+        try
+            cites ~= citationsIn(path, readText(buildPath(repoRoot, path)));
+        catch (Exception)
+        {
+        }
+    }
+
+    const bad = unresolvedCitations(cites, sources, paths);
+    foreach (u; bad)
+        error(i"$(u.cite.file):$(u.cite.line): $(u.cite.id) cites `$(u.cite.token)` — no `$(u.name)` anywhere in the tree");
+
+    if (bad.length)
+    {
+        error(i"✗ $(bad.length) unresolved citation(s) of $(cites.length) in $(files) spec files — an evidence column that names nothing turns the delivery gate into decoration.");
+        return 1;
+    }
+
+    info(i"✓ Spec evidence resolves: all $(cites.length) cited symbols across $(files) spec files name something in the tree.");
+    return 0;
+}
+
 private int runCheckDocsSidebar()
 {
     import std.stdio : stderr;
