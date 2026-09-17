@@ -208,10 +208,12 @@ already have.
 
 **ED5: Overflow is counted, not fatal.** When the queue is full, the arriving event is
 dropped and a per-backend counter is incremented. The next drain must deliver one
-`EventsDropped` event carrying that count before any other event and then reset the
-counter. The counter is synthesized at drain time because a full queue has no slot to
-give. Overflow must never set a sticky error, and must never be reported as a
-dispatch or loop failure.
+`EventsDropped` event carrying that count after the events it drains, then reset the
+counter. It is synthesized at drain time, because a full queue has no slot to give it,
+and it is delivered last carrying the sequence of the last dropped event: every
+dropped sequence is above every queued one, so any earlier position would contradict
+`ED6`. It is not attributable to one window and carries `WindowId.init`. Overflow must
+never set a sticky error, and must never be reported as a dispatch or loop failure.
 
 **ED6: Drain order.** Sequence numbers delivered by one drain must be strictly
 increasing. Contiguity is explicitly not promised: merging and `ED5` both leave gaps.

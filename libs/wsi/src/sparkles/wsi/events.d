@@ -23,6 +23,15 @@ struct ExposedEvent {}
 struct CloseRequestedEvent {}
 struct DestroyedEvent {}
 struct OccludedEvent { bool occluded; }
+
+/**
+Events the queue dropped because it was full (`ED5`). Not attributable to one
+window, so `window` is `WindowId.init`; the count is the number lost since the
+previous drain. It is delivered last in a drain and carries the sequence of the
+last dropped event, so the delivered order stays strictly increasing and the gap
+in sequence numbers names exactly what was lost.
+*/
+struct EventsDroppedEvent { uint count; }
 struct FocusChangedEvent { bool focused; }
 struct SurfaceMetricsChangedEvent { SurfaceMetrics metrics; }
 struct MovedEvent { PhysicalPosition position; }
@@ -255,7 +264,8 @@ alias WindowEventPayload = SumType!(NoWindowEvent, ReadyEvent, ExposedEvent,
     SurfaceMetricsChangedEvent, MovedEvent, OutputEnteredEvent, FrameReadyEvent,
     KeyboardEvent, TextCommittedEvent, CompositionEvent, PointerEvent,
     RelativePointerEvent, ScrollEvent, TouchEvent, OutputEvent, DataOfferEvent,
-    PopupConfiguredEvent, PopupDismissedEvent, CursorChangedEvent);
+    PopupConfiguredEvent, PopupDismissedEvent, CursorChangedEvent,
+    EventsDroppedEvent);
 
 /// Sequence-stamped event. Sequence zero is reserved for uninitialized data.
 struct WindowEvent

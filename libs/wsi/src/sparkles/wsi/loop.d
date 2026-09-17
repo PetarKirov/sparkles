@@ -23,16 +23,33 @@ if (Capacity > 0)
     private size_t head_;
     private size_t count_;
     private bool draining_;
+    private uint dropped_;
+    private ulong droppedSequence_;
 
     bool full() const pure nothrow @nogc => count_ == Capacity;
     bool empty() const pure nothrow @nogc => count_ == 0;
     size_t length() const pure nothrow @nogc => count_;
 
+    /// Events dropped since the last drain; the next drain reports and
+    /// clears it.
+    uint dropped() const pure nothrow @nogc => dropped_;
+
+    /**
+    `ED5`: a full queue drops the arriving event and counts it rather than
+    failing. A consumer that stops draining must not be able to fail a
+    dispatch, and through it the loop. The loss is reported by the next
+    drain and is visible in the delivered sequence numbers as a gap.
+    */
     WsiResult!void push(WindowEvent event) pure nothrow @nogc
     {
         if (full)
-            return wsiErr!void(wsiError(WsiErrorKind.capacity,
-                WsiOperation.dispatch, diagnostic: "WSI event queue is full"));
+        {
+            if (dropped_ != uint.max)
+                ++dropped_;
+            if (event.sequence > droppedSequence_)
+                droppedSequence_ = event.sequence;
+            return wsiOk();
+        }
 
         assignEvent(events_[(head_ + count_) % Capacity], event);
         ++count_;
@@ -42,12 +59,13 @@ if (Capacity > 0)
     /**
     Push, coalescing over $(LREF supersedes): scans the queue's trailing
     run of superseded-kind events and, when one of this event's kind and
-    window is found there, removes it before appending — so bounded
-    capacity survives native event floods whose intermediate observations
-    no consumer needs (a resize drag interleaves metrics and expose
-    events, hundreds per dispatch). The scan stops at the first event
-    that must keep its place, and removal happens behind append, keeping
-    drained sequences strictly increasing.
+    window is found there, replaces that event's payload where it sits —
+    so bounded capacity survives native event floods whose intermediate
+    observations no consumer needs (a resize drag interleaves metrics and
+    expose events, hundreds per dispatch). The scan stops at the first
+    event that must keep its place. A merged event keeps its sequence, so
+    drained sequences stay strictly increasing, the sequence names when
+    the merged run began, and the payload names its newest observation.
     */
     WsiResult!void pushCoalesced(WindowEvent event) pure nothrow @nogc
     {
@@ -58,17 +76,16 @@ if (Capacity > 0)
                 events_[(head_ + count_ - 1 - scanned) % Capacity];
             if (supersedes(candidate, event))
             {
-                // Compact the run over the superseded slot, then append.
-                foreach (offset; 0 .. scanned)
-                {
-                    const to = (head_ + count_ - 1 - scanned + offset)
-                        % Capacity;
-                    const from = (to + 1) % Capacity;
-                    assignEvent(events_[to], events_[from]);
-                }
-                clearEvent(events_[(head_ + count_ - 1) % Capacity]);
-                --count_;
-                break;
+                // `ED2`: merge in place. The queued event keeps its
+                // sequence and its position, so only the observation it
+                // carries is replaced. That consumes no slot, costs no
+                // compaction, and keeps every queued sequence below any
+                // dropped one, which is what lets `ED5`'s notice go last
+                // and still increase.
+                const keptSequence = candidate.sequence;
+                assignEvent(candidate, event);
+                candidate.sequence = keptSequence;
+                return wsiOk();
             }
             // Only events that themselves could coalesce with something may
             // be scanned past; anything else anchors the queue's order.
@@ -101,8 +118,98 @@ if (Capacity > 0)
             --count_;
             sink(event);
         }
+        if (dropped_ != 0)
+        {
+            // `ED5`: report the loss last. Every dropped event's sequence
+            // is above everything queued when it was dropped, and a merge
+            // never introduces a higher one, so last is the only position
+            // that keeps `ED6`'s strictly increasing order.
+            auto notice = WindowEvent(droppedSequence_, WindowId.init,
+                WindowEventPayload(EventsDroppedEvent(dropped_)));
+            dropped_ = 0;
+            droppedSequence_ = 0;
+            ++available;
+            sink(notice);
+        }
         return wsiOk(available);
     }
+}
+
+@("wsi.loop.aMergedEventKeepsItsSequenceAndTakesTheNewestObservation")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.sumtype : match;
+
+    // `ED2`: merging replaces the observation in place. The sequence names
+    // when the run began, so drained order is unaffected by how long a flood
+    // ran; the payload names its newest state.
+    EventQueue!8 queue;
+    const window = WindowId(1, 1);
+    static SurfaceMetrics metricsWide(uint width) @safe pure nothrow @nogc
+        => SurfaceMetrics(LogicalSize(width, 100), PhysicalSize(width, 100),
+            ScaleFactor(1));
+
+    assert(!queue.pushCoalesced(WindowEvent(1, window,
+        WindowEventPayload(SurfaceMetricsChangedEvent(metricsWide(100)))))
+        .hasError);
+    assert(!queue.pushCoalesced(WindowEvent(2, window,
+        WindowEventPayload(SurfaceMetricsChangedEvent(metricsWide(200)))))
+        .hasError);
+    assert(queue.length == 1, "the second observation took the first's slot");
+
+    ulong sequence;
+    double width = 0;
+    assert(!queue.drain((WindowEvent event) @safe pure nothrow @nogc {
+        sequence = event.sequence;
+        event.payload.match!(
+            (in SurfaceMetricsChangedEvent value) {
+                width = value.metrics.logicalSize.width;
+            },
+            (_) {});
+    }).hasError);
+    assert(sequence == 1);
+    assert(width == 200);
+}
+
+@("wsi.loop.overflowIsCountedAndReportedRatherThanFatal")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.sumtype : match;
+
+    // `ED5`: a consumer that stops draining must not be able to fail a
+    // dispatch, and through it the loop. Keyboard events never merge, so this
+    // flood can only overflow.
+    EventQueue!4 queue;
+    const window = WindowId(1, 1);
+    ulong sequence = 1;
+    foreach (_; 0 .. 10)
+        assert(!queue.push(WindowEvent(sequence++, window,
+            WindowEventPayload(KeyboardEvent()))).hasError,
+            "overflow is not a failure");
+    assert(queue.dropped == 6);
+
+    ulong last;
+    size_t delivered;
+    uint reported;
+    ulong noticeSequence;
+    auto result = queue.drain((WindowEvent event) @safe pure nothrow @nogc {
+        assert(event.sequence > last, "drained order stays increasing");
+        last = event.sequence;
+        ++delivered;
+        event.payload.match!(
+            (in EventsDroppedEvent value) {
+                reported = value.count;
+                noticeSequence = event.sequence;
+            },
+            (_) {});
+    });
+    // Four survivors plus the notice, which arrives last carrying the
+    // sequence of the last event lost, so the gap names what went missing.
+    assert(!result.hasError && result.value == 5 && delivered == 5);
+    assert(reported == 6 && noticeSequence == 10);
+    assert(queue.dropped == 0, "the loss is reported once");
 }
 
 @("wsi.loop.eventQueueSurvivesAResizeFloodByCoalescing")
