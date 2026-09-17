@@ -139,6 +139,7 @@ import live_types : applyTip, LiveTypesSession;
 // the two entry points a navigation reload needs.
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
+import crt_config : applyCrtCapture, applyCrtConfig;
 import settings : HueConfig, PointerMode, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
@@ -392,36 +393,16 @@ int runGui(GuiArgs guiArgs) @system
     CrtEffect crt;
     if (configStore !is null)
     {
-        crt.enabled = configStore.resolved.appearance.crt.enabled || capture.crt;
-        crt.tilt = configStore.resolved.appearance.crt.tilt || capture.crtTilt;
-        crt.magnify = configStore.resolved.appearance.crt.magnify || capture.crtMagnify;
-        crt.curvature = cast(float) configStore.resolved.appearance.crt.curvature;
-        crt.scanlines = cast(float) configStore.resolved.appearance.crt.scanlines;
-        crt.mask = cast(float) configStore.resolved.appearance.crt.mask;
-        crt.chromaticAberration = cast(float) configStore.resolved.appearance.crt.chromaticAberration;
-        crt.vignette = cast(float) configStore.resolved.appearance.crt.vignette;
-        crt.flicker = cast(float) configStore.resolved.appearance.crt.flicker;
-        crt.brightness = cast(float) configStore.resolved.appearance.crt.brightness;
-        crt.bloomIntensity = cast(float) configStore.resolved.appearance.crt.bloomIntensity;
-        crt.bloomThreshold = cast(float) configStore.resolved.appearance.crt.bloomThreshold;
-        crt.bloomRadius = cast(float) configStore.resolved.appearance.crt.bloomRadius;
-        crt.lensRadius = cast(float) configStore.resolved.appearance.crt.lensRadius;
-        crt.lensPower = cast(float) configStore.resolved.appearance.crt.lensPower;
-        crt.uiReactive = configStore.resolved.appearance.crt.uiReactive;
-        crt.focusHalo = cast(float) configStore.resolved.appearance.crt.focusHalo;
-        crt.hoverGlow = cast(float) configStore.resolved.appearance.crt.hoverGlow;
-        crt.selectionBloom = cast(float) configStore.resolved.appearance.crt.selectionBloom;
-        crt.dividerTension = cast(float) configStore.resolved.appearance.crt.dividerTension;
-        crt.systemPointer = capture.pointerMode.length
-            ? capture.pointerMode == "system"
-            : configStore.resolved.appearance.pointer.mode == PointerMode.system;
+        applyCrtConfig(crt, configStore.resolved.appearance.crt,
+            configStore.resolved.appearance.pointer, capture);
+        if (capture.screenshotPath.length)
+            crt.pinnedTime = 1.0f; // `DBG1`: an animated effect needs a pinned clock
     }
     else
     {
-        crt.enabled = capture.crt;
-        crt.tilt = capture.crtTilt;
-        crt.magnify = capture.crtMagnify;
-        crt.systemPointer = capture.pointerMode == "system";
+        applyCrtCapture(crt, capture);
+        if (capture.screenshotPath.length)
+            crt.pinnedTime = 1.0f;
     }
     PointF rawPointerPos;
     with (gs)
@@ -508,12 +489,6 @@ int runGui(GuiArgs guiArgs) @system
         // window never read it: `search.smart_case` moved one of hue's three
         // searches, and this is one of the two lines that was missing.
         vm.searchPolicy = configStore.resolved.search.searchPolicy;
-        if (configStore.resolved.appearance.crt.enabled)
-            crt.enabled = true;
-        if (configStore.resolved.appearance.crt.tilt)
-            crt.tilt = true;
-        if (configStore.resolved.appearance.crt.magnify)
-            crt.magnify = true;
     }
     vm.tableOverflow = tableOverflow;
 
@@ -1058,29 +1033,10 @@ int runGui(GuiArgs guiArgs) @system
             return;
         vm.hScrollStep = configStore.resolved.scroll.hScrollStep;
         vm.searchPolicy = configStore.resolved.search.searchPolicy;
-        crt.enabled = configStore.resolved.appearance.crt.enabled || capture.crt;
-        crt.tilt = configStore.resolved.appearance.crt.tilt || capture.crtTilt;
-        crt.magnify = configStore.resolved.appearance.crt.magnify || capture.crtMagnify;
-        crt.curvature = cast(float) configStore.resolved.appearance.crt.curvature;
-        crt.scanlines = cast(float) configStore.resolved.appearance.crt.scanlines;
-        crt.mask = cast(float) configStore.resolved.appearance.crt.mask;
-        crt.chromaticAberration = cast(float) configStore.resolved.appearance.crt.chromaticAberration;
-        crt.vignette = cast(float) configStore.resolved.appearance.crt.vignette;
-        crt.flicker = cast(float) configStore.resolved.appearance.crt.flicker;
-        crt.brightness = cast(float) configStore.resolved.appearance.crt.brightness;
-        crt.bloomIntensity = cast(float) configStore.resolved.appearance.crt.bloomIntensity;
-        crt.bloomThreshold = cast(float) configStore.resolved.appearance.crt.bloomThreshold;
-        crt.bloomRadius = cast(float) configStore.resolved.appearance.crt.bloomRadius;
-        crt.lensRadius = cast(float) configStore.resolved.appearance.crt.lensRadius;
-        crt.lensPower = cast(float) configStore.resolved.appearance.crt.lensPower;
-        crt.uiReactive = configStore.resolved.appearance.crt.uiReactive;
-        crt.focusHalo = cast(float) configStore.resolved.appearance.crt.focusHalo;
-        crt.hoverGlow = cast(float) configStore.resolved.appearance.crt.hoverGlow;
-        crt.selectionBloom = cast(float) configStore.resolved.appearance.crt.selectionBloom;
-        crt.dividerTension = cast(float) configStore.resolved.appearance.crt.dividerTension;
-        crt.systemPointer = capture.pointerMode.length
-            ? capture.pointerMode == "system"
-            : configStore.resolved.appearance.pointer.mode == PointerMode.system;
+        applyCrtConfig(crt, configStore.resolved.appearance.crt,
+            configStore.resolved.appearance.pointer, capture);
+        if (capture.screenshotPath.length)
+            crt.pinnedTime = 1.0f; // `DBG1`: an animated effect needs a pinned clock
         if (!filePicker.empty)
         {
             filePicker.get.stepBudget =
