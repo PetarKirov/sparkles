@@ -1426,6 +1426,10 @@
             "link": "/specs/ui/backends"
           },
           {
+            "text": "Effects & images",
+            "link": "/specs/ui/effects"
+          },
+          {
             "text": "Migration (planned)",
             "link": "/specs/ui/migration"
           },
