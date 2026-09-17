@@ -707,7 +707,6 @@ handles resizing and resource cleanup.
 struct CrtEffect
 {
     private CrtProjection proj_;
-    private bool cursorHidden_;
     private PointerShape shape_ = PointerShape.default_;
     private bool systemPointer_;
 
@@ -795,6 +794,18 @@ struct CrtEffect
     input out of screen space — see $(LREF mapPointerToUi).
     */
     bool systemPointer() const @safe pure nothrow @nogc => systemPointer_;
+
+    /**
+    Whether this pass renders a pointer itself, and so wants the window system
+    to stop drawing one (`PTR1`).
+
+    A $(B declaration), not an action. Whether a cursor is on screen is the
+    window's state, and a pass that is disabled, reconfigured or destroyed
+    between frames should not have to remember to hand it back — so the host
+    reads this and calls $(REF Window.pointerVisible, sparkles,ui_raylib,window).
+    */
+    bool drawsOwnPointer() const @safe pure nothrow @nogc
+        => proj_.enabled && !systemPointer_;
 
     /// ditto
     void systemPointer(bool on) @safe pure nothrow @nogc { systemPointer_ = on; }
@@ -964,24 +975,12 @@ struct CrtEffect
 
     /**
     Begins off-screen capture into the render texture if CRT mode is enabled.
-    Hides the desktop compositor cursor while CRT mode is active, unless
-    $(LREF systemPointer) asks for it to be left alone (`PTR1`).
     Must be paired with $(LREF end).
+
+    Cursor visibility is $(B not) touched here — see $(LREF drawsOwnPointer).
     */
     void begin(int screenW, int screenH) @system
     {
-        // The compositor cursor is hidden only while the shader is drawing one
-        // in its place; the two conditions are the same condition, so a mode
-        // switch mid-run restores it on the very next frame.
-        const wantHidden = proj_.enabled && !systemPointer_;
-        if (wantHidden != cursorHidden_)
-        {
-            if (wantHidden)
-                HideCursor();
-            else
-                ShowCursor();
-            cursorHidden_ = wantHidden;
-        }
         if (!proj_.enabled)
             return;
 
@@ -1118,11 +1117,6 @@ struct CrtEffect
     /// Releases GPU resources (render texture and compiled shader) and restores cursor.
     void release() @system nothrow @nogc
     {
-        if (cursorHidden_)
-        {
-            ShowCursor();
-            cursorHidden_ = false;
-        }
         if (target.id != 0)
         {
             UnloadRenderTexture(target);
