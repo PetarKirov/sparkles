@@ -27,7 +27,7 @@ $(LI $(B Captured) — while the UI believes a button is down, every event is
 */
 module sparkles.input.surface;
 
-import sparkles.input.events : Point, PointerAction, PointerButton;
+import sparkles.input.events : Event, Point, PointerAction, PointerButton;
 
 /// What the host does with one event whose position left the surface.
 enum PointerRoute : ubyte
@@ -235,4 +235,117 @@ unittest
     const held = c.routeWheel(Point(-1, 10), 100, 50);
     assert(held.route == PointerRoute.deliver);
     assert(held.pos == Point(0, 10));
+}
+
+/++
+Translates one event onto the surface and rules on it, in one step.
+
+The whole of $(LREF PointerCapture)'s policy applied to a real event: the
+position is mapped by `toSurface`, the decision is taken, and the event is
+rewritten — a `leave` also clearing the button, since nothing is pressed at a
+position nothing occupies.
+
+Returns `false` for an event the host must $(B drop); `admitted` is only
+meaningful when it returns `true`.
+
+Templated on the mapper so attributes infer and a caller whose projection is
+`@nogc` keeps a `@nogc` intake — and so this is testable with an arithmetic
+stand-in rather than a live projection.
++/
+bool admitOntoSurface(Map)(ref PointerCapture capture, scope Map toSurface,
+    in Event e, out Event admitted, int w, int h)
+{
+    import sparkles.input.events : FocusEvent, GestureEvent, match,
+        PointerEvent, WheelEvent;
+
+    admitted = e;
+    bool keep = true;
+    e.match!(
+        (in PointerEvent p) {
+            const d = capture.route(p.action, toSurface(p.pos), w, h);
+            PointerEvent q = p;
+            q.pos = d.pos;
+            final switch (d.route)
+            {
+            case PointerRoute.deliver:
+                capture.noteDelivered(q.action, q.button);
+                break;
+            case PointerRoute.leave:
+                q.action = PointerAction.leave;
+                q.button = PointerButton.none;
+                break;
+            case PointerRoute.drop:
+                keep = false;
+                break;
+            }
+            admitted = Event(q);
+        },
+        (in WheelEvent wv) {
+            const d = capture.routeWheel(toSurface(wv.pos), w, h);
+            WheelEvent q = wv;
+            q.pos = d.pos;
+            keep = d.route == PointerRoute.deliver;
+            admitted = Event(q);
+        },
+        (in GestureEvent g) {
+            const d = capture.routeWheel(toSurface(g.pos), w, h);
+            GestureEvent q = g;
+            q.pos = d.pos;
+            keep = d.route == PointerRoute.deliver;
+            admitted = Event(q);
+        },
+        (in FocusEvent f) {
+            // A window that loses focus mid-drag never gets the release, so
+            // the level would stay down forever.
+            if (!f.focused)
+                capture.reset();
+        },
+        (in _) {}
+    );
+    return keep;
+}
+
+@("input.surface.admitOntoSurface.mapsRewritesAndDrops")
+@safe
+unittest
+{
+    import sparkles.input.events : FocusEvent, match, PointerEvent, WheelEvent;
+
+    // A projection that shifts everything left by 40 — enough to push the low
+    // end off the surface, which is the whole point.
+    static Point shift(in Point p) @safe pure nothrow @nogc
+        => Point(p.x - 40, p.y);
+
+    PointerCapture c;
+    Event got;
+
+    // On the surface after mapping: delivered at the MAPPED position.
+    assert(admitOntoSurface(c, &shift, Event(PointerEvent(PointerAction.move,
+        PointerButton.none, Point(60, 10))), got, 100, 50));
+    got.match!((in PointerEvent p) { assert(p.pos == Point(20, 10)); }, (in _) { assert(false); });
+
+    // Off it: rewritten to `leave`, with the button cleared.
+    assert(admitOntoSurface(c, &shift, Event(PointerEvent(PointerAction.drag,
+        PointerButton.left, Point(10, 10))), got, 100, 50));
+    got.match!(
+        (in PointerEvent p) {
+            assert(p.action == PointerAction.leave);
+            assert(p.button == PointerButton.none);
+        },
+        (in _) { assert(false); });
+
+    // A press out there is dropped, and starts no capture.
+    assert(!admitOntoSurface(c, &shift, Event(PointerEvent(PointerAction.press,
+        PointerButton.left, Point(10, 10))), got, 100, 50));
+    assert(!c.captured);
+
+    // A press ON the surface does, and then a wheel off it still arrives.
+    assert(admitOntoSurface(c, &shift, Event(PointerEvent(PointerAction.press,
+        PointerButton.left, Point(60, 10))), got, 100, 50));
+    assert(c.captured);
+    assert(admitOntoSurface(c, &shift, Event(WheelEvent(0, 1, Point(10, 10))), got, 100, 50));
+
+    // Losing focus forgets the button nobody will send a release for.
+    assert(admitOntoSurface(c, &shift, Event(FocusEvent(false)), got, 100, 50));
+    assert(!c.captured);
 }
