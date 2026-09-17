@@ -1,19 +1,18 @@
 /**
-Pointer input policy for a warped canvas (`PTR2`, `PTR3`).
+What a pointer event means when it lands where the surface is not (`PTR3`).
 
-With `appearance.pointer.mode = system` the window system draws the pointer, so
-input arrives in $(B screen) space while the UI lives in texture space. The host
-translates each event's position through
-$(REF CrtEffect.mapPointerToUi, sparkles,ui_raylib,crt) — and then has to answer
-what happens to the positions that translate to nothing, because a warped image
-does not fill its window: the tube's rounded corners leave the window's own
-corners with no UI point under them at all (1.2% of the window at the default
-curvature, 7.7% at the maximum — the edges themselves are seated flush by
-`CRT10`, so the dead area is corners only).
+A drawn surface does not always fill the window it lives in. A warped one is the
+clearest case — hue's CRT tube rounds its corners, leaving 1.2% of the window
+with no UI beneath it at the default curvature and 7.7% at the maximum — but the
+shape is general: any target whose image is inset, letterboxed, rotated or
+projected has window pixels that address nothing. Where the window system draws
+the pointer, those pixels are reachable, so $(B what a click there means) is a
+question someone has to answer.
 
-This module is that answer, and only that answer: the geometry is the canvas
-backend's and the plumbing is the frame loop's, but $(B what a click in the
-bezel means) is policy, so it lives somewhere it can be stated in a test.
+This module is that answer, and only that answer. Translating a window position
+into a surface position belongs to whatever owns the projection; delivering the
+result belongs to the frame loop. Neither is here. What is here is the policy in
+between, isolated so it can be stated in tests rather than discovered in an app.
 
 The rule has two halves, and the second half is the one that is easy to miss:
 
@@ -21,12 +20,12 @@ $(UL
 $(LI $(B Uncaptured) — a move becomes `leave`, so hover clears rather than
     sticking to whatever was last hot; a press is swallowed.)
 $(LI $(B Captured) — while the UI believes a button is down, every event is
-    clamped onto the surface and delivered. A scrollbar drag that strays into
-    the bezel must keep dragging, and a release out there must still arrive, or
-    the button stays down forever and the grab never ends.)
+    clamped onto the surface and delivered. A scrollbar drag that strays off
+    the surface must keep dragging, and a release out there must still arrive,
+    or the button stays down forever and the grab never ends.)
 )
 */
-module pointer_map;
+module sparkles.input.surface;
 
 import sparkles.input.events : Point, PointerAction, PointerButton;
 
@@ -62,7 +61,7 @@ bool onSurface(in Point p, int w, int h) @safe pure nothrow @nogc
 /**
 The held-button level $(B as the UI sees it), which is not the same as the level
 the window system reports: an event this policy swallows never happened as far
-as the UI is concerned, so a press dropped in the bezel must not start a capture.
+as the UI is concerned, so a press dropped off the surface must not start a capture.
 Only delivered events move this.
 */
 struct PointerCapture
@@ -121,7 +120,7 @@ struct PointerCapture
     }
 }
 
-@("pointer_map.clampToSurface.pinsInsideTheHalfOpenRect")
+@("input.surface.clampToSurface.pinsInsideTheHalfOpenRect")
 @safe pure nothrow @nogc
 unittest
 {
@@ -136,7 +135,7 @@ unittest
     assert(!onSurface(Point(20, -1), 100, 50));
 }
 
-@("pointer_map.route.onSurfaceIsAlwaysDelivered")
+@("input.surface.route.onSurfaceIsAlwaysDelivered")
 @safe pure nothrow @nogc
 unittest
 {
@@ -146,14 +145,14 @@ unittest
     assert(d.pos == Point(10, 10));
 }
 
-@("pointer_map.route.uncapturedOffSurfaceClearsHoverAndSwallowsClicks")
+@("input.surface.route.uncapturedOffSurfaceClearsHoverAndSwallowsClicks")
 @safe pure nothrow @nogc
 unittest
 {
     PointerCapture c;
     assert(!c.captured);
 
-    // A move into the bezel must not leave the last row hot.
+    // A move off the surface must not leave the last row hot.
     assert(c.route(PointerAction.move, Point(-3, 10), 100, 50).route == PointerRoute.leave);
     // A click out there does nothing at all...
     assert(c.route(PointerAction.press, Point(-3, 10), 100, 50).route == PointerRoute.drop);
@@ -164,7 +163,7 @@ unittest
     assert(!c.captured);
 }
 
-@("pointer_map.route.aDragSurvivesTheBezel")
+@("input.surface.route.aDragSurvivesLeavingTheSurface")
 @safe pure nothrow @nogc
 unittest
 {
@@ -177,7 +176,7 @@ unittest
     assert(c.captured);
 
     // Now stray outside. The drag must keep arriving, pinned to the edge —
-    // this is the scrollbar grab that used to die at the window edge.
+    // this is the scrollbar grab that used to die at the surface edge.
     const strayed = c.route(PointerAction.drag, Point(140, 20), 100, 50);
     assert(strayed.route == PointerRoute.deliver);
     assert(strayed.pos == Point(99, 20));
@@ -190,7 +189,7 @@ unittest
     assert(!c.captured);
 }
 
-@("pointer_map.route.releaseIsNeverDroppedEvenUncaptured")
+@("input.surface.route.releaseIsNeverDroppedEvenUncaptured")
 @safe pure nothrow @nogc
 unittest
 {
@@ -201,7 +200,7 @@ unittest
         == PointerRoute.deliver);
 }
 
-@("pointer_map.capture.tracksEachButtonIndependently")
+@("input.surface.capture.tracksEachButtonIndependently")
 @safe pure nothrow @nogc
 unittest
 {
@@ -224,7 +223,7 @@ unittest
     assert(!c.captured);
 }
 
-@("pointer_map.routeWheel.needsTheSurfaceOrACapture")
+@("input.surface.routeWheel.needsTheSurfaceOrACapture")
 @safe pure nothrow @nogc
 unittest
 {
