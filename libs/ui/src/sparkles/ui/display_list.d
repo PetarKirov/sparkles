@@ -208,9 +208,18 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             break; // background (if any) already emitted
         case row, column, stack, panel, popup:
             // A clipping container brackets its children in scissor ops. The
-            // pushed rect is the *effective* clip — this node's padded content
-            // box on each clipped axis, already intersected with the ancestor
-            // clip — so a canvas replaces rather than intersects.
+            // pushed rect is this node's padded content box on each clipped
+            // axis, already intersected with the ancestor clip by
+            // `childClipOf` — so the ops a display list emits are always
+            // pre-intersected.
+            //
+            // That is a property of THESE ops, not a licence for a canvas to
+            // replace rather than intersect (`TGT1`/`TGT12`). A canvas also
+            // receives clips pushed by hand — hue's base viewport, diagram's
+            // board clip — which are not pre-intersected against anything, and
+            // a canvas that replaces loses the ancestor on exactly those. The
+            // contract a canvas implements is the one stated on `pushClip`:
+            // nested clips intersect.
             const clips = node.clipX || node.clipY;
             const childClip = childClipOf(node, rect, clip);
             if (clips)
