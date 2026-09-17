@@ -355,17 +355,24 @@ backend truncates at a UTF-8 boundary and sets the event's `truncated` flag. See
 
 ## 6. What this became, and what is left
 
-The accepted answers are [SPEC.md](./SPEC.md) §4.5, `ED1`–`ED10`. Implementing them
-is a separate slice, and the work each requirement implies is:
+The accepted answers are [SPEC.md](./SPEC.md) §4.5, `ED1`–`ED10`. `ED5` and `ED2`'s
+in-place rule landed together on September 17, 2026, because the notice's position
+depends on the merge: a remove-and-append merge can admit a sequence above a dropped
+one, and then no position for the notice keeps `ED6`. Implementing that pair also
+corrected `ED5`, which had said the notice arrives first. The rest is outstanding:
 
-| Requirement  | Work                                                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `ED2`, `ED3` | a per-(window, pointer) slot index and sample ring in `sparkles.wsi.loop`, and the merge rewritten from remove-and-append |
-| `ED5`        | an `EventsDropped` payload, a per-backend counter, and a drain that emits it first                                        |
-| `ED7`        | a timestamp on `WindowEvent`, and the four backends' clock conversions                                                    |
-| `ED8`        | `InlineBuffer` to `SharedBuffer` in three payloads, a `truncated` flag, and the 64 KiB bound                              |
-| `ED9`        | capacity and depth as template parameters; two per-window switches                                                        |
-| `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                         |
+| Requirement  | Work                                                                                                                               |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ED2`, `ED3` | done for the three latest-observation kinds; still owed for pointer motion: a per-(window, pointer) slot index and the sample ring |
+| `ED5`        | **done**: an `EventsDropped` payload, a counter on the queue, and a drain that reports it last                                     |
+| `ED7`        | a timestamp on `WindowEvent`, and the four backends' clock conversions                                                             |
+| `ED8`        | `InlineBuffer` to `SharedBuffer` in three payloads, a `truncated` flag, and the 64 KiB bound                                       |
+| `ED9`        | capacity and depth as template parameters; two per-window switches                                                                 |
+| `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                                  |
+
+A dropped lifecycle event is an accepted consequence rather than a special case:
+`ED5` drops by arrival, not by kind, and a consumer that misses a `destroyed` learns
+of it from the generation-checked `WindowId`, whose next use returns `staleId`.
 
 The conformance suite gains two properties per backend. A motion flood injects more
 samples than the queue holds, faster than the drain, and requires the summed delta to
