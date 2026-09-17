@@ -402,6 +402,9 @@ int runGui(GuiArgs guiArgs) @system
         crt.vignette = cast(float) configStore.resolved.appearance.crt.vignette;
         crt.flicker = cast(float) configStore.resolved.appearance.crt.flicker;
         crt.brightness = cast(float) configStore.resolved.appearance.crt.brightness;
+        crt.bloomIntensity = cast(float) configStore.resolved.appearance.crt.bloomIntensity;
+        crt.bloomThreshold = cast(float) configStore.resolved.appearance.crt.bloomThreshold;
+        crt.bloomRadius = cast(float) configStore.resolved.appearance.crt.bloomRadius;
         crt.lensRadius = cast(float) configStore.resolved.appearance.crt.lensRadius;
         crt.lensPower = cast(float) configStore.resolved.appearance.crt.lensPower;
         crt.uiReactive = configStore.resolved.appearance.crt.uiReactive;
@@ -1065,6 +1068,9 @@ int runGui(GuiArgs guiArgs) @system
         crt.vignette = cast(float) configStore.resolved.appearance.crt.vignette;
         crt.flicker = cast(float) configStore.resolved.appearance.crt.flicker;
         crt.brightness = cast(float) configStore.resolved.appearance.crt.brightness;
+        crt.bloomIntensity = cast(float) configStore.resolved.appearance.crt.bloomIntensity;
+        crt.bloomThreshold = cast(float) configStore.resolved.appearance.crt.bloomThreshold;
+        crt.bloomRadius = cast(float) configStore.resolved.appearance.crt.bloomRadius;
         crt.lensRadius = cast(float) configStore.resolved.appearance.crt.lensRadius;
         crt.lensPower = cast(float) configStore.resolved.appearance.crt.lensPower;
         crt.uiReactive = configStore.resolved.appearance.crt.uiReactive;
