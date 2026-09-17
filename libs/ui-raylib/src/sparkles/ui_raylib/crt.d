@@ -12,17 +12,8 @@ module sparkles.ui_raylib.crt;
 import raylib;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
+public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
 
-/// Axis-aligned rectangle representing a UI element in window pixel coordinates.
-struct UiRect
-{
-    float x = 0;
-    float y = 0;
-    float w = 0;
-    float h = 0;
-
-    bool empty() const @safe pure nothrow @nogc => w <= 0 || h <= 0;
-}
 
 /// UI structure context passed to the CRT shader to drive localized phosphor reactions.
 struct CrtUiContext
@@ -715,24 +706,18 @@ handles resizing and resource cleanup.
 */
 struct CrtEffect
 {
-    private bool enabled_;
-    private bool tilt_;
-    private bool magnify_;
+    private CrtProjection proj_;
     private bool cursorHidden_;
     private PointerShape shape_ = PointerShape.default_;
     private bool systemPointer_;
-    private float lastMouseX_ = 0;
-    private float lastMouseY_ = 0;
 
-    private float curvature_ = 0.08f;
+
     private float scanlines_ = 0.12f;
     private float mask_ = 1.0f;
     private float chromaticAberration_ = 0.0025f;
     private float vignette_ = 0.12f;
     private float flicker_ = 0.007f;
     private float brightness_ = 1.05f;
-    private float lensRadius_ = 0.18f;
-    private float lensPower_ = 0.45f;
 
     private bool shaderLoaded;
     private Shader shader;
@@ -774,25 +759,25 @@ struct CrtEffect
     @disable this(this);
 
     /// Whether the CRT effect is active.
-    bool enabled() const @safe pure nothrow @nogc => enabled_;
+    bool enabled() const @safe pure nothrow @nogc => proj_.enabled;
 
     /// ditto
-    void enabled(bool on) @safe pure nothrow @nogc { enabled_ = on; }
+    void enabled(bool on) @safe pure nothrow @nogc { proj_.enabled = on; }
 
     /// Toggles the CRT effect on or off.
-    void toggle() @safe pure nothrow @nogc { enabled_ = !enabled_; }
+    void toggle() @safe pure nothrow @nogc { proj_.enabled = !proj_.enabled; }
 
     /// Whether mouse-directed 3D asteroid curvature tilt is enabled.
-    bool tilt() const @safe pure nothrow @nogc => tilt_;
+    bool tilt() const @safe pure nothrow @nogc => proj_.tilt;
 
     /// ditto
-    void tilt(bool on) @safe pure nothrow @nogc { tilt_ = on; }
+    void tilt(bool on) @safe pure nothrow @nogc { proj_.tilt = on; }
 
     /// Whether mouse magnification lens distortion is enabled.
-    bool magnify() const @safe pure nothrow @nogc => magnify_;
+    bool magnify() const @safe pure nothrow @nogc => proj_.magnify;
 
     /// ditto
-    void magnify(bool on) @safe pure nothrow @nogc { magnify_ = on; }
+    void magnify(bool on) @safe pure nothrow @nogc { proj_.magnify = on; }
 
     /// The active pointer shape rendered by the CRT shader.
     PointerShape pointerShape() const @safe pure nothrow @nogc => shape_;
@@ -815,10 +800,10 @@ struct CrtEffect
     void systemPointer(bool on) @safe pure nothrow @nogc { systemPointer_ = on; }
 
     /// Screen curvature amount (0 for flat monitor).
-    float curvature() const @safe pure nothrow @nogc => curvature_;
+    float curvature() const @safe pure nothrow @nogc => proj_.curvature;
 
     /// ditto
-    void curvature(float v) @safe pure nothrow @nogc { curvature_ = v; }
+    void curvature(float v) @safe pure nothrow @nogc { proj_.curvature = v; }
 
     /// Scanline darkening intensity (0 to disable).
     float scanlines() const @safe pure nothrow @nogc => scanlines_;
@@ -857,16 +842,16 @@ struct CrtEffect
     void brightness(float v) @safe pure nothrow @nogc { brightness_ = v; }
 
     /// Mouse magnification lens radius.
-    float lensRadius() const @safe pure nothrow @nogc => lensRadius_;
+    float lensRadius() const @safe pure nothrow @nogc => proj_.lensRadius;
 
     /// ditto
-    void lensRadius(float v) @safe pure nothrow @nogc { lensRadius_ = v; }
+    void lensRadius(float v) @safe pure nothrow @nogc { proj_.lensRadius = v; }
 
     /// Mouse magnification zoom power factor.
-    float lensPower() const @safe pure nothrow @nogc => lensPower_;
+    float lensPower() const @safe pure nothrow @nogc => proj_.lensPower;
 
     /// ditto
-    void lensPower(float v) @safe pure nothrow @nogc { lensPower_ = v; }
+    void lensPower(float v) @safe pure nothrow @nogc { proj_.lensPower = v; }
 
     /// Whether CRT reacts to UI structure (focus, hover, selection, dividers).
     bool uiReactive() const @safe pure nothrow @nogc => uiReactive_;
@@ -905,134 +890,28 @@ struct CrtEffect
     const(CrtUiContext) uiContext() const @safe pure nothrow @nogc => uiContext_;
 
     /**
-    Converts a $(LREF UiRect) in screen coordinates to shader `[cx, cy, hw, hh]` in normalized
-    UV space where `uv.y = 1.0` is the top of the window.
-    */
-    static float[4] toShaderBox(in UiRect r, float screenW, float screenH) @safe pure nothrow @nogc
-    {
-        if (r.w <= 0 || r.h <= 0 || screenW <= 0 || screenH <= 0)
-            return [0.0f, 0.0f, 0.0f, 0.0f];
-        float cx = (r.x + r.w * 0.5f) / screenW;
-        float cy = 1.0f - (r.y + r.h * 0.5f) / screenH;
-        float hw = (r.w * 0.5f) / screenW;
-        float hh = (r.h * 0.5f) / screenH;
-        return [cx, cy, hw, hh];
-    }
-
-    /**
     The pointer position last presented through $(LREF end), in UI pixels —
     the point both the lens and the software cursor are centred on.
     */
-    PointF pointerPos() const @safe pure nothrow @nogc
-        => PointF(lastMouseX_, lastMouseY_);
+    PointF pointerPos() const @safe pure nothrow @nogc => proj_.pointer;
 
     /// ditto
-    void pointerPos(PointF p) @safe pure nothrow @nogc
-    {
-        lastMouseX_ = p.x;
-        lastMouseY_ = p.y;
-    }
+    void pointerPos(PointF p) @safe pure nothrow @nogc { proj_.pointer = p; }
 
-    /**
-    The curvature step alone, in normalized y-flipped coordinates: `curve()`
-    from the shader, and nothing else. `mx`/`my` are the apex the tilt bends
-    around, ignored when tilt is off.
-    */
-    private void curveStep(float nx, float ny, float mx, float my,
-        out float uvX, out float uvY) const @safe pure nothrow @nogc
-    {
-        const apexX = tilt_ ? mx : 0.5f;
-        const apexY = tilt_ ? my : 0.5f;
-        const k = tilt_ ? curvature_ * 0.625f : curvature_;
-        const ccX = nx - apexX;
-        const ccY = ny - apexY;
-        const dist = ccX * ccX + ccY * ccY;
-        // `CRT10`: seat the texture's edge midpoints on the screen's edges —
-        // see the shader's `curve`, of which this is the twin.
-        const fit = 1.0f / (1.0f + k * 0.25f);
-        uvX = (nx + ccX * (dist * k) - 0.5f) * fit + 0.5f;
-        uvY = (ny + ccY * (dist * k) - 0.5f) * fit + 0.5f;
-    }
+    /// The geometry alone — the tube's shape, with no GPU in it. Everything
+    /// the shader's `curve()` must agree with lives there, not here.
+    ref const(CrtProjection) projection() const return @safe pure nothrow @nogc
+        => proj_;
 
-    /**
-    The UI point the $(B OS pointer) at a screen position is sitting on — what
-    `appearance.pointer.mode = system` routes input through (`PTR2`).
-
-    Magnification is deliberately $(B not) applied. The lens is centred on the
-    pointer's own UI position and leaves that point fixed, so for the pointer
-    itself the lens cancels exactly; running it here would instead measure the
-    displacement from the $(I previous) frame's centre. Tilt does not cancel —
-    its apex is that same position — so it is resolved by iterating the map to
-    its fixed point, which converges in a couple of steps at any curvature the
-    settings allow.
-    */
+    /// ditto — the two maps, forwarded so existing call sites are unchanged.
     PointF mapPointerToUi(float screenX, float screenY, int screenW, int screenH)
         const @safe pure nothrow @nogc
-    {
-        if (!enabled_ || screenW <= 0 || screenH <= 0)
-            return PointF(screenX, screenY);
+        => proj_.mapPointerToUi(screenX, screenY, screenW, screenH);
 
-        const nx = screenX / cast(float) screenW;
-        const ny = (cast(float) screenH - screenY) / cast(float) screenH;
-
-        float mx = lastMouseX_ / cast(float) screenW;
-        float my = (cast(float) screenH - lastMouseY_) / cast(float) screenH;
-
-        float uvX, uvY;
-        curveStep(nx, ny, mx, my, uvX, uvY);
-        if (tilt_)
-            foreach (_; 0 .. 3)
-            {
-                curveStep(nx, ny, uvX, uvY, uvX, uvY);
-            }
-
-        return PointF(uvX * cast(float) screenW, (1.0f - uvY) * cast(float) screenH);
-    }
-
-    /**
-    Translates a screen device pixel coordinate to the corresponding unwarped UI
-    pixel coordinate rendered under that screen location.
-    */
-    PointF mapScreenToUi(float screenX, float screenY, int screenW, int screenH) const @safe pure nothrow @nogc
-    {
-        if (!enabled_ || screenW <= 0 || screenH <= 0)
-            return PointF(screenX, screenY);
-
-        float nx = screenX / cast(float) screenW;
-        float ny = (cast(float) screenH - screenY) / cast(float) screenH;
-
-        float mx = lastMouseX_ / cast(float) screenW;
-        float my = (cast(float) screenH - lastMouseY_) / cast(float) screenH;
-
-        float aspect = cast(float) screenW / cast(float) screenH;
-
-        float uvX, uvY;
-        curveStep(nx, ny, mx, my, uvX, uvY);
-
-        // Lens magnification around the mouse, in texture space — the same
-        // order the shader applies it in, so this stays its exact inverse-free
-        // twin. Applying it before curvature made the two disagree.
-        if (magnify_)
-        {
-            float dx = (uvX - mx) * aspect;
-            float dy = uvY - my;
-            import std.math : sqrt, pow;
-            float dist = cast(float) sqrt(dx * dx + dy * dy);
-            float radius = lensRadius_;
-            if (dist < radius)
-            {
-                float normDist = dist / radius;
-                float z = cast(float) sqrt(1.0f - normDist * normDist);
-                float factor = 1.0f - lensPower_ * cast(float) pow(z, 1.4f);
-                uvX = mx + (uvX - mx) * factor;
-                uvY = my + (uvY - my) * factor;
-            }
-        }
-
-        float uiX = uvX * cast(float) screenW;
-        float uiY = (1.0f - uvY) * cast(float) screenH;
-        return PointF(uiX, uiY);
-    }
+    /// ditto
+    PointF mapScreenToUi(float screenX, float screenY, int screenW, int screenH)
+        const @safe pure nothrow @nogc
+        => proj_.mapScreenToUi(screenX, screenY, screenW, screenH);
 
     private void ensureShader() @system
     {
@@ -1094,7 +973,7 @@ struct CrtEffect
         // The compositor cursor is hidden only while the shader is drawing one
         // in its place; the two conditions are the same condition, so a mode
         // switch mid-run restores it on the very next frame.
-        const wantHidden = enabled_ && !systemPointer_;
+        const wantHidden = proj_.enabled && !systemPointer_;
         if (wantHidden != cursorHidden_)
         {
             if (wantHidden)
@@ -1103,7 +982,7 @@ struct CrtEffect
                 ShowCursor();
             cursorHidden_ = wantHidden;
         }
-        if (!enabled_)
+        if (!proj_.enabled)
             return;
 
         ensureShader();
@@ -1121,11 +1000,10 @@ struct CrtEffect
     */
     void end(int screenW, int screenH, float mouseX = 0, float mouseY = 0) @system
     {
-        if (!enabled_ || !shaderLoaded || target.id == 0)
+        if (!proj_.enabled || !shaderLoaded || target.id == 0)
             return;
 
-        lastMouseX_ = mouseX;
-        lastMouseY_ = mouseY;
+        proj_.pointer = PointF(mouseX, mouseY);
 
         EndTextureMode();
 
@@ -1146,12 +1024,12 @@ struct CrtEffect
         }
         if (tiltLoc >= 0)
         {
-            float tv = tilt_ ? 1.0f : 0.0f;
+            float tv = proj_.tilt ? 1.0f : 0.0f;
             SetShaderValue(shader, tiltLoc, &tv, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         }
         if (magnifyLoc >= 0)
         {
-            float mv = magnify_ ? 1.0f : 0.0f;
+            float mv = proj_.magnify ? 1.0f : 0.0f;
             SetShaderValue(shader, magnifyLoc, &mv, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         }
         if (cursorShapeLoc >= 0)
@@ -1170,7 +1048,7 @@ struct CrtEffect
             SetShaderValue(shader, cursorShapeLoc, &sc, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         }
         if (curvatureLoc >= 0)
-            SetShaderValue(shader, curvatureLoc, &curvature_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+            SetShaderValue(shader, curvatureLoc, &proj_.curvature, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         if (scanlinesLoc >= 0)
             SetShaderValue(shader, scanlinesLoc, &scanlines_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         if (maskLoc >= 0)
@@ -1184,9 +1062,9 @@ struct CrtEffect
         if (brightnessLoc >= 0)
             SetShaderValue(shader, brightnessLoc, &brightness_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         if (lensRadiusLoc >= 0)
-            SetShaderValue(shader, lensRadiusLoc, &lensRadius_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+            SetShaderValue(shader, lensRadiusLoc, &proj_.lensRadius, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         if (lensPowerLoc >= 0)
-            SetShaderValue(shader, lensPowerLoc, &lensPower_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+            SetShaderValue(shader, lensPowerLoc, &proj_.lensPower, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
         if (uiReactiveLoc >= 0)
         {
             float rv = uiReactive_ ? 1.0f : 0.0f;
@@ -1351,12 +1229,12 @@ unittest
     // UiRect & toShaderBox
     UiRect rEmpty;
     assert(rEmpty.empty);
-    auto bEmpty = CrtEffect.toShaderBox(rEmpty, 800, 600);
+    auto bEmpty = toShaderBox(rEmpty, 800, 600);
     assert(bEmpty == [0.0f, 0.0f, 0.0f, 0.0f]);
 
     UiRect r = UiRect(100, 50, 200, 100);
     assert(!r.empty);
-    auto b = CrtEffect.toShaderBox(r, 800, 600);
+    auto b = toShaderBox(r, 800, 600);
     // cx = (100 + 100) / 800 = 0.25, cy = 1.0 - (50 + 50) / 600 = 500/600 ~ 0.8333
     // hw = 100 / 800 = 0.125, hh = 50 / 600 ~ 0.08333
     assert(b[0] == 0.25f);
@@ -1370,132 +1248,7 @@ unittest
     assert(crt.uiContext.focusBox == r);
 }
 
-/**
-The magnifier lens is centred on the software cursor (`CRT6`).
 
-The shader draws the cursor at the fragment whose $(I final) `uv` equals the
-mouse's UI position, and applies the lens to that same `uv` — which leaves that
-point fixed. So the screen point that resolves to the mouse must be the one the
-lens is built around, whether magnification is on or off.
-
-Applying the lens before curvature instead centred it on the screen point the
-mouse had not yet been displaced from, and the pointer drifted out of the circle
-the further it travelled from the middle of the screen.
-*/
-@("ui_raylib.crt.magnifierLensIsCentredOnTheCursor")
-@system
-unittest
-{
-    import std.math : abs;
-
-    enum int w = 800, h = 600;
-
-    CrtEffect crt;
-    crt.enabled = true;
-    crt.curvature = 0.25f;  // well past the default, so a drift is visible
-    crt.lensRadius = 0.22f;
-    crt.lensPower = 0.55f;
-
-    // Off-centre in both axes: the bug is invisible at the screen's middle.
-    const mouse = PointF(624, 168);
-
-    static float miss(in PointF got, in PointF want)
-    {
-        const dx = got.x - want.x, dy = got.y - want.y;
-        return abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-    }
-
-    foreach (tilt; [false, true])
-    {
-        crt.tilt = tilt;
-        crt.pointerPos = mouse;
-
-        // Find the screen point that renders the mouse's own UI pixel: a
-        // coarse sweep, then a refinement around the best cell.
-        crt.magnify = false;
-        auto best = PointF(mouse.x, mouse.y);
-        float bestMiss = float.max;
-        for (float y = 0; y < h; y += 2)
-            for (float x = 0; x < w; x += 2)
-            {
-                const d = miss(crt.mapScreenToUi(x, y, w, h), mouse);
-                if (d < bestMiss) { bestMiss = d; best = PointF(x, y); }
-            }
-        for (float dy = -2; dy <= 2; dy += 0.125f)
-            for (float dx = -2; dx <= 2; dx += 0.125f)
-            {
-                const p = PointF(best.x + dx, best.y + dy);
-                const d = miss(crt.mapScreenToUi(p.x, p.y, w, h), mouse);
-                if (d < bestMiss) { bestMiss = d; best = p; }
-            }
-        assert(bestMiss < 0.5f, "no screen point renders the mouse's UI pixel");
-
-        // Curvature really does displace the cursor — otherwise the assertion
-        // below would hold for the broken ordering too.
-        assert(miss(best, mouse) > 4.0f);
-
-        // Turning the lens on must not move that point: the cursor sits at the
-        // centre of the circle.
-        crt.magnify = true;
-        assert(miss(crt.mapScreenToUi(best.x, best.y, w, h), mouse) < 0.5f);
-    }
-}
-
-/**
-The pointer map is the lens's fixed point and the tilt's (`PTR2`).
-
-`mapPointerToUi` answers "which UI point is the OS pointer sitting on", and both
-mouse-driven distortions are centred on that same answer — which is why neither
-may be applied to it naively. The lens leaves its own centre alone, so it must
-cancel exactly; the tilt's apex is that centre, so the map must be a fixed point
-of itself. Testing those two properties is testing that the self-reference was
-resolved rather than papered over with the previous frame's value.
-*/
-@("ui_raylib.crt.mapPointerToUi.resolvesTheDistortionsCentredOnIt")
-@system
-unittest
-{
-    import std.math : abs;
-
-    enum int w = 1000, h = 720;
-    enum PointF probe = PointF(820, 560);
-
-    static float miss(in PointF a, in PointF b)
-    {
-        const dx = a.x - b.x, dy = a.y - b.y;
-        return abs(dx) > abs(dy) ? abs(dx) : abs(dy);
-    }
-
-    CrtEffect crt;
-    crt.enabled = true;
-    crt.curvature = 0.25f;
-    crt.lensRadius = 0.30f;
-    crt.lensPower = 0.55f;
-    crt.pointerPos = PointF(640, 300);
-
-    // The lens cancels: magnifying does not move the point the pointer is on.
-    crt.tilt = false;
-    crt.magnify = false;
-    const flat = crt.mapPointerToUi(probe.x, probe.y, w, h);
-    crt.magnify = true;
-    assert(miss(crt.mapPointerToUi(probe.x, probe.y, w, h), flat) < 0.01f);
-
-    // It is a real warp, not a no-op that would satisfy the above vacuously.
-    assert(miss(flat, probe) > 4.0f);
-
-    // Tilt bends around the pointer, so the map must reproduce itself when its
-    // own answer is fed back as that apex.
-    crt.tilt = true;
-    const tilted = crt.mapPointerToUi(probe.x, probe.y, w, h);
-    crt.pointerPos = tilted;
-    assert(miss(crt.mapPointerToUi(probe.x, probe.y, w, h), tilted) < 0.5f,
-        "the tilt apex did not converge");
-
-    // ...and it converges from a badly wrong starting point, too — the apex is
-    // seeded with the previous frame's pointer, which after a jump is stale.
-    crt.pointerPos = PointF(10, 700);
-    assert(miss(crt.mapPointerToUi(probe.x, probe.y, w, h), tilted) < 1.0f);
-}
 
 @("ui_raylib.crt.systemPointer.suppressesTheShaderCursor")
 @system
@@ -1511,51 +1264,4 @@ unittest
     crt.pointerShape = PointerShape.text;
     const p = crt.mapPointerToUi(123, 456, 800, 600);
     assert(p.x == 123 && p.y == 456);
-}
-
-/**
-The tube is fitted to the screen at every curvature (`CRT10`).
-
-The bend pushes a point at radius `r` out by `(1 + k·r²)`, so the midpoint of
-each edge — at `r = ½` — lands at `(1 + k/4)`, and scaling by that reciprocal
-seats it exactly on the screen edge. The old fixed `1.06` was a fit for one
-curvature and no other: it left a 20 px band of nothing along every edge even
-on a flat screen, and swallowed a third of the window at the top of the range.
-
-The corners, at a larger radius, still overhang and are cut — that is the
-rounded face of the tube, and it should be the only part of the window without
-an image.
-*/
-@("ui_raylib.crt.curve.seatsEachEdgeMidpointOnItsScreenEdge")
-@system
-unittest
-{
-    import std.math : abs;
-
-    enum int w = 1000, h = 720;
-
-    CrtEffect crt;
-    crt.enabled = true;
-    crt.tilt = false; // the fit is stated for a centred apex
-
-    foreach (curv; [0.0f, 0.08f, 0.25f, 0.5f, 1.0f])
-    {
-        crt.curvature = curv;
-
-        // Each screen edge midpoint reads the corresponding texture edge.
-        assert(abs(crt.mapScreenToUi(w / 2.0f, 0, w, h).y - 0) < 0.5f);
-        assert(abs(crt.mapScreenToUi(w / 2.0f, h, w, h).y - h) < 0.5f);
-        assert(abs(crt.mapScreenToUi(0, h / 2.0f, w, h).x - 0) < 0.5f);
-        assert(abs(crt.mapScreenToUi(w, h / 2.0f, w, h).x - w) < 0.5f);
-
-        // ...so there is no dead band anywhere along an edge's middle.
-        assert(crt.mapScreenToUi(w / 2.0f, 0.5f, w, h).y >= 0);
-
-        // A flat screen is a 1:1 blit: no curvature, and so nothing cut.
-        const corner = crt.mapScreenToUi(0, 0, w, h);
-        if (curv == 0)
-            assert(corner.x >= 0 && corner.y >= 0, "a flat tube fills the window");
-        else
-            assert(corner.x < 0 || corner.y < 0, "a curved tube rounds its corners");
-    }
 }
