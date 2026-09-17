@@ -226,6 +226,19 @@ type, or the test-name convention, and the check does not care which.
 +/
 string resolvableName(string token) @safe pure nothrow
 {
+    // `dock.d:826` cites a file AND a line. The line number is not a symbol
+    // and cannot be checked (it moves with every edit above it), so strip it
+    // and resolve the file.
+    const colon = token.length ? indexOfLast(token, ':') : -1;
+    if (colon > 0 && colon + 1 < token.length)
+    {
+        bool digits = true;
+        foreach (c; token[colon + 1 .. $])
+            if (!c.isDigit) { digits = false; break; }
+        if (digits)
+            token = token[0 .. colon];
+    }
+
     ptrdiff_t dot = -1;
     foreach (i, c; token)
         if (c == '.')
@@ -248,6 +261,20 @@ unittest
     assert(resolvableName("CrtEffect.systemPointer") == "systemPointer");
     assert(resolvableName("ui_raylib.crt.magnifierIsCentred") == "magnifierIsCentred");
     assert(resolvableName("applyScissor") == "applyScissor");
+    // A file-and-line citation resolves as the file; the line is uncheckable.
+    assert(resolvableName("dock.d:826") == "dock.d");
+    assert(resolvableName("style.d:233") == "style.d");
+    // A colon that is not a line number is left alone.
+    assert(resolvableName("sparkles:ui") == "sparkles:ui");
+}
+
+private ptrdiff_t indexOfLast(scope const(char)[] s, char c) @safe pure nothrow
+{
+    ptrdiff_t at = -1;
+    foreach (i, ch; s)
+        if (ch == c)
+            at = i;
+    return at;
 }
 
 private bool isWordByte(char c) @safe pure nothrow
