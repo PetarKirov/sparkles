@@ -35,7 +35,7 @@ The stack levels referenced below: **STM** (level 1, pure state machines in
 | IXR6  | Pointer capture       | `CaptureState` (STM11)                                     | RESOLVED: `workspace.d` runs the machine (press owns the drag)                              | RESOLVED: all six draggables take an id and ask `available(id)`; one central release                        | resolved — one capture model on both targets; a new affordance takes an id instead of joining a negation chain     |
 | IXR7  | Click-to-focus        | none                                                       | on press, via the capture block                                                             | two branches inside the selection click block                                                               | same intent, two code paths, historically inconsistent (the TUI's arrived in a bug fix)                            |
 | IXR8  | Wheel routing         | none                                                       | pane-under-cursor, 3 rows/notch, `workspace.d` block                                        | pane-under-cursor by `mp.x`, fractional accumulation host-side                                              | policy duplicated; the GUI's fractional accumulation belongs in `RaylibEvents` (M14)                               |
-| IXR9  | Pointer shape         | `PointerShape` + `wantedPointerShape` (STM)                | shared decision; workspace writes OSC 22 and re-asserts mid-grab                            | shared decision mapped through `Window.pointerShape`                                                        | resolved semantic priority; each adapter still performs its native write                                           |
+| IXR9  | Pointer shape         | `PointerShape` + `composeShape`/`shapeAt` (`DCK15`)        | shared decision; workspace writes OSC 22 and re-asserts mid-grab                            | shared decision mapped through `Window.pointerShape`                                                        | resolved semantic priority; each adapter still performs its native write                                           |
 | IXR10 | Focus chrome          | `Slot.chromeFocused` + `headerBar(focused)`                | panes stamp `focused` in `workspace.paint`                                                  | headers built inline per frame with `focused:` args                                                         | component shared ✓ (PR #143/#144); stamping still per host                                                         |
 | IXR11 | Document-pane state   | `ViewerModel` (`viewer_model.d`, raylib-free)              | RESOLVED (IXB5): `PreviewTui.vm` owns the shared pipeline                                   | uses it                                                                                                     | resolved — document/theme/layout/fold/search state has one shared owner; GUI shell state remains `HUE-O1`          |
 | IXR12 | Selection             | `Selection!T` (STM3) — shared                              | line-granular over shared `ViewerModel` rows                                                | char-precise + table regime + ANSI/strip copy modes                                                         | state model shared; TUI char/table precision remains a declared feature-parity gap                                 |
@@ -132,6 +132,20 @@ was justified by a divider and two scrollbars in a windowed app. Now there is a
 third bottom-edge affordance on a device where the pointer is a fingertip
 several cells wide — and IXR27 is the proof that two ad-hoc owners of one press
 is not a hypothetical. Order: ~~IXB1~~ (done) → IXB9 → IXB3.
+
+**Correction (2026-08-24).** The note above records IXB4 as shipped "as
+`wantedPointerShape`", and that is not what happened. `wantedPointerShape`
+composes a split and a list of bars, and only `apps/ui-gallery` ever called it;
+hue's two hosts each kept writing their own expression, and
+[`DCK9`](./containers.md)/[`SCV6`](./containers.md) were written to match — both
+say the **host** supplies the pane shapes, which is the direct negation of this
+row's "Hosts never compute shapes". Three requirements therefore disagreed in
+the tree, in favour of the code.
+
+[`DCK15`](./containers.md) is the actual seam: a shape is _declared_ by an
+element and _derived_ from ownership, so no host composes one. IXB4 is
+reinstated as `partial` until the two hue expressions are gone; the wording that
+survives is its last sentence, which was right all along.
 
 Original sequencing note: IXB1/IXB4 are independent and small; IXB3 wants IXB7
 for the GUI side but its TUI half can land first (the TUI workspace already

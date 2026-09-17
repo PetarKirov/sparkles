@@ -142,9 +142,10 @@ Proposed. Required by the [application host](../ui-app/index.md) and by migratin
 
 ## Hit testing (`INP10`)
 
-| ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                                                                                                  |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets`/`keyTargets` (`f166e099`) are visibility- and clip-aware and consumed by the shared document tree; non-widget pane/chrome routing remains until the container tier owns it (`DCK13`, whose top-layer rung is specified by [anchored overlays](./popup.md) `LYR5`) |
+| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                              | Status            | Traces to                                                                                                                                                                                                                                                                                  |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map.                                                                                                                        | partial           | `state.d` `hoverTargets`/`keyTargets` (`f166e099`) are visibility- and clip-aware and consumed by the shared document tree; non-widget pane/chrome routing remains until the container tier owns it (`DCK13`, whose top-layer rung is specified by [anchored overlays](./popup.md) `LYR5`) |
+| INP21 | **What the hit list carries, the cursor is decided from.** A shape declared on an element (`Widget.pointerShape`) rides the _same_ derived per-frame targets as its hit identity, so `shapeAt` and hover resolve from one list rather than two walks that can disagree by a frame — a resolver reading the live tree would be a routing bug, not a visual one (`PLC13`). | full (`251b0823`) | `state.d` `HoverTarget.shape`/`shapeAt`; [`DCK15`](./containers.md) owns the composition                                                                                                                                                                                                   |
 
 ### The hit-testing model
 
@@ -190,13 +191,13 @@ order, or equivalently a culled top-down frame-tree descent. The rules:
 
 ## Module coverage
 
-| Source file                                         | Requirements                   |
-| --------------------------------------------------- | ------------------------------ |
-| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP20` |
-| `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                         |
-| `libs/ui-raylib/src/`                               | `INP8`, `INP9`                 |
-| `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer)         |
-| `libs/input/src/sparkles/input/frame.d` _(planned)_ | `INP17`                        |
+| Source file                                         | Requirements                    |
+| --------------------------------------------------- | ------------------------------- |
+| `libs/input/src/sparkles/input/`                    | `INP1`–`INP6`, `INP11`–`INP20`  |
+| `libs/tui/src/sparkles/tui/input.d`                 | `INP7`                          |
+| `libs/ui-raylib/src/`                               | `INP8`, `INP9`                  |
+| `libs/ui/src/sparkles/ui/state.d`                   | `INP10` (the consumer), `INP21` |
+| `libs/input/src/sparkles/input/frame.d` _(planned)_ | `INP17`                         |
 
 ## Relationship to existing specs
 
