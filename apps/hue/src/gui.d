@@ -3702,6 +3702,10 @@ int runGui(GuiArgs guiArgs) @system
                 hoverShape());
         window.pointerShape(curShape);
         crt.pointerShape = curShape;
+        // `PTR1`: the pass declares whether it draws a pointer; the window owns
+        // whether one is on screen. Asked every frame, so disabling the effect
+        // — or switching to the system pointer — hands the cursor straight back.
+        window.pointerVisible(!crt.drawsOwnPointer);
 
         const treePaneRows = pn.tree.bodyRows;
         const treeMaxTop = cast(long) pn.tree.rows.length - treePaneRows;
