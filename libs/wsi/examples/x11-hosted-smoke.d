@@ -240,5 +240,65 @@ int main()
         assert(!wsi.destroyWindow(id).hasError);
         writeln("ok: X11 raw motion is one event per device motion");
     }
+
+    /*
+    Addendum: a flood no longer ends the loop (`ED5`). XTEST delivers far
+    more events in one dispatch than the 128-slot queue holds, which used to
+    become a sticky capacity error that the next dispatch reported as a
+    failure. Now the excess is counted and the drain reports it, last, as an
+    `EventsDropped` event, and the loop keeps running.
+    */
+    {
+        WindowConfig config;
+        assert(config.title.assign("sparkles:wsi X11 flood"));
+        const id = wsi.createWindow(config).value;
+        bool ready;
+        const readyDeadline = MonoTime.currTime + 5.seconds;
+        while (!ready)
+        {
+            assert(MonoTime.currTime < readyDeadline,
+                "no ReadyEvent for the flood window");
+            hooks.step(200.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                if (event.window == id)
+                    event.payload.match!(
+                        (in ReadyEvent _) { ready = true; },
+                        (_) {});
+            }).hasError);
+        }
+        assert(!wsi.setRelativePointer(id, true).hasError);
+
+        // Every motion raises a core and a raw event, and neither kind
+        // coalesces, so this is several times the queue's capacity.
+        foreach (_; 0 .. 400)
+            assert(sendRelativeMotion(hooks.connection, 1, 0) == 0);
+        foreach (_; 0 .. 4)
+            hooks.step(100.msecs);
+
+        uint dropped;
+        ulong last;
+        ulong noticeSequence;
+        size_t delivered;
+        assert(!wsi.drain((WindowEvent event) {
+            assert(event.sequence > last, "drained order stays increasing");
+            last = event.sequence;
+            ++delivered;
+            event.payload.match!(
+                (in EventsDroppedEvent value) {
+                    dropped = value.count;
+                    noticeSequence = event.sequence;
+                },
+                (_) {});
+        }).hasError, "the flood must not fail the drain");
+        assert(dropped != 0, "the flood did not overflow the queue");
+        assert(noticeSequence == last, "the notice is delivered last");
+
+        // The regression: the dispatch after an overflow used to fail.
+        hooks.step(100.msecs);
+        assert(!wsi.setRelativePointer(id, false).hasError);
+        assert(!wsi.destroyWindow(id).hasError);
+        writeln("ok: X11 queue overflow reported, not fatal (", dropped,
+            " dropped of ", dropped + delivered, ")");
+    }
     return 0;
 }
