@@ -42,7 +42,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
     pickerPreviewRect;
-import pointer_map : PointerCapture, PointerRoute;
+import sparkles.input.surface : PointerCapture, PointerRoute;
 import sparkles.ui_tui : Cell, Grid;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
     LtnStepKind = StepKind;
