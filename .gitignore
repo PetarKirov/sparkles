@@ -95,6 +95,8 @@ bazel-*
 /apps/ci/tools/add_sidebar_entry
 /apps/hue/tools/gui_ab
 /apps/hue/tools/resize_probe
+/apps/hue/tools/gen-dsv-corpus
+/apps/hue/tools/tui_scroll_bench
 /apps/hue/tools/dub.selections.json
 screenshot*.png
 
