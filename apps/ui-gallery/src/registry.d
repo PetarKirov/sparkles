@@ -122,7 +122,7 @@ compile-time fact rather than a hope.
 */
 static immutable Page[] pages = [
     Page("Welcome", "what this build is", &welcomeView),
-    Page("Primitives", "the ten widget kinds", &primitivesView),
+    Page("Primitives", "the twelve widget kinds", &primitivesView),
     Page("Layout", "sizing, spacing, alignment", &layoutView,
         GalleryScope.pageLayout, &layoutOnCommand),
     Page("Tracks", "the grid subset, resolved live", &tracksView,

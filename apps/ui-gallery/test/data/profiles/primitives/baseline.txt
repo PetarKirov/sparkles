@@ -1,5 +1,5 @@
- sparkles:ui the ten widget kinds                                                   tokyo-night
-   Welcome           | Primitives * the eleven widget kinds                                    #
+ sparkles:ui the twelve widget kinds                                                tokyo-night
+   Welcome           | Primitives * the twelve widget kinds                                    #
  > Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | Every tree in this catalog is built from these and nothing else. A      #
@@ -15,18 +15,18 @@
    Scrolling         | | glyph            *                                                  | #
    State             | | line * solid     an underlined run                                  | #
    Split             | | line * wavy      a squiggled run                                    | #
-   Dock              | | scrollbar        ||                                                 | #
+   Dock              | | scrollbar        ||                                                 | |
    Terminal          | |                  ||                                                 | |
                      | |                  ##                                                 | |
                      | |                  ##                                                 | |
                      | |                  ||                                                 | |
                      | |                  ||                                                 | |
+                     | | image            [a colo]                                           | |
+                     | |                                                                     | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
                      | | flow containers                                                     | |
                      | | row               one   two   three                                 | |
-                     | | column            one                                               | |
-                     | |                   two                                               | |
                      |
  pages                                                                          ? keys   q quit
