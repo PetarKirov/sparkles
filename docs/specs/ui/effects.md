@@ -1,6 +1,6 @@
 # `sparkles:ui` effects & images — Feature Requirements (`EFX`, `IMG`)
 
-_**Status:** design · **Date:** 2026-09-18 · **Scope:** raster content (images)
+_**Status:** gate 1 (images) delivered; effects in design · **Date:** 2026-09-18 · **Scope:** raster content (images)
 in the widget tree, and subtree effects — the `pushEffect`/`popEffect` bracket,
 the tier model that decides what survives to a cell grid, the effect registry,
 and the re-expression of hue's CRT as an effect on the root node. Out of scope:
@@ -69,15 +69,36 @@ vocabulary.
 
 The first slice, and independent of every effect question: raster content needs
 no tier system, and it is the one addition here with a genuine cell-grid answer
-(the kitty and sixel protocols, for which hue already carries detection).
+in principle — the kitty and sixel protocols.
 
-| ID   | Requirement                                                                                                                                                                                                                            | Status | Traces to |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | --------- |
-| IMG1 | The op vocabulary must carry an **image** op addressing a decoded image by opaque handle, with a destination `Rect` in cells and a declared fit (fill, contain, cover). The op must not grow `DrawOp` past its current 64-byte budget. | none   | —         |
-| IMG2 | An `Image` widget must participate in layout as an ordinary box: an intrinsic cell size derived from pixel size and the canvas's cell metrics, subject to the same constraints as any other widget.                                    | none   | —         |
-| IMG3 | Image data must be owned by a **registry outside the widget tree**, keyed by handle, so the flat arena stays flat and a relayout never re-decodes.                                                                                     | none   | —         |
-| IMG4 | A canvas that cannot draw raster content must degrade **visibly and declaredly** — a placeholder box carrying the image's alt text — never silently skip the op.                                                                       | none   | —         |
-| IMG5 | `ui-tui` must draw images through a terminal image protocol where one is detected, and fall back to `IMG4` otherwise. Protocol detection is the terminal's, not the toolkit's.                                                         | none   | —         |
+$(B Correction.) This section originally claimed hue already carried protocol
+detection. It does not: nothing under `apps/hue/` or `libs/tui/` mentions kitty
+or sixel, and neither does `libs/base`'s `term_caps`, which is where such a
+probe would belong. The research note that claim came from surveys other
+terminals' detection, not ours. `IMG5` is scoped accordingly below.
+
+| ID   | Requirement                                                                                                                                                                                                                            | Status  | Traces to                                                                                                                                                               |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IMG1 | The op vocabulary must carry an **image** op addressing a decoded image by opaque handle, with a destination `Rect` in cells and a declared fit (fill, contain, cover). The op must not grow `DrawOp` past its current 64-byte budget. | full    | `canvas.d` `ImageDraw`/`OpKind.image`/`imageOp`; `CmdBufferT.image`; `static assert(DrawOp.sizeof <= 64)`; `ui.canvas.image.addressesByHandleAndCarriesItsAlt`          |
+| IMG2 | An `Image` widget must participate in layout as an ordinary box: an intrinsic cell size derived from pixel size and the canvas's cell metrics, subject to the same constraints as any other widget.                                    | full    | `WidgetKind.image`; `Widget.imagePixels`; `layout.d`'s `image` arms; `image.d` `imageCells`/`cellPixelsOf`; `ui.displayList.image.laysOutAsABoxAndEmitsOneOp`           |
+| IMG3 | Image data must be owned by a **registry outside the widget tree**, keyed by handle, so the flat arena stays flat and a relayout never re-decodes.                                                                                     | full    | `image.d` `ImageRegistry`/`ImageHandle`/`ImageData`; `ui.image.registry.handlesAreStableAndNeverReused`                                                                 |
+| IMG4 | A canvas that cannot draw raster content must degrade **visibly and declaredly** — a placeholder box carrying the image's alt text — never silently skip the op.                                                                       | full    | `interp/immediate.d` `paintImagePlaceholder`; the `image` arms of `interp/html.d` and `interp/html_semantic.d`; `ui.interp.immediate.imageFallsBackToTheAltPlaceholder` |
+| IMG5 | `ui-tui` must draw images through a terminal image protocol where one is detected, and fall back to `IMG4` otherwise. Protocol detection is the terminal's, not the toolkit's.                                                         | partial | `grid_canvas.d`'s `image` arm (the fallback half, through `IMG4`'s shared routine). The protocol half is **not built** — see below.                                     |
+
+`IMG5` is deliberately half-delivered, and the half that is missing is the one
+that needs something this slice does not own:
+
+- **There is no detection to consult.** `term_caps` probes size, tty, colours
+  and unicode; no kitty/sixel probe exists anywhere in the tree. `IMG5` says
+  detection is the terminal's answer, so it belongs in `term_caps`, not here.
+- **`sparkles:tui` has no passthrough channel.** A kitty or sixel image is an
+  escape sequence placed at a cursor position; the `Screen` compositor diffs a
+  grid of cells and has no way to carry one. Adding that channel is a change to
+  the terminal substrate's contract, not to the toolkit's op vocabulary.
+
+Until both exist, every image in a terminal takes `IMG4`'s placeholder — which
+is a declared degradation rather than a gap, and is drawn through the _shared_
+routine so the terminal cannot drift from the window.
 
 ## The effect bracket (`EFX1`–`EFX6`)
 
@@ -179,8 +200,10 @@ Two facts bound this, and neither is a blocker:
 
 ## Delivery gates
 
-1. **Images** (`IMG1`–`IMG5`) — independent of every effect question, and the
-   proof that the op vocabulary can grow without the arena growing.
+1. ~~**Images** (`IMG1`–`IMG5`)~~ — **delivered**, except `IMG5`'s protocol
+   half (above). The op vocabulary grew by one entry and `DrawOp` is still 64
+   bytes; the budget assert caught the first attempt, which carried a whole
+   `Ink` and reached 72.
 2. **The bracket** (`EFX1`–`EFX6`) plus tier-0 in `ui-tui` (`EFX7`–`EFX10`), with
    at least one built-in effect visibly landing in a terminal (`EFX24`).
 3. **The registry** (`EFX13`–`EFX19`) and tier-1/2 on `ui-raylib` (`EFX11`).
