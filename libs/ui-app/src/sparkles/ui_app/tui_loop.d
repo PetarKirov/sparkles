@@ -34,6 +34,7 @@ module sparkles.ui_app.tui_loop;
 version (UiAppTui):
 version (Posix):
 
+import sparkles.ui.image : ImageRegistry;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, isEndOfInput, isNoEvent,
     NoEvent;
@@ -162,6 +163,12 @@ struct TuiHost
 
     /// ditto
     void writeOutOfBand(scope const(char)[] seq) @system => session.writeOutOfBand(seq);
+
+    /// Accepted and dropped: a cell grid resolves no handles, so every image
+    /// takes `IMG4`'s placeholder. Present so an application binds its
+    /// registry once, on whichever host it got, rather than branching on the
+    /// target for something only one of them can use.
+    void images(const(ImageRegistry)*) @safe pure nothrow @nogc {}
 
     /// A terminal has no fullscreen of its own — the emulator owns that.
     bool fullscreenSupported() const @safe pure nothrow @nogc => false;
