@@ -34,6 +34,8 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
     PointerUnit, RunConfig, withRealSize;
+import sparkles.ui.image : ImageRegistry;
+import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
 import sparkles.ui_raylib.window : Window;
@@ -45,6 +47,7 @@ struct GuiHost
 
     private GuiSession* session;
     private SharedBuffer!(char, 4096) drawScratch;
+    private ImageTextures imageTextures;
 
     /// `true` when the event-horizon arm paces (raylib never sleeps);
     /// `false` on the raylib-paced fallback (no ring available).
@@ -113,6 +116,18 @@ struct GuiHost
 
     void title(in char[] t) @safe => session.window.title(t);
 
+    /**
+    Binds the image registry this host's canvas resolves handles against
+    (`IMG3`), uploading each image on the first frame that draws it.
+
+    Borrowed: the application owns the registry, and it must outlive the run.
+    A host that is never given one paints `IMG4`'s placeholder for every
+    image, which is also what the terminal and headless arms do — so calling
+    this is how a GUI gains pixels, not how an application gains images.
+    */
+    void images(const(ImageRegistry)* registry) @system
+        => imageTextures.attach(registry);
+
     /// A window has no out-of-band channel: the terminal's escape sequences
     /// address a terminal. Accepted and dropped so an application does not have
     /// to branch on the target for something the other one needs.
@@ -126,7 +141,12 @@ struct GuiHost
     /// `apps/terminal` paints a VT screen cell by cell and would not survive
     /// being routed through a display list.
     RaylibCanvas canvas() @system
-        => RaylibCanvas(&session.fonts, &drawScratch, session.cellW, session.cellH);
+    {
+        auto c = RaylibCanvas(&session.fonts, &drawScratch,
+            session.cellW, session.cellH);
+        c.images = &imageTextures;
+        return c;
+    }
 
     /**
     The window, the `HST3` companion to $(LREF canvas).
@@ -174,6 +194,12 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     // The terminal-grade keyboard, where the application asked for it: the
     // capability declaration IS the switch — RaylibEvents reads it back.
     host.capabilities.keyRelease = cfg.keyRelease;
+
+    // Uploaded textures are GL objects: free them here, while the context is
+    // still up. A destructor would run at an unspecified point relative to
+    // the window's own teardown, which is the classic way to leak or to free
+    // against a dead context.
+    scope (exit) host.imageTextures.release();
 
     // `HST19`: the window exists and the font has settled on a cell size, so
     // an application that lays out before its first frame can now do it.

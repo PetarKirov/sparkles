@@ -25,6 +25,9 @@ import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
     visualOf;
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
+import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
+import sparkles.ui.interp.immediate : paintImagePlaceholder;
+import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : BorderStyle, Visual;
 
@@ -166,6 +169,12 @@ struct RaylibCanvas
     float originX = 0;         /// pixel x of cell column 0
     float originY = 0;         /// pixel y of cell row 0
 
+    /// Uploaded images (borrowed), or `null`. Last, and defaulted, so the
+    /// canvas's many positional construction sites are unaffected — and so a
+    /// host that has not wired images up gets `IMG4`'s placeholder rather
+    /// than a null dereference.
+    ImageTextures* images;
+
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
 
@@ -301,6 +310,50 @@ struct RaylibCanvas
             drawBorder(x, y, w, h, v);
         if (v.arrow)
             drawArrow(x, y, v);
+    }
+
+    /**
+    Draws the registered image `handle` into `r` under `fit` (`IMG1`).
+
+    The optional raster primitive. Geometry is resolved in $(B pixels), not
+    cells: the destination is the cell rect scaled up, and `fitRect` places the
+    image inside it — so a `contain` letterbox lands on the pixel rather than
+    snapping to a cell boundary. The arithmetic is the toolkit's, shared with
+    every other target, because "contain" meaning two different things in the
+    window and the terminal is the sort of difference nothing catches.
+
+    With no cache attached, an unregistered handle, or an image with no pixels,
+    this falls through to the same `IMG4` placeholder a canvas without the
+    primitive would get. Degrading identically is the point; a GPU backend
+    silently drawing nothing would be the one case `IMG4` does not cover.
+    */
+    void image(in Rect r, ImageHandle handle, ImageFit fit,
+        scope const(char)[] alt, in Visual v) @system
+    {
+        Texture2D* tex = images is null ? null : images.resolve(handle);
+        if (tex is null)
+        {
+            paintImagePlaceholder(this, r, alt, v);
+            return;
+        }
+
+        const dest = Rect(cast(int) px(r.x), cast(int) py(r.y),
+            r.width * cellW, r.height * cellH);
+        const placed = fitRect(dest, Size(tex.width, tex.height), fit);
+
+        // `cover` overflows its box by design, so it is clipped to it —
+        // through the clip STACK rather than a bare scissor, so an image
+        // inside a scrolled viewport stays inside that viewport too.
+        const clipped = fit == ImageFit.cover;
+        if (clipped)
+            pushClip(r);
+        DrawTexturePro(*tex,
+            Rectangle(0, 0, cast(float) tex.width, cast(float) tex.height),
+            Rectangle(cast(float) placed.x, cast(float) placed.y,
+                cast(float) placed.width, cast(float) placed.height),
+            Vector2(0, 0), 0.0f, Color(255, 255, 255, v.fgAlpha));
+        if (clipped)
+            popClip();
     }
 
     /// Draws `text` at `at`, selecting the real bold/italic/strike/underline face

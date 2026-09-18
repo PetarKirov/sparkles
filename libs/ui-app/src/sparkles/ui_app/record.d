@@ -18,6 +18,7 @@ three targets" is checkable at $(I session) scope rather than only per widget.
 */
 module sparkles.ui_app.record;
 
+import sparkles.ui.image : ImageRegistry;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, cellPointer;
 import sparkles.ui.arena : GcArena;
@@ -97,6 +98,10 @@ struct RecordingHost
     void clipboard(scope const(char)[] text) pure nothrow { clipboardWrites ~= text.idup; }
     void title(scope const(char)[] t) pure nothrow { titles ~= t.idup; }
     void writeOutOfBand(scope const(char)[] seq) pure nothrow { outOfBand ~= seq.idup; }
+
+    /// Accepted and dropped, as on the terminal arm: a recording host paints
+    /// no pixels, so an image reaches it as `IMG4`'s placeholder.
+    void images(const(ImageRegistry)*) @safe pure nothrow @nogc {}
 
     /// Reported `false`, matching a terminal and Android — a test that assumes
     /// fullscreen exists should have to say so.
