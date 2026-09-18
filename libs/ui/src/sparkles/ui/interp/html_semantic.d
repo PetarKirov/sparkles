@@ -171,6 +171,18 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx)
             const n = encode(enc, node.glyph);
             escape(w, enc[0 .. n]);
             break;
+        case image:
+            // The same `IMG4` placeholder every other target shows: this
+            // module has no image encoder, so there is no `src` to emit and
+            // an `<img>` without one is a broken image rather than a
+            // degradation.
+            if (node.text.length)
+            {
+                put(w, "[");
+                escape(w, node.text);
+                put(w, "]");
+            }
+            break;
         case line, scrollbar, box:
             break;
         case row, column, stack, panel, popup:
