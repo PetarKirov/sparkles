@@ -33,6 +33,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 // disagree, with `--render` showing dashes the live terminal did not.
 import sparkles.ui.glyphs : projectGlyph;
 import sparkles.ui.interp.cells : accentGlyph, blend;
+import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
 import sparkles.ui.tokens : boxGlyphs, projectBorder, TargetCapabilities;
 
@@ -99,6 +100,14 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 break;
             case line:
                 canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
+                break;
+            case image:
+                // `IMG5`'s fallback half. No terminal image protocol is
+                // wired up yet — detection is the terminal's answer to give,
+                // and nothing in the tree gives it — so every image takes
+                // `IMG4`'s placeholder, through the SHARED routine rather
+                // than a second one written here.
+                paintImagePlaceholder(canvas, op.rect, op.imageAlt, op.visual);
                 break;
             case rule:
                 // The cell backend has no sub-cell resolution: a hairline

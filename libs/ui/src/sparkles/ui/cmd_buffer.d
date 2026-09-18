@@ -29,9 +29,11 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : RgbColor;
 
 import sparkles.ui.arena : FrameArena, GcArena, isArena;
-import sparkles.ui.canvas : boxChromeOf, DrawOp, FillRect, Glyph, inkOf, Line,
-    LineStyle, PopClip, PushClip, Rule, RuleEdge, Scrollbar, TextRun;
+import sparkles.ui.canvas : boxChromeOf, DrawOp, FillRect, Glyph, ImageDraw,
+    inkOf, Line, LineStyle, PopClip, PushClip, Rule, RuleEdge, Scrollbar,
+    TextRun;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
+import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.style : Slot, Visual;
 
 /// Operations held inline before the buffer reaches for the heap. A frame
@@ -193,6 +195,19 @@ if (isArena!Arena)
             expandPercent: expandPercent, edge: edge, slot: slot,
             trackGlyph: trackGlyph, thumbGlyph: thumbGlyph,
         ));
+    }
+
+    /// ditto — `alt` is interned, so a caller may hand over a transient
+    /// buffer the way it does for a text run (`IMG1`, `IMG4`).
+    void image(in Rect rect, ImageHandle handle,
+        ImageFit fit = ImageFit.contain, scope const(char)[] alt = null,
+        Slot slot = Slot.inherit, in Visual visual = Visual.init)
+    {
+        _ops ~= DrawOp(ImageDraw(
+            rect: rect, alt: _arena.intern(alt), handle: handle,
+            fg: visual.fg, fgAlpha: visual.fgAlpha, bg: visual.bg,
+            bgAlpha: visual.bgAlpha, hasBg: visual.hasBg,
+            fit: fit, slot: slot));
     }
 
     /// ditto
