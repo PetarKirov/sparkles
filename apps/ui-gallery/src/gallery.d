@@ -40,6 +40,7 @@ import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
 import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
+import sparkles.ui.image : ImageRegistry;
 import state;
 import term_store : TerminalStore;
 
@@ -146,6 +147,12 @@ struct Gallery
     widths into `s.navCols`/`s.inspCols` for the pure views.
     */
     DockContainer dock;
+
+    /// The Primitives page's specimen image and the bytes it was decoded
+    /// from (`IMG3`: the registry lives beside the tree, never inside it).
+    /// Registered on the first frame, because that is when a host exists.
+    private ImageRegistry images;
+    private ubyte[] imagePixels;
 
     private enum PaneId paneNav = 1;
     private enum PaneId paneContent = 2;
@@ -338,6 +345,24 @@ struct Gallery
     /// Remembers the host's coordinate mapping without advancing a frame.
     private void noteHost(H)(ref H h)
     {
+        // `IMG3`: register once, then hand the registry to whichever host we
+        // got. A terminal or recording host accepts it and draws `IMG4`'s
+        // placeholder; a window resolves the handle and draws pixels. The
+        // page below does not branch on which.
+        if (!s.sampleImage.valid)
+        {
+            imagePixels = swatchPixels(swatchSize);
+            s.sampleImage = images.register(imagePixels, swatchSize,
+                "a colour swatch");
+        }
+        // The host borrows the registry for the frame it is about to paint.
+        // `@trusted`: the host is created inside the run this component was
+        // handed to, so its lifetime is contained in this object's — the
+        // pointer cannot outlive the field it names.
+        auto imagesP = (() @trusted => &images)();
+        static if (__traits(compiles, h.images(imagesP)))
+            h.images(imagesP);
+
         s.surface = h.size;
         s.backend = h.backend;
         s.caps = h.capabilities;
