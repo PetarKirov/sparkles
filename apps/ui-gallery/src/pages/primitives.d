@@ -17,7 +17,8 @@ import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 import sparkles.ui.wrap : TextWrap;
 
 import kit;
-import state : GalleryState;
+import sparkles.ui.image : ImageFit;
+import state : GalleryState, swatchSize;
 
 @safe:
 
@@ -55,6 +56,19 @@ uint view(ref Builder b, in GalleryState s)
         barEdge: RuleEdge.right,
         barExpandPercent: 50,
         barTrackLit: true,
+    )));
+
+    // `IMG1`/`IMG2`: raster content as an ordinary leaf. In a window the
+    // handle resolves to pixels; in a terminal — and here, before the shell
+    // has registered anything — it is `IMG4`'s placeholder, which is the
+    // specimen worth showing either way.
+    leaves ~= specimen(b, "image", b.add(Widget(
+        kind: WidgetKind.image,
+        image: s.sampleImage,
+        imagePixels: swatchSize,
+        imageFit: ImageFit.contain,
+        text: "a colour swatch",
+        slot: Slot.chip,
     )));
 
     uint[] flows;
@@ -115,7 +129,7 @@ uint view(ref Builder b, in GalleryState s)
     )));
 
     uint[] body_;
-    body_ ~= heading(b, "Primitives · the eleven widget kinds");
+    body_ ~= heading(b, "Primitives · the twelve widget kinds");
     body_ ~= spacer(b);
     body_ ~= para(b,
         "Every tree in this catalog is built from these and nothing else. A "
@@ -198,6 +212,16 @@ private uint tile(ref Builder b, string text)
     static foreach (k; __traits(allMembers, WidgetKind))
         assert(seen[__traits(getMember, WidgetKind, k)],
             "no specimen for WidgetKind." ~ k);
+
+    // The two places that say how many there are, said in prose and therefore
+    // able to drift — as the nav subtitle had, reading "ten" against eleven
+    // kinds until an image made it twelve.
+    import registry : pages;
+    import std.algorithm : canFind, filter;
+
+    assert([__traits(allMembers, WidgetKind)].length == 12);
+    const primitives = pages.filter!(p => p.title == "Primitives").front;
+    assert(primitives.blurb.canFind("twelve"), "the nav blurb counts them");
 }
 
 @("ui_gallery.pages.primitivesStackChildrenShareAnOrigin")

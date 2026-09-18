@@ -13,6 +13,7 @@ page grows.
 */
 module state;
 
+import sparkles.ui.image : ImageHandle;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
@@ -306,6 +307,12 @@ struct GalleryState
     Timeline toast;      /// the transient "theme: nord" notice
     string toastText;    /// ditto
     bool hasFrameClock;  /// ditto — see `toastConfigFor`
+
+    /// The Primitives page's specimen image (`IMG3`) — registered once by the
+    /// shell, which is the side that has a host to bind the registry to. Null
+    /// until then, and a null handle is exactly what `IMG4` degrades on, so
+    /// the page reads the same either way.
+    ImageHandle sampleImage;
 
     // ── page-local ──────────────────────────────────────────────────────────
     LayoutDemo layoutDemo;   ///
@@ -665,4 +672,39 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
         if (i > 0)
             assert(b > bases[i - 1]);
     }
+}
+
+/// The Primitives page's specimen image, in pixels (`IMG2` needs an extent;
+/// the registry needs bytes). Small on purpose — it is a swatch, not a photo,
+/// and the toolkit decodes nothing, so a generated one keeps the catalog free
+/// of an asset pipeline it is not demonstrating.
+enum Size swatchSize = Size(64, 32);
+
+/// `swatchSize` worth of RGBA: a two-axis gradient under a checkerboard, so
+/// the aspect ratio and the fit are both readable at a glance.
+ubyte[] swatchPixels(in Size size) @safe pure nothrow
+{
+    auto px = new ubyte[](cast(size_t) size.width * size.height * 4);
+    foreach (y; 0 .. size.height)
+        foreach (x; 0 .. size.width)
+        {
+            const i = (cast(size_t) y * size.width + x) * 4;
+            const dark = ((x / 8) + (y / 8)) % 2 == 0;
+            px[i + 0] = cast(ubyte)(x * 255 / (size.width - 1));
+            px[i + 1] = cast(ubyte)(y * 255 / (size.height - 1));
+            px[i + 2] = dark ? 0x30 : 0xc0;
+            px[i + 3] = 0xFF;
+        }
+    return px;
+}
+
+@("ui_gallery.state.swatchIsFullyCoveredRgba")
+@safe pure nothrow unittest
+{
+    // The upload path rejects a buffer shorter than width*height*4 rather
+    // than reading uninitialised memory, so the generator must not produce
+    // one.
+    const px = swatchPixels(swatchSize);
+    assert(px.length == cast(size_t) swatchSize.width * swatchSize.height * 4);
+    assert(px[3] == 0xFF && px[$ - 1] == 0xFF, "opaque throughout");
 }
