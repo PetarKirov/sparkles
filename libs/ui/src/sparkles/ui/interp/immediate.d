@@ -9,10 +9,10 @@ interpreters are later siblings under `interp/`.
 */
 module sparkles.ui.interp.immediate;
 
-import sparkles.ui.canvas : DrawOp, FillRect, Glyph, isCanvas, Line, LineStyle,
-    match, OpKind, PopClip, PushClip, Rule, RuleEdge, ruleSpan, Scrollbar,
-    scrollbarCell, scrollbarCellCount, TextRun, visualOf;
-import sparkles.ui.geometry : Point;
+import sparkles.ui.canvas : DrawOp, FillRect, Glyph, ImageDraw, isCanvas, Line,
+    LineStyle, match, OpKind, PopClip, PushClip, Rule, RuleEdge, ruleSpan,
+    Scrollbar, scrollbarCell, scrollbarCellCount, TextRun, visualOf;
+import sparkles.ui.geometry : cellsOf, Point, Rect;
 import sparkles.ui.style : Visual;
 
 /**
@@ -67,6 +67,19 @@ if (isCanvas!Canvas)
                 else
                     paintScrollbarCells(canvas, s);
             },
+            (in ImageDraw i)
+            {
+                // Raster content is an OPTIONAL primitive. A canvas that can
+                // draw it gets the op; one that cannot gets `IMG4`'s visible,
+                // declared placeholder — never silence, which would leave a
+                // hole in the layout with nothing to say what belonged there.
+                const vis = visualOf(i);
+                static if (__traits(compiles,
+                    canvas.image(i.rect, i.handle, i.fit, i.alt, vis)))
+                    canvas.image(i.rect, i.handle, i.fit, i.alt, vis);
+                else
+                    paintImagePlaceholder(canvas, i.rect, i.alt, vis);
+            },
             (in PushClip c)
             {
                 // The clipping pair is an optional canvas capability: forward
@@ -81,6 +94,50 @@ if (isCanvas!Canvas)
                     canvas.popClip();
             },
         );
+}
+
+/**
+`IMG4`: what an image looks like on a canvas that cannot draw one.
+
+A filled box the size the image was allocated — so the page keeps its shape —
+with the alt text in brackets across it, truncated to what fits. Bracketed
+because a placeholder must not read as content: `[a bar chart]` is visibly a
+stand-in, where the bare words are just a label.
+
+$(B Public because it is the shared degradation, not this module's.) A backend
+with its own op dispatch — $(REF paintGrid, sparkles,ui_tui,grid_canvas) — must
+degrade the same way, and a second hand-written placeholder is exactly the kind
+of per-target shortfall `IMG4` exists to rule out. Takes the rect and the alt
+rather than an `ImageDraw`, so a dispatcher holding a `DrawOp` can call it
+through the accessors.
+*/
+void paintImagePlaceholder(Canvas)(ref Canvas canvas, in Rect rect,
+    scope const(char)[] alt, in Visual vis)
+{
+    if (rect.width <= 0 || rect.height <= 0)
+        return;
+
+    canvas.fillRect(rect, vis);
+    if (alt.length == 0)
+        return;
+
+    // Centre one line of `[alt]`, clipped to the box rather than spilling out
+    // of it — the surrounding layout was sized for the image, not the words.
+    const y = rect.y + (rect.height - 1) / 2;
+    const(char)[] text = alt;
+    int width = cast(int) cellsOf(text) + 2; // the brackets
+    while (width > rect.width && text.length)
+    {
+        text = text[0 .. $ - 1];
+        width = cast(int) cellsOf(text) + 2;
+    }
+    if (text.length == 0)
+        return;
+
+    const x = rect.x + (rect.width - width) / 2;
+    canvas.textRun(Point(x, y), "[", vis);
+    canvas.textRun(Point(x + 1, y), text, vis);
+    canvas.textRun(Point(x + width - 1, y), "]", vis);
 }
 
 private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
@@ -250,4 +307,69 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
     // A degenerate rect must not index outside itself.
     ruleEndpoints(Rect(5, 5, 0, 0), RuleEdge.bottom, f, t);
     assert(f == Point(5, 5) && t == Point(5, 5));
+}
+
+@("ui.interp.immediate.imageFallsBackToTheAltPlaceholder")
+@safe unittest
+{
+    import sparkles.ui.canvas : imageOp, OpKind, RecordingCanvas;
+    import sparkles.ui.geometry : Rect;
+    import sparkles.ui.image : ImageFit, ImageHandle;
+
+    // A canvas with no raster primitive must still show that something was
+    // there, and what (`IMG4`). Silence would leave a hole the layout already
+    // reserved space for — the same wrong degradation `rule` used to have.
+    // A minimal conforming canvas: the five required primitives and nothing
+    // optional, so `image` genuinely is not there to forward to.
+    static struct NoRasters
+    {
+        import sparkles.ui.canvas : DrawOp, fillRectOp, glyphOp, lineOp,
+            textRunOp;
+        import sparkles.ui.geometry : cellsOf, Size;
+        import sparkles.ui.style : Slot;
+
+        DrawOp[] ops;
+
+    @safe nothrow:
+        void fillRect(in Rect r, in Visual v) { ops ~= fillRectOp(r, Slot.inherit, v); }
+        void textRun(in Point at, scope const(char)[] t, in Visual v)
+        {
+            ops ~= textRunOp(Rect(at.x, at.y, cast(int) cellsOf(t), 1),
+                t.idup, Slot.inherit, v);
+        }
+        void glyph(in Point at, dchar g, in Visual v) { ops ~= glyphOp(at, g, Slot.inherit, v); }
+        void line(in Point a, in Point b, in Visual v, LineStyle st) { ops ~= lineOp(a, b, st, Slot.inherit, v); }
+        Size measure(scope const(char)[] t) const => Size(cast(int) cellsOf(t), 1);
+    }
+
+    static assert(isCanvas!NoRasters);
+    static assert(!__traits(compiles, (ref NoRasters c) => c.image));
+
+    NoRasters c;
+    paint(c, [imageOp(Rect(2, 3, 15, 5), ImageHandle(1), ImageFit.contain,
+        "a bar chart")]);
+
+    assert(c.ops.length == 4, "a fill plus the bracketed alt");
+    assert(c.ops[0].kind == OpKind.fillRect);
+    assert(c.ops[0].rect == Rect(2, 3, 15, 5), "the box keeps its shape");
+    assert(c.ops[1].text == "[");
+    assert(c.ops[2].text == "a bar chart");
+    assert(c.ops[3].text == "]");
+    // Centred on the middle row of the box, and within it.
+    assert(c.ops[1].rect.origin == Point(3, 5), "13 cells centred in 15");
+    assert(c.ops[3].rect.origin == Point(15, 5));
+
+    // Narrower than the alt: truncated to the box, never spilling past it.
+    NoRasters narrow;
+    paint(narrow, [imageOp(Rect(0, 0, 6, 1), ImageHandle(1), ImageFit.contain,
+        "a bar chart")]);
+    assert(narrow.ops[2].text == "a ba");
+    assert(narrow.ops[3].rect.origin.x == 5);
+
+    // A canvas that CAN draw rasters gets the op itself, not the placeholder.
+    RecordingCanvas real_;
+    paint(real_, [imageOp(Rect(2, 3, 12, 5), ImageHandle(1), ImageFit.cover,
+        "a bar chart")]);
+    assert(real_.ops.length == 1 && real_.ops[0].kind == OpKind.image);
+    assert(real_.ops[0].imageFit == ImageFit.cover);
 }

@@ -49,6 +49,7 @@ public import std.sumtype : match;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : Point, Rect, Size, cellsOf;
+import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.style : BoxBorder, FontRole, Shadow, Slot, Visual;
@@ -94,6 +95,7 @@ enum OpKind : ubyte
     line,      /// stroke `rect.origin` → `to`
     rule,      /// a hairline along `ruleEdge` of `rect`
     scrollbar, /// a semantic scrollbar band along `ruleEdge` of `rect`
+    image,     /// draw the registered image `handle` into `rect` (`IMG1`)
     pushClip,  /// clip subsequent operations to `rect` (nested clips intersect)
     popClip,   /// undo the matching `pushClip`
 }
@@ -231,6 +233,38 @@ struct Scrollbar
     dchar thumbGlyph = '█'; /// the cell fallback's thumb glyph
 }
 
+/**
+Draw the registered image `handle` into `rect` under `fit` (`IMG1`).
+
+$(B The pixels are not here, and neither is the registry.) The operation
+carries a handle — four bytes — because $(REF ImageRegistry, sparkles,ui,image)
+owns the decoded bytes and a backend resolves the handle when it paints. That
+is what keeps a relayout from re-decoding and the op stream from growing.
+
+$(B `alt` rides along rather than being looked up.) A canvas that cannot draw
+rasters must show the alt text (`IMG4`), and that degradation lives in the
+painter — which takes an op stream and a canvas, and no registry. Carrying the
+slice keeps it that way; like $(LREF TextRun.text) it is borrowed from the
+arena that interned it.
+*/
+struct ImageDraw
+{
+    Rect rect;
+    const(char)[] alt;   /// what a canvas without rasters shows instead
+    ImageHandle handle;  /// the registry entry to draw
+    // The placeholder's colours, inlined exactly as $(LREF FillRect) inlines
+    // them — because the placeholder IS a fill plus a text run, and because a
+    // whole `Ink` here costs 18 bytes and pushes the operation past 64.
+    // A backend that draws the image reads none of these.
+    RgbColor fg;
+    ubyte fgAlpha = 0xFF;
+    RgbColor bg;
+    ubyte bgAlpha = 0xFF;
+    bool hasBg;
+    ImageFit fit = ImageFit.contain;
+    Slot slot = Slot.inherit;
+}
+
 /// Clip subsequent operations to `rect`; nested clips intersect.
 struct PushClip
 {
@@ -255,7 +289,7 @@ private const(char)[] launder(scope const(char)[] s) @trusted pure nothrow @nogc
 
 /// The sum itself: exactly one of the payloads above.
 alias Payload = SumType!(FillRect, TextRun, Glyph, Line, Rule, Scrollbar,
-    PushClip, PopClip);
+    ImageDraw, PushClip, PopClip);
 
 /**
 One reified drawing command in abstract cell space.
@@ -347,6 +381,7 @@ struct DrawOp
             },
             (ref Rule r) { r.rect = moved(r.rect, dx, dy); },
             (ref Scrollbar s) { s.rect = moved(s.rect, dx, dy); },
+            (ref ImageDraw i) { i.rect = moved(i.rect, dx, dy); },
             (ref PushClip c) { c.rect = moved(c.rect, dx, dy); },
             (ref PopClip _) {},
         );
@@ -363,6 +398,7 @@ struct DrawOp
             (in Line _) => OpKind.line,
             (in Rule _) => OpKind.rule,
             (in Scrollbar _) => OpKind.scrollbar,
+            (in ImageDraw _) => OpKind.image,
             (in PushClip _) => OpKind.pushClip,
             (in PopClip _) => OpKind.popClip,
         );
@@ -382,6 +418,7 @@ struct DrawOp
             (in Line l) => Rect(l.from.x, l.from.y, 0, 0),
             (in Rule r) => r.rect,
             (in Scrollbar s) => s.rect,
+            (in ImageDraw i) => i.rect,
             (in PushClip c) => c.rect,
             (in PopClip _) => Rect.init,
         );
@@ -430,6 +467,7 @@ struct DrawOp
             (in Line l) => l.slot,
             (in Rule r) => r.slot,
             (in Scrollbar s) => s.slot,
+            (in ImageDraw i) => i.slot,
             _ => Slot.inherit,
         );
 
@@ -455,6 +493,27 @@ struct DrawOp
     dchar barThumbGlyph()
         => payload.match!((in Scrollbar s) => s.thumbGlyph, _ => '\u2588');
 
+    /// The image this operation draws, or the null handle (`IMG1`).
+    ImageHandle imageHandle()
+        => payload.match!((in ImageDraw i) => i.handle, _ => ImageHandle.init);
+
+    /// How that image fills its rect.
+    ImageFit imageFit()
+        => payload.match!((in ImageDraw i) => i.fit, _ => ImageFit.contain);
+
+    /**
+    The image's alt text — what a canvas without rasters shows instead
+    (`IMG4`), empty for every other kind.
+
+    Laundered for the same reason, and on the same guarantee, as
+    $(LREF DrawOp.text): the bytes belong to the arena, not to this `scope`
+    operation.
+    */
+    const(char)[] imageAlt() @trusted
+        => payload.match!(
+            (ref const ImageDraw i) => launder(i.alt),
+            _ => cast(const(char)[]) null);
+
     /**
     The operation's appearance as a whole `Visual`, for the canvas seam — which
     still speaks `Visual`, so no backend had to learn the payloads.
@@ -473,6 +532,7 @@ struct DrawOp
             (in Line l) => visualOf(l.ink),
             (in Rule r) => visualOf(r.ink),
             (in Scrollbar s) => visualOf(s),
+            (in ImageDraw i) => visualOf(i),
             _ => Visual.init,
         );
 }
@@ -540,6 +600,18 @@ Visual visualOf(in FillRect f) @safe pure nothrow @nogc
 }
 
 /// ditto
+Visual visualOf(in ImageDraw i) @safe pure nothrow @nogc
+{
+    Visual v;
+    v.fg = i.fg;
+    v.fgAlpha = i.fgAlpha;
+    v.bg = i.bg;
+    v.bgAlpha = i.bgAlpha;
+    v.hasBg = i.hasBg;
+    return v;
+}
+
+/// ditto
 Visual visualOf(in Scrollbar s) @safe pure nothrow @nogc
 {
     Visual v;
@@ -565,6 +637,7 @@ Visual visual(in DrawOp op) @safe pure nothrow @nogc
         (in Line l) => visualOf(l.ink),
         (in Rule r) => visualOf(r.ink),
         (in Scrollbar s) => visualOf(s),
+        (in ImageDraw i) => visualOf(i),
         _ => Visual.init,
     );
 
@@ -612,6 +685,22 @@ DrawOp lineOp(in Point from, in Point to, LineStyle style = LineStyle.solid,
 DrawOp ruleOp(in Rect rect, RuleEdge edge, Slot slot = Slot.inherit,
     in Visual visual = Visual.init) @safe pure nothrow @nogc
     => DrawOp(Rule(rect: rect, ink: inkOf(visual), edge: edge, slot: slot));
+
+/**
+An image over storage the caller vouches for.
+
+`string` alt text — a literal, or a document-owned buffer — is the one text an
+operation may point at without an arena to intern it into, exactly as
+$(LREF textRunOp) states. Anything shorter-lived goes through
+$(REF CmdBuffer.image, sparkles,ui,cmd_buffer), which copies.
+*/
+DrawOp imageOp(in Rect rect, ImageHandle handle,
+    ImageFit fit = ImageFit.contain, string alt = null,
+    Slot slot = Slot.inherit, in Visual visual = Visual.init)
+    @safe pure nothrow @nogc
+    => DrawOp(ImageDraw(rect: rect, alt: alt, handle: handle,
+        fg: visual.fg, fgAlpha: visual.fgAlpha, bg: visual.bg,
+        bgAlpha: visual.bgAlpha, hasBg: visual.hasBg, fit: fit, slot: slot));
 
 /// ditto
 DrawOp pushClipOp(in Rect rect) @safe pure nothrow @nogc
@@ -765,6 +854,16 @@ struct RecordingCanvas
         ops ~= lineOp(from, to, style, Slot.inherit, v);
     }
 
+    // The optional raster primitive — recorded so a test can assert an image
+    // reached the canvas rather than its `IMG4` placeholder.
+    void image(in Rect r, ImageHandle handle, ImageFit fit,
+        scope const(char)[] alt, in Visual v)
+    {
+        ops ~= DrawOp(ImageDraw(rect: r, alt: _arena.intern(alt),
+            handle: handle, fg: v.fg, fgAlpha: v.fgAlpha, bg: v.bg,
+            bgAlpha: v.bgAlpha, hasBg: v.hasBg, fit: fit));
+    }
+
     // The optional clipping pair — recorded so tests can assert scissor
     // bracketing without a real backend.
     void pushClip(in Rect r)
@@ -902,4 +1001,45 @@ unittest
     // A question the arm cannot answer reports the neutral value rather than
     // reading another arm's bytes.
     assert(ops[0].text.length == 0 && ops[0].glyph == dchar.init);
+}
+
+@("ui.canvas.image.addressesByHandleAndCarriesItsAlt")
+@safe pure nothrow @nogc
+unittest
+{
+    // `IMG1`: the op names the image, states the fit, and carries the text a
+    // canvas without rasters shows instead — no pixels, no registry.
+    const op = imageOp(Rect(4, 2, 20, 10), ImageHandle(7), ImageFit.cover,
+        "a bar chart", Slot.surface);
+    assert(op.kind == OpKind.image);
+    assert(op.rect == Rect(4, 2, 20, 10));
+    assert(op.imageHandle == ImageHandle(7));
+    assert(op.imageFit == ImageFit.cover);
+    assert(op.imageAlt == "a bar chart");
+    assert(op.slot == Slot.surface);
+
+    // It is not a text run, and asking a text run about images says so.
+    assert(op.text.length == 0);
+    const run = textRunOp(Rect(0, 0, 2, 1), "hi");
+    assert(!run.imageHandle.valid && run.imageAlt.length == 0);
+
+    // Geometry moves with the rest.
+    DrawOp moved = op;
+    moved.translate(3, 1);
+    assert(moved.rect == Rect(7, 3, 20, 10));
+}
+
+@("ui.canvas.image.recorderCapturesTheOpAndInternsTheAlt")
+@safe
+unittest
+{
+    RecordingCanvas c;
+    {
+        char[8] scratch = "logo   \0";
+        c.image(Rect(0, 0, 4, 2), ImageHandle(1), ImageFit.contain,
+            scratch[0 .. 4], Visual.init);
+        scratch[] = '?';
+    }
+    assert(c.ops.length == 1 && c.ops[0].kind == OpKind.image);
+    assert(c.ops[0].imageAlt == "logo", "alt is interned, not borrowed");
 }

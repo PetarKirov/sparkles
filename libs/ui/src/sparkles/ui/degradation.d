@@ -22,7 +22,7 @@ import std.traits : EnumMembers, getUDAs;
 import sparkles.base.term_color : ColorDepth, RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
-    PopClip, PushClip, Rule, Scrollbar, TextRun;
+    ImageDraw, PopClip, PushClip, Rule, Scrollbar, TextRun;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
 import sparkles.ui.style : BorderStyle, FontRole;
@@ -268,6 +268,9 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                 if (!caps.alpha && (s.fgAlpha != 0xFF || (s.trackLit && s.trackAlpha != 0xFF)))
                     r.note(Substitution.alphaFlattened);
             },
+            // An image is its `IMG4` placeholder on any target without a
+            // raster primitive: a bracketed alt text, in the op's colours.
+            (in ImageDraw i) { color(); glyphs(i.alt); },
             (in PushClip _) {},
             (in PopClip _) {},
         );
