@@ -349,7 +349,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
                     foreach (ref const s; node.spans)
                         addText(inner.y, s.text, s.srcStart, s.srcEnd);
                 break;
-            case glyph, line, scrollbar, box:
+            case glyph, line, scrollbar, box, image:
                 break;
             case row, column, stack, panel, popup:
                 foreach (ci; node.children)

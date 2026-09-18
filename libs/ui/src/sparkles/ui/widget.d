@@ -17,9 +17,10 @@ module sparkles.ui.widget;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.canvas : LineStyle, RuleEdge;
-import sparkles.ui.geometry : Insets, Point, SizeSpec;
+import sparkles.ui.geometry : Insets, Point, Size, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, StateSet, TextStyle;
 import sparkles.ui.wrap : TextWrap;
+import sparkles.ui.image : ImageFit, ImageHandle;
 
 @safe:
 
@@ -48,6 +49,7 @@ enum WidgetKind : ubyte
     text,   /// a text run
     rich,   /// a text run of styled spans (`spans` payload; `WGT6`)
     glyph,  /// a single glyph
+    image,  /// raster content addressed by handle (`IMG2`)
     line,   /// a stroked line (connector / underline)
     scrollbar, /// a semantic scrollbar leaf (content units + expansion)
     row,    /// horizontal container (children left→right, `gap` between)
@@ -96,6 +98,21 @@ struct Widget
     /// list items align under their text, not under the bullet).
     int hangIndent;
     dchar glyph;             /// `glyph` payload
+
+    /// `image` payload (`IMG2`): which registered image, how it fills its
+    /// box, and the extent it was decoded at.
+    ///
+    /// $(B The pixel size is on the node, not looked up.) `layout` is a pure
+    /// function of the tree and must stay one; a view that registered the
+    /// image already knows its extent, and layout converts that to cells
+    /// through the measurer's metrics. So the registry never enters the
+    /// layout pass — only the backend that finally paints resolves the handle.
+    /// The node's `text` is the image's alt text (`IMG4`).
+    ImageHandle image;
+    /// ditto
+    Size imagePixels;
+    /// ditto
+    ImageFit imageFit = ImageFit.contain;
     LineStyle lineStyle;     /// `line` stroke style
     Point lineTo;            /// `line` end, relative to the node origin
 
