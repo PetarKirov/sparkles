@@ -31,6 +31,7 @@ module sparkles.ui.layout;
 
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
+import sparkles.ui.image : cellPixelsOf, imageCells;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans;
 
@@ -287,6 +288,13 @@ if (isTextMeasure!TM)
             case line:
                 content = absInt(node.lineTo.x);
                 break;
+            case image:
+                // `IMG2`: an intrinsic box like any other, its extent the
+                // image's pixels converted through the measurer's cell
+                // metrics. The registry is not consulted — the node carries
+                // the pixel size, so this pass stays pure.
+                content = imageCells(node.imagePixels, cellPixelsOf(tm)).width;
+                break;
             case box:
                 break;
             case row:
@@ -401,6 +409,9 @@ if (isTextMeasure!TM)
             case line:
                 content = node.lineTo.y == 0 ? 1 : absInt(node.lineTo.y);
                 break;
+            case image:
+                content = imageCells(node.imagePixels, cellPixelsOf(tm)).height;
+                break;
             case box:
                 break;
             case row:
@@ -449,7 +460,7 @@ if (isTextMeasure!TM)
 
         final switch (node.kind) with (WidgetKind)
         {
-            case text, rich, glyph, line, scrollbar, box:
+            case text, rich, glyph, line, scrollbar, box, image:
                 break; // leaves (children.length == 0 already returned)
             case row:
             {

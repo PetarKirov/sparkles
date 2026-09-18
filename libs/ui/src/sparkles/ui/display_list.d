@@ -172,6 +172,13 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
         case glyph:
             ops.glyph(rect.origin, node.glyph, node.slot, vis);
             break;
+        case image:
+            // The node's `text` is the alt text, which the buffer interns —
+            // so a backend without rasters has something to show (`IMG4`)
+            // without the painter ever consulting a registry.
+            ops.image(rect, node.image, node.imageFit, node.text, node.slot,
+                vis);
+            break;
         case line:
             ops.line(rect.origin,
                 Point(rect.x + node.lineTo.x, rect.y + node.lineTo.y),
@@ -572,4 +579,55 @@ unittest
 
     assert(trackFgOf(true) == border, "an owned rule is border-coloured");
     assert(trackFgOf(false) == track, "a lane bar keeps the track slot");
+}
+
+@("ui.displayList.image.laysOutAsABoxAndEmitsOneOp")
+@safe unittest
+{
+    import std.algorithm : filter;
+    import std.array : array;
+    import sparkles.ui.image : defaultCellPixels, ImageFit, ImageRegistry;
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Builder;
+
+    // The view registers once; the tree it rebuilds carries a handle (`IMG3`).
+    ImageRegistry reg;
+    const chart = reg.register(null, Size(64, 48), "quarterly revenue");
+
+    auto b = Builder();
+    const img = b.add(Widget(
+        kind: WidgetKind.image,
+        image: chart,
+        imagePixels: reg.sizeOf(chart),
+        imageFit: ImageFit.contain,
+        text: "quarterly revenue",
+    ));
+    const caption = b.add(Widget(kind: WidgetKind.text, text: "Fig. 1"));
+    const col = b.container(WidgetKind.column, [img, caption]);
+    auto tree = b.finish(col);
+
+    const frames = layout(tree);
+
+    // `IMG2`: an ordinary box, sized from pixels through the cell metrics —
+    // 64x48 over an 8x16 cell is 8x3, and the caption sits below it rather
+    // than on top of it, which is the whole of "participates in layout".
+    assert(defaultCellPixels == Size(8, 16));
+    assert(frames[img].rect == Rect(0, 0, 8, 3));
+    assert(frames[caption].rect.y == 3);
+    // The column is as wide as the image, not as the six-cell caption.
+    assert(frames[col].rect.width == 8);
+
+    const pal = defaultTwoslashPalette();
+    auto ops = buildDisplayList(tree, frames, pal,
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+
+    const images = ops.filter!(o => o.kind == OpKind.image).array;
+    assert(images.length == 1);
+    assert(images[0].rect == Rect(0, 0, 8, 3));
+    assert(images[0].imageHandle == chart);
+    assert(images[0].imageFit == ImageFit.contain);
+    assert(images[0].imageAlt == "quarterly revenue",
+        "the node's text is the alt, interned by the buffer");
 }

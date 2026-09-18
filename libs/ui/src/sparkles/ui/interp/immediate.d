@@ -78,7 +78,7 @@ if (isCanvas!Canvas)
                     canvas.image(i.rect, i.handle, i.fit, i.alt, vis)))
                     canvas.image(i.rect, i.handle, i.fit, i.alt, vis);
                 else
-                    paintImagePlaceholder(canvas, i, vis);
+                    paintImagePlaceholder(canvas, i.rect, i.alt, vis);
             },
             (in PushClip c)
             {
@@ -103,23 +103,30 @@ A filled box the size the image was allocated — so the page keeps its shape �
 with the alt text in brackets across it, truncated to what fits. Bracketed
 because a placeholder must not read as content: `[a bar chart]` is visibly a
 stand-in, where the bare words are just a label.
+
+$(B Public because it is the shared degradation, not this module's.) A backend
+with its own op dispatch — $(REF paintGrid, sparkles,ui_tui,grid_canvas) — must
+degrade the same way, and a second hand-written placeholder is exactly the kind
+of per-target shortfall `IMG4` exists to rule out. Takes the rect and the alt
+rather than an `ImageDraw`, so a dispatcher holding a `DrawOp` can call it
+through the accessors.
 */
-private void paintImagePlaceholder(Canvas)(ref Canvas canvas,
-    in ImageDraw img, in Visual vis)
+void paintImagePlaceholder(Canvas)(ref Canvas canvas, in Rect rect,
+    scope const(char)[] alt, in Visual vis)
 {
-    if (img.rect.width <= 0 || img.rect.height <= 0)
+    if (rect.width <= 0 || rect.height <= 0)
         return;
 
-    canvas.fillRect(img.rect, vis);
-    if (img.alt.length == 0)
+    canvas.fillRect(rect, vis);
+    if (alt.length == 0)
         return;
 
     // Centre one line of `[alt]`, clipped to the box rather than spilling out
     // of it — the surrounding layout was sized for the image, not the words.
-    const y = img.rect.y + (img.rect.height - 1) / 2;
-    const(char)[] text = img.alt;
+    const y = rect.y + (rect.height - 1) / 2;
+    const(char)[] text = alt;
     int width = cast(int) cellsOf(text) + 2; // the brackets
-    while (width > img.rect.width && text.length)
+    while (width > rect.width && text.length)
     {
         text = text[0 .. $ - 1];
         width = cast(int) cellsOf(text) + 2;
@@ -127,7 +134,7 @@ private void paintImagePlaceholder(Canvas)(ref Canvas canvas,
     if (text.length == 0)
         return;
 
-    const x = img.rect.x + (img.rect.width - width) / 2;
+    const x = rect.x + (rect.width - width) / 2;
     canvas.textRun(Point(x, y), "[", vis);
     canvas.textRun(Point(x + 1, y), text, vis);
     canvas.textRun(Point(x + width - 1, y), "]", vis);

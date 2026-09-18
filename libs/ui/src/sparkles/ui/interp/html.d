@@ -182,6 +182,29 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "</span>");
             break;
 
+        case image:
+            // `IMG4`, in HTML. The registry holds decoded RGBA and this
+            // module has no encoder, so there is no `src` to emit and an
+            // `<img>` without one is a broken image, not a degradation. The
+            // honest answer is the same placeholder the painter draws —
+            // a box of the reserved size with the bracketed alt text — so
+            // all three targets degrade identically rather than each
+            // inventing its own shortfall.
+            put(w, "<div role=\"img\" aria-label=\"");
+            escape(w, node.text);
+            put(w, "\" style=\"");
+            boxStyle(w, node, vis);
+            put(w, ";display:flex;align-items:center;justify-content:center");
+            put(w, "\">");
+            if (node.text.length)
+            {
+                put(w, "[");
+                escape(w, node.text);
+                put(w, "]");
+            }
+            put(w, "</div>");
+            break;
+
         case line:
             // A stroked connector → a thin element with a bottom border.
             put(w, "<div style=\"height:1px;border-bottom:1px solid ");
