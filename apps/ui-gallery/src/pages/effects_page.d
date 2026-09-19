@@ -65,6 +65,17 @@ uint view(ref Builder b, in GalleryState s)
     ]);
     body_ ~= spacer(b);
 
+    // The tier boundary, in both directions. `curvature` rewrites POSITION,
+    // which needs a texture — so a window warps this panel and a terminal
+    // paints it untouched and says so. Seeing the same specimen differ
+    // between the two targets is the whole point of tiering by readable
+    // input; a page that only showed tier 0 would be showing the easy half.
+    body_ ~= section(b, "tier 1 · rewrites position (window only)", [
+        sample(b, "curvature", fx.curvature, w),
+        para(b, degradationNote(s), w > 8 ? w - 6 : w),
+    ]);
+    body_ ~= spacer(b);
+
     body_ ~= section(b, "the tiers", [
         kv(b, "0 · color", "position + its own colour → colour. Cell grid: yes."),
         kv(b, "1 · distortion", "rewrites position. Needs a texture."),
@@ -73,11 +84,21 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
     body_ ~= para(b,
         "Tier 0 is the part of the vocabulary every target can honour, which "
-        ~ "is why all three built-ins are tier 0: naming one costs an "
-        ~ "application nothing on a terminal.", w);
+        ~ "is why three of the four built-ins are tier 0: naming one costs "
+        ~ "an application nothing on a terminal. The fourth is here so the "
+        ~ "boundary is visible from both sides.", w);
 
     return column(b, body_);
 }
+
+/// What this target does with a tier-1 effect, read off the registry rather
+/// than assumed — which is what makes `EFX12`'s `degradation` field load
+/// bearing instead of decorative.
+private string degradationNote(in GalleryState s)
+    => s.guiCellW > 0
+        ? "This target renders the bracket to a texture, so the panel above is warped."
+        : "This target has no texture, so the panel above is painted unaffected — "
+        ~ "the degradation the effect declares, not a silent omission.";
 
 /// One specimen: a labelled panel of ordinary widgets under `effect`.
 private uint sample(ref Builder b, string caption, EffectId effect, int width)
@@ -135,7 +156,8 @@ private uint nested(ref Builder b, EffectId effect, int width)
 {
     import sparkles.ui.canvas : OpKind;
     import sparkles.ui.display_list : buildDisplayList;
-    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.effect : builtinEffects, Degradation, EffectRegistry,
+        EffectTier;
     import sparkles.ui.layout : layout;
     import sparkles.ui.style : defaultTwoslashPalette;
     import std.algorithm : count, filter;
@@ -155,13 +177,30 @@ private uint nested(ref Builder b, EffectId effect, int width)
     const pushes = ops.count!(o => o.kind == OpKind.pushEffect);
     assert(pushes == ops.count!(o => o.kind == OpKind.popEffect));
 
-    // Three built-ins as top-level specimens, plus the two of the nesting
+    // Four built-ins as top-level specimens, plus the two of the nesting
     // demonstration. The "none" specimen must NOT emit one: a null id is the
     // absence of an effect, not an effect that does nothing.
-    assert(pushes == 5, "three specimens plus the nested pair");
+    assert(pushes == 6, "four specimens plus the nested pair");
 
     const ids = ops.filter!(o => o.kind == OpKind.pushEffect).array;
+    size_t cellHonoured, textureOnly;
     foreach (ref op; ids)
-        assert(op.effectId.valid && reg.lookup(op.effectId).honouredByCells,
-            "every specimen on this page must survive to a cell grid");
+    {
+        assert(op.effectId.valid);
+        const rec = reg.lookup(op.effectId);
+        if (rec.honouredByCells)
+            ++cellHonoured;
+        else
+        {
+            ++textureOnly;
+            // `EFX12`: an effect a cell grid cannot honour must SAY what it
+            // does instead. A page specimen with no stated degradation would
+            // be the silent omission the requirement exists to prevent.
+            assert(rec.tier != EffectTier.color);
+            assert(rec.degradation == Degradation.unaffected);
+        }
+    }
+    // Both sides of the tier boundary are on the page. A catalogue showing
+    // only the tier a terminal can run would be showing the easy half.
+    assert(cellHonoured == 5 && textureOnly == 1);
 }
