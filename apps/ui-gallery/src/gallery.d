@@ -40,6 +40,7 @@ import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
 import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : builtinEffects, EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import state;
@@ -358,8 +359,14 @@ struct Gallery
         // The terminal arm is the one that HONOURS tier-0 (`EFX9`), which is
         // the inversion the tier model predicts and the Effects page explains.
         auto fxP = (() @trusted => &fx)();
-        static if (__traits(compiles, h.effects(fxP, RgbColor.init)))
-            h.effects(fxP, rgbOr(s.theme.defaultFg, 0xcc, 0xcc, 0xcc));
+        const fxFg = rgbOr(s.theme.defaultFg, 0xcc, 0xcc, 0xcc);
+        // Probe the EXACT expression that is about to run. Probing a
+        // stand-in (`h.effects(fxP, RgbColor.init)`) hid a plain missing
+        // import for a whole build: the trait was false because `RgbColor`
+        // was not in scope HERE, nothing failed to compile, and every effect
+        // silently degraded on the GPU arm.
+        static if (__traits(compiles, h.effects(fxP, fxFg)))
+            h.effects(fxP, fxFg);
 
         s.surface = h.size;
         s.backend = h.backend;
