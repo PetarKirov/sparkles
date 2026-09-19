@@ -283,6 +283,14 @@
         # needs a shader compiler to build an example that uses one.
         pkgs.glslang
 
+        # SPIR-V → GLSL, for `shader-compile`: the single-source effects under
+        # `libs/ui/shaders/` compile to SPIR-V through the dcompute-enabled LDC
+        # (`$SPARKLES_SHADER_LDC`), and spirv-cross turns that into the GLSL
+        # `sparkles:ui-raylib` loads. Committed like the `.spv` above, so CI
+        # needs neither — `shader-compile --verify` skips without the compiler.
+        pkgs.spirv-tools
+        pkgs.spirv-cross
+
         # Vulkan's validation layers, including synchronization validation —
         # the semaphore/fence reuse rules in `sparkles.ui_sdl3.frame` are the
         # kind that only a layer catches, and `--validation` is a no-op
