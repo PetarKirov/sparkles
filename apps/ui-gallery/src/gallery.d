@@ -40,6 +40,7 @@ import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
 import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
+import sparkles.ui.effect : builtinEffects, EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import state;
 import term_store : TerminalStore;
@@ -153,6 +154,10 @@ struct Gallery
     /// Registered on the first frame, because that is when a host exists.
     private ImageRegistry images;
     private ubyte[] imagePixels;
+
+    /// The effect registry (`EFX13`) and its built-in ids, registered on the
+    /// first frame beside the image one and bound to the host the same way.
+    EffectRegistry fx;
 
     private enum PaneId paneNav = 1;
     private enum PaneId paneContent = 2;
@@ -340,6 +345,8 @@ struct Gallery
             s.sampleImage = images.register(imagePixels, swatchSize,
                 "a colour swatch");
         }
+        if (!s.effects.scanlines.valid)
+            s.effects = builtinEffects(fx);
         // The host borrows the registry for the frame it is about to paint.
         // `@trusted`: the host is created inside the run this component was
         // handed to, so its lifetime is contained in this object's — the
@@ -347,6 +354,12 @@ struct Gallery
         auto imagesP = (() @trusted => &images)();
         static if (__traits(compiles, h.images(imagesP)))
             h.images(imagesP);
+
+        // The terminal arm is the one that HONOURS tier-0 (`EFX9`), which is
+        // the inversion the tier model predicts and the Effects page explains.
+        auto fxP = (() @trusted => &fx)();
+        static if (__traits(compiles, h.effects(fxP, RgbColor.init)))
+            h.effects(fxP, rgbOr(s.theme.defaultFg, 0xcc, 0xcc, 0xcc));
 
         s.surface = h.size;
         s.backend = h.backend;

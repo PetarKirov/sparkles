@@ -29,7 +29,8 @@ import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.render : paintFull;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.host : RunConfig;
-import sparkles.ui_tui.grid_canvas : paintGrid;
+import sparkles.ui.geometry : Rect;
+import sparkles.ui_tui.grid_canvas : EffectContext, paintGrid;
 
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
@@ -128,7 +129,12 @@ Grid renderGrid(in RenderRequest req)
     grid.resize(cast(ushort) req.width, cast(ushort) req.height);
     grid.clearTo(CellStyle(fg: Color.fromRgb(th.pageFg),
         bg: Color.fromRgb(th.pageBg)));
-    paintGrid(grid, th.pageBg, rec.lastOps);
+    // The effect context, so a tier-0 bracket is actually honoured here
+    // (`EFX9`) — a `--render` that dropped effects would be showing something
+    // the terminal does not.
+    auto fxP = (() @trusted => &app.fx)();
+    paintGrid(grid, th.pageBg, rec.lastOps, 0, 0, Rect.init,
+        EffectContext(fxP, th.pageFg));
     return grid;
 }
 
