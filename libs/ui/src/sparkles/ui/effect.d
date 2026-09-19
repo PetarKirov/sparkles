@@ -311,6 +311,12 @@ struct BuiltinEffects
     EffectId scanlines; /// alternate rows darkened — a CRT's horizontal raster
     EffectId phosphor;  /// tinted toward a monochrome phosphor's colour
     EffectId dim;       /// uniformly darkened, for an inactive pane
+    /// A 24-bit hue sweep across the bracket's COLUMNS, at each cell's own
+    /// luminance. The built-in set's per-column member: `scanlines` varies
+    /// down the rows and needs height to read, so a four-row panel shows it
+    /// as barely anything — this one varies along the axis a panel always
+    /// has, and puts a distinct truecolor value in every cell.
+    EffectId spectrum;
     /// Barrel distortion — $(B tier 1), so a cell grid cannot honour it and
     /// says so. The built-in set's proof that the tier boundary is real in
     /// both directions, and the shape `EFX21`'s CRT is built from.
@@ -331,6 +337,7 @@ BuiltinEffects builtinEffects(ref EffectRegistry reg) @safe pure nothrow
     b.scanlines = reg.registerTier0("scanlines", &scanlinesTier0, scanlinesGlsl);
     b.phosphor = reg.registerTier0("phosphor", &phosphorTier0, phosphorGlsl);
     b.dim = reg.registerTier0("dim", &dimTier0, dimGlsl);
+    b.spectrum = reg.registerTier0("spectrum", &spectrumTier0, spectrumGlsl);
     b.curvature = reg.register(EffectRecord(
         name: "curvature",
         tier: EffectTier.distortion,
@@ -409,6 +416,58 @@ vec3 effectColor(vec2 at, vec2 extent, vec3 color)
 };
 
 /**
+A 24-bit hue sweep across the bracket's columns, at each cell's own luminance.
+
+$(B Why a column-wise built-in exists.) `scanlines` varies down the rows, so
+it needs height before it reads as anything: in a four-row panel only one or
+two lines are ever darkened and the effect looks like noise. Position is two
+axes, and a specimen that only exercises one of them under-demonstrates the
+tier. This varies along `at.x`, which every bracket has plenty of, and lands a
+different truecolor value in each cell — so it also shows that a tier-0
+transform's output is a full 24-bit colour and not a palette pick.
+
+Luminance is kept, as in $(LREF phosphorTier0): the hue says where the cell is,
+the brightness still says what it is, and text stays readable.
+*/
+RgbColor spectrumTier0(in Tier0Input i) @safe pure nothrow @nogc
+{
+    const width = i.extent.width > 0 ? i.extent.width : 1;
+    const x = i.at.x < 0 ? 0 : (i.at.x >= width ? width - 1 : i.at.x);
+    // Six segments of 256 steps. Integer throughout: the ramp must agree with
+    // its GLSL twin cell for cell, and a float here would drift.
+    const luma = (299 * i.color.r + 587 * i.color.g + 114 * i.color.b) / 1000;
+    return scale(hueRamp((x * 1536) / width), luma > 255 ? 255 : luma, 255);
+}
+
+/// The fully-saturated hue ramp, `t` in `[0, 1536)`.
+private RgbColor hueRamp(int t) @safe pure nothrow @nogc
+{
+    const f = cast(ubyte)(t % 256);
+    const inv = cast(ubyte)(255 - f);
+    switch (t / 256)
+    {
+        case 0:  return RgbColor(255, f, 0);
+        case 1:  return RgbColor(inv, 255, 0);
+        case 2:  return RgbColor(0, 255, f);
+        case 3:  return RgbColor(0, inv, 255);
+        case 4:  return RgbColor(f, 0, 255);
+        default: return RgbColor(255, 0, inv);
+    }
+}
+
+/// ditto
+enum string spectrumGlsl = q{
+vec3 effectColor(vec2 at, vec2 extent, vec3 color)
+{
+    float w = max(extent.x, 1.0);
+    float h = floor(at.x) / w * 6.0;
+    float l = dot(color, vec3(0.299, 0.587, 0.114));
+    vec3 hue = clamp(abs(mod(h + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+    return hue * l;
+}
+};
+
+/**
 Barrel distortion: a tier-1 twin, so it rewrites POSITION and has no D half.
 
 `effectWarp` is the tier-1 entry point — the backend's wrapper samples at what
@@ -437,7 +496,7 @@ vec2 effectWarp(vec2 uv)
     // terminal honours — which is the inversion this gate exists to end.
     EffectRegistry reg;
     const b = builtinEffects(reg);
-    foreach (id; [b.scanlines, b.phosphor, b.dim])
+    foreach (id; [b.scanlines, b.phosphor, b.dim, b.spectrum])
     {
         const rec = reg.lookup(id);
         assert(rec.tier0 !is null, "the CPU half");
@@ -520,6 +579,42 @@ vec2 effectWarp(vec2 uv)
     assert(scanlinesTier0(Tier0Input(Point(0, 1), extent, black)) == black);
 }
 
+@("ui.effect.spectrum.variesAcrossColumnsAndKeepsLuminance")
+@safe pure nothrow @nogc unittest
+{
+    const extent = Size(24, 4);
+    const white = RgbColor(255, 255, 255);
+
+    // The point of the effect: neighbouring COLUMNS differ, and a whole
+    // column is one colour whatever row it is on. `scanlines` is the mirror
+    // of this, and a four-row panel is why both exist.
+    const a = spectrumTier0(Tier0Input(Point(0, 0), extent, white));
+    const b = spectrumTier0(Tier0Input(Point(1, 0), extent, white));
+    assert(a != b, "adjacent columns differ");
+    assert(a == spectrumTier0(Tier0Input(Point(0, 3), extent, white)),
+        "the row cannot change it");
+
+    // A sweep, not a repeat: 24 columns land on 24 distinct truecolor values.
+    RgbColor[24] seen;
+    foreach (x; 0 .. 24)
+    {
+        seen[x] = spectrumTier0(Tier0Input(Point(x, 0), extent, white));
+        foreach (y; 0 .. x)
+            assert(seen[y] != seen[x], "a distinct 24-bit colour per column");
+    }
+
+    // Luminance survives: a dim cell stays dim at the same hue position.
+    const dimmed = spectrumTier0(Tier0Input(Point(5, 0), extent, RgbColor(40, 40, 40)));
+    const bright = spectrumTier0(Tier0Input(Point(5, 0), extent, white));
+    assert(dimmed.r <= bright.r && dimmed.g <= bright.g && dimmed.b <= bright.b);
+    assert(bright.r + bright.g + bright.b > dimmed.r + dimmed.g + dimmed.b);
+
+    // Black stays black, and a degenerate extent cannot divide by zero.
+    const black = RgbColor(0, 0, 0);
+    assert(spectrumTier0(Tier0Input(Point(3, 0), extent, black)) == black);
+    assert(spectrumTier0(Tier0Input(Point(9, 0), Size(0, 0), white)).r == 255);
+}
+
 // ---------------------------------------------------------------------------
 // Theme rebinding (`EFX16`).
 // ---------------------------------------------------------------------------
@@ -553,6 +648,7 @@ struct ThemeEffects
     EffectBinding scanlines; ///
     EffectBinding phosphor;  ///
     EffectBinding dim;       ///
+    EffectBinding spectrum;  ///
 }
 
 /**
@@ -593,6 +689,8 @@ void applyThemeEffects(ref EffectRegistry reg, in BuiltinEffects builtin,
     bind(reg, builtin.phosphor, bindings.phosphor, "phosphor",
         &phosphorTier0, phosphorGlsl);
     bind(reg, builtin.dim, bindings.dim, "dim", &dimTier0, dimGlsl);
+    bind(reg, builtin.spectrum, bindings.spectrum, "spectrum",
+        &spectrumTier0, spectrumGlsl);
 }
 
 @("ui.effect.theme.rebindsABuiltinWithoutTheViewChanging")
