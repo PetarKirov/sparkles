@@ -7,17 +7,17 @@
    Themes            |                                                                         #
    Slots             | column 34 cells hang 2                                                  #
    Decoration        |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
-   Components        | | none - one line, clipped by whatever contains it                    | #
-   Tree              | | A widget names a semantic slot, ne                                  | #
-   Property tree     | +---------------------------------------------------------------------+ #
-   Table             |                                                                         #
-   Scrolling         | +---------------------------------------------------------------------+ #
-   State             | | greedy - break as late as possible                                  | #
-   Split             | | A widget names a semantic slot,                                     | #
-   Dock              | | never a concrete colour, and the                                    | |
-   Terminal          | | palette resolves it while the                                       | |
-                     | | display list is built.                                              | |
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | none - one line, clipped by whatever contains it                    | #
+   Components        | | A widget names a semantic slot, ne                                  | #
+   Tree              | +---------------------------------------------------------------------+ #
+   Property tree     |                                                                         #
+   Table             | +---------------------------------------------------------------------+ #
+   Scrolling         | | greedy - break as late as possible                                  | #
+   State             | | A widget names a semantic slot,                                     | #
+   Split             | | never a concrete colour, and the                                    | |
+   Dock              | | palette resolves it while the                                       | |
+   Terminal          | | display list is built.                                              | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |

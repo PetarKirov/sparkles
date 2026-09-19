@@ -7,17 +7,17 @@
    Themes            | through the headless host reproduces exactly what your keystrokes       #
    Slots             | produce.                                                                #
    Decoration        |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
-   Components        | | HoverState - topmost wins                                           | #
-   Tree              | |   one          two          three                                   | #
-   Property tree     | | hot            nothing                                              | #
-   Table             | | Move the pointer over a tile.                                       | |
-   Scrolling         | +---------------------------------------------------------------------+ |
- > State             |                                                                         |
-   Split             | +---------------------------------------------------------------------+ |
-   Dock              | | PressState - arm, then activate on the same target                  | |
-   Terminal          | | armed          -                                                    | |
-                     | | activated      -                                                    | |
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | HoverState - topmost wins                                           | #
+   Components        | |   one          two          three                                   | #
+   Tree              | | hot            nothing                                              | #
+   Property tree     | | Move the pointer over a tile.                                       | |
+   Table             | +---------------------------------------------------------------------+ |
+   Scrolling         |                                                                         |
+ > State             | +---------------------------------------------------------------------+ |
+   Split             | | PressState - arm, then activate on the same target                  | |
+   Dock              | | armed          -                                                    | |
+   Terminal          | | activated      -                                                    | |
                      | | Press one tile and release over another: nothing fires.             | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |

@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0msubtree effects, tier by tier[0m                                          [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mEffects * a bracket, not a post-pass[0m                                    [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mA widget carries an effect id; the display list brackets its subtree in[0m [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mpushEffect/popEffect, exactly as a clipping container brackets one in[0m   [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mpushClip/popClip. A backend that cannot honour an effect paints the[0m     [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0msubtree unaffected - a declared degradation, so a missing effect can[0m    [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m [0mnever take a frame down.[0m                                                [0m#[0m
+[0m [0m> [0;1mEffects[0m          [0m [0m|[0m                                                                         [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mtier 0 * a per-cell colour transform[0m                                [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m [0mnone[0m                             [0m                                  [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m [0m                        [0m         [0m                                  [0m|[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m [0mscanlines[0m                        [0m                                  [0m|[0m [0m|[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0m                        [0m         [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0mphosphor[0m                         [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0m                        [0m         [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0mdim[0m                              [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0m                                                                          [0m? keys   q quit[0m [0m

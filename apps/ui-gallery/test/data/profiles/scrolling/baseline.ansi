@@ -7,17 +7,17 @@
 [0m [0m  Themes[0m            [0m|[0m [0mabove the viewport get negative frames, and the display list culls[0m      [0m#[0m
 [0m [0m  Slots[0m             [0m|[0m [0mwhatever falls fully outside.[0m                                           [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m
-[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mforty rows in an eight-row viewport[0m                                 [0m|[0m [0m#[0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m 1  - a landmark row -[0m  [0m#[0m                                           [0m|[0m [0m#[0m
-[0m [0m  Property tree[0m     [0m|[0m [0m|[0m  2  the quick brown fox [0m|[0m                                           [0m|[0m [0m#[0m
-[0m [0m  Table[0m             [0m|[0m [0m|[0m  3  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
-[0m [0m> [0;1mScrolling[0m        [0m [0m|[0m [0m|[0m  4  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
-[0m [0m  State[0m             [0m|[0m [0m|[0m  5  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
-[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m 6  - a landmark row -[0m  [0m|[0m                                           [0m|[0m [0m|[0m
-[0m [0m  Dock[0m              [0m|[0m [0m|[0m  7  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m  8  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m  Effects[0m           [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mforty rows in an eight-row viewport[0m                                 [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0m 1  - a landmark row -[0m  [0m#[0m                                           [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m  2  the quick brown fox [0m|[0m                                           [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m  3  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m  4  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
+[0m [0m> [0;1mScrolling[0m        [0m [0m|[0m [0m|[0m  5  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0m 6  - a landmark row -[0m  [0m|[0m                                           [0m|[0m [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m  7  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m  8  the quick brown fox [0m|[0m                                           [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m                                                                         [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0;1mthe machine[0m                                                         [0m|[0m [0m|[0m

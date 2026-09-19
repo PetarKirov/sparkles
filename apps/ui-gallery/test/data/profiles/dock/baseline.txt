@@ -7,17 +7,17 @@
    Themes            | the reserved header rows, and where a pointer event goes. Nothing here  #
    Slots             | keeps a second copy of any of that.                                     #
    Decoration        |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
-   Components        | | the arrangement                                                     | #
-   Tree              | | explorer          | document  notes                                 | #
-   Property tree     | | 18 cells          |document                                         | #
-   Table             | | a file tree, say  |flexes                                           | #
-   Scrolling         | |                   |the thing being read                             | #
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | the arrangement                                                     | #
+   Components        | | explorer          | document  notes                                 | #
+   Tree              | | 18 cells          |document                                         | #
+   Property tree     | | a file tree, say  |flexes                                           | #
+   Table             | |                   |the thing being read                             | #
+   Scrolling         | |                   |                                                 | #
    State             | |                   |                                                 | #
-   Split             | |                   |                                                 | #
+   Split             | |                   |                                                 | |
  > Dock              | |                   |                                                 | |
    Terminal          | |                   |                                                 | |
-                     | |                   |                                                 | |
                      | |                   |                                                 | |
                      | |                   |                                                 | |
                      | |                                                                     | |

@@ -7,17 +7,17 @@
    Themes            | the caller's - cells here, pixels in a window.                          #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
-   Grid              | | the panes                                                           | #
-   Components        | | leading                 |trailing                                   | #
-   Tree              | | 24 cells                |46 cells                                   | #
-   Property tree     | | a file tree, say        |~and the document beside it                | #
+   Effects           | | the panes                                                           | #
+   Grid              | | leading                 |trailing                                   | #
+   Components        | | 24 cells                |46 cells                                   | #
+   Tree              | | a file tree, say        |~and the document beside it                | #
+   Property tree     | |                         |                                           | #
    Table             | |                         |                                           | #
-   Scrolling         | |                         |                                           | #
-   State             | +---------------------------------------------------------------------+ #
- > Split             |                                                                         #
-   Dock              | +---------------------------------------------------------------------+ #
-   Terminal          | | the machine                                                         | #
-                     | | size             24                                                 | #
+   Scrolling         | +---------------------------------------------------------------------+ #
+   State             |                                                                         #
+ > Split             | +---------------------------------------------------------------------+ #
+   Dock              | | the machine                                                         | #
+   Terminal          | | size             24                                                 | #
                      | | dragging         no                                                 | #
                      | | bounds           10 ~ 60                                            | #
                      | | pointer shape    default_                                           | #

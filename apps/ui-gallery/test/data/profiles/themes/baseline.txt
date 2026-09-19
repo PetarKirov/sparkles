@@ -7,17 +7,17 @@
  > Themes            | the whole window follow - nothing here is a preview pane.               #
    Slots             |                                                                         #
    Decoration        | selected tokyo-night (8 of 36) dark                                     #
-   Grid              |                                                                         #
-   Components        | +---------------------------------------------------------------------+ #
-   Tree              | | the catalog                                                         | #
-   Property tree     | |   dracula                                                           | #
-   Table             | |   nord                                                              | #
-   Scrolling         | |   monokai                                                           | #
-   State             | |   github-dark                                                       | #
-   Split             | |   github-light                                                      | #
-   Dock              | |   github-dark-dimmed                                                | #
-   Terminal          | | > tokyo-night                                                       | #
-                     | |   solarized-dark                                                    | #
+   Effects           |                                                                         #
+   Grid              | +---------------------------------------------------------------------+ #
+   Components        | | the catalog                                                         | #
+   Tree              | |   dracula                                                           | #
+   Property tree     | |   nord                                                              | #
+   Table             | |   monokai                                                           | #
+   Scrolling         | |   github-dark                                                       | #
+   State             | |   github-light                                                      | #
+   Split             | |   github-dark-dimmed                                                | #
+   Dock              | | > tokyo-night                                                       | #
+   Terminal          | |   solarized-dark                                                    | #
                      | |   solarized-light                                                   | #
                      | |   catppuccin-mocha                                                  | |
                      | |   catppuccin-macchiato                                              | |

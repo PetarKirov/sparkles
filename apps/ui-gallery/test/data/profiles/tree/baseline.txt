@@ -7,17 +7,17 @@
    Themes            | identity. flatten turns the two into visible rows and precomputes the   #
    Slots             | guide rails, so no renderer re-derives them.                            #
    Decoration        |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
-   Components        | | your view                                                           | #
- > Tree              | | +- > src/                                                           | #
-   Property tree     | | +- > docs/                                                          | #
-   Table             | | +- * README.md                                                      | #
-   Scrolling         | +---------------------------------------------------------------------+ #
-   State             |                                                                         #
-   Split             | +---------------------------------------------------------------------+ #
-   Dock              | | the same data, everything open                                      | |
-   Terminal          | | +- v src/                                                           | |
-                     | | |  +- v sparkles/                                                   | |
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | your view                                                           | #
+   Components        | | +- > src/                                                           | #
+ > Tree              | | +- > docs/                                                          | #
+   Property tree     | | +- * README.md                                                      | #
+   Table             | +---------------------------------------------------------------------+ #
+   Scrolling         |                                                                         #
+   State             | +---------------------------------------------------------------------+ #
+   Split             | | the same data, everything open                                      | |
+   Dock              | | +- v src/                                                           | |
+   Terminal          | | |  +- v sparkles/                                                   | |
                      | | |  |  +- * widget.d                                                 | |
                      | | |  |  +- * layout.d                                                 | |
                      | | |  |  +- * theme.d                                                  | |

@@ -7,9 +7,10 @@
    Themes            | paints the diagram board and this page - a widget preview here, DrawOps #
    Slots             | on the infinite canvas.                                                 #
    Decoration        |                                                                         #
- > Grid              | +---------------------------------------------------------------------+ #
-   Components        | | Default (RND4)                                                      | #
-   Tree              | | +----------------------------------------+                          | #
+   Effects           | +---------------------------------------------------------------------+ #
+ > Grid              | | Default (RND4)                                                      | #
+   Components        | | +----------------------------------------+                          | #
+   Tree              | | |                                        |                          | |
    Property tree     | | |                                        |                          | |
    Table             | | |                                        |                          | |
    Scrolling         | | |                                        |                          | |
@@ -17,7 +18,6 @@
    Split             | | |                                        |                          | |
    Dock              | | |                                        |                          | |
    Terminal          | | |                                        |                          | |
-                     | | |                                        |                          | |
                      | | |                                        |                          | |
                      | | |                                        |                          | |
                      | | +----------------------------------------+                          | |

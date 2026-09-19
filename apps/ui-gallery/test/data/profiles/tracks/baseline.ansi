@@ -7,17 +7,17 @@
 [0m [0m  Themes[0m            [0m|[0m [0mleftover is distributed with integer divmod and an explicit remainder,[0m   [0m
 [0m [0m  Slots[0m             [0m|[0m [0mso the parts always sum to exactly the whole.[0m                            [0m
 [0m [0m  Decoration[0m        [0m|[0m                                                                          [0m
-[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mresolution[0m                                                          [0m|[0m  [0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mtemplate[0m auto auto auto                                             [0m|[0m  [0m
-[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0mavailable[0m 48 cells, gap 1                                           [0m|[0m  [0m
-[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mcontent[0m 8  14  6                                                    [0m|[0m  [0m
-[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mresolved[0m [0m8  14  6[0m                                                   [0m|[0m  [0m
-[0m [0m  State[0m             [0m|[0m [0m|[0m [0msum + gaps[0m [0m30[0m                                                       [0m|[0m  [0m
-[0m [0m  Split[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
-[0m [0m  Dock[0m              [0m|[0m                                                                          [0m
-[0m [0m  Terminal[0m          [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
-[0m                     [0m|[0m [0m|[0m [0;1mthe tracks[0m                                                          [0m|[0m  [0m
+[0m [0m  Effects[0m           [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mresolution[0m                                                          [0m|[0m  [0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0mtemplate[0m auto auto auto                                             [0m|[0m  [0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mavailable[0m 48 cells, gap 1                                           [0m|[0m  [0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0mcontent[0m 8  14  6                                                    [0m|[0m  [0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mresolved[0m [0m8  14  6[0m                                                   [0m|[0m  [0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0msum + gaps[0m [0m30[0m                                                       [0m|[0m  [0m
+[0m [0m  State[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
+[0m [0m  Split[0m             [0m|[0m                                                                          [0m
+[0m [0m  Dock[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0;1mthe tracks[0m                                                          [0m|[0m  [0m
 [0m                     [0m|[0m [0m|[0m [0mauto 8[0m  [0m [0mauto 14       [0m [0mauto 6[0m                                      [0m|[0m  [0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m  [0m
 [0m                     [0m|[0m                                                                          [0m

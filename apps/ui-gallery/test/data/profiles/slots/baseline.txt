@@ -7,17 +7,17 @@
    Themes            | built. Nothing below hardcodes a colour - press ] and every swatch      #
  > Slots             | re-resolves.                                                            #
    Decoration        |                                                                         |
-   Grid              | +---------------------------------------------------------------------+ |
-   Components        | | text                                                                | |
-   Tree              | | inherit            Aa 0123    #a9b1d6       -                       | |
-   Property tree     | | textPrimary        Aa 0123    #a9b1d6       -                       | |
-   Table             | | textSecondary      Aa 0123    #8d93b3       -                       | |
-   Scrolling         | | muted              Aa 0123    #777d99       -                       | |
-   State             | | textDisabled       Aa 0123    #5b5f76 50%   -                       | |
-   Split             | | textInverse        Aa 0123    #1a1b26       -                       | |
-   Dock              | | code               Aa 0123    #a9b1d6       -                       | |
-   Terminal          | | docs               Aa 0123    #a0a0a0       -                       | |
-                     | | matched            Aa 0123    #a9b1d6       -                       | |
+   Effects           | +---------------------------------------------------------------------+ |
+   Grid              | | text                                                                | |
+   Components        | | inherit            Aa 0123    #a9b1d6       -                       | |
+   Tree              | | textPrimary        Aa 0123    #a9b1d6       -                       | |
+   Property tree     | | textSecondary      Aa 0123    #8d93b3       -                       | |
+   Table             | | muted              Aa 0123    #777d99       -                       | |
+   Scrolling         | | textDisabled       Aa 0123    #5b5f76 50%   -                       | |
+   State             | | textInverse        Aa 0123    #1a1b26       -                       | |
+   Split             | | code               Aa 0123    #a9b1d6       -                       | |
+   Dock              | | docs               Aa 0123    #a0a0a0       -                       | |
+   Terminal          | | matched            Aa 0123    #a9b1d6       -                       | |
                      | | unmatched          Aa 0123    #888888       -                       | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |

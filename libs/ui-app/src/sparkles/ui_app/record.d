@@ -18,6 +18,8 @@ three targets" is checkable at $(I session) scope rather than only per widget.
 */
 module sparkles.ui_app.record;
 
+import sparkles.base.term_color : RgbColor;
+import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, cellPointer;
@@ -102,6 +104,11 @@ struct RecordingHost
     /// Accepted and dropped, as on the terminal arm: a recording host paints
     /// no pixels, so an image reaches it as `IMG4`'s placeholder.
     void images(const(ImageRegistry)*) @safe pure nothrow @nogc {}
+
+    /// Accepted and dropped: a recording host keeps the op stream, brackets
+    /// included, and applies nothing. A test that wants to check an effect
+    /// asserts on the ops.
+    void effects(const(EffectRegistry)*, RgbColor) @safe pure nothrow @nogc {}
 
     /// Reported `false`, matching a terminal and Android — a test that assumes
     /// fullscreen exists should have to say so.

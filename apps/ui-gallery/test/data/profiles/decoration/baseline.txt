@@ -7,17 +7,17 @@
    Themes            | everything else.                                                        #
    Slots             |                                                                         #
  > Decoration        | +---------------------------------------------------------------------+ #
-   Grid              | | borders                                                             | #
-   Components        | | solid          +-----------+                                        | |
-   Tree              | |                | content   |                                        | |
-   Property tree     | |                +-----------+                                        | |
-   Table             | |                                                                     | |
-   Scrolling         | | rounded        +-----------+                                        | |
-   State             | |                | content   |                                        | |
-   Split             | |                +-----------+                                        | |
-   Dock              | |                                                                     | |
-   Terminal          | | heavy (2px)    +-----------+                                        | |
-                     | |                | content   |                                        | |
+   Effects           | | borders                                                             | #
+   Grid              | | solid          +-----------+                                        | |
+   Components        | |                | content   |                                        | |
+   Tree              | |                +-----------+                                        | |
+   Property tree     | |                                                                     | |
+   Table             | | rounded        +-----------+                                        | |
+   Scrolling         | |                | content   |                                        | |
+   State             | |                +-----------+                                        | |
+   Split             | |                                                                     | |
+   Dock              | | heavy (2px)    +-----------+                                        | |
+   Terminal          | |                | content   |                                        | |
                      | |                +-----------+                                        | |
                      | |                                                                     | |
                      | | dotted         +...........+                                        | |

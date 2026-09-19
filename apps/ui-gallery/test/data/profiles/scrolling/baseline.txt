@@ -7,17 +7,17 @@
    Themes            | above the viewport get negative frames, and the display list culls      #
    Slots             | whatever falls fully outside.                                           #
    Decoration        |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
-   Components        | | forty rows in an eight-row viewport                                 | #
-   Tree              | |  1  - a landmark row -  #                                           | #
-   Property tree     | |  2  the quick brown fox |                                           | #
-   Table             | |  3  the quick brown fox |                                           | |
- > Scrolling         | |  4  the quick brown fox |                                           | |
-   State             | |  5  the quick brown fox |                                           | |
-   Split             | |  6  - a landmark row -  |                                           | |
-   Dock              | |  7  the quick brown fox |                                           | |
-   Terminal          | |  8  the quick brown fox |                                           | |
-                     | +---------------------------------------------------------------------+ |
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | forty rows in an eight-row viewport                                 | #
+   Components        | |  1  - a landmark row -  #                                           | #
+   Tree              | |  2  the quick brown fox |                                           | #
+   Property tree     | |  3  the quick brown fox |                                           | |
+   Table             | |  4  the quick brown fox |                                           | |
+ > Scrolling         | |  5  the quick brown fox |                                           | |
+   State             | |  6  - a landmark row -  |                                           | |
+   Split             | |  7  the quick brown fox |                                           | |
+   Dock              | |  8  the quick brown fox |                                           | |
+   Terminal          | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
                      | | the machine                                                         | |

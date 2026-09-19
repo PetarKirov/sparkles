@@ -34,7 +34,11 @@ module sparkles.ui_app.tui_loop;
 version (UiAppTui):
 version (Posix):
 
+import sparkles.base.term_color : RgbColor;
+import sparkles.ui.effect : EffectRegistry;
+import sparkles.ui.geometry : Rect;
 import sparkles.ui.image : ImageRegistry;
+import sparkles.ui_tui.grid_canvas : EffectContext;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, isEndOfInput, isNoEvent,
     NoEvent;
@@ -170,6 +174,24 @@ struct TuiHost
     /// target for something only one of them can use.
     void images(const(ImageRegistry)*) @safe pure nothrow @nogc {}
 
+    /**
+    Binds the effect registry this host's grid resolves ids against (`EFX9`).
+
+    The terminal is the arm that HONOURS this — tier-0 is a per-cell colour
+    transform and a cell grid can run it — which is the inversion `EFX24`
+    predicts and the whole point of tiering by readable input.
+
+    `pageFg` is what a `default`/`unset` cell foreground concretizes to before
+    the transform sees it; an effect rewrites a colour the grid already holds,
+    so unlike every other paint it has to ask what `default` means.
+    */
+    void effects(const(EffectRegistry)* registry, RgbColor pageFg) @system
+    {
+        effectContext = EffectContext(registry, pageFg);
+    }
+
+    private EffectContext effectContext;
+
     /// A terminal has no fullscreen of its own — the emulator owns that.
     bool fullscreenSupported() const @safe pure nothrow @nogc => false;
     /// ditto
@@ -254,7 +276,8 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
             return;
 
         const target = host.target;
-        paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[], caps: target);
+        paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[], caps: target,
+            effects: host.effectContext);
         draw(host); // `HST13`: the application's own cells, before the diff
         // The grid holds RGB; the depth it goes out at is the target's — the
         // declared one, or a narrowed preview's (`CAP5`).

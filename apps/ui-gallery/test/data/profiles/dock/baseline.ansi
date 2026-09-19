@@ -7,17 +7,17 @@
 [0m [0m  Themes[0m            [0m|[0m [0mthe reserved header rows, and where a pointer event goes. Nothing here[0m  [0m#[0m
 [0m [0m  Slots[0m             [0m|[0m [0mkeeps a second copy of any of that.[0m                                     [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m
-[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mthe arrangement[0m                                                     [0m|[0m [0m#[0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mexplorer[0m          [0m|[0m [0;1mdocument[0m [0m [0mnotes[0m [0m                               [0m [0m|[0m [0m#[0m
-[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m18 cells          [0m|[0;1mdocument[0m                                        [0m [0m|[0m [0m#[0m
-[0m [0m  Table[0m             [0m|[0m [0m|[0m [0ma file tree, say[0m  [0m|[0mflexes                                          [0m [0m|[0m [0m#[0m
-[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m                  [0m|[0mthe thing being read[0m                            [0m [0m|[0m [0m#[0m
+[0m [0m  Effects[0m           [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mthe arrangement[0m                                                     [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0mexplorer[0m          [0m|[0m [0;1mdocument[0m [0m [0mnotes[0m [0m                               [0m [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m18 cells          [0m|[0;1mdocument[0m                                        [0m [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0ma file tree, say[0m  [0m|[0mflexes                                          [0m [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0m                  [0m|[0mthe thing being read[0m                            [0m [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m#[0m
 [0m [0m  State[0m             [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m#[0m
-[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m#[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
 [0m [0m> [0;1mDock[0m             [0m [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
 [0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m                    [0m                                                [0m [0m|[0m [0m|[0m
