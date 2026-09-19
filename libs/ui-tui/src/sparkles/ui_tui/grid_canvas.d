@@ -33,6 +33,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 // disagree, with `--render` showing dashes the live terminal did not.
 import sparkles.ui.interp.cells : accentGlyph, blend, dashedHorizontal,
     dashedVertical;
+import sparkles.ui.effect : EffectId, EffectRegistry, Tier0Fn, Tier0Input;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
 
@@ -49,9 +50,11 @@ $(REF paint, sparkles,ui,interp,immediate)) keeps the borrowed-`Grid` canvas
 the whole path stays `@safe` under dip1000.
 */
 void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
-    int originX = 0, int originY = 0, Rect clip = Rect.init)
+    int originX = 0, int originY = 0, Rect clip = Rect.init,
+    in EffectContext effects = EffectContext.init)
 {
     auto canvas = GridCanvas(&grid, pageBg, originX, originY);
+    canvas.effects = effects;
     if (!clip.empty)
         canvas.pushClip(clip); // an outer viewport in canvas cell coordinates
     foreach (ref op; ops)
@@ -77,6 +80,12 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 // `IMG4`'s placeholder, through the SHARED routine rather
                 // than a second one written here.
                 paintImagePlaceholder(canvas, op.rect, op.imageAlt, op.visual);
+                break;
+            case pushEffect:
+                canvas.pushEffect(op.rect, op.effectId);
+                break;
+            case popEffect:
+                canvas.popEffect();
                 break;
             case rule:
                 // The cell backend has no sub-cell resolution: a hairline
@@ -158,6 +167,29 @@ private void paintScrollbarCells(ref scope GridCanvas canvas, in DrawOp op)
 }
 
 /**
+What a cell grid needs in order to honour a tier-0 effect (`EFX9`): the
+registry that resolves an id, and the page foreground a `default`/`unset` cell
+colour concretizes against.
+
+$(B Optional, and absent by default.) A caller that passes none gets no
+effects, which is `EFX3`'s declared degradation rather than a failure — the
+same answer a canvas without the primitive gives. It travels as one value
+because `paintGrid` has a long positional tail and two more parameters there
+would be two more things to pass in the right order.
+
+`pageFg` is here rather than on the canvas because the canvas never needed it:
+a glyph arrives with its colour already resolved. Only an effect, which rewrites
+a colour the grid already holds, has to ask what `default` means.
+*/
+struct EffectContext
+{
+    /// Borrowed; must outlive the paint. `null` disables effects entirely.
+    const(EffectRegistry)* registry;
+    /// What a `default`/`unset` foreground concretizes to before transforming.
+    RgbColor pageFg;
+}
+
+/**
 A `sparkles:ui` canvas that paints into a borrowed `sparkles.tui.Grid`. `pageBg`
 is the blend base for translucent fills (a cell whose background is unset resolves
 to it). Cell coordinates are the grid's own (the caller offsets a laid-out subtree
@@ -169,6 +201,20 @@ struct GridCanvas
     RgbColor pageBg; /// blend base for translucent fills / unset backgrounds
     int originX = 0; /// grid column of cell x = 0 (place a laid-out subtree)
     int originY = 0; /// grid row of cell y = 0
+
+    /// The effect registry and page colours, or all-null for "no effects".
+    EffectContext effects;
+
+    /// The open effect brackets, innermost last. An unresolvable id still
+    /// occupies a slot so `popEffect` stays paired with `pushEffect` — an
+    /// `EFX17` miss must not desynchronise the stack.
+    private ActiveEffect[] effectStack;
+
+    private static struct ActiveEffect
+    {
+        Rect rect;
+        Tier0Fn fn; /// null when the id resolved to nothing, or to a higher tier
+    }
 
     /// The active clip stack in canvas cell coordinates (empty = unclipped).
     /// The display list pushes *effective* (pre-intersected) rects, but an
@@ -221,6 +267,80 @@ struct GridCanvas
     {
         if (clips.length)
             clips = clips[0 .. $ - 1];
+    }
+
+    /**
+    Opens an effect bracket (`EFX1`). Resolution happens here, once per
+    bracket, rather than per cell.
+    */
+    void pushEffect(in Rect r, EffectId id) scope
+    {
+        Tier0Fn fn;
+        if (effects.registry !is null)
+            fn = effects.registry.tier0Of(id);
+        effectStack ~= ActiveEffect(r, fn);
+    }
+
+    /**
+    Closes the bracket and applies its tier-0 transform to the cells it
+    covers (`EFX9`).
+
+    $(B At pop, not per write.) The transform is defined over the $(I resolved)
+    colour of each cell (`EFX8`), and a cell is only resolved once the subtree
+    has finished painting it — a glyph drawn over a fill, an underline added
+    afterwards. Hooking each of the canvas's ten write sites would apply the
+    transform to intermediate states and would have to be repeated in each.
+
+    $(B This is also what makes nesting compose) (`EFX2`). The inner bracket
+    pops first and transforms its rect; the outer pops later and transforms
+    its own, larger rect — over cells the inner one has already changed. So an
+    ancestor's effect is applied to the descendant's result rather than
+    replacing it, with no composition machinery of its own.
+
+    $(B The declared cell-grid degradation.) The transform covers every cell in
+    the bracket's rect, including any the subtree did not itself paint — a
+    parent's background showing through a transparent panel is tinted along
+    with the panel. A grid has no record of which subtree last touched a cell,
+    and inventing one would cost a per-cell tag on every write to serve
+    decoration. A GPU backend rendering the bracket to its own texture does not
+    have this difference (`EFX11`).
+    */
+    void popEffect() scope
+    {
+        if (!effectStack.length)
+            return;
+        const active = effectStack[$ - 1];
+        effectStack = effectStack[0 .. $ - 1];
+        if (active.fn !is null)
+            applyTier0(active.rect, active.fn);
+    }
+
+    private void applyTier0(in Rect r, Tier0Fn fn) scope
+    {
+        const extent = Size(r.width, r.height);
+        foreach (y; r.y .. r.y + r.height)
+        {
+            if (rowOutside(y))
+                continue;
+            foreach (x; r.x .. r.x + r.width)
+            {
+                if (!inBounds(x, y))
+                    continue;
+                auto c = &cell(x, y);
+                const at = Point(x - r.x, y - r.y);
+
+                // Concretize, transform, write back as RGB. A cell whose
+                // colour was `default` has been given one BY the effect,
+                // which is what applying a colour transform to it means.
+                c.style.fg = Color.fromRgb(
+                    fn(Tier0Input(at, extent, toRgb(c.style.fg, effects.pageFg))));
+                c.style.bg = Color.fromRgb(
+                    fn(Tier0Input(at, extent, cellBg(c.style))));
+                if (c.style.underline != UnderlineStyle.none)
+                    c.style.underlineColor = Color.fromRgb(fn(Tier0Input(at,
+                        extent, toRgb(c.style.underlineColor, effects.pageFg))));
+            }
+        }
     }
 
     private ref auto cell(int x, int y) scope
@@ -975,4 +1095,95 @@ static assert(isCanvas!GridCanvas);
     foreach (x; 0 .. 6)
         assert(g[cast(ushort) x, 1].style.underline == UnderlineStyle.single,
             "the rule covers its whole rect, last cell included");
+}
+
+@("ui_tui.grid_canvas.tier0EffectLandsInTheTerminal")
+@safe unittest
+{
+    import sparkles.ui.canvas : fillRectOp, popEffectOp, pushEffectOp;
+    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.style : Slot, Visual;
+
+    // `EFX24`'s claim, checked: a terminal showing scanlines is the proof
+    // that the tier split is real and not a GPU feature wearing a label.
+    EffectRegistry reg;
+    const builtin = builtinEffects(reg);
+    const ctx = EffectContext(&reg, RgbColor(0xFF, 0xFF, 0xFF));
+
+    const white = RgbColor(0xFF, 0xFF, 0xFF);
+    Visual fill;
+    fill.bg = white;
+    fill.hasBg = true;
+
+    Grid grid;
+    grid.resize(4, 4);
+    paintGrid(grid, RgbColor(0, 0, 0), [
+        pushEffectOp(Rect(0, 0, 4, 4), builtin.scanlines),
+        fillRectOp(Rect(0, 0, 4, 4), Slot.inherit, fill),
+        popEffectOp(),
+    ], 0, 0, Rect.init, ctx);
+
+    // Even rows untouched, odd rows darkened — through the SAME D function
+    // the GPU path would compile, not a terminal-only reimplementation.
+    assert(grid[0, 0].style.bg.rgb == white);
+    assert(grid[0, 1].style.bg.rgb.r < white.r);
+    assert(grid[0, 2].style.bg.rgb == white);
+    assert(grid[3, 1].style.bg.rgb == grid[0, 1].style.bg.rgb);
+
+    // `EFX3`/`EFX17`: with no registry the very same op stream paints the
+    // subtree unaffected, rather than failing.
+    Grid plain;
+    plain.resize(4, 4);
+    paintGrid(plain, RgbColor(0, 0, 0), [
+        pushEffectOp(Rect(0, 0, 4, 4), builtin.scanlines),
+        fillRectOp(Rect(0, 0, 4, 4), Slot.inherit, fill),
+        popEffectOp(),
+    ]);
+    assert(plain[0, 1].style.bg.rgb == white);
+}
+
+@("ui_tui.grid_canvas.nestedEffectsComposeWithTheirAncestors")
+@safe unittest
+{
+    import sparkles.ui.canvas : fillRectOp, popEffectOp, pushEffectOp;
+    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.style : Slot, Visual;
+
+    EffectRegistry reg;
+    const builtin = builtinEffects(reg);
+    const ctx = EffectContext(&reg, RgbColor(0xFF, 0xFF, 0xFF));
+
+    const white = RgbColor(0xFF, 0xFF, 0xFF);
+    Visual fill;
+    fill.bg = white;
+    fill.hasBg = true;
+
+    // `EFX2`: an inner `dim` inside an outer `dim` must be dimmer than either
+    // alone — composing with the ancestor, not replacing it.
+    Grid grid;
+    grid.resize(4, 2);
+    paintGrid(grid, RgbColor(0, 0, 0), [
+        pushEffectOp(Rect(0, 0, 4, 2), builtin.dim),
+        fillRectOp(Rect(0, 0, 4, 2), Slot.inherit, fill),
+        pushEffectOp(Rect(0, 0, 2, 2), builtin.dim),
+        fillRectOp(Rect(0, 0, 2, 2), Slot.inherit, fill),
+        popEffectOp(),
+        popEffectOp(),
+    ], 0, 0, Rect.init, ctx);
+
+    const both = grid[0, 0].style.bg.rgb;
+    const outerOnly = grid[3, 0].style.bg.rgb;
+    assert(outerOnly.r < white.r, "the outer effect reached its own cells");
+    assert(both.r < outerOnly.r, "the nested cell took BOTH, not just one");
+
+    // An unbalanced stream must not corrupt the next frame: a stray pop is
+    // ignored, and an unclosed push simply never applies.
+    Grid odd;
+    odd.resize(2, 1);
+    paintGrid(odd, RgbColor(0, 0, 0), [
+        popEffectOp(),
+        pushEffectOp(Rect(0, 0, 2, 1), builtin.dim),
+        fillRectOp(Rect(0, 0, 2, 1), Slot.inherit, fill),
+    ], 0, 0, Rect.init, ctx);
+    assert(odd[0, 0].style.bg.rgb == white, "an unclosed bracket never fires");
 }
