@@ -15,12 +15,18 @@ targetPath "build"
 // `../test-runner/src` is here for the same reason: see the unittest
 // configuration below. This is the recipe `sparkles:core-cli` documents.
 importPaths "src" "../test-runner/src" "../math/src"
+// The built-in effects' fragment shaders, generated from `effect_shaders.d`
+// by `dub run :shader-compile` and string-imported by `effect.d`.
+stringImportPaths "shaders/generated"
 
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
 // sparkles:ui, never the reverse.
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
+// The single-source effect transforms (`effect_shaders.d`) are written
+// against the shader vocabulary, and run on the CPU through it.
+dependency "sparkles:shader" path="../.."
 dependency "sparkles:metadata" path="../.."
 // The property tree's leaf classification dispatches on the shared
 // reflection kernel, so "is this a leaf" has one answer across the toolkit,
