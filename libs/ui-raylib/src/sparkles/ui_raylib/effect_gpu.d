@@ -32,7 +32,7 @@ import raylib;
 import raylib.rlgl : rlDisableScissorTest, rlDrawRenderBatchActive,
     rlEnableScissorTest, rlScissor;
 
-import sparkles.ui.effect : EffectId, EffectRegistry, glslBackend;
+import sparkles.ui.effect : EffectId, EffectRegistry, EffectTier, glslBackend;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui_raylib.glsl : activePrologue;
 
@@ -46,7 +46,7 @@ same transform over the same input and can be compared. Getting that wrong
 would make the two halves of a twin silently disagree in a way only a
 screenshot would show.
 */
-private enum string effectEpilogue = q{
+private enum string tier0Epilogue = q{
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform vec2 uExtentCells;
@@ -59,15 +59,38 @@ void main()
 }
 };
 
+/**
+The tier-1 wrapper: the twin supplies `vec2 effectWarp(vec2 uv)` and this
+samples at what it returns.
+
+A position outside `[0, 1]` is off the subtree, not a clamped edge — a barrel
+distortion that smeared its border pixels outward would be hiding the shape it
+exists to show. Transparent is the honest answer and composites correctly over
+whatever the bracket sits on.
+*/
+private enum string tier1Epilogue = q{
+uniform sampler2D texture0;
+uniform vec4 colDiffuse;
+uniform vec2 uExtentCells;
+
+void main()
+{
+    vec2 uv = effectWarp(fragTexCoord);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        OUT_COLOR = vec4(0.0, 0.0, 0.0, 0.0);
+    else
+        OUT_COLOR = SAMPLE(texture0, uv) * colDiffuse * fragColor;
+}
+};
+
 /// One open bracket.
 private struct OpenBracket
 {
     Rect rect;            /// in cells, as the op carried it
     RenderTexture2D target;
-    float savedOriginX;
-    float savedOriginY;
     Shader shader;
     int extentLoc = -1;
+    EffectId id;
     bool redirected;      /// false for a bracket we could not honour
 }
 
@@ -85,6 +108,7 @@ struct EffectGpu
         {
             Shader shader;
             int extentLoc = -1;
+            int[string] paramLocs; /// uniform locations, by `EffectParam.name`
             bool ok;
         }
 
@@ -169,8 +193,8 @@ struct EffectGpu
         BeginTextureMode(target);
         ClearBackground(Color(0, 0, 0, 0));
 
-        _open ~= OpenBracket(rect: rectCells, target: target,
-            shader: c.shader, extentLoc: c.extentLoc, redirected: true);
+        _open ~= OpenBracket(rect: rectCells, target: target, shader: c.shader,
+            extentLoc: c.extentLoc, id: id, redirected: true);
         return true;
     }
 
@@ -205,6 +229,7 @@ struct EffectGpu
             SetShaderValue(b.shader, b.extentLoc, extent.ptr,
                 ShaderUniformDataType.SHADER_UNIFORM_VEC2);
         }
+        uploadParams(b.id, b.shader);
         // Negative source height: a render texture is stored bottom-up, and
         // drawing it the natural way puts the subtree on its head.
         const src = Rectangle(0, 0, cast(float) b.target.texture.width,
@@ -265,6 +290,34 @@ struct EffectGpu
         _open = null;
     }
 
+    // `EFX21`: the values the artifact reads, refreshed every frame by the
+    // application. Uploaded after `BeginShaderMode`, because a uniform binds
+    // to the ACTIVE program — the same trap the CRT's bloom sampler fell into.
+    private void uploadParams(EffectId id, Shader shader) @system
+    {
+        if (_registry is null)
+            return;
+        const rec = _registry.lookup(id);
+        if (rec is null || rec.params.length == 0)
+            return;
+        auto c = id.value in _shaders;
+        if (c is null)
+            return;
+        foreach (ref prm; rec.params)
+        {
+            const loc = prm.name in c.paramLocs;
+            if (loc is null || *loc < 0)
+                continue;
+            float[4] v = prm.value;
+            const type = prm.arity >= 4
+                ? ShaderUniformDataType.SHADER_UNIFORM_VEC4
+                : prm.arity == 3 ? ShaderUniformDataType.SHADER_UNIFORM_VEC3
+                : prm.arity == 2 ? ShaderUniformDataType.SHADER_UNIFORM_VEC2
+                : ShaderUniformDataType.SHADER_UNIFORM_FLOAT;
+            SetShaderValue(shader, *loc, v.ptr, type);
+        }
+    }
+
     private Compiled resolve(EffectId id) @system
     {
         if (auto hit = id.value in _shaders)
@@ -277,14 +330,25 @@ struct EffectGpu
             if (rec !is null)
                 if (const impl = rec.implFor(glslBackend))
                 {
+                    // The wrapper follows the TIER: tier 0 supplies a colour
+                    // transform, tier 1 a position one. Choosing by tier is
+                    // what makes the tier a contract rather than a label.
+                    const epilogue = rec.tier == EffectTier.distortion
+                        ? tier1Epilogue : tier0Epilogue;
                     const source = activePrologue ~ impl.source
-                        ~ effectEpilogue ~ "\0";
+                        ~ epilogue ~ "\0";
                     c.shader = LoadShaderFromMemory(null, source.ptr);
                     if (c.shader.id != 0)
                     {
                         c.ok = true;
                         c.extentLoc = GetShaderLocation(c.shader,
                             "uExtentCells".ptr);
+                        // Uniform locations are fixed for the life of a
+                        // program, so they are resolved once here rather than
+                        // per frame per parameter.
+                        foreach (ref prm; rec.params)
+                            c.paramLocs[prm.name] = GetShaderLocation(
+                                c.shader, (prm.name ~ "\0").ptr);
                     }
                 }
         }
