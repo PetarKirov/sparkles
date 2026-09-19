@@ -1,13 +1,15 @@
 # `sparkles:ui` effects & images — Feature Requirements (`EFX`, `IMG`)
 
-_**Status:** gates 1-3 delivered (images; the bracket and tier 0; tier 1 on the
-GPU, the registry and theme rebinding). Gate 4 partial — the CRT's migration
-is scoped below · **Date:** 2026-09-18 · **Scope:** raster content (images)
-in the widget tree, and subtree effects — the `pushEffect`/`popEffect` bracket,
-the tier model that decides what survives to a cell grid, the effect registry,
-and the re-expression of hue's CRT as an effect on the root node. Out of scope:
-raw pipeline access (see [Non-goals](#non-goals)) and shader authoring in D (see
-[`EFX20`](#the-dcompute-horizon-efx20))._
+_**Status:** gates 1-3 and 5 delivered (images; the bracket and tier 0; tier 1
+on the GPU, the registry and theme rebinding; single-source shaders). Gate 4
+partial — the CRT's migration is scoped below · **Date:** 2026-09-19 ·
+**Scope:** raster content (images) in the widget tree, and subtree effects —
+the `pushEffect`/`popEffect` bracket, the tier model that decides what survives
+to a cell grid, the effect registry, the re-expression of hue's CRT as an
+effect on the root node, and the built-in effects as one D function each,
+serving the terminal and the GPU (see
+[`EFX20`](#one-source-two-targets-efx20)). Out of scope: raw pipeline access
+(see [Non-goals](#non-goals))._
 
 ## Design & rationale
 
@@ -142,23 +144,51 @@ recorded in [Decisions](#decisions).
 | EFX18 | Re-registering an id must be safe **between** frames and must not be observable mid-frame, so a shader can be hot-reloaded while the settings pane is open.                                                                | full    | `EffectRegistry.replace`; a bracket resolves once at `pushEffect`, so a swap lands whole or not at all                                                                                                                                      |
 | EFX19 | Registration must be the only mechanism. There is no second, compile-time path: `EFX20` is served by registering artifacts that were _generated_ at compile time, not by a parallel API.                                   | full    | `builtinEffects` registers rather than special-cases; there is no `final switch` over ids anywhere                                                                                                                                          |
 
-### The dcompute horizon (`EFX20`)
+### One source, two targets (`EFX20`)
 
-| ID    | Requirement                                                                                                                                                                                                                                                                                                                                                   | Status  | Traces to |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | --------- |
-| EFX20 | A tier-0 transform must remain expressible as **one D function serving both targets**: called per cell by `ui-tui`, and — on a backend that can dispatch it — compiled to SPIR-V from that same source. The registry stores both artifacts; it must never be the case that the GPU and terminal paths are two hand-written implementations that can disagree. | planned | —         |
+| ID    | Requirement                                                                                                                                                                                                                                                                                                    | Status | Traces to                                                                                                                                                                                                                                                                                                                  |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EFX20 | A tier-0 transform must be **one D function serving both targets**: called per cell by `ui-tui`, and compiled to the GPU's shader from that same source. The registry stores both artifacts; it must never be the case that the GPU and terminal paths are two hand-written implementations that can disagree. | full   | `sparkles.ui.effect_shaders` — the four built-ins and the tier-1 warp, written once against `sparkles:shader`; `effect.d`'s `tier0Adapter` calls them per cell; `libs/ui/shaders/effects.d` wraps them in `@fragment` entry points; `shader-compile` derives `libs/ui/shaders/generated/*.frag`; `shader-compile --verify` |
+| EFX25 | The generated GPU artifact must be **reproducible and guarded**: regenerating from the D source must yield the committed GLSL byte for byte, and a build must not need the shader compiler — only the committed GLSL.                                                                                          | full   | `shader-compile --verify` diffs a fresh derivation against `generated/` and reports stale files; it skips with exit 0 when no dcompute-enabled LDC is present (what CI sees), so the committed GLSL is what `sparkles:ui` string-imports and nothing else                                                                  |
+| EFX26 | The shader vocabulary must run on the CPU on every supported compiler, with GLSL's semantics: `mod` follows the divisor's sign, `clamp`/`mix`/`step`/`smoothstep` are the specification's formulas, and a `vec3` never crosses the shader interface (so its representation may differ per side).               | full   | `sparkles.shader.testing` under LDC and DMD; `vec2`/`vec4` are native vectors under LDC and a struct elsewhere, `vec3` a struct on every host and native only under `-d-version=SparklesShaderDevice`                                                                                                                      |
+| EFX27 | The GPU artifact is a **complete** fragment shader against the backend's pipeline — inputs, sampler, uniforms and output all declared — so the backend loads it as-is and wraps nothing. The tier is what the shader does, not what a backend prepends.                                                        | full   | `ui_raylib.effect_gpu` has no prologue or epilogue any more; `ui.effect.builtins.eachCarriesBothHalvesOfItsTwin` checks `#version`, `main`, `texture0`, `fragTexCoord`; glslang validates every generated file in `shader-compile`                                                                                         |
 
-Two facts bound this, and neither is a blocker:
+**How the one function reaches the GPU.** `libs/ui/shaders/effects.d` is a
+`@compute(CompileFor.deviceOnly)` module holding one `@fragment` function per
+effect — a thin wrapper that samples `texture0`, floors `fragTexCoord *
+uExtentCells` to the cell (the very `at` the terminal hands the function) and
+calls the transform. `shader-compile` compiles it, together with
+`effect_shaders.d` and the vocabulary, through LDC's Vulkan dcompute target to
+SPIR-V, validates that, optimises it, and cross-compiles each entry point with
+spirv-cross to desktop GLSL 330 and GLSL ES 100 — the two dialects `ui-raylib`
+speaks — proving each with glslang. `effect.d` string-imports the result. The
+compiler is LDC's `sparkles/vulkan-shaders` branch: upstream's Vulkan compute
+target ([ldc#5132](https://github.com/ldc-developers/ldc/pull/5132) over
+[llvm#216919](https://github.com/llvm/llvm-project/pull/216919)) plus
+`@fragment`, `@input`/`@uniform` parameter markers, and `Sampler2D` — the
+graphics stage upstream dcompute does not have, and what the thread that
+started this work ([forum](https://forum.dlang.org/thread/qrfvwkubyceuamcvdeya@forum.dlang.org))
+described as compute-only.
 
-- **dcompute's Vulkan SPIR-V work is compute-kernel only**, not graphics — its
-  tests are `@kernel()` / `@CompileFor.deviceOnly`. That is sufficient: a tier-0
-  transform is per-pixel with no neighbour reads, which is a compute dispatch
-  over the texture and never needs to be a fragment shader.
-- **The dispatch lands on a Vulkan backend, not the raylib one.** `sparkles:vulkan`
-  and `sparkles:vulkan-wsi` exist; an `isCanvas` implementation over them does
-  not. Until it does, a tier-0 effect's GPU path on `ui-raylib` is a hand-written
-  GLSL twin, and `EFX20` is the reason that is a temporary state and not the
-  design.
+Three facts shaped the design, and each is a constraint the SPIR-V backend
+imposes rather than a choice:
+
+- **An opaque handle is a scalar.** Vulkan forbids an image or sampler inside
+  a composite or in a Function-storage variable, and the backend cannot pass
+  one as a function argument. So GLSL's combined `sampler2D` is modelled as
+  the image handle alone, every image is read through one shared sampler at
+  binding 0, and every helper in a Vulkan module is always-inline, so the
+  handle and the sample that reads it end in one function.
+- **Uniforms are GL's shape, not Vulkan's.** raylib looks uniforms up by name,
+  so a `@uniform` parameter becomes a plain `UniformConstant` variable named
+  after it — valid SPIR-V, invalid under Vulkan's rules, exactly right after
+  spirv-cross. Validation runs under the universal rules; a Vulkan `isCanvas`
+  backend, when it exists, wants these as a push-constant block, which is a
+  target flag away.
+- **Aggregates stay out of memory.** A struct `vec3` copied by `memcpy` is a
+  load the backend cannot legalise, which is why the device build uses a
+  native 12-byte vector for `vec3` while the host — where stock LDC sizes that
+  vector at 12 bytes and LLVM at 16 — uses three floats.
 
 ## The CRT, re-expressed (`EFX21`–`EFX24`)
 
@@ -237,10 +267,11 @@ off the picker. The remaining half is a hue refactor, not an effects one.
     10 000 cells; at 60 fps, and only for cells under an effect bracket, that is
     well under a millisecond per second of wall time. The `DrawOp` 656→64 byte
     precedent is about bandwidth over the whole op stream and does not transfer.
-  - It does **not** foreclose `EFX20`. dcompute compiles a `@kernel` function to
-    SPIR-V at build time; the registry then stores that artifact alongside the
-    CPU function pointer, both derived from one source. Registration is of
-    _results_, and results can be generated at compile time.
+  - It does **not** foreclose `EFX20`, and `EFX20` proved it: LDC compiles a
+    `@fragment` function to SPIR-V at build time; the registry then stores the
+    GLSL derived from that alongside the CPU function pointer, both from one
+    source. Registration is of _results_, and results are generated at build
+    time.
   - What is genuinely lost is compile-time capability checking: `hasTier0!E`
     becomes a runtime lookup, so `EFX12` and `EFX17` carry a guarantee the type
     system would otherwise have carried. That is the accepted cost, and it buys
@@ -265,4 +296,7 @@ off the picker. The remaining half is a hue refactor, not an effects one.
 4. **The CRT re-expressed** (`EFX21`–`EFX23`) — **partial**. The mechanism is
    proven and the double relayout is gone; what remains is stated below.
 
-`EFX20` gates on a Vulkan `isCanvas` backend and is not part of this delivery.
+5. ~~**One source, two targets** (`EFX20`, `EFX25`–`EFX27`)~~ — **delivered**,
+   without waiting for a Vulkan `isCanvas` backend: the GPU artifact is GLSL
+   derived from SPIR-V, so the raylib backend consumes it today, and the same
+   SPIR-V is what a Vulkan backend would load directly.
