@@ -12,7 +12,8 @@ module sparkles.ui_raylib.crt;
 import raylib;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
-public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
+import sparkles.ui_raylib.glsl : activePrologue;
+import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
 
 
 /// UI structure context passed to the CRT shader to drive localized phosphor reactions.
@@ -25,43 +26,10 @@ struct CrtUiContext
     UiRect scrollbarThumb;
 }
 
-/**
-The one GLSL prologue per dialect, and the one shader body they share.
-
-The two variants used to be a 330-line verbatim copy differing in seventeen
-lines, only one of which any given build compiles — so a typo in the Android
-copy was discoverable only by building an APK and running it on a device. The
-differences are all spellings the GLSL preprocessor can absorb, so they live in
-the prologue and the body is written once.
-*/
-private enum glslPrologue = q{
-#version 330
-
-in vec2 fragTexCoord;
-in vec4 fragColor;
-out vec4 finalColor;
-
-#define SAMPLE texture
-#define OUT_COLOR finalColor
-};
-
-/// ditto
-private enum glslPrologueEs = q{
-#version 100
-precision mediump float;
-
-varying vec2 fragTexCoord;
-varying vec4 fragColor;
-
-#define SAMPLE texture2D
-#define OUT_COLOR gl_FragColor
-};
-
-/// The dialect this build compiles for.
-version (Android)
-    private enum activePrologue = glslPrologueEs;
-else
-    private enum activePrologue = glslPrologue;
+// The prologues moved to `sparkles.ui_raylib.glsl` when a second shader needed
+// them: the effect compiler builds fragment shaders the same way, and a
+// per-shader copy of the dual-dialect trick is the duplication this file
+// already removed once.
 
 /// The CRT shader's uniform block — shared, so a new uniform is declared once.
 private enum crtUniforms = q{

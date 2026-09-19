@@ -27,6 +27,8 @@ import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
+import sparkles.ui.effect : EffectId;
+import sparkles.ui_raylib.effect_gpu : EffectGpu, scissorInTarget;
 import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : BorderStyle, Visual;
@@ -175,6 +177,11 @@ struct RaylibCanvas
     /// than a null dereference.
     ImageTextures* images;
 
+    /// Compiled effect shaders and the per-bracket texture pool (borrowed), or
+    /// `null`. Absent means every effect bracket degrades to unaffected —
+    /// `EFX3`, the same answer a canvas with no primitive at all gives.
+    EffectGpu* fx;
+
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
 
@@ -222,31 +229,72 @@ struct RaylibCanvas
             return;
         // Intersect across the clip stack so nested child clips (e.g. wide tables
         // or code blocks) stay strictly bounded by their enclosing viewports.
-        // An axis-only viewport (`clipX` without `clipY`) leaves the other axis
-        // unbounded, so clamp to the window before pixel math or scissor
-        // arithmetic overflows.
         const r = effectiveClip();
-        if (r.empty)
+        // Inside an effect bracket the render target is not the screen, so its
+        // size is what bounds the box and what Y is flipped against.
+        const inTarget = fx !is null && fx.depth > 0
+            ? fx.currentTargetHeight : 0;
+        const boundW = inTarget > 0 ? fx.currentTargetWidth : GetScreenWidth();
+        const boundH = inTarget > 0 ? inTarget : GetScreenHeight();
+
+        ScissorBox box;
+        if (!scissorBoxOf(r, originX, originY, cellW, cellH, boundW, boundH, box))
         {
             BeginScissorMode(0, 0, 0, 0);
             return;
         }
-        const sw = cast(float) GetScreenWidth();
-        const sh = cast(float) GetScreenHeight();
-        static float cl(float v, float lo, float hi) pure nothrow @nogc @safe
-            => v < lo ? lo : (v > hi ? hi : v);
-        // Long math throughout: the sentinel cell coords overflow `int` when
-        // multiplied by the cell size (px()/py() are fine for real cells).
-        const x0 = cl(originX + cast(long) r.x * cast(float) cellW, 0, sw);
-        const y0 = cl(originY + cast(long) r.y * cast(float) cellH, 0, sh);
-        const x1 = cl(originX + (cast(long) r.x + r.width) * cast(float) cellW, 0, sw);
-        const y1 = cl(originY + (cast(long) r.y + r.height) * cast(float) cellH, 0, sh);
-        if (x1 <= x0 || y1 <= y0)
-            BeginScissorMode(0, 0, 0, 0); // fully clipped away
+        if (inTarget > 0)
+            scissorInTarget(box.x, box.y, box.w, box.h, inTarget);
         else
-            BeginScissorMode(cast(int) x0, cast(int) y0,
-                cast(int)(x1 - x0), cast(int)(y1 - y0));
+            BeginScissorMode(box.x, box.y, box.w, box.h);
     }
+
+    /**
+    Opens an effect bracket, rendering the subtree into its own texture
+    (`EFX11`).
+
+    Drawing continues in the same cell coordinates: the origin is shifted so
+    the bracket's top-left cell lands at the texture's `(0, 0)`, and restored
+    on `popEffect`. Everything the subtree emits — including its clips, which
+    are in cell space — therefore needs no knowledge that it is being
+    redirected.
+    */
+    void pushEffect(in Rect r, EffectId id) scope @system
+    {
+        if (fx is null)
+            return; // `EFX3`: unaffected, and `popEffect` is a no-op to match
+
+        const x = cast(int) px(r.x), y = cast(int) py(r.y);
+        const w = r.width * cellW, h = r.height * cellH;
+        if (fx.open(id, r, x, y, w, h))
+        {
+            savedOrigins ~= [originX, originY];
+            originX = cast(float)(-r.x * cellW);
+            originY = cast(float)(-r.y * cellH);
+            applyScissor();
+        }
+    }
+
+    /// ditto — composites the bracket back through its shader.
+    void popEffect() scope @system
+    {
+        if (fx is null)
+            return;
+        // The position to composite at must be computed in the ENCLOSING
+        // target's coordinates, so the origin is restored first.
+        Rect r;
+        const redirected = fx.peek(r);
+        if (redirected && savedOrigins.length)
+        {
+            originX = savedOrigins[$ - 1][0];
+            originY = savedOrigins[$ - 1][1];
+            savedOrigins = savedOrigins[0 .. $ - 1];
+        }
+        fx.close(cast(int) px(r.x), cast(int) py(r.y));
+        applyScissor();
+    }
+
+    private float[2][] savedOrigins;
 
     /**
     A flat fill in $(B pixels), for chrome that is genuinely not cell-aligned
@@ -822,4 +870,88 @@ unittest
 
     // Empty stack returns empty rect.
     assert(RaylibCanvas.effectiveClip(null).empty);
+}
+
+/// The device-pixel scissor rectangle a clip resolves to.
+struct ScissorBox
+{
+    int x, y, w, h;
+}
+
+/**
+Turns a clip rect in cells into a device-pixel scissor box, clamped to a
+target `boundW` x `boundH`. Returns `false` when nothing survives.
+
+$(B Extracted because the clamp is where this went wrong.) An axis-only
+viewport (`clipX` without `clipY`) leaves the other axis spanning the whole
+`int` range, so the bound is doing real work rather than tidying edges — and
+the bound must be the size of the target actually being drawn into, which
+inside an `EFX11` bracket is a texture rather than the screen.
+
+The previous version reached for `cast(float) int.max` as an "unbounded"
+sentinel on the axis a render target did not constrain. That value rounds UP
+to 2147483648.0f, and casting it back to `int` on x86 yields `int.min`, so the
+width handed to `glScissor` was negative: `GL_INVALID_VALUE`, no state change,
+and the PREVIOUS scissor — belonging to a different coordinate space — left
+quietly in force. The visible symptom was a bracketed subtree missing a row.
+Integer throughout, and a real bound, is the fix; the tests below are the
+guard.
+*/
+bool scissorBoxOf(in Rect clip, float originX, float originY,
+    int cellW, int cellH, int boundW, int boundH, out ScissorBox box)
+    @safe pure nothrow @nogc
+{
+    if (clip.empty || boundW <= 0 || boundH <= 0)
+        return false;
+
+    static long cl(long v, long lo, long hi)
+        => v < lo ? lo : (v > hi ? hi : v);
+
+    // `long` throughout: a sentinel cell coordinate times a cell size
+    // overflows `int` long before it reaches the clamp.
+    const ox = cast(long) originX, oy = cast(long) originY;
+    const x0 = cl(ox + cast(long) clip.x * cellW, 0, boundW);
+    const y0 = cl(oy + cast(long) clip.y * cellH, 0, boundH);
+    const x1 = cl(ox + (cast(long) clip.x + clip.width) * cellW, 0, boundW);
+    const y1 = cl(oy + (cast(long) clip.y + clip.height) * cellH, 0, boundH);
+    if (x1 <= x0 || y1 <= y0)
+        return false;
+
+    box = ScissorBox(cast(int) x0, cast(int) y0,
+        cast(int)(x1 - x0), cast(int)(y1 - y0));
+    return true;
+}
+
+@("ui_raylib.raylib_canvas.scissorBoxClampsToTheTargetNotToASentinel")
+@safe pure nothrow @nogc
+unittest
+{
+    ScissorBox box;
+
+    // The ordinary case: a viewport well inside the target.
+    assert(scissorBoxOf(Rect(2, 1, 10, 4), 0, 0, 10, 24, 800, 600, box));
+    assert(box == ScissorBox(20, 24, 100, 96));
+
+    // `LAY7`'s axis-only viewport: one axis spans the whole int range, and
+    // the bound is what makes that expressible at all. The regression this
+    // guards produced a NEGATIVE width here.
+    const wide = Rect(-1_073_741_824, 1, 2_147_483_647, 31);
+    assert(scissorBoxOf(wide, -250, -408, 10, 24, 340, 96, box));
+    assert(box.x >= 0 && box.y >= 0);
+    assert(box.w > 0 && box.h > 0, "a negative extent is GL_INVALID_VALUE");
+    assert(box.x + box.w <= 340 && box.y + box.h <= 96,
+        "never larger than the target being drawn into");
+    assert(box == ScissorBox(0, 0, 340, 96), "the bracket is fully visible");
+
+    // Inside an effect bracket the origin is shifted so the bracket's own
+    // cell lands at the target's (0, 0); a clip that starts above it clamps
+    // rather than going negative.
+    assert(scissorBoxOf(Rect(0, 0, 100, 100), -250, -408, 10, 24, 340, 96, box));
+    assert(box == ScissorBox(0, 0, 340, 96));
+
+    // Fully off the target, and degenerate inputs, report nothing rather
+    // than a box GL would reject.
+    assert(!scissorBoxOf(Rect(100, 100, 2, 2), 0, 0, 10, 24, 340, 96, box));
+    assert(!scissorBoxOf(Rect(0, 0, 0, 0), 0, 0, 10, 24, 340, 96, box));
+    assert(!scissorBoxOf(Rect(0, 0, 4, 4), 0, 0, 10, 24, 0, 0, box));
 }
