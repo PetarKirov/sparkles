@@ -580,6 +580,10 @@
         ]
       },
       {
+        "text": "shader",
+        "link": "/libs/shader/"
+      },
+      {
         "text": "syntax",
         "link": "/libs/syntax/",
         "collapsed": true,
