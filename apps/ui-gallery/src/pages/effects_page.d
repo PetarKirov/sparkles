@@ -8,11 +8,11 @@ is real and not a GPU feature wearing a tier label — so every specimen here is
 tier 0, and every one of them is painted by the cell grid you are reading it
 on. Nothing below is a picture of an effect; it is the effect.
 
-Note which way the degradation runs. `EFX11`'s texture-per-bracket path is not
-built, so these land in the terminal and $(B not) in the window — the opposite
-of the usual arrangement, and exactly what the tier model predicts: tier 0 is a
-per-cell colour transform, which a cell grid runs directly and a GPU wants as a
-shader over a texture it does not yet have.
+Both targets honour tier 0, by different routes: the cell grid runs the D
+transform per resolved cell, and the window renders the bracket to a texture
+and runs the GLSL twin over it (`EFX11`). The page is where that agreement is
+checkable by eye — the same specimen, side by side, in a terminal and a
+window.
 */
 module pages.effects_page;
 
@@ -49,6 +49,7 @@ uint view(ref Builder b, in GalleryState s)
         sample(b, "scanlines", fx.scanlines, w),
         sample(b, "phosphor", fx.phosphor, w),
         sample(b, "dim", fx.dim, w),
+        sample(b, "spectrum", fx.spectrum, w),
     ], gap: 1);
     body_ ~= spacer(b);
 
@@ -58,6 +59,14 @@ uint view(ref Builder b, in GalleryState s)
         ~ "bracket, so it reaches the panel's own background as well as its "
         ~ "text — and a nested effect composes with its ancestors rather than "
         ~ "replacing them.", w);
+    body_ ~= spacer(b);
+    body_ ~= para(b,
+        "Note which axis each one varies along. scanlines darkens alternate "
+        ~ "ROWS, so a four-row panel can only show it once or twice and it "
+        ~ "reads as a smudge; spectrum sweeps the hue across the COLUMNS, "
+        ~ "which every bracket has plenty of, and puts a distinct 24-bit "
+        ~ "colour in each cell while keeping that cell's own luminance. "
+        ~ "Position is two axes and a tier-0 transform reads both.", w);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "nesting · dim inside dim", [
@@ -84,8 +93,8 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
     body_ ~= para(b,
         "Tier 0 is the part of the vocabulary every target can honour, which "
-        ~ "is why three of the four built-ins are tier 0: naming one costs "
-        ~ "an application nothing on a terminal. The fourth is here so the "
+        ~ "is why four of the five built-ins are tier 0: naming one costs "
+        ~ "an application nothing on a terminal. The fifth is here so the "
         ~ "boundary is visible from both sides.", w);
 
     return column(b, body_);
@@ -177,10 +186,10 @@ private uint nested(ref Builder b, EffectId effect, int width)
     const pushes = ops.count!(o => o.kind == OpKind.pushEffect);
     assert(pushes == ops.count!(o => o.kind == OpKind.popEffect));
 
-    // Four built-ins as top-level specimens, plus the two of the nesting
+    // Five built-ins as top-level specimens, plus the two of the nesting
     // demonstration. The "none" specimen must NOT emit one: a null id is the
     // absence of an effect, not an effect that does nothing.
-    assert(pushes == 6, "four specimens plus the nested pair");
+    assert(pushes == 7, "five specimens plus the nested pair");
 
     const ids = ops.filter!(o => o.kind == OpKind.pushEffect).array;
     size_t cellHonoured, textureOnly;
@@ -202,5 +211,5 @@ private uint nested(ref Builder b, EffectId effect, int width)
     }
     // Both sides of the tier boundary are on the page. A catalogue showing
     // only the tier a terminal can run would be showing the easy half.
-    assert(cellHonoured == 5 && textureOnly == 1);
+    assert(cellHonoured == 6 && textureOnly == 1);
 }

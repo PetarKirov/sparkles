@@ -9,8 +9,8 @@
    Decoration        | never take a frame down.                                                #
  > Effects           |                                                                         #
    Grid              | +---------------------------------------------------------------------+ #
-   Components        | | tier 0 * a per-cell colour transform                                | #
-   Tree              | |  none                                                               | #
+   Components        | | tier 0 * a per-cell colour transform                                | |
+   Tree              | |  none                                                               | |
    Property tree     | |  The quick brown fox                                                | |
    Table             | |  jumps over the lazy dog                                            | |
    Scrolling         | |                                                                     | |

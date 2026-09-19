@@ -9,8 +9,8 @@
 [0m [0m  Decoration[0m        [0m|[0m [0mnever take a frame down.[0m                                                [0m#[0m
 [0m [0m> [0;1mEffects[0m          [0m [0m|[0m                                                                         [0m#[0m
 [0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mtier 0 * a per-cell colour transform[0m                                [0m|[0m [0m#[0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m [0mnone[0m                             [0m                                  [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mtier 0 * a per-cell colour transform[0m                                [0m|[0m [0m|[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m [0mnone[0m                             [0m                                  [0m|[0m [0m|[0m
 [0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m
 [0m [0m  Table[0m             [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m|[0m
 [0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m [0m                        [0m         [0m                                  [0m|[0m [0m|[0m

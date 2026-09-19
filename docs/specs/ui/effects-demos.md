@@ -24,11 +24,11 @@ Build once: `dub build :ui-gallery && dub build :hue`.
 
 ## The bracket and tier 0 (`EFX1`–`EFX10`, `EFX24`)
 
-| #   | What it shows                                                                           | Command                                             | Expected                                                                                                                             |
-| --- | --------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| D4  | Tier-0 effects running **in a terminal** — the claim `EFX24` exists to make falsifiable | `dub run :ui-gallery -q -- --render --page effects` | Four panels of identical widgets: `none` plain, `scanlines` with alternating darkened rows, `phosphor` green, `dim` uniformly darker |
-| D5  | Nesting composes with ancestors rather than replacing them (`EFX2`)                     | same as D4, scroll to "nesting · dim inside dim"    | The inner panel is visibly darker than the outer one — it took both                                                                  |
-| D6  | A bracket never moves anything (`EFX6`)                                                 | `dub test :ui -- -i "ui.displayList.effect"`        | Frames identical with and without the effect; the op stream is the plain one plus exactly two ops                                    |
+| #   | What it shows                                                                           | Command                                             | Expected                                                                                                                                                                               |
+| --- | --------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D4  | Tier-0 effects running **in a terminal** — the claim `EFX24` exists to make falsifiable | `dub run :ui-gallery -q -- --render --page effects` | Five panels of identical widgets: `none` plain, `scanlines` with alternating darkened rows, `phosphor` green, `dim` uniformly darker, `spectrum` a 24-bit hue sweep across the columns |
+| D5  | Nesting composes with ancestors rather than replacing them (`EFX2`)                     | same as D4, scroll to "nesting · dim inside dim"    | The inner panel is visibly darker than the outer one — it took both                                                                                                                    |
+| D6  | A bracket never moves anything (`EFX6`)                                                 | `dub test :ui -- -i "ui.displayList.effect"`        | Frames identical with and without the effect; the op stream is the plain one plus exactly two ops                                                                                      |
 
 ## Tier 1, the registry and theming (`EFX11`–`EFX19`)
 
