@@ -1,0 +1,36 @@
+name "shader"
+description "Single-source shader vocabulary: GLSL-shaped vector types and built-ins that run on the CPU and compile to SPIR-V through LDC's Vulkan target"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "../../build"
+
+// Cycle-safe runner integration (the recipe `sparkles:input` documents):
+// `sparkles:ui` depends on this package and sits in the test-runner-impl's
+// closure, so a `dependency "sparkles:test-runner"` here would close
+// `ui -> shader -> test-runner -> impl -> ui`. Source-include the shim and
+// the impl instead; only the shim is on the top-level import paths.
+importPaths "src" "../test-runner/src"
+sourcePaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // The source-included impl reaches for base's lifetime helpers.
+    dependency "sparkles:base" path="../.."
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    dflags "-checkaction=context" "-allinst"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
