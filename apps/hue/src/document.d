@@ -1397,6 +1397,35 @@ unittest
     assert(rawP.detect("data.csv") == ContentKind.code);
 }
 
+@("document.highlight.glslAndSpirv")
+@system unittest
+{
+    import std.process : environment;
+    import sparkles.syntax : LabelSet;
+    import sparkles.test_runner.skip : skipTest;
+
+    const bundle = environment.get("SPARKLES_TS_GRAMMAR_PATH", "");
+    if (bundle.length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set");
+
+    auto registry = GrammarRegistry.fromSearchPath(bundle);
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache(&registry, labels);
+    DocumentPipeline p = { registry: &registry, cache: &cache };
+
+    // GLSL highlighting
+    const glslSrc = "#version 330\nvoid main() {\n    gl_Position = vec4(1.0);\n}\n";
+    auto glslDoc = p.fromSource("test.frag", "test.frag", glslSrc, "glsl");
+    assert(glslDoc.lang == "glsl");
+    assert(glslDoc.events.length > 1, "glsl should produce highlight events");
+
+    // SPIR-V highlighting
+    const spirvSrc = "; SPIR-V\nOpCapability Shader\nOpMemoryModel Logical Simple\n";
+    auto spirvDoc = p.fromSource("test.spvasm", "test.spvasm", spirvSrc, "spirv");
+    assert(spirvDoc.lang == "spirv");
+    assert(spirvDoc.events.length > 1, "spirv should produce highlight events");
+}
+
 /**
 The fence renderer for hue's markdown widget view: ` ```ansi ` fences carry
 pre-styled terminal output — without an off-screen VT (the `no-gui` build and

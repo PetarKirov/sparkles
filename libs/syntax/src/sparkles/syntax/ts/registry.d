@@ -285,6 +285,12 @@ string canonicalLanguage(scope const(char)[] label) @safe pure nothrow
         case "rkt": return "racket";
         case "scm", "ss", "sls": return "scheme";
         case "sdlang": return "sdl";
+        case "vert", "frag", "geom", "comp", "tesc", "tese", "mesh", "task",
+            "rgen", "rint", "rahit", "rchit", "rmiss", "rcall",
+            "glslf", "glslv", "fsh", "vsh", "gsh", "vshader", "fshader":
+            return "glsl";
+        case "spvasm", "spv-asm", "spirv-asm", "spir-v", "spir_v":
+            return "spirv";
         // The only approximations left: Eff and Frank are ML-family research
         // languages nobody has written a tree-sitter grammar for, so they point
         // at the closest surface syntax. Anything that *has* a grammar gets it
@@ -334,6 +340,10 @@ unittest
     // deliberately NOT folded onto `d`, which would shadow the better parser.
     assert(canonicalLanguageOfPath("libs/base/dub.sdl") == "sdl");
     assert(canonicalLanguageOfPath("/tmp/vec.h") == "c");
+    assert(canonicalLanguageOfPath("shaders/triangle.vert") == "glsl");
+    assert(canonicalLanguageOfPath("shaders/triangle.frag") == "glsl");
+    assert(canonicalLanguageOfPath("shaders/compute.comp") == "glsl");
+    assert(canonicalLanguageOfPath("shaders/kernel.spvasm") == "spirv");
 
     // Extensionless files resolve through their base name.
     assert(canonicalLanguageOfPath("Makefile") == "make");
@@ -410,6 +420,12 @@ unittest
     assert(canonicalLanguage("asm") == "asm");   // a real grammar, not folded
     assert(canonicalLanguage("Makefile") == "make");
     assert(canonicalLanguage("work") == "gowork");
+    assert(canonicalLanguage("vert") == "glsl");
+    assert(canonicalLanguage("frag") == "glsl");
+    assert(canonicalLanguage("glsl") == "glsl");
+    assert(canonicalLanguage("spvasm") == "spirv");
+    assert(canonicalLanguage("spir-v") == "spirv");
+    assert(canonicalLanguage("SPIRV") == "spirv");
     assert(canonicalLanguage("qml") == "qmljs");        // nixpkgs attribute spelling
     assert(canonicalLanguage("xaml") == "xml");
     assert(canonicalLanguage("bzl") == "starlark");
@@ -562,6 +578,8 @@ unittest
         ["xml", "<?xml version=\"1.0\"?><a b=\"c\">d</a>\n"],
         ["yaml", "a: 1\nb: [x, y]\n"],
         ["zig", "pub fn main() void {}\n"],
+        ["glsl", "#version 330\nvoid main() {\n    gl_Position = vec4(1.0);\n}\n"],
+        ["spirv", "; SPIR-V\n; Version: 1.0\nOpCapability Shader\nOpMemoryModel Logical Simple\n"],
     ];
 
     auto registry = GrammarRegistry.fromEnvironment();

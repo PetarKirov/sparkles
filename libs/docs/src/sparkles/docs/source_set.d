@@ -123,7 +123,7 @@ private immutable string[] binaryExtensions = [
     // archives & packages
     "zip", "gz", "bz2", "xz", "zst", "tar", "7z", "rar", "jar", "whl", "deb", "rpm",
     // executables, objects & libraries
-    "exe", "dll", "so", "dylib", "o", "obj", "a", "lib", "wasm", "class", "pyc",
+    "exe", "dll", "so", "dylib", "o", "obj", "a", "lib", "wasm", "class", "pyc", "spv",
     // media
     "mp3", "mp4", "wav", "ogg", "flac", "avi", "mkv", "mov", "webm",
     // documents & databases
