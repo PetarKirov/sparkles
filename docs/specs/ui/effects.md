@@ -1,6 +1,7 @@
 # `sparkles:ui` effects & images — Feature Requirements (`EFX`, `IMG`)
 
-_**Status:** gate 1 (images) delivered; effects in design · **Date:** 2026-09-18 · **Scope:** raster content (images)
+_**Status:** gates 1-2 delivered (images; the bracket and tier 0); tier 1/2 and
+the CRT outstanding · **Date:** 2026-09-18 · **Scope:** raster content (images)
 in the widget tree, and subtree effects — the `pushEffect`/`popEffect` bracket,
 the tier model that decides what survives to a cell grid, the effect registry,
 and the re-expression of hue's CRT as an effect on the root node. Out of scope:
@@ -102,14 +103,14 @@ routine so the terminal cannot drift from the window.
 
 ## The effect bracket (`EFX1`–`EFX6`)
 
-| ID   | Requirement                                                                                                                                                                                                           | Status | Traces to |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | --------- |
-| EFX1 | The op vocabulary must carry `pushEffect`/`popEffect`, bracketing every op emitted for a subtree, carrying an `EffectId` and the subtree's `Rect`.                                                                    | none   | —         |
-| EFX2 | Effects must nest, and a nested effect must compose with its ancestors rather than replace them — the same reading `TGT12` settled for clips, and stated in the same place.                                           | none   | —         |
-| EFX3 | `pushEffect`/`popEffect` must be **optional canvas primitives**, discovered by presence. A canvas that does not implement them paints the bracketed subtree unaffected; this is a declared degradation, not an error. | none   | —         |
-| EFX4 | A widget must carry at most one effect id; the tree stores the id, never an implementation, and the id must be small enough to leave the widget arena flat.                                                           | none   | —         |
-| EFX5 | Effect brackets must be emitted by `buildDisplayList` from the widget tree, so every consumer of the display list — including the headless `--render` target — sees the same structure.                               | none   | —         |
-| EFX6 | An effect must never change layout. The bracketed subtree's geometry is decided before the effect is known, so that turning an effect off cannot reflow the page.                                                     | none   | —         |
+| ID   | Requirement                                                                                                                                                                                                           | Status | Traces to                                                                                                                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| EFX1 | The op vocabulary must carry `pushEffect`/`popEffect`, bracketing every op emitted for a subtree, carrying an `EffectId` and the subtree's `Rect`.                                                                    | full   | `canvas.d` `PushEffect`/`PopEffect`/`OpKind.pushEffect`/`pushEffectOp`; `CmdBufferT.pushEffect`; `DrawOp.effectId`                                           |
+| EFX2 | Effects must nest, and a nested effect must compose with its ancestors rather than replace them — the same reading `TGT12` settled for clips, and stated in the same place.                                           | full   | `GridCanvas.popEffect` (the inner bracket pops first, the outer over its result); `ui_tui.grid_canvas.nestedEffectsComposeWithTheirAncestors`                |
+| EFX3 | `pushEffect`/`popEffect` must be **optional canvas primitives**, discovered by presence. A canvas that does not implement them paints the bracketed subtree unaffected; this is a declared degradation, not an error. | full   | the `PushEffect`/`PopEffect` arms of `interp/immediate.d`; `ui.interp.immediate.effectBracketIsOptionalAndDegradesToUnaffected`                              |
+| EFX4 | A widget must carry at most one effect id; the tree stores the id, never an implementation, and the id must be small enough to leave the widget arena flat.                                                           | full   | `Widget.effect`; `EffectId` (one `uint`)                                                                                                                     |
+| EFX5 | Effect brackets must be emitted by `buildDisplayList` from the widget tree, so every consumer of the display list — including the headless `--render` target — sees the same structure.                               | full   | `display_list.d`'s `bracketed` push/pop; `ui.displayList.effect.bracketsTheSubtreeAndNeverMovesIt`; `ui-gallery`'s `--render` path passes an `EffectContext` |
+| EFX6 | An effect must never change layout. The bracketed subtree's geometry is decided before the effect is known, so that turning an effect off cannot reflow the page.                                                     | full   | `layout.d` reads no effect field; `ui.displayList.effect.bracketsTheSubtreeAndNeverMovesIt` compares frames with and without                                 |
 
 ## Tiers and degradation (`EFX7`–`EFX12`)
 
@@ -130,15 +131,15 @@ tuned by eye. The alternative — compile-time effect values, capability-checked
 per backend — was considered and rejected; the decision and what it costs are
 recorded in [Decisions](#decisions).
 
-| ID    | Requirement                                                                                                                                                                                                                | Status | Traces to |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | --------- |
-| EFX13 | One runtime registry maps `EffectId` to a record carrying the tier, the tier-0 transform where present, per-backend implementations, and the `EFX12` degradation.                                                          | none   | —         |
-| EFX14 | Ids must be stable for the life of a run. A registry that reuses an id after removal would silently repaint a subtree with someone else's effect.                                                                          | none   | —         |
-| EFX15 | The toolkit must pre-register a small **built-in set**, whose ids are constants an app can name without registering anything.                                                                                              | none   | —         |
-| EFX16 | A `Theme` must be able to rebind a built-in id — including to nothing — so a design language can turn an effect off without the view changing. App-registered ids are not themeable; they have no semantic name to rebind. | none   | —         |
-| EFX17 | An unregistered id must paint the subtree unaffected, never abort. An effect is decoration; a missing one must not be able to take the frame down.                                                                         | none   | —         |
-| EFX18 | Re-registering an id must be safe **between** frames and must not be observable mid-frame, so a shader can be hot-reloaded while the settings pane is open.                                                                | none   | —         |
-| EFX19 | Registration must be the only mechanism. There is no second, compile-time path: `EFX20` is served by registering artifacts that were _generated_ at compile time, not by a parallel API.                                   | none   | —         |
+| ID    | Requirement                                                                                                                                                                                                                | Status  | Traces to                                                                                                                                                                                                                                                                                            |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EFX13 | One runtime registry maps `EffectId` to a record carrying the tier, the tier-0 transform where present, per-backend implementations, and the `EFX12` degradation.                                                          | partial | `EffectRegistry`/`EffectRecord` carry tier, transform and degradation. **Per-backend implementations are absent** — there is no GPU path to hold an artifact for yet, and an unexercised opaque slot would be surface with no reader                                                                 |
+| EFX14 | Ids must be stable for the life of a run. A registry that reuses an id after removal would silently repaint a subtree with someone else's effect.                                                                          | full    | `EffectRegistry.remove` keeps the slot; `ui.effect.registry.resolvesAndNeverReusesAnId`                                                                                                                                                                                                              |
+| EFX15 | The toolkit must pre-register a small **built-in set**, whose ids are constants an app can name without registering anything.                                                                                              | partial | `builtinEffects`/`BuiltinEffects` — scanlines, phosphor, dim. The ids are **returned values, not constants**: they cannot be compile-time constants while `EFX19` requires them to come from the one registration path, so an app holds the struct the way `ui-gallery` holds `GalleryState.effects` |
+| EFX16 | A `Theme` must be able to rebind a built-in id — including to nothing — so a design language can turn an effect off without the view changing. App-registered ids are not themeable; they have no semantic name to rebind. | none    | — `EffectRegistry.replace` is the mechanism it would use, but `Theme` does not carry effects yet                                                                                                                                                                                                     |
+| EFX17 | An unregistered id must paint the subtree unaffected, never abort. An effect is decoration; a missing one must not be able to take the frame down.                                                                         | full    | `EffectRegistry.lookup` returns null for a null/stale/out-of-range id; `GridCanvas.pushEffect` still occupies a stack slot so the pair cannot desynchronise                                                                                                                                          |
+| EFX18 | Re-registering an id must be safe **between** frames and must not be observable mid-frame, so a shader can be hot-reloaded while the settings pane is open.                                                                | full    | `EffectRegistry.replace`; a bracket resolves once at `pushEffect`, so a swap lands whole or not at all                                                                                                                                                                                               |
+| EFX19 | Registration must be the only mechanism. There is no second, compile-time path: `EFX20` is served by registering artifacts that were _generated_ at compile time, not by a parallel API.                                   | full    | `builtinEffects` registers rather than special-cases; there is no `final switch` over ids anywhere                                                                                                                                                                                                   |
 
 ### The dcompute horizon (`EFX20`)
 
@@ -160,12 +161,36 @@ Two facts bound this, and neither is a blocker:
 
 ## The CRT, re-expressed (`EFX21`–`EFX24`)
 
-| ID    | Requirement                                                                                                                                                                                                                                                                 | Status | Traces to |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | --------- |
-| EFX21 | The CRT must be expressible as an effect bracketed on the **root node**, not as a frame-level pass outside the pipeline.                                                                                                                                                    | none   | —         |
-| EFX22 | `sparkles:ui-app` must not grow a separate post-process bracket. `EFX21` is that feature; two mechanisms for one thing is what this spec exists to avoid.                                                                                                                   | none   | —         |
-| EFX23 | Once `EFX21` holds, `CrtUiContext` must be **harvested from the display list** — the rects the frame actually emitted, per `Slot` — never re-derived by an application. The present hand-derivation in `hue` is the debt this retires.                                      | none   | —         |
-| EFX24 | The CRT's curvature and lens are tier-1; its scanlines, phosphor mask and vignette are tier-0 and must therefore survive to `ui-tui`. A terminal showing scanlines and a phosphor tint is the proof that the tier split is real and not a GPU feature wearing a tier label. | none   | —         |
+| ID    | Requirement                                                                                                                                                                                                                                                                 | Status  | Traces to                                                                                                                                                                                                                                                                                    |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EFX21 | The CRT must be expressible as an effect bracketed on the **root node**, not as a frame-level pass outside the pipeline.                                                                                                                                                    | none    | —                                                                                                                                                                                                                                                                                            |
+| EFX22 | `sparkles:ui-app` must not grow a separate post-process bracket. `EFX21` is that feature; two mechanisms for one thing is what this spec exists to avoid.                                                                                                                   | none    | —                                                                                                                                                                                                                                                                                            |
+| EFX23 | Once `EFX21` holds, `CrtUiContext` must be **harvested from the display list** — the rects the frame actually emitted, per `Slot` — never re-derived by an application. The present hand-derivation in `hue` is the debt this retires.                                      | none    | —                                                                                                                                                                                                                                                                                            |
+| EFX24 | The CRT's curvature and lens are tier-1; its scanlines, phosphor mask and vignette are tier-0 and must therefore survive to `ui-tui`. A terminal showing scanlines and a phosphor tint is the proof that the tier split is real and not a GPU feature wearing a tier label. | partial | The proof exists for the built-ins: `ui-gallery`'s Effects page renders scanlines, phosphor and dim in a terminal (`--render --page effects`), and `ui_tui.grid_canvas.tier0EffectLandsInTheTerminal` asserts it. The **CRT's own** terms are not yet expressed as effects — that is `EFX21` |
+
+### Why the registry landed in gate 2
+
+The gate order put the registry third, and that turned out not to be
+schedulable. Tier-0 cannot be shown working without resolving an `EffectId`,
+and the obvious stopgap — a `final switch` over built-in ids, with the real
+registry arriving later — is precisely the second, compile-time path `EFX19`
+forbids. Building it would have meant writing the thing the spec rules out and
+then deleting it.
+
+So `EffectRegistry` landed with the bracket, the built-ins are registered
+through it like anything else, and gate 3 keeps only what genuinely needs a
+GPU: per-backend artifacts (`EFX13`), `EFX11`'s texture, and `EFX16`'s theme
+rebinding.
+
+### The degradation runs the other way
+
+Until `EFX11` lands, an effect shows in the **terminal** and not in the
+**window**. That reads backwards, and it is worth stating plainly rather than
+letting it look like a bug: tier 0 is a per-cell colour transform, which a cell
+grid runs directly and a GPU wants as a shader over a per-bracket texture it
+does not yet have. It is also the clearest evidence so far that the tier axis
+is the right one — the split fell along "what can read what", not along "which
+backend is fancier".
 
 ## Decisions
 
@@ -204,9 +229,12 @@ Two facts bound this, and neither is a blocker:
    half (above). The op vocabulary grew by one entry and `DrawOp` is still 64
    bytes; the budget assert caught the first attempt, which carried a whole
    `Ink` and reached 72.
-2. **The bracket** (`EFX1`–`EFX6`) plus tier-0 in `ui-tui` (`EFX7`–`EFX10`), with
-   at least one built-in effect visibly landing in a terminal (`EFX24`).
-3. **The registry** (`EFX13`–`EFX19`) and tier-1/2 on `ui-raylib` (`EFX11`).
+2. ~~**The bracket** (`EFX1`–`EFX6`) plus tier-0 in `ui-tui` (`EFX7`–`EFX10`),
+   with at least one built-in effect visibly landing in a terminal
+   (`EFX24`)~~ — **delivered**, and it pulled most of gate 3's registry
+   forward with it (below).
+3. **Tier-1/2 on `ui-raylib`** (`EFX11`), plus the registry rows gate 2 left
+   open: per-backend implementations (`EFX13`) and theme rebinding (`EFX16`).
 4. **The CRT re-expressed** (`EFX21`–`EFX24`), retiring `CrtUiContext`'s
    hand-derivation and the `ui-app` post-process seam in the same move.
 
