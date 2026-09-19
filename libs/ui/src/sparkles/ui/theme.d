@@ -29,6 +29,7 @@ $(REF TermStyle, sparkles,base,term_style), both of which `sparkles:base` owns.
 module sparkles.ui.theme;
 
 import sparkles.base.term_color : Color, mix, RgbColor;
+import sparkles.ui.effect : ThemeEffects;
 import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette, Slot,
     schemeForBackground;
 
@@ -92,6 +93,12 @@ struct Theme
     bool hasPalette; /// ditto — `true` once `palette` was set explicitly
 
     GlyphSet glyphs; /// glyph channel
+
+    /// Effect channel (`EFX16`): the theme's say over the built-in effect
+    /// set. All-default leaves them exactly as registered; a binding turns
+    /// one off or swaps it, without any view changing — a widget still names
+    /// the same id and the registry answers differently.
+    ThemeEffects effects;
 
     /**
     The palette to resolve slots against: the explicitly configured one, or —
