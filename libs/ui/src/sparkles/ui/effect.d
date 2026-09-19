@@ -27,6 +27,8 @@ honour would quietly turn that into "one view, one of which is plainer".
 */
 module sparkles.ui.effect;
 
+import std.algorithm : canFind;
+
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : Point, Size;
 
@@ -106,6 +108,37 @@ enum Degradation : ubyte
     colorApproximation,
 }
 
+/**
+A backend's own artifact for an effect (`EFX13`).
+
+$(B The toolkit never looks inside `source`, and never interprets `backend`) —
+it compares the key and hands the bytes over. That is what keeps a GLSL string
+and, later, a SPIR-V blob from turning `sparkles:ui` into something that knows
+about devices: a record carries artifacts the way a registry carries anything
+else, and the backend that recognises the key is the only code that can read
+them.
+
+$(B Why a string beside a D function.) For a tier-0 effect the two are twins —
+the same transform written twice — and `EFX20` exists because that is a
+temporary state, not the design. Keeping them adjacent in this module is the
+weakest form of the enforcement that eventually replaces them: a reader sees
+both at once, and `ui_raylib.effect_gpu`'s golden test checks they agree.
+*/
+struct EffectImpl
+{
+    /// A key the toolkit only compares. $(LREF glslBackend) is the one both
+    /// GL targets use.
+    string backend;
+    /// The artifact. For $(LREF glslBackend), the body of a
+    /// `vec3 effectColor(vec2 at, vec2 extent, vec3 color)` function — the
+    /// GLSL twin of a $(LREF Tier0Fn), in the same cell coordinates.
+    string source;
+}
+
+/// The `EffectImpl.backend` key for a GLSL fragment target (desktop and ES
+/// alike — the dialect difference is a prologue the backend supplies).
+enum string glslBackend = "glsl";
+
 /// One registered effect: its tier, its tier-0 transform where it has one, and
 /// what it degrades to (`EFX13`).
 struct EffectRecord
@@ -119,9 +152,23 @@ struct EffectRecord
     Tier0Fn tier0;
     Degradation degradation;
 
+    /// Per-backend artifacts (`EFX13`), looked up by key.
+    EffectImpl[] impls;
+
     /// Whether a cell grid can honour this — i.e. whether there is a transform
     /// to run at all.
     bool honouredByCells() const @safe pure nothrow @nogc => tier0 !is null;
+
+    /// The artifact `backend` recognises, or `null`. A backend with no entry
+    /// degrades per `EFX3`/`EFX12` rather than failing.
+    const(EffectImpl)* implFor(scope const(char)[] backend) const
+        @safe pure nothrow @nogc return
+    {
+        foreach (ref const i; impls)
+            if (i.backend == backend)
+                return &i;
+        return null;
+    }
 }
 
 /**
@@ -156,9 +203,12 @@ struct EffectRegistry
         return EffectId(cast(uint) _records.length);
     }
 
-    /// ditto — the common case: a tier-0 transform under a name.
-    EffectId registerTier0(string name, Tier0Fn fn) pure nothrow
-        => register(EffectRecord(name: name, tier: EffectTier.color, tier0: fn));
+    /// ditto — the common case: a tier-0 transform under a name, optionally
+    /// with the GLSL twin a GPU target needs to run the same thing.
+    EffectId registerTier0(string name, Tier0Fn fn, string glsl = null)
+        pure nothrow
+        => register(EffectRecord(name: name, tier: EffectTier.color, tier0: fn,
+            impls: glsl is null ? null : [EffectImpl(glslBackend, glsl)]));
 
     /**
     Replaces what `id` resolves to, keeping the id (`EFX18`).
@@ -234,9 +284,9 @@ phosphor tint proves the tier split is real — is these.
 BuiltinEffects builtinEffects(ref EffectRegistry reg) @safe pure nothrow
 {
     BuiltinEffects b;
-    b.scanlines = reg.registerTier0("scanlines", &scanlinesTier0);
-    b.phosphor = reg.registerTier0("phosphor", &phosphorTier0);
-    b.dim = reg.registerTier0("dim", &dimTier0);
+    b.scanlines = reg.registerTier0("scanlines", &scanlinesTier0, scanlinesGlsl);
+    b.phosphor = reg.registerTier0("phosphor", &phosphorTier0, phosphorGlsl);
+    b.dim = reg.registerTier0("dim", &dimTier0, dimGlsl);
     return b;
 }
 
@@ -256,6 +306,16 @@ private RgbColor scale(in RgbColor c, int numerator, int denominator)
 RgbColor scanlinesTier0(in Tier0Input i) @safe pure nothrow @nogc
     => (i.at.y & 1) ? scale(i.color, 62, 100) : i.color;
 
+/// ditto — the GLSL twin. Kept touching its D original on purpose: these are
+/// one transform written twice until `EFX20` removes the duplication, and a
+/// reader must be able to see both without going looking.
+enum string scanlinesGlsl = q{
+vec3 effectColor(vec2 at, vec2 extent, vec3 color)
+{
+    return mod(at.y, 2.0) >= 1.0 ? color * 0.62 : color;
+}
+};
+
 /**
 Tinted toward a green phosphor, keeping each cell's own luminance.
 
@@ -273,9 +333,49 @@ RgbColor phosphorTier0(in Tier0Input i) @safe pure nothrow @nogc
         scale(RgbColor(l, l, l), 45, 100).b);
 }
 
+/// ditto
+enum string phosphorGlsl = q{
+vec3 effectColor(vec2 at, vec2 extent, vec3 color)
+{
+    float l = dot(color, vec3(0.299, 0.587, 0.114));
+    return vec3(l * 0.30, l, l * 0.45);
+}
+};
+
 /// Uniformly darkened — an inactive pane, without the view knowing it is one.
 RgbColor dimTier0(in Tier0Input i) @safe pure nothrow @nogc
     => scale(i.color, 55, 100);
+
+/// ditto
+enum string dimGlsl = q{
+vec3 effectColor(vec2 at, vec2 extent, vec3 color)
+{
+    return color * 0.55;
+}
+};
+
+@("ui.effect.builtins.eachCarriesBothHalvesOfItsTwin")
+@safe pure nothrow unittest
+{
+    // `EFX13`: every built-in must ship the GPU artifact beside the D
+    // function, or the GPU target silently degrades on an effect the
+    // terminal honours — which is the inversion this gate exists to end.
+    EffectRegistry reg;
+    const b = builtinEffects(reg);
+    foreach (id; [b.scanlines, b.phosphor, b.dim])
+    {
+        const rec = reg.lookup(id);
+        assert(rec.tier0 !is null, "the CPU half");
+        const impl = rec.implFor(glslBackend);
+        assert(impl !is null, "the GPU half");
+        // The contract the backend wraps: one function, one name, one
+        // signature. A twin that declared something else would compile into
+        // the wrapper and fail at link with no line number worth reading.
+        assert(impl.source.canFind("vec3 effectColor(vec2 at, vec2 extent, vec3 color)"));
+    }
+    assert(reg.lookup(b.dim).implFor("spirv") is null,
+        "an unknown backend key resolves to nothing, not to the wrong blob");
+}
 
 @("ui.effect.registry.resolvesAndNeverReusesAnId")
 @safe pure nothrow unittest
