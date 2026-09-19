@@ -104,6 +104,7 @@
   special = [
     "xml"
     "fsharp"
+    "glsl"
     "just"
     "latex"
     "matlab"
@@ -167,6 +168,12 @@
       repo = "tree-sitter-starlark";
       rev = "a453dbf3ba433db0e5ec621a38a7e59d72e4dc69";
       hash = "sha256-iBchBq9NE4QqHc8MbWs4YgzUH6EB0W7RCIk07I6Zm+I=";
+    };
+    spirv = {
+      owner = "JuliaGPU";
+      repo = "tree-sitter-spirv";
+      rev = "57032ecc3e8472593137910ecc154356420c26df";
+      hash = "sha256-PTuXmmhTcMfMzghBz5rNMaXnFjcenLQ4SHXE2jFJTt4=";
     };
   };
 }

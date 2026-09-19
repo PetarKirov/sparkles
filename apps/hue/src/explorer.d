@@ -148,6 +148,10 @@ FsIcon fsIcon(scope const(char)[] name) @safe pure nothrow @nogc
         case "go":               return FsIcon("\U0000E627 ", RgbColor(0x00, 0xad, 0xd8));
         case "html", "htm":      return FsIcon("\U0000E736 ", RgbColor(0xe4, 0x4d, 0x26));
         case "css":              return FsIcon("\U0000E749 ", RgbColor(0x56, 0x3d, 0x7c));
+        case "glsl", "vert", "frag", "geom", "comp", "tesc", "tese":
+            return FsIcon("\U0000E6A2 ", RgbColor(0x56, 0xb6, 0xc2));
+        case "spvasm", "spirv":
+            return FsIcon("\U0000E6A2 ", RgbColor(0x7e, 0xba, 0xe4));
         case "toml", "yaml", "yml", "ini", "cfg", "conf", "sdl":
             return FsIcon("\U0000E615 ", RgbColor(0x6d, 0x80, 0x86));
         case "lock":             return FsIcon("\U0000F023 ", RgbColor(0x6d, 0x80, 0x86));

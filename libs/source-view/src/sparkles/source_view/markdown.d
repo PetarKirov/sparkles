@@ -2252,6 +2252,7 @@ string langIcon(const(char)[] lang) @safe pure nothrow @nogc
         case "css": return "\U0000E749";
         case "go": return "\U0000E627";
         case "d": return "\U0000E7AF";
+        case "glsl": return "\U0000E6A2";
         case "": return "";
         default: return genericCodeIcon;
     }

@@ -199,6 +199,17 @@
           name = "sdl";
           grammar = config.packages.tree-sitter-sdl;
         };
+        # Upstream queries use neovim's `#lua-match?` for builtin variables
+        # (`gl_...`), which our engine disables as an unsupported predicate.
+        # Rewrite to standard `#match?`.
+        glsl = entry {
+          name = "glsl";
+          grammar = g.tree-sitter-glsl;
+          queriesDir = pkgs.runCommand "ts-grammar-glsl-queries" { } ''
+            mkdir -p $out
+            sed -e 's/#lua-match?/#match?/' ${g.tree-sitter-glsl}/queries/highlights.scm > $out/highlights.scm
+          '';
+        };
       }
       # Grammars whose nixpkgs output ships no `queries/`: the .scm files live
       # in the source tree, either at its root (fsharp) or under a
