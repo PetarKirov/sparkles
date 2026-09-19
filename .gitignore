@@ -98,6 +98,10 @@ bazel-*
 /apps/hue/tools/dub.selections.json
 screenshot*.png
 
+# Compiled output of the effects/images acceptance demo (dub run --single)
+/docs/specs/ui/demos/imgshot
+/docs/specs/ui/demos/dub.selections.json
+
 # Compiled output of the wired-inline bench-engine generator (dub run --single)
 /libs/wired/bench/runtime/tools/gen-wired-inline
 /libs/wired/bench/runtime/tools/dub.selections.json

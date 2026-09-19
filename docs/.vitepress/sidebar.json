@@ -1268,6 +1268,10 @@
             "link": "/specs/ui/effects"
           },
           {
+            "text": "Effects & images · demos",
+            "link": "/specs/ui/effects-demos"
+          },
+          {
             "text": "Migration (planned)",
             "link": "/specs/ui/migration"
           },
