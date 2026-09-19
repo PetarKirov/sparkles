@@ -10,8 +10,9 @@ interpreters are later siblings under `interp/`.
 module sparkles.ui.interp.immediate;
 
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, ImageDraw, isCanvas, Line,
-    LineStyle, match, OpKind, PopClip, PushClip, Rule, RuleEdge, ruleSpan,
-    Scrollbar, scrollbarCell, scrollbarCellCount, TextRun, visualOf;
+    LineStyle, match, OpKind, PopClip, PopEffect, PushClip, PushEffect, Rule,
+    RuleEdge, ruleSpan, Scrollbar, scrollbarCell, scrollbarCellCount, TextRun,
+    visualOf;
 import sparkles.ui.geometry : cellsOf, Point, Rect;
 import sparkles.ui.style : Visual;
 
@@ -92,6 +93,22 @@ if (isCanvas!Canvas)
             {
                 static if (__traits(compiles, canvas.popClip()))
                     canvas.popClip();
+            },
+            (in PushEffect e)
+            {
+                // `EFX3`: the effect pair is optional, exactly as the clip
+                // pair is. A canvas without it paints the bracketed subtree
+                // unaffected — a DECLARED degradation, not an error, because
+                // an effect is decoration and a missing one must not be able
+                // to take the frame down (`EFX17` says the same of an
+                // unregistered id).
+                static if (__traits(compiles, canvas.pushEffect(e.rect, e.effect)))
+                    canvas.pushEffect(e.rect, e.effect);
+            },
+            (in PopEffect _)
+            {
+                static if (__traits(compiles, canvas.popEffect()))
+                    canvas.popEffect();
             },
         );
 }
@@ -372,4 +389,60 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
         "a bar chart")]);
     assert(real_.ops.length == 1 && real_.ops[0].kind == OpKind.image);
     assert(real_.ops[0].imageFit == ImageFit.cover);
+}
+
+@("ui.interp.immediate.effectBracketIsOptionalAndDegradesToUnaffected")
+@safe unittest
+{
+    import sparkles.ui.canvas : fillRectOp, OpKind, popEffectOp, pushEffectOp,
+        RecordingCanvas;
+    import sparkles.ui.effect : EffectId;
+    import sparkles.ui.geometry : Rect;
+
+    // `EFX3`: a canvas that implements the pair receives it...
+    RecordingCanvas aware;
+    paint(aware, [
+        pushEffectOp(Rect(0, 0, 4, 2), EffectId(3)),
+        fillRectOp(Rect(0, 0, 4, 2)),
+        popEffectOp(),
+    ]);
+    assert(aware.ops.length == 3);
+    assert(aware.ops[0].kind == OpKind.pushEffect);
+    assert(aware.ops[0].effectId == EffectId(3));
+    assert(aware.ops[2].kind == OpKind.popEffect);
+
+    // ...and one that does not paints the bracketed subtree unaffected. Not
+    // an error, and not a dropped subtree: the CONTENT still lands, only the
+    // treatment is missing.
+    static struct NoEffects
+    {
+        import sparkles.ui.canvas : DrawOp, fillRectOp, glyphOp, lineOp,
+            textRunOp;
+        import sparkles.ui.geometry : cellsOf, Size;
+        import sparkles.ui.style : Slot;
+
+        DrawOp[] ops;
+
+    @safe nothrow:
+        void fillRect(in Rect r, in Visual v) { ops ~= fillRectOp(r, Slot.inherit, v); }
+        void textRun(in Point at, scope const(char)[] t, in Visual v)
+        {
+            ops ~= textRunOp(Rect(at.x, at.y, cast(int) cellsOf(t), 1),
+                t.idup, Slot.inherit, v);
+        }
+        void glyph(in Point at, dchar g, in Visual v) { ops ~= glyphOp(at, g, Slot.inherit, v); }
+        void line(in Point a, in Point b, in Visual v, LineStyle st) { ops ~= lineOp(a, b, st, Slot.inherit, v); }
+        Size measure(scope const(char)[] t) const => Size(cast(int) cellsOf(t), 1);
+    }
+
+    static assert(isCanvas!NoEffects);
+    static assert(!__traits(compiles, (ref NoEffects c) => c.popEffect()));
+
+    NoEffects blind;
+    paint(blind, [
+        pushEffectOp(Rect(0, 0, 4, 2), EffectId(3)),
+        fillRectOp(Rect(0, 0, 4, 2)),
+        popEffectOp(),
+    ]);
+    assert(blind.ops.length == 1 && blind.ops[0].kind == OpKind.fillRect);
 }

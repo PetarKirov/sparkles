@@ -22,7 +22,7 @@ import std.traits : EnumMembers, getUDAs;
 import sparkles.base.term_color : ColorDepth, RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
-    ImageDraw, PopClip, PushClip, Rule, Scrollbar, TextRun;
+    ImageDraw, PopClip, PopEffect, PushClip, PushEffect, Rule, Scrollbar, TextRun;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
 import sparkles.ui.style : BorderStyle, FontRole;
@@ -273,6 +273,10 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
             (in ImageDraw i) { color(); glyphs(i.alt); },
             (in PushClip _) {},
             (in PopClip _) {},
+            // An effect's degradation is its own declaration (`EFX3`), not
+            // a capability of the target's.
+            (in PushEffect _) {},
+            (in PopEffect _) {},
         );
     return r;
 }

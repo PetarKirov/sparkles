@@ -30,8 +30,9 @@ import sparkles.base.term_color : RgbColor;
 
 import sparkles.ui.arena : FrameArena, GcArena, isArena;
 import sparkles.ui.canvas : boxChromeOf, DrawOp, FillRect, Glyph, ImageDraw,
-    inkOf, Line, LineStyle, PopClip, PushClip, Rule, RuleEdge, Scrollbar,
-    TextRun;
+    inkOf, Line, LineStyle, PopClip, PopEffect, PushClip, PushEffect, Rule,
+    RuleEdge, Scrollbar, TextRun;
+import sparkles.ui.effect : EffectId;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
 import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.style : Slot, Visual;
@@ -220,6 +221,18 @@ if (isArena!Arena)
     void popClip()
     {
         _ops ~= DrawOp(PopClip());
+    }
+
+    /// ditto — the `EFX1` bracket, shaped exactly like the clip pair above.
+    void pushEffect(in Rect rect, EffectId effect)
+    {
+        _ops ~= DrawOp(PushEffect(rect: rect, effect: effect));
+    }
+
+    /// ditto
+    void popEffect()
+    {
+        _ops ~= DrawOp(PopEffect());
     }
 
     /// The cell extent of `text` — the `isCanvas` primitive, so a buffer can
