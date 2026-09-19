@@ -94,6 +94,19 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
         if (node.hasBorderOverride)
             vis.border.color = node.borderOverride;
     }
+    // `EFX5`: the bracket is emitted HERE, by the display list, so every
+    // consumer of the op stream — the GPU painter, the cell grid, the HTML
+    // emitters, the headless `--render` target — sees the same structure.
+    // A backend deriving it for itself is how the CRT ended up outside the
+    // pipeline in the first place.
+    //
+    // It wraps the node's own background too, not just its children: an
+    // effect on a panel that left the panel's fill untreated would be
+    // treating "the subtree" as something other than what it looks like.
+    const bracketed = node.effect.valid;
+    if (bracketed)
+        ops.pushEffect(rect, node.effect);
+
     Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg,
         pageBg, node.states);
     applyOverrides(vis, node);
@@ -238,6 +251,9 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 ops.popClip();
             break;
     }
+
+    if (bracketed)
+        ops.popEffect();
 }
 
 @("ui.display_list.hoverPopup.surfaceThenText")
@@ -662,4 +678,84 @@ unittest
     assert(images[0].imageFit == ImageFit.contain);
     assert(images[0].imageAlt == "quarterly revenue",
         "the node's text is the alt, interned by the buffer");
+}
+
+@("ui.displayList.effect.bracketsTheSubtreeAndNeverMovesIt")
+@safe unittest
+{
+    import std.algorithm : filter, map;
+    import std.array : array;
+    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Builder;
+
+    EffectRegistry reg;
+    const builtin = builtinEffects(reg);
+
+    uint[] build(ref Builder b, bool withEffect)
+    {
+        const a = b.add(Widget(kind: WidgetKind.text, text: "alpha"));
+        const c = b.add(Widget(kind: WidgetKind.text, text: "beta"));
+        const inner = b.container(WidgetKind.column, [a, c]);
+        Widget panelW = Widget(kind: WidgetKind.panel, children: [inner],
+            slot: Slot.surface, paintBackground: true);
+        if (withEffect)
+            panelW.effect = builtin.dim;
+        const panel = b.add(panelW);
+        const after = b.add(Widget(kind: WidgetKind.text, text: "outside"));
+        return [b.add(Widget(kind: WidgetKind.column, children: [panel, after]))];
+    }
+
+    auto plainB = Builder();
+    auto plainTree = plainB.finish(build(plainB, false)[0]);
+    auto fxB = Builder();
+    auto fxTree = fxB.finish(build(fxB, true)[0]);
+
+    // `EFX6`: turning an effect on cannot reflow the page. The geometry is
+    // decided before the effect is known, so every frame must be identical.
+    const plainFrames = layout(plainTree);
+    const fxFrames = layout(fxTree);
+    assert(plainFrames.length == fxFrames.length);
+    foreach (i; 0 .. plainFrames.length)
+        assert(plainFrames[i].rect == fxFrames[i].rect);
+
+    const pal = defaultTwoslashPalette();
+    auto plainOps = buildDisplayList(plainTree, plainFrames, pal,
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    auto fxOps = buildDisplayList(fxTree, fxFrames, pal,
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+
+    // `EFX5`: the bracket is emitted by the display list, so every consumer
+    // sees it — exactly one pair, and only in the effected tree.
+    assert(plainOps.filter!(o => o.kind == OpKind.pushEffect).empty);
+    const pushes = fxOps.filter!(o => o.kind == OpKind.pushEffect).array;
+    const pops = fxOps.filter!(o => o.kind == OpKind.popEffect).array;
+    assert(pushes.length == 1 && pops.length == 1);
+    assert(pushes[0].effectId == builtin.dim);
+
+    // It carries the subtree's own rect, and brackets the node's OWN
+    // background too — a dimmed panel whose fill stayed bright would not be
+    // treating the subtree as what it looks like.
+    const panelRect = pushes[0].rect;
+    const bracketed = fxOps
+        .filter!(o => o.kind != OpKind.pushEffect && o.kind != OpKind.popEffect)
+        .array;
+    assert(bracketed.length == plainOps.length,
+        "the bracket adds ops, it does not change them");
+    foreach (i; 0 .. plainOps.length)
+        assert(bracketed[i].kind == plainOps[i].kind
+            && bracketed[i].rect == plainOps[i].rect);
+
+    // The "outside" run is emitted after the pop, not inside the bracket.
+    size_t popAt, outsideAt;
+    foreach (i, ref o; fxOps)
+    {
+        if (o.kind == OpKind.popEffect)
+            popAt = i;
+        if (o.kind == OpKind.textRun && o.text == "outside")
+            outsideAt = i;
+    }
+    assert(outsideAt > popAt, "a sibling must not inherit the bracket");
+    assert(panelRect.width > 0);
 }

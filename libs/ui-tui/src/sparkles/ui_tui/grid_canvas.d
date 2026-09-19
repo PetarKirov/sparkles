@@ -109,6 +109,11 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 // than a second one written here.
                 paintImagePlaceholder(canvas, op.rect, op.imageAlt, op.visual);
                 break;
+            case pushEffect:
+            case popEffect:
+                // No tier-0 support on the grid yet: the subtree paints
+                // unaffected, `EFX3`'s declared degradation.
+                break;
             case rule:
                 // The cell backend has no sub-cell resolution: a hairline
                 // becomes the box-drawing line along the same edge (UIA2).
