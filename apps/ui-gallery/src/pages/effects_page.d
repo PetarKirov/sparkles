@@ -19,11 +19,12 @@ module pages.effects_page;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.image : ImageFit;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
-import state : GalleryState;
+import state : GalleryState, swatchSize;
 
 @safe:
 
@@ -67,6 +68,29 @@ uint view(ref Builder b, in GalleryState s)
         ~ "which every bracket has plenty of, and puts a distinct 24-bit "
         ~ "colour in each cell while keeping that cell's own luminance. "
         ~ "Position is two axes and a tier-0 transform reads both.", w);
+    body_ ~= spacer(b);
+
+    // Raster content under a bracket. The effect does not know it is over an
+    // image — `pushEffect` brackets a SUBTREE, and an image is an ordinary
+    // leaf inside it — which is the whole reason the bracket was shaped like
+    // a clip. In a window the tier-0 transform runs over the uploaded
+    // texture's pixels; in a terminal it runs over `IMG4`'s placeholder,
+    // because that is what the cells actually hold.
+    body_ ~= section(b, "over raster content · an image is just a leaf", [
+        picture(b, "none", EffectId.init, EffectId.init, s),
+        picture(b, "phosphor", fx.phosphor, EffectId.init, s),
+        picture(b, "spectrum", fx.spectrum, EffectId.init, s),
+    ], gap: 1);
+    body_ ~= spacer(b);
+
+    // A CRT is not one effect. Curvature warps the tube's geometry and the
+    // raster darkens alternate lines ON the warped result — so the two are
+    // nested rather than merged, and the order is visible: scanlines bow
+    // with the picture because they are inside the bracket that bows it.
+    body_ ~= section(b, "a CRT · scanlines inside curvature (window only)", [
+        picture(b, "crt", fx.curvature, fx.scanlines, s),
+        para(b, degradationNote(s), w > 8 ? w - 6 : w),
+    ]);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "nesting · dim inside dim", [
@@ -136,6 +160,49 @@ private uint sample(ref Builder b, string caption, EffectId effect, int width)
     ));
 }
 
+/**
+One raster specimen: the sample image under `outer`, and — when `inner` names
+one — under a second bracket inside it.
+
+The image is given an explicit cell box rather than its natural size: the
+swatch is 64×32 pixels, which rounds to eight cells by two, and a distortion
+is not legible across two rows. `contain` keeps its aspect inside that box,
+so the warp is the only thing changing its shape.
+*/
+private uint picture(ref Builder b, string caption, EffectId outer,
+    EffectId inner, in GalleryState s)
+{
+    const pic = b.add(Widget(
+        kind: WidgetKind.image,
+        image: s.sampleImage,
+        imagePixels: swatchSize,
+        imageFit: ImageFit.contain,
+        text: "a colour swatch",
+        slot: Slot.chip,
+        width: SizeSpec.fixed(30),
+        height: SizeSpec.fixed(7),
+    ));
+
+    // The inner bracket rides its own panel, so the outer effect sees the
+    // inner one's RESULT — which is what makes the composition order
+    // observable rather than a claim.
+    const framed = inner.valid
+        ? b.add(Widget(kind: WidgetKind.panel, children: [pic],
+            slot: Slot.surface, paintBackground: true, effect: inner))
+        : pic;
+
+    const stack = column(b, [label(b, caption, Slot.chromeAccent), framed]);
+    return b.add(Widget(
+        kind: WidgetKind.panel,
+        children: [stack],
+        slot: Slot.surface,
+        padding: Insets.symmetric(0, 1),
+        width: SizeSpec.fixed(34),
+        paintBackground: true,
+        effect: outer,
+    ));
+}
+
 /// An effected panel inside an effected panel: the inner cells take both.
 private uint nested(ref Builder b, EffectId effect, int width)
 {
@@ -186,10 +253,12 @@ private uint nested(ref Builder b, EffectId effect, int width)
     const pushes = ops.count!(o => o.kind == OpKind.pushEffect);
     assert(pushes == ops.count!(o => o.kind == OpKind.popEffect));
 
-    // Five built-ins as top-level specimens, plus the two of the nesting
-    // demonstration. The "none" specimen must NOT emit one: a null id is the
-    // absence of an effect, not an effect that does nothing.
-    assert(pushes == 7, "five specimens plus the nested pair");
+
+    // Five tier-0 specimens, two effected raster specimens, the CRT's two
+    // nested brackets, and the nesting demonstration's two. The "none"
+    // specimens must NOT emit one: a null id is the absence of an effect,
+    // not an effect that does nothing.
+    assert(pushes == 11, "every specimen that names an id, and only those");
 
     const ids = ops.filter!(o => o.kind == OpKind.pushEffect).array;
     size_t cellHonoured, textureOnly;
@@ -211,5 +280,5 @@ private uint nested(ref Builder b, EffectId effect, int width)
     }
     // Both sides of the tier boundary are on the page. A catalogue showing
     // only the tier a terminal can run would be showing the easy half.
-    assert(cellHonoured == 6 && textureOnly == 1);
+    assert(cellHonoured == 9 && textureOnly == 2);
 }

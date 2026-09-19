@@ -5,10 +5,10 @@
    Tracks            | A widget carries an effect id; the display list brackets its subtree in #
    Text              | pushEffect/popEffect, exactly as a clipping container brackets one in   #
    Themes            | pushClip/popClip. A backend that cannot honour an effect paints the     #
-   Slots             | subtree unaffected - a declared degradation, so a missing effect can    #
-   Decoration        | never take a frame down.                                                #
- > Effects           |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
+   Slots             | subtree unaffected - a declared degradation, so a missing effect can    |
+   Decoration        | never take a frame down.                                                |
+ > Effects           |                                                                         |
+   Grid              | +---------------------------------------------------------------------+ |
    Components        | | tier 0 * a per-cell colour transform                                | |
    Tree              | |  none                                                               | |
    Property tree     | |  The quick brown fox                                                | |
