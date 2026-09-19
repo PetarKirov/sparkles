@@ -5,10 +5,10 @@
 [0m [0m  Tracks[0m            [0m|[0m [0mA widget carries an effect id; the display list brackets its subtree in[0m [0m#[0m
 [0m [0m  Text[0m              [0m|[0m [0mpushEffect/popEffect, exactly as a clipping container brackets one in[0m   [0m#[0m
 [0m [0m  Themes[0m            [0m|[0m [0mpushClip/popClip. A backend that cannot honour an effect paints the[0m     [0m#[0m
-[0m [0m  Slots[0m             [0m|[0m [0msubtree unaffected - a declared degradation, so a missing effect can[0m    [0m#[0m
-[0m [0m  Decoration[0m        [0m|[0m [0mnever take a frame down.[0m                                                [0m#[0m
-[0m [0m> [0;1mEffects[0m          [0m [0m|[0m                                                                         [0m#[0m
-[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0msubtree unaffected - a declared degradation, so a missing effect can[0m    [0m|[0m
+[0m [0m  Decoration[0m        [0m|[0m [0mnever take a frame down.[0m                                                [0m|[0m
+[0m [0m> [0;1mEffects[0m          [0m [0m|[0m                                                                         [0m|[0m
+[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mtier 0 * a per-cell colour transform[0m                                [0m|[0m [0m|[0m
 [0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m [0mnone[0m                             [0m                                  [0m|[0m [0m|[0m
 [0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m
