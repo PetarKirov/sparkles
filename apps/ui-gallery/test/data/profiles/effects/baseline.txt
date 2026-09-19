@@ -11,9 +11,9 @@
    Grid              | +---------------------------------------------------------------------+ #
    Components        | | tier 0 * a per-cell colour transform                                | #
    Tree              | |  none                                                               | #
-   Property tree     | |  The quick brown fox                                                | #
-   Table             | |  jumps over the lazy dog                                            | #
-   Scrolling         | |                                                                     | #
+   Property tree     | |  The quick brown fox                                                | |
+   Table             | |  jumps over the lazy dog                                            | |
+   Scrolling         | |                                                                     | |
    State             | |                                                                     | |
    Split             | |  scanlines                                                          | |
    Dock              | |  The quick brown fox                                                | |

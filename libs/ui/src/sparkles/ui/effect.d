@@ -135,6 +135,27 @@ struct EffectImpl
     string source;
 }
 
+/**
+One named scalar an effect reads at paint time (`EFX21`).
+
+$(B Why a channel at all.) A tier-0 transform is a pure function and needs
+nothing; a real tier-1 effect does — a curvature amount, a lens radius, a
+pointer position that moves every frame. Without this an application could
+only register a new shader to change a number.
+
+$(B Backend-neutral by being dumb.) A name and up to four floats. The backend
+that recognises the artifact also knows what the names mean; the toolkit
+carries them and never reads one. Refresh them between frames with
+$(REF EffectRegistry.setParams, sparkles,ui,effect) — the same window
+`EFX18` makes safe for rebinding.
+*/
+struct EffectParam
+{
+    string name;        /// the uniform's name in the backend's artifact
+    float[4] value = 0; /// up to four components
+    ubyte arity = 1;    /// how many of them are meaningful (1..4)
+}
+
 /// The `EffectImpl.backend` key for a GLSL fragment target (desktop and ES
 /// alike — the dialect difference is a prologue the backend supplies).
 enum string glslBackend = "glsl";
@@ -154,6 +175,11 @@ struct EffectRecord
 
     /// Per-backend artifacts (`EFX13`), looked up by key.
     EffectImpl[] impls;
+
+    /// Values the artifact reads at paint time (`EFX21`). Replaced wholesale
+    /// by `setParams`, never mutated in place, so a frame either sees the old
+    /// set or the new one.
+    EffectParam[] params;
 
     /// Whether a cell grid can honour this — i.e. whether there is a transform
     /// to run at all.
@@ -223,6 +249,20 @@ struct EffectRegistry
             *slot = record;
     }
 
+    /**
+    Replaces the values `id`'s artifact reads (`EFX21`), leaving everything
+    else about the record alone.
+
+    The per-frame call. It is separate from `replace` because changing a
+    number and changing an effect are different events: one happens sixty
+    times a second, the other when a shader is reloaded.
+    */
+    void setParams(EffectId id, EffectParam[] params) pure nothrow @nogc
+    {
+        if (auto slot = slotOf(id))
+            slot.params = params;
+    }
+
     /// Forgets `id`'s record. The slot is kept, so the id is never reissued.
     void remove(EffectId id) pure nothrow @nogc
     {
@@ -271,6 +311,10 @@ struct BuiltinEffects
     EffectId scanlines; /// alternate rows darkened — a CRT's horizontal raster
     EffectId phosphor;  /// tinted toward a monochrome phosphor's colour
     EffectId dim;       /// uniformly darkened, for an inactive pane
+    /// Barrel distortion — $(B tier 1), so a cell grid cannot honour it and
+    /// says so. The built-in set's proof that the tier boundary is real in
+    /// both directions, and the shape `EFX21`'s CRT is built from.
+    EffectId curvature;
 }
 
 /**
@@ -287,6 +331,16 @@ BuiltinEffects builtinEffects(ref EffectRegistry reg) @safe pure nothrow
     b.scanlines = reg.registerTier0("scanlines", &scanlinesTier0, scanlinesGlsl);
     b.phosphor = reg.registerTier0("phosphor", &phosphorTier0, phosphorGlsl);
     b.dim = reg.registerTier0("dim", &dimTier0, dimGlsl);
+    b.curvature = reg.register(EffectRecord(
+        name: "curvature",
+        tier: EffectTier.distortion,
+        // No tier-0 transform: warping position is not something a cell grid
+        // can approximate, and claiming otherwise is what `EFX12` exists to
+        // stop. A terminal states the degradation instead of faking it.
+        degradation: Degradation.unaffected,
+        impls: [EffectImpl(glslBackend, curvatureGlsl)],
+        params: [EffectParam("uAmount", [0.18f, 0, 0, 0], 1)],
+    ));
     return b;
 }
 
@@ -351,6 +405,27 @@ enum string dimGlsl = q{
 vec3 effectColor(vec2 at, vec2 extent, vec3 color)
 {
     return color * 0.55;
+}
+};
+
+/**
+Barrel distortion: a tier-1 twin, so it rewrites POSITION and has no D half.
+
+`effectWarp` is the tier-1 entry point — the backend's wrapper samples at what
+this returns and treats anything outside `[0,1]` as off the tube. The screen
+fit keeps the midpoint of each edge on the edge whatever the amount, which is
+the same `1/(1 + k/4)` the CRT's own projection derives.
+*/
+enum string curvatureGlsl = q{
+uniform float uAmount;
+
+vec2 effectWarp(vec2 uv)
+{
+    vec2 c = uv - 0.5;
+    float d = dot(c, c);
+    vec2 warped = uv + c * (d * uAmount);
+    float fit = 1.0 / (1.0 + uAmount * 0.25);
+    return (warped - 0.5) * fit + 0.5;
 }
 };
 

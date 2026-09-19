@@ -42,7 +42,7 @@ import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : applyThemeEffects, builtinEffects, EffectBinding,
-    EffectRegistry, ThemeEffects;
+    EffectParam, EffectRegistry, ThemeEffects;
 import sparkles.ui.image : ImageRegistry;
 import state;
 import term_store : TerminalStore;
@@ -160,6 +160,7 @@ struct Gallery
     /// The effect registry (`EFX13`) and its built-in ids, registered on the
     /// first frame beside the image one and bound to the host the same way.
     EffectRegistry fx;
+    private EffectParam[] fxParams;
 
     private enum PaneId paneNav = 1;
     private enum PaneId paneContent = 2;
@@ -374,6 +375,14 @@ struct Gallery
             // An environment variable rather than a key because this is a
             // harness hook, like `UIG_SHOT`: it exists to be scripted.
             import std.process : environment;
+
+            // `EFX21`'s parameter channel, in use: the built-in's own
+            // default is the CRT's 0.18, which is right for a whole screen
+            // and nearly invisible on a four-row panel. A catalogue specimen
+            // wants to be legible, so the shell says so — without touching
+            // the registered effect, and without the page knowing.
+            fxParams = [EffectParam("uAmount", [0.55f, 0, 0, 0], 1)];
+            fx.setParams(s.effects.curvature, fxParams);
 
             if (environment.get("UIG_EFFECTS") == "off")
             {
