@@ -375,6 +375,7 @@ struct Gallery
                 off.scanlines = EffectBinding(bound: true, enabled: false);
                 off.phosphor = EffectBinding(bound: true, enabled: false);
                 off.dim = EffectBinding(bound: true, enabled: false);
+                off.spectrum = EffectBinding(bound: true, enabled: false);
                 applyThemeEffects(fx, s.effects, off);
             }
         }
