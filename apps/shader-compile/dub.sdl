@@ -1,0 +1,32 @@
+name "shader-compile"
+description "Turns the repository's single-source D shaders into the GLSL sparkles:ui-raylib loads: LDC's Vulkan target to SPIR-V, spirv-cross to GLSL 330 and ES 100, glslang to prove it"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+targetType "executable"
+targetName "shader-compile"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:core-cli" path="../.."
+
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    // `dub test` supplies its own `main` (in the generated `dub_test_root`),
+    // so the test build is a library and `app.main` is version-guarded out.
+    targetType "library"
+    dependency "sparkles:test-runner" path="../.."
+    dflags "-checkaction=context" "-allinst"
+}
