@@ -13,7 +13,7 @@ import raylib;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
 import sparkles.ui_raylib.glsl : activePrologue;
-import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
+public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
 
 
 /// UI structure context passed to the CRT shader to drive localized phosphor reactions.
