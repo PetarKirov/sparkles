@@ -7,17 +7,17 @@
 [0m [0m  Themes[0m            [0m|[0m [0mthe caller's - cells here, pixels in a window.[0m                          [0m#[0m
 [0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mthe panes[0m                                                           [0m|[0m [0m#[0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mleading[0m                 [0m|[0;1mtrailing[0m                                  [0m [0m|[0m [0m#[0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m24 cells                [0m|[0m46 cells                                  [0m [0m|[0m [0m#[0m
-[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0ma file tree, say[0m        [0m|[0m~and the document beside it[0m               [0m [0m|[0m [0m#[0m
+[0m [0m  Effects[0m           [0m|[0m [0m|[0m [0;1mthe panes[0m                                                           [0m|[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mleading[0m                 [0m|[0;1mtrailing[0m                                  [0m [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0m24 cells                [0m|[0m46 cells                                  [0m [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0ma file tree, say[0m        [0m|[0m~and the document beside it[0m               [0m [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m                        [0m|[0m                                          [0m [0m|[0m [0m#[0m
 [0m [0m  Table[0m             [0m|[0m [0m|[0m [0m                        [0m|[0m                                          [0m [0m|[0m [0m#[0m
-[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m                        [0m|[0m                                          [0m [0m|[0m [0m#[0m
-[0m [0m  State[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m> [0;1mSplit[0m            [0m [0m|[0m                                                                         [0m#[0m
-[0m [0m  Dock[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0;1mthe machine[0m                                                         [0m|[0m [0m#[0m
-[0m                     [0m|[0m [0m|[0m [0msize[0m             [0m24[0m                                                 [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m> [0;1mSplit[0m            [0m [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0;1mthe machine[0m                                                         [0m|[0m [0m#[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0msize[0m             [0m24[0m                                                 [0m|[0m [0m#[0m
 [0m                     [0m|[0m [0m|[0m [0mdragging[0m         no                                                 [0m|[0m [0m#[0m
 [0m                     [0m|[0m [0m|[0m [0mbounds[0m           10 ~ 60                                            [0m|[0m [0m#[0m
 [0m                     [0m|[0m [0m|[0m [0mpointer shape[0m    default_                                           [0m|[0m [0m#[0m

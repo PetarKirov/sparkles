@@ -34,6 +34,7 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
     PointerUnit, RunConfig, withRealSize;
+import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui_raylib.raylib_canvas : raylibCapabilities, RaylibCanvas;

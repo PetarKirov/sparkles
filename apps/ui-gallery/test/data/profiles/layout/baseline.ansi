@@ -7,17 +7,17 @@
 [0m [0m  Themes[0m            [0m|[0m [0m- the width/height cycle is broken by ordering.[0m                         [0m#[0m
 [0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mthe knobs[0m                                                           [0m|[0m [0m#[0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0mwidth[0m [0m [0;1mfit[0m [0m [0m [0mgrow[0m [0m [0m [0mfixed[0m [0m [0m [0mpercent[0m [0m                                [0m|[0m [0m#[0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mvalue[0m 12                                                            [0m|[0m [0m#[0m
-[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0malignX[0m [0m [0;1mstart[0m [0m [0m [0mcenter[0m [0m [0m [0mend[0m [0m                                       [0m|[0m [0m#[0m
-[0m [0m  Table[0m             [0m|[0m [0m|[0m [0malignY[0m [0m [0;1mstart[0m [0m [0m [0mcenter[0m [0m [0m [0mend[0m [0m                                       [0m|[0m [0m#[0m
-[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mgap[0m 1 [0mpadding[0m 1                                                     [0m|[0m [0m#[0m
-[0m [0m  State[0m             [0m|[0m [0m|[0m [0mthird band[0m [0m [0;1mvisible[0m [0m [0m [0mhidden[0m [0m [0m [0mcollapsed[0m [0m                           [0m|[0m [0m#[0m
-[0m [0m  Split[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Dock[0m              [0m|[0m                                                                         [0m#[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m                     [0m|[0m [0m|[0m [0;1mthe row[0m                                                             [0m|[0m [0m#[0m
+[0m [0m  Effects[0m           [0m|[0m [0m|[0m [0;1mthe knobs[0m                                                           [0m|[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0mwidth[0m [0m [0;1mfit[0m [0m [0m [0mgrow[0m [0m [0m [0mfixed[0m [0m [0m [0mpercent[0m [0m                                [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0mvalue[0m 12                                                            [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0malignX[0m [0m [0;1mstart[0m [0m [0m [0mcenter[0m [0m [0m [0mend[0m [0m                                       [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0malignY[0m [0m [0;1mstart[0m [0m [0m [0mcenter[0m [0m [0m [0mend[0m [0m                                       [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mgap[0m 1 [0mpadding[0m 1                                                     [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mthird band[0m [0m [0;1mvisible[0m [0m [0m [0mhidden[0m [0m [0m [0mcollapsed[0m [0m                           [0m|[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Split[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m  Dock[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0;1mthe row[0m                                                             [0m|[0m [0m#[0m
 [0m                     [0m|[0m [0m|[0m [0m       [0m [0m        [0m [0m       [0m                                            [0m|[0m [0m#[0m
 [0m                     [0m|[0m [0m|[0m [0m [0mfirst[0m [0m [0m second [0m [0m third [0m                                            [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m       [0m [0m        [0m [0m       [0m                                            [0m|[0m [0m|[0m

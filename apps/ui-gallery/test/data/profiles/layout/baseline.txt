@@ -7,17 +7,17 @@
    Themes            | - the width/height cycle is broken by ordering.                         #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
-   Grid              | | the knobs                                                           | #
-   Components        | | width  fit   grow   fixed   percent                                 | #
-   Tree              | | value 12                                                            | #
-   Property tree     | | alignX  start   center   end                                        | #
-   Table             | | alignY  start   center   end                                        | #
-   Scrolling         | | gap 1 padding 1                                                     | #
-   State             | | third band  visible   hidden   collapsed                            | #
-   Split             | +---------------------------------------------------------------------+ #
-   Dock              |                                                                         #
-   Terminal          | +---------------------------------------------------------------------+ #
-                     | | the row                                                             | #
+   Effects           | | the knobs                                                           | #
+   Grid              | | width  fit   grow   fixed   percent                                 | #
+   Components        | | value 12                                                            | #
+   Tree              | | alignX  start   center   end                                        | #
+   Property tree     | | alignY  start   center   end                                        | #
+   Table             | | gap 1 padding 1                                                     | #
+   Scrolling         | | third band  visible   hidden   collapsed                            | #
+   State             | +---------------------------------------------------------------------+ #
+   Split             |                                                                         #
+   Dock              | +---------------------------------------------------------------------+ #
+   Terminal          | | the row                                                             | #
                      | |                                                                     | #
                      | |  first   second   third                                             | |
                      | |                                                                     | |

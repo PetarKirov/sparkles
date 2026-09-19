@@ -1,0 +1,32 @@
+ sparkles:ui subtree effects, tier by tier                                          tokyo-night
+   Welcome           | Effects * a bracket, not a post-pass                                    #
+   Primitives        |                                                                         #
+   Layout            |                                                                         #
+   Tracks            | A widget carries an effect id; the display list brackets its subtree in #
+   Text              | pushEffect/popEffect, exactly as a clipping container brackets one in   #
+   Themes            | pushClip/popClip. A backend that cannot honour an effect paints the     #
+   Slots             | subtree unaffected - a declared degradation, so a missing effect can    #
+   Decoration        | never take a frame down.                                                #
+ > Effects           |                                                                         #
+   Grid              | +---------------------------------------------------------------------+ #
+   Components        | | tier 0 * a per-cell colour transform                                | #
+   Tree              | |  none                                                               | #
+   Property tree     | |  The quick brown fox                                                | #
+   Table             | |  jumps over the lazy dog                                            | #
+   Scrolling         | |                                                                     | #
+   State             | |                                                                     | |
+   Split             | |  scanlines                                                          | |
+   Dock              | |  The quick brown fox                                                | |
+   Terminal          | |  jumps over the lazy dog                                            | |
+                     | |                                                                     | |
+                     | |                                                                     | |
+                     | |  phosphor                                                           | |
+                     | |  The quick brown fox                                                | |
+                     | |  jumps over the lazy dog                                            | |
+                     | |                                                                     | |
+                     | |                                                                     | |
+                     | |  dim                                                                | |
+                     | |  The quick brown fox                                                | |
+                     | |  jumps over the lazy dog                                            | |
+                     |
+ pages                                                                          ? keys   q quit

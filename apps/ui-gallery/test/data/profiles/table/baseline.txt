@@ -7,17 +7,17 @@
    Themes            | per-column and per-cell alignment including decimal, VAlign, wrapping   #
    Slots             | under width caps, and pluggable glyph presets. One layout core decides  #
    Decoration        | every width, height and junction; the widget view below and the string  #
-   Grid              | view beside it both materialize its answer.                             #
-   Components        |                                                                         #
-   Tree              | +---------------------------------------------------------------------+ #
-   Property tree     | | widget view - buildTableWidgets                                     | #
- > Table             | | preset rounded   row rules    stub col                              | #
-   Scrolling         | |                                                                     | |
-   State             | | +------------------------------+                                    | |
-   Split             | | |          Q3 restock          |                                    | |
-   Dock              | | +--------+--------+------------+                                    | |
-   Terminal          | | | item   |  price | notes      |                                    | |
-                     | | +--------+--------+------------+                                    | |
+   Effects           | view beside it both materialize its answer.                             #
+   Grid              |                                                                         #
+   Components        | +---------------------------------------------------------------------+ #
+   Tree              | | widget view - buildTableWidgets                                     | #
+   Property tree     | | preset rounded   row rules    stub col                              | #
+ > Table             | |                                                                     | |
+   Scrolling         | | +------------------------------+                                    | |
+   State             | | |          Q3 restock          |                                    | |
+   Split             | | +--------+--------+------------+                                    | |
+   Dock              | | | item   |  price | notes      |                                    | |
+   Terminal          | | +--------+--------+------------+                                    | |
                      | | | widget |  12.5  | steady     |                                    | |
                      | | +--------+--------+------------+                                    | |
                      | | | gadget |   3.75 | bulk order |                                    | |

@@ -7,17 +7,17 @@
 [0m [0m  Themes[0m            [0m|[0m [0mbuilt. Nothing below hardcodes a colour - press ] and every swatch[0m      [0m#[0m
 [0m [0m> [0;1mSlots[0m            [0m [0m|[0m [0mre-resolves.[0m                                                            [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m                                                                         [0m|[0m
-[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
-[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mtext[0m                                                                [0m|[0m [0m|[0m
-[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0minherit[0m            Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0mtextPrimary[0m        Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mtextSecondary[0m     [0m Aa 0123 [0m   [0m#8d93b3[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mmuted[0m             [0m Aa 0123 [0m   [0m#777d99[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  State[0m             [0m|[0m [0m|[0m [0mtextDisabled[0m      [0m Aa 0123 [0m   [0m#5b5f76 50%[0m   [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  Split[0m             [0m|[0m [0m|[0m [0mtextInverse[0m       [0m Aa 0123 [0m   [0m#1a1b26[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0mcode[0m               Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0mdocs[0m              [0m Aa 0123 [0m   [0m#a0a0a0[0m       [0m-[0m                       [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m|[0m [0mmatched[0m            Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Effects[0m           [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mtext[0m                                                                [0m|[0m [0m|[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0minherit[0m            Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mtextPrimary[0m        Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0mtextSecondary[0m     [0m Aa 0123 [0m   [0m#8d93b3[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mmuted[0m             [0m Aa 0123 [0m   [0m#777d99[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mtextDisabled[0m      [0m Aa 0123 [0m   [0m#5b5f76 50%[0m   [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0mtextInverse[0m       [0m Aa 0123 [0m   [0m#1a1b26[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0mcode[0m               Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0mdocs[0m              [0m Aa 0123 [0m   [0m#a0a0a0[0m       [0m-[0m                       [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0mmatched[0m            Aa 0123    [0m#a9b1d6[0m       [0m-[0m                       [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0munmatched[0m         [0m Aa 0123 [0m   [0m#888888[0m       [0m-[0m                       [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m                                                                         [0m|[0m

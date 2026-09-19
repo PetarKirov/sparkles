@@ -7,17 +7,17 @@
    Themes            | component serves a terminal and a window with no second copy.           #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
-   Grid              | | headerBar - leading * centre * trailing                             | #
- > Components        | |  hue                         file.d                         q quit  | #
-   Tree              | |                                                                     | #
-   Property tree     | |  focused pane                                                       | |
-   Table             | +---------------------------------------------------------------------+ |
-   Scrolling         |                                                                         |
-   State             | The groups are separated by grow spacers - the spelling the layout      |
-   Split             | engine prescribes for distribution, since there is no margin and no     |
-   Dock              | space-between.                                                          |
-   Terminal          |                                                                         |
-                     | +---------------------------------------------------------------------+ |
+   Effects           | | headerBar - leading * centre * trailing                             | #
+   Grid              | |  hue                         file.d                         q quit  | #
+ > Components        | |                                                                     | #
+   Tree              | |  focused pane                                                       | |
+   Property tree     | +---------------------------------------------------------------------+ |
+   Table             |                                                                         |
+   Scrolling         | The groups are separated by grow spacers - the spelling the layout      |
+   State             | engine prescribes for distribution, since there is no margin and no     |
+   Split             | space-between.                                                          |
+   Dock              |                                                                         |
+   Terminal          | +---------------------------------------------------------------------+ |
                      | | tabStrip - one active, the rest idle                                | |
                      | |  config.js  config.ts  ?.md                                         | |
                      | |                                                                     | |

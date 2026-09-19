@@ -28,6 +28,7 @@ import pages.components_page : componentsAnimating = animating,
     componentsOnPointer = handlePointer, componentsStep = step,
     componentsView = view;
 import pages.decoration_page : decorationView = view;
+import pages.effects_page : effectsView = view;
 import pages.dock_page : dockOnCommand = handleCommand,
     dockOnPointer = handlePointer, dockStep = step, dockView = view;
 import pages.machines_page : machinesAnimating = animating,
@@ -133,6 +134,7 @@ static immutable Page[] pages = [
         onActivate: &themesOnActivate),
     Page("Slots", "the semantic colour vocabulary", &slotsView),
     Page("Decoration", "box and text chrome", &decorationView),
+    Page("Effects", "subtree effects, tier by tier", &effectsView),
     Page("Grid", "Cartesian backdrop, lines and dots", &gridView,
         GalleryScope.pageGrid, &gridOnCommand),
     Page("Components", "the application chrome", &componentsView,

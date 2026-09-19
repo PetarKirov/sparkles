@@ -7,17 +7,17 @@
    Themes            | leftover is distributed with integer divmod and an explicit remainder,
    Slots             | so the parts always sum to exactly the whole.
    Decoration        |
-   Grid              | +---------------------------------------------------------------------+
-   Components        | | resolution                                                          |
-   Tree              | | template auto auto auto                                             |
-   Property tree     | | available 48 cells, gap 1                                           |
-   Table             | | content 8  14  6                                                    |
-   Scrolling         | | resolved 8  14  6                                                   |
-   State             | | sum + gaps 30                                                       |
-   Split             | +---------------------------------------------------------------------+
-   Dock              |
-   Terminal          | +---------------------------------------------------------------------+
-                     | | the tracks                                                          |
+   Effects           | +---------------------------------------------------------------------+
+   Grid              | | resolution                                                          |
+   Components        | | template auto auto auto                                             |
+   Tree              | | available 48 cells, gap 1                                           |
+   Property tree     | | content 8  14  6                                                    |
+   Table             | | resolved 8  14  6                                                   |
+   Scrolling         | | sum + gaps 30                                                       |
+   State             | +---------------------------------------------------------------------+
+   Split             |
+   Dock              | +---------------------------------------------------------------------+
+   Terminal          | | the tracks                                                          |
                      | | auto 8   auto 14        auto 6                                      |
                      | +---------------------------------------------------------------------+
                      |

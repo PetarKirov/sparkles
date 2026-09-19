@@ -7,17 +7,17 @@
    Themes            | while the display list is built, which is why every specimen below      #
    Slots             | repaints when you press ] .                                             #
    Decoration        |                                                                         #
-   Grid              | +---------------------------------------------------------------------+ #
-   Components        | | leaves                                                              | #
-   Tree              | | box                                                                 | #
-   Property tree     | | text             a run of text                                      | #
-   Table             | | rich             auto n = 42;                                       | #
-   Scrolling         | | glyph            *                                                  | #
-   State             | | line * solid     an underlined run                                  | #
-   Split             | | line * wavy      a squiggled run                                    | #
-   Dock              | | scrollbar        ||                                                 | |
-   Terminal          | |                  ||                                                 | |
-                     | |                  ##                                                 | |
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | leaves                                                              | #
+   Components        | | box                                                                 | #
+   Tree              | | text             a run of text                                      | #
+   Property tree     | | rich             auto n = 42;                                       | #
+   Table             | | glyph            *                                                  | #
+   Scrolling         | | line * solid     an underlined run                                  | #
+   State             | | line * wavy      a squiggled run                                    | #
+   Split             | | scrollbar        ||                                                 | |
+   Dock              | |                  ||                                                 | |
+   Terminal          | |                  ##                                                 | |
                      | |                  ##                                                 | |
                      | |                  ||                                                 | |
                      | |                  ||                                                 | |

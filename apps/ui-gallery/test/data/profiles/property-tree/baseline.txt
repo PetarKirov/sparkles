@@ -7,17 +7,17 @@
    Themes            | subject on every change. Disclosure, selection, the filter, and the     #
    Slots             | undo/redo history are host-owned values beside it.                      #
    Decoration        |                                                                         #
-   Grid              | / starts the ranked fuzzy filter                                        #
-   Components        |                                                                         #
-   Tree              | +---------------------------------------------------------------------+ #
- > Property tree     | | the live tree                                                       | #
-   Table             | | +- name                   "background"  <needs EDT>            #    | #
-   Scrolling         | | +- visible                [x] true                             #    | #
-   State             | | +- blend                  < normal >                           #    | #
-   Split             | | +- > fill                                                      #    | #
-   Dock              | | +- > metrics                                                   #    | #
-   Terminal          | | +- > dashes               [3]                                  #    | #
-                     | | +- id o                   42                                   #    | #
+   Effects           | / starts the ranked fuzzy filter                                        #
+   Grid              |                                                                         #
+   Components        | +---------------------------------------------------------------------+ #
+   Tree              | | the live tree                                                       | #
+ > Property tree     | | +- name                   "background"  <needs EDT>            #    | #
+   Table             | | +- visible                [x] true                             #    | #
+   Scrolling         | | +- blend                  < normal >                           #    | #
+   State             | | +- > fill                                                      #    | #
+   Split             | | +- > metrics                                                   #    | #
+   Dock              | | +- > dashes               [3]                                  #    | #
+   Terminal          | | +- id o                   42                                   #    | #
                      | | +- tint                   3368601                              #    | |
                      | | +- handle o               Handle(0x12648430)                   #    | |
                      | | +- > extra                {3 keys}                             #    | |

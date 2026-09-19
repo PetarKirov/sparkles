@@ -32,7 +32,8 @@ import sparkles.ui.degradation : DegradationReport, degradationsOf;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.tokens : Profile, TargetCapabilities;
 import sparkles.ui_app.host : RunConfig;
-import sparkles.ui_tui.grid_canvas : paintGrid;
+import sparkles.ui.geometry : Rect;
+import sparkles.ui_tui.grid_canvas : EffectContext, paintGrid;
 
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
@@ -202,7 +203,12 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
     grid.resize(cast(ushort) req.width, cast(ushort) req.height);
     grid.clearTo(CellStyle(fg: Color.fromRgb(th.pageFg),
         bg: Color.fromRgb(th.pageBg)));
-    paintGrid(grid, th.pageBg, rec.lastOps, caps: caps);
+    // The effect context, so a tier-0 bracket is actually honoured here
+    // (`EFX9`) — a `--render` that dropped effects would be showing something
+    // the terminal does not.
+    auto fxP = (() @trusted => &app.fx)();
+    paintGrid(grid, th.pageBg, rec.lastOps, caps: caps,
+        effects: EffectContext(fxP, th.pageFg));
     report = degradationsOf(rec.lastOps, caps);
     return grid;
 }

@@ -7,17 +7,17 @@
    Themes            | and in a window. Where the two differ, the difference is the finding.   #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
-   Grid              | | this build                                                          | #
-   Components        | | backend            tui                                              | #
-   Tree              | | surface            96 x 32 cells                                    | #
-   Property tree     | | theme              tokyo-night                                      | #
-   Table             | | tier served        1 * interactive (keys, pointer, wheel)           | #
-   Scrolling         | +---------------------------------------------------------------------+ #
-   State             |                                                                         #
-   Split             | +---------------------------------------------------------------------+ #
-   Dock              | | input capabilities                                                  | #
-   Terminal          | | hover               yes                                             | #
-                     | | sub-cell pointer    no                                              | #
+   Effects           | | this build                                                          | #
+   Grid              | | backend            tui                                              | #
+   Components        | | surface            96 x 32 cells                                    | #
+   Tree              | | theme              tokyo-night                                      | #
+   Property tree     | | tier served        1 * interactive (keys, pointer, wheel)           | #
+   Table             | +---------------------------------------------------------------------+ #
+   Scrolling         |                                                                         #
+   State             | +---------------------------------------------------------------------+ #
+   Split             | | input capabilities                                                  | #
+   Dock              | | hover               yes                                             | #
+   Terminal          | | sub-cell pointer    no                                              | #
                      | | key release         no                                              | #
                      | | multi-pointer       no                                              | #
                      | +---------------------------------------------------------------------+ #
