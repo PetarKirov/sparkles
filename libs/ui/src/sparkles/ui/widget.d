@@ -20,6 +20,7 @@ import sparkles.ui.canvas : LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, Size, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
 import sparkles.ui.wrap : TextWrap;
+import sparkles.ui.effect : EffectId;
 import sparkles.ui.image : ImageFit, ImageHandle;
 
 @safe:
@@ -127,6 +128,16 @@ struct Widget
     dchar barThumbGlyph = '█';
     RgbColor barTrackFgOverride;
     bool hasBarTrackFgOverride;
+
+    /// The effect applied to this node and its subtree (`EFX4`), or the null
+    /// id for none.
+    ///
+    /// $(B The tree stores the id, never an implementation.) Four bytes, so
+    /// the arena stays flat; what the id means is the registry's business and
+    /// is resolved when the frame paints, not when it is built. At most one
+    /// per node — nesting is how effects compose (`EFX2`), and a node that
+    /// wants two wraps itself in a node that wants one.
+    EffectId effect;
 
     Decoration decoration;   /// box chrome (border/radius/shadow/arrow) — slot-referencing
     TextStyle textStyle;     /// text chrome (font role/size, bold/italic/underline)

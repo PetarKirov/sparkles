@@ -49,6 +49,7 @@ public import std.sumtype : match;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : Point, Rect, Size, cellsOf;
+import sparkles.ui.effect : EffectId;
 import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.base.term_style : UnderlineStyle;
@@ -98,6 +99,8 @@ enum OpKind : ubyte
     image,     /// draw the registered image `handle` into `rect` (`IMG1`)
     pushClip,  /// clip subsequent operations to `rect` (nested clips intersect)
     popClip,   /// undo the matching `pushClip`
+    pushEffect, /// apply `effect` to the bracketed subtree (`EFX1`)
+    popEffect,  /// undo the matching `pushEffect`
 }
 
 /**
@@ -276,6 +279,31 @@ struct PopClip
 {
 }
 
+/**
+Apply `effect` to every operation up to the matching $(LREF PopEffect) (`EFX1`).
+
+$(B Deliberately the same shape as $(LREF PushClip)), which is the whole
+argument for this design: bracketing a subtree is a thing the display list
+already does, and `TGT12` already settled how brackets nest. Effects reuse that
+rather than inventing a parallel structure, which is why the CRT can become the
+degenerate case — an effect pushed on the root node — instead of a second
+mechanism bolted to the end of the frame.
+
+`rect` is the subtree's own rect, carried because an effect that reads position
+needs to know what it is relative to, and because a backend rendering the
+bracket to a texture needs to know how big to make it (`EFX11`).
+*/
+struct PushEffect
+{
+    Rect rect;
+    EffectId effect;
+}
+
+/// Undo the matching $(LREF PushEffect).
+struct PopEffect
+{
+}
+
 // A slice whose target outlives the aggregate it was reached through. Not a
 // general-purpose escape: the one caller is `DrawOp.text`, whose comment
 // carries the argument.
@@ -289,7 +317,7 @@ private const(char)[] launder(scope const(char)[] s) @trusted pure nothrow @nogc
 
 /// The sum itself: exactly one of the payloads above.
 alias Payload = SumType!(FillRect, TextRun, Glyph, Line, Rule, Scrollbar,
-    ImageDraw, PushClip, PopClip);
+    ImageDraw, PushClip, PopClip, PushEffect, PopEffect);
 
 /**
 One reified drawing command in abstract cell space.
@@ -384,6 +412,8 @@ struct DrawOp
             (ref ImageDraw i) { i.rect = moved(i.rect, dx, dy); },
             (ref PushClip c) { c.rect = moved(c.rect, dx, dy); },
             (ref PopClip _) {},
+            (ref PushEffect e) { e.rect = moved(e.rect, dx, dy); },
+            (ref PopEffect _) {},
         );
     }
 
@@ -401,6 +431,8 @@ struct DrawOp
             (in ImageDraw _) => OpKind.image,
             (in PushClip _) => OpKind.pushClip,
             (in PopClip _) => OpKind.popClip,
+            (in PushEffect _) => OpKind.pushEffect,
+            (in PopEffect _) => OpKind.popEffect,
         );
 
     /**
@@ -420,7 +452,9 @@ struct DrawOp
             (in Scrollbar s) => s.rect,
             (in ImageDraw i) => i.rect,
             (in PushClip c) => c.rect,
+            (in PushEffect e) => e.rect,
             (in PopClip _) => Rect.init,
+            (in PopEffect _) => Rect.init,
         );
 
     /**
@@ -500,6 +534,10 @@ struct DrawOp
     /// How that image fills its rect.
     ImageFit imageFit()
         => payload.match!((in ImageDraw i) => i.fit, _ => ImageFit.contain);
+
+    /// The effect this operation pushes, or the null id (`EFX1`).
+    EffectId effectId()
+        => payload.match!((in PushEffect e) => e.effect, _ => EffectId.init);
 
     /**
     The image's alt text — what a canvas without rasters shows instead
@@ -709,6 +747,13 @@ DrawOp pushClipOp(in Rect rect) @safe pure nothrow @nogc
 /// ditto
 DrawOp popClipOp() @safe pure nothrow @nogc => DrawOp(PopClip());
 
+/// ditto
+DrawOp pushEffectOp(in Rect rect, EffectId effect) @safe pure nothrow @nogc
+    => DrawOp(PushEffect(rect: rect, effect: effect));
+
+/// ditto
+DrawOp popEffectOp() @safe pure nothrow @nogc => DrawOp(PopEffect());
+
 /**
 The endpoints of a $(LREF RuleEdge) within `rect`, in whole cells — the
 fallback every canvas without a sub-cell `rule` primitive paints instead.
@@ -862,6 +907,19 @@ struct RecordingCanvas
         ops ~= DrawOp(ImageDraw(rect: r, alt: _arena.intern(alt),
             handle: handle, fg: v.fg, fgAlpha: v.fgAlpha, bg: v.bg,
             bgAlpha: v.bgAlpha, hasBg: v.hasBg, fit: fit));
+    }
+
+    // The optional effect pair — recorded so a test can assert bracketing
+    // without a backend that knows what an effect is.
+    void pushEffect(in Rect r, EffectId effect)
+    {
+        ops ~= pushEffectOp(r, effect);
+    }
+
+    /// ditto
+    void popEffect()
+    {
+        ops ~= popEffectOp();
     }
 
     // The optional clipping pair — recorded so tests can assert scissor
