@@ -2079,6 +2079,17 @@ int runGui(GuiArgs guiArgs) @system
         // tree the terminal paints, centered and one row down — then the
         // preview panel's framed hole is filled with the live document
         // pane's cells, drawn through the font set.
+        // `EFX23`: the focus halo must outline what the frame ACTUALLY
+        // painted. The modal paint sites below already know their panel's
+        // rect — they just placed it — so they record it here and the halo
+        // reads it, instead of rebuilding the view and re-running layout a
+        // second time purely to rediscover a number that was already on the
+        // stack. That second layout was the per-frame cost the architecture
+        // review flagged, and the duplicated centring beneath it was how the
+        // halo drifted off the picker in the first place.
+        UiRect paintedFocus;
+        bool hasPaintedFocus;
+
         if (!filePicker.empty && filePicker.get.state.active)
         {
             const cellsW = screenW / cellW;
@@ -2089,6 +2100,11 @@ int runGui(GuiArgs guiArgs) @system
                 Constraints(maxW: 2 * pkGeometry.panelCols));
             const pkPanel = pkFrames[pkTree.root].rect;
             const pkOriginX = pickerOriginCol(cellsW, pkPanel.width);
+            paintedFocus = UiRect(cast(float)(pkOriginX * cellW),
+                cast(float)(pickerOriginRow * cellH),
+                cast(float)(pkPanel.width * cellW),
+                cast(float)(pkPanel.height * cellH));
+            hasPaintedFocus = true;
             window.resetClip();
             chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset(); // sequential reuse of the guide's sink (`NFR2`)
@@ -2154,6 +2170,11 @@ int runGui(GuiArgs guiArgs) @system
             const sPanel = sFrames[sTree.root].rect;
             const sX = (cellsW - sPanel.width) / 2;
             const sY = (cellsH - sPanel.height) / 2;
+            paintedFocus = UiRect(cast(float)((sX > 0 ? sX : 0) * cellW),
+                cast(float)((sY > 0 ? sY : 0) * cellH),
+                cast(float)(sPanel.width * cellW),
+                cast(float)(sPanel.height * cellH));
+            hasPaintedFocus = true;
             window.resetClip();
             chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset();
@@ -2201,39 +2222,12 @@ int runGui(GuiArgs guiArgs) @system
         {
             CrtUiContext uiCtx;
 
-            // 1. Focused container
-            if (settingsPane.active)
+            // 1. Focused container. A modal reports the rect it painted
+            // (`EFX23`); the two non-modal cases are whole panes, whose
+            // geometry is a subtraction rather than a layout.
+            if (hasPaintedFocus)
             {
-                const cellsW = screenW / cellW;
-                const cellsH = screenH / cellH;
-                const sg = settingsGeometryFor(cellsW, cellsH);
-                auto sTree = settingsPane.buildView(sg);
-                auto sFrames = layout(sTree, Constraints(maxW: sg.panelCols));
-                const sPanel = sFrames[sTree.root].rect;
-                // The origin is the paint site's, clamp included — a halo
-                // computed from an unclamped centring sits off the panel it
-                // is meant to outline.
-                const sX = (cellsW - sPanel.width) / 2;
-                const sY = (cellsH - sPanel.height) / 2;
-                uiCtx.focusBox = UiRect(cast(float)((sX > 0 ? sX : 0) * cellW),
-                    cast(float)((sY > 0 ? sY : 0) * cellH),
-                    cast(float)(sPanel.width * cellW), cast(float)(sPanel.height * cellH));
-            }
-            else if (!filePicker.empty && filePicker.get.state.active)
-            {
-                const cellsW = screenW / cellW;
-                const cellsH = screenH / cellH;
-                const pkGeometry = pickerGeometryFor(cellsW, cellsH);
-                auto pkTree = filePicker.get.buildView(pkGeometry);
-                auto pkFrames = layout(pkTree, Constraints(maxW: 2 * pkGeometry.panelCols));
-                const pPanel = pkFrames[pkTree.root].rect;
-                // ditto, and the picker is centred horizontally but pinned one
-                // row down, not centred vertically — both from the shared
-                // origin the paint site above uses.
-                const pkOriginX = pickerOriginCol(cellsW, pPanel.width);
-                uiCtx.focusBox = UiRect(cast(float)(pkOriginX * cellW),
-                    cast(float)(pickerOriginRow * cellH),
-                    cast(float)(pPanel.width * cellW), cast(float)(pPanel.height * cellH));
+                uiCtx.focusBox = paintedFocus;
             }
             else if (pn.treeVisible && pn.treeFocused)
             {
