@@ -41,7 +41,8 @@ import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
 import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.effect : builtinEffects, EffectRegistry;
+import sparkles.ui.effect : applyThemeEffects, builtinEffects, EffectBinding,
+    EffectRegistry, ThemeEffects;
 import sparkles.ui.image : ImageRegistry;
 import state;
 import term_store : TerminalStore;
@@ -362,7 +363,27 @@ struct Gallery
                 "a colour swatch");
         }
         if (!s.effects.scanlines.valid)
+        {
             s.effects = builtinEffects(fx);
+            // `EFX16`, as a runnable demonstration: `UIG_EFFECTS=off` makes
+            // the THEME rebind the built-ins to nothing. Nothing in any page
+            // changes — the widgets still name the same ids — and every
+            // specimen paints unaffected. Run the Effects page with and
+            // without it and diff.
+            //
+            // An environment variable rather than a key because this is a
+            // harness hook, like `UIG_SHOT`: it exists to be scripted.
+            import std.process : environment;
+
+            if (environment.get("UIG_EFFECTS") == "off")
+            {
+                ThemeEffects off;
+                off.scanlines = EffectBinding(bound: true, enabled: false);
+                off.phosphor = EffectBinding(bound: true, enabled: false);
+                off.dim = EffectBinding(bound: true, enabled: false);
+                applyThemeEffects(fx, s.effects, off);
+            }
+        }
         // The host borrows the registry for the frame it is about to paint.
         // `@trusted`: the host is created inside the run this component was
         // handed to, so its lifetime is contained in this object's — the

@@ -444,3 +444,117 @@ vec3 effectColor(vec2 at, vec2 extent, vec3 color)
     assert(dimTier0(Tier0Input(Point(0, 1), extent, black)) == black);
     assert(scanlinesTier0(Tier0Input(Point(0, 1), extent, black)) == black);
 }
+
+// ---------------------------------------------------------------------------
+// Theme rebinding (`EFX16`).
+// ---------------------------------------------------------------------------
+
+/**
+What a theme says about one built-in effect (`EFX16`).
+
+$(B Rebinding, not overriding at the call site.) A design language turns an
+effect off, or swaps it for its own, without any view changing: the widget
+still names the same id, and the registry answers differently. That is the
+whole reason ids are semantic for built-ins and anonymous for app-registered
+ones — an app's effect has no name a theme could address.
+*/
+struct EffectBinding
+{
+    /// Whether the theme says anything at all. `false` leaves the built-in
+    /// exactly as registered, which is different from binding it to nothing.
+    bool bound;
+    /// `false` rebinds the id to $(B nothing): it resolves to no record, so
+    /// `EFX17` paints the subtree unaffected. This is "turn it off".
+    bool enabled = true;
+    /// Replaces the transform when non-null; the built-in's is kept otherwise.
+    Tier0Fn tier0;
+    /// Replaces the GLSL twin when non-null.
+    string glsl;
+}
+
+/// A theme's say over the built-in set. All-default means "leave them alone".
+struct ThemeEffects
+{
+    EffectBinding scanlines; ///
+    EffectBinding phosphor;  ///
+    EffectBinding dim;       ///
+}
+
+/**
+Applies `bindings` to the built-ins already registered in `reg` (`EFX16`).
+
+Idempotent against the original set: it rebinds from `builtin`'s ids, so
+calling it again with different bindings does not compound. An application
+calls it when the theme changes, between frames — which is exactly the window
+`EFX18` says a rebind is safe in.
+*/
+// `bindings` is taken by VALUE, not `in`. Under `-preview=in` it would be
+// `scope const`, and a binding's `tier0`/`glsl` then cannot be stored into the
+// registry at all — the documented dip1000 clash, relaxed on exactly the
+// parameter that needs it rather than on the function's safety.
+void applyThemeEffects(ref EffectRegistry reg, in BuiltinEffects builtin,
+    ThemeEffects bindings) @safe pure nothrow
+{
+    static void bind(ref EffectRegistry reg, EffectId id, EffectBinding b,
+        string name, Tier0Fn fallback, string fallbackGlsl) @safe pure nothrow
+    {
+        if (!b.bound)
+            return;
+        if (!b.enabled)
+        {
+            reg.remove(id); // resolves to nothing; `EFX17` does the rest
+            return;
+        }
+        const glsl = b.glsl is null ? fallbackGlsl : b.glsl;
+        reg.replace(id, EffectRecord(
+            name: name,
+            tier: EffectTier.color,
+            tier0: b.tier0 is null ? fallback : b.tier0,
+            impls: glsl is null ? null : [EffectImpl(glslBackend, glsl)]));
+    }
+
+    bind(reg, builtin.scanlines, bindings.scanlines, "scanlines",
+        &scanlinesTier0, scanlinesGlsl);
+    bind(reg, builtin.phosphor, bindings.phosphor, "phosphor",
+        &phosphorTier0, phosphorGlsl);
+    bind(reg, builtin.dim, bindings.dim, "dim", &dimTier0, dimGlsl);
+}
+
+@("ui.effect.theme.rebindsABuiltinWithoutTheViewChanging")
+@safe pure nothrow unittest
+{
+    EffectRegistry reg;
+    const b = builtinEffects(reg);
+
+    // Untouched by default: an all-default `ThemeEffects` is not an
+    // instruction to clear everything.
+    applyThemeEffects(reg, b, ThemeEffects.init);
+    assert(reg.lookup(b.scanlines).name == "scanlines");
+    assert(reg.tier0Of(b.dim) !is null);
+
+    // Off: the id stays on the widget, and resolves to nothing.
+    ThemeEffects off;
+    off.scanlines = EffectBinding(bound: true, enabled: false);
+    applyThemeEffects(reg, b, off);
+    assert(reg.lookup(b.scanlines) is null, "rebound to nothing");
+    assert(b.scanlines.valid, "the id itself is unchanged — no view moves");
+    assert(reg.tier0Of(b.phosphor) !is null, "siblings are untouched");
+
+    // Swapped: same id, different transform, and the GPU twin follows.
+    ThemeEffects swap;
+    swap.phosphor = EffectBinding(bound: true, tier0: &dimTier0,
+        glsl: dimGlsl);
+    applyThemeEffects(reg, b, swap);
+    assert(reg.tier0Of(b.phosphor) is &dimTier0);
+    assert(reg.lookup(b.phosphor).implFor(glslBackend).source == dimGlsl);
+
+    // A swap that names only the CPU half keeps the built-in's GPU half, so
+    // a partial binding cannot silently desynchronise the two.
+    EffectRegistry reg2;
+    const b2 = builtinEffects(reg2);
+    ThemeEffects half;
+    half.dim = EffectBinding(bound: true, tier0: &scanlinesTier0);
+    applyThemeEffects(reg2, b2, half);
+    assert(reg2.tier0Of(b2.dim) is &scanlinesTier0);
+    assert(reg2.lookup(b2.dim).implFor(glslBackend).source == dimGlsl);
+}
