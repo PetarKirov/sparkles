@@ -30,7 +30,9 @@ module sparkles.ui.effect;
 import std.algorithm : canFind;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.shader : clamp, v2, v3, vec3, x, y, z;
 import sparkles.ui.geometry : Point, Size;
+static import sparkles.ui.effect_shaders;
 
 /**
 An effect's identity, stable for the life of the registry that issued it.
@@ -88,9 +90,36 @@ A tier-0 colour transform (`EFX8`).
 
 `@safe pure nothrow @nogc` is required, not preferred: it runs per cell, and
 the constraint is also what keeps `EFX20` — one D function compiled both for
-the terminal and to SPIR-V — reachable.
+the terminal and to SPIR-V — reachable. The built-ins are that function: a
+transform from $(MREF sparkles,ui,effect_shaders) behind $(LREF tier0Fn),
+which is how the same source the GPU runs is called here per cell.
 */
 alias Tier0Fn = RgbColor function(in Tier0Input) @safe pure nothrow @nogc;
+
+/**
+Adapts a single-source transform to a $(LREF Tier0Fn) (`EFX20`).
+
+`fn` is `vec3 fn(in vec2 at, in vec2 extent, in vec3 color)` — one of the
+functions in $(MREF sparkles,ui,effect_shaders), or an application's own
+written the same way. The adapter is the CPU's answer to what the fragment
+shader's prologue does on the GPU: a byte colour becomes a colour in `[0, 1]`,
+the cell position and the bracket's extent become the shader's `at` and
+`extent`, and the result rounds back to bytes — the RGBA8 store the GPU
+performs.
+*/
+RgbColor tier0Adapter(alias fn)(in Tier0Input i) @safe pure nothrow @nogc
+{
+    const c = fn(v2(i.at.x, i.at.y), v2(i.extent.width, i.extent.height),
+        v3(i.color.r / 255.0f, i.color.g / 255.0f, i.color.b / 255.0f));
+    return RgbColor(toByte(c.x), toByte(c.y), toByte(c.z));
+}
+
+/// ditto — as the function pointer a record stores.
+enum Tier0Fn tier0Fn(alias fn) = &tier0Adapter!fn;
+
+/// `[0, 1]` to a byte, rounding to nearest as an RGBA8 render target does.
+private ubyte toByte(float v) @safe pure nothrow @nogc
+    => cast(ubyte)(clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
 
 /**
 What a canvas that cannot honour an effect's tier does instead (`EFX12`).
@@ -118,20 +147,25 @@ about devices: a record carries artifacts the way a registry carries anything
 else, and the backend that recognises the key is the only code that can read
 them.
 
-$(B Why a string beside a D function.) For a tier-0 effect the two are twins —
-the same transform written twice — and `EFX20` exists because that is a
-temporary state, not the design. Keeping them adjacent in this module is the
-weakest form of the enforcement that eventually replaces them: a reader sees
-both at once, and `ui_raylib.effect_gpu`'s golden test checks they agree.
+$(B Why a string beside a D function, and why that is not duplication.) The
+built-ins' GLSL is $(I generated) from the same D function the `tier0`
+pointer calls (`EFX20`): `shader-compile` compiles
+$(MREF sparkles,ui,effect_shaders) through LDC's Vulkan target to SPIR-V and
+spirv-cross to the GLSL under `libs/ui/shaders/generated/`, which this module
+string-imports. Nothing here is written twice; the string is an artifact of
+the function, the way an object file is.
 */
 struct EffectImpl
 {
     /// A key the toolkit only compares. $(LREF glslBackend) is the one both
     /// GL targets use.
     string backend;
-    /// The artifact. For $(LREF glslBackend), the body of a
-    /// `vec3 effectColor(vec2 at, vec2 extent, vec3 color)` function — the
-    /// GLSL twin of a $(LREF Tier0Fn), in the same cell coordinates.
+    /// The artifact. For $(LREF glslBackend), a $(B complete) fragment shader
+    /// against raylib's pipeline: `fragTexCoord`/`fragColor` in, `texture0`
+    /// the rendered subtree, `finalColor` out, plus `uExtentCells` (the
+    /// bracket's size in cells, for a tier-0 transform's `at`) and whatever
+    /// $(LREF EffectParam)s the effect declares. Desktop GLSL 330, or ES 100
+    /// on Android.
     string source;
 }
 
@@ -156,8 +190,9 @@ struct EffectParam
     ubyte arity = 1;    /// how many of them are meaningful (1..4)
 }
 
-/// The `EffectImpl.backend` key for a GLSL fragment target (desktop and ES
-/// alike — the dialect difference is a prologue the backend supplies).
+/// The `EffectImpl.backend` key for a GLSL fragment target. The dialect is
+/// the build's: a source registered under it is desktop GLSL, or ES on
+/// Android — the generated built-ins come in both, and pick by `version`.
 enum string glslBackend = "glsl";
 
 /// One registered effect: its tier, its tier-0 transform where it has one, and
@@ -230,7 +265,7 @@ struct EffectRegistry
     }
 
     /// ditto — the common case: a tier-0 transform under a name, optionally
-    /// with the GLSL twin a GPU target needs to run the same thing.
+    /// with the fragment shader a GPU target needs to run the same thing.
     EffectId registerTier0(string name, Tier0Fn fn, string glsl = null)
         pure nothrow
         => register(EffectRecord(name: name, tier: EffectTier.color, tier0: fn,
@@ -326,10 +361,13 @@ struct BuiltinEffects
 /**
 Registers the built-in effects into `reg` and returns their ids (`EFX15`).
 
-All three are tier 0, which is deliberate: the built-in set is the part of the
+Four are tier 0, which is deliberate: the built-in set is the part of the
 vocabulary every target can honour, so naming one costs an application nothing
 on a terminal. `EFX24`'s claim — that a terminal showing scanlines and a
-phosphor tint proves the tier split is real — is these.
+phosphor tint proves the tier split is real — is these. Each one is
+$(B one function) in $(MREF sparkles,ui,effect_shaders): the terminal calls
+it through $(LREF tier0Fn), and the GPU runs the GLSL `shader-compile`
+generated from it (`EFX20`).
 */
 BuiltinEffects builtinEffects(ref EffectRegistry reg) @safe pure nothrow
 {
@@ -351,142 +389,35 @@ BuiltinEffects builtinEffects(ref EffectRegistry reg) @safe pure nothrow
     return b;
 }
 
-private RgbColor scale(in RgbColor c, int numerator, int denominator)
-    @safe pure nothrow @nogc
-{
-    static ubyte part(ubyte v, int n, int d)
-    {
-        const scaled = (cast(int) v * n) / d;
-        return cast(ubyte)(scaled > 255 ? 255 : (scaled < 0 ? 0 : scaled));
-    }
-    return RgbColor(part(c.r, numerator, denominator),
-        part(c.g, numerator, denominator), part(c.b, numerator, denominator));
-}
-
-/// Every other row darkened — the raster a CRT's beam skips.
-RgbColor scanlinesTier0(in Tier0Input i) @safe pure nothrow @nogc
-    => (i.at.y & 1) ? scale(i.color, 62, 100) : i.color;
-
-/// ditto — the GLSL twin. Kept touching its D original on purpose: these are
-/// one transform written twice until `EFX20` removes the duplication, and a
-/// reader must be able to see both without going looking.
-enum string scanlinesGlsl = q{
-vec3 effectColor(vec2 at, vec2 extent, vec3 color)
-{
-    return mod(at.y, 2.0) >= 1.0 ? color * 0.62 : color;
-}
-};
-
-/**
-Tinted toward a green phosphor, keeping each cell's own luminance.
-
-Luminance rather than a flat green, so text stays readable and the tint reads
-as a display characteristic rather than as a colour wash: a bright cell is
-bright green and a dim one is dim green, which is what a monochrome tube does.
-*/
-RgbColor phosphorTier0(in Tier0Input i) @safe pure nothrow @nogc
-{
-    // Rec. 601 luma, integer: the cheapest weighting that does not make blue
-    // text vanish, which a naive average does.
-    const luma = (299 * i.color.r + 587 * i.color.g + 114 * i.color.b) / 1000;
-    const l = cast(ubyte)(luma > 255 ? 255 : luma);
-    return RgbColor(scale(RgbColor(l, l, l), 30, 100).r, l,
-        scale(RgbColor(l, l, l), 45, 100).b);
-}
-
+/// The built-ins' tier-0 transforms, as the cell grid calls them: each is
+/// $(LREF tier0Adapter) over the one function in
+/// $(MREF sparkles,ui,effect_shaders) that the GPU also runs.
+alias scanlinesTier0 = tier0Adapter!(sparkles.ui.effect_shaders.scanlines);
 /// ditto
-enum string phosphorGlsl = q{
-vec3 effectColor(vec2 at, vec2 extent, vec3 color)
-{
-    float l = dot(color, vec3(0.299, 0.587, 0.114));
-    return vec3(l * 0.30, l, l * 0.45);
-}
-};
-
-/// Uniformly darkened — an inactive pane, without the view knowing it is one.
-RgbColor dimTier0(in Tier0Input i) @safe pure nothrow @nogc
-    => scale(i.color, 55, 100);
-
+alias phosphorTier0 = tier0Adapter!(sparkles.ui.effect_shaders.phosphor);
 /// ditto
-enum string dimGlsl = q{
-vec3 effectColor(vec2 at, vec2 extent, vec3 color)
-{
-    return color * 0.55;
-}
-};
-
-/**
-A 24-bit hue sweep across the bracket's columns, at each cell's own luminance.
-
-$(B Why a column-wise built-in exists.) `scanlines` varies down the rows, so
-it needs height before it reads as anything: in a four-row panel only one or
-two lines are ever darkened and the effect looks like noise. Position is two
-axes, and a specimen that only exercises one of them under-demonstrates the
-tier. This varies along `at.x`, which every bracket has plenty of, and lands a
-different truecolor value in each cell — so it also shows that a tier-0
-transform's output is a full 24-bit colour and not a palette pick.
-
-Luminance is kept, as in $(LREF phosphorTier0): the hue says where the cell is,
-the brightness still says what it is, and text stays readable.
-*/
-RgbColor spectrumTier0(in Tier0Input i) @safe pure nothrow @nogc
-{
-    const width = i.extent.width > 0 ? i.extent.width : 1;
-    const x = i.at.x < 0 ? 0 : (i.at.x >= width ? width - 1 : i.at.x);
-    // Six segments of 256 steps. Integer throughout: the ramp must agree with
-    // its GLSL twin cell for cell, and a float here would drift.
-    const luma = (299 * i.color.r + 587 * i.color.g + 114 * i.color.b) / 1000;
-    return scale(hueRamp((x * 1536) / width), luma > 255 ? 255 : luma, 255);
-}
-
-/// The fully-saturated hue ramp, `t` in `[0, 1536)`.
-private RgbColor hueRamp(int t) @safe pure nothrow @nogc
-{
-    const f = cast(ubyte)(t % 256);
-    const inv = cast(ubyte)(255 - f);
-    switch (t / 256)
-    {
-        case 0:  return RgbColor(255, f, 0);
-        case 1:  return RgbColor(inv, 255, 0);
-        case 2:  return RgbColor(0, 255, f);
-        case 3:  return RgbColor(0, inv, 255);
-        case 4:  return RgbColor(f, 0, 255);
-        default: return RgbColor(255, 0, inv);
-    }
-}
-
+alias dimTier0 = tier0Adapter!(sparkles.ui.effect_shaders.dim);
 /// ditto
-enum string spectrumGlsl = q{
-vec3 effectColor(vec2 at, vec2 extent, vec3 color)
-{
-    float w = max(extent.x, 1.0);
-    float h = floor(at.x) / w * 6.0;
-    float l = dot(color, vec3(0.299, 0.587, 0.114));
-    vec3 hue = clamp(abs(mod(h + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
-    return hue * l;
-}
-};
+alias spectrumTier0 = tier0Adapter!(sparkles.ui.effect_shaders.spectrum);
 
-/**
-Barrel distortion: a tier-1 twin, so it rewrites POSITION and has no D half.
+// The generated fragment shaders (`libs/ui/shaders/generated/`), in the
+// dialect this build's GL speaks. Regenerate with `dub run :shader-compile`;
+// `--verify` is the guard that they still come from the D source.
+version (Android)
+    private enum string glslDialect = ".es.frag";
+else
+    private enum string glslDialect = ".frag";
 
-`effectWarp` is the tier-1 entry point — the backend's wrapper samples at what
-this returns and treats anything outside `[0,1]` as off the tube. The screen
-fit keeps the midpoint of each edge on the edge whatever the amount, which is
-the same `1/(1 + k/4)` the CRT's own projection derives.
-*/
-enum string curvatureGlsl = q{
-uniform float uAmount;
-
-vec2 effectWarp(vec2 uv)
-{
-    vec2 c = uv - 0.5;
-    float d = dot(c, c);
-    vec2 warped = uv + c * (d * uAmount);
-    float fit = 1.0 / (1.0 + uAmount * 0.25);
-    return (warped - 0.5) * fit + 0.5;
-}
-};
+/// The built-ins' fragment shaders, generated from their D transforms.
+enum string scanlinesGlsl = import("scanlines" ~ glslDialect);
+/// ditto
+enum string phosphorGlsl = import("phosphor" ~ glslDialect);
+/// ditto
+enum string dimGlsl = import("dim" ~ glslDialect);
+/// ditto
+enum string spectrumGlsl = import("spectrum" ~ glslDialect);
+/// ditto — the tier-1 warp, sampling at what `effect_shaders.curvature` returns.
+enum string curvatureGlsl = import("curvature" ~ glslDialect);
 
 @("ui.effect.builtins.eachCarriesBothHalvesOfItsTwin")
 @safe pure nothrow unittest
@@ -502,11 +433,20 @@ vec2 effectWarp(vec2 uv)
         assert(rec.tier0 !is null, "the CPU half");
         const impl = rec.implFor(glslBackend);
         assert(impl !is null, "the GPU half");
-        // The contract the backend wraps: one function, one name, one
-        // signature. A twin that declared something else would compile into
-        // the wrapper and fail at link with no line number worth reading.
-        assert(impl.source.canFind("vec3 effectColor(vec2 at, vec2 extent, vec3 color)"));
+        // A complete shader against raylib's interface, generated from the
+        // same function `tier0` points at — `shader-compile --verify` is what
+        // proves the "same function" part; this proves it is the whole shader.
+        assert(impl.source.canFind("#version"), "a complete shader, not a body");
+        assert(impl.source.canFind("void main()"));
+        assert(impl.source.canFind("texture0") && impl.source.canFind("fragTexCoord"));
     }
+    // A transform that reads its position needs the bracket's extent; one
+    // that does not (phosphor, dim) has it optimised away, and the backend
+    // treats the missing uniform as exactly that.
+    assert(reg.lookup(b.scanlines).implFor(glslBackend).source.canFind("uExtentCells"));
+    assert(reg.lookup(b.spectrum).implFor(glslBackend).source.canFind("uExtentCells"));
+    assert(reg.lookup(b.curvature).implFor(glslBackend).source.canFind("uAmount"),
+        "the tier-1 shader reads its EffectParam");
     assert(reg.lookup(b.dim).implFor("spirv") is null,
         "an unknown backend key resolves to nothing, not to the wrong blob");
 }
@@ -559,8 +499,10 @@ vec2 effectWarp(vec2 uv)
     assert(scanlinesTier0(Tier0Input(Point(0, 2), extent, white)) == white);
 
     // Phosphor keeps luminance: a bright cell stays bright, a dim one dim,
-    // and green dominates in both.
+    // and green dominates in both. White is the pinned case: full luma,
+    // tinted (0.30, 1, 0.45), rounded as an RGBA8 target rounds.
     const bright = phosphorTier0(Tier0Input(Point(0, 0), extent, white));
+    assert(bright == RgbColor(77, 255, 115));
     const dark = phosphorTier0(Tier0Input(Point(0, 0), extent, RgbColor(40, 40, 40)));
     assert(bright.g > dark.g, "luminance survives the tint");
     assert(bright.g > bright.r && bright.g > bright.b, "green dominates");
@@ -572,6 +514,7 @@ vec2 effectWarp(vec2 uv)
     // `dim` is uniform: position cannot change it.
     assert(dimTier0(Tier0Input(Point(0, 0), extent, white))
         == dimTier0(Tier0Input(Point(7, 3), extent, white)));
+    assert(dimTier0(Tier0Input(Point(0, 0), extent, white)) == RgbColor(140, 140, 140));
 
     // Saturating, not wrapping — the failure mode of integer colour maths.
     const black = RgbColor(0, 0, 0);

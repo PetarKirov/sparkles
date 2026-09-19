@@ -32,56 +32,15 @@ import raylib;
 import raylib.rlgl : rlDisableScissorTest, rlDrawRenderBatchActive,
     rlEnableScissorTest, rlScissor;
 
-import sparkles.ui.effect : EffectId, EffectRegistry, EffectTier, glslBackend;
+import sparkles.ui.effect : EffectId, EffectRegistry, glslBackend;
 import sparkles.ui.geometry : Rect;
-import sparkles.ui_raylib.glsl : activePrologue;
 
-/**
-The wrapper every effect's GLSL twin is compiled into.
-
-The twin supplies `vec3 effectColor(vec2 at, vec2 extent, vec3 color)`; this
-supplies everything around it. `at` is in $(B cells), floored — the same
-coordinate `Tier0Input.at` carries — so the terminal and the window run the
-same transform over the same input and can be compared. Getting that wrong
-would make the two halves of a twin silently disagree in a way only a
-screenshot would show.
-*/
-private enum string tier0Epilogue = q{
-uniform sampler2D texture0;
-uniform vec4 colDiffuse;
-uniform vec2 uExtentCells;
-
-void main()
-{
-    vec4 texel = SAMPLE(texture0, fragTexCoord) * colDiffuse * fragColor;
-    vec2 at = floor(fragTexCoord * uExtentCells);
-    OUT_COLOR = vec4(effectColor(at, uExtentCells, texel.rgb), texel.a);
-}
-};
-
-/**
-The tier-1 wrapper: the twin supplies `vec2 effectWarp(vec2 uv)` and this
-samples at what it returns.
-
-A position outside `[0, 1]` is off the subtree, not a clamped edge — a barrel
-distortion that smeared its border pixels outward would be hiding the shape it
-exists to show. Transparent is the honest answer and composites correctly over
-whatever the bracket sits on.
-*/
-private enum string tier1Epilogue = q{
-uniform sampler2D texture0;
-uniform vec4 colDiffuse;
-uniform vec2 uExtentCells;
-
-void main()
-{
-    vec2 uv = effectWarp(fragTexCoord);
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
-        OUT_COLOR = vec4(0.0, 0.0, 0.0, 0.0);
-    else
-        OUT_COLOR = SAMPLE(texture0, uv) * colDiffuse * fragColor;
-}
-};
+// An effect's `glsl` artifact is a complete fragment shader against raylib's
+// pipeline (`fragTexCoord`/`fragColor` in, `texture0`, `finalColor` out, and
+// `uExtentCells` for a tier-0 transform's cell position) — generated from the
+// effect's D function by `shader-compile` for the built-ins (`EFX20`), in
+// the dialect this build's GL speaks. Nothing is wrapped around it here: the
+// tier is what the shader $(I does), not what this backend prepends to it.
 
 /// One open bracket.
 private struct OpenBracket
@@ -330,13 +289,7 @@ struct EffectGpu
             if (rec !is null)
                 if (const impl = rec.implFor(glslBackend))
                 {
-                    // The wrapper follows the TIER: tier 0 supplies a colour
-                    // transform, tier 1 a position one. Choosing by tier is
-                    // what makes the tier a contract rather than a label.
-                    const epilogue = rec.tier == EffectTier.distortion
-                        ? tier1Epilogue : tier0Epilogue;
-                    const source = activePrologue ~ impl.source
-                        ~ epilogue ~ "\0";
+                    const source = impl.source ~ "\0";
                     c.shader = LoadShaderFromMemory(null, source.ptr);
                     if (c.shader.id != 0)
                     {
