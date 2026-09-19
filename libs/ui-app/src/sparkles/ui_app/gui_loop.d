@@ -34,8 +34,11 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
     PointerUnit, RunConfig, withRealSize;
+import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
+import sparkles.ui_raylib.effect_gpu : EffectGpu;
 import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui_raylib.raylib_canvas : raylibCapabilities, RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
@@ -49,6 +52,7 @@ struct GuiHost
     private GuiSession* session;
     private SharedBuffer!(char, 4096) drawScratch;
     private ImageTextures imageTextures;
+    private EffectGpu effectGpu;
 
     /// `true` when the event-horizon arm paces (raylib never sleeps);
     /// `false` on the raylib-paced fallback (no ring available).
@@ -129,6 +133,19 @@ struct GuiHost
     void images(const(ImageRegistry)* registry) @system
         => imageTextures.attach(registry);
 
+    /**
+    Binds the effect registry this host's canvas resolves ids against
+    (`EFX11`, `EFX13`).
+
+    An effect with a GLSL twin is compiled on first use and its subtree is
+    rendered through a texture the size of the bracket; one without degrades
+    to unaffected per `EFX3`. `pageFg` is unused here — a GPU canvas paints
+    already-resolved colours and never has to ask what `default` means — and
+    is accepted so an application binds its registry identically on every arm.
+    */
+    void effects(const(EffectRegistry)* registry, RgbColor) @system
+        => effectGpu.attach(registry);
+
     /// A window has no out-of-band channel: the terminal's escape sequences
     /// address a terminal. Accepted and dropped so an application does not have
     /// to branch on the target for something the other one needs.
@@ -146,6 +163,7 @@ struct GuiHost
         auto c = RaylibCanvas(&session.fonts, &drawScratch,
             session.cellW, session.cellH, capabilities: target);
         c.images = &imageTextures;
+        c.fx = &effectGpu;
         return c;
     }
 
@@ -202,6 +220,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     // the window's own teardown, which is the classic way to leak or to free
     // against a dead context.
     scope (exit) host.imageTextures.release();
+    scope (exit) host.effectGpu.release();
 
     // `HST19`: the window exists and the font has settled on a cell size, so
     // an application that lays out before its first frame can now do it.
