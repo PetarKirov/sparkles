@@ -436,6 +436,7 @@ enum BoxCharset : ubyte
     light,       /// `┌─┐│└┘`
     rounded,     /// `╭─╮│╰╯`
     heavy,       /// `┏━┓┃┗┛`
+    double_,     /// `╔═╗║╚╝`
     dashedLight, /// `┌┄┐┆└┘`
     dashedHeavy, /// `┏┅┓┇┗┛`
 }
@@ -450,9 +451,11 @@ struct BorderProjection
 
 /**
 Projects a px-typed border onto a cell target (`GLY2`): width `0` → none;
-below `unicode` → ASCII; `dotted`/`dashed` → the dashed variants; width `≥ 2`
-→ heavy; radius `> 0` → rounded — which exists only for the light set, so
-heavy-and-rounded degrades to heavy-square and says so.
+below `unicode` → ASCII; `double_` → the double set (weight and radius are
+meaningless there, so a radius is reported lost); `dotted`/`dashed` → the
+dashed variants; width `≥ 2` → heavy; radius `> 0` → rounded — which exists
+only for the light set, so heavy-and-rounded degrades to heavy-square and says
+so.
 */
 BorderProjection projectBorder(in BoxBorder border, int radius, in TargetCapabilities caps)
     @safe pure nothrow @nogc
@@ -466,6 +469,8 @@ BorderProjection projectBorder(in BoxBorder border, int radius, in TargetCapabil
     if (!caps.unicode)
         return BorderProjection(BoxCharset.ascii, true);
 
+    if (border.style == BorderStyle.double_)
+        return BorderProjection(BoxCharset.double_, radius > 0);
     const heavy = width >= 2;
     const dashed = border.style == BorderStyle.dashed || border.style == BorderStyle.dotted;
     if (dashed)
@@ -631,6 +636,8 @@ unittest
     assert(projectBorder(box(1, BorderStyle.dashed), 0, cell) == BorderProjection(BoxCharset.dashedLight, false));
     assert(projectBorder(box(1, BorderStyle.dotted), 0, cell) == BorderProjection(BoxCharset.dashedLight, false));
     assert(projectBorder(box(2, BorderStyle.dashed), 0, cell) == BorderProjection(BoxCharset.dashedHeavy, false));
+    assert(projectBorder(box(1, BorderStyle.double_), 0, cell) == BorderProjection(BoxCharset.double_, false));
+    assert(projectBorder(box(3, BorderStyle.double_), 2, cell) == BorderProjection(BoxCharset.double_, true));
     // below unicode everything is ASCII, and that is a loss.
     assert(projectBorder(box(1, BorderStyle.solid), 4, dumb) == BorderProjection(BoxCharset.ascii, true));
     // a one-sided border still counts by its widest side.

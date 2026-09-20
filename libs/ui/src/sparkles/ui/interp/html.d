@@ -353,7 +353,8 @@ private void borderStyle(Writer)(ref Writer w, in Visual vis)
         return;
     const b = vis.border;
     const style = b.style == BorderStyle.dotted ? "dotted"
-        : b.style == BorderStyle.dashed ? "dashed" : "solid";
+        : b.style == BorderStyle.dashed ? "dashed"
+        : b.style == BorderStyle.double_ ? "double" : "solid";
     void edge(string side, int px)
     {
         if (px <= 0)

@@ -31,8 +31,8 @@ import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
 // canvases each choosing their own box-drawing runs is how they came to
 // disagree, with `--render` showing dashes the live terminal did not.
-import sparkles.ui.interp.cells : accentGlyph, blend, dashedHorizontal,
-    dashedVertical;
+import sparkles.ui.interp.cells : accentGlyph, blend, boxCorners,
+    dashedHorizontal, dashedVertical;
 import sparkles.ui.style : BorderStyle, Visual;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
@@ -437,12 +437,13 @@ struct GridCanvas
             setc(x0, y, vg);
             setc(x1, y, vg);
         }
-        // Corners stay solid whatever the style: box-drawing has no dashed
-        // corner, and a gap where two runs meet reads as a broken box.
-        setc(x0, y0, rounded ? '╭' : '┌');
-        setc(x1, y0, rounded ? '╮' : '┐');
-        setc(x0, y1, rounded ? '╰' : '└');
-        setc(x1, y1, rounded ? '╯' : '┘');
+        // Corners from the same table as the cell grid's (`boxCorners`):
+        // solid for the dashed styles, the double set's own for `double_`.
+        const corners = boxCorners(v.border.style, rounded);
+        setc(x0, y0, corners[0]);
+        setc(x1, y0, corners[1]);
+        setc(x0, y1, corners[2]);
+        setc(x1, y1, corners[3]);
         if (v.arrow)
             setc(x0 + 1 + v.arrowOffset, y0, '┴');
     }

@@ -49,6 +49,11 @@ uint view(ref Builder b, in GalleryState s)
         borderStyle: BorderStyle.dashed,
         borderSlot: Slot.muted,
     )), 14);
+    boxes ~= specimen(b, "double", box(b, Decoration(
+        borderWidth: Insets.all(1),
+        borderStyle: BorderStyle.double_,
+        borderSlot: Slot.border,
+    )), 14);
     boxes ~= specimen(b, "bottom only", box(b, Decoration(
         borderWidth: Insets(0, 0, 1, 0),
         borderStyle: BorderStyle.solid,
@@ -121,7 +126,8 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= section(b, "what a cell grid can express", [
         kv(b, "border sides", "box-drawing glyphs on the perimeter", 15, Slot.docs),
         kv(b, "solid/dashed/dotted", "─ ╌ ┈ and │ ╎ ┊ — all three differ", 15, Slot.docs),
-        kv(b, "corners", "always solid; rounded when a radius is set", 15, Slot.docs),
+        kv(b, "double", "═ ║ with its own corners ╔╗╚╝; never rounded", 15, Slot.docs),
+        kv(b, "corners", "solid for the dashed styles; rounded when a radius is set", 15, Slot.docs),
         kv(b, "left accent", "the quote bar — │, heavy ┃ at 2+ wide", 15, Slot.docs),
         kv(b, "right accent", "an eighth-block, weighted by the px width", 15, Slot.docs),
         kv(b, "bottom only", "an underline; a rule on a one-row box", 15, Slot.docs),
