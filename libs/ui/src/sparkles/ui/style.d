@@ -102,6 +102,9 @@ enum BorderStyle : ubyte
     solid,  /// a solid rule (popup border, 3px accent bars, docs top divider)
     dotted, /// a dotted rule (the `.twoslash-hover` 1px underline)
     dashed, /// a dashed rule (available; unused by twoslash today)
+    /// two parallel rules: CSS `double`, box-drawing `═║╔╗╚╝` on a cell target
+    /// (design-system `GLY2`; the underscore because `double` is a keyword)
+    double_,
 }
 
 /// Which font family a text run wants. The concrete faces live in the backend

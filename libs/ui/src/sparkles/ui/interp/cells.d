@@ -102,6 +102,7 @@ dchar dashedHorizontal(BorderStyle s) pure nothrow @nogc
         case none: case solid: return '─'; // ─
         case dashed: return '╌';           // ╌ two long strokes
         case dotted: return '┈';           // ┈ four short ones
+        case double_: return '═';          // ═
     }
 }
 
@@ -113,7 +114,22 @@ dchar dashedVertical(BorderStyle s) pure nothrow @nogc
         case none: case solid: return '│'; // │
         case dashed: return '╎';           // ╎
         case dotted: return '┊';           // ┊
+        case double_: return '║';          // ║
     }
+}
+
+/**
+The four corner glyphs (top-left, top-right, bottom-left, bottom-right) of a
+full box in `s`. Corners stay solid for the dashed styles — box-drawing has no
+dashed corner, and a gap where two runs meet reads as a broken box — and the
+double set has no rounded corners, so `rounded` is honoured only by the light
+set (design-system `GLY2`: a published loss, not a silent one).
+*/
+dchar[4] boxCorners(BorderStyle s, bool rounded) pure nothrow @nogc
+{
+    if (s == BorderStyle.double_)
+        return ['╔', '╗', '╚', '╝'];
+    return rounded ? ['╭', '╮', '╰', '╯'] : ['┌', '┐', '└', '┘'];
 }
 
 /**
@@ -361,10 +377,11 @@ struct CellGrid
                 // The corners stay solid whatever the style: box-drawing has no
                 // dashed corner, and a gap where two dashed runs meet reads as
                 // a broken box rather than a dashed one.
-                setc(x0, y0, rounded ? '╭' : '┌');
-                setc(x1, y0, rounded ? '╮' : '┐');
-                setc(x0, y1, rounded ? '╰' : '└');
-                setc(x1, y1, rounded ? '╯' : '┘');
+                const corners = boxCorners(v.border.style, rounded);
+                setc(x0, y0, corners[0]);
+                setc(x1, y0, corners[1]);
+                setc(x0, y1, corners[2]);
+                setc(x1, y1, corners[3]);
                 if (v.arrow)
                     setc(x0 + 1 + v.arrowOffset, y0, '┴');
             }
@@ -712,6 +729,16 @@ static assert(isCanvas!CellGrid);
             color: RgbColor(255, 255, 255))));
     assert(g.at(0, 0).glyph == '┌' && g.at(3, 2).glyph == '┘');
     assert(g.at(0, 1).glyph == '┊', "the sides carry the style");
+
+    // A double border is the one style with corners of its own — and no
+    // rounded form, so a radius is dropped rather than mixing charsets.
+    auto d = CellGrid(4, 3, RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0, 0, 0));
+    d.fillRect(Rect(0, 0, 4, 3), Visual(
+        border: BoxBorder(width: Insets.all(1), style: BorderStyle.double_,
+            color: RgbColor(255, 255, 255)),
+        borderRadius: 4));
+    assert(d.at(0, 0).glyph == '╔' && d.at(3, 2).glyph == '╝');
+    assert(d.at(1, 0).glyph == '═' && d.at(0, 1).glyph == '║');
 }
 
 @("ui.cells.aSingleSideAccentSurvivesIntoTheTerminal")
