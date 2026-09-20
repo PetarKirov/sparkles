@@ -2864,6 +2864,83 @@
         ]
       },
       {
+        "text": "Fileset & File-Selection Languages",
+        "link": "/research/fileset-languages/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/fileset-languages/concepts"
+          },
+          {
+            "text": "Set-Algebra Languages",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "jj filesets",
+                "link": "/research/fileset-languages/jj-filesets"
+              },
+              {
+                "text": "jj revsets",
+                "link": "/research/fileset-languages/jj-revsets"
+              },
+              {
+                "text": "Mercurial filesets",
+                "link": "/research/fileset-languages/mercurial-filesets"
+              },
+              {
+                "text": "bazel query & glob()",
+                "link": "/research/fileset-languages/bazel"
+              },
+              {
+                "text": "nixpkgs lib.fileset",
+                "link": "/research/fileset-languages/nixpkgs-fileset"
+              }
+            ]
+          },
+          {
+            "text": "Rule Lists & Prefix Namespaces",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "git pathspec",
+                "link": "/research/fileset-languages/git-pathspec"
+              },
+              {
+                "text": "Ordered-rule filters",
+                "link": "/research/fileset-languages/ordered-rule-filters"
+              }
+            ]
+          },
+          {
+            "text": "Interactive & Shell Tools",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "fzf & fff",
+                "link": "/research/fileset-languages/implicit-and-pickers"
+              },
+              {
+                "text": "find, fd, ripgrep",
+                "link": "/research/fileset-languages/shell-tools"
+              }
+            ]
+          },
+          {
+            "text": "Comparison & Synthesis",
+            "link": "/research/fileset-languages/comparison"
+          },
+          {
+            "text": "Recommendations",
+            "link": "/research/fileset-languages/recommendations"
+          },
+          {
+            "text": "Contradictions with the Brief",
+            "link": "/research/fileset-languages/contradictions"
+          }
+        ]
+      },
+      {
         "text": "Fuzzy Matching & Pickers",
         "link": "/research/fuzzy-matching/",
         "collapsed": true,
