@@ -12,6 +12,12 @@ library overview see [`sparkles:base`](../../../libs/base/index.md)._
 
 ## 1. Scope & credits
 
+The separately owned [OSC 66 sizing contract](./sizing.md) adds planned
+text-bearing escape semantics and safe emission. The Kitty attribution above
+concerns Unicode cell splitting, not a claim that OSC 66 is implemented. For sizing
+consumers, the new contract qualifies this page's generic zero-width-escape rule;
+existing implementation status remains unchanged.
+
 This spec governs three modules of `sparkles.base.text`:
 
 | Module             | Role                                                                                                |
