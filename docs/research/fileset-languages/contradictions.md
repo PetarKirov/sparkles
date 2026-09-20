@@ -2,8 +2,8 @@
 
 The design brief that started this survey arrived with twelve decisions marked
 settled and six questions marked open. Three of the settled items are
-contradicted by primary sources; four more survive but for different reasons
-than the ones stated. Nothing here changes an open question — those are answered
+contradicted by primary sources; six more survive but for different reasons than
+the ones stated, or need a qualifier the brief does not carry. Nothing here changes an open question — those are answered
 in the [recommendations].
 
 **Last reviewed:** September 20, 2026
@@ -79,6 +79,12 @@ plan's pruning". That reasoning is sound and is independently confirmed by
 representation side, because every fileset must name a bounding `_internalBase`
 and a complement has none.
 
+[watchman][watchman] sharpens the rule rather than breaking it: it _does_ have
+`not`, and it is affordable there because a **generator has already bounded the
+universe** before the expression evaluator runs. So the real condition is not
+"no complement" but "no complement outside a bound", which is the same thing in
+a language whose only bound is the expression itself.
+
 But **open question 4** then sketches a universe primary (`.`, possibly
 `all:`/`root:`), and a universe reopens exactly what item 4 closed: `all: ~ x`
 is `¬x`, with the same `⊤` prefix and the same full walk. The ban only holds if
@@ -139,6 +145,52 @@ can disagree today. Every current entry begins `**/` and is unaffected.
 
 → [O1][rec-o1], with a CI-verified runnable example.
 
+### A5 — anchoring by inference is a default, not a rule
+
+**Open question 1** asks for `.gitignore`'s anchoring rule, in which the scope
+is _inferred_ from whether the pattern contains a `/`. The
+[recommendations][rec-o1] adopt it.
+
+The two systems in this survey built for the largest repositories both refuse to
+infer. [watchman][watchman] takes the scope as an explicit argument —
+`["match", "*.txt", "basename"]` against `["match", "dir/*.txt", "wholename"]` —
+and [Sapling][sapling] splits it into separate pattern kinds, documented per
+variant: `Glob` is "a shell-style glob pattern relative to cwd", `RelGlob` is
+"an unrooted glob (e.g.: `*.c` matches C files in all dirs)", with the same
+split again for `Path`/`RelPath` and `RE`/`RelRE`.
+
+The pattern is hard to miss once both are on the table: inference is what the
+tools people type into interactively do; explicitness is what the tools that
+must be right over millions of files do. Our language is both.
+
+This does not reverse the decision — under the adopted rules a leading `/`
+forces the anchor and a leading `**/` forces the float, so each spelling is one
+character away. It does mean the override is **part of the contract** rather
+than an incidental consequence, and has to be documented as such. That is
+precisely the property `globAny` lacks today: its base-name-or-whole-path double
+match cannot be overridden at all.
+
+→ [O1][rec-o1].
+
+### A6 — the empty expression is a decision, not an absence
+
+**Open question 4** asks whether a universe primary is needed; [O4][rec-o4]
+answers no and makes the empty expression an error.
+
+Two subjects show this is the nullary-intersection question wearing a different
+hat, and that it has been answered both ways. [nixpkgs][nix] declines to answer
+it and therefore ships no `intersections` list form at all — "There is no
+suitable return value for `intersections [ ]`". [Sapling][sapling] answers it
+concretely: `IntersectMatcher::matches_directory` returns
+`DirectoryMatch::Nothing` when the matcher list is empty — wrong in set theory,
+right for a traversal, because the alternative means walking the whole
+repository.
+
+Making the empty expression underivable in the grammar is the same choice taken
+one level earlier, and should be recorded as a choice.
+
+→ [O4][rec-o4].
+
 ---
 
 ## Not a contradiction, but worth recording
@@ -149,7 +201,19 @@ pattern `foo`" — that is, a leading `**/` matches **zero** directories as well
 as many. `sparkles.fuzzy.glob` requires at least one separator, so `**/x` does
 not match `x`. The example in [O1][rec-o1] demonstrates this. It is a compiler
 fix (emit an alternation over the zero-directory case), not a language decision,
-but it has to land with the anchoring rule or the rule is wrong.
+but it has to land with the anchoring rule or the rule is wrong. The rule is
+older than git: [Ant][ant], which introduced `**` in the first place, specifies
+that "when `**` is used as the name of a directory in the pattern, it matches
+**zero or more** directories".
+
+**`dir_walk`'s `enterDir` hook returns a `bool`.** Two independent
+implementations of this exact walk — [Sapling][sapling]'s `DirectoryMatch` and
+[the `ignore` crate][ignore]'s `Match` — use a **three-valued** verdict, and in
+both the third value is load-bearing: Sapling's `Everything` means "admit the
+subtree and stop asking", the `ignore` crate's `None` means "no rule had an
+opinion, ask the next matcher". A boolean `enterDir` can express neither. Also
+not a language decision, but the Plan consumer will want the wider verdict, and
+widening it later is a breaking change to every walker hook in the repository.
 
 <!-- References -->
 
@@ -165,3 +229,7 @@ but it has to land with the anchoring rule or the rule is wrong.
 [nix]: ./nixpkgs-fileset.md
 [ordered]: ./ordered-rule-filters.md
 [shell]: ./shell-tools.md
+[watchman]: ./watchman.md
+[sapling]: ./sapling.md
+[ant]: ./ant-gradle.md
+[ignore]: ./ignore-crate.md

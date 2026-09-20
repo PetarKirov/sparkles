@@ -10,14 +10,16 @@ is covered by five axes; this page names them.
 
 ## Composition model
 
-How two selections combine. The field has exactly three answers, and they are
-not interchangeable.
+How two selections combine. The field has five answers, and they are not
+interchangeable.
 
-| Model                    | Shape                                                                         | Can express intersection?     | Examples                                                                                     |
-| ------------------------ | ----------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| **Set algebra**          | An expression tree over `union` / `intersection` / `difference` with grouping | yes                           | [jj filesets][jj-filesets], [Mercurial filesets][hg], [`bazel query`][bazel], [nixpkgs][nix] |
-| **Ordered rules**        | A list of patterns, each include or exclude; last (or first) match decides    | **no**                        | [`.gitignore`, rsync, CODEOWNERS][ordered], [`ripgrep -g`][shell]                            |
-| **Implicit conjunction** | Juxtaposed terms are ANDed; a prefix sigil negates one term                   | yes, but only over _one_ axis | [fzf, fff][implicit], [`find`][shell] (with explicit `-o`)                                   |
+| Model                    | Shape                                                                         | Can express intersection?     | Examples                                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **Set algebra**          | An expression tree over `union` / `intersection` / `difference` with grouping | yes                           | [jj filesets][jj-filesets], [Mercurial filesets][hg], [`bazel query`][bazel], [nixpkgs][nix], [Sapling][sapling] |
+| **Ordered rules**        | A list of patterns, each include or exclude; last (or first) match decides    | **no**                        | [`.gitignore`, rsync, CODEOWNERS][ordered], [`ripgrep -g`][shell], [the `ignore` crate][ignore]                  |
+| **Generate then filter** | A generator bounds the candidate set; an algebra filters what it produced     | yes, within one generator     | [watchman][watchman]                                                                                             |
+| **Two-layer hybrid**     | Ordered rules for paths, a boolean algebra one level up over predicates       | yes, in the upper layer       | [Ant `<fileset>`, Gradle `PatternSet`][ant]                                                                      |
+| **Implicit conjunction** | Juxtaposed terms are ANDed; a prefix sigil negates one term                   | yes, but only over _one_ axis | [fzf, fff][implicit], [`find`][shell] (with explicit `-o`)                                                       |
 
 The distinction that matters for a build system is that **an ordered-rule list
 cannot express intersection**. `a` then `!b` is `a ∖ b`, and the rules compose
@@ -28,17 +30,46 @@ by git" unless one of the two predicates is folded into the traversal itself.
 function's clothes: two lists, one subtracted from the other, and no third
 operator.
 
+## Generators versus predicates
+
+The distinction [watchman][watchman] makes its API out of, and the one a
+fileset IR with two consumers needs a name for.
+
+A **generator** bounds the candidate set: it can be evaluated without being
+handed a candidate, because it enumerates. A **predicate** can only test a
+candidate it is given. Watchman's five generators (`since`, `suffix`, `glob`,
+`path`, `all`) and its expression terms (`match`, `dirname`, `type`, `size`, …)
+are exactly this split, and the documentation teaches users to exploit it by
+hand: `{"suffix": "c"}` plus a `dirname` term is faster than
+`{"glob": ["**/*.c"]}` for the same set.
+
+Two properties follow, and both are used throughout this tree:
+
+- **Only a generator can prune.** A predicate answers about one path, and by
+  the time it is asked the walk is already committed. This is why the
+  [literal-path-prefix lattice](#literal-path-prefix-lattice) is an analysis
+  over the _generating_ parts of an expression.
+- **Complement is safe inside a generator's bound and ruinous outside it.**
+  `["not", ["match", "*.c"]]` means "of the candidates this generator produced,
+  the non-C ones". The same `~x` with no bounding generator means "every path on
+  the disk that is not x".
+
+[Sapling][sapling] expresses the same split differently: one `Matcher` trait
+with two methods — `matches_directory`, the generator side, which may prune a
+whole subtree, and `matches_file`, the predicate side.
+
 ## Anchoring
 
 Whether a pattern is positioned relative to a root, or free to match at any
 depth. Four distinct rules are in production use:
 
-| Rule                     | A slash-free pattern (`foo`)         | A pattern with a slash (`a/b`)                  | Systems                                                                 |
-| ------------------------ | ------------------------------------ | ----------------------------------------------- | ----------------------------------------------------------------------- |
-| **Root-anchored**        | only the root entry `foo`            | only `a/b` from the root                        | [Mercurial `glob:`/`rootglob:`][hg], [jj][jj-filesets], [git][pathspec] |
-| **Float-unless-slashed** | any segment, at any depth (`**/foo`) | anchored to the root                            | [`.gitignore`][ordered], [`ripgrep -g`][shell]                          |
-| **Suffix-anchored**      | the final component only             | the trailing components (`a/b` matches `x/a/b`) | [rsync filter rules][ordered]                                           |
-| **Base-name by default** | the final component only             | nothing, unless `--full-path`                   | [`fd`][shell]                                                           |
+| Rule                     | A slash-free pattern (`foo`)            | A pattern with a slash (`a/b`)                  | Systems                                                                                |
+| ------------------------ | --------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **Root-anchored**        | only the root entry `foo`               | only `a/b` from the root                        | [Mercurial `glob:`/`rootglob:`][hg], [jj][jj-filesets], [git][pathspec]                |
+| **Float-unless-slashed** | any segment, at any depth (`**/foo`)    | anchored to the root                            | [`.gitignore`][ordered], [`ripgrep -g`][shell]                                         |
+| **Suffix-anchored**      | the final component only                | the trailing components (`a/b` matches `x/a/b`) | [rsync filter rules][ordered]                                                          |
+| **Base-name by default** | the final component only                | nothing, unless `--full-path`                   | [`fd`][shell], [watchman `match`][watchman] (default scope)                            |
+| **Explicit per term**    | whatever the term's scope argument says | whatever the term's scope argument says         | [watchman][watchman] (`basename`/`wholename`), [Sapling][sapling] (`glob:`/`relglob:`) |
 
 Two further sub-questions ride along:
 
@@ -84,6 +115,9 @@ _mostly_ not an expression. Three answers exist:
   failure, retries it as a bare path pattern
   ([`program_or_bare_string`][jj-pest]). This removes the delimiter entirely at
   the cost of a query whose meaning changes when a typo makes it stop parsing.
+- **Restrict the language instead.** [git sparse-checkout][sparse]'s cone mode
+  accepts only directory names, which dissolves the question — a directory name
+  cannot be confused with an expression, so it needs no delimiter.
 - **A heuristic per token.** [fff][implicit] (and hue today) classify each
   whitespace-separated token as constraint-or-text by inspecting it. This is
   the model the [recommendations] replace, and its cost is visible in fff's
@@ -105,6 +139,13 @@ prefix(a ∩ b)                = the longer of the two, if one extends the other
 prefix(a ∖ b)                = prefix(a)          (b can only remove)
 prefix(¬a)                   = ⊤                  (always)
 ```
+
+Its **runtime dual** is [Sapling][sapling]'s `DirectoryMatch`, which answers
+the same question per directory during the walk rather than per sub-expression
+before it: `Everything` (admit the subtree and stop asking), `Nothing` (prune),
+`ShouldTraverse` (the `⊤` — "always valid … does not provide additional
+information"). A planner computes the static lattice, a matcher answers the
+dynamic one, and the two must agree.
 
 Two consequences drive the [recommendations]:
 
@@ -146,3 +187,8 @@ restated with a primary source there.
 [shell]: ./shell-tools.md
 [recommendations]: ./recommendations.md
 [picker]: ../../specs/hue/picker.md
+[watchman]: ./watchman.md
+[sapling]: ./sapling.md
+[ant]: ./ant-gradle.md
+[ignore]: ./ignore-crate.md
+[sparse]: ./git-sparse-checkout.md

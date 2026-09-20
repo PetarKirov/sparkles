@@ -41,6 +41,17 @@ serves two contexts at once, so the tie has to be broken on other grounds:
   a `/`, and rule 2 anchors exactly those.
 - Our users arrive from ripgrep and `.gitignore`, where rule 1 is the law
   ([ripgrep][shell]: "Globbing rules match `.gitignore` globs").
+- **The inference must always be overridable in one character**, because the
+  two systems in the survey built for the largest repositories both refuse to
+  infer at all. [watchman][watchman] takes the scope as an argument
+  (`["match", "dir/*.txt", "wholename"]` against the `basename` default);
+  [Sapling][sapling] splits it into separate kinds — `glob:` "relative to cwd"
+  against `relglob:` "an unrooted glob (e.g.: `*.c` matches C files in all
+  dirs)", and likewise `path:`/`relpath:` and `re:`/`relre:`. Under rules 1–3
+  both spellings are already reachable: a leading `/` forces the anchor, a
+  leading `**/` forces the float. So the inference is a default, never a trap —
+  but the documentation has to say so, because that is exactly what
+  `globAny`'s double match does not offer.
 - Rule 5 is the one place the search tools are wrong and the VCS languages are
   right. ripgrep has to document the consequence in its own `--help` — "`-g
 foo` is incorrect because `foo/bar` does not match the glob `foo`" — while
@@ -48,7 +59,11 @@ foo` is incorrect because `foo/bar` does not match the glob `foo`" — while
 src` means what it looks like. A picker whose `src` matches nothing is
   broken. (We diverge from jj in one detail: jj's `glob:` is the
   _non_-closure kind and `prefix-glob:` the closure one; ours are `file:` and
-  everything else.)
+  everything else.) [Sapling][sapling] shows closure need not be a pattern
+  property at all — `DirectoryMatch::Everything` is a verdict its matcher
+  returns about a directory — so the rule here serves the **Predicate**
+  consumer, and the **Plan** gets closure from the verdict whether the pattern
+  asked for it or not.
 
 ### The behaviour change, measured
 
@@ -364,6 +379,12 @@ Three arguments converge:
   file under the fileset root — and, unlike `all:`, it has a literal prefix
   (the root itself), so it prunes exactly as well as the walk it describes. If
   a rooted universe is wanted, that is its spelling.
+- **The nullary-intersection question has a right answer for a walk, and it is
+  not the universe.** [Sapling][sapling]'s `IntersectMatcher` returns
+  `DirectoryMatch::Nothing` for an empty matcher list — wrong in set theory,
+  right here, because `Everything` would mean walking the entire repository.
+  Making the empty expression underivable is the same decision taken one level
+  earlier.
 - **nixpkgs reached the same conclusion from the representation side.** The
   README rejects a universe value for `intersections []` because "such a value
   could then not be used with `fileFilter` unless the internal representation is
@@ -601,12 +622,42 @@ prefix(a ~ b)                = prefix(a)
 Start roots are the prefixes of the top-level union's arms, deduplicated by
 containment. `⊤` in any arm means "start at the fileset root".
 
-Two engineering notes the survey supplies:
+Its **runtime dual** is [Sapling][sapling]'s `DirectoryMatch`, and the two must
+agree: the planner computes the static prefix before the walk; the matcher
+answers `Everything` / `Nothing` / `ShouldTraverse` per directory during it.
+Adopt its soundness convention — the top element is always a legal answer
+("`ShouldTraverse` is a value that is always valid. It does not provide
+additional information") — so a new primary can be correct before it is fast.
+Note that `sparkles.build_primitives.dir_walk`'s hook returns a **`bool`** from
+`enterDir`, which cannot express "admit this whole subtree without asking
+again". That is a three-valued verdict waiting to be introduced.
+
+Sapling's combinators also supply the joins, and they are worth copying rather
+than re-deriving: one `Nothing` short-circuits an intersection,
+`Everything ∩ Everything = Everything` (so closure survives intersection), and
+`DifferenceMatcher` defers its exclude operand "since in some cases we can avoid
+executing it entirely".
+
+Three engineering notes the survey supplies:
 
 - [git's pathspec][pathspec] has done the per-argument version of this for
   decades — "the pathspec up to the last slash represents a directory prefix.
   The scope of that pathspec is limited to that subtree" — so the lattice is
   the generalisation of a proven idea, not a speculative one.
+- **[git sparse-checkout][sparse] is the warning.** Its non-cone mode is this
+  language without the lattice, and git measured the result: "O(N\*M) pattern
+  matches, where N is the number of patterns and M is the number of paths in the
+  index. This scales poorly." The only mitigation git could name is the one this
+  section describes — "limiting the number of patterns via specifying leading
+  directory name or glob" — and git concluded that relying on users to supply a
+  leading directory does not work, so cone mode makes it the only thing they
+  _can_ supply. The consequence that should shape our scope: "The excessive
+  flexibility made other extensions essentially impractical. `--sparse-index` is
+  likely impossible in non-cone mode." **A prefix the language guarantees is
+  worth more than one an analysis usually finds.** Concretely, keep every
+  non-path primary (`git:`, a future `re:`) out of the start-root computation by
+  construction, so the lattice never falls back to `⊤` for a reason the user
+  cannot see in what they typed.
 - [Mercurial's optimiser][hg] is the other half. Once the plan exists, the
   **predicate** should be reordered by cost, as `filesetlang.optimize` does:
   commute `&` so the cheap arm runs first (`WEIGHT_CHECK_FILENAME = 0.5` against
@@ -639,3 +690,6 @@ cross-subject [comparison].
 [comparison]: ./comparison.md
 [contradictions]: ./contradictions.md
 [picker]: ../../specs/hue/picker.md
+[watchman]: ./watchman.md
+[sapling]: ./sapling.md
+[sparse]: ./git-sparse-checkout.md
