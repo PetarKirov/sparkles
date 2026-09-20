@@ -9,9 +9,11 @@ rendered as a published substitution rather than a silent loss._
 
 ## The decision: flags, not tiers
 
-Both surveyed outlines ([input 1](../../../tui-design-system-input1.md),
-[input 2](../../../tui-design-system-input2.md)) frame capability as three
-tiers — baseline / enhanced / full. The repository's own research
+The two outlines that seeded this tree both framed capability as three
+tiers — baseline / enhanced / full — and their feature inventories (color
+depth, unicode width, box drawing and block elements, the OSC and DEC-mode
+protocols, multiplexer passthrough, non-tty modes) are absorbed into the table
+below. The repository's own research
 ([concepts](../../research/platform-ui-guidelines/concepts.md)) and the shipped
 input side ([`IXB10`](../ui/interaction-review.md), `InputCapabilities`)
 argue the other way: **a support bit lies** the moment a real terminal has
