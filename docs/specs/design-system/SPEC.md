@@ -1,0 +1,109 @@
+# Sparkles design system — Specification (`TOK` / `ACC` / `FMT`)
+
+_**Status:** proposed · **Date:** 2026-09-21 · **Owner:** `sparkles:ui`
+(`sparkles.ui.tokens`, `sparkles.ui.style`, `sparkles.ui.theme`); file I/O via
+`sparkles:wired` · **Scope:** the framework contract — what a design system
+\_is_ as data, how a slot resolves under an interaction state, what unit a metric
+is in, which slots a component may use, the accessibility floors, and the file
+format a theme ships in. Capabilities, glyphs, keyboard and web are separate
+pages under this tree.\_
+
+> [!NOTE]
+> Symbols marked _proposed_ do not exist yet. `sparkles.ui.tokens`
+> (`libs/ui/src/sparkles/ui/tokens.d`) is the **draft** of the types this page
+> traces to; it compiles and has tests, but `Slot`/`Palette`/`GlyphSet` are not
+> yet migrated onto it ([`PLAN.md` M1](./PLAN.md)).
+
+## Vocabulary
+
+| Term                  | Meaning                                                                                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **token**             | one named design decision with a value: a color, a length, a glyph choice, a font role. Named by a dotted **path** (`text.primary`, `border.weight`) |
+| **tier**              | `primitive` (a raw value: `indigo.500`), `semantic` (a role: `text.primary`), `component` (a part of one component: `scrollbar.thumb`, `diff.added`) |
+| **slot**              | a semantic or component token a widget references instead of a color — the existing `Slot` enum ([`THM1`](../ui/theme.md))                           |
+| **interaction state** | `rest`, `hover`, `focused`, `selected`, `pressed`, `disabled` — a second axis on slot resolution                                                     |
+| **visual**            | the resolved appearance a backend paints (`sparkles.ui.style.Visual`)                                                                                |
+| **target**            | one rendering backend instance with a declared capability set ([`capabilities.md`](./capabilities.md))                                               |
+| **projection**        | the rule by which a target that cannot honour a token renders it anyway (a px radius becomes rounded box-drawing)                                    |
+| **theme**             | one complete assignment of values to tokens: `sparkles.ui.theme.Theme`                                                                               |
+
+## Tokens (`TOK`)
+
+### Tiers and paths
+
+| ID     | Requirement                                                                                                                                                                                                                                                                                                                                                                                               | Status   | Traces to                                                                                           |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `TOK1` | Every token belongs to exactly one **tier**. A component token must resolve to a semantic token or a primitive; a semantic token to a primitive or a literal; the alias graph must be acyclic and every alias must resolve. Violation: a theme whose alias graph has a cycle or a dangling reference is rejected at load with the offending path named, never resolved to a default.                      | proposed | `tokens.d` `TokenTier`, `tierOf`; `FMT2`                                                            |
+| `TOK2` | Every slot has exactly one **path**: segments of `[a-z0-9]+` joined by `.`, the first starting with a letter (so `indigo.500` is a valid primitive), unique across the slot enum. The CSS custom-property name and the DTCG group path are both **derived** from it by one function, never spelled separately. Violation: two slots with the same path, or a path failing the grammar, is a test failure. | proposed | `tokens.d` `tokenPath`, `cssName`; [`WEB1`](./web.md)                                               |
+| `TOK3` | The **semantic vocabulary** must contain at least the roles below. A theme may leave a role unset; resolution then follows the documented fallback (the last column), so every role is total for every theme.                                                                                                                                                                                             | partial  | `style.d` `Slot` (chrome/gutter/selection exist; text levels, focus, disabled, accent, link do not) |
+
+The minimum semantic set (`TOK3`):
+
+| Group       | Roles                                                     | Fallback when unset                                                    |
+| ----------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `text`      | `primary`, `secondary`, `muted`, `disabled`, `inverse`    | `primary` = page fg; the rest are alpha mixes of it toward the page bg |
+| `surface`   | `base`, `raised`, `overlay`, `sunken`                     | `base` = page bg; the rest are tone steps per the derivation rule      |
+| `border`    | `default`, `strong`, `focus`                              | `default` = `text.muted`; `focus` = `accent.primary`                   |
+| `accent`    | `primary`, `secondary`                                    | probed from the syntax rules (`function` / `markup.link`) as today     |
+| `status`    | `error`, `warning`, `info`, `success` (each fg + bg tint) | the existing `error`/`warn`/`info` slots; `success` = diff-added hue   |
+| `selection` | `bg`                                                      | existing `selection`                                                   |
+| `link`      | `fg`, `underline`                                         | `accent.primary`; `hoverUnderline`                                     |
+| `focus`     | `ring`                                                    | `border.focus`                                                         |
+
+### Interaction states
+
+| ID     | Requirement                                                                                                                                                                                                                                                                                                                                                           | Status   | Traces to                                        |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------ |
+| `TOK4` | Slot resolution takes an **interaction state set** as a second argument: `resolve(theme, slot, states) → Visual`. It is total: for any slot and any state set, a theme that sets no override for that state yields exactly the `rest` visual. Violation: a resolved visual that differs from `rest` when the theme declares no override for any active state.         | proposed | `tokens.d` `InteractionState`, `StateSet`        |
+| `TOK5` | When several states are active, the override of the **highest-precedence** state that has one wins; precedence, low to high, is `hover < focused < selected < pressed < disabled`. A theme override for a state is sparse: it may set only the fields it changes, and unset fields fall through to `rest`. Violation: a `disabled` widget that also reads as hovered. | proposed | `tokens.d` `StateSet.highest`                    |
+| `TOK6` | Every component declares the **slots it uses** as compile-time data (a `slots` member), and a test asserts that the display list it builds references no slot outside that set. The component's documentation page lists the slots from the declaration, not from prose. Violation: an op in the component's display list whose `slot` is not in its declared set.    | proposed | `tokens.d` `slotsWithin`; every `components/*.d` |
+
+### Units and metrics
+
+| ID      | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Status      | Traces to                                         |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------- |
+| `TOK7`  | The **cell** is the universal layout unit: paddings, gaps, widths and heights are integer cells on every target ([`LAY`](../ui/layout.md) integer-unit rule). A metric whose meaning is sub-cell — corner radius, border weight, shadow offset/blur, font scale — is typed in **device px** and carries a defined **projection** onto a cell target ([`GLY2`](./glyphs.md)). A target declares per px-typed metric whether it _honours_ or _projects_ it; a metric is never silently dropped. | partial     | `style.d` `Palette` (mixed units, no declaration) |
+| `TOK8`  | Metrics are named by **role**, not by the feature that first needed them: `radius.overlay`, `border.weight`, `pad.panel.x`, `gap.detach`, `width.overlay.max` — replacing `popupRadius`, `borderWidth`, `popupPadX`, `detachGap`, `popupMaxWidth`. Renames are one-shot with the `Palette` migration; no alias period.                                                                                                                                                                        | not started | `style.d` `Palette` scalar fields                 |
+| `TOK9`  | The **syntax channel stays opaque** to the token model: syntax rules are `(selector, TextStyle)` data resolved by `sparkles:syntax`, exactly as [`THM`](../ui/theme.md) states. The token model may _reference_ a syntax rule's foreground (the accent probe) but never resolves selectors.                                                                                                                                                                                                   | full        | `theme.d` `ruleFgFor`                             |
+| `TOK10` | Application-domain component tokens (`diff.*`, `coverage.*`, `twoslash.*`) live in `sparkles:ui`'s component tier under a **domain namespace**, because the slot index must stay a closed enum for the display list. Their _values_ belong to the theme; their _existence_ is the toolkit's. Revisit if a third application domain appears ([`decisions.md` D16](./decisions.md)).                                                                                                            | proposed    | `style.d` `Slot` (diff/cov groups)                |
+
+## Accessibility (`ACC`)
+
+Floors are the [color-derivation](../../research/platform-ui-guidelines/color-derivation/index.md)
+values: WCAG 2.x contrast ratio, computed from sRGB relative luminance.
+
+| ID     | Requirement                                                                                                                                                                                                                                                                                                                                                                                          | Status      | Traces to                              |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------- |
+| `ACC1` | For every theme, a test computes **conformance**: `text.primary` on `surface.base` ≥ 4.5:1 and every chrome/accent foreground on its band ≥ 3:1, in the theme's own scheme. The result is data (`ThemeConformance`) rendered in `ui-gallery`'s theme page and the docs, and exposed to a theme picker.                                                                                               | not started | [`testing.md` O2](./testing.md)        |
+| `ACC2` | A built-in theme that **fails** the floors is **labelled**, not rejected: the 36 borrowed schemes keep upstream fidelity. Only [Sparkles](./sparkles-theme.md) and any theme that _declares_ `conformance: required` must pass, and for those a failure is a test failure. Violation: a required theme shipping below floor; or a failing theme rendered without its label where labels are shown.   | not started | `SPK2`                                 |
+| `ACC3` | **Never color alone.** Every `status.*` token has a paired **status mark** in the glyph channel with an ASCII fallback ([`GLY3`](./glyphs.md)); a component that shows status must emit the mark whenever the target's color depth is `none` or `ansi16`, and may omit it above that only if the theme says so. Violation: a monochrome render of a status row indistinguishable from a neutral row. | not started | `GlyphSet` (proposed marks)            |
+| `ACC4` | **Focus is visible in monochrome.** Under a target with no color, the focused element must differ from its unfocused rendering by attribute (reverse, underline or bold) or glyph, never only by a color token. Checked by the `baseline` profile render of every `ui-gallery` page with focus placed on each focusable ([`O1`](./testing.md)).                                                      | not started | [`CAP5`](./capabilities.md)            |
+| `ACC5` | **Reduced motion** is a capability input (`TargetCapabilities.reducedMotion`): when set, spinners render their static frame, eased scrolling jumps, and toasts appear without transition. The source is the host (OS preference later via `sparkles:appearance`; a `--reduced-motion` flag and env now).                                                                                             | not started | [`capabilities.md`](./capabilities.md) |
+
+## Theme file format (`FMT`)
+
+The file format is the **W3C Design Tokens Community Group format** (DTCG),
+used both to author user themes and to interchange with web tooling. It
+realises [`THM9`](../ui/theme.md). Authority: the DTCG format specification
+(interoperability target; the exact edition is pinned in
+[`decisions.md` D12](./decisions.md) once the first loader lands).
+
+| ID     | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Status   | Traces to                                    |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------- |
+| `FMT1` | A theme file is a DTCG document: groups are token paths (`TOK2`), each leaf carries `$type` and `$value`. The `$type` mapping is fixed: `color` ↔ `Color` (hex, alpha allowed); `dimension` in `px` ↔ a px-typed metric; `number` ↔ a cell-typed metric (cells are the design system's own unit and DTCG has no such unit — [D13](./decisions.md)); `fontFamily`/`fontWeight`/`typography` ↔ the font roles; `border`, `shadow`, `strokeStyle` ↔ the box chrome. | proposed | proposed `sparkles.ui.theme_file`            |
+| `FMT2` | Aliases (`{text.primary}`) resolve first within the file, then against the **base theme** the file names (`$extensions.dev.sparkles.base`, default `sparkles`), so a user theme is an overlay. Unresolvable aliases and cycles reject the file (`TOK1`).                                                                                                                                                                                                         | proposed |                                              |
+| `FMT3` | Loading is **fail-closed on malformed input, pass-through on unknown extensions**: a structurally invalid document, a wrong `$type`, or an out-of-range value yields a structured error naming the path; unknown `$extensions` keys are preserved for round-trip. Malformed input must never become an assertion.                                                                                                                                                | proposed | `sparkles:wired` (`fromJSON`, `WireInvalid`) |
+| `FMT4` | `save(load(file))` is canonical: loading a file and saving it produces a document equal, as DTCG, to the canonical form of the input (key order, alias preservation and extension pass-through defined by the loader). Checked by round-tripping every built-in theme's export.                                                                                                                                                                                  | proposed | [`testing.md` O4](./testing.md)              |
+| `FMT5` | Every built-in theme is **exported** to DTCG by a tool and the exports are checked in as goldens, so the format is exercised by 36 real documents from day one and a change to any built-in is visible in review as a token diff.                                                                                                                                                                                                                                | proposed | `apps/ci` or `hue theme export`              |
+| `FMT6` | Syntax rules are encoded as the group `syntax`, one `color` token per selector with attributes under `$extensions.dev.sparkles.attrs` (`["bold", "italic"]`), since DTCG has no text-attribute type. This is a **hypothesis** until the first loader; the alternative (a `typography` composite) is recorded in [D14](./decisions.md).                                                                                                                           | proposed |                                              |
+
+## Relationship to `THM`
+
+| `THM` row | Realised by                                                                |
+| --------- | -------------------------------------------------------------------------- |
+| `THM2`    | `TOK3` (the minimum semantic set) and `TOK4`/`TOK5` (the state axis)       |
+| `THM6`    | `TOK7`–`TOK10` (metrics and domain tokens in the one value)                |
+| `THM8`    | [`CAP4`](./capabilities.md) (per-target application, never a tty snapshot) |
+| `THM9`    | `FMT1`–`FMT6`                                                              |
+
+→ [Overview](./index.md) · [Capabilities](./capabilities.md) · [Glyphs](./glyphs.md) · [Testing](./testing.md)
