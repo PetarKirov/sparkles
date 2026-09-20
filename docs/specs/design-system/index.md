@@ -55,6 +55,7 @@ here; they do not restate normative text.
 | CSS custom properties, VitePress mapping, generated stylesheet     | `sparkles:docs`                                                                                          | [`web.md`](./web.md)                          |
 | The Sparkles values                                                | this tree                                                                                                | [`sparkles-theme.md`](./sparkles-theme.md)    |
 | Canonical component renderings (the Storybook role)                | `apps/ui-gallery`                                                                                        | [`testing.md`](./testing.md) `O1`             |
+| The public style guide (wireframes + fences)                       | `docs/design-system/` on the site                                                                        | [`PLAN.md` M3](./PLAN.md)                     |
 
 ## Target sequencing
 
