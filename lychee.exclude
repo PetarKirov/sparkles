@@ -150,3 +150,13 @@ apps/hue/twoslash
 # ui-backend-seam/functional-images.md): protected by Anubis anti-bot middleware
 # which returns HTTP 403 to automated checkers; valid canonical academic citations.
 ^https?://eprints\.soton\.ac\.uk/
+
+# repo.mercurial-scm.org (Mercurial's canonical hgweb, cited from
+# research/fileset-languages/mercurial-filesets.md): the host does not answer
+# automated checkers at all — a direct `curl --max-time 35` on
+# /hg/help/filesets and /hg/file/7.1/mercurial/filesetlang.py returns no status
+# (connection stalls), reproducibly, while the same pages load in a browser.
+# Mercurial has no upstream git mirror to cite instead; every quotation in that
+# deep-dive is reproducible offline with
+# `nix shell nixpkgs#mercurial -c hg help filesets`.
+^https?://repo\.mercurial-scm\.org/
