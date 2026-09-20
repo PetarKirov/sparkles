@@ -2889,6 +2889,10 @@
                 "link": "/research/fileset-languages/mercurial-filesets"
               },
               {
+                "text": "Sapling pathmatcher",
+                "link": "/research/fileset-languages/sapling"
+              },
+              {
                 "text": "bazel query & glob()",
                 "link": "/research/fileset-languages/bazel"
               },
@@ -2907,8 +2911,30 @@
                 "link": "/research/fileset-languages/git-pathspec"
               },
               {
+                "text": "git sparse-checkout",
+                "link": "/research/fileset-languages/git-sparse-checkout"
+              },
+              {
                 "text": "Ordered-rule filters",
                 "link": "/research/fileset-languages/ordered-rule-filters"
+              },
+              {
+                "text": "The ignore crate",
+                "link": "/research/fileset-languages/ignore-crate"
+              }
+            ]
+          },
+          {
+            "text": "Build Systems & Watchers",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Ant & Gradle filesets",
+                "link": "/research/fileset-languages/ant-gradle"
+              },
+              {
+                "text": "watchman queries",
+                "link": "/research/fileset-languages/watchman"
               }
             ]
           },
