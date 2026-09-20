@@ -2864,6 +2864,63 @@
         ]
       },
       {
+        "text": "Content Addressing",
+        "link": "/research/content-addressing/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/content-addressing/concepts"
+          },
+          {
+            "text": "Serial Serialization",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Nix Archive (NAR)",
+                "link": "/research/content-addressing/nar"
+              }
+            ]
+          },
+          {
+            "text": "Merkle Trees",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Git objects",
+                "link": "/research/content-addressing/git-objects"
+              },
+              {
+                "text": "Nix git-hashing",
+                "link": "/research/content-addressing/nix-git-hashing"
+              },
+              {
+                "text": "Bazel REAPI",
+                "link": "/research/content-addressing/reapi"
+              },
+              {
+                "text": "OSTree",
+                "link": "/research/content-addressing/ostree"
+              }
+            ]
+          },
+          {
+            "text": "Intra-File Trees",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Bao / BLAKE3",
+                "link": "/research/content-addressing/bao-blake3"
+              }
+            ]
+          },
+          {
+            "text": "Synthesis & Recommendations",
+            "link": "/research/content-addressing/recommendations"
+          }
+        ]
+      },
+      {
         "text": "Fileset & File-Selection Languages",
         "link": "/research/fileset-languages/",
         "collapsed": true,
