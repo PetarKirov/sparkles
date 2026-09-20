@@ -822,6 +822,52 @@
         ]
       },
       {
+        "text": "Design System (proposal)",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/specs/design-system/"
+          },
+          {
+            "text": "Specification",
+            "link": "/specs/design-system/SPEC"
+          },
+          {
+            "text": "Capabilities",
+            "link": "/specs/design-system/capabilities"
+          },
+          {
+            "text": "Glyphs & typography",
+            "link": "/specs/design-system/glyphs"
+          },
+          {
+            "text": "Keyboard vocabulary",
+            "link": "/specs/design-system/keyboard"
+          },
+          {
+            "text": "Web",
+            "link": "/specs/design-system/web"
+          },
+          {
+            "text": "The Sparkles theme",
+            "link": "/specs/design-system/sparkles-theme"
+          },
+          {
+            "text": "Testing",
+            "link": "/specs/design-system/testing"
+          },
+          {
+            "text": "Delivery plan",
+            "link": "/specs/design-system/PLAN"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/design-system/decisions"
+          }
+        ]
+      },
+      {
         "text": "DMD-FMT",
         "collapsed": true,
         "items": [
