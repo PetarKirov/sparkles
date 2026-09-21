@@ -2879,6 +2879,10 @@
               {
                 "text": "Nix Archive (NAR)",
                 "link": "/research/content-addressing/nar"
+              },
+              {
+                "text": "casync / desync",
+                "link": "/research/content-addressing/casync"
               }
             ]
           },
@@ -2887,12 +2891,28 @@
             "collapsed": true,
             "items": [
               {
+                "text": "Venti (Plan 9)",
+                "link": "/research/content-addressing/venti"
+              },
+              {
                 "text": "Git objects",
                 "link": "/research/content-addressing/git-objects"
               },
               {
+                "text": "Git cache-tree",
+                "link": "/research/content-addressing/git-cache-tree"
+              },
+              {
                 "text": "Nix git-hashing",
                 "link": "/research/content-addressing/nix-git-hashing"
+              },
+              {
+                "text": "Snix castore",
+                "link": "/research/content-addressing/tvix-castore"
+              },
+              {
+                "text": "Mercurial -> Sapling",
+                "link": "/research/content-addressing/mercurial-sapling-manifests"
               },
               {
                 "text": "Bazel REAPI",
@@ -2901,6 +2921,14 @@
               {
                 "text": "OSTree",
                 "link": "/research/content-addressing/ostree"
+              },
+              {
+                "text": "Software Heritage",
+                "link": "/research/content-addressing/software-heritage"
+              },
+              {
+                "text": "bup / git-annex",
+                "link": "/research/content-addressing/bup-git-annex"
               }
             ]
           },
@@ -2911,6 +2939,50 @@
               {
                 "text": "Bao / BLAKE3",
                 "link": "/research/content-addressing/bao-blake3"
+              },
+              {
+                "text": "IPFS unixfs / CID",
+                "link": "/research/content-addressing/ipfs-unixfs"
+              },
+              {
+                "text": "composefs + fs-verity",
+                "link": "/research/content-addressing/composefs-fs-verity"
+              },
+              {
+                "text": "dm-verity / APK v4",
+                "link": "/research/content-addressing/apk-dm-verity"
+              },
+              {
+                "text": "Tahoe-LAFS",
+                "link": "/research/content-addressing/tahoe-lafs"
+              }
+            ]
+          },
+          {
+            "text": "Archives & Retrofits",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "OCI image layers",
+                "link": "/research/content-addressing/oci-layers"
+              },
+              {
+                "text": "eStargz / SOCI",
+                "link": "/research/content-addressing/estargz-soci"
+              },
+              {
+                "text": "Reproducible archives",
+                "link": "/research/content-addressing/reproducible-archives"
+              }
+            ]
+          },
+          {
+            "text": "Adjacent",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Build input caches",
+                "link": "/research/content-addressing/build-input-caches"
               }
             ]
           },
