@@ -19,6 +19,16 @@ struct GitIgnoreRule
     bool anchored;
     bool hasSlash;
 
+    /// Path of the `.gitignore` that declared this rule, as given to
+    /// $(LREF GitIgnore.parse) or $(LREF GitIgnore.fromFile). Empty when the
+    /// rules were parsed without a source path.
+    string sourceFile;
+
+    /// 1-based line number of this rule within `sourceFile`. Zero when
+    /// unknown. Blank and comment lines are counted, so the number addresses
+    /// the file as an editor shows it.
+    uint sourceLine;
+
     /// Returns true when this rule matches `normalizedPath`.
     bool matches(in const(char)[] normalizedPath, bool isDirectory) const pure
     {
@@ -81,17 +91,32 @@ enum IgnoreMatch
     notIgnored, /// The last matching rule is a negation (`!`) re-including it.
 }
 
+/// The verdict for a path together with the rule that produced it — the
+/// information `git check-ignore -v` prints. `verdict` is `IgnoreMatch.none`
+/// when no rule matched, in which case the remaining fields are unset.
+struct IgnoreDecision
+{
+    IgnoreMatch verdict;
+    string sourceFile; /// The `.gitignore` that declared the deciding rule.
+    uint sourceLine; /// 1-based line of the deciding rule, or zero if unknown.
+    string pattern; /// The deciding rule's pattern, without its `!` prefix.
+    bool negated; /// Whether the deciding rule was a negation.
+}
+
 /// Value-semantics container for parsed `.gitignore` rules.
 struct GitIgnore
 {
     GitIgnoreRule[] rules;
 
-    /// Parses all rules from a `.gitignore` text payload.
-    static GitIgnore parse(string source) pure
+    /// Parses all rules from a `.gitignore` text payload. `sourceFile` is
+    /// recorded on every rule for diagnostics ($(LREF GitIgnoreRule.sourceFile));
+    /// it is never used for matching.
+    static GitIgnore parse(string source, string sourceFile = null) pure
     {
         GitIgnore result;
+        uint lineNumber;
         foreach (line; source.lineSplitter)
-            result.addLine(line);
+            result.addLine(line, sourceFile, ++lineNumber);
         return result;
     }
 
@@ -104,15 +129,20 @@ struct GitIgnore
         if (!path.exists)
             return GitIgnore.init;
 
-        return parse(path.readText);
+        return parse(path.readText, path);
     }
 
-    /// Adds a single rule line from a `.gitignore` file.
-    void addLine(string rawLine) pure
+    /// Adds a single rule line from a `.gitignore` file. `sourceFile` and
+    /// `sourceLine` are recorded on the rule for diagnostics only.
+    void addLine(string rawLine, string sourceFile = null, uint sourceLine = 0) pure
     {
-        const parsed = parseRuleLine(rawLine);
-        if (parsed.valid)
-            rules ~= parsed.rule;
+        auto parsed = parseRuleLine(rawLine);
+        if (!parsed.valid)
+            return;
+
+        parsed.rule.sourceFile = sourceFile;
+        parsed.rule.sourceLine = sourceLine;
+        rules ~= parsed.rule;
     }
 
     /// Evaluates ignore status for a repository-relative path.
@@ -132,11 +162,31 @@ struct GitIgnore
         if (normalizedPath.length == 0)
             return IgnoreMatch.none;
 
-        auto result = IgnoreMatch.none;
-        foreach (rule; rules)
+        return explain(relativePath, isDirectory).verdict;
+    }
+
+    /// Like `match`, but also reports which rule decided — the file, line and
+    /// pattern `git check-ignore -v` would name. Git's last-match-wins rule
+    /// means the reported rule is the last one that matched, not the first.
+    IgnoreDecision explain(in const(char)[] relativePath, bool isDirectory = false) const pure
+    {
+        const normalizedPath = normalizePath(relativePath);
+        if (normalizedPath.length == 0)
+            return IgnoreDecision.init;
+
+        IgnoreDecision result;
+        foreach (ref rule; rules)
         {
-            if (rule.matches(normalizedPath, isDirectory))
-                result = rule.negated ? IgnoreMatch.notIgnored : IgnoreMatch.ignored;
+            if (!rule.matches(normalizedPath, isDirectory))
+                continue;
+
+            result = IgnoreDecision(
+                verdict: rule.negated ? IgnoreMatch.notIgnored : IgnoreMatch.ignored,
+                sourceFile: rule.sourceFile,
+                sourceLine: rule.sourceLine,
+                pattern: rule.pattern,
+                negated: rule.negated,
+            );
         }
         return result;
     }
@@ -189,9 +239,17 @@ struct GitIgnoreStack
     /// Evaluates `relativePath` (walk-relative) against all applicable frames.
     bool isIgnored(in const(char)[] relativePath, bool isDirectory = false) const pure
     {
+        return explain(relativePath, isDirectory).verdict == IgnoreMatch.ignored;
+    }
+
+    /// Like `isIgnored`, but reports the deciding rule across every applicable
+    /// frame — the file, line and pattern `git check-ignore -v` would name.
+    /// Deeper frames are consulted last, so the deepest matching rule wins.
+    IgnoreDecision explain(in const(char)[] relativePath, bool isDirectory = false) const pure
+    {
         const normalizedPath = normalizePath(relativePath);
 
-        bool ignored = false;
+        IgnoreDecision decision;
         foreach (ref frame; frames)
         {
             const(char)[] localPath;
@@ -209,19 +267,11 @@ struct GitIgnoreStack
             if (frame.pathPrefix.length > 0)
                 localPath = frame.pathPrefix ~ "/" ~ localPath;
 
-            final switch (frame.ignore.match(localPath, isDirectory))
-            {
-                case IgnoreMatch.none:
-                    break;
-                case IgnoreMatch.ignored:
-                    ignored = true;
-                    break;
-                case IgnoreMatch.notIgnored:
-                    ignored = false;
-                    break;
-            }
+            const frameDecision = frame.ignore.explain(localPath, isDirectory);
+            if (frameDecision.verdict != IgnoreMatch.none)
+                decision = frameDecision;
         }
-        return ignored;
+        return decision;
     }
 }
 
@@ -537,4 +587,154 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
     assert(ignore.isIgnored("src/gen", true));
     assert(ignore.isIgnored("src/gen/code.d"));
     assert(!ignore.isIgnored("nested/src/gen/code.d"));
+}
+
+@("buildPrimitives.gitIgnore.ruleProvenanceRecordsFileAndLine")
+@safe unittest
+{
+    // Blank and comment lines are counted, so a reported line number addresses
+    // the file the way an editor shows it — which is what `git check-ignore -v`
+    // prints and therefore what a reader will compare against.
+    const ignore = GitIgnore.parse(
+        "# comment\n"
+            ~ "\n"
+            ~ "*.o\n"
+            ~ "!keep.o\n",
+        "libs/base/.gitignore",
+    );
+
+    assert(ignore.rules.length == 2);
+    assert(ignore.rules[0].pattern == "*.o");
+    assert(ignore.rules[0].sourceFile == "libs/base/.gitignore");
+    assert(ignore.rules[0].sourceLine == 3);
+    assert(ignore.rules[1].sourceLine == 4);
+}
+
+@("buildPrimitives.gitIgnore.explainReportsTheDecidingRule")
+@safe unittest
+{
+    const ignore = GitIgnore.parse("*.o\n!keep.o\n", ".gitignore");
+
+    // Last match wins, so the negation on line 2 is the deciding rule for
+    // `keep.o` even though the broader rule on line 1 also matches.
+    const kept = ignore.explain("keep.o");
+    assert(kept.verdict == IgnoreMatch.notIgnored);
+    assert(kept.sourceLine == 2);
+    assert(kept.pattern == "keep.o");
+    assert(kept.negated);
+
+    const dropped = ignore.explain("main.o");
+    assert(dropped.verdict == IgnoreMatch.ignored);
+    assert(dropped.sourceLine == 1);
+    assert(!dropped.negated);
+
+    // No rule matched: the verdict falls through and nothing is attributed.
+    const untouched = ignore.explain("README.md");
+    assert(untouched.verdict == IgnoreMatch.none);
+    assert(untouched.sourceFile.length == 0);
+    assert(untouched.sourceLine == 0);
+}
+
+@("buildPrimitives.gitIgnoreStack.explainAttributesTheDeepestScope")
+@safe unittest
+{
+    GitIgnoreStack stack;
+    stack.push("", GitIgnore.parse("*.log\n", ".gitignore"));
+    stack.push("logs", GitIgnore.parse("!keep.log\n", "logs/.gitignore"));
+
+    const decision = stack.explain("logs/keep.log");
+    assert(decision.verdict == IgnoreMatch.notIgnored);
+    assert(decision.sourceFile == "logs/.gitignore");
+    assert(decision.sourceLine == 1);
+    assert(!stack.isIgnored("logs/keep.log"));
+
+    // A path the deeper scope does not cover keeps the root scope's verdict,
+    // attributed to the root file.
+    const outer = stack.explain("logs/other.log");
+    assert(outer.verdict == IgnoreMatch.ignored);
+    assert(outer.sourceFile == ".gitignore");
+    assert(stack.isIgnored("logs/other.log"));
+}
+
+/// `git check-ignore -v` parity: the rule this module attributes a verdict to
+/// must be the rule git attributes it to — same file, same line, same pattern.
+///
+/// This is the acceptance gate for rule provenance
+/// ([`FSI3`](../../../../../docs/specs/build-primitives/filesets/SPEC.md)).
+/// It is an independent oracle rather than a round trip: git is a separate
+/// implementation of the semantics this module copies, so agreement is
+/// evidence and disagreement names the defect.
+@("buildPrimitives.gitIgnore.explainMatchesGitCheckIgnore")
+@system unittest
+{
+    import sparkles.build_primitives.git_env : runGit;
+    import sparkles.test_runner.skip : skipTest;
+    import std.algorithm.searching : endsWith;
+    import std.conv : to;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.string : splitLines, split, strip;
+    import std.uuid : randomUUID;
+
+    // A missing git is a degraded environment, not a failure: skip loudly
+    // rather than returning early and counting it as a pass.
+    try
+    {
+        if (runGit(["--version"]).status != 0)
+            return skipTest("git is not usable");
+    }
+    catch (Exception)
+        return skipTest("git is not on PATH");
+
+    const root = buildPath(tempDir(), "sparkles-gitignore-" ~ randomUUID.toString());
+    mkdirRecurse(buildPath(root, "logs"));
+    scope (exit)
+        rmdirRecurse(root);
+
+    // `runGit` scrubs GIT_DIR and friends. Inheriting them here would point
+    // `git init` at whatever repository is running the test suite, which has
+    // twice left `core.bare = true` in this repository's own config.
+    assert(runGit(["init", "-q", root]).status == 0, "git init failed");
+
+    write(buildPath(root, ".gitignore"), "# comment\n\n*.log\nbuild/\n");
+    write(buildPath(root, "logs", ".gitignore"), "!keep.log\n");
+
+    GitIgnoreStack stack;
+    stack.push("", GitIgnore.fromFile(buildPath(root, ".gitignore")));
+    stack.push("logs", GitIgnore.fromFile(buildPath(root, "logs", ".gitignore")));
+
+    // Paths chosen so that each exercises a different deciding rule: the root
+    // pattern, the nested negation, and the directory-only rule.
+    foreach (relativePath; ["a.log", "logs/other.log", "logs/keep.log", "build/x.o"])
+    {
+        const result = runGit(["check-ignore", "-v", "--no-index", relativePath], root);
+
+        const ours = stack.explain(relativePath);
+        if (result.status != 0)
+        {
+            // git reports no match; so must we, or one of us is wrong about
+            // which rules apply.
+            assert(ours.verdict != IgnoreMatch.ignored,
+                "we ignore '" ~ relativePath ~ "' and git does not");
+            continue;
+        }
+
+        // `<source>:<line>:<pattern>\t<path>`
+        const fields = result.output.splitLines[0].split("\t")[0].split(":");
+        assert(fields.length == 3, "unexpected check-ignore output");
+
+        assert(ours.sourceFile.endsWith(fields[0]),
+            "source mismatch for '" ~ relativePath ~ "': git says '" ~ fields[0]
+                ~ "', we say '" ~ ours.sourceFile ~ "'");
+        assert(ours.sourceLine == fields[1].to!uint,
+            "line mismatch for '" ~ relativePath ~ "': git says " ~ fields[1]
+                ~ ", we say " ~ ours.sourceLine.to!string);
+
+        const gitPattern = fields[2].strip;
+        const oursPattern = (ours.negated ? "!" : "") ~ ours.pattern
+            ~ (gitPattern.endsWith("/") ? "/" : "");
+        assert(oursPattern == gitPattern,
+            "pattern mismatch for '" ~ relativePath ~ "': git says '" ~ gitPattern
+                ~ "', we say '" ~ oursPattern ~ "'");
+    }
 }
