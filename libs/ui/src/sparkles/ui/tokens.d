@@ -21,6 +21,8 @@ import sparkles.base.term_color : ColorDepth;
 import sparkles.input.capability : InputCapabilities;
 import sparkles.input.tier : InteractionTier;
 import sparkles.ui.style : BorderStyle, BoxBorder, Slot;
+import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
+    wireNames;
 
 // ── tiers and paths (TOK1, TOK2) ────────────────────────────────────────────
 
@@ -33,60 +35,20 @@ enum TokenTier : ubyte
 }
 
 /**
-The dotted path of a slot (`TOK2`) — the one spelling from which the CSS
-custom-property name and the DTCG group path are both derived.
-
-Paths group the shipped slots into the spec's vocabulary: the semantic groups
-(`text`, `status`, `surface`, `border`, `link`, `selection`, `shadow`) and the
-component namespaces (`chrome`, `gutter`, `scrollbar`, `completion`, `input`,
-`twoslash`, `diff`, `coverage` — the last three being the application domains
-`TOK10` keeps in the closed enum).
+The resolved token paths of every slot, in declaration order (`TOK2`): the
+`@WireName` each `Slot` member carries, resolved by wired — the same table
+`toJSON`/`fromJSON` and the DTCG theme file use, so a path is spelled exactly
+once, on the member. Wired also proves the names unique at compile time.
 */
-string tokenPath(Slot s) @safe pure nothrow @nogc
-{
-    final switch (s)
-    {
-        case Slot.inherit:         return "inherit";
-        case Slot.code:            return "text.code";
-        case Slot.docs:            return "text.docs";
-        case Slot.muted:           return "text.muted";
-        case Slot.error:           return "status.error";
-        case Slot.warn:            return "status.warning";
-        case Slot.info:            return "status.info";
-        case Slot.surface:         return "surface.overlay";
-        case Slot.border:          return "border.default";
-        case Slot.shadow:          return "shadow.overlay";
-        case Slot.hoverUnderline:  return "link.underline";
-        case Slot.selection:       return "selection.bg";
+alias slotPaths = wireNames!(AnyFormat, Slot, resolveCaseStyle!(AnyFormat, Slot));
 
-        case Slot.chrome:          return "chrome.band";
-        case Slot.chromeAccent:    return "chrome.accent";
-        case Slot.chromeFocused:   return "chrome.focused";
-        case Slot.gutter:          return "gutter.fg";
-        case Slot.gutterBand:      return "gutter.band";
-        case Slot.track:           return "scrollbar.track";
-        case Slot.thumb:           return "scrollbar.thumb";
-        case Slot.matched:         return "completion.matched";
-        case Slot.unmatched:       return "completion.unmatched";
-        case Slot.caret:           return "input.caret";
+// `slotPaths[s]` indexes by ordinal, which is only right while `Slot` is the
+// contiguous `0 .. n` its `ubyte` base implies — checked, not assumed.
+static foreach (i, m; EnumMembers!Slot)
+    static assert(m == i, "Slot must stay a contiguous 0-based enum");
 
-        case Slot.annotate:        return "twoslash.annotate";
-        case Slot.highlight:       return "twoslash.highlight";
-        case Slot.highlightBorder: return "twoslash.highlight.border";
-        case Slot.chip:            return "twoslash.chip";
-
-        case Slot.diffAdded:       return "diff.added";
-        case Slot.diffRemoved:     return "diff.removed";
-        case Slot.diffEmphAdded:   return "diff.emph.added";
-        case Slot.diffEmphRemoved: return "diff.emph.removed";
-        case Slot.diffHunk:        return "diff.hunk";
-        case Slot.diffFill:        return "diff.fill";
-
-        case Slot.covCovered:      return "coverage.covered";
-        case Slot.covUncovered:    return "coverage.uncovered";
-        case Slot.covPartial:      return "coverage.partial";
-    }
-}
+/// The dotted path of a slot (`TOK2`), from $(LREF slotPaths).
+string tokenPath(Slot s) @safe pure nothrow @nogc => slotPaths[s];
 
 /// The groups whose slots are semantic roles; every other group is a
 /// component namespace (`TOK1`). `inherit` is the one single-segment path.
@@ -148,6 +110,7 @@ precedence (`TOK5`): when several states are active, the override of the
 highest one that has an override wins. `rest` is the absence of every other
 state, never a bit of its own.
 */
+@WireCase(CaseStyle.kebabCase)
 enum InteractionState : ubyte
 {
     rest,     /// nothing else applies — the value a theme always sets
@@ -158,19 +121,13 @@ enum InteractionState : ubyte
     disabled, /// it cannot be interacted with
 }
 
-/// The name a state contributes to a CSS custom property (`WEB1`).
-string stateName(InteractionState s) @safe pure nothrow @nogc
-{
-    final switch (s)
-    {
-        case InteractionState.rest:     return "rest";
-        case InteractionState.hover:    return "hover";
-        case InteractionState.focused:  return "focused";
-        case InteractionState.selected: return "selected";
-        case InteractionState.pressed:  return "pressed";
-        case InteractionState.disabled: return "disabled";
-    }
-}
+/// The resolved wire names of the states (`WEB1`'s CSS suffixes), from the
+/// enum's own `@WireCase` — declaration order, like $(LREF slotPaths).
+alias stateNames = wireNames!(AnyFormat, InteractionState,
+    resolveCaseStyle!(AnyFormat, InteractionState));
+
+static foreach (i, m; EnumMembers!InteractionState)
+    static assert(m == i, "InteractionState must stay a contiguous 0-based enum");
 
 /// The set of currently active states — a bitset over every state but
 /// `rest`, which is the empty set.
@@ -232,7 +189,7 @@ void writeCssName(W)(ref W w, Slot slot, InteractionState state = InteractionSta
     if (state != InteractionState.rest)
     {
         put(w, '-');
-        put(w, stateName(state));
+        put(w, stateNames[state]);
     }
 }
 
