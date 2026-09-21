@@ -256,6 +256,10 @@ Returns the subtree's root index. `layout` reports the shape that was used, so
 a caller can hit-test rows against the same arithmetic rather than re-deriving
 it.
 */
+/// The slots this component's views reference (design-system `TOK6`); keys accented, the panel surface, muted marks, label prose.
+/// The tests assert every tree it builds stays inside this set.
+enum Slot[] lanternSlots = [Slot.chromeAccent, Slot.surface, Slot.muted, Slot.docs];
+
 uint viewLantern(B)(ref Builder b, ref LabelArena arena,
     scope const(B)[] items, size_t depth, int availWidth,
     out BoxLayout layout, Placement placement = Placement.classic,
@@ -602,6 +606,10 @@ unittest
     BoxLayout layout;
     const root = viewLantern(b, arena, manyBindings, 0, 120, layout);
     auto tree = b.finish(root);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, lanternSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
 
     // A prefix's label carries the `+` that tells a reader more keys follow —
     // the one thing distinguishing "this runs something" from "this opens a

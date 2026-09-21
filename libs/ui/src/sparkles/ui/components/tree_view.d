@@ -49,9 +49,10 @@ import sparkles.input : InputCapabilities, InputKey = Key, KeyEvent,
     PointerAction, PointerButton, PointerEvent;
 import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
-import sparkles.ui.components.tree_widget : FlatTreeRow, nodeExpandable,
+import sparkles.ui.components.tree_widget : FlatTreeRow, nodeExpandable, treeWidgetSlots,
     TreeData, TreeGlyphs, treeView;
 import sparkles.ui.geometry : Rect;
+import sparkles.ui.style : Slot;
 import sparkles.ui.state : CaptureState, DisclosureState, LineEditState,
     ScrollbarState;
 import sparkles.ui.widget : Builder;
@@ -498,6 +499,12 @@ top + bodyRows)` window of the visible rows, rendered through
 $(REF treeView, sparkles,ui,components,tree_widget) with the selection
 carried across (guides are per-row, so slicing is safe).
 */
+/// The slots this component's views reference (design-system `TOK6`): the
+/// selected row's tint, plus everything the rows it composes from
+/// `treeView` declare (guides, markers). Composition counts — a consumer
+/// sees the union. The tests assert every tree it builds stays inside it.
+enum Slot[] treeViewSlots = [Slot.selection] ~ treeWidgetSlots;
+
 uint viewSlice(Key, T)(ref Builder b, in TreeData!T data,
     in TreeViewState!Key s, scope bool delegate(uint) @safe isOpen,
     TreeGlyphs glyphs = TreeGlyphs.init,
@@ -829,6 +836,10 @@ version (unittest)
     auto b = Builder();
     const col = viewSlice(b, data, s, (uint) @safe => true);
     auto wt = b.finish(col);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(wt, treeViewSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     assert(wt.nodes[col].children.length == 3, "exactly the viewport's rows");
 
     // The selected row is inside the slice and carries the selection slot.

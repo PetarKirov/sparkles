@@ -80,6 +80,10 @@ The details pane exists when the adapter has one: pass the selected node's
 is one line — `node == uint.max ? [] : adapter.details(node)` — and keeping
 that line in the host is what keeps this view free of the adapter's type.
 */
+/// The slots this component's views reference (design-system `TOK6`); header chips, the tree (composing `treeViewSlots`) and the details pane.
+/// The tests assert every tree it builds stays inside this set.
+enum Slot[] inspectorSlots = [Slot.gutter, Slot.code, Slot.chromeAccent, Slot.docs, Slot.info, Slot.chrome, Slot.border, Slot.selection, Slot.thumb];
+
 uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
     in TreeViewState!Key state, scope bool delegate(uint) @safe isOpen,
     string title, in InspectorAction[] actions, in DetailRow[] details,
@@ -396,6 +400,10 @@ version (unittest)
         "inspector", [InspectorAction("sync", true, 42)],
         wi.details(s.selectedNode), 28);
     auto wt = b.finish(col);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(wt, inspectorSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
 
     bool sawTitle, sawAction, sawKind;
     foreach (ref n; wt.nodes)

@@ -22,6 +22,7 @@ import sparkles.base.term_color : ColorDepth;
 import sparkles.input.capability : cellPointer, InputCapabilities, staticPointer;
 import sparkles.input.tier : InteractionTier;
 import sparkles.ui.style : BorderStyle, BoxBorder, Slot;
+import sparkles.ui.widget : WidgetTree;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
     wireNames;
 
@@ -226,6 +227,69 @@ bool slotsWithin(R)(R ops, scope const(Slot)[] allowed)
             return false;
     }
     return true;
+}
+
+/**
+The first slot `tree` references outside `allowed` (`TOK6`), or `Slot.inherit`
+when every node, span and drawn border stays inside it — the tree-level form
+of $(LREF slotsWithin), needing neither a layout nor a palette. `inherit` is
+"no slot of its own" and never counts; a decoration's `borderSlot` counts only
+when the decoration draws an edge, since every decoration carries the default.
+*/
+Slot firstUndeclaredSlot(in WidgetTree tree, scope const(Slot)[] allowed)
+    @safe pure nothrow @nogc
+{
+    static bool declared(Slot s, scope const(Slot)[] allowed)
+    {
+        if (s == Slot.inherit)
+            return true;
+        foreach (a; allowed)
+            if (a == s)
+                return true;
+        return false;
+    }
+
+    foreach (ref const n; tree.nodes)
+    {
+        if (!declared(n.slot, allowed))
+            return n.slot;
+        const bw = n.decoration.borderWidth;
+        if ((bw.top > 0 || bw.right > 0 || bw.bottom > 0 || bw.left > 0)
+            && !declared(n.decoration.borderSlot, allowed))
+            return n.decoration.borderSlot;
+        foreach (ref const sp; n.spans)
+            if (!declared(sp.slot, allowed))
+                return sp.slot;
+    }
+    return Slot.inherit;
+}
+
+@("ui.tokens.firstUndeclaredSlot.nodesSpansAndDrawnBorders")
+@safe unittest
+{
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.style : Decoration;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.text, text: "x", slot: Slot.muted));
+    const r = b.add(Widget(kind: WidgetKind.rich,
+        spans: [TextSpan("y", Slot.error)]));
+    // A decoration with no drawn edge carries the default `borderSlot`, which
+    // must not count; the same decoration with an edge does.
+    const plain = b.add(Widget(kind: WidgetKind.box, decoration: Decoration()));
+    const tree = b.finish(b.add(Widget(kind: WidgetKind.column,
+        children: [t, r, plain])));
+    static immutable Slot[2] ok = [Slot.muted, Slot.error];
+    assert(firstUndeclaredSlot(tree, ok[]) == Slot.inherit);
+    static immutable Slot[1] narrow = [Slot.muted];
+    assert(firstUndeclaredSlot(tree, narrow[]) == Slot.error);
+
+    auto b2 = Builder();
+    const edged = b2.add(Widget(kind: WidgetKind.box,
+        decoration: Decoration(borderWidth: Insets.all(1), borderSlot: Slot.borderStrong)));
+    const tree2 = b2.finish(edged);
+    assert(firstUndeclaredSlot(tree2, ok[]) == Slot.borderStrong);
 }
 
 // ── target capabilities (CAP1, CAP2, CAP5, CAP9) ────────────────────────────
