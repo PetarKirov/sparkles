@@ -656,6 +656,19 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
     assert(stack.isIgnored("logs/other.log"));
 }
 
+@("buildPrimitives.gitIgnore.normalizePathFoldsWindowsSeparators")
+@safe pure unittest
+{
+    // The `git check-ignore` parity gate compares our recorded source path
+    // against git's, and git reports repository-relative paths with `/` on
+    // every platform. `std.path.relativePath` yields the *platform*
+    // separator, so the comparison only holds once folded — which is what
+    // broke the Windows CI leg when the gate first landed.
+    assert(normalizePath("logs\\.gitignore") == "logs/.gitignore");
+    assert(normalizePath("a\\b\\c.txt") == "a/b/c.txt");
+    assert(normalizePath(".gitignore") == ".gitignore");
+}
+
 /// `git check-ignore -v` parity: the rule this module attributes a verdict to
 /// must be the rule git attributes it to — same file, same line, same pattern.
 ///
@@ -672,7 +685,7 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
     import std.algorithm.searching : endsWith;
     import std.conv : to;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import std.path : buildPath, relativePath;
     import std.string : splitLines, split, strip;
     import std.uuid : randomUUID;
 
@@ -688,8 +701,20 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
 
     const root = buildPath(tempDir(), "sparkles-gitignore-" ~ randomUUID.toString());
     mkdirRecurse(buildPath(root, "logs"));
+    // Best effort: a cleanup failure (git leaves read-only objects behind on
+    // some platforms) must not mask the assertion that actually fired.
+    // `scope(exit)` cannot host a `catch`, so the handler is a local function.
+    static void removeQuietly(string dir) nothrow
+    {
+        try
+            rmdirRecurse(dir);
+        catch (Exception)
+        {
+        }
+    }
+
     scope (exit)
-        rmdirRecurse(root);
+        removeQuietly(root);
 
     // `runGit` scrubs GIT_DIR and friends. Inheriting them here would point
     // `git init` at whatever repository is running the test suite, which has
@@ -705,17 +730,17 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
 
     // Paths chosen so that each exercises a different deciding rule: the root
     // pattern, the nested negation, and the directory-only rule.
-    foreach (relativePath; ["a.log", "logs/other.log", "logs/keep.log", "build/x.o"])
+    foreach (relPath; ["a.log", "logs/other.log", "logs/keep.log", "build/x.o"])
     {
-        const result = runGit(["check-ignore", "-v", "--no-index", relativePath], root);
+        const result = runGit(["check-ignore", "-v", "--no-index", relPath], root);
 
-        const ours = stack.explain(relativePath);
+        const ours = stack.explain(relPath);
         if (result.status != 0)
         {
             // git reports no match; so must we, or one of us is wrong about
             // which rules apply.
             assert(ours.verdict != IgnoreMatch.ignored,
-                "we ignore '" ~ relativePath ~ "' and git does not");
+                "we ignore '" ~ relPath ~ "' and git does not");
             continue;
         }
 
@@ -723,18 +748,24 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
         const fields = result.output.splitLines[0].split("\t")[0].split(":");
         assert(fields.length == 3, "unexpected check-ignore output");
 
-        assert(ours.sourceFile.endsWith(fields[0]),
-            "source mismatch for '" ~ relativePath ~ "': git says '" ~ fields[0]
-                ~ "', we say '" ~ ours.sourceFile ~ "'");
+        // git reports the source repository-relative with `/` separators on
+        // every platform; ours is whatever path the caller opened, which is
+        // backslash-separated on Windows. Normalize both before comparing, and
+        // compare for equality rather than suffix: `endsWith` would also
+        // accept `xlogs/.gitignore`.
+        const oursSource = normalizePath(relativePath(ours.sourceFile, root));
+        assert(oursSource == fields[0],
+            "source mismatch for '" ~ relPath ~ "': git says '" ~ fields[0]
+                ~ "', we say '" ~ oursSource ~ "' (from '" ~ ours.sourceFile ~ "')");
         assert(ours.sourceLine == fields[1].to!uint,
-            "line mismatch for '" ~ relativePath ~ "': git says " ~ fields[1]
+            "line mismatch for '" ~ relPath ~ "': git says " ~ fields[1]
                 ~ ", we say " ~ ours.sourceLine.to!string);
 
         const gitPattern = fields[2].strip;
         const oursPattern = (ours.negated ? "!" : "") ~ ours.pattern
             ~ (gitPattern.endsWith("/") ? "/" : "");
         assert(oursPattern == gitPattern,
-            "pattern mismatch for '" ~ relativePath ~ "': git says '" ~ gitPattern
+            "pattern mismatch for '" ~ relPath ~ "': git says '" ~ gitPattern
                 ~ "', we say '" ~ oursPattern ~ "'");
     }
 }
