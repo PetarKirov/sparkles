@@ -36,6 +36,12 @@ dependency "sparkles:reflection" path="../.."
 // test-runner -> impl -> ui`) is gone: fuzzy integrates the runner
 // cycle-safely (source-include), so it has no runner dependency edge.
 dependency "sparkles:fuzzy" path="../.."
+// The design-system token paths are `@WireName` data on the `Slot` members
+// (`TOK2`), resolved by wired's `wireNames` — the same table the JSON writer
+// and the DTCG theme file use — rather than a hand-kept enum -> string switch.
+// `wired` depends on `base` alone (its tests source-include the runner, so
+// this edge closes no cycle).
+dependency "sparkles:wired" path="../.."
 
 // `expected` is declared rather than inherited through base's import paths: the
 // table component returns `Expected` in its public API, so it is this package's
