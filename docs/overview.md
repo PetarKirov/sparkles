@@ -633,7 +633,7 @@ snapshot combining tty-ness, the color decision (`$NO_COLOR`, `TERM=dumb`,
 processing), a UTF-8 locale heuristic, and the size. `setTermWindowSizeHandler`
 delivers resize notifications (POSIX `SIGWINCH`).
 
-`sparkles.ui.components.theme` turns a `TermCaps` into rendering decisions:
+`sparkles.ui.components.theme` turns a target's `OutputCapabilities` (a `TermCaps` converts implicitly) into rendering decisions:
 `makeTheme(detectTermCaps())` yields a `Theme` with semantic styles
 (`Semantic.success/failure/warning/accent/muted` via `paint`/`mark`), a
 status-glyph vocabulary (`✔ ✖ ⚠ ○ ┄` with ASCII fallbacks), and one

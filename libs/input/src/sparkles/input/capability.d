@@ -20,6 +20,7 @@ position, which is what the hosts did before this existed.
 */
 module sparkles.input.capability;
 
+import sparkles.base.term_caps : TermCaps;
 import sparkles.input.tier : InteractionTier;
 
 @safe pure nothrow @nogc:
@@ -77,6 +78,15 @@ struct InputCapabilities
     */
     bool keyRelease = false;
 
+    /// The target reports focus in/out, so a blurred surface can recede.
+    /// A window always can; a terminal only with mode 1004 negotiated.
+    bool focusEvents = true;
+
+    /// A paste arrives as $(B one) event rather than as typed keys (bracketed
+    /// paste on a terminal, the platform clipboard on a window), so an input
+    /// can insert it verbatim instead of interpreting a newline as submit.
+    bool pasteEvents = true;
+
     // The module-level block above does not reach inside an aggregate.
 @safe pure nothrow @nogc:
 
@@ -116,7 +126,60 @@ enum InputCapabilities cellPointer = InputCapabilities(
 /// does — tier 0, and no pointer stream at all.
 enum InputCapabilities staticPointer = InputCapabilities(
     hover: true, precisePointer: false, maxPointers: 1,
-    tier: InteractionTier.passive);
+    tier: InteractionTier.passive, focusEvents: false, pasteEvents: false);
+
+/**
+The input affordances a terminal's negotiated modes amount to — the one
+adapter from `sparkles.base.term_caps.TermCaps`' protocol facts to this
+module's target-neutral axes, so the two can never disagree: `hover` $(I is)
+any-motion tracking, `precisePointer` $(I is) pixel-coordinate mouse,
+`keyRelease` $(I is) the kitty keyboard protocol.
+
+A tty with no mouse mode is still `interactive` (a live key stream is one);
+only a non-tty is `passive`. Nothing today fills the modes — `detectTermCaps`
+answers the environment only — so a caller that wants the historical
+terminal-mouse assumption keeps $(LREF cellPointer) until `sparkles:tui`'s
+probe lands (design-system `CAP3`).
+*/
+InputCapabilities fromTerminal(in TermCaps t)
+{
+    return InputCapabilities(
+        hover: t.anyMotion,
+        precisePointer: t.pixelMouse,
+        maxPointers: t.mouseSgr ? 1 : 0,
+        tier: t.tty ? InteractionTier.interactive : InteractionTier.passive,
+        keyRelease: t.kittyKeyboard,
+        focusEvents: t.focusReporting,
+        pasteEvents: t.bracketedPaste);
+}
+
+@("input.capability.fromTerminal.modesBecomeAxes")
+@safe pure nothrow @nogc
+unittest
+{
+    // No modes negotiated: a keyboard-only tty. Live, but no pointer at all.
+    TermCaps bare;
+    bare.tty = true;
+    const kb = fromTerminal(bare);
+    assert(kb.tier == InteractionTier.interactive && kb.maxPointers == 0
+        && !kb.hover && !kb.keyRelease && !kb.focusEvents && !kb.pasteEvents);
+
+    // A pipe is passive.
+    assert(fromTerminal(TermCaps.init).tier == InteractionTier.passive);
+
+    // The full kitty-grade negotiation reproduces a cell pointer plus releases.
+    TermCaps full;
+    full.tty = true;
+    full.mouseSgr = full.anyMotion = full.focusReporting = full.bracketedPaste
+        = full.kittyKeyboard = true;
+    const k = fromTerminal(full);
+    assert(k.hover && !k.precisePointer && k.maxPointers == 1 && k.keyRelease
+        && k.focusEvents && k.pasteEvents);
+    assert(k.tier == cellPointer.tier && k.hover == cellPointer.hover);
+    // Pixel-coordinate mouse is the one thing that makes a terminal precise.
+    full.pixelMouse = true;
+    assert(fromTerminal(full).precisePointer);
+}
 
 @("input.capability.axesAreOrthogonalToTheTier")
 @safe pure nothrow @nogc
