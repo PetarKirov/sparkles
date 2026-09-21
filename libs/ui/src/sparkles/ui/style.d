@@ -33,14 +33,20 @@ A semantic style role. Widgets and display-list ops carry a `Slot`, and a
 $(LREF Palette) turns it into a concrete $(LREF Visual). Roles are intentionally
 generic (an app palette can reuse them) even though the seed values come from
 twoslash.
+
+Every member carries its design-system $(B token path) as `@WireName` data
+(`TOK2`): the one spelling wired resolves for JSON and the DTCG theme file, and
+from which `sparkles.ui.tokens.cssName` derives the CSS custom property. The
+semantic groups (`text`, `status`, `surface`, `border`, `accent`, `link`,
+`selection`, `focus`, `shadow`) and the component namespaces (`chrome`,
+`gutter`, `scrollbar`, `completion`, `input`, `twoslash`, `diff`, `coverage`)
+are the spec's tiers; `inherit` is the one single-segment path.
+
+The semantic roles are `TOK3`'s minimum set. A theme may leave any of them
+unset: $(LREF defaultTwoslashPalette) supplies the scheme default and a theme
+that pins its page colors derives them (`Theme.effectivePalette`), so every
+role is total for every theme.
 */
-/// Every member carries its design-system **token path** as `@WireName` data
-/// (`TOK2`): the one spelling wired resolves for JSON and the DTCG theme file,
-/// and from which `sparkles.ui.tokens.cssName` derives the CSS custom property.
-/// The semantic groups (`text`, `status`, `surface`, `border`, `link`,
-/// `selection`, `shadow`) and the component namespaces (`chrome`, `gutter`,
-/// `scrollbar`, `completion`, `input`, `twoslash`, `diff`, `coverage`) are the
-/// spec's tiers; `inherit` is the one single-segment path.
 @WireCase(CaseStyle.kebabCase)
 enum Slot : ubyte
 {
@@ -56,6 +62,8 @@ enum Slot : ubyte
     @WireName("status.warning") warn,
     /// informational / `@tag` text + background
     @WireName("status.info") info,
+    /// success text + background (`TOK3`; the diff-added hue)
+    @WireName("status.success") success,
     /// `@annotate`-family tag text + background
     @WireName("twoslash.annotate") annotate,
     /// highlighted-range tint (background only)
@@ -64,8 +72,26 @@ enum Slot : ubyte
     @WireName("twoslash.highlight.border") highlightBorder,
     /// popup / panel background (opaque)
     @WireName("surface.overlay") surface,
+    /// the page itself (`TOK3`; unset ⇒ no fill, the page shows through)
+    @WireName("surface.base") surfaceBase,
+    /// a card or panel one step above the page
+    @WireName("surface.raised") surfaceRaised,
+    /// a well or input field one step below the page
+    @WireName("surface.sunken") surfaceSunken,
     /// popup / panel border line
     @WireName("border.default") border,
+    /// an emphasized border (a selected card, a table header rule)
+    @WireName("border.strong") borderStrong,
+    /// the border of the focused element (`TOK3`; the accent by default)
+    @WireName("border.focus") borderFocus,
+    /// the interactive accent: links, the active tab, primary actions
+    @WireName("accent.primary") accentPrimary,
+    /// a second accent for contrast with the first (badges, secondary actions)
+    @WireName("accent.secondary") accentSecondary,
+    /// link text (`TOK3`; the primary accent by default)
+    @WireName("link.fg") link,
+    /// the focus ring drawn around the focused element
+    @WireName("focus.ring") focusRing,
     /// hoverable-token underline (`.twoslash-hover`, always on)
     @WireName("link.underline") hoverUnderline,
     /// popup drop shadow
@@ -78,6 +104,14 @@ enum Slot : ubyte
     @WireName("input.caret") caret,
     /// generic de-emphasized text
     @WireName("text.muted") muted,
+    /// body text — the page foreground (`TOK3`; unset ⇒ page fg)
+    @WireName("text.primary") textPrimary,
+    /// supporting text: one step toward the page background
+    @WireName("text.secondary") textSecondary,
+    /// text of a control that cannot be interacted with
+    @WireName("text.disabled") textDisabled,
+    /// text drawn over an accent or inverted band: the page background's tone
+    @WireName("text.inverse") textInverse,
     /// a JSDoc `@tag` name pill in a popup (muted text on a grey bg)
     @WireName("twoslash.chip") chip,
 
@@ -354,6 +388,10 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.bg[annotate] = Color.fromRgb(0x1b, 0xa6, 0x73);
         p.bgAlpha[annotate] = 0x20;
 
+        p.fg[success] = Color.fromRgb(0x1b, 0xa6, 0x73);
+        p.bg[success] = Color.fromRgb(0x1b, 0xa6, 0x73);
+        p.bgAlpha[success] = 0x20;
+
         // highlighted range: a warm tint + border, no text color of its own.
         p.bg[highlight] = Color.fromRgb(0xc3, 0x7d, 0x0d);
         p.bgAlpha[highlight] = 0x20;
@@ -387,7 +425,25 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.fgAlpha[caret] = 0x88;
         p.fg[muted] = Color.fromRgb(0x88, 0x88, 0x88);
 
-        // code / matched / inherit stay unset ⇒ page foreground.
+        // code / matched / inherit / textPrimary stay unset ⇒ page foreground.
+
+        // The TOK3 roles a scheme can answer without knowing the page colors:
+        // greys for the text steps, the neutral surfaces, the shared accent.
+        // A theme that pins its page colors replaces every one of these with
+        // a mix of its own (`Theme.effectivePalette`).
+        p.fg[textSecondary] = Color.fromRgb(0x99, 0x99, 0x99);
+        p.fg[textDisabled] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.fgAlpha[textDisabled] = 0x80;
+        p.fg[textInverse] = dark ? Color.fromRgb(0x1e, 0x1e, 0x1e) : Color.fromRgb(0xf8, 0xf8, 0xf8);
+        // surfaceBase stays unset: the page shows through.
+        p.bg[surfaceRaised] = dark ? Color.fromRgb(0x2a, 0x2a, 0x2a) : Color.fromRgb(0xff, 0xff, 0xff);
+        p.bg[surfaceSunken] = dark ? Color.fromRgb(0x16, 0x16, 0x16) : Color.fromRgb(0xee, 0xee, 0xee);
+        p.fg[borderStrong] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.fg[borderFocus] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.fg[accentPrimary] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.fg[accentSecondary] = Color.fromRgb(0x98, 0x6e, 0xe2);
+        p.fg[link] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.fg[focusRing] = Color.fromRgb(0x37, 0x72, 0xcf);
 
         // Application chrome: a neutral band, muted gutters/tracks, a solid
         // thumb, a cool selection tint. Colors only — the glyphs (thumb/track
@@ -614,6 +670,37 @@ void writeTwoslashVars(Writer)(ref Writer w, in Palette pal,
 }
 
 // ---------------------------------------------------------------------------
+
+@("ui.style.defaultTwoslashPalette.tok3RolesAreTotal")
+@safe pure nothrow @nogc
+unittest
+{
+    // TOK3: every semantic role resolves in both schemes without a theme
+    // saying anything — the roles that mean "the page" stay unset by design.
+    static foreach (scheme; [ColorScheme.light, ColorScheme.dark])
+    {{
+        const p = defaultTwoslashPalette(scheme);
+        with (Slot)
+        {
+            static foreach (s; [textSecondary, textDisabled, textInverse,
+                borderStrong, borderFocus, accentPrimary, accentSecondary, link,
+                focusRing, success])
+                assert(p.fg[s].isSet, "unset fg for a TOK3 role");
+            static foreach (s; [surfaceRaised, surfaceSunken, success])
+                assert(p.bg[s].isSet, "unset bg for a TOK3 role");
+            assert(!p.fg[textPrimary].isSet && !p.bg[surfaceBase].isSet);
+            // The steps order: disabled is fainter than secondary than primary.
+            assert(p.fgAlpha[textDisabled] < p.fgAlpha[textSecondary]);
+            // Inverse text is the scheme's page tone, not a grey.
+            assert(p.fg[textInverse] != p.fg[muted]);
+            // The interactive roles share one accent by default.
+            assert(p.fg[link] == p.fg[accentPrimary]
+                && p.fg[borderFocus] == p.fg[accentPrimary]
+                && p.fg[focusRing] == p.fg[accentPrimary]);
+            assert(p.fg[accentSecondary] != p.fg[accentPrimary]);
+        }
+    }}
+}
 
 @("ui.style.resolveSlot.inheritAndTint")
 @safe pure nothrow @nogc

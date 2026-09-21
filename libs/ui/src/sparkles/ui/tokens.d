@@ -53,8 +53,8 @@ string tokenPath(Slot s) @safe pure nothrow @nogc => slotPaths[s];
 
 /// The groups whose slots are semantic roles; every other group is a
 /// component namespace (`TOK1`). `inherit` is the one single-segment path.
-private immutable string[] semanticGroups =
-    ["inherit", "text", "status", "surface", "border", "link", "selection", "shadow"];
+private immutable string[] semanticGroups = ["inherit", "text", "status",
+    "surface", "border", "accent", "link", "selection", "focus", "shadow"];
 
 /// The tier a slot's path places it on (`TOK1`).
 TokenTier tierOf(Slot s) @safe pure nothrow @nogc
@@ -442,6 +442,8 @@ unittest
     assert(tierOf(Slot.muted) == TokenTier.semantic);
     assert(tierOf(Slot.error) == TokenTier.semantic);
     assert(tierOf(Slot.inherit) == TokenTier.semantic);
+    assert(tierOf(Slot.accentPrimary) == TokenTier.semantic);
+    assert(tierOf(Slot.focusRing) == TokenTier.semantic);
     assert(tierOf(Slot.thumb) == TokenTier.component);
     assert(tierOf(Slot.diffAdded) == TokenTier.component);
     assert(tierOf(Slot.chip) == TokenTier.component);
