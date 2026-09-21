@@ -17,8 +17,9 @@ module sparkles.ui.tokens;
 
 import std.traits : EnumMembers;
 
+import sparkles.base.term_caps : BlockTier, ImageProtocol, OutputCapabilities;
 import sparkles.base.term_color : ColorDepth;
-import sparkles.input.capability : InputCapabilities;
+import sparkles.input.capability : cellPointer, InputCapabilities, staticPointer;
 import sparkles.input.tier : InteractionTier;
 import sparkles.ui.style : BorderStyle, BoxBorder, Slot;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
@@ -229,73 +230,44 @@ bool slotsWithin(R)(R ops, scope const(Slot)[] allowed)
 
 // ── target capabilities (CAP1, CAP2, CAP5, CAP9) ────────────────────────────
 
-/// How fine the block-element tier a target's font covers (`CAP2` `blocks`).
-enum BlockTier : ubyte
-{
-    none,     /// no block elements
-    half,     /// `▀▄█` and the eighth-blocks `▏…▉` / `▁…▇`
-    quadrant, /// the 2×2 quadrants (U+2596–U+259F)
-    sextant,  /// the 2×3 sextants (Symbols for Legacy Computing)
-    octant,   /// the 2×4 octants (Unicode 16)
-}
-
-/// Which inline-image protocol the target accepts (`CAP2` `images`).
-enum ImageProtocol : ubyte
-{
-    none,
-    sixel,  /// DEC sixel
-    iterm2, /// OSC 1337
-    kitty,  /// the kitty graphics protocol
-}
-
 /**
-What one target can render and receive (`CAP1`): one field per row of the
-capability table, every default the conservative answer. Subsumes the input
-axes (`input`) so a backend declares one value.
+What one render target can render and receive (`CAP1`) — the composition of
+the two layers below the toolkit plus the axes only a target has:
 
-The documented profiles are $(LREF capabilitiesOf); a backend's real
-declaration is derived from its own probing (`CAP3`), never from a profile.
+$(LIST
+    * $(REF OutputCapabilities, sparkles,base,term_caps) — what may be emitted
+        (color tier, glyph coverage, links, clipboard, images, …). A terminal's
+        answers come from `TermCaps.output`; a window or HTML sink declares
+        constants. Reachable directly (`caps.colorDepth`) via `alias this`.
+    * $(REF InputCapabilities, sparkles,input,capability) — the input axes; a
+        terminal's from `fromTerminal(termCaps)`, a window's from the presets.
+    * the sub-cell chrome a target honours rather than projects (`TOK7`), and
+        the user's motion preference (`ACC5`).
+)
+
+Every default is the conservative answer, so a default-constructed declaration
+claims nothing (`CAP1`). The documented profiles are $(LREF capabilitiesOf); a
+backend's real declaration is derived from its own probing (`CAP3`), never
+from a profile.
 */
 struct TargetCapabilities
 {
-    /// The existing input axes (`IXB10`). `InputCapabilities`' own defaults
-    /// describe a mouse; here they are overridden to the conservative answer
-    /// so a default-constructed declaration claims nothing (`CAP1`).
+    OutputCapabilities output; /// what may be emitted (`base`'s vocabulary)
+    alias output this;
+
+    /// The input axes (`IXB10`). `InputCapabilities`' own defaults describe a
+    /// window; here they are overridden to the conservative answer.
     InputCapabilities input = InputCapabilities(
         hover: false, precisePointer: false, maxPointers: 0,
-        tier: InteractionTier.passive);
+        tier: InteractionTier.passive, focusEvents: false, pasteEvents: false);
 
-    ColorDepth colorDepth;     /// `none` … `trueColor`
-    bool unicode;              /// non-ASCII glyphs at all
-    BlockTier blocks;          /// block-element coverage
-    bool braille;              /// U+2800 as a 2×4 grid
-    bool nerdFont;             /// Nerd Font PUA glyphs (configured, not queried — `GLY4`)
+    bool subCellScroll;    /// scroll offsets finer than a cell (GUI/Web)
+    bool proportionalText; /// a proportional face for `FontRole.docs` (GUI/Web)
+    bool radius;           /// corner radius honoured, not projected
+    bool shadow;           /// drop shadow honoured
+    bool alpha;            /// translucent fills honoured
 
-    bool hyperlinks;           /// OSC 8
-    bool clipboard;            /// OSC 52 write
-    bool notifications;        /// OSC 99 / 9 / 777
-    bool pointerShape;         /// OSC 22
-    bool textSizing;           /// OSC 66
-    ImageProtocol images;      /// inline images
-    bool syncOutput;           /// mode 2026
-    bool mouse;                /// SGR 1006
-    bool hoverMotion;          /// mode 1003
-    bool pixelMouse;           /// mode 1016
-    bool focusEvents;          /// mode 1004
-    bool bracketedPaste;       /// mode 2004
-    bool colorSchemeNotify;    /// mode 2031 / OSC 11
-    bool progress;             /// OSC 9;4
-    bool extendedUnderline;    /// SGR 4:3 + 58
-    bool cellPixelSize;        /// CSI 16 t
-    bool graphemeClusters;     /// mode 2027
-
-    bool subCellScroll;        /// scroll offsets finer than a cell (GUI/Web)
-    bool proportionalText;     /// a proportional face for `FontRole.docs` (GUI/Web)
-    bool radius;               /// corner radius honoured, not projected
-    bool shadow;               /// drop shadow honoured
-    bool alpha;                /// translucent fills honoured
-
-    bool reducedMotion;        /// the user prefers no animation (`ACC5`)
+    bool reducedMotion;    /// the user prefers no animation (`ACC5`)
 }
 
 /// The three documented profiles (`CAP5`) — test and style-guide presets,
@@ -316,62 +288,63 @@ TargetCapabilities capabilitiesOf(Profile p) @safe pure nothrow @nogc
             return TargetCapabilities.init;
         case Profile.enhanced:
             return TargetCapabilities(
-                input: InputCapabilities(precisePointer: false),
-                colorDepth: ColorDepth.ansi256,
-                unicode: true,
-                blocks: BlockTier.half,
-                hyperlinks: true,
-                mouse: true,
-                focusEvents: true,
-                bracketedPaste: true,
+                output: OutputCapabilities(
+                    colorDepth: ColorDepth.ansi256,
+                    unicode: true,
+                    blocks: BlockTier.half,
+                    hyperlinks: true,
+                ),
+                input: cellPointer, // SGR mouse, focus and paste events
             );
         case Profile.full:
             return TargetCapabilities(
-                input: InputCapabilities(precisePointer: false, keyRelease: true),
-                colorDepth: ColorDepth.trueColor,
-                unicode: true,
-                blocks: BlockTier.octant,
-                braille: true,
-                nerdFont: true,
-                hyperlinks: true,
-                clipboard: true,
-                notifications: true,
-                pointerShape: true,
-                textSizing: true,
-                images: ImageProtocol.kitty,
-                syncOutput: true,
-                mouse: true,
-                hoverMotion: true,
-                pixelMouse: true,
-                focusEvents: true,
-                bracketedPaste: true,
-                colorSchemeNotify: true,
-                progress: true,
-                extendedUnderline: true,
-                cellPixelSize: true,
-                graphemeClusters: true,
+                output: OutputCapabilities(
+                    colorDepth: ColorDepth.trueColor,
+                    unicode: true,
+                    blocks: BlockTier.octant,
+                    braille: true,
+                    nerdFont: true,
+                    hyperlinks: true,
+                    clipboard: true,
+                    notifications: true,
+                    pointerShape: true,
+                    textSizing: true,
+                    images: ImageProtocol.kitty,
+                    syncOutput: true,
+                    progress: true,
+                    extendedUnderline: true,
+                    cellPixelSize: true,
+                    graphemeClusters: true,
+                    colorSchemeNotify: true,
+                ),
+                input: InputCapabilities(
+                    hover: true, precisePointer: true, maxPointers: 1,
+                    tier: InteractionTier.precise, keyRelease: true),
             );
     }
 }
 
 /**
 `true` iff `a` claims nothing `b` does not (`CAP9`): every `bool` implies,
-every ordered enum is `<=`, and an image protocol is a subset only of itself
-or of `none`. `reducedMotion` is a preference, not a capability, and is
-ignored.
+every ordered enum or count is `<=`, an image protocol is a subset only of
+itself or of `none`, and nested capability structs are compared field-wise.
+`reducedMotion` is a preference, not a capability, and is ignored.
 */
 bool subsetOf(in TargetCapabilities a, in TargetCapabilities b) @safe pure nothrow @nogc
 {
-    static bool widens(T)(T x, T y)
+    static bool widens(T)(in T x, in T y)
     {
         static if (is(immutable T == immutable bool))
             return !x || y;
         else static if (is(immutable T == immutable ImageProtocol))
             return x == ImageProtocol.none || x == y;
-        else static if (is(immutable T == immutable InputCapabilities))
-            return widens(x.hover, y.hover) && widens(x.precisePointer, y.precisePointer)
-                && x.maxPointers <= y.maxPointers && x.tier <= y.tier
-                && widens(x.keyRelease, y.keyRelease);
+        else static if (is(T == struct))
+        {
+            static foreach (i, _; T.tupleof)
+                if (!widens(x.tupleof[i], y.tupleof[i]))
+                    return false;
+            return true;
+        }
         else
             return x <= y;
     }
@@ -543,8 +516,12 @@ unittest
     assert(!subsetOf(f, e));
     assert(!subsetOf(e, b));
     // CAP8: baseline is what a pipe gets — nothing on.
-    assert(b.colorDepth == ColorDepth.none && !b.unicode && !b.mouse
+    assert(b.colorDepth == ColorDepth.none && !b.unicode && b.input.maxPointers == 0
         && b.input.tier == InteractionTier.passive);
+    // The static HTML preset is a baseline target with hover: still ⊆ enhanced.
+    TargetCapabilities html;
+    html.input = staticPointer;
+    assert(subsetOf(html, e) && !subsetOf(html, b));
     // A default-constructed declaration is the conservative one (CAP1).
     assert(subsetOf(TargetCapabilities.init, b));
 }

@@ -12,7 +12,7 @@ parameters.
 module sparkles.ui.components.theme;
 
 import sparkles.base.term_style : Style, stylize;
-import sparkles.base.term_caps : TermCaps;
+import sparkles.base.term_caps : OutputCapabilities;
 import sparkles.ui.components.box : BoxProps;
 import sparkles.ui.components.table : presetGlyphs, TableGlyphs;
 
@@ -163,9 +163,11 @@ struct Theme
     }
 }
 
-/// The theme for a capability snapshot: ASCII borders + fallback glyphs on a
-/// non-UTF-8 terminal, colors per the caps decision.
-Theme makeTheme(in TermCaps caps) pure nothrow @nogc
+/// The theme for a target's output affordances: ASCII borders + fallback
+/// glyphs without Unicode, colors per the color tier. A `TermCaps` converts
+/// implicitly (its `output` is `alias this`), so `makeTheme(detectTermCaps())`
+/// reads as before; a GUI target passes its own declaration.
+Theme makeTheme(in OutputCapabilities caps) pure nothrow @nogc
 {
     return Theme(
         colors: caps.colors,
@@ -236,13 +238,20 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.term_caps : TermCaps;
+    import sparkles.base.term_caps : OutputCapabilities, TermCaps;
+    import sparkles.base.term_color : ColorDepth;
 
-    const dumb = makeTheme(TermCaps(tty: false, colors: false, unicode: false));
+    const dumb = makeTheme(OutputCapabilities(colorDepth: ColorDepth.none, unicode: false));
     assert(dumb.border == BorderStyle.ascii);
     assert(dumb.glyphs.ok == "+");
 
-    const nice = makeTheme(TermCaps(tty: true, colors: true, unicode: true));
+    const nice = makeTheme(OutputCapabilities(colorDepth: ColorDepth.ansi16, unicode: true));
     assert(nice.border == BorderStyle.rounded);
     assert(nice.colors);
+
+    // A whole terminal snapshot converts through its `alias this`.
+    TermCaps term;
+    term.colorDepth = ColorDepth.trueColor;
+    term.unicode = true;
+    assert(makeTheme(term) == nice);
 }
