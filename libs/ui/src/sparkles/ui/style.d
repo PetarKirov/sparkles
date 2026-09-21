@@ -22,6 +22,8 @@ module sparkles.ui.style;
 
 import sparkles.base.term_color :
     Color, ColorChannel, ColorDepth, RgbColor, toRgb, writeSgrColor;
+import std.traits : EnumMembers;
+
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.wired.policy : CaseStyle, WireCase, WireName;
 import sparkles.ui.geometry : Insets;
@@ -169,6 +171,92 @@ enum Slot : ubyte
 
 private enum slotCount = Slot.max + 1;
 
+// ── interaction states (TOK4, TOK5) ─────────────────────────────────────────
+
+/**
+The second axis of slot resolution (`TOK4`). Declaration order $(B is) the
+precedence (`TOK5`): when several states are active, the override of the
+highest one that has an override wins. `rest` is the absence of every other
+state, never a bit of its own.
+*/
+@WireCase(CaseStyle.kebabCase)
+enum InteractionState : ubyte
+{
+    rest,     /// nothing else applies — the value a theme always sets
+    hover,    /// the pointer rests on it
+    focused,  /// it owns keyboard focus
+    selected, /// it is part of the selection
+    pressed,  /// the pointer/key is down on it
+    disabled, /// it cannot be interacted with
+}
+
+/// The set of currently active states — a bitset over every state but
+/// `rest`, which is the empty set.
+struct StateSet
+{
+    private ubyte bits;
+
+@safe pure nothrow @nogc:
+
+    /// Builds a set from the listed states; `rest` contributes nothing.
+    static StateSet of(scope const InteractionState[] states...)
+    {
+        StateSet r;
+        foreach (s; states)
+            r = r.with_(s);
+        return r;
+    }
+
+    private static ubyte bit(InteractionState s)
+        => s == InteractionState.rest ? 0 : cast(ubyte)(1u << (s - 1));
+
+    bool empty() const => bits == 0;
+
+    bool has(InteractionState s) const
+        => s == InteractionState.rest ? empty : (bits & bit(s)) != 0;
+
+    StateSet with_(InteractionState s) const => StateSet(cast(ubyte)(bits | bit(s)));
+
+    StateSet without(InteractionState s) const => StateSet(cast(ubyte)(bits & ~bit(s)));
+
+    /**
+    The state whose override wins (`TOK5`): the highest-precedence active
+    state — or `rest` for the empty set. A resolver that consults overrides
+    walks from `highest` downward and stops at the first override set, so a
+    theme that sets none yields exactly `rest` (`TOK4`).
+    */
+    InteractionState highest() const
+    {
+        static foreach_reverse (s; EnumMembers!InteractionState)
+            if (has(s))
+                return s;
+        return InteractionState.rest;
+    }
+}
+
+@("ui.style.StateSet.precedence")
+@safe pure nothrow @nogc
+unittest
+{
+    // TOK4: the empty set is `rest`.
+    StateSet none;
+    assert(none.empty);
+    assert(none.has(InteractionState.rest));
+    assert(none.highest == InteractionState.rest);
+
+    // TOK5: disabled > pressed > selected > focused > hover.
+    const hf = StateSet.of(InteractionState.hover, InteractionState.focused);
+    assert(hf.highest == InteractionState.focused);
+    assert(!hf.has(InteractionState.rest));
+    assert(hf.with_(InteractionState.disabled).highest == InteractionState.disabled);
+    assert(hf.with_(InteractionState.pressed).without(InteractionState.pressed) == hf);
+    assert(StateSet.of(InteractionState.selected, InteractionState.hover).highest
+        == InteractionState.selected);
+    // `rest` never contributes a bit.
+    assert(StateSet.of(InteractionState.rest).empty);
+}
+
+
 /// How a box edge is stroked. Mirrors the CSS `border-style` keywords the
 /// twoslash chrome uses (the `.twoslash-hover` bottom border is `dotted`; the
 /// popup / accent bars are `solid`). A text-decoration underline uses the base
@@ -291,6 +379,15 @@ constants shared by the backends. `fg`/`bg` are $(REF Color, sparkles,base,term_
 an $(I unset) `fg` means "inherit the page foreground", an $(I unset) `bg` means
 "no background". Alpha is stored separately because `Color` carries none.
 */
+/// A sparse per-state color overlay — see `Palette.states`.
+struct StateColors
+{
+    Color[slotCount] fg;             /// set ⇒ replaces the rest fg in this state
+    ubyte[slotCount] fgAlpha = 0xFF; /// the fg's opacity when `fg` is set
+    Color[slotCount] bg;             /// set ⇒ replaces the rest bg in this state
+    ubyte[slotCount] bgAlpha = 0xFF; /// the bg's opacity when `bg` is set
+}
+
 struct Palette
 {
     /// Per-slot foreground; `Color.init` (unset) ⇒ inherit page fg.
@@ -301,6 +398,22 @@ struct Palette
     Color[slotCount] bg;
     /// Per-slot background opacity (only meaningful when `bg` is set).
     ubyte[slotCount] bgAlpha = 0xFF;
+
+    /**
+    The interaction-state dimension (`TOK4`/`TOK5`): one sparse overlay per
+    state but `rest`, indexed by `state - 1`. A set `fg`/`bg` replaces the
+    rest value for that state; an unset one falls through, so a theme that
+    sets none resolves every state exactly as `rest`. Attributes and metrics
+    per state are not carried yet (design-system D22 admits them; they land
+    with their first consumer).
+    */
+    StateColors[InteractionState.max] states;
+
+    /// The overlay for `s` (never `rest`, whose colors are the arrays above).
+    ref inout(StateColors) overlay(InteractionState s) inout return
+        pure nothrow @nogc
+    in (s != InteractionState.rest, "rest has no overlay; set fg/bg directly")
+        => states[s - 1];
 
     // --- scalar chrome (shared across GUI/HTML/TUI) ---
     // Metrics are named by ROLE, not by the feature that first needed them
@@ -530,8 +643,8 @@ Resolves `slot` against `pal` and the page fore/background to a concrete
 $(LREF Visual). Unset slot colors defer: an unset `fg` becomes `pageFg`, an
 unset `bg` yields `hasBg == false`.
 */
-Visual resolveSlot(in Palette pal, Slot slot, in RgbColor pageFg, in RgbColor pageBg)
-    pure nothrow @nogc
+Visual resolveSlot(in Palette pal, Slot slot, in RgbColor pageFg, in RgbColor pageBg,
+    StateSet states = StateSet.init) pure nothrow @nogc
 {
     const i = cast(size_t) slot;
     Visual v;
@@ -540,6 +653,30 @@ Visual resolveSlot(in Palette pal, Slot slot, in RgbColor pageFg, in RgbColor pa
     v.hasBg = pal.bg[i].isSet;
     v.bg = toRgb(pal.bg[i], pageBg);
     v.bgAlpha = pal.bgAlpha[i];
+
+    // TOK5: per channel, the highest-precedence ACTIVE state that sets the
+    // channel wins; a state that sets only `fg` leaves `bg` to fall through.
+    // Walked highest → lowest so the first hit is the answer.
+    bool fgDone, bgDone;
+    static foreach_reverse (s; EnumMembers!InteractionState)
+        static if (s != InteractionState.rest)
+            if (states.has(s))
+            {
+                const ref o = pal.states[s - 1];
+                if (!fgDone && o.fg[i].isSet)
+                {
+                    v.fg = toRgb(o.fg[i], pageFg);
+                    v.fgAlpha = o.fgAlpha[i];
+                    fgDone = true;
+                }
+                if (!bgDone && o.bg[i].isSet)
+                {
+                    v.bg = toRgb(o.bg[i], pageBg);
+                    v.bgAlpha = o.bgAlpha[i];
+                    v.hasBg = true;
+                    bgDone = true;
+                }
+            }
     return v;
 }
 
@@ -553,9 +690,12 @@ This is the display-list path (colors + chrome); $(LREF resolveSlot) stays the
 colors-only path used by the CSS-var and SGR generators.
 */
 Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle text,
-    in RgbColor pageFg, in RgbColor pageBg) pure nothrow @nogc
+    in RgbColor pageFg, in RgbColor pageBg, StateSet states = StateSet.init)
+    pure nothrow @nogc
 {
-    Visual v = resolveSlot(pal, slot, pageFg, pageBg);
+    // The states apply to the slot's own colors; a border or shadow keeps its
+    // rest appearance unless its own slot is resolved with states by a caller.
+    Visual v = resolveSlot(pal, slot, pageFg, pageBg, states);
 
     // Box border: resolve the edge color from the decoration's own slot.
     if (deco.borderStyle != BorderStyle.none)
@@ -715,6 +855,45 @@ unittest
             assert(p.fg[accentSecondary] != p.fg[accentPrimary]);
         }
     }}
+}
+
+@("ui.style.resolveSlot.statesFallThroughToRest")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_color : Color;
+
+    const fg = RgbColor(0x10, 0x10, 0x10), bg = RgbColor(0xf0, 0xf0, 0xf0);
+    auto pal = defaultTwoslashPalette();
+    const rest = resolveSlot(pal, Slot.thumb, fg, bg);
+
+    // TOK4: no overlay set ⇒ every state set resolves exactly as rest.
+    const all = StateSet.of(InteractionState.hover, InteractionState.focused,
+        InteractionState.selected, InteractionState.pressed, InteractionState.disabled);
+    assert(resolveSlot(pal, Slot.thumb, fg, bg, all) == rest);
+    assert(resolveSlot(pal, Slot.thumb, fg, bg, StateSet.of(InteractionState.hover)) == rest);
+
+    // A hover overlay that sets only the fg: bg falls through to rest.
+    pal.overlay(InteractionState.hover).fg[Slot.thumb] = Color.fromRgb(0x33, 0x66, 0x99);
+    const hov = resolveSlot(pal, Slot.thumb, fg, bg, StateSet.of(InteractionState.hover));
+    assert(hov.fg == RgbColor(0x33, 0x66, 0x99) && hov.fgAlpha == 0xFF);
+    assert(hov.hasBg == rest.hasBg && hov.bg == rest.bg);
+    // …and a state with no overlay still reads as rest.
+    assert(resolveSlot(pal, Slot.thumb, fg, bg, StateSet.of(InteractionState.focused)) == rest);
+
+    // TOK5: pressed outranks hover for the channel it sets; the channel it
+    // does not set comes from the next state down that does.
+    pal.overlay(InteractionState.pressed).bg[Slot.thumb] = Color.fromRgb(0xaa, 0x00, 0x00);
+    pal.overlay(InteractionState.pressed).bgAlpha[Slot.thumb] = 0x80;
+    const both = resolveSlot(pal, Slot.thumb, fg, bg,
+        StateSet.of(InteractionState.hover, InteractionState.pressed));
+    assert(both.fg == RgbColor(0x33, 0x66, 0x99), "fg: only hover sets it");
+    assert(both.hasBg && both.bg == RgbColor(0xaa, 0x00, 0x00) && both.bgAlpha == 0x80,
+        "bg: pressed sets it");
+    // disabled outranks everything it sets.
+    pal.overlay(InteractionState.disabled).fg[Slot.thumb] = Color.fromRgb(0x77, 0x77, 0x77);
+    const dis = resolveSlot(pal, Slot.thumb, fg, bg, all);
+    assert(dis.fg == RgbColor(0x77, 0x77, 0x77) && dis.bg == RgbColor(0xaa, 0x00, 0x00));
 }
 
 @("ui.style.resolveSlot.inheritAndTint")

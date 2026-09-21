@@ -21,7 +21,7 @@ import sparkles.base.term_caps : BlockTier, ImageProtocol, OutputCapabilities;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.input.capability : cellPointer, InputCapabilities, staticPointer;
 import sparkles.input.tier : InteractionTier;
-import sparkles.ui.style : BorderStyle, BoxBorder, Slot;
+import sparkles.ui.style : BorderStyle, BoxBorder, InteractionState, Slot;
 import sparkles.ui.widget : WidgetTree;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
     wireNames;
@@ -105,23 +105,8 @@ bool isValidTokenPath(scope const(char)[] path) @safe pure nothrow @nogc
 }
 
 // ── interaction states (TOK4, TOK5) ─────────────────────────────────────────
-
-/**
-The second axis of slot resolution (`TOK4`). Declaration order $(B is) the
-precedence (`TOK5`): when several states are active, the override of the
-highest one that has an override wins. `rest` is the absence of every other
-state, never a bit of its own.
-*/
-@WireCase(CaseStyle.kebabCase)
-enum InteractionState : ubyte
-{
-    rest,     /// nothing else applies — the value a theme always sets
-    hover,    /// the pointer rests on it
-    focused,  /// it owns keyboard focus
-    selected, /// it is part of the selection
-    pressed,  /// the pointer/key is down on it
-    disabled, /// it cannot be interacted with
-}
+// `InteractionState` and `StateSet` live beside `Slot` in `sparkles.ui.style`,
+// where resolution consumes them; this module adds only their wire names.
 
 /// The resolved wire names of the states (`WEB1`'s CSS suffixes), from the
 /// enum's own `@WireCase` — declaration order, like $(LREF slotPaths).
@@ -130,50 +115,6 @@ alias stateNames = wireNames!(AnyFormat, InteractionState,
 
 static foreach (i, m; EnumMembers!InteractionState)
     static assert(m == i, "InteractionState must stay a contiguous 0-based enum");
-
-/// The set of currently active states — a bitset over every state but
-/// `rest`, which is the empty set.
-struct StateSet
-{
-    private ubyte bits;
-
-@safe pure nothrow @nogc:
-
-    /// Builds a set from the listed states; `rest` contributes nothing.
-    static StateSet of(scope const InteractionState[] states...)
-    {
-        StateSet r;
-        foreach (s; states)
-            r = r.with_(s);
-        return r;
-    }
-
-    private static ubyte bit(InteractionState s)
-        => s == InteractionState.rest ? 0 : cast(ubyte)(1u << (s - 1));
-
-    bool empty() const => bits == 0;
-
-    bool has(InteractionState s) const
-        => s == InteractionState.rest ? empty : (bits & bit(s)) != 0;
-
-    StateSet with_(InteractionState s) const => StateSet(cast(ubyte)(bits | bit(s)));
-
-    StateSet without(InteractionState s) const => StateSet(cast(ubyte)(bits & ~bit(s)));
-
-    /**
-    The state whose override wins (`TOK5`): the highest-precedence active
-    state — or `rest` for the empty set. A resolver that consults overrides
-    walks from `highest` downward and stops at the first override set, so a
-    theme that sets none yields exactly `rest` (`TOK4`).
-    */
-    InteractionState highest() const
-    {
-        static foreach_reverse (s; EnumMembers!InteractionState)
-            if (has(s))
-                return s;
-        return InteractionState.rest;
-    }
-}
 
 // ── CSS custom-property names (TOK2, WEB1) ──────────────────────────────────
 
@@ -531,28 +472,6 @@ unittest
 
     checkWriter!((ref w) => writeCssName(w, Slot.chromeAccent, InteractionState.disabled))
         ("--spk-chrome-accent-disabled");
-}
-
-@("ui.tokens.StateSet.precedence")
-@safe pure nothrow @nogc
-unittest
-{
-    // TOK4: the empty set is `rest`.
-    StateSet none;
-    assert(none.empty);
-    assert(none.has(InteractionState.rest));
-    assert(none.highest == InteractionState.rest);
-
-    // TOK5: disabled > pressed > selected > focused > hover.
-    const hf = StateSet.of(InteractionState.hover, InteractionState.focused);
-    assert(hf.highest == InteractionState.focused);
-    assert(!hf.has(InteractionState.rest));
-    assert(hf.with_(InteractionState.disabled).highest == InteractionState.disabled);
-    assert(hf.with_(InteractionState.pressed).without(InteractionState.pressed) == hf);
-    assert(StateSet.of(InteractionState.selected, InteractionState.hover).highest
-        == InteractionState.selected);
-    // `rest` never contributes a bit.
-    assert(StateSet.of(InteractionState.rest).empty);
 }
 
 @("ui.tokens.slotsWithin.checksEveryOp")
