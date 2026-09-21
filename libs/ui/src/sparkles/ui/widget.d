@@ -18,7 +18,7 @@ module sparkles.ui.widget;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.canvas : LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : Decoration, Slot, StateSet, TextStyle;
 import sparkles.ui.wrap : TextWrap;
 
 @safe:
@@ -74,6 +74,10 @@ struct Widget
 {
     WidgetKind kind;
     Slot slot = Slot.inherit; /// semantic role (color comes from the palette)
+    /// The interaction states this node is in (`TOK4`): the view sets them
+    /// from its machines (hovered, pressed, focused, …) and slot resolution
+    /// applies the theme's per-state overlays. Empty is `rest`.
+    StateSet states;
 
     SizeSpec width = SizeSpec.fit_;  /// horizontal sizing
     SizeSpec height = SizeSpec.fit_; /// vertical sizing

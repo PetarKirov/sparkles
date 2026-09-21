@@ -94,7 +94,8 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
         if (node.hasBorderOverride)
             vis.border.color = node.borderOverride;
     }
-    Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
+    Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg,
+        pageBg, node.states);
     applyOverrides(vis, node);
 
     // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
@@ -144,7 +145,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                         ? node.textStyle : span.textStyle;
                     const w = cast(int) cellsOf(span.text);
                     auto vis = resolveVisual(pal, slot, node.decoration, style,
-                        pageFg, pageBg);
+                        pageFg, pageBg, node.states);
                     if (span.hasFg) // the syntax channel: a resolved color
                         vis.fg = span.fg;
                     vis.hasBg = span.paintBackground && vis.hasBg;
@@ -189,7 +190,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 node.barPaintsIdleTrack ? Slot.border : Slot.track,
                 node.decoration, node.textStyle, pageFg, pageBg);
             auto thumbVis = resolveVisual(pal, Slot.thumb, node.decoration,
-                node.textStyle, pageFg, pageBg);
+                node.textStyle, pageFg, pageBg, node.states);
             if (node.hasBarTrackFgOverride)
                 trackVis.fg = node.barTrackFgOverride;
             if (node.hasFgOverride)
@@ -255,6 +256,37 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
 
     assert(ops[2].kind == OpKind.textRun && ops[2].text == "The title.");
     assert(ops[2].visual.fg == RgbColor(0x88, 0x88, 0x88)); // docs muted
+}
+
+@("ui.display_list.nodeStatesSelectTheThemeOverlay")
+@safe unittest
+{
+    import sparkles.base.term_color : Color, RgbColor;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette, InteractionState, StateSet;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // TOK4 at the display-list boundary: the node carries its states, the
+    // palette carries the overlay, and the op's resolved visual is the
+    // meeting point — with no overlay a hovered node paints exactly as rest.
+    const fg = RgbColor(0xee, 0xee, 0xee), bg = RgbColor(0x11, 0x11, 0x11);
+    auto pal = defaultTwoslashPalette();
+
+    auto b = Builder();
+    const rest = b.add(Widget(kind: WidgetKind.text, text: "a", slot: Slot.thumb));
+    const hovered = b.add(Widget(kind: WidgetKind.text, text: "b", slot: Slot.thumb,
+        states: StateSet.of(InteractionState.hover)));
+    const tree = b.finish(b.add(Widget(kind: WidgetKind.column, children: [rest, hovered])));
+    const frames = layout(tree);
+
+    const plain = buildDisplayList(tree, frames, pal, fg, bg);
+    assert(plain.length == 2 && plain[0].visual.fg == plain[1].visual.fg,
+        "no overlay ⇒ hover paints as rest");
+
+    pal.overlay(InteractionState.hover).fg[Slot.thumb] = Color.fromRgb(0x00, 0xcc, 0xff);
+    const lit = buildDisplayList(tree, frames, pal, fg, bg);
+    assert(lit[0].visual.fg == plain[0].visual.fg, "the rest node is untouched");
+    assert(lit[1].visual.fg == RgbColor(0x00, 0xcc, 0xff), "the hovered node took the overlay");
 }
 
 @("ui.display_list.errorWavyUnderlineAndMessage")
