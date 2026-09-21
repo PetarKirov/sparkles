@@ -85,11 +85,11 @@ uint view(ref Builder b, in GalleryState s)
     }
 
     body_ ~= section(b, "metrics", [
-        kv(b, "popup radius", pal.popupRadius.text, 18, Slot.code),
-        kv(b, "popup padding", text(pal.popupPadY, " × ", pal.popupPadX), 18, Slot.code),
-        kv(b, "popup width", text(pal.popupMinWidth, " … ", pal.popupMaxWidth), 18, Slot.code),
+        kv(b, "popup radius", pal.overlayRadius.text, 18, Slot.code),
+        kv(b, "popup padding", text(pal.overlayPadY, " × ", pal.overlayPadX), 18, Slot.code),
+        kv(b, "popup width", text(pal.overlayMinWidth, " … ", pal.overlayMaxWidth), 18, Slot.code),
         kv(b, "docs width", pal.docsMaxWidth.text, 18, Slot.code),
-        kv(b, "border / accent", text(pal.borderWidth, " / ", pal.accentBorder), 18, Slot.code),
+        kv(b, "border / accent", text(pal.borderWeight, " / ", pal.accentWeight), 18, Slot.code),
         kv(b, "shadow", text(pal.shadowDx, ", ", pal.shadowDy,
             ", blur ", pal.shadowBlur), 18, Slot.code),
         kv(b, "font scales", text("code ", pal.codeFontScale, "  docs ",

@@ -64,10 +64,10 @@ private size_t hitOf(size_t nodeIndex) pure nothrow @nogc => nodeIndex + 1;
 /// the `^?` query line, and the completion list (all one surface rule in the CSS).
 private Decoration surfaceDeco(bool arrow, int arrowOffset = 1) pure nothrow @nogc
     => Decoration(
-        borderWidth: Insets.all(M.borderWidth),
+        borderWidth: Insets.all(M.borderWeight),
         borderStyle: BorderStyle.solid,
         borderSlot: Slot.border,
-        borderRadius: M.popupRadius,
+        borderRadius: M.overlayRadius,
         shadow: true,
         arrow: arrow,
         arrowOffset: arrowOffset,
@@ -78,7 +78,7 @@ private Decoration surfaceDeco(bool arrow, int arrowOffset = 1) pure nothrow @no
 /// (unfilled) box so it rides under the code text without tinting it.
 private Decoration hoverUnderlineDeco() pure nothrow @nogc
     => Decoration(
-        borderWidth: Insets(0, 0, M.borderWidth, 0),
+        borderWidth: Insets(0, 0, M.borderWeight, 0),
         borderStyle: BorderStyle.dotted,
         borderSlot: Slot.hoverUnderline,
     );
@@ -88,7 +88,7 @@ private Decoration hoverUnderlineDeco() pure nothrow @nogc
 /// same slot via `paintBackground`.
 private Decoration accentDeco(Slot slot) pure nothrow @nogc
     => Decoration(
-        borderWidth: Insets(0, 0, 0, M.accentBorder),
+        borderWidth: Insets(0, 0, 0, M.accentWeight),
         borderStyle: BorderStyle.solid,
         borderSlot: slot,
     );
@@ -452,9 +452,9 @@ value means the caller could not work it out and gets the ceiling.
 int effectivePopupWidth(in Palette pal, int available) @safe pure nothrow @nogc
 {
     if (available <= 0)
-        return pal.popupMaxWidth;
-    const room = available < pal.popupMinWidth ? pal.popupMinWidth : available;
-    return room < pal.popupMaxWidth ? room : pal.popupMaxWidth;
+        return pal.overlayMaxWidth;
+    const room = available < pal.overlayMinWidth ? pal.overlayMinWidth : available;
+    return room < pal.overlayMaxWidth ? room : pal.overlayMaxWidth;
 }
 
 /**
@@ -477,10 +477,10 @@ int clampOrigin(int anchor, int width, int extent) @safe pure nothrow @nogc
 @safe pure nothrow @nogc unittest
 {
     const pal = Palette.init;
-    assert(effectivePopupWidth(pal, 0) == pal.popupMaxWidth, "unknown room ⇒ ceiling");
-    assert(effectivePopupWidth(pal, 500) == pal.popupMaxWidth, "the ceiling holds");
+    assert(effectivePopupWidth(pal, 0) == pal.overlayMaxWidth, "unknown room ⇒ ceiling");
+    assert(effectivePopupWidth(pal, 500) == pal.overlayMaxWidth, "the ceiling holds");
     assert(effectivePopupWidth(pal, 40) == 40, "room narrower than the ceiling wins");
-    assert(effectivePopupWidth(pal, 3) == pal.popupMinWidth, "never below the floor");
+    assert(effectivePopupWidth(pal, 3) == pal.overlayMinWidth, "never below the floor");
 }
 
 @("render_widgets.clampOrigin.shiftsRatherThanOverhangs")
@@ -503,7 +503,7 @@ struct HoverViewOptions
 {
     /// Effective content width in cells; 0 leaves the popup unbounded, which
     /// is what every caller got before this existed. The backend passes
-    /// `min(Palette.popupMaxWidth, room at the anchor)` — the view never
+    /// `min(Palette.overlayMaxWidth, room at the anchor)` — the view never
     /// invents a width (`LAY10`).
     int maxWidth = 0;
 
@@ -634,7 +634,7 @@ private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
     // structural breaking that replaces it knows where the parameters are.
     auto sigWidth = SizeSpec.fit_;
     if (opts.maxWidth > 0)
-        sigWidth.max = opts.maxWidth - 2 * M.popupPadX;
+        sigWidth.max = opts.maxWidth - 2 * M.overlayPadX;
     const sigWrap = opts.maxWidth > 0 ? TextWrap.greedy : TextWrap.none;
     // With the producer's structure the signature breaks where D would break;
     // without it (a TypeScript payload, or a node predating the field) it is
@@ -707,7 +707,7 @@ private uint[] signatureRows(ref Builder b, const Node node, size_t hit,
     // The effect words are drawn as chips, so the rows stop at the body.
     const body_ = effectFreeRange(text, node.signature);
     const laid = layoutSignature(text, node.signature, opts.maxWidth,
-        M.sigIndent, (scope const(char)[] s) => cast(int) cellsOf(s), body_,
+        M.signatureIndent, (scope const(char)[] s) => cast(int) cellsOf(s), body_,
         opts.expanded);
 
     uint[] rows;
@@ -877,7 +877,7 @@ private uint[] effectChips(ref Builder b, in Effects effects, size_t hit,
 private uint chipWidget(ref Builder b, string text, Slot slot, size_t hit)
     => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, hitId: hit,
         paintBackground: slot != Slot.muted,
-        decoration: Decoration(borderRadius: M.popupRadius),
+        decoration: Decoration(borderRadius: M.overlayRadius),
         textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
 
 /// A full-width popup section: a `stretch` column with its own horizontal padding
@@ -888,7 +888,7 @@ private uint popupSection(ref Builder b, uint[] rows, bool divider)
     => b.add(Widget(kind: WidgetKind.column, children: rows, stretch: true,
         padding: Insets(0, 1, 0, 1),
         decoration: divider
-            ? Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
+            ? Decoration(borderWidth: Insets(M.borderWeight, 0, 0, 0),
                 borderStyle: BorderStyle.solid, borderSlot: Slot.border) : Decoration.init));
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
@@ -950,7 +950,7 @@ private uint docsLine(ref Builder b, const(char)[] text, size_t hit,
 /// padding. `0` (unbounded) stays unbounded.
 private int popupInterior(int maxWidth) @safe pure nothrow @nogc
 {
-    const inner = maxWidth - 2 * M.borderWidth - 2;
+    const inner = maxWidth - 2 * M.borderWeight - 2;
     return maxWidth > 0 && inner > 0 ? inner : 0;
 }
 
@@ -973,7 +973,7 @@ private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit,
     // `.twoslash-popup-docs-tag-name` — `border-radius: 4px; font-size: 0.92em`).
     parts ~= b.add(Widget(kind: WidgetKind.text, text: nameText,
         slot: Slot.chip, hitId: hit, paintBackground: true,
-        decoration: Decoration(borderRadius: M.popupRadius),
+        decoration: Decoration(borderRadius: M.overlayRadius),
         textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
     if (tag.length > 1 && tag[1].length)
     {
@@ -1002,7 +1002,7 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
     uint[] parts;
     parts ~= b.add(Widget(kind: WidgetKind.text, text: nameText,
         slot: Slot.chip, hitId: hit, paintBackground: true,
-        decoration: Decoration(borderRadius: M.popupRadius),
+        decoration: Decoration(borderRadius: M.overlayRadius),
         textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
 
     if (tag.length > 1 && tag[1].length)
@@ -1030,7 +1030,7 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
         parts ~= b.add(Widget(kind: WidgetKind.rich, slot: Slot.docs, hitId: hit,
             spans: spans, textStyle: docsBase(), width: width,
             wrap: width.max > 0 ? TextWrap.greedy : TextWrap.none,
-            decoration: Decoration(borderRadius: M.popupRadius)));
+            decoration: Decoration(borderRadius: M.overlayRadius)));
     }
     return b.container(WidgetKind.row, parts, gap: 1);
 }

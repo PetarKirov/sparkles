@@ -203,13 +203,13 @@ parity harness: "do the widget settings match the CSS?".
     }
 
     // border: 1px solid  (popup surface) / border-left: 3px solid  (accent bars)
-    assert(css.canFind("border: " ~ m.borderWidth.to!string ~ "px solid"),
+    assert(css.canFind("border: " ~ m.borderWeight.to!string ~ "px solid"),
         "borderWidth drift");
-    assert(css.canFind("border-left: " ~ m.accentBorder.to!string ~ "px solid"),
-        "accentBorder drift");
+    assert(css.canFind("border-left: " ~ m.accentWeight.to!string ~ "px solid"),
+        "accentWeight drift");
     // border-radius: 4px  (popup surface)
-    assert(css.canFind("border-radius: " ~ m.popupRadius.to!string ~ "px"),
-        "popupRadius drift");
+    assert(css.canFind("border-radius: " ~ m.overlayRadius.to!string ~ "px"),
+        "overlayRadius drift");
     // box-shadow: … 0px 1px 4px  (--twoslash-popup-shadow)
     assert(css.canFind(m.shadowDx.to!string ~ "px " ~ m.shadowDy.to!string
             ~ "px " ~ m.shadowBlur.to!string ~ "px"), "shadow geometry drift");
