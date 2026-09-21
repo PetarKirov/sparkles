@@ -139,6 +139,18 @@ struct Theme
         p.bgAlpha[Slot.gutterBand] = 0xFF; // the mix IS the final tone
         set(Slot.border, rgb(mix(bg, fg, 0.4)), Color.init);        // rules
         set(Slot.muted, rgb(mix(fg, bg, 0.35)), Color.init);
+
+        // The TOK3 roles, as steps along the same fg⇄bg axis so they order
+        // consistently: secondary is nearer the fg than muted, disabled nearer
+        // the bg; raised is a lighter step than the overlay surface, sunken a
+        // darker well in either scheme; the strong border sits above the rule.
+        set(Slot.textSecondary, rgb(mix(fg, bg, 0.2)), Color.init);
+        set(Slot.textDisabled, rgb(mix(fg, bg, 0.55)), Color.init);
+        set(Slot.textInverse, rgb(bg), Color.init);
+        set(Slot.surfaceRaised, Color.init, rgb(mix(bg, fg, 0.05)));
+        set(Slot.surfaceSunken, Color.init,
+            rgb(mix(bg, RgbColor(0, 0, 0), scheme == ColorScheme.dark ? 0.25 : 0.06)));
+        set(Slot.borderStrong, rgb(mix(bg, fg, 0.6)), Color.init);
         // Emphasized chrome (the active tab, key hints): the theme's own
         // accent where its rules pin one — its bg an accent TINT, so an
         // accented selection is unmistakably not the panel surface.
@@ -147,6 +159,14 @@ struct Theme
             set(Slot.chromeAccent, accent, rgb(mix(bg, accent.rgb, 0.20)));
         else
             set(Slot.chromeAccent, Color.init, rgb(mix(bg, fg, 0.30)));
+        // The accent roles track the same probe (`TOK3`): where the theme
+        // pins none, the scheme default's blue stays. The second accent is
+        // the keyword/type hue, so a badge reads apart from a link.
+        set(Slot.accentPrimary, accent, Color.init);
+        set(Slot.link, accent, Color.init);
+        set(Slot.borderFocus, accent, Color.init);
+        set(Slot.focusRing, accent, Color.init);
+        set(Slot.accentSecondary, ruleFgFor("keyword", ruleFgFor("type")), Color.init);
         return p;
     }
 
@@ -194,6 +214,28 @@ private RgbColor toRgbOr(in Color c, RgbColor fallback) pure nothrow @nogc
     const dark2 = Theme(name: "d2",
         defaultBg: Color.fromRgb(RgbColor(0x10, 0x14, 0x18)));
     assert(dark2.effectivePalette().bg[Slot.chrome] != p.bg[Slot.chrome]);
+
+    // The TOK3 roles track the page colors too: steps along the fg⇄bg axis,
+    // ordered as the spec's fallback column says, and inverse text IS the bg.
+    assert(p.fg[Slot.textSecondary] == Color.fromRgb(mix(fgFall, bgA, 0.2)));
+    assert(p.fg[Slot.textDisabled] == Color.fromRgb(mix(fgFall, bgA, 0.55)));
+    assert(p.fg[Slot.textInverse] == Color.fromRgb(bgA));
+    assert(p.bg[Slot.surfaceRaised] == Color.fromRgb(mix(bgA, fgFall, 0.05)));
+    assert(p.bg[Slot.surfaceSunken] != p.bg[Slot.surfaceRaised]);
+    assert(p.fg[Slot.borderStrong] == Color.fromRgb(mix(bgA, fgFall, 0.6)));
+    // No accent rule pinned ⇒ the accent roles keep the scheme default.
+    assert(p.fg[Slot.accentPrimary] == defaultTwoslashPalette(ColorScheme.dark).fg[Slot.accentPrimary]);
+
+    // A theme that pins a `function` color hands it to every accent role.
+    const accented = Theme(name: "a", defaultBg: Color.fromRgb(bgA),
+        rules: [ThemeRule("function", StyleSpec(fg: Color.fromRgb(RgbColor(0xff, 0x80, 0x00)))),
+                ThemeRule("keyword", StyleSpec(fg: Color.fromRgb(RgbColor(0x80, 0x00, 0xff))))]);
+    const ap = accented.effectivePalette();
+    assert(ap.fg[Slot.accentPrimary] == Color.fromRgb(RgbColor(0xff, 0x80, 0x00)));
+    assert(ap.fg[Slot.link] == ap.fg[Slot.accentPrimary]
+        && ap.fg[Slot.borderFocus] == ap.fg[Slot.accentPrimary]
+        && ap.fg[Slot.focusRing] == ap.fg[Slot.accentPrimary]);
+    assert(ap.fg[Slot.accentSecondary] == Color.fromRgb(RgbColor(0x80, 0x00, 0xff)));
 
     // A pinned fg is honored over the scheme fallback.
     const fgB = RgbColor(0xee, 0xdd, 0xcc);
