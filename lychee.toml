@@ -139,6 +139,13 @@ request_interval = "100ms"
 [hosts."gitlab.freedesktop.org"]
 request_interval = "1s"
 
+# A small self-hosted Forgejo instance, and the only source for the Snix
+# castore citations in docs/research/content-addressing/. Unlike the forges
+# above it has no CDN in front of it, so pace it conservatively rather than
+# letting `max_concurrency = 16` hit one person's server.
+[hosts."git.snix.dev"]
+request_interval = "1s"
+
 # nick-black.com and notcurses.com are ONE server (both 173.230.130.29), and one
 # of them serves a 27.8 MB PDF. That combination starves the other: notcurses.com
 # is a 6.7 KB page answering in 0.7s to a single client, yet it timed out in CI

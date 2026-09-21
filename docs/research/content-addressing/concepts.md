@@ -40,6 +40,12 @@ be conventional at one level and exotic at the other:
   is a real tree for [Bao/BLAKE3][bao], for IPFS's unixfs chunker, and — the
   finding that surprised this survey — for REAPI's [`SHA256TREE`][reapi].
 
+[Venti][venti] settles the question of whether the levels _nest_: they do not.
+Its directories are "a special file" of concatenated 40-byte `VtEntry`
+structures, so its level-1 tree is an instance of its level-2 pointer tree with
+a different block-type base — the same machine run twice, not one layer inside
+another.
+
 A scheme is a pair. Nix is _NAR × whole-blob_; git is _git-tree × whole-blob_;
 iroh is _no level 1 at all_ (a bare blob) _× Bao_. The levels are independent,
 not a hierarchy.
@@ -107,6 +113,64 @@ granularity for free. Level-2 chunk trees extend it inside a file, which is what
 [iroh][bao] is built on — a lying provider is "caught within one 16 KiB chunk
 group". A serial scheme gives none of it: NAR must be hashed end to end.
 
+## Identity versus provenance
+
+Where the _context_ of a digest lives. A Merkle DAG deduplicates, which means it
+deliberately erases the path and origin by which a subtree was reached — two
+identical directories anywhere in the world are one object. [Software
+Heritage][swh] hit this head-on: a citation needs to say _which_ repository and
+_which_ path a file came from, and none of that is recoverable from the
+identifier. Its answer is SWHID **qualifiers** (`origin`, `visit`, `anchor`,
+`path`, `lines`), which sit _outside_ the hash and are unverifiable by
+construction.
+
+The rule generalizes: **record context beside the digest, never inside it.**
+Putting provenance in the hash would destroy the dedup that made the digest
+worth having.
+
+## Parameterized digests
+
+Most digests in this survey are a hash of a defined serialization, so two
+implementations agree by construction. A growing minority are hashes of a
+_descriptor_ that includes the parameters used, so the same bytes legitimately
+produce different digests under different settings:
+
+| Subject             | Parameter that changes the digest                                  |
+| ------------------- | ------------------------------------------------------------------ |
+| [fs-verity][cfs]    | hash algorithm, `block_size`, salt — all covered by the descriptor |
+| [dm-verity][apk]    | on-disk version (salt prepended vs appended), block size           |
+| [IPFS unixfs][ipfs] | chunker, chunk size, DAG layout, raw-leaves                        |
+| [eStargz][estargz]  | the prefetch order chosen by a profiling run                       |
+
+A parameterized digest is not comparable with a plain content hash, and often
+not comparable with itself across settings. Treat "what parameters does this
+digest cover" as a question to answer explicitly, not a detail.
+
+## Who builds the tree
+
+For a level-2 Merkle tree, _when_ it is constructed decides who pays and who can
+verify. The field runs in one direction:
+
+| Built by                                | Example                                                           | Consequence                                                          |
+| --------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------- |
+| An offline tool, before distribution    | `veritysetup format` ([dm-verity][apk])                           | The verifier receives a root only                                    |
+| The kernel, on demand                   | `FS_IOC_ENABLE_VERITY` ([fs-verity][cfs])                         | One full pass at enable time; `O(1)` digest afterwards               |
+| The packager, shipped with the artifact | APK v4 `.apk.idsig` ([APK v4][apk]); iroh's outboard ([Bao][bao]) | The verifier can check a range **without ever hashing the artifact** |
+
+Only the last removes the computation from the verifier, which is why a seam
+should let a tree arrive **out of band** rather than assuming each consumer
+recomputes one.
+
+## Index versus tree
+
+Two ways to make part of a blob verifiable, and they are not equivalent. A
+**tree** ([Bao][bao], `SHA256TREE`) lets a 16 KiB range be checked against a
+32-byte root with nothing else transmitted, because the geometry follows from
+the length. An **index** ([eStargz and SOCI][estargz]) is a flat list of
+per-chunk digests in a document that must be fetched _whole_ before any byte can
+be checked — and whose own integrity hangs off an annotation or a side artifact.
+The index gives depth-2 trust; the tree gives `O(log n)`.
+
 ## Terms this survey does _not_ use
 
 - **Chunking strategy** (fixed-size, or content-defined via a rolling hash such
@@ -118,6 +182,12 @@ group". A serial scheme gives none of it: NAR must be hashed end to end.
 
 <!-- References -->
 
+[venti]: ./venti.md
+[swh]: ./software-heritage.md
+[cfs]: ./composefs-fs-verity.md
+[apk]: ./apk-dm-verity.md
+[ipfs]: ./ipfs-unixfs.md
+[estargz]: ./estargz-soci.md
 [nar]: ./nar.md
 [git]: ./git-objects.md
 [ostree]: ./ostree.md
