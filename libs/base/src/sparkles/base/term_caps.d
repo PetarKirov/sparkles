@@ -205,16 +205,91 @@ unittest
     cast(void) isTerminal(StdStream.stderr);
 }
 
-/// One-shot capability snapshot: the single place the color/glyph *decision* is
-/// made. Renderers stay pure producers taking explicit bools/options; apps call
-/// $(LREF detectTermCaps) once at startup and thread the fields through.
+/// How fine the block-element tier a terminal's font covers
+/// ($(LREF OutputCapabilities.blocks)).
+enum BlockTier : ubyte
+{
+    none,     /// no block elements
+    half,     /// `▀▄█` and the eighth-blocks `▏…▉` / `▁…▇`
+    quadrant, /// the 2×2 quadrants (U+2596–U+259F)
+    sextant,  /// the 2×3 sextants (Symbols for Legacy Computing)
+    octant,   /// the 2×4 octants (Unicode 16)
+}
+
+/// Which inline-image protocol a target accepts ($(LREF OutputCapabilities.images)).
+enum ImageProtocol : ubyte
+{
+    none,
+    sixel,  /// DEC sixel
+    iterm2, /// OSC 1337
+    kitty,  /// the kitty graphics protocol
+}
+
+/**
+What an output target can $(B render and carry) — the affordances a renderer
+degrades on, named abstractly (`clipboard`, not "OSC 52") because a window
+serves most of them too, by other means. A terminal's answers arrive through
+$(LREF TermCaps); a GUI or HTML target declares its own constants. Every
+default is the conservative answer, so a producer that has not thought about
+a field claims nothing.
+
+This is the vocabulary the design system's capability table is written in
+(`docs/specs/design-system/capabilities.md`, `CAP1`–`CAP3`); its input-side
+counterpart is `sparkles.input.capability.InputCapabilities`.
+*/
+struct OutputCapabilities
+{
+    ColorDepth colorDepth;   /// color tier to emit; `none` means no SGR color at all
+    bool unicode;            /// emit non-ASCII glyphs (box drawing, ✓/✗ marks)
+    BlockTier blocks;        /// block-element coverage (configured; a font fact)
+    bool braille;            /// U+2800 renders as a 2×4 grid (configured)
+    bool nerdFont;           /// Nerd Font PUA glyphs available (configured; unqueryable)
+
+    bool hyperlinks;         /// clickable links (OSC 8 on a terminal)
+    bool clipboard;          /// a clipboard write can be carried (OSC 52)
+    bool notifications;      /// desktop notifications (OSC 99 / 9 / 777)
+    bool pointerShape;       /// the pointer shape can be set (OSC 22)
+    bool textSizing;         /// multi-cell / scaled text (OSC 66)
+    ImageProtocol images;    /// inline images
+    bool syncOutput;         /// atomic frame presentation (mode 2026)
+    bool progress;           /// a taskbar progress mirror (OSC 9;4)
+    bool extendedUnderline;  /// curly/colored underlines (SGR 4:3 + 58)
+    bool cellPixelSize;      /// the cell's pixel size is known (CSI 16 t)
+    bool graphemeClusters;   /// the terminal segments by grapheme (mode 2027)
+    bool colorSchemeNotify;  /// scheme changes are pushed (mode 2031 / OSC 11)
+
+    /// `true` iff any SGR color may be emitted — a view of `colorDepth`, not a
+    /// second field that could disagree with it.
+    bool colors() const @safe pure nothrow @nogc => colorDepth != ColorDepth.none;
+}
+
+/**
+One-shot terminal capability snapshot: the single place the color/glyph
+$(I decision) is made. Renderers stay pure producers taking explicit
+bools/options; apps call $(LREF detectTermCaps) once at startup and thread the
+fields through.
+
+The output affordances are the embedded $(LREF OutputCapabilities) (reachable
+directly: `caps.colors`, `caps.unicode`); the raw terminal $(B input modes)
+below are what `sparkles.input.capability.fromTerminal` turns into the
+target-neutral `InputCapabilities`. $(LREF detectTermCaps) fills what the
+environment answers; the query-derived fields (DA1, DECRQM, XTGETTCAP) are
+`sparkles:tui`'s to fill, on the same value.
+*/
 struct TermCaps
 {
-    bool tty;              /// stdout is attached to a terminal
-    bool colors;           /// emit SGR color/attribute escapes
-    ColorDepth colorDepth; /// color tier to emit; `none` when `colors` is off
-    bool unicode;          /// emit non-ASCII glyphs (box drawing, ✓/✗ marks)
-    TermSize size;         /// terminal size; `0` components mean unknown
+    bool tty;                  /// stdout is attached to a terminal
+    TermSize size;             /// terminal size; `0` components mean unknown
+    OutputCapabilities output; /// what may be emitted
+    alias output this;
+
+    // Raw terminal input modes — protocol facts, not yet input affordances.
+    bool mouseSgr;        /// SGR-1006 button events
+    bool anyMotion;       /// mode 1003: motion without a button held
+    bool pixelMouse;      /// mode 1016: pixel coordinates
+    bool focusReporting;  /// mode 1004
+    bool bracketedPaste;  /// mode 2004
+    bool kittyKeyboard;   /// the kitty keyboard protocol (release/repeat, CSI u)
 }
 
 /// Detects capabilities and prepares the console.
@@ -261,18 +336,18 @@ TermCaps detectTermCaps(bool noColors = false) @safe
             return SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
         }();
         caps.unicode = true; // output code page is now UTF-8
-        caps.colors = !disabled && (force || (caps.tty && vt));
+        const colors = !disabled && (force || (caps.tty && vt));
     }
     else
     {
         caps.unicode = localeIsUtf8();
-        caps.colors = !disabled && (force || caps.tty);
+        const colors = !disabled && (force || caps.tty);
     }
 
     // The color tier, folded through the emit decision: the classifier picks
     // the tier from $COLORTERM/$TERM, but a snapshot with colors off reports
-    // `none` so consumers can use `.colorDepth` directly.
-    caps.colorDepth = caps.colors
+    // `none` — `caps.colors` is a view of this one field.
+    caps.colorDepth = colors
         ? classifyColorDepth(environment.get("COLORTERM", ""), environment.get("TERM", ""))
         : ColorDepth.none;
     return caps;
@@ -313,4 +388,20 @@ unittest
     const auto_ = detectTermCaps();
     if (!auto_.colors)
         assert(auto_.colorDepth == ColorDepth.none);
+}
+
+/// `colors` is a view of `colorDepth`, and the embedded output affordances
+/// read as the snapshot's own fields.
+@("TermCaps.outputIsAliasThis")
+@safe pure nothrow @nogc
+unittest
+{
+    TermCaps caps;
+    assert(!caps.colors);
+    caps.colorDepth = ColorDepth.ansi16;
+    assert(caps.colors && caps.output.colors);
+    caps.output.unicode = true;
+    assert(caps.unicode);
+    // A default snapshot claims no affordance and no input mode.
+    assert(TermCaps.init.output == OutputCapabilities.init && !TermCaps.init.mouseSgr);
 }
