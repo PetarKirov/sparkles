@@ -778,6 +778,30 @@
         ]
       },
       {
+        "text": "Build Primitives",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Filesets",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/filesets/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/filesets/PLAN"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/filesets/decisions"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "CI",
         "collapsed": true,
         "items": [
