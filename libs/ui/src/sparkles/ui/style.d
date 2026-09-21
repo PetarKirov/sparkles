@@ -23,6 +23,7 @@ module sparkles.ui.style;
 import sparkles.base.term_color :
     Color, ColorChannel, ColorDepth, RgbColor, toRgb, writeSgrColor;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
+import sparkles.wired.policy : CaseStyle, WireCase, WireName;
 import sparkles.ui.geometry : Insets;
 
 @safe:
@@ -33,51 +34,90 @@ $(LREF Palette) turns it into a concrete $(LREF Visual). Roles are intentionally
 generic (an app palette can reuse them) even though the seed values come from
 twoslash.
 */
+/// Every member carries its design-system **token path** as `@WireName` data
+/// (`TOK2`): the one spelling wired resolves for JSON and the DTCG theme file,
+/// and from which `sparkles.ui.tokens.cssName` derives the CSS custom property.
+/// The semantic groups (`text`, `status`, `surface`, `border`, `link`,
+/// `selection`, `shadow`) and the component namespaces (`chrome`, `gutter`,
+/// `scrollbar`, `completion`, `input`, `twoslash`, `diff`, `coverage`) are the
+/// spec's tiers; `inherit` is the one single-segment path.
+@WireCase(CaseStyle.kebabCase)
 enum Slot : ubyte
 {
-    inherit,         /// no styling of its own — use the page fg/bg
-    code,            /// code text inside a popup (inherits page fg)
-    docs,            /// documentation prose (muted)
-    error,           /// error text + its translucent background
-    warn,            /// warning text + background
-    info,            /// informational / `@tag` text + background
-    annotate,        /// `@annotate`-family tag text + background
-    highlight,       /// highlighted-range tint (background only)
-    highlightBorder, /// highlighted-range border
-    surface,         /// popup / panel background (opaque)
-    border,          /// popup / panel border line
-    hoverUnderline,  /// hoverable-token underline (`.twoslash-hover`, always on)
-    shadow,          /// popup drop shadow
-    matched,         /// matched prefix in a completion list (inherits page fg)
-    unmatched,       /// unmatched remainder in a completion list (muted)
-    caret,           /// query caret / cursor marker
-    muted,           /// generic de-emphasized text
-    chip,            /// a JSDoc `@tag` name pill in a popup (muted text on a grey bg)
+    /// no styling of its own — use the page fg/bg
+    @WireName("inherit") inherit,
+    /// code text inside a popup (inherits page fg)
+    @WireName("text.code") code,
+    /// documentation prose (muted)
+    @WireName("text.docs") docs,
+    /// error text + its translucent background
+    @WireName("status.error") error,
+    /// warning text + background
+    @WireName("status.warning") warn,
+    /// informational / `@tag` text + background
+    @WireName("status.info") info,
+    /// `@annotate`-family tag text + background
+    @WireName("twoslash.annotate") annotate,
+    /// highlighted-range tint (background only)
+    @WireName("twoslash.highlight") highlight,
+    /// highlighted-range border
+    @WireName("twoslash.highlight.border") highlightBorder,
+    /// popup / panel background (opaque)
+    @WireName("surface.overlay") surface,
+    /// popup / panel border line
+    @WireName("border.default") border,
+    /// hoverable-token underline (`.twoslash-hover`, always on)
+    @WireName("link.underline") hoverUnderline,
+    /// popup drop shadow
+    @WireName("shadow.overlay") shadow,
+    /// matched prefix in a completion list (inherits page fg)
+    @WireName("completion.matched") matched,
+    /// unmatched remainder in a completion list (muted)
+    @WireName("completion.unmatched") unmatched,
+    /// query caret / cursor marker
+    @WireName("input.caret") caret,
+    /// generic de-emphasized text
+    @WireName("text.muted") muted,
+    /// a JSDoc `@tag` name pill in a popup (muted text on a grey bg)
+    @WireName("twoslash.chip") chip,
 
     // Application-chrome slots (the widened vocabulary the component catalog
     // requires — `THM2`): bands, gutters and scroll affordances.
-    chrome,          /// header / status-bar band (its background + text)
-    chromeAccent,    /// emphasized chrome text (title, active segment, key hints)
-    gutter,          /// line-number / marker column (foreground only)
+    /// header / status-bar band (its background + text)
+    @WireName("chrome.band") chrome,
+    /// emphasized chrome text (title, active segment, key hints)
+    @WireName("chrome.accent") chromeAccent,
+    /// line-number / marker column (foreground only)
+    @WireName("gutter.fg") gutter,
     /// the line-number gutter STRIP: its own band, distinct from both the
     /// page and a code panel's surface
-    gutterBand,
-    track,           /// scrollbar track
-    thumb,           /// scrollbar thumb
-    selection,       /// selected-content tint (background only)
-    chromeFocused,   /// the focused pane's header band (accented background)
+    @WireName("gutter.band") gutterBand,
+    /// scrollbar track
+    @WireName("scrollbar.track") track,
+    /// scrollbar thumb
+    @WireName("scrollbar.thumb") thumb,
+    /// selected-content tint (background only)
+    @WireName("selection.bg") selection,
+    /// the focused pane's header band (accented background)
+    @WireName("chrome.focused") chromeFocused,
 
     // Diff slots (the diff viewer's design language — hue diff-view `DVL5`):
     // row tints layered OVER syntax colors (alpha-composited, the
     // git-split-diffs recipe), a second emphasis tier for changed word
     // segments (delta's two-tone emphasis), the hunk header, and the filler
     // opposite unmatched split rows.
-    diffAdded,       /// added-row tint (background only)
-    diffRemoved,     /// removed-row tint (background only)
-    diffEmphAdded,   /// changed word segments within an added/paired row
-    diffEmphRemoved, /// changed word segments within a removed/paired row
-    diffHunk,        /// hunk-header line (`@@ … @@`) text + faint band
-    diffFill,        /// filler opposite an unmatched row in a split layout
+    /// added-row tint (background only)
+    @WireName("diff.added") diffAdded,
+    /// removed-row tint (background only)
+    @WireName("diff.removed") diffRemoved,
+    /// changed word segments within an added/paired row
+    @WireName("diff.emph.added") diffEmphAdded,
+    /// changed word segments within a removed/paired row
+    @WireName("diff.emph.removed") diffEmphRemoved,
+    /// hunk-header line (`@@ … @@`) text + faint band
+    @WireName("diff.hunk") diffHunk,
+    /// filler opposite an unmatched row in a split layout
+    @WireName("diff.fill") diffFill,
 
     // Coverage slots (the code-coverage overlay's gutter column — hue
     // `COV2`/`OVL7`). Foreground only: the column is text, and tinting its
@@ -85,9 +125,12 @@ enum Slot : ubyte
     // Deliberately the same three hues as the diff and diagnostic slots, so
     // "ran / never ran / partly ran" reads in the design language a viewer
     // already knows rather than a fourth private palette.
-    covCovered,      /// a line that executed at least once
-    covUncovered,    /// a line that emitted code and never ran
-    covPartial,      /// a line that ran, but not every branch out of it
+    /// a line that executed at least once
+    @WireName("coverage.covered") covCovered,
+    /// a line that emitted code and never ran
+    @WireName("coverage.uncovered") covUncovered,
+    /// a line that ran, but not every branch out of it
+    @WireName("coverage.partial") covPartial,
 }
 
 private enum slotCount = Slot.max + 1;
