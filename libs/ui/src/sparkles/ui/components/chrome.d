@@ -32,6 +32,10 @@ scroll state machine plugged in. `key` addresses the element's state across
 rebuilds (`WGT5`); pass the view's stable identity when the offset must
 survive a rebuild.
 */
+/// The slots this component's views reference (design-system `TOK6`); bands, the focused band, accented text, rules, the bar's thumb, numbers.
+/// The tests assert every tree it builds stays inside this set.
+enum Slot[] chromeSlots = [Slot.chrome, Slot.chromeFocused, Slot.chromeAccent, Slot.border, Slot.thumb, Slot.gutter];
+
 uint scrollView(ref Builder b, uint content, int height,
     in ScrollState scroll, size_t key = 0)
 {
@@ -625,6 +629,10 @@ version (unittest)
     auto b = Builder();
     const bar = scrollbar(b, 30, 10, 10, 6);
     auto tree = b.finish(bar);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, chromeSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     auto frames = layout(tree);
     assert(frames[bar].rect.width == 1 && frames[bar].rect.height == 6);
 
@@ -650,6 +658,10 @@ version (unittest)
         width: SizeSpec.fixed(30));
     const col = b.add(colW);
     auto tree = b.finish(col);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, chromeSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     auto frames = layout(tree);
 
     // The hit rects come from the SAME frames the painter uses — this is the
@@ -821,6 +833,10 @@ version (unittest)
     const col = b.add(Widget(kind: WidgetKind.column, children: [strip],
         width: SizeSpec.fixed(40)));
     auto tree = b.finish(col);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, chromeSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     auto frames = layout(tree);
 
     // Widths are label CELLS plus one either side — "π.md" is 4 cells, not
@@ -904,6 +920,10 @@ version (unittest)
     auto b = Builder();
     const hint = dockHint(b, d);
     auto tree = b.finish(hint);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, chromeSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     auto frames = layout(tree);
     assert(frames[hint].rect.width == 20 && frames[hint].rect.height == 30);
     assert(tree.nodes[hint].slot == Slot.chromeFocused);
@@ -943,6 +963,10 @@ version (unittest)
     const rows = b.add(Widget(kind: WidgetKind.column));
     const root = scrollBox(b, rows, frame, vBar(sv, 7), hBar(sv, 3), key: 55);
     auto tree = b.finish(root);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, chromeSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     auto frames = layout(tree);
 
     assert(tree.nodes[root].kind == WidgetKind.row, "content beside the bar");

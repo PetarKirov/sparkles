@@ -144,6 +144,10 @@ The interactive rows for the `[top .. top + bodyRows)` window of the visible
 rows, one widget row per tree row — plus, directly below an addressed row,
 its current refusal (`PRT21`). Returns the column's widget index.
 */
+/// The slots this component's views reference (design-system `TOK6`); labels, guides, match highlights, refusals, values, the bar it composes.
+/// The tests assert every tree it builds stays inside this set.
+enum Slot[] propertyViewSlots = [Slot.muted, Slot.gutter, Slot.matched, Slot.error, Slot.chromeAccent, Slot.selection, Slot.code, Slot.thumb];
+
 uint propertyView(ref Builder b, in TreeData!PropertyNode data,
     in TreeViewState!string s, in PropertyEditState edits,
     PropertyViewOptions opt = PropertyViewOptions.init, uint hitBase = 1)
@@ -549,6 +553,10 @@ version (UiPropertyFixtures)
     auto b = Builder();
     const root = propertyView(b, f.pt.data, f.tv, f.es);
     auto wt = b.finish(root);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(wt, propertyViewSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
 
     assert(wt.nodes[root].kind == WidgetKind.row, "content + bar, framed");
     bool sawBar;

@@ -166,6 +166,10 @@ text); an optional `icon` renders before the label; an optional `slot`
 overrides the label slot — so a filesystem tree and a syntax tree share this
 one renderer with no type hierarchy.
 */
+/// The slots this component's views reference (design-system `TOK6`); guides in the gutter role, markers as info, the selected row.
+/// The tests assert every tree it builds stays inside this set.
+enum Slot[] treeWidgetSlots = [Slot.gutter, Slot.info, Slot.selection];
+
 uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
     scope bool delegate(uint) @safe isOpen,
     uint selected = uint.max, TreeGlyphs glyphs = TreeGlyphs.init,
@@ -358,6 +362,10 @@ version (unittest)
     auto b = Builder();
     const tree = treeView(b, t, rows, (uint) => true, selected: 2);
     auto wt = b.finish(tree);
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(wt, treeWidgetSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
 
     auto ops = buildDisplayList(wt, layout(wt), defaultTwoslashPalette(),
         RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0));

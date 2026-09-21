@@ -278,6 +278,10 @@ Params:
 
 Returns: the row's index, or `0` when no channel is enabled.
 */
+/// The slots this component's views reference (design-system `TOK6`); the column is text in the gutter role, nothing else.
+/// The tests assert every tree it builds stays inside this set.
+enum Slot[] gutterSlots = [Slot.gutter];
+
 uint gutterRow(ref Builder b, const(GutterChannel)[] channels, size_t line)
 {
     uint[] cells;
@@ -461,6 +465,10 @@ private uint joinStrip(ref Builder b, uint strip, uint content, int separator)
     const code = b.add(Widget(kind: WidgetKind.rich, spans: spans,
         wrap: TextWrap.greedy));
     auto tree = b.finish(withGutter(b, chans, 0, code));
+    {
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(tree, gutterSlots) == Slot.inherit, "TOK6: an undeclared slot");
+    }
     auto frames = layout(tree, Constraints(maxW: 12));
 
     const root = frames[tree.root].rect;
