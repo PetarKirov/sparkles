@@ -357,6 +357,60 @@ _Detection:_ the acceptance suite runs entirely against it on Windows and macOS.
 shipped production path. _Detection:_ it is not reachable from the library's
 public configuration.
 
+**`FSD5` — A reference is a handle, not a path, where the platform offers
+one.** The `FsoRef` a driver hands a scheme is opaque, and on Linux the
+event-horizon driver must materialize it as a **directory descriptor plus a
+name**, not an absolute path. Three properties follow, and none is available
+to a path-based reference:
+
+- **Resolution is `O(1)` per entry, not `O(depth)`.** An absolute path is
+  re-walked by the kernel on every `openat`/`statx`; a relative open against a
+  held descriptor is not. On a deep tree that difference is the walk.
+- **The reference cannot be invalidated by a rename above it.** A path
+  re-resolved after an ancestor moves names a different file, or nothing.
+  [`FSE3`](#10-errors-and-partial-results-fse) admits that entries vanish
+  mid-walk; a descriptor makes "this is the directory I enumerated" true
+  rather than hopeful.
+- **Escape becomes checkable.** See `FSD6`.
+
+_Detection:_ the Linux driver issues no absolute-path `openat` below the
+roots; a fixture that renames a directory mid-walk still resolves the entries
+already enumerated beneath it.
+
+**`FSD6` — `openat2` resolution flags are a declared driver capability, and
+their absence is reported, not silently ignored.** Where `openat2` is
+available (Linux 5.6+), the driver must use it with:
+
+| Flag                    | Enforces                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `RESOLVE_BENEATH`       | the walk cannot leave the root it was given, whatever symlinks or `..` it meets |
+| `RESOLVE_NO_MAGICLINKS` | `/proc/*/fd` entries cannot teleport the walk elsewhere                         |
+| `RESOLVE_NO_XDEV`       | the walk does not cross a mount boundary                                        |
+
+`RESOLVE_NO_SYMLINKS` is **not** set: [`FSO2`](#3-the-file-system-object-vocabulary-fso)
+already forbids following a symlink to decide membership, and the flag would
+also reject opening a symlink to _read its target_, which the node model
+requires.
+
+A driver on a platform or kernel without `openat2` must report the capability
+as absent through the same typed channel
+[`FSM2`](#7-the-resolution-machine-fsm) uses for an unsupported request, so a
+consumer that requires the guarantee can refuse rather than assume it.
+_Detection:_ a fixture whose root contains a symlink to `/etc` resolves no
+entry outside the root; on a kernel without `openat2` the same fixture reports
+the capability as unavailable.
+
+**`FSD7` — Crossing a mount boundary is a declared choice, defaulting to
+"do not".** A walk that follows a bind mount, a network filesystem or a
+container overlay silently changes what a fileset means, and can make it
+unbounded. The default is to stop at the boundary and record the directory as
+skipped per [`FSE2`](#10-errors-and-partial-results-fse), not to descend
+silently. A consumer may opt in. On Linux this is `RESOLVE_NO_XDEV`;
+elsewhere it is a `statx` device-number comparison against the root's, which
+is weaker (it races) and must be documented as such where it is the only
+mechanism. _Detection:_ a fixture with a bind mount beneath the root yields no
+entry from the mounted filesystem by default, and reports the boundary.
+
 **`FSD4` — Descriptor policy is the driver's.** Any `RLIMIT_NOFILE` strategy
 belongs to a driver, never to the machine or the seam. _Detection:_ the machine
 contains no descriptor accounting.
