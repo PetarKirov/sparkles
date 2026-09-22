@@ -214,18 +214,8 @@ unittest
 
 version (unittest)
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.uuid : randomUUID;
-
-    /// Creates a fresh empty tempdir under `tempDir`. Caller is responsible
-    /// for `rmdirRecurse`-ing the returned path (typically via `scope(exit)`).
-    @safe
-    private string makeTmpDir(string label)
-    {
-        auto path = tempDir.buildPath(label ~ "-" ~ randomUUID.toString);
-        mkdirRecurse(path);
-        return path;
-    }
+    import std.file : mkdirRecurse;
+    import sparkles.test_utils.tmpfs : TmpFS;
 }
 
 @("dub_deps.rewriteInTreeDeps.no-in-tree-packages")
@@ -233,8 +223,9 @@ version (unittest)
 unittest
 {
     // When inTreePackageNames returns nothing (no dub.sdl), code passes through unchanged.
-    const root = makeTmpDir("ci-rewrite-empty");
-    scope(exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const root = tmp.dir();
 
     const code = `dependency "sparkles" version="*"`;
     assert(rewriteInTreeDeps(code, root, root) == code);
@@ -249,21 +240,22 @@ unittest
     //   <root>/libs/core-cli/dub.sdl            (name "core-cli")
     //   <root>/libs/test-utils/dub.sdl          (name "test-utils")
     //   <root>/examples/                        (fromDir — example lives here)
-    const root = makeTmpDir("ci-rewrite-tree");
-    scope(exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create();
+    const root = tmp.dir();
 
-    mkdirRecurse(buildPath(root, "libs", "core-cli"));
-    mkdirRecurse(buildPath(root, "libs", "test-utils"));
-    mkdirRecurse(buildPath(root, "examples"));
-
-    write(buildPath(root, "dub.sdl"),
+    tmp.writeFileAt("dub.sdl",
         "name \"sparkles\"\n"
         ~ "subPackage \"libs/core-cli\"\n"
         ~ "subPackage \"libs/test-utils\"\n");
-    write(buildPath(root, "libs", "core-cli", "dub.sdl"), "name \"core-cli\"\n");
-    write(buildPath(root, "libs", "test-utils", "dub.sdl"), "name \"test-utils\"\n");
+    // `writeFileAt` creates the parents, so the sub-package directories come
+    // into being with the recipes that make them sub-packages.
+    tmp.writeFileAt("libs/core-cli/dub.sdl", "name \"core-cli\"\n");
+    tmp.writeFileAt("libs/test-utils/dub.sdl", "name \"test-utils\"\n");
 
+    // `examples/` holds no file — it exists only to be `fromDir`, the
+    // directory the rewritten `path=` is made relative to.
     const fromDir = buildPath(root, "examples");
+    mkdirRecurse(fromDir);
     // relativePath("<root>", "<root>/examples") == ".."
     const code =
         "name \"demo\"\n"
@@ -288,10 +280,9 @@ unittest
 @safe
 unittest
 {
-    const root = makeTmpDir("ci-rewrite-crlf");
-    scope(exit) rmdirRecurse(root);
-
-    write(buildPath(root, "dub.sdl"), "name \"sparkles\"\n");
+    auto tmp = TmpFS.create();
+    const root = tmp.dir();
+    tmp.writeFileAt("dub.sdl", "name \"sparkles\"\n");
 
     const code = "dependency \"sparkles\" version=\"*\"\r\nimport sparkles;\r\n";
     const expected = "dependency \"sparkles\" path=\".\"\r\nimport sparkles;\r\n";
@@ -302,15 +293,15 @@ unittest
 @safe
 unittest
 {
-    const root = makeTmpDir("ci-read-pkg-name");
-    scope(exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const root = tmp.dir();
 
     // Missing file returns null
     assert(readPackageName(buildPath(root, "missing.sdl")) is null);
 
     // First matching `name "..."` line wins, even when surrounded by other fields
-    const sdlPath = buildPath(root, "dub.sdl");
-    write(sdlPath,
+    const sdlPath = tmp.writeFileAt("dub.sdl",
         "// header comment\n"
         ~ "description \"a package\"\n"
         ~ "name \"sparkles\"\n"
@@ -318,8 +309,7 @@ unittest
     assert(readPackageName(sdlPath) == "sparkles");
 
     // dub.sdl with no `name` field returns null
-    const noNamePath = buildPath(root, "no-name.sdl");
-    write(noNamePath, "description \"missing name\"\n");
+    const noNamePath = tmp.writeFileAt("no-name.sdl", "description \"missing name\"\n");
     assert(readPackageName(noNamePath) is null);
 }
 
@@ -329,27 +319,26 @@ unittest
 {
     import std.conv : to;
 
-    const root = makeTmpDir("ci-in-tree-names");
-    scope(exit) rmdirRecurse(root);
+    // Two fixtures in one test, so neither may take the default `__FUNCTION__`
+    // prefix — they would name the same directory.
+    auto tmp = TmpFS.create("ci-in-tree-names");
+    const root = tmp.dir();
 
-    mkdirRecurse(buildPath(root, "libs", "core-cli"));
-    mkdirRecurse(buildPath(root, "libs", "test-utils"));
-    mkdirRecurse(buildPath(root, "libs", "broken")); // listed but has no dub.sdl
-
-    write(buildPath(root, "dub.sdl"),
+    tmp.writeFileAt("dub.sdl",
         "name \"sparkles\"\n"
         ~ "subPackage \"libs/core-cli\"\n"
         ~ "subPackage \"libs/test-utils\"\n"
         ~ "subPackage \"libs/broken\"\n");
-    write(buildPath(root, "libs", "core-cli", "dub.sdl"), "name \"core-cli\"\n");
-    write(buildPath(root, "libs", "test-utils", "dub.sdl"), "name \"test-utils\"\n");
+    tmp.writeFileAt("libs/core-cli/dub.sdl", "name \"core-cli\"\n");
+    tmp.writeFileAt("libs/test-utils/dub.sdl", "name \"test-utils\"\n");
+    tmp.ensureSubdir("libs/broken"); // listed but has no dub.sdl
 
     auto names = inTreePackageNames(root);
     assert(names == ["sparkles", "sparkles:core-cli", "sparkles:test-utils"],
         "unexpected names: " ~ names.to!string);
 
     // No root dub.sdl → empty
-    const empty = makeTmpDir("ci-in-tree-empty");
-    scope(exit) rmdirRecurse(empty);
-    assert(inTreePackageNames(empty).length == 0);
+    auto emptyTmp = TmpFS.create("ci-in-tree-empty");
+    emptyTmp.ensureDir();
+    assert(inTreePackageNames(emptyTmp.dir()).length == 0);
 }

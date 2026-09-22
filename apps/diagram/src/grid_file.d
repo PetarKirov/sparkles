@@ -99,16 +99,16 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
 @("diagram.grid_file.unreadableFileIsAnErrorNotAThrow")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     // A directory is the portable stand-in for "exists, cannot be read as
     // text": `readText` throws, and the caller in `app.d` prints `error` — so
     // a throw here reaches the user as a stack trace instead of a sentence.
-    const dir = buildPath(tempDir, "diagram-grid-file-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    // The scratch directory itself is that stand-in.
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const dir = tmp.dir();
 
     GridConfig cfg;
     auto pal = defaultTwoslashPalette(ColorScheme.dark);
@@ -134,17 +134,22 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
 @("diagram.grid_file.saveRoundTripsThroughTheSameSchema")
 @system unittest
 {
-    import std.file : rmdirRecurse, tempDir;
     import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import sparkles.ui.components.grid_backdrop : GridPreset, gridPreset,
         MarkKind;
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     // What the pane saves is what `--config-file` loads (`SET5`/`GRD8`): one
     // schema, asserted by driving both halves rather than by comment.
-    const dir = buildPath(tempDir, "diagram-grid-save-test");
-    scope (exit) rmdirRecurse(dir);
-    const path = buildPath(dir, "nested", "grid.json");
+    //
+    // `nested/` must *not* exist: creating the parent is part of the contract
+    // under test. So the fixture only claims the scratch root — `ensureDir`
+    // makes it the owner, and the destructor takes the whole tree, the
+    // directory `saveGridConfigFile` created included.
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const path = buildPath(tmp.dir(), "nested", "grid.json");
 
     auto saved = gridPreset(GridPreset.dotPaper);
     saved.minorLattice.interval = 5;
@@ -162,16 +167,14 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
 @("diagram.grid_file.saveFailureIsAReasonNotAThrow")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // A directory where the file should be: `write` throws, and the pane's
     // footer needs a sentence.
-    const dir = buildPath(tempDir, "diagram-grid-save-fail");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
 
     string err;
-    assert(!saveGridConfigFile(dir, GridConfig.init, err));
+    assert(!saveGridConfigFile(tmp.dir(), GridConfig.init, err));
     assert(err.length > 0);
 }

@@ -892,18 +892,21 @@ version (unittest)
 {
     import sparkles.input.events : Mods;
 
-    private string pickerFixture(string stem) @system
-    {
-        import std.file : mkdirRecurse, tempDir, write;
-        import std.path : buildPath;
-        import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-        const root = buildPath(tempDir(), stem ~ "-" ~ randomUUID.toString);
-        mkdirRecurse(buildPath(root, "src"));
-        write(buildPath(root, "src", "app.d"), "void main() {}\n");
-        write(buildPath(root, "src", "lib.d"), "int x;\n");
-        write(buildPath(root, "readme.md"), "hi\n");
-        return root;
+    /// A three-file corpus under a fresh root. The fixture owns the tree, so
+    /// the caller has to keep it alive for the length of the test.
+    ///
+    /// `stem` only names the tree — `TmpFS` appends a pid and an ordinal, so
+    /// it is what makes the directory unique. Without a stem the default
+    /// `__FUNCTION__` prefix would label all seven callers after this helper.
+    private TmpFS pickerFixture(string stem) @system
+    {
+        auto fixture = TmpFS.create(stem);
+        fixture.writeFileAt("src/app.d", "void main() {}\n");
+        fixture.writeFileAt("src/lib.d", "int x;\n");
+        fixture.writeFileAt("readme.md", "hi\n");
+        return fixture;
     }
 
     private void drain(ref PickerHost host) @system
@@ -924,11 +927,10 @@ version (unittest)
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import std.path : buildPath;
 
-    const root = pickerFixture("hue-picker-host");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = pickerFixture("hue-picker-host");
+    const root = fixture.dir;
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -962,10 +964,8 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
-
-    const root = pickerFixture("hue-picker-host-keys");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = pickerFixture("hue-picker-host-keys");
+    const root = fixture.dir;
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -997,10 +997,8 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
-
-    const root = pickerFixture("hue-picker-host-focus");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = pickerFixture("hue-picker-host-focus");
+    const root = fixture.dir;
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -1061,11 +1059,10 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import sparkles.ui.state : hoverTargets;
 
-    const root = pickerFixture("hue-picker-host-overlay");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = pickerFixture("hue-picker-host-overlay");
+    const root = fixture.dir;
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -1139,11 +1136,10 @@ unittest
     // narrowed the list correctly and then opened at the top of the file,
     // which looks like the feature working right up until you look at where
     // the cursor is.
-    import std.file : rmdirRecurse;
     import std.path : buildPath;
 
-    const root = pickerFixture("hue-picker-loc");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = pickerFixture("hue-picker-loc");
+    const root = fixture.dir;
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -1184,15 +1180,13 @@ unittest
     // goes through the host's real entry points — `openGrep`, typed keys,
     // `poll`, Enter — because the seam worth testing is the one the
     // workspace actually calls.
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
-    const root = buildPath(tempDir(), "hue-grep-host-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "src"));
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "src", "widget.d"), "struct Widget\n{\n}\n");
-    write(buildPath(root, "src", "use.d"), "    Widget w;\n");
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
+    fixture.writeFileAt("src/widget.d", "struct Widget\n{\n}\n");
+    fixture.writeFileAt("src/use.d", "    Widget w;\n");
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -1246,14 +1240,10 @@ unittest
     // it, so every test passed — and it was inert to the pointer, because
     // nothing routed events to a decoration. Keys are not a substitute for
     // a bar; a reader who reaches for the mouse finds nothing there.
-    import std.file : mkdirRecurse, rmdirRecurse, write;
-    import std.path : buildPath;
-
-    const root = pickerFixture("hue-picker-bar");
-    scope (exit) rmdirRecurse(root);
-    const deep = buildPath(root, "docs", "research", "window-system", "os-apis");
-    mkdirRecurse(deep);
-    write(buildPath(deep, "distinctive.d"), "void f() { needleHere(); }\n");
+    auto fixture = pickerFixture("hue-picker-bar");
+    const root = fixture.dir;
+    fixture.writeFileAt("docs/research/window-system/os-apis/distinctive.d",
+        "void f() { needleHere(); }\n");
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
@@ -1325,14 +1315,12 @@ unittest
     // would open something they cannot see.
     import sparkles.ui.state : hoverTargets;
     import std.conv : to;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
     import picker_view : pickerVBarHitId;
 
-    const root = pickerFixture("hue-picker-vbar");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = pickerFixture("hue-picker-vbar");
+    const root = fixture.dir;
     foreach (i; 0 .. 40)
-        write(buildPath(root, "zeta" ~ i.to!string ~ ".d"), "int x;\n");
+        fixture.writeFileAt("zeta" ~ i.to!string ~ ".d", "int x;\n");
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();

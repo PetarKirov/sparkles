@@ -1040,17 +1040,16 @@ struct ExplorerTui
 unittest
 {
     import std.conv : text;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import std.algorithm.searching : canFind;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // tmp/{notes.md, src/{app.d}} — a dir with a nested renderable file.
-    const root = buildPath(tempDir(), "hue-explorer-test");
-    mkdirRecurse(buildPath(root, "src"));
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "notes.md"), "# hi\n");
-    write(buildPath(root, "src", "app.d"), "void main() {}\n");
+    auto tmp = TmpFS.create("hue-explorer-test");
+    const root = tmp.dir;
+    tmp.writeFileAt("notes.md", "# hi\n");
+    tmp.writeFileAt("src/app.d", "void main() {}\n");
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1117,25 +1116,25 @@ unittest
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // A closed directory's children are never displayed, so the tree only
     // probes for the first one — its marker's honesty is the whole question.
     // full/  : many children, marker shown, ALL of them appear when opened
     // empty/ : no children, no marker
     // dotonly/: only entries the pane hides, so also no marker
-    const root = buildPath(tempDir(), "hue-explorer-probe");
-    mkdirRecurse(buildPath(root, "full"));
-    mkdirRecurse(buildPath(root, "empty"));
-    mkdirRecurse(buildPath(root, "dotonly"));
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-explorer-probe");
+    const root = tmp.dir;
     foreach (i; 0 .. 12)
-        write(buildPath(root, "full", text("f", i, ".d")), "void main(){}\n");
+        tmp.writeFileAt(buildPath("full", text("f", i, ".d")),
+            "void main(){}\n");
     // Hidden, so `visible` rejects it — the probe must apply the same filter
     // the full listing does, not merely skip `.git`.
-    write(buildPath(root, "dotonly", ".hidden"), "x\n");
+    tmp.writeFileAt(buildPath("dotonly", ".hidden"), "x\n");
+    // `empty/` holds no file, so no write can bring it into being.
+    tmp.ensureSubdir("empty");
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1179,16 +1178,14 @@ unittest
 unittest
 {
     import std.conv : text;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // Enough files to overflow the pane, so the scrollbar exists.
-    const root = buildPath(tempDir(), "hue-explorer-sb-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-explorer-sb-test");
+    const root = tmp.dir;
     foreach (i; 0 .. 12)
-        write(buildPath(root, text("f", i, ".d")), "int x;\n");
+        tmp.writeFileAt(text("f", i, ".d"), "int x;\n");
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1244,16 +1241,14 @@ unittest
 unittest
 {
     import std.conv : text;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import sparkles.input : linesPerNotch, WheelEvent;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir(), "hue-explorer-wheel-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-explorer-wheel-test");
+    const root = tmp.dir;
     foreach (i; 0 .. 12)
-        write(buildPath(root, text("f", i, ".d")), "int x;\n");
+        tmp.writeFileAt(text("f", i, ".d"), "int x;\n");
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1283,14 +1278,12 @@ unittest
 unittest
 {
     import std.conv : text;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir(), "hue-explorer-hbar-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "a-very-long-file-name-that-overflows-the-pane.d"),
+    auto tmp = TmpFS.create("hue-explorer-hbar-test");
+    const root = tmp.dir;
+    tmp.writeFileAt("a-very-long-file-name-that-overflows-the-pane.d",
         "int x;\n");
 
     static immutable Theme dark = builtinDark;
@@ -1321,17 +1314,16 @@ unittest
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // XPL3: with the cursor on ANOTHER row, the open document still shows an
     // unmistakable indicator — the theme-tinted row band + the accent label.
-    const root = buildPath(tempDir(), "hue-accent-probe");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "aaa.d"), "int a;\n");
-    write(buildPath(root, "bbb.d"), "int b;\n");
+    auto tmp = TmpFS.create("hue-accent-probe");
+    const root = tmp.dir;
+    tmp.writeFileAt("aaa.d", "int a;\n");
+    tmp.writeFileAt("bbb.d", "int b;\n");
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1369,19 +1361,20 @@ unittest
     import core.thread : Thread;
     import core.time : msecs;
     import sparkles.build_primitives.git_env : runGit;
-    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import git_status : GitStatus;
 
     // A real repo: one committed-then-modified file, one untracked, one
-    // ignored dir with contents.
-    const root = buildPath(tempDir(), "hue-explorer-git-test");
-    if (root.exists)
-        rmdirRecurse(root);
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    // ignored dir with contents. The repo itself stays hand-rolled —
+    // `TmpGitRepo` lives in build-primitives' `testing.d`, which that
+    // package's library configuration excludes, so hue cannot import it.
+    auto tmp = TmpFS.create("hue-explorer-git-test");
+    const root = tmp.dir;
+    tmp.ensureDir(); // `git init` must not be the one that creates it
     try
     {
         if (runGit(["init", "-q", root]).status != 0)
@@ -1389,15 +1382,14 @@ unittest
     }
     catch (Exception)
         skipTest("git not available");
-    write(buildPath(root, "tracked.d"), "int a;\n");
-    write(buildPath(root, ".gitignore"), "junk/\n");
+    const tracked = tmp.writeFileAt("tracked.d", "int a;\n");
+    tmp.writeFileAt(".gitignore", "junk/\n");
     runGit(["-C", root, "add", "-A"]);
     runGit(["-C", root, "-c", "user.email=t@t", "-c", "user.name=t",
         "commit", "-qm", "init"]);
-    write(buildPath(root, "tracked.d"), "int a; int b;\n"); // modified
-    write(buildPath(root, "fresh.d"), "int c;\n");          // untracked
-    mkdirRecurse(buildPath(root, "junk"));
-    write(buildPath(root, "junk", "x.o"), "");              // ignored dir
+    write(tracked, "int a; int b;\n");              // modified
+    tmp.writeFileAt("fresh.d", "int c;\n");         // untracked
+    tmp.writeFileAt("junk/x.o", "");                // ignored dir
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1461,22 +1453,18 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind, startsWith;
-    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import git_status : GitStatus, GitStatusMap;
 
     // No git needed: the ignored toggle is driven by a hand-built snapshot.
-    const root = buildPath(tempDir(), "hue-explorer-toggles-test");
-    if (root.exists)
-        rmdirRecurse(root);
-    mkdirRecurse(buildPath(root, "src"));
-    mkdirRecurse(buildPath(root, "build"));
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, ".hidden.conf"), "");
-    write(buildPath(root, "keep.d"), "int k;\n");
-    write(buildPath(root, "src", "app.d"), "void main() {}\n");
-    write(buildPath(root, "build", "out.o"), "");
+    auto tmp = TmpFS.create("hue-explorer-toggles-test");
+    const root = tmp.dir;
+    tmp.writeFileAt(".hidden.conf", "");
+    tmp.writeFileAt("keep.d", "int k;\n");
+    tmp.writeFileAt("src/app.d", "void main() {}\n");
+    tmp.writeFileAt("build/out.o", "");
 
     static immutable Theme dark = builtinDark;
     ExplorerTui x;
@@ -1530,11 +1518,9 @@ unittest
     assert(!listed("app.d") && listed("src"));
 
     // reveal() outside the root re-roots outward (XPF3 × XPL4).
-    const outside = buildPath(tempDir(),
-        "hue-explorer-toggles-test-outside");
-    mkdirRecurse(outside);
-    scope (exit) rmdirRecurse(outside);
-    write(buildPath(outside, "elsewhere.d"), "int e;\n");
+    auto away = TmpFS.create("hue-explorer-toggles-test-outside");
+    const outside = away.dir;
+    away.writeFileAt("elsewhere.d", "int e;\n");
     x.reveal(buildPath(outside, "elsewhere.d"));
     assert(x.root == outside);
     assert(listed("elsewhere.d"));

@@ -2394,11 +2394,17 @@ private bool onWaitExpired(ref WorkspaceTui w, Duration waited) @system
 
 version (unittest)
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     /// A workspace over two files in a temp directory, wired the way the
-    /// entry point wires one. Returns the root so the caller can clean up.
-    private string fixtureWorkspace(ref WorkspaceTui w, string stem) @system
+    /// entry point wires one. Returns the scratch fixture: its destructor
+    /// removes the tree, so the caller keeps it alive for the whole test.
+    ///
+    /// `stem` only names the directory for a human reading `/tmp`; `TmpFS`
+    /// makes it unique. Passing the caller's own is still worth it, since
+    /// this helper's `__FUNCTION__` would name every fixture alike.
+    private TmpFS fixtureWorkspace(ref WorkspaceTui w, string stem) @system
     {
-        import std.file : mkdirRecurse, tempDir, write;
         import std.path : baseName, buildPath;
         import sparkles.syntax : LabelSet;
 
@@ -2406,10 +2412,10 @@ version (unittest)
         static immutable string[1] names = ["dark"];
         const labels = LabelSet.standard();
 
-        const root = buildPath(tempDir(), stem);
-        mkdirRecurse(root);
-        write(buildPath(root, "alpha.d"), "int alpha;\n");
-        write(buildPath(root, "beta.d"), "int beta;\n");
+        auto tmp = TmpFS.create(stem);
+        tmp.writeFileAt("alpha.d", "int alpha;\n");
+        tmp.writeFileAt("beta.d", "int beta;\n");
+        const root = tmp.dir;
 
         w.loadDoc = delegate WorkspaceDoc(string path) @system {
             import std.file : readText;
@@ -2435,7 +2441,7 @@ version (unittest)
         w.tree.rebuild();
         w.arrange(80, 24);
         w.openDoc(buildPath(root, "alpha.d"));
-        return root;
+        return tmp;
     }
 }
 
@@ -2450,7 +2456,6 @@ version (unittest)
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import sparkles.input : charEvent;
     import sparkles.ui_app.host : RunConfig;
     import sparkles.ui_app.run_app : isAppFor, runAppRecorded;
@@ -2461,8 +2466,7 @@ unittest
         ~ " written against — that is what lets a scripted run drive it");
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-workspace-component-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-component-test");
 
     const treeWas = w.treeVisible;
 
@@ -2495,9 +2499,6 @@ unittest
 @system
 unittest
 {
-    import std.conv : text;
-    import std.file : rmdirRecurse;
-    import std.process : thisProcessID;
     import std.path : buildPath;
     import sparkles.input : charEvent;
     import sparkles.ui_app.host : RunConfig;
@@ -2507,9 +2508,8 @@ unittest
     import settings_overlay : Sparse;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, text("hue-workspace-settings-",
-        thisProcessID));
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-settings");
+    const root = tmp.dir;
 
     // The shared store, with its user file inside the fixture dir.
     auto store = new ConfigStore;
@@ -2544,7 +2544,6 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import dsv_view : adaptDsv, DsvFlags;
     import gui_preview : PreviewModel;
     import sparkles.input : charEvent, keyEvent;
@@ -2554,8 +2553,7 @@ unittest
     import sparkles.ui_app.record : RecordingHost;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-workspace-dsv-palette");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-dsv-palette");
 
     // Hand the viewer a DSV document (the fixture's loader is plain-text).
     // A table-only preview never touches the fence cache, so a default one
@@ -2601,11 +2599,8 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
-
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-leader-e");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-leader-e");
 
     // `<leader>e` lives in the focused pane's own lantern; the workspace must
     // not steal the sequence's tail. (The old hand-rolled 'e' interception
@@ -2627,7 +2622,6 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import sparkles.ui_app.host : RunConfig;
     import sparkles.ui_app.run_app : runAppRecorded;
     import sparkles.ui_app.record : RecordingHost;
@@ -2638,8 +2632,7 @@ unittest
     // per event, so an empty script IS the idle case — one first frame that
     // draws, and a `requestFrame`-free run that stops there.
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-workspace-idle-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-idle-test");
 
     RunConfig cfg;
     auto rec = runAppRecorded(w, cfg, null,
@@ -2663,7 +2656,6 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import sparkles.input : PointerAction, PointerEvent;
     import sparkles.ui_app.host : RunConfig;
     import sparkles.ui_app.run_app : runAppRecorded;
@@ -2675,8 +2667,7 @@ unittest
     // window, which spells the same intent through the window system, gets
     // it for free.
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-workspace-errand-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-errand-test");
     if (!w.treeVisible)
         return; // no divider to hover; the arrangement decides that
 
@@ -2706,7 +2697,6 @@ unittest
 @system
 unittest
 {
-    import std.file : rmdirRecurse;
     import sparkles.input : charEvent;
     import sparkles.ui_app.host : RunConfig;
     import sparkles.ui_app.run_app : runAppRecorded;
@@ -2716,8 +2706,7 @@ unittest
     // through the host, which is what lets the same decision end a run on
     // either target.
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-workspace-quit-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-quit-test");
 
     const treeWas = w.treeVisible;
 
@@ -2744,16 +2733,14 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
 
     // tmp/{alpha.d, beta.d} and a stub loader (no grammar registry needed).
-    const root = buildPath(tempDir(), "hue-workspace-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "alpha.d"), "int alpha;\n");
-    write(buildPath(root, "beta.d"), "int beta;\n");
+    auto tmp = TmpFS.create("hue-workspace-test");
+    const root = tmp.dir;
+    tmp.writeFileAt("alpha.d", "int alpha;\n");
+    tmp.writeFileAt("beta.d", "int beta;\n");
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -2836,14 +2823,11 @@ unittest
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import sparkles.syntax : LabelSet;
 
-    const root = buildPath(tempDir(), "hue-workspace-split-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "a.d"), "int a;\n");
+    auto tmp = TmpFS.create("hue-workspace-split-test");
+    const root = tmp.dir;
+    tmp.writeFileAt("a.d", "int a;\n");
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -2891,12 +2875,11 @@ unittest
 {
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
-    import std.file : rmdirRecurse;
     import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-picker-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-picker-test");
+    const root = tmp.dir;
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
 
     // Long enough that the preview pane can actually scroll (the forwarded-
@@ -2907,8 +2890,8 @@ unittest
         string src;
         foreach (i; 0 .. 40)
             src ~= "int line;\n";
-        write(buildPath(root, "alpha.d"), src);
-        write(buildPath(root, "beta.d"), src);
+        tmp.writeFileAt("alpha.d", src);
+        tmp.writeFileAt("beta.d", src);
     }
 
     static void settle(ref WorkspaceTui w) @system
@@ -3045,21 +3028,19 @@ unittest
 unittest
 {
     import std.conv : text;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
 
     // Enough files that the tree overflows its pane (its scrollbar is live)
     // and a long document in the viewer.
-    const root = buildPath(tempDir(), "hue-workspace-capture-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-workspace-capture-test");
+    const root = tmp.dir;
     foreach (i; 0 .. 20)
-        write(buildPath(root, text("f", i, ".d")), "int x;\n");
+        tmp.writeFileAt(text("f", i, ".d"), "int x;\n");
     string src;
     foreach (i; 0 .. 40)
         src ~= "int line;\n";
-    write(buildPath(root, "long.d"), src);
+    tmp.writeFileAt("long.d", src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -3119,17 +3100,15 @@ unittest
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
 
-    const root = buildPath(tempDir(), "hue-workspace-chrome-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-workspace-chrome-test");
+    const root = tmp.dir;
     string src;
     foreach (i; 0 .. 40)
         src ~= "int line;\n";
-    write(buildPath(root, "long.d"), src);
+    tmp.writeFileAt("long.d", src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -3216,12 +3195,10 @@ unittest
 @("workspace.selection.edgeAutoscrollExtendsWithoutPointerMotion")
 @system unittest
 {
-    import std.file : rmdirRecurse;
     import gui_preview : PreviewModel;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-workspace-autoscroll-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-workspace-autoscroll-test");
 
     string src;
     foreach (i; 0 .. 80)
@@ -3254,18 +3231,16 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
 
-    const root = buildPath(tempDir(), "hue-workspace-wheel-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-workspace-wheel-test");
+    const root = tmp.dir;
     string src;
     foreach (i; 0 .. 30)
         src ~= "int line" ~ cast(char)('0' + i / 10) ~ cast(char)('0' + i % 10)
             ~ ";\n";
-    write(buildPath(root, "long.d"), src);
+    tmp.writeFileAt("long.d", src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -3326,8 +3301,6 @@ unittest
     import core.thread : Thread;
     import core.time : msecs;
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
 
     import sparkles.core_cli.process_utils : isInPath;
     import sparkles.syntax : LabelSet;
@@ -3342,12 +3315,10 @@ unittest
     // contract), so this exercises the loop's tick — payload attaches, the
     // opened popup requests its node, the answer paints — with no DMD, no
     // pty, and no timing on a real analysis.
-    const root = buildPath(tempDir(), "hue-live-types-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-live-types-test");
+    const root = tmp.dir;
     const src = "int alpha;\n";
-    const path = buildPath(root, "alpha.d");
-    write(path, src);
+    const path = tmp.writeFileAt("alpha.d", src);
 
     enum payload = `{"code":"int alpha;\n","offsetEncoding":"utf-8",` ~
         `"language":"d","nodes":[{"type":"hover","start":4,"length":5,` ~
@@ -3455,8 +3426,6 @@ unittest
 {
     import core.thread : Thread;
     import core.time : msecs;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
 
     import document : DocumentPipeline;
     import live_types : liveTypesBinary;
@@ -3475,13 +3444,12 @@ unittest
     if (!environment.get("SPARKLES_DMD_IMPORT_PATH", "").length)
         skipTest("SPARKLES_DMD_IMPORT_PATH not set (enter `nix develop`)");
 
-    const dir = buildPath(tempDir(), "hue-diff-types-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
-    const oldPath = buildPath(dir, "old.d");
-    const newPath = buildPath(dir, "new.d");
-    write(oldPath, "module s;\n\nint compute(int a)\n{\n    return a;\n}\n");
-    write(newPath, "module s;\n\nlong compute(int a)\n{\n    return a;\n}\n");
+    auto tmp = TmpFS.create("hue-diff-types-test");
+    const dir = tmp.dir;
+    const oldPath = tmp.writeFileAt("old.d",
+        "module s;\n\nint compute(int a)\n{\n    return a;\n}\n");
+    const newPath = tmp.writeFileAt("new.d",
+        "module s;\n\nlong compute(int a)\n{\n    return a;\n}\n");
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -3694,8 +3662,7 @@ unittest
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import std.file : write;
     import std.process : environment;
     import sparkles.syntax : HighlightEvent, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
@@ -3711,11 +3678,9 @@ unittest
     cache = new TsConfigCache;
     *cache = TsConfigCache.create(&registry, LabelSet.standard());
 
-    const root = buildPath(tempDir(), "hue-ws-reload-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    const doc = buildPath(root, "d.json");
-    write(doc, "{\"a\": [1,\n2,\n3,\n4,\n5,\n6,\n7,\n8]}\n");
+    auto tmp = TmpFS.create("hue-ws-reload-test");
+    const doc = tmp.writeFileAt("d.json",
+        "{\"a\": [1,\n2,\n3,\n4,\n5,\n6,\n7,\n8]}\n");
 
     static immutable string[1] names = ["dark"];
     static immutable Theme[1] themes = [builtinDark];
@@ -3767,7 +3732,6 @@ unittest
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.path : buildPath;
     import sparkles.syntax : LabelSet;
 
@@ -3775,13 +3739,12 @@ unittest
     // `arrange` re-lays the panes out AND round-trips every offset through
     // the dock's own clamp, which is the second place a resize could move
     // the reader.
-    const root = buildPath(tempDir(), "hue-workspace-resize-test");
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto tmp = TmpFS.create("hue-workspace-resize-test");
+    const root = tmp.dir;
     string src;
     foreach (i; 0 .. 40)
         src ~= "line of source number that is long enough to wrap somewhere\n";
-    write(buildPath(root, "long.d"), src);
+    tmp.writeFileAt("long.d", src);
 
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
@@ -3912,17 +3875,13 @@ unittest
     // `ViewerModel.search`, its documented entry point, since `gui.d` links
     // raylib and is excluded from `dub test :hue`.
     import sparkles.source_view.search : SearchPolicy;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
     import viewer_model : ViewerModel;
 
     static immutable src = "Foo\nfoo\nFOO bar\n";
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-search-parity");
-    scope (exit) rmdirRecurse(root);
-    const path = buildPath(root, "case.txt");
-    write(path, src);
+    auto tmp = fixtureWorkspace(w, "hue-ws-search-parity");
+    const path = tmp.writeFileAt("case.txt", src);
     w.openDoc(path);
     w.viewer.vm.searchPolicy = SearchPolicy.init;
 
@@ -3996,12 +3955,11 @@ unittest
     // The defaults happen to equal `SearchPolicy.init`, so an unwired
     // consumer looks correct right up until someone turns the knob — which
     // is why this test turns it.
-    import std.file : rmdirRecurse;
     import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-case-rule");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-case-rule");
+    const root = tmp.dir;
 
     auto store = new ConfigStore;
     store.resolved = HueConfig.init;
@@ -4029,15 +3987,14 @@ unittest
     // smart case OFF — it folds and finds both. A test querying lowercase, or
     // leaving the setting at its default, would pass either way.
     import core.thread : Thread;
-    import std.file : rmdirRecurse, write;
     import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-grep-case");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-grep-case");
+    const root = tmp.dir;
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
-    write(buildPath(root, "alpha.d"), "struct Widget\n");
-    write(buildPath(root, "beta.d"), "auto widget = 1;\n");
+    tmp.writeFileAt("alpha.d", "struct Widget\n");
+    tmp.writeFileAt("beta.d", "auto widget = 1;\n");
 
     auto store = new ConfigStore;
     store.resolved = HueConfig.init;
@@ -4076,16 +4033,15 @@ unittest
     // would have read is one the setting refuses.
     import core.thread : Thread;
     import std.array : replicate;
-    import std.file : rmdirRecurse, write;
     import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-grep-cap");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-grep-cap");
+    const root = tmp.dir;
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
 
     // The needle sits past 64 KiB: inside the default cap, outside a small one.
-    write(buildPath(root, "big.d"),
+    tmp.writeFileAt("big.d",
         "// filler\n".replicate(8 * 1024) ~ "struct Widget\n");
 
     auto store = new ConfigStore;
@@ -4131,15 +4087,12 @@ unittest
     // and it is invisible to any assertion on `rowCount` alone.
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-grep-rung");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-grep-rung");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
-    write(buildPath(root, "alpha.d"), "struct Widget\n");
-    write(buildPath(root, "beta.d"), "int unrelated;\n");
+    tmp.writeFileAt("alpha.d", "struct Widget\n");
+    tmp.writeFileAt("beta.d", "int unrelated;\n");
 
     foreach (ch; " /")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
@@ -4183,19 +4136,16 @@ unittest
     // grid — the widget tree can be right while nothing reaches the screen.
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
 
     import sparkles.input.events : Mods;
 
     import picker_grep : GrepMode, PickerSource;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-grep-test");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-grep-test");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
-    write(buildPath(root, "alpha.d"), "struct Widget\n{\n    int n;\n}\n");
-    write(buildPath(root, "beta.d"), "void f() { Widget w; }\n");
+    tmp.writeFileAt("alpha.d", "struct Widget\n{\n    int n;\n}\n");
+    tmp.writeFileAt("beta.d", "void f() { Widget w; }\n");
 
     static void settle(ref WorkspaceTui w) @system
     {
@@ -4304,18 +4254,14 @@ unittest
     // the rest — which is exactly what the screenshot showed.
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-hscroll");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-hscroll");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
 
     // A path deep enough that the tail cannot share a panel with the match.
-    const deep = "docs/research/window-system-integration/os-apis/appkit";
-    mkdirRecurse(buildPath(root, deep));
-    write(buildPath(root, deep, "distinctive.d"),
+    tmp.writeFileAt(
+        "docs/research/window-system-integration/os-apis/appkit/distinctive.d",
         "void f() { needleHere(); }\n");
 
     static void settle(ref WorkspaceTui w) @system
@@ -4388,12 +4334,9 @@ unittest
     // as the thing that shows you the hit.
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-prevmatch");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-prevmatch");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
 
     // Long lines AND many of them, so both axes overflow.
@@ -4401,7 +4344,7 @@ unittest
     foreach (i; 0 .. 300)
         src ~= "int filler_aVeryLongLineOfSourceThatRunsPastAnyPreviewPane;\n";
     src ~= "void needleHere() {}\n";
-    write(buildPath(root, "big.d"), src);
+    tmp.writeFileAt("big.d", src);
 
     static void settle(ref WorkspaceTui w) @system
     {
@@ -4454,16 +4397,12 @@ unittest
     // so the expansion existed in the state and never on screen.
     import core.thread : Thread;
     import core.time : msecs;
-    import std.file : mkdirRecurse, rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-barease");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-barease");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
-    const deep = buildPath(root, "docs", "research", "window-system", "os-apis");
-    mkdirRecurse(deep);
-    write(buildPath(deep, "distinctive.d"), "void f() { needleHere(); }\n");
+    tmp.writeFileAt("docs/research/window-system/os-apis/distinctive.d",
+        "void f() { needleHere(); }\n");
 
     foreach (ch; " /")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
@@ -4510,15 +4449,12 @@ unittest
     // (Preserving is right while the QUERY is unchanged — a partial page
     // growing under the cursor. It is wrong across an edit.)
     import core.thread : Thread;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-restart");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-restart");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
     foreach (n; ["alpha1", "alpha2", "alpha3", "alpha4"])
-        write(buildPath(root, n ~ ".d"), "int x;\n");
+        tmp.writeFileAt(n ~ ".d", "int x;\n");
 
     static void settle(ref WorkspaceTui w) @system
     {
@@ -4568,20 +4504,16 @@ unittest
     // one whether or not the picker kept its.
     import core.thread : Thread;
     import std.algorithm.searching : startsWith;
-    import std.file : mkdirRecurse, rmdirRecurse, write;
-    import std.path : buildPath;
     import sparkles.ui.geometry : Constraints;
     import sparkles.ui.layout : layout;
     import sparkles.ui.widget : WidgetKind;
     import explorer : fsIcon;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-iconpin");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-iconpin");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
-    const deep = buildPath(root, "docs", "research", "window-system", "os-apis");
-    mkdirRecurse(deep);
-    write(buildPath(deep, "distinctive.d"), "int x;\n");
+    tmp.writeFileAt("docs/research/window-system/os-apis/distinctive.d",
+        "int x;\n");
 
     foreach (ch; " ff")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
@@ -4630,17 +4562,13 @@ unittest
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
     import std.conv : to;
-    import std.file : mkdirRecurse, rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-fill");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-fill");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
-    const deep = buildPath(root, "docs", "research", "window-system-integration");
-    mkdirRecurse(deep);
     foreach (i; 0 .. 40)
-        write(buildPath(deep, "alphafile" ~ i.to!string ~ ".md"), "x\n");
+        tmp.writeFileAt("docs/research/window-system-integration/alphafile"
+            ~ i.to!string ~ ".md", "x\n");
 
     foreach (ch; " ff")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
@@ -4725,18 +4653,14 @@ unittest
     import core.thread : Thread;
     import std.algorithm.searching : canFind;
     import std.conv : to;
-    import std.file : rmdirRecurse, write;
-    import std.path : buildPath;
 
     WorkspaceTui w;
-    const root = fixtureWorkspace(w, "hue-ws-rowtint");
-    scope (exit) rmdirRecurse(root);
+    auto tmp = fixtureWorkspace(w, "hue-ws-rowtint");
     scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
     // Names longer than the column: a row that fits cannot show the defect.
     foreach (i; 0 .. 30)
-        write(buildPath(root,
-            "zeta-considerably-longer-than-the-column-is-wide" ~ i.to!string
-            ~ ".md"), "x\n");
+        tmp.writeFileAt("zeta-considerably-longer-than-the-column-is-wide"
+            ~ i.to!string ~ ".md", "x\n");
 
     foreach (ch; " ff")
         assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));

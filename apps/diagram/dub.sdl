@@ -35,6 +35,9 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     dependency "sparkles:test-runner" path="../.."
+    // Scratch-tree fixtures for `grid_file.d`'s save/load round trip. Test
+    // helpers, so unittest-only: they must never enter the shipped closure.
+    dependency "sparkles:test-utils" path="../.."
     subConfiguration "sparkles:ui-app" "full"
 
     dflags "-checkaction=context" "-allinst"
