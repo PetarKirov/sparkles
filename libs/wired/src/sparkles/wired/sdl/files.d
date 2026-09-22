@@ -399,7 +399,6 @@ version (unittest)
 
     auto tmp = TmpFS.create();
     tmp.ensureDir();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "out.sdl");
 
     BrokenDoc broken;
@@ -476,7 +475,6 @@ version (unittest)
         import core.sys.posix.sys.stat : chmod;
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     tmp.ensureDir();
     const lockedDir = buildPath(tmp.dir(), "locked");
     mkdirRecurse(lockedDir);
