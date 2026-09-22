@@ -510,6 +510,15 @@ unittest
     // used to be the fixed `hue-git-status-test`, which two concurrent runs
     // of this suite would have shared; `TmpFS` names it after this unittest
     // and owns the removal.
+    //
+    // That removal is single-shot and best effort, so it must not run while a
+    // refresh worker still holds `.git/index.lock`. This test is safe because
+    // it polls each refresh to completion before returning — *not* because of
+    // anything `TmpFS` does. If a later edit adds a `rebuild`/`ensureFresh`
+    // whose refresh is not harvested, or sleeps past the 5 s TTL that
+    // suppresses a second spawn, the destructor starts racing that worker and
+    // the fixture leaks with no error anywhere. Poll it, or give the fixture
+    // a retrying teardown the way `explorer.globs.snacksPrecedence` does.
     auto fixture = TmpFS.create();
     fixture.ensureDir();
     const root = fixture.dir;
