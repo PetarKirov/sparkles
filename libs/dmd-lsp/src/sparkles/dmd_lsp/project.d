@@ -1127,8 +1127,6 @@ version (unittest)
 
 version (unittest)
 {
-    import sparkles.test_utils.tmpfs : TmpFS;
-
     /// Concurrent `dub` child processes contend on dub's own lock files and
     /// fail transiently under the parallel test runner — every dub-invoking
     /// test serializes on this.
@@ -1148,9 +1146,15 @@ version (unittest)
 
     `ensureDir` up front so the fixture owns the tree: a `dub describe` run
     inside it leaves a `.dub` cache directory the file list alone would miss.
+
+    A template with the test-utils import in its body: a module-scope
+    `version (unittest)` import is evaluated by every `-unittest` consumer that
+    imports this module (twoslash-extract, hue), and consumers carry no
+    test-utils edge. A template body is analyzed only when instantiated.
     */
-    private TmpFS tempProject(string name) @system
+    private auto tempProject()(string name) @system
     {
+        import sparkles.test_utils.tmpfs : TmpFS;
         import std.conv : to;
         import std.process : thisProcessID;
 

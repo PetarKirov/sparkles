@@ -510,8 +510,6 @@ unittest
 
 version (unittest)
 {
-    import sparkles.test_utils.tmpfs : TmpFS;
-
     /// A throwaway source tree: `files` are `path → text` pairs written under
     /// a scratch directory named after `tag`. The returned fixture owns the
     /// tree and removes it when the caller lets it go out of scope.
@@ -519,8 +517,14 @@ version (unittest)
     /// `tag` is the scratch directory's name, so it must be distinct per call
     /// site: the runner executes tests in parallel, and `TmpFS`'s default
     /// `__FUNCTION__` prefix would name *this* helper for every one of them.
-    private TmpFS makeTree(string tag, scope const(string[2])[] files) @system
+    ///
+    /// A template with the test-utils import in its body: a module-scope
+    /// `version (unittest)` import is evaluated by every `-unittest` consumer
+    /// that imports this module, and consumers carry no test-utils edge.
+    private auto makeTree()(string tag, scope const(string[2])[] files) @system
     {
+        import sparkles.test_utils.tmpfs : TmpFS;
+
         auto tmp = TmpFS.create("sparkles-docs-" ~ tag);
         foreach (ref f; files)
             tmp.writeFileAt(f[0], f[1]);
