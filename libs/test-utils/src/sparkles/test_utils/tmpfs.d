@@ -144,6 +144,31 @@ struct TmpFS
         mkdirRecurse(dir);
     }
 
+    /// Rejects a relative path that would leave the fixture.
+    ///
+    /// Without this, `writeFileAt("../x")` writes *outside* the scratch tree —
+    /// and, because tracked files are removed individually, then deletes that
+    /// outside file when the fixture goes out of scope. A mistyped `..` would
+    /// overwrite and then remove a real file.
+    ///
+    /// This is a component check rather than `openat2(RESOLVE_BENEATH)` on
+    /// purpose: `openat2` is Linux 5.6+, and this helper runs on the Windows
+    /// and macOS legs too. The kernel guarantee is worth having where the
+    /// threat is an adversarial symlink race; here the threat is a typo in
+    /// trusted test code, which a portable check answers completely.
+    private static void enforceBeneath(string relativePath) @safe pure
+    {
+        import std.algorithm.iteration : splitter;
+        import std.algorithm.searching : canFind;
+        import std.path : isAbsolute;
+
+        assert(!relativePath.isAbsolute,
+            "relativePath must be relative: " ~ relativePath);
+        assert(!relativePath.splitter('/').canFind("..")
+            && !relativePath.splitter('\\').canFind(".."),
+            "relativePath must stay beneath the fixture: " ~ relativePath);
+    }
+
     /// Eight hex digits of randomness, drawn once per *thread* — `static`
     /// inside a function is thread-local in D, which also makes the lazy
     /// initialization race-free without a lock. Uniqueness is unaffected: two
@@ -172,9 +197,7 @@ struct TmpFS
     string ensureSubdir(string relativePath)
     in (relativePath.length > 0, "relativePath must not be empty")
     {
-        import std.path : isAbsolute;
-
-        assert(!relativePath.isAbsolute, "relativePath must be relative");
+        enforceBeneath(relativePath);
 
         ensureDir();
         const path = buildPath(dir, relativePath);
@@ -196,9 +219,9 @@ struct TmpFS
     string writeFileAt(string relativePath, string contents)
     in (relativePath.length > 0, "relativePath must not be empty")
     {
-        import std.path : dirName, isAbsolute;
+        import std.path : dirName;
 
-        assert(!relativePath.isAbsolute, "relativePath must be relative");
+        enforceBeneath(relativePath);
 
         ensureDir();
         const filepath = buildPath(dir, relativePath);
@@ -340,4 +363,26 @@ unittest
     }
 
     assert(!marker.exists, "the scratch tree removes it");
+}
+
+/// A relative path that climbs out of the fixture is refused, because the
+/// fixture would otherwise write — and later delete — a file outside the tree
+/// it owns.
+@("testUtils.tmpFS.refusesAPathThatLeavesTheFixture")
+@system unittest
+{
+    import core.exception : AssertError;
+    import std.exception : assertThrown;
+
+    auto tmp = TmpFS.create();
+
+    assertThrown!AssertError(tmp.writeFileAt("../escaped.txt", "x"));
+    assertThrown!AssertError(tmp.writeFileAt("a/../../escaped.txt", "x"));
+    assertThrown!AssertError(tmp.ensureSubdir("../escaped"));
+
+    // A `..` inside a *name* is not a climb, and stays allowed.
+    const ok = tmp.writeFileAt("a..b/c..d.txt", "x");
+    import std.file : exists;
+
+    assert(ok.exists);
 }
