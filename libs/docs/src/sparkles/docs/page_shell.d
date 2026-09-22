@@ -1005,15 +1005,17 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : exists, readText, rmdirRecurse, tempDir;
+    import std.file : exists, readText;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
     import sparkles.docs.source_set : SourceEntry, SourceSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const outDir = buildPath(tempDir(), "hue-gallery-mirror-" ~ randomUUID.toString);
-    scope (exit)
-        rmdirRecurse(outDir);
+    // `writeGallery` fills this tree itself, so the fixture only has to own
+    // it: `ensureDir` is what makes the destructor remove the whole thing.
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const outDir = tmp.dir();
 
     static SourceEntry entry(string rel, string name)
         => SourceEntry(path: "src/" ~ rel, name: name, summary: "d · 1 line",
@@ -1058,15 +1060,15 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : exists, readText, rmdirRecurse, tempDir;
+    import std.file : exists, readText;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
     import sparkles.docs.source_set : SourceEntry, SourceSet;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const outDir = buildPath(tempDir(), "hue-gallery-skip-" ~ randomUUID.toString);
-    scope (exit)
-        rmdirRecurse(outDir);
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const outDir = tmp.dir();
 
     const set = SourceSet(entries: [
         SourceEntry(path: "a/bad.d", name: "bad.d", relPath: "a/bad.d",
@@ -1230,13 +1232,14 @@ private auto IndexRowFor(string href, string label) @safe pure
 unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, readText, rmdirRecurse, tempDir, write;
+    import std.file : readText;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
-    const outDir = buildPath(tempDir(), "hue-explorer-" ~ randomUUID.toString);
-    scope (exit)
-        rmdirRecurse(outDir);
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const outDir = tmp.dir();
 
     const set = SourceSet(entries: [
         SourceEntry(name: "x.d", summary: "d · 1 line",

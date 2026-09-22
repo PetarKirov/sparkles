@@ -151,37 +151,20 @@ auto runGit(scope const(string)[] args, scope const(char)[] workDir = null) @saf
 @("git_env.runGit.ignoresAnInheritedGitDir")
 @safe unittest
 {
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
     import sparkles.test_runner.skip : skipTest;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
-    import std.path : buildPath;
     import std.process : Config, execute;
     import std.string : strip;
 
-    const root = buildPath(tempDir(), "sparkles-git-env-test");
+    if (!gitAvailable)
+        return skipTest("git is not on PATH");
 
-    static void discard(string dir) @safe nothrow
-    {
-        try
-            rmdirRecurse(dir);
-        catch (Exception) {}
-    }
-
-    discard(root);
-    mkdirRecurse(root);
-    scope (exit) discard(root);
-
-    const subject = buildPath(root, "subject");
-    const elsewhere = buildPath(root, "elsewhere");
-    mkdirRecurse(subject);
-    mkdirRecurse(elsewhere);
-    try
-    {
-        if (runGit(["init", "-q", subject]).status != 0
-            || runGit(["init", "-q", elsewhere]).status != 0)
-            skipTest("git init failed");
-    }
-    catch (Exception)
-        skipTest("git not available");
+    // Two fixtures in one test, so neither can take the default `__FUNCTION__`
+    // prefix — they would be the same directory.
+    auto subjectRepo = TmpGitRepo.create("sparkles-git-env-subject");
+    auto elsewhereRepo = TmpGitRepo.create("sparkles-git-env-elsewhere");
+    const subject = subjectRepo.dir();
+    const elsewhere = elsewhereRepo.dir();
 
     // Every path compared below is a path git printed. Asking git what it
     // calls these two repositories, rather than assembling the names here,

@@ -303,10 +303,8 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
 @("buildPrimitives.dirWalk.hookFiltering")
 @safe unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.sorting : sort;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
 
     struct FilteringHook
     {
@@ -329,15 +327,11 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
         }
     }
 
-    const root = buildPath(tempDir(), "walkDir-hookFiltering-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "src"));
-    mkdirRecurse(buildPath(root, "skip"));
-    write(buildPath(root, "src", "main.d"), "module main;");
-    write(buildPath(root, "src", "notes.tmp"), "temp");
-    write(buildPath(root, "skip", "secret.d"), "ignored");
-
-    scope (exit)
-        rmdirRecurse(root);
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt("src/main.d", "module main;");
+    tmp.writeFileAt("src/notes.tmp", "temp");
+    tmp.writeFileAt("skip/secret.d", "ignored");
+    const root = tmp.dir();
 
     auto hook = FilteringHook.init;
     walkDir(root, hook);
@@ -349,29 +343,23 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
 @("buildPrimitives.dirWalk.walkGitRepository")
 @safe unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
 
-    const root = buildPath(tempDir(), "walkGitRepository-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "src"));
-    mkdirRecurse(buildPath(root, "build"));
-    mkdirRecurse(buildPath(root, ".git"));
+    // A plain scratch tree, not a real repository: the walk is driven by the
+    // `.gitignore` files and the `.git` marker on disk, so writing them is
+    // both sufficient and hermetic — no `git` on `PATH` to skip on.
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt(".gitignore", "build/\n*.tmp\n!keep.tmp\n");
+    tmp.writeFileAt("README.md", "README\n");
+    tmp.writeFileAt("src/main.d", "module main;\n");
+    tmp.writeFileAt("src/notes.tmp", "temp\n");
+    tmp.writeFileAt("src/keep.tmp", "keep\n");
+    tmp.writeFileAt("build/artifact.txt", "ignored\n");
+    tmp.writeFileAt(".git/config", "[core]\n");
 
-    write(buildPath(root, ".gitignore"), "build/\n*.tmp\n!keep.tmp\n");
-    write(buildPath(root, "README.md"), "README\n");
-    write(buildPath(root, "src", "main.d"), "module main;\n");
-    write(buildPath(root, "src", "notes.tmp"), "temp\n");
-    write(buildPath(root, "src", "keep.tmp"), "keep\n");
-    write(buildPath(root, "build", "artifact.txt"), "ignored\n");
-    write(buildPath(root, ".git", "config"), "[core]\n");
-
-    scope (exit)
-        rmdirRecurse(root);
-
-    auto files = walkGitRepository(root).array;
+    auto files = walkGitRepository(tmp.dir()).array;
     files.sort;
 
     assert(files == [
@@ -385,28 +373,21 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
 @("buildPrimitives.dirWalk.nestedGitignore")
 @safe unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
 
-    const root = buildPath(tempDir(), "walkGitRepository-nested-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "sub", "nested"));
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt(".gitignore", "*.tmp\n");
+    tmp.writeFileAt("sub/.gitignore", "!keep.tmp\n*.log\n");
+    tmp.writeFileAt("a.tmp", "ignored by root\n");
+    tmp.writeFileAt("a.log", "kept: sub's rules do not apply here\n");
+    tmp.writeFileAt("sub/keep.tmp", "re-included by sub\n");
+    tmp.writeFileAt("sub/other.tmp", "still ignored by root\n");
+    tmp.writeFileAt("sub/b.log", "ignored by sub\n");
+    tmp.writeFileAt("sub/nested/c.log", "sub's rules reach the subtree\n");
 
-    write(buildPath(root, ".gitignore"), "*.tmp\n");
-    write(buildPath(root, "sub", ".gitignore"), "!keep.tmp\n*.log\n");
-    write(buildPath(root, "a.tmp"), "ignored by root\n");
-    write(buildPath(root, "a.log"), "kept: sub's rules do not apply here\n");
-    write(buildPath(root, "sub", "keep.tmp"), "re-included by sub\n");
-    write(buildPath(root, "sub", "other.tmp"), "still ignored by root\n");
-    write(buildPath(root, "sub", "b.log"), "ignored by sub\n");
-    write(buildPath(root, "sub", "nested", "c.log"), "sub's rules reach the subtree\n");
-
-    scope (exit)
-        rmdirRecurse(root);
-
-    auto files = walkGitRepository(root).array;
+    auto files = walkGitRepository(tmp.dir()).array;
     files.sort;
 
     assert(files == [
@@ -420,27 +401,25 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
 @("buildPrimitives.dirWalk.ancestorGitignore")
 @safe unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : mkdirRecurse;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
     // A repository (marked by `.git`) whose root `.gitignore` applies to a
     // walk rooted at the `sub` subdirectory.
-    const repo = buildPath(tempDir(), "walkGitRepository-ancestor-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(repo, ".git"));
-    mkdirRecurse(buildPath(repo, "sub", "build"));
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt(".gitignore", "build/\n/rootonly.txt\n");
+    tmp.writeFileAt("sub/a.txt", "kept\n");
+    tmp.writeFileAt("sub/rootonly.txt", "kept: the rule is anchored to the repo root\n");
+    tmp.writeFileAt("sub/build/artifact.txt", "ignored by the ancestor rule\n");
+    // The marker is an *empty* directory, which only a `mkdir` expresses. It
+    // needs no cleanup of its own: the fixture created the tree, so it removes
+    // all of it.
+    tmp.ensureSubdir(".git");
 
-    write(buildPath(repo, ".gitignore"), "build/\n/rootonly.txt\n");
-    write(buildPath(repo, "sub", "a.txt"), "kept\n");
-    write(buildPath(repo, "sub", "rootonly.txt"), "kept: the rule is anchored to the repo root\n");
-    write(buildPath(repo, "sub", "build", "artifact.txt"), "ignored by the ancestor rule\n");
-
-    scope (exit)
-        rmdirRecurse(repo);
-
-    auto files = walkGitRepository(buildPath(repo, "sub")).array;
+    auto files = walkGitRepository(buildPath(tmp.dir(), "sub")).array;
     files.sort;
 
     assert(files == ["a.txt", "rootonly.txt"]);
@@ -450,21 +429,20 @@ version (Posix)
 @("buildPrimitives.dirWalk.symlinksNotFollowed")
 @safe unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.file : mkdirRecurse, rmdirRecurse, symlink, tempDir, write;
+    import std.file : symlink;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
-    const root = buildPath(tempDir(), "walkDir-symlinks-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "real"));
-    write(buildPath(root, "real", "data.txt"), "data");
-    symlink(buildPath(root, "real"), buildPath(root, "link"));
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt("real/data.txt", "data");
+    // The subject of the test, and the one thing the fixture cannot express.
+    // `rmdirRecurse` unlinks it rather than following it, so the tree still
+    // goes away with the fixture.
+    symlink(buildPath(tmp.dir(), "real"), buildPath(tmp.dir(), "link"));
 
-    scope (exit)
-        rmdirRecurse(root);
-
-    auto files = dirEntriesFilter(root).array;
+    auto files = dirEntriesFilter(tmp.dir()).array;
     files.sort;
 
     // `link` appears once as a file; its target's contents are listed only

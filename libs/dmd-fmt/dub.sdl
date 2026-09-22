@@ -59,6 +59,9 @@ configuration "unittest" {
     // Fast path: depend on the runner shim (pulls the prebuilt impl library),
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
+    // Scratch trees for the `.editorconfig` discovery walk and the case
+    // runner's failure artifacts. Test-only: never a library dependency.
+    dependency "sparkles:test-utils" path="../.."
 
     // Same link setup as libs/dmd-lsp's unittest configuration (the frontend
     // archive is large; no -checkaction=context for the same reason — it

@@ -33,6 +33,10 @@ configuration "unittest" {
     dependency "sparkles:syntax" path="../.."
     dependency "sparkles:twoslash" path="../.."
     dependency "sparkles:wired" path="../.."
+    // Scratch-tree fixtures for the tests that walk a real directory. Test
+    // helpers only — never a library dependency, which would drag them into
+    // every consumer's closure.
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

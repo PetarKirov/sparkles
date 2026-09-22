@@ -26,6 +26,9 @@ configuration "libkqueue" {
 
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
+    // Scratch trees for the PATH-lookup probe fixtures in `live.d`.
+    // Test-only: never a library dependency.
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

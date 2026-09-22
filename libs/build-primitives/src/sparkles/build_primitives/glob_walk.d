@@ -115,13 +115,11 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath, dirName;
-    import std.uuid : randomUUID;
 
-    const root = buildPath(tempDir(), "globWalk-" ~ randomUUID.toString);
+    auto tmp = TmpFS.create();
     foreach (pair; [
         [".gitignore", "build/\n*.tmp\n"],
         ["src/app.d", "module app;\n"],
@@ -130,13 +128,8 @@ unittest
         ["build/out.d", "ignored\n"],
         [".git/config", "[core]\n"],
     ])
-    {
-        const path = buildPath(root, pair[0]);
-        mkdirRecurse(path.dirName);
-        write(path, pair[1]);
-    }
-    scope (exit)
-        rmdirRecurse(root);
+        tmp.writeFileAt(pair[0], pair[1]);
+    const root = tmp.dir();
 
     static string[] sorted(R)(R r)
     {

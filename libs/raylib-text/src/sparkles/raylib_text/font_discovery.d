@@ -216,30 +216,35 @@ package bool isUndecoratedFace(scope const(char)[] path) @safe
 // A collision-free scratch directory. The runner executes tests in parallel
 // *threads*, which a fixed name survives — but two concurrent test
 // *processes* (a CI matrix leg beside a local `dub test`, or a retried job)
-// would share it, and one run's `rmdirRecurse` would delete the other's
-// fixture mid-assert.
+// would share it, and one run's cleanup would delete the other's fixture
+// mid-assert.
 version (unittest)
-private string uniqueTestDir(string stem) @safe
 {
-    import std.file : tempDir;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    return buildPath(tempDir, stem ~ "-" ~ randomUUID().toString());
+    private TmpFS uniqueTestDir(string stem) @safe
+    {
+        import std.uuid : randomUUID;
+
+        // A UUID rather than `TmpFS`'s default per-function prefix: that
+        // prefix is the *calling* function, which every test routed through
+        // here would share.
+        auto tmp = TmpFS.create(stem);
+        tmp.ensureDir();
+        return tmp;
+    }
 }
 
 @("resolveFontInDirs.preferenceListAndRanking")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
-    const dir = uniqueTestDir("sparkles-font-resolve-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = uniqueTestDir("sparkles-font-resolve-test");
+    const dir = tmp.dir;
     foreach (f; ["FiraCodeNerdFontMono-Regular.ttf", "FiraCodeNerdFontMono-Bold.ttf",
         "FiraCodeNerdFontMono-Italic.ttf", "DejaVuSansMono.ttf", "notafont.txt"])
-        write(buildPath(dir, f), "x");
+        tmp.writeFileAt(f, "x");
 
     // Preference list: first resolvable name wins; the -Regular face beats
     // the styled siblings; generic "monospace" matches nothing and falls
@@ -261,21 +266,17 @@ private string uniqueTestDir(string stem) @safe
 @("resolveFontInDirs.dirPrecedenceBeatsPathOrder")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
     // Two directories holding the SAME family at the same rank. The caller's
     // order must decide — not which absolute path sorts first, which is what
     // a lexicographic tie-break did (hue passes [<dataDir>/fonts,
     // /system/fonts] and only worked because "/data" precedes "/system").
-    const root = uniqueTestDir("sparkles-font-precedence-test");
-    const zFirst = buildPath(root, "zzz");
-    const aSecond = buildPath(root, "aaa");
-    mkdirRecurse(zFirst);
-    mkdirRecurse(aSecond);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(zFirst, "SomeMono-Regular.ttf"), "x");
-    write(buildPath(aSecond, "SomeMono-Regular.ttf"), "x");
+    auto tmp = uniqueTestDir("sparkles-font-precedence-test");
+    const zFirst = buildPath(tmp.dir, "zzz");
+    const aSecond = buildPath(tmp.dir, "aaa");
+    tmp.writeFileAt("zzz/SomeMono-Regular.ttf", "x");
+    tmp.writeFileAt("aaa/SomeMono-Regular.ttf", "x");
 
     // Listed first wins, despite sorting later.
     assert(resolveFontInDirs("SomeMono", [zFirst, aSecond])
@@ -288,15 +289,13 @@ private string uniqueTestDir(string stem) @safe
 @("resolveFontInDirs.prefixBeatsInteriorMatch")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
-    const dir = uniqueTestDir("sparkles-font-prefix-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = uniqueTestDir("sparkles-font-prefix-test");
+    const dir = tmp.dir;
     // "Mono" appears inside MapleMono but at the START of MonoLisa.
-    write(buildPath(dir, "MapleMono-Regular.ttf"), "x");
-    write(buildPath(dir, "MonoLisa-Regular.ttf"), "x");
+    tmp.writeFileAt("MapleMono-Regular.ttf", "x");
+    tmp.writeFileAt("MonoLisa-Regular.ttf", "x");
 
     // Without a startsWith tier both are rank-1 and the tie went to whichever
     // came first — an arbitrary family. This matters against /system/fonts,
@@ -350,15 +349,13 @@ package void fontVariantPaths(string primaryPath,
 @("fontVariantPaths.namingConvention")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
 
-    const dir = uniqueTestDir("sparkles-font-variant-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = uniqueTestDir("sparkles-font-variant-test");
+    const dir = tmp.dir;
     foreach (f; ["Mono-Regular.ttf", "Mono-Bold.ttf", "Mono-BoldOblique.ttf",
         "Solo.otf", "Solo-Italic.otf"])
-        write(buildPath(dir, f), "x");
+        tmp.writeFileAt(f, "x");
 
     string b, i, bi;
     // -Regular stem: bold present, italic absent, bold-italic via -BoldOblique.

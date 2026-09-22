@@ -42,6 +42,9 @@ configuration "unittest" {
     // Fast path: depend on the runner shim (pulls the prebuilt impl library),
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
+    // Scratch dub projects for the project-discovery and runtime-import
+    // tests. Test-only: never a library dependency.
+    dependency "sparkles:test-utils" path="../.."
 
     // Also no -checkaction=context (the other repo-standard unittest flag):
     // it leaks into the dmd:frontend dependency's compilation in the same

@@ -510,22 +510,21 @@ unittest
 
 version (unittest)
 {
-    /// A throwaway source tree: `dirs` are created, `files` are `path → text`
-    /// pairs written under `root`. Returns the root (deleted by the caller).
-    private string makeTree(string tag, scope const(string[2])[] files) @system
-    {
-        import std.file : mkdirRecurse, tempDir, write;
-        import std.path : buildPath, dirName;
-        import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-        const root = buildPath(tempDir(), "hue-" ~ tag ~ "-" ~ randomUUID.toString);
+    /// A throwaway source tree: `files` are `path → text` pairs written under
+    /// a scratch directory named after `tag`. The returned fixture owns the
+    /// tree and removes it when the caller lets it go out of scope.
+    ///
+    /// `tag` is the scratch directory's name, so it must be distinct per call
+    /// site: the runner executes tests in parallel, and `TmpFS`'s default
+    /// `__FUNCTION__` prefix would name *this* helper for every one of them.
+    private TmpFS makeTree(string tag, scope const(string[2])[] files) @system
+    {
+        auto tmp = TmpFS.create("sparkles-docs-" ~ tag);
         foreach (ref f; files)
-        {
-            const path = buildPath(root, f[0]);
-            mkdirRecurse(path.dirName);
-            write(path, f[1]);
-        }
-        return root;
+            tmp.writeFileAt(f[0], f[1]);
+        return tmp;
     }
 }
 
@@ -538,9 +537,8 @@ unittest
 {
     import std.algorithm.iteration : map;
     import std.array : array;
-    import std.file : rmdirRecurse;
 
-    const root = makeTree("recursive", [
+    auto tmp = makeTree("recursive", [
         [".gitignore", "build/\n*.tmp\n"],
         ["top.d", "module top;\n"],
         ["src/app.d", "module app;\n"],
@@ -549,8 +547,7 @@ unittest
         ["build/out.d", "ignored\n"],
         [".git/config", "[core]\n"],
     ]);
-    scope (exit)
-        rmdirRecurse(root);
+    const root = tmp.dir();
 
     // Top level only: the subtree is invisible, as before (`SRC5`).
     assert(collectSources(root, false).entries.map!(e => e.relPath).array == ["top.d"]);
@@ -581,14 +578,12 @@ unittest
 {
     import std.algorithm.iteration : map;
     import std.array : array;
-    import std.file : rmdirRecurse;
 
-    const root = makeTree("collision", [
+    auto tmp = makeTree("collision", [
         ["foo/app.d", "module foo;\n"],
         ["bar/app.d", "module bar;\n"],
     ]);
-    scope (exit)
-        rmdirRecurse(root);
+    const root = tmp.dir();
 
     auto set = collectSources(root, false, recursive: true);
     assert(set.length == 2);
@@ -608,13 +603,10 @@ unittest
 {
     import std.algorithm.iteration : map;
     import std.array : array;
-    import std.file : rmdirRecurse;
     import std.path : buildPath;
 
-    const root = makeTree("root-rebase", [["libs/base/a.d", "module a;\n"]]);
-    scope (exit)
-        rmdirRecurse(root);
-
+    auto tmp = makeTree("root-rebase", [["libs/base/a.d", "module a;\n"]]);
+    const root = tmp.dir();
     const target = buildPath(root, "libs", "base");
     assert(collectSources(target, false, recursive: true, root).entries
         .map!(e => e.relPath).array == ["libs/base/a.d"]);
@@ -633,15 +625,13 @@ unittest
 {
     import std.algorithm.iteration : map;
     import std.array : array;
-    import std.file : rmdirRecurse;
 
-    const root = makeTree("twoslash-set", [
+    auto tmp = makeTree("twoslash-set", [
         ["src/app.d", "module app;\n"],
         ["notes.md", "# no\n"],
         ["01-hover.twoslash.json", `{"code":"x","nodes":[]}`],
     ]);
-    scope (exit)
-        rmdirRecurse(root);
+    const root = tmp.dir();
 
     auto set = collectSources(root, true, recursive: true);
     assert(set.entries.map!(e => e.relPath).array == ["01-hover", "src/app.d"]);
