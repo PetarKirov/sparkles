@@ -12,7 +12,10 @@ dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {
     targetType "library"
-    excludedSourceFiles "src/app.d"
+    // `testing.d` hosts the git-repository fixtures and is the only module
+    // needing `sparkles:test-utils`; excluding it here keeps test helpers out
+    // of every consumer's closure.
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d"
 }
 
 configuration "unittest" {
