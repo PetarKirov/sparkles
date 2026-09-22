@@ -174,6 +174,43 @@ digest byte-exact via a `raw_manifest`, repair only the _model_ — which matter
 for any consumer that must reproduce an upstream digest and therefore cannot
 refuse. Whether this library offers that hatch, and at which layer, is open.
 
+### A10 — Handles, not paths, and `openat2` where it exists
+
+The event-horizon driver materializes an `FsoRef` as a directory descriptor
+plus a name, and opens through `openat2` with `RESOLVE_BENEATH`,
+`RESOLVE_NO_MAGICLINKS` and `RESOLVE_NO_XDEV` where the kernel provides it
+([`FSD5`](./SPEC.md#11-drivers-fsd)–`FSD7`).
+
+Path-based resolution was rejected on three counts, of which only the first is
+about speed: the kernel re-walks an absolute path on every operation, so
+resolution is `O(depth)` per entry rather than `O(1)`; a path re-resolved after
+a rename above it names a different file, which makes
+[`FSE3`](./SPEC.md#10-errors-and-partial-results-fse)'s
+"an entry vanished mid-walk" indistinguishable from "an ancestor moved"; and
+"the walk stayed beneath its root" is a property a path cannot assert, only
+hope for.
+
+`RESOLVE_NO_SYMLINKS` is deliberately **not** set. It would also refuse to
+open a symlink in order to read its target, which
+[`FSO1`](./SPEC.md#3-the-file-system-object-vocabulary-fso) requires; not
+_following_ a symlink is already the machine's rule, enforced above the
+syscall.
+
+Absence is reported rather than ignored. `openat2` is Linux 5.6+, so macOS,
+Windows and older kernels fall back to `openat` and declare the guarantee
+unavailable through the same typed channel as an unsupported request. A
+consumer that needs the guarantee can then refuse, instead of believing it has
+something it does not. The fallback for the mount-boundary check is a `statx`
+device-number comparison, which races and must be documented as the weaker
+mechanism wherever it is the only one.
+
+Note the asymmetry with `sparkles:test-utils`, which deliberately does _not_
+use `openat2` for its fixtures: there the threat is a mistyped `..` in trusted
+test code, which a portable path-component check answers completely, and the
+helper has to run on every CI leg. The kernel guarantee is worth its
+portability cost where the input is a real filesystem that can change under
+the walk; it is not worth it to validate a string a test author wrote.
+
 ### D4 — Extended attributes
 
 Out of scope for v1, but [`FSM2`](./SPEC.md#7-the-resolution-machine-fsm)
