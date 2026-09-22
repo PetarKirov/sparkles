@@ -10,6 +10,12 @@ scratch directory itself when `ensureDir` was the thing that created it. A
 directory that already existed is left alone, so two instances sharing a
 `prefix` cannot delete each other's work.
 
+One instance is not thread-safe: `writeFileAt` appends to its file list,
+`ensureDir` checks and then sets ownership, and the destructor reads both.
+That is the intended shape — one fixture per test, used from the test's own
+thread — and `create` itself is safe to call concurrently. Sharing a single
+instance across threads needs the caller's own synchronization.
+
 Removal is best effort and never throws. A destructor that throws during
 unwinding replaces the assertion that actually failed with a cleanup error,
 and on Windows that is not hypothetical — git leaves read-only objects behind
@@ -72,8 +78,8 @@ struct TmpFS
     Creates a fixture rooted at a directory derived from `prefix`.
 
     `prefix` names the fixture for a human reading `/tmp`; it does not have to
-    be unique. The directory actually used appends the process id and a
-    per-process counter, which makes three problems impossible rather than
+    be unique. The directory actually used appends a random token and a
+    process-wide ordinal, which makes three problems impossible rather than
     merely unlikely:
 
     $(LIST
@@ -82,8 +88,11 @@ struct TmpFS
         other's fixtures mid-test.
         * A crashed run cannot leave a directory behind for the next run to
         inherit. An inherited directory is one this instance did not create,
-        so it would never be cleaned (see the ownership rule above) and would
-        leak forever.
+        so it would never be cleaned (see the ownership rule above), and a
+        test could read a previous run's files. The token is random rather
+        than the process id for exactly this case: pids are recycled, so
+        `prefix-<pid>-1` recurs and would collide with the leftovers of a run
+        that died holding the same pid.
         * Two fixtures in one test function cannot collide, so neither needs
         an artificial prefix to tell them apart.
     )
@@ -96,13 +105,12 @@ struct TmpFS
     {
         import core.atomic : atomicOp;
         import std.conv : to;
-        import std.process : thisProcessID;
 
         static shared uint counter;
         const ordinal = atomicOp!"+="(counter, 1u);
 
         auto result = TmpFS(
-            prefix ~ "-" ~ thisProcessID.to!string ~ "-" ~ ordinal.to!string,
+            prefix ~ "-" ~ processToken() ~ "-" ~ ordinal.to!string,
             basePath,
         );
         return result;
@@ -134,6 +142,21 @@ struct TmpFS
             ownsDir = true;
 
         mkdirRecurse(dir);
+    }
+
+    /// Eight hex digits of randomness, drawn once per *thread* — `static`
+    /// inside a function is thread-local in D, which also makes the lazy
+    /// initialization race-free without a lock. Uniqueness is unaffected: two
+    /// threads drawing different tokens can only separate their fixtures
+    /// further.
+    private static string processToken() @safe
+    {
+        import std.uuid : randomUUID;
+
+        static string token;
+        if (token.length == 0)
+            token = randomUUID.toString()[0 .. 8];
+        return token;
     }
 
     /**
