@@ -30,6 +30,11 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     dependency "sparkles:test-runner" path="../.."
+    // A coverage build type propagates `-unittest` into every dependency, and
+    // raylib-text's font-discovery fixture then imports the temp-filesystem
+    // helpers — so this edge is needed even though terminal's own tests never
+    // touch it. Unittest-scoped like every other consumer's (see ci, hue).
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
