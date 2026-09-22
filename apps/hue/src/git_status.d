@@ -502,16 +502,17 @@ unittest
     import core.thread : Thread;
     import core.time : msecs;
     import sparkles.build_primitives.git_env : runGit;
-    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
     import sparkles.test_runner.skip : skipTest;
 
-    // A real throwaway repository (git comes with the dev shell).
-    const root = buildPath(tempDir(), "hue-git-status-test");
-    if (root.exists)
-        rmdirRecurse(root);
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    // A real throwaway repository (git comes with the dev shell). The name
+    // used to be the fixed `hue-git-status-test`, which two concurrent runs
+    // of this suite would have shared; `TmpFS` names it after this unittest
+    // and owns the removal.
+    auto fixture = TmpFS.create();
+    fixture.ensureDir();
+    const root = fixture.dir;
     try
     {
         if (runGit(["init", "-q", root]).status != 0)
@@ -519,10 +520,9 @@ unittest
     }
     catch (Exception)
         skipTest("git not available");
-    write(buildPath(root, "fresh.txt"), "hi\n");
-    write(buildPath(root, ".gitignore"), "junk/\n");
-    mkdirRecurse(buildPath(root, "junk"));
-    write(buildPath(root, "junk", "x.o"), "");
+    fixture.writeFileAt("fresh.txt", "hi\n");
+    fixture.writeFileAt(".gitignore", "junk/\n");
+    fixture.writeFileAt("junk/x.o", "");
 
     GitStatusCache c;
     c.root = root;

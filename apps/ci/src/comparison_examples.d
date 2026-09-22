@@ -300,19 +300,19 @@ ComparisonExample[] extractComparisons(string content, string docsRoot,
 
 @("comparison_examples.dualSuiteProvenance") @system unittest
 {
-    import std.file : tempDir, mkdirRecurse, write, remove, rmdirRecurse;
-    import std.uuid : randomUUID;
+    import std.file : remove;
     import std.exception : assertThrown;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir, "dual-suite-" ~ randomUUID().toString());
-    const snippets = buildPath(root, "libs/event-horizon/tutorial/snippets");
+    auto tmp = TmpFS.create();
+    const root = tmp.dir();
+    enum snippetsRel = "libs/event-horizon/tutorial/snippets";
+    const snippets = buildPath(root, snippetsRel);
     const tutorials = buildPath(snippets, "tutorial");
-    mkdirRecurse(tutorials);
-    scope(exit) rmdirRecurse(root);
     foreach (name; ["node_timers.mjs", "eh_timers.d"])
     {
-        buildPath(snippets, name).write("contract");
-        buildPath(tutorials, name).write("tutorial");
+        tmp.writeFileAt(buildPath(snippetsRel, name), "contract");
+        tmp.writeFileAt(buildPath(snippetsRel, "tutorial", name), "tutorial");
     }
     auto items = [ComparisonExample(buildPath(tutorials, "node_timers.mjs")),
         ComparisonExample(buildPath(tutorials, "eh_timers.d"))];
@@ -337,14 +337,13 @@ ComparisonExample[] extractComparisons(string content, string docsRoot,
 
 @("comparison_examples.realSourceBoundary") unittest
 {
-    import std.file : tempDir, mkdir, write, rmdirRecurse;
-    import std.uuid : randomUUID;
     import std.exception : assertThrown;
-    auto root = buildPath(tempDir, "comparison-parser-" ~ randomUUID().toString());
-    mkdir(root);
-    scope(exit) rmdirRecurse(root);
-    buildPath(root, "source.d").write("void main() {}\n");
-    assert(resolveComparisonSource("<<< @/source.d [foreign]", root) == buildPath(root, "source.d"));
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    auto tmp = TmpFS.create();
+    const root = tmp.dir();
+    const source = tmp.writeFileAt("source.d", "void main() {}\n");
+    assert(resolveComparisonSource("<<< @/source.d [foreign]", root) == source);
     version(Posix)
     {
         import std.file : symlink;

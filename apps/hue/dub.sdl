@@ -175,6 +175,12 @@ configuration "unittest" {
     versions "HueDmdFmt"
 
     dependency "sparkles:test-runner" path="../.."
+    // `TmpFS`, the scratch-tree fixture the unittests build their workspaces,
+    // explorers and documents on. Test-only: never in a shipped closure.
+    dependency "sparkles:test-utils" path="../.."
+    // `TmpGitRepo` lives in build-primitives' `testing.d`, which the library
+    // configuration excludes so the helpers stay out of hue's shipped closure.
+    subConfiguration "sparkles:build-primitives" "testing"
 
     sourcePaths "src" "test"
     importPaths "src" "test"

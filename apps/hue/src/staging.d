@@ -132,25 +132,24 @@ private auto run(string[] argv, string input, string workDir) @safe
 version (unittest)
 {
     import sparkles.build_primitives.git_env : runGit;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import sparkles.build_primitives.testing : TmpGitRepo;
+    import std.file : write;
     import std.path : buildPath;
 
     /// A throwaway repository with one committed file, for the tests below.
-    private string makeRepo(string name, string content) @safe
+    /// The returned fixture owns the tree and removes it; the caller keeps it
+    /// alive for as long as the test needs the repository.
+    ///
+    /// `name` labels the fixture. It no longer has to be unique — `TmpFS`
+    /// appends a pid and an ordinal — but the default `__FUNCTION__` prefix
+    /// would name this helper, so every repository under `/tmp` would read
+    /// alike while a test was running.
+    private TmpGitRepo makeRepo(string name, string content) @safe
     {
-        const dir = buildPath(tempDir(), name);
-        try
-            rmdirRecurse(dir);
-        catch (Exception) {}
-        mkdirRecurse(dir);
-        foreach (argv; [["init", "-q"],
-                ["config", "user.email", "t@example.com"],
-                ["config", "user.name", "t"]])
-            runGit(argv, dir);
-        write(buildPath(dir, "f.txt"), content);
-        runGit(["add", "f.txt"], dir);
-        runGit(["commit", "-qm", "base"], dir);
-        return dir;
+        auto repo = TmpGitRepo.create(name);
+        repo.writeFile("f.txt", content);
+        repo.commitAll("base");
+        return repo;
     }
 
     private string staged(string dir) @safe
@@ -169,8 +168,8 @@ version (unittest)
     // Nothing but a real `git apply` can establish that, so the test runs one.
     enum before = "one\ntwo\nthree\n";
     enum after = "ONE\ntwo\nTHREE\n";
-    const dir = makeRepo("hue-staging-lines", before);
-    scope (exit) rmdirRecurse(dir);
+    auto repo = makeRepo("hue-staging-lines", before);
+    const dir = repo.dir;
     write(buildPath(dir, "f.txt"), after);
 
     auto doc = diffText(before, after, "f.txt", "f.txt");
@@ -205,8 +204,8 @@ version (unittest)
 
     // A patch against content the index does not have. `--check` must catch
     // it and report, rather than leaving a half-applied selection behind.
-    const dir = makeRepo("hue-staging-check", "actual\n");
-    scope (exit) rmdirRecurse(dir);
+    auto repo = makeRepo("hue-staging-check", "actual\n");
+    const dir = repo.dir;
 
     auto doc = diffText("something else\n", "changed\n", "f.txt", "f.txt");
     auto sel = new bool[](doc.rows.length);
@@ -238,8 +237,8 @@ version (unittest)
     // `DST4`: destructive, and the reason the caller must confirm first.
     enum before = "keep\n";
     enum after = "clobbered\n";
-    const dir = makeRepo("hue-staging-discard", before);
-    scope (exit) rmdirRecurse(dir);
+    auto repo = makeRepo("hue-staging-discard", before);
+    const dir = repo.dir;
     write(buildPath(dir, "f.txt"), after);
 
     auto doc = diffText(before, after, "f.txt", "f.txt");
@@ -264,8 +263,8 @@ version (unittest)
     // about an insertion or a deletion. Both, against real git.
     enum before = "a\nb\nc\n";
     enum after = "a\nINSERTED\nb\n"; // c deleted, INSERTED added
-    const dir = makeRepo("hue-staging-shapes", before);
-    scope (exit) rmdirRecurse(dir);
+    auto repo = makeRepo("hue-staging-shapes", before);
+    const dir = repo.dir;
     write(buildPath(dir, "f.txt"), after);
 
     auto doc = diffText(before, after, "f.txt", "f.txt");
@@ -293,8 +292,8 @@ version (unittest)
     // before it anywhere.
     enum before = "body\n";
     enum after = "header\nbody\n";
-    const dir = makeRepo("hue-staging-top", before);
-    scope (exit) rmdirRecurse(dir);
+    auto repo = makeRepo("hue-staging-top", before);
+    const dir = repo.dir;
     write(buildPath(dir, "f.txt"), after);
 
     auto doc = diffText(before, after, "f.txt", "f.txt");

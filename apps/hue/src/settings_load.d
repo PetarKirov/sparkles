@@ -173,27 +173,28 @@ string renderConfigWarning(JsonError e) @safe
 
 version (unittest)
 {
-    // `tag` keeps the parallel-running tests out of each other's fixture.
-    private string makeConfigFixture(string tag)
-    {
-        import std.file : mkdirRecurse, tempDir, write;
-        import std.process : thisProcessID;
-        import std.conv : text;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-        const root = buildPath(tempDir,
-            text("hue-settings-load-", tag, '-', thisProcessID));
-        mkdirRecurse(buildPath(root, "repo", "sub"));
-        return root;
+    // `tag` labels each caller's fixture. `TmpFS` is what makes the
+    // directory unique; the tag only keeps the two of them tellable apart
+    // under `/tmp`, which the default `__FUNCTION__` prefix would not.
+    private TmpFS makeConfigFixture(string tag)
+    {
+        auto fixture = TmpFS.create("hue-settings-load-" ~ tag);
+        // `repo/sub` holds no file of its own — it is the directory the
+        // project-file search starts from.
+        fixture.ensureSubdir("repo/sub");
+        return fixture;
     }
 }
 
 @("settings_load.loadHueConfig.layersAndOrigins")
 @system unittest
 {
-    import std.file : rmdirRecurse, write;
+    import std.file : write;
 
-    const root = makeConfigFixture("layers");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = makeConfigFixture("layers");
+    const root = fixture.dir;
 
     const userPath = buildPath(root, "config.json");
     write(userPath, "{\n" ~
@@ -229,10 +230,10 @@ version (unittest)
 @system unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : rmdirRecurse, write;
+    import std.file : write;
 
-    const root = makeConfigFixture("degrades");
-    scope (exit) rmdirRecurse(root);
+    auto fixture = makeConfigFixture("degrades");
+    const root = fixture.dir;
 
     // Missing files are not warnings; hue runs on defaults.
     auto quiet = loadHueConfig(buildPath(root, "config.json"), null, null);

@@ -2245,20 +2245,18 @@ unittest
     // The first test that touches a filesystem: everything above is pure.
     // It pins the seam the rest of the picker sees — corpus in, ranked rows
     // and resolvable targets out (`PKC1`).
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
-    import std.uuid : randomUUID;
 
-    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "src"));
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, ".gitignore"), "ignored/\n*.bin\n");
-    write(buildPath(root, "src", "widget.d"),
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
+    fixture.writeFileAt(".gitignore", "ignored/\n*.bin\n");
+    fixture.writeFileAt("src/widget.d",
         "struct Widget\n{\n    int n;\n}\n");
-    write(buildPath(root, "src", "use.d"),
+    fixture.writeFileAt("src/use.d",
         "void f()\n{\n    Widget w;\n}\n");
-    write(buildPath(root, "notes.md"), "Widget is a thing\n");
-    write(buildPath(root, "blob.bin"), "Widget\x00binary\n");
+    fixture.writeFileAt("notes.md", "Widget is a thing\n");
+    fixture.writeFileAt("blob.bin", "Widget\x00binary\n");
 
     GrepFinder finder;
     finder.openCorpus(root);
@@ -2306,14 +2304,11 @@ unittest
     // `PKC9`'s ladder, end to end: classified plain, exhausted with nothing,
     // re-asked as a subsequence, and the rung reported. Exactly one rung —
     // a second would be a mode nobody chose, reached by a rule nobody saw.
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "a.d"), "struct Widget\n");
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
+    fixture.writeFileAt("a.d", "struct Widget\n");
 
     GrepFinder finder;
     finder.openCorpus(root);
@@ -2360,14 +2355,11 @@ unittest
 {
     // `<S-Tab>` is a reader saying which question they are asking. Neither
     // classification nor the fallback rung may answer a different one.
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir(), "hue-grep-" ~ randomUUID.toString);
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, "a.d"), "struct Widget\n");
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
+    fixture.writeFileAt("a.d", "struct Widget\n");
 
     GrepFinder finder;
     finder.openCorpus(root);
@@ -2402,18 +2394,15 @@ unittest
 {
     // The two ways a document is refused, both without a second read
     // (`PKC6`/`PKC7`).
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir(), "hue-grep-skip-" ~ randomUUID.toString);
-    mkdirRecurse(root);
-    scope (exit) rmdirRecurse(root);
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
 
     // A NUL-bearing file whose EXTENSION says nothing — only the byte sniff
     // can refuse it.
-    write(buildPath(root, "data.txt"), "needle\x00more needle\n");
-    write(buildPath(root, "ok.txt"), "needle\n");
+    fixture.writeFileAt("data.txt", "needle\x00more needle\n");
+    fixture.writeFileAt("ok.txt", "needle\n");
 
     GrepFinder finder;
     finder.openCorpus(root);

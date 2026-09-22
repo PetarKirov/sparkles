@@ -258,32 +258,25 @@ unittest
 @system
 unittest
 {
-    import std.conv : text;
-    import std.file : mkdirRecurse, rmdirRecurse, setTimes, tempDir, write;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.file : setTimes;
     import std.path : buildPath;
-    import std.process : thisProcessID;
 
-    // A temp tree of our own rather than `sparkles:test-utils`: hue's unittest
-    // configuration is tuned around a source-included test runner, and one
-    // helper is not worth another dependency in it.
-    const root = buildPath(tempDir, text("hue-cov-discovery-", thisProcessID));
-    if (root.exists)
-        root.rmdirRecurse;
-    scope (exit)
-        if (root.exists)
-            root.rmdirRecurse;
-    mkdirRecurse(buildPath(root, ".git"));
-    mkdirRecurse(buildPath(root, "libs", "x", "src"));
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
+    // `.git` marks the repository root, and it is a directory with no file in
+    // it — the one shape `writeFileAt` cannot express.
+    fixture.ensureSubdir(".git");
+
     const covDir = buildPath(root, coverageDirName);
-    mkdirRecurse(covDir);
-
-    const src = buildPath(root, "libs", "x", "src", "math.d");
-    write(src, "int add(int a, int b) { return a + b; }\n");
-    write(buildPath(covDir, "libs-x-src-math.lst"),
+    const src = fixture.writeFileAt("libs/x/src/math.d",
+        "int add(int a, int b) { return a + b; }\n");
+    fixture.writeFileAt(buildPath(coverageDirName, "libs-x-src-math.lst"),
         "      5|int add(int a, int b) { return a + b; }\n"
         ~ "libs/x/src/math.d is 100% covered\n");
     // A listing with no trailer names nothing and must not enter the index.
-    write(buildPath(covDir, "truncated.lst"), "      5|x();\n");
+    fixture.writeFileAt(buildPath(coverageDirName, "truncated.lst"),
+        "      5|x();\n");
 
     assert(repositoryRoot(src) == root);
     assert(repositoryRoot(buildPath(root, "libs", "x")) == root);

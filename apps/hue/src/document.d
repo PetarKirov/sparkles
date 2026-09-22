@@ -1456,29 +1456,27 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.classifyStructural.reflowedCodeFoldsAsNoise")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import std.file : write;
     import std.process : environment;
 
     import sparkles.syntax : GrammarRegistry, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
-    const dir = buildPath(tempDir(), "hue-structural-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-structural-test");
 
     // A signature and an expression reflowed across lines. The LINE STRUCTURE
     // changed, so `DVN1`'s per-line policy and `DVN2`'s per-row verdict both
     // see real changes — only the grammar can say the tokens are identical.
-    const oldPath = buildPath(dir, "a.d");
-    const newPath = buildPath(dir, "b.d");
-    write(oldPath, "module s;\n\nint f(int alpha, int beta)\n{\n"
+    const oldPath = tmp.writeFileAt("a.d",
+        "module s;\n\nint f(int alpha, int beta)\n{\n"
         ~ "    return alpha + beta;\n}\n");
-    write(newPath, "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
+    const newPath = tmp.writeFileAt("b.d",
+        "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
         ~ "    return alpha\n        + beta;\n}\n");
 
     auto reg = GrammarRegistry.fromEnvironment();
@@ -1505,30 +1503,28 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.classifyStructural.sortedImportsAreAReorderNotFormatting")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import std.file : write;
     import std.process : environment;
 
     import sparkles.syntax : GrammarRegistry, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
-    const dir = buildPath(tempDir(), "hue-commutative-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-commutative-test");
 
     // `DVN7`: sorting an import block is N removals and N additions, and it
     // reads like a rewrite. The tokens really did change order, so `DVN3`
     // says `differs` — correctly. Only the commutativity profile can say the
     // order carried no meaning.
-    const oldPath = buildPath(dir, "a.d");
-    const newPath = buildPath(dir, "b.d");
-    write(oldPath, "module m;\n\nimport std.stdio;\nimport std.conv;\n"
+    const oldPath = tmp.writeFileAt("a.d",
+        "module m;\n\nimport std.stdio;\nimport std.conv;\n"
         ~ "import std.array;\n\nvoid f() {}\n");
-    write(newPath, "module m;\n\nimport std.array;\nimport std.conv;\n"
+    const newPath = tmp.writeFileAt("b.d",
+        "module m;\n\nimport std.array;\nimport std.conv;\n"
         ~ "import std.stdio;\n\nvoid f() {}\n");
 
     auto reg = GrammarRegistry.fromEnvironment();
@@ -1561,29 +1557,26 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.structuralView.emphasizesTokensNotCharacterRuns")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import std.process : environment;
 
     import sparkles.diff : RowKind;
     import sparkles.syntax : GrammarRegistry, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
-    const dir = buildPath(tempDir(), "hue-structural-view-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-structural-view-test");
 
     // One operator changed, and the spacing around it changed with it — the
     // case where word runs and tokens disagree about what the reviewer
     // should be looking at.
-    const oldPath = buildPath(dir, "a.d");
-    const newPath = buildPath(dir, "b.d");
-    write(oldPath, "module s;\n\nint f()\n{\n    return alpha+beta;\n}\n");
-    write(newPath, "module s;\n\nint f()\n{\n    return alpha - beta;\n}\n");
+    const oldPath = tmp.writeFileAt("a.d",
+        "module s;\n\nint f()\n{\n    return alpha+beta;\n}\n");
+    const newPath = tmp.writeFileAt("b.d",
+        "module s;\n\nint f()\n{\n    return alpha - beta;\n}\n");
 
     auto reg = GrammarRegistry.fromEnvironment();
     auto cache = TsConfigCache.create(&reg, LabelSet.standard());
@@ -1625,20 +1618,17 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.classifyStructural.oneHunkReflowedOneEdited")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import std.process : environment;
 
     import sparkles.syntax : GrammarRegistry, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
-    const dir = buildPath(tempDir(), "hue-structural-hunks-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-structural-hunks-test");
 
     // The commit every reviewer actually gets: one function reflowed, another
     // edited, far enough apart to be two hunks. A whole-file verdict has to
@@ -1646,14 +1636,14 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
     enum pad = "int p1() { return 0; }\nint p2() { return 0; }\n"
         ~ "int p3() { return 0; }\nint p4() { return 0; }\n"
         ~ "int p5() { return 0; }\nint p6() { return 0; }\n";
-    const oldPath = buildPath(dir, "a.d");
-    const newPath = buildPath(dir, "b.d");
     // The reflow moves LINE BOUNDARIES, so no whitespace policy and no
     // row-wise verdict can reach it — only the parser can.
-    write(oldPath, "module s;\n\nint f(int alpha, int beta)\n{\n"
+    const oldPath = tmp.writeFileAt("a.d",
+        "module s;\n\nint f(int alpha, int beta)\n{\n"
         ~ "    return alpha + beta;\n}\n\n"
         ~ pad ~ "\nint g()\n{\n    return 1;\n}\n");
-    write(newPath, "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
+    const newPath = tmp.writeFileAt("b.d",
+        "module s;\n\nint f(\n    int alpha,\n    int beta)\n{\n"
         ~ "    return alpha\n        + beta;\n}\n\n"
         ~ pad ~ "\nint g()\n{\n    return 2;\n}\n");
 
@@ -1679,26 +1669,21 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.loadDiffPreview.rendersOneDecoratedDocument")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import std.process : environment;
 
     import sparkles.syntax : GrammarRegistry, LabelSet;
     import sparkles.syntax.md.model : MdDiffStatus;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
-    const dir = buildPath(tempDir(), "hue-preview-diff-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-preview-diff-test");
 
-    const oldPath = buildPath(dir, "a.md");
-    const newPath = buildPath(dir, "b.md");
-    write(oldPath, "# Title\n\nkept\n\ndoomed\n");
-    write(newPath, "# Title\n\nkept\n\nfresh text\n");
+    const oldPath = tmp.writeFileAt("a.md", "# Title\n\nkept\n\ndoomed\n");
+    const newPath = tmp.writeFileAt("b.md", "# Title\n\nkept\n\nfresh text\n");
 
     auto reg = GrammarRegistry.fromEnvironment();
     auto cache = TsConfigCache.create(&reg, LabelSet.standard());
@@ -1724,22 +1709,18 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.coverage.loadsAndAttachesToDocument")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import sparkles.code_instrumentation : LineState;
 
-    const dir = buildPath(tempDir(), "hue-coverage-test");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-coverage-test");
 
-    const srcPath = buildPath(dir, "math.d");
-    const lstPath = buildPath(dir, "math.lst");
-
-    write(srcPath, "module math;\n\nint add(int a, int b)\n{\n    return a + b;\n}\n\nint sub(int a, int b)\n{\n    return a - b;\n}\n");
+    const srcPath = tmp.writeFileAt("math.d",
+        "module math;\n\nint add(int a, int b)\n{\n    return a + b;\n}\n\nint sub(int a, int b)\n{\n    return a - b;\n}\n");
     // With the trailer `-cov` actually writes: it names the source the
     // listing describes, which is what `findFile` matches on now that the
     // artifact path no longer overwrites it.
-    write(lstPath, "       |module math;\n       |\n       |int add(int a, int b)\n       |{\n      5|    return a + b;\n       |}\n       |\n       |int sub(int a, int b)\n       |{\n0000000|    return a - b;\n       |}\n"
+    const lstPath = tmp.writeFileAt("math.lst",
+        "       |module math;\n       |\n       |int add(int a, int b)\n       |{\n      5|    return a + b;\n       |}\n       |\n       |int sub(int a, int b)\n       |{\n0000000|    return a - b;\n       |}\n"
         ~ "math.d is 50% covered\n");
 
     import sparkles.syntax : GrammarRegistry, LabelSet;
@@ -1764,20 +1745,17 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 @("document.coverage.artifactForAnotherFileIsRefused")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // A listing that names a different source must not decorate this one.
     // The old single-file fallback attached whatever the report held to
     // whatever was open, so browsing to any other file inherited its counts.
-    const dir = buildPath(tempDir(), "hue-coverage-mismatch");
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
+    auto tmp = TmpFS.create("hue-coverage-mismatch");
 
-    const srcPath = buildPath(dir, "other.d");
-    const lstPath = buildPath(dir, "math.lst");
-    write(srcPath, "module other;\nvoid unrelated() {}\n");
-    write(lstPath, "      5|    return a + b;\nmath.d is 100% covered\n");
+    const srcPath = tmp.writeFileAt("other.d",
+        "module other;\nvoid unrelated() {}\n");
+    const lstPath = tmp.writeFileAt("math.lst",
+        "      5|    return a + b;\nmath.d is 100% covered\n");
 
     import sparkles.syntax : GrammarRegistry, LabelSet;
     import sparkles.syntax.ts.injection : TsConfigCache;

@@ -178,19 +178,15 @@ private size_t filenameOffset(scope const(char)[] path)
 @system
 unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const root = buildPath(tempDir(), "hue-picker-files-" ~ randomUUID.toString);
-    mkdirRecurse(buildPath(root, "src"));
-    mkdirRecurse(buildPath(root, "build"));
-    scope (exit) rmdirRecurse(root);
-    write(buildPath(root, ".gitignore"), "build/\n*.tmp\n");
-    write(buildPath(root, "src", "app.d"), "void main() {}\n");
-    write(buildPath(root, "src", "keep.log"), "log\n");
-    write(buildPath(root, "drop.tmp"), "tmp\n");
-    write(buildPath(root, "build", "out.d"), "int x;\n");
+    auto fixture = TmpFS.create();
+    const root = fixture.dir;
+    fixture.writeFileAt(".gitignore", "build/\n*.tmp\n");
+    fixture.writeFileAt("src/app.d", "void main() {}\n");
+    fixture.writeFileAt("src/keep.log", "log\n");
+    fixture.writeFileAt("drop.tmp", "tmp\n");
+    fixture.writeFileAt("build/out.d", "int x;\n");
 
     auto finder = collectFilesFinder(root, ["keep.log"], ["*.log"]);
     assert(finder.length == 3); // .gitignore, app.d, explicitly included log

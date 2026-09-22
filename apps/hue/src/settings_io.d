@@ -196,21 +196,16 @@ Expected!(T, JsonError) readJsoncFile(T)(string path)
 @("settings_io.readJsoncFile.roundTrip")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.file : write;
 
     import settings : HueConfig;
     import settings_overlay : Sparse;
 
-    import std.conv : text;
-    import std.process : thisProcessID;
-
-    const dir = buildPath(tempDir, text("hue-settings-io-", thisProcessID));
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
-
-    const path = buildPath(dir, "config.json");
-    write(path, "{\n" ~
+    // `TmpFS.create()` names the directory after this unittest, which is what
+    // keeps the parallel-running tests out of each other's way.
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFileAt("config.json", "{\n" ~
         "  // the theme hue starts with\n" ~
         "  \"appearance\": { \"theme\": \"builtin-dark\", },\n" ~
         "}\n");
@@ -570,15 +565,14 @@ Expected!(void, SaveRefusal) saveUserConfig(string path,
 @("settings_io.saveUserConfig.freshAndRewrite")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
-    import std.process : thisProcessID;
-    import std.conv : text;
 
-    const dir = buildPath(tempDir, text("hue-save-fresh-", thisProcessID));
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
-    const path = buildPath(dir, "config.json");
+    auto fixture = TmpFS.create();
+    fixture.ensureDir();
+    // The file does not exist yet — `saveUserConfig` creating it is the
+    // behaviour under test — so only the directory is prepared here.
+    const path = buildPath(fixture.dir, "config.json");
 
     // Fresh: deltas alone become the file.
     Sparse!HueConfig deltas;
@@ -609,16 +603,11 @@ Expected!(void, SaveRefusal) saveUserConfig(string path,
 @system unittest
 {
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
-    import std.process : thisProcessID;
-    import std.conv : text;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const dir = buildPath(tempDir, text("hue-save-human-", thisProcessID));
-    mkdirRecurse(dir);
-    scope (exit) rmdirRecurse(dir);
-    const path = buildPath(dir, "config.json");
-    write(path, "{\n  // my carefully commented file\n  \"appearance\": { \"theme\": \"x\" }\n}\n");
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFileAt("config.json",
+        "{\n  // my carefully commented file\n  \"appearance\": { \"theme\": \"x\" }\n}\n");
 
     Sparse!HueConfig deltas;
     deltas.panes.viewer.tabWidth = 2;

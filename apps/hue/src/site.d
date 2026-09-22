@@ -202,21 +202,21 @@ private string repoRelative(string absRoot, string abs) @system
 
 version (unittest)
 {
-    /// A throwaway repo tree: `files` are `path → text` pairs written under a
-    /// fresh root, returned for the caller to delete.
-    private string makeSiteTree(scope const(string[2])[] files) @system
-    {
-        import std.file : mkdirRecurse, tempDir, write;
-        import std.uuid : randomUUID;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-        const root = buildPath(tempDir(), "hue-site-" ~ randomUUID.toString);
+    /// A throwaway repo tree: `files` are `path → text` pairs written under a
+    /// fresh root. The fixture owns the tree; the caller keeps it alive for as
+    /// long as the test needs the files.
+    ///
+    /// The prefix is spelled out only to name the tree: `TmpFS` appends a pid
+    /// and an ordinal, so uniqueness is its business, but the default
+    /// `__FUNCTION__` would label every caller's tree after *this* helper.
+    private TmpFS makeSiteTree(scope const(string[2])[] files) @system
+    {
+        auto tree = TmpFS.create("hue-site");
         foreach (ref f; files)
-        {
-            const path = buildPath(root, f[0]);
-            mkdirRecurse(path.dirName);
-            write(path, f[1]);
-        }
-        return root;
+            tree.writeFileAt(f[0], f[1]);
+        return tree;
     }
 }
 
@@ -229,9 +229,8 @@ unittest
 {
     import std.algorithm.iteration : map;
     import std.array : array;
-    import std.file : rmdirRecurse;
 
-    const root = makeSiteTree([
+    auto tree = makeSiteTree([
         ["libs/a/.gitignore", "build/\n"],
         ["docs/index.md", "See [a](../libs/a/src/x.d) and [the lib](../libs/a).\n"],
         ["docs/hidden/page.md", "[secret](../../libs/secret.rs)\n"],
@@ -243,8 +242,7 @@ unittest
         ["libs/secret.rs", "fn s() {}\n"],
         ["README.rst", "hi\n"],               // directly linked: allow-list exempt
     ]);
-    scope (exit)
-        rmdirRecurse(root);
+    const root = tree.dir;
 
     const cfg = SiteConfig().withDefaults;
     auto d = discoverSite(root, cfg, ["**/hidden/**"]);
@@ -268,12 +266,11 @@ unittest
     import std.algorithm.iteration : map;
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.file : rmdirRecurse;
 
     char[] big;
     big.length = 100;
     big[] = 'x';
-    const root = makeSiteTree([
+    auto tree = makeSiteTree([
         ["docs/index.md", "[b](../big.txt) [p](../logo.png) [l](../x.log)\n"
             ~ "[ok](../ok.txt)\n"],
         ["big.txt", big.idup],
@@ -281,8 +278,7 @@ unittest
         ["x.log", "line\n"],
         ["ok.txt", "fine\n"],
     ]);
-    scope (exit)
-        rmdirRecurse(root);
+    const root = tree.dir;
 
     auto cfg = SiteConfig(maxFileSize: 50, excludeGlobs: ["*.log"]).withDefaults;
     auto d = discoverSite(root, cfg, null);
