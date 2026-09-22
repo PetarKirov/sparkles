@@ -30,6 +30,11 @@ struct TmpFS
 
     @disable this();
 
+    // A destructor plus value semantics would remove the same tree twice.
+    // `create` returns by value, which is a move, so nothing legitimate needs
+    // a copy.
+    @disable this(this);
+
     const(string)[] createdFiles() const
     {
         return files;
@@ -63,6 +68,15 @@ struct TmpFS
         }
     }
 
+    /**
+    Creates a fixture rooted at `basePath/prefix`.
+
+    `prefix` defaults to the *calling* function, which gives each test its own
+    directory. Take care when calling this from a shared helper: every test
+    routed through one helper would then share one directory, and the test
+    runner executes tests in parallel. Pass an explicit, unique `prefix` in
+    that case.
+    */
     static TmpFS create(string prefix = __FUNCTION__, string basePath = tempDir())
     {
         auto result = TmpFS(prefix, basePath);
