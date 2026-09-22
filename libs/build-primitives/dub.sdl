@@ -18,6 +18,16 @@ configuration "library" {
     excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d"
 }
 
+// The library plus `testing.d`, for a consumer whose *tests* want the
+// repository fixtures. Select it from the consumer's unittest configuration
+// with `subConfiguration "sparkles:build-primitives" "testing"`; never from a
+// shipped configuration, or the test helpers travel with the binary.
+configuration "testing" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+    dependency "sparkles:test-utils" path="../.."
+}
+
 configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
