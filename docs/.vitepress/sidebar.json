@@ -3063,6 +3063,149 @@
         ]
       },
       {
+        "text": "Safe Path Traversal",
+        "link": "/research/safe-path-traversal/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/safe-path-traversal/concepts"
+          },
+          {
+            "text": "Attacks & Theory",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Bishop & Dilger 1996",
+                "link": "/research/safe-path-traversal/bishop-dilger-1996"
+              },
+              {
+                "text": "Dean & Hu 2004 / Borisov 2005",
+                "link": "/research/safe-path-traversal/dean-hu-2004-borisov-2005"
+              },
+              {
+                "text": "Wei & Pu 2005",
+                "link": "/research/safe-path-traversal/wei-pu-2005"
+              },
+              {
+                "text": "Watson 2007",
+                "link": "/research/safe-path-traversal/watson-2007"
+              },
+              {
+                "text": "Tsafrir 2008",
+                "link": "/research/safe-path-traversal/tsafrir-2008"
+              },
+              {
+                "text": "Cai 2009",
+                "link": "/research/safe-path-traversal/cai-2009"
+              },
+              {
+                "text": "Chari 2010",
+                "link": "/research/safe-path-traversal/chari-2010"
+              },
+              {
+                "text": "Payer 2012",
+                "link": "/research/safe-path-traversal/payer-2012"
+              },
+              {
+                "text": "Raducu 2022",
+                "link": "/research/safe-path-traversal/raducu-2022"
+              }
+            ]
+          },
+          {
+            "text": "Kernel Mechanisms",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Linux openat2",
+                "link": "/research/safe-path-traversal/linux-openat2"
+              },
+              {
+                "text": "Linux procfs & magic links",
+                "link": "/research/safe-path-traversal/linux-procfs-magic-links"
+              },
+              {
+                "text": "FreeBSD & OpenBSD",
+                "link": "/research/safe-path-traversal/freebsd-openbsd"
+              },
+              {
+                "text": "Darwin",
+                "link": "/research/safe-path-traversal/darwin"
+              },
+              {
+                "text": "Windows NT",
+                "link": "/research/safe-path-traversal/windows-nt"
+              }
+            ]
+          },
+          {
+            "text": "Libraries & Runtime APIs",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "libpathrs",
+                "link": "/research/safe-path-traversal/libpathrs"
+              },
+              {
+                "text": "filepath-securejoin",
+                "link": "/research/safe-path-traversal/filepath-securejoin"
+              },
+              {
+                "text": "Go os.Root",
+                "link": "/research/safe-path-traversal/go-os-root"
+              },
+              {
+                "text": "Rust std",
+                "link": "/research/safe-path-traversal/rust-std"
+              },
+              {
+                "text": "rustix",
+                "link": "/research/safe-path-traversal/rustix"
+              },
+              {
+                "text": "cap-std",
+                "link": "/research/safe-path-traversal/cap-std"
+              },
+              {
+                "text": "openat / openat-ext",
+                "link": "/research/safe-path-traversal/openat-crates"
+              },
+              {
+                "text": "gnulib fts",
+                "link": "/research/safe-path-traversal/gnulib-fts"
+              },
+              {
+                "text": "CPython shutil",
+                "link": "/research/safe-path-traversal/cpython-shutil"
+              }
+            ]
+          },
+          {
+            "text": "Talks & Articles",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Aleksa Sarai's talks",
+                "link": "/research/safe-path-traversal/sarai-talks"
+              },
+              {
+                "text": "LWN openat2 series",
+                "link": "/research/safe-path-traversal/lwn-openat2-series"
+              },
+              {
+                "text": "Forshaw: Windows symlinks",
+                "link": "/research/safe-path-traversal/forshaw-windows-symlinks"
+              }
+            ]
+          },
+          {
+            "text": "Comparison & Recommendations",
+            "link": "/research/safe-path-traversal/comparison"
+          }
+        ]
+      },
+      {
         "text": "Fileset & File-Selection Languages",
         "link": "/research/fileset-languages/",
         "collapsed": true,
