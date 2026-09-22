@@ -1298,15 +1298,15 @@ private bool hueUsable() @safe
 @("cases.report.plain-render-has-all-three-panes")
 @system unittest
 {
-    import std.file : exists, rmdirRecurse, tempDir;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     // Its own directory: a passing test must not leave anything in the one a
-    // real sweep clears, nor race that sweep for it.
-    const dir = buildPath(tempDir, "sparkles-dmd-fmt-report-test");
-    scope (exit)
-        if (dir.exists)
-            rmdirRecurse(dir);
+    // real sweep clears, nor race that sweep for it. `ensureDir` up front so
+    // the fixture owns the tree and removes the artifacts `renderFailure`
+    // writes into it — it never tells the caller their names.
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const dir = tmp.dir();
 
     CaseResult r;
     r.expected = "int a;\n";
@@ -1401,13 +1401,15 @@ private bool hueUsable() @safe
 @("cases.artifacts.both-sides-land-on-disk")
 @system unittest
 {
-    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir;
-    import std.path : baseName, buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.file : readText;
+    import std.path : baseName;
 
-    const dir = buildPath(tempDir, "sparkles-dmd-fmt-artifact-test");
-    scope (exit)
-        if (dir.exists)
-            rmdirRecurse(dir);
+    // `ensureDir` up front so the fixture owns the tree: `writeArtifacts`
+    // names the files it writes, and only whole-tree removal collects them.
+    auto tmp = TmpFS.create();
+    tmp.ensureDir();
+    const dir = tmp.dir();
 
     CaseResult r;
     r.file = "/somewhere/declarations.md";
@@ -1474,12 +1476,11 @@ private bool hueUsable() @safe
     exp.text = "int a;\n";
 
     // Bless into a temp file and read it back.
-    import std.file : readText, remove, tempDir, write;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.file : readText;
 
-    const path = buildPath(tempDir, "sparkles-dmd-fmt-bless-test.md");
-    write(path, md);
-    scope (exit) remove(path);
+    auto tmp = TmpFS.create();
+    const path = tmp.writeFileAt("cases.md", md);
     blessCaseFile(path, md, [exp]);
 
     const after = readText(path);

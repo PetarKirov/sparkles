@@ -289,17 +289,15 @@ private bool globMatch_(const(char)[] pattern, const(char)[] s) @safe
 @("config.discovery.walks-up-applies-nearest-last")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
 
-    const root = buildPath(tempDir, "dmd-fmt-cfg-test");
-    scope (exit)
-        rmdirRecurse(root);
-    mkdirRecurse(buildPath(root, "sub"));
-    write(buildPath(root, ".editorconfig"),
+    auto tmp = TmpFS.create();
+    const root = tmp.dir();
+    tmp.writeFileAt(".editorconfig",
         "root = true\n[*]\nindent_style = tab\nindent_size = 8\n"
         ~ "max_line_length = 100\ndfmt_brace_style = allman\n");
-    write(buildPath(root, "sub", ".editorconfig"),
+    tmp.writeFileAt("sub/.editorconfig",
         "[*.d]\nindent_size = 2\ndfmt_soft_max_line_length = 60\n");
 
     const cfg = configFor(buildPath(root, "sub", "x.d"));
@@ -316,17 +314,14 @@ private bool globMatch_(const(char)[] pattern, const(char)[] s) @safe
 @("config.discovery.root-stops-the-walk")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
 
-    const root = buildPath(tempDir, "dmd-fmt-cfg-root-test");
-    scope (exit)
-        rmdirRecurse(root);
-    mkdirRecurse(buildPath(root, "inner"));
-    write(buildPath(root, ".editorconfig"), "[*]\nindent_size = 8\n");
-    write(buildPath(root, "inner", ".editorconfig"),
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt(".editorconfig", "[*]\nindent_size = 8\n");
+    tmp.writeFileAt("inner/.editorconfig",
         "root = true\n[*]\nindent_size = 3\n");
 
-    const cfg = configFor(buildPath(root, "inner", "x.d"));
+    const cfg = configFor(buildPath(tmp.dir(), "inner", "x.d"));
     assert(cfg.indentSize == 3); // the outer file is never consulted
 }

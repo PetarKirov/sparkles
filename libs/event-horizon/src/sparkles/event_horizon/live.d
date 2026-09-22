@@ -1995,26 +1995,27 @@ unittest
 }
 
 version (unittest)
-private string makeProbeDir(string marker) @system
 {
-    import core.sys.posix.unistd : getpid;
-    import std.conv : text;
-    import std.file : mkdirRecurse, tempDir, write;
-    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
 
-    const dir = buildPath(tempDir(),
-        text("eh-path-probe-", marker, "-", getpid()));
-    mkdirRecurse(dir);
+    // `marker` plus the pid, rather than `TmpFS`'s default prefix: that
+    // default is the *calling* function, so every test routed through this
+    // helper would share one directory, and the runner is parallel.
+    private TmpFS makeProbeDir(string marker) @system
     {
-        import std.string : toStringz;
         import core.sys.posix.sys.stat : chmod;
+        import core.sys.posix.unistd : getpid;
+        import std.conv : text;
+        import std.string : toStringz;
 
-        const script = buildPath(dir, "ehprobe");
-        write(script, "#!/bin/sh\necho from-overlay\n");
+        auto tmp = TmpFS.create(text("eh-path-probe-", marker, "-", getpid()));
+        const script = tmp.writeFileAt("ehprobe", "#!/bin/sh\necho from-overlay\n");
+        // The executable bit is the point of the probe, and no fixture
+        // grants it — the test does.
         enum uint mode755 = 493; // 0o755
         cast(void) chmod(script.toStringz, mode755);
+        return tmp;
     }
-    return dir;
 }
 
 @("live.env.pathLookupUsesTheOverlayResult")
@@ -2024,17 +2025,10 @@ unittest
     Sched s;
     schedOrSkip(s);
 
-    const probeDir = makeProbeDir("lookup");
-    const scriptPath = probeDir ~ "/ehprobe";
-    // Unconditional: a failing assertion below must not strand the probe
-    // script or its directory in the temp dir.
-    scope (exit)
-    {
-        import std.file : remove, rmdir;
-
-        remove(scriptPath);
-        rmdir(probeDir);
-    }
+    // The fixture's destructor is unconditional: a failing assertion below
+    // must not strand the probe script or its directory in the temp dir.
+    auto probe = makeProbeDir("lookup");
+    const probeDir = probe.dir;
 
     auto r = s.run(() {
         // Control: without the overlay the bare name is not findable.
@@ -2068,8 +2062,6 @@ unittest
 unittest
 {
     import core.sys.posix.sys.stat : chmod;
-    import std.file : mkdirRecurse, remove, rmdir, tempDir, write;
-    import std.path : buildPath;
     import std.string : toStringz;
 
     Sched s;
@@ -2078,22 +2070,15 @@ unittest
     import core.sys.posix.unistd : getpid;
     import std.conv : text;
 
-    const root = buildPath(tempDir(), text("eh-path-cwd-probe-", getpid()));
-    const bin = buildPath(root, "bin");
-    const script = buildPath(bin, "cwdprobe");
-    const emptyScript = buildPath(root, "emptyprobe");
-    mkdirRecurse(bin);
-    write(script, "#!/bin/sh\nprintf cwd-relative\n");
-    write(emptyScript, "#!/bin/sh\nprintf cwd-empty\n");
+    // The pid keeps two concurrent test processes apart, as the hand-rolled
+    // name it replaces did.
+    auto tmp = TmpFS.create(text("eh-path-cwd-probe-", getpid()));
+    const root = tmp.dir;
+    const script = tmp.writeFileAt("bin/cwdprobe", "#!/bin/sh\nprintf cwd-relative\n");
+    const emptyScript = tmp.writeFileAt("emptyprobe", "#!/bin/sh\nprintf cwd-empty\n");
+    // The executable bit is the subject here, so the test sets it.
     cast(void) chmod(script.toStringz, 493 /* 0o755 */);
     cast(void) chmod(emptyScript.toStringz, 493 /* 0o755 */);
-    scope (exit)
-    {
-        remove(script);
-        remove(emptyScript);
-        rmdir(bin);
-        rmdir(root);
-    }
 
     auto r = s.run(() {
         ProcessConfig excluded;
@@ -2140,37 +2125,27 @@ unittest
     import core.sys.posix.sys.stat : chmod;
     import core.sys.posix.unistd : getpid;
     import std.conv : text;
-    import std.file : mkdirRecurse, remove, rmdir, tempDir, write;
     import std.path : buildPath;
     import std.string : toStringz;
 
     Sched s;
     schedOrSkip(s);
 
-    const root = buildPath(tempDir(), text("eh-path-search-probe-", getpid()));
+    auto tmp = TmpFS.create(text("eh-path-search-probe-", getpid()));
+    const root = tmp.dir;
     const unexec = buildPath(root, "unexec");
     const exec = buildPath(root, "exec");
     const garbage = buildPath(root, "garbage");
-    mkdirRecurse(unexec);
-    mkdirRecurse(exec);
-    mkdirRecurse(garbage);
     // The same name three ways: not executable, executable, and an
-    // executable that is not an exec format.
-    write(buildPath(unexec, "ehprobe"), "#!/bin/sh\nprintf wrong\n");
-    write(buildPath(exec, "ehprobe"), "#!/bin/sh\nprintf right\n");
-    write(buildPath(garbage, "ehprobe"), "\x00\x01\x02not-an-executable");
-    cast(void) chmod(buildPath(unexec, "ehprobe").toStringz, 420 /* 0o644 */);
-    cast(void) chmod(buildPath(exec, "ehprobe").toStringz, 493 /* 0o755 */);
-    cast(void) chmod(buildPath(garbage, "ehprobe").toStringz, 493 /* 0o755 */);
-    scope (exit)
-    {
-        foreach (dir; [unexec, exec, garbage])
-        {
-            remove(buildPath(dir, "ehprobe"));
-            rmdir(dir);
-        }
-        rmdir(root);
-    }
+    // executable that is not an exec format. The modes are the subject of
+    // the test, so it sets them itself.
+    const unexecProbe = tmp.writeFileAt("unexec/ehprobe", "#!/bin/sh\nprintf wrong\n");
+    const execProbe = tmp.writeFileAt("exec/ehprobe", "#!/bin/sh\nprintf right\n");
+    const garbageProbe =
+        tmp.writeFileAt("garbage/ehprobe", "\x00\x01\x02not-an-executable");
+    cast(void) chmod(unexecProbe.toStringz, 420 /* 0o644 */);
+    cast(void) chmod(execProbe.toStringz, 493 /* 0o755 */);
+    cast(void) chmod(garbageProbe.toStringz, 493 /* 0o755 */);
 
     auto r = s.run(() {
         // EACCES is sticky: a later miss does not downgrade it to ENOENT.

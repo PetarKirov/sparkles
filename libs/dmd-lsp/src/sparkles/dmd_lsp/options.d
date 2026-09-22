@@ -104,20 +104,20 @@ string runtimeSourcesProblem(scope const string[] importPaths) @safe
 @("dmd_lsp.options.runtimeSourcesProblem")
 @system unittest
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.searching : canFind;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath;
     import std.uuid : randomUUID;
 
     assert(runtimeSourcesProblem(null).canFind("SPARKLES_DMD_IMPORT_PATH"));
 
-    const dir = buildPath(tempDir, "sparkles-dmd-lsp-" ~ randomUUID.toString);
-    mkdirRecurse(dir);
-    scope (exit)
-        rmdirRecurse(dir);
+    // A UUID rather than the default per-function prefix: the first assertion
+    // needs the directory *empty*, so a concurrent run of this same test in
+    // another process must not be sharing it.
+    auto tmp = TmpFS.create("sparkles-dmd-lsp");
+    tmp.ensureDir();
 
-    assert(runtimeSourcesProblem([dir]).canFind("object.d"));
+    assert(runtimeSourcesProblem([tmp.dir]).canFind("object.d"));
 
-    write(buildPath(dir, "object.d"), "module object;");
-    assert(runtimeSourcesProblem([dir]) is null);
+    tmp.writeFileAt("object.d", "module object;");
+    assert(runtimeSourcesProblem([tmp.dir]) is null);
 }

@@ -944,28 +944,28 @@ private string[] splitArgs(scope const(char)[] line) @safe pure
 {
     import std.path : buildPath;
 
-    auto t = TempProject.create("single-file");
-    scope (exit) t.cleanup();
+    auto t = tempProject("single-file");
 
-    t.put("shebang.d", "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"x\"\n+/\nvoid main() {}\n");
-    t.put("bare.d", "/+dub.json: {\"name\":\"x\"} +/\nvoid main() {}\n");
-    t.put("plain.d", "module plain;\nvoid main() {}\n");
+    t.writeFileAt("shebang.d",
+        "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"x\"\n+/\nvoid main() {}\n");
+    t.writeFileAt("bare.d", "/+dub.json: {\"name\":\"x\"} +/\nvoid main() {}\n");
+    t.writeFileAt("plain.d", "module plain;\nvoid main() {}\n");
     // A `/+ +/` comment further down is not a recipe: only the file's opening
     // comment counts, or an ordinary module with documentation would qualify.
-    t.put("late.d", "module late;\n/+ dub.sdl: no +/\nvoid main() {}\n");
-    t.put("dub.sdl", "name \"not-a-d-file\"\n");
+    t.writeFileAt("late.d", "module late;\n/+ dub.sdl: no +/\nvoid main() {}\n");
+    t.writeFileAt("dub.sdl", "name \"not-a-d-file\"\n");
 
-    assert(isSingleFileDubPackage(t.root.buildPath("shebang.d")));
-    assert(isSingleFileDubPackage(t.root.buildPath("bare.d")));
-    assert(!isSingleFileDubPackage(t.root.buildPath("plain.d")));
-    assert(!isSingleFileDubPackage(t.root.buildPath("late.d")));
-    assert(!isSingleFileDubPackage(t.root.buildPath("dub.sdl")));
-    assert(!isSingleFileDubPackage(t.root.buildPath("absent.d")));
+    assert(isSingleFileDubPackage(t.dir.buildPath("shebang.d")));
+    assert(isSingleFileDubPackage(t.dir.buildPath("bare.d")));
+    assert(!isSingleFileDubPackage(t.dir.buildPath("plain.d")));
+    assert(!isSingleFileDubPackage(t.dir.buildPath("late.d")));
+    assert(!isSingleFileDubPackage(t.dir.buildPath("dub.sdl")));
+    assert(!isSingleFileDubPackage(t.dir.buildPath("absent.d")));
 
     // The recipe of a single-file package is the file; anything else walks up
     // to the enclosing directory recipe (PRJ1).
-    assert(dubRecipeFor(t.root.buildPath("shebang.d")) == t.root.buildPath("shebang.d"));
-    assert(dubRecipeFor(t.root.buildPath("plain.d")) == t.root.buildPath("dub.sdl"));
+    assert(dubRecipeFor(t.dir.buildPath("shebang.d")) == t.dir.buildPath("shebang.d"));
+    assert(dubRecipeFor(t.dir.buildPath("plain.d")) == t.dir.buildPath("dub.sdl"));
 }
 
 @("project.singleFile.ownRecipeBeatsTheEnclosingOne")
@@ -975,24 +975,23 @@ private string[] splitArgs(scope const(char)[] line) @safe pure
     import std.path : buildPath;
 
     requireDub();
-    auto t = TempProject.create("single-vs-enclosing");
-    scope (exit) t.cleanup();
+    auto t = tempProject("single-vs-enclosing");
 
     // The `libs/x/examples/*.d` shape: a sample whose own recipe pulls in a
     // package the enclosing library never mentions. Climbing past it (PRJ1)
     // would lose that import path and report every symbol from it as
     // `unable to read module`.
-    t.put("dub.sdl", "name \"host\"\ntargetType \"library\"\n"
+    t.writeFileAt("dub.sdl", "name \"host\"\ntargetType \"library\"\n"
         ~ "sourcePaths \"src\"\nimportPaths \"src\"\n");
-    t.put("src/host_mod.d", "module host_mod;\nint h;\n");
-    t.put("aside/dub.sdl", "name \"aside\"\ntargetType \"library\"\n"
+    t.writeFileAt("src/host_mod.d", "module host_mod;\nint h;\n");
+    t.writeFileAt("aside/dub.sdl", "name \"aside\"\ntargetType \"library\"\n"
         ~ "sourcePaths \"src\"\nimportPaths \"src\"\n");
-    t.put("aside/src/aside_mod.d", "module aside_mod;\nint a;\n");
-    t.put("examples/sample.d",
+    t.writeFileAt("aside/src/aside_mod.d", "module aside_mod;\nint a;\n");
+    t.writeFileAt("examples/sample.d",
         "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"sample\"\n"
         ~ "    dependency \"aside\" path=\"../aside\"\n+/\nvoid main() {}\n");
 
-    const sample = t.root.buildPath("examples", "sample.d");
+    const sample = t.dir.buildPath("examples", "sample.d");
     DubProject proj;
     synchronized (dubTestSync)
     {
@@ -1128,6 +1127,8 @@ version (unittest)
 
 version (unittest)
 {
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     /// Concurrent `dub` child processes contend on dub's own lock files and
     /// fail transiently under the parallel test runner — every dub-invoking
     /// test serializes on this.
@@ -1138,45 +1139,25 @@ version (unittest)
         dubTestSync = new Object;
     }
 
-    /// A scratch dub project on disk; removed on scope exit.
-    private struct TempProject
+    /**
+    A scratch dub project on disk; removed when the fixture leaves scope.
+
+    The `name` keeps concurrent tests apart — the runner is parallel, and
+    `TmpFS`'s default prefix would give every test routed through here the
+    same directory. The pid keeps concurrent test *processes* apart.
+
+    `ensureDir` up front so the fixture owns the tree: a `dub describe` run
+    inside it leaves a `.dub` cache directory the file list alone would miss.
+    */
+    private TmpFS tempProject(string name) @system
     {
-        string root;
+        import std.conv : to;
+        import std.process : thisProcessID;
 
-        static TempProject create(string name) @system
-        {
-            import std.conv : to;
-            import std.file : mkdirRecurse, tempDir;
-            import std.path : buildPath;
-            import std.process : thisProcessID;
-
-            TempProject t;
-            t.root = tempDir.buildPath(
-                "sparkles-dmd-lsp-" ~ name ~ "-" ~ thisProcessID.to!string);
-            mkdirRecurse(t.root);
-            return t;
-        }
-
-        void put(string rel, string content) @system
-        {
-            import std.file : mkdirRecurse, write;
-            import std.path : buildPath, dirName;
-
-            const path = root.buildPath(rel);
-            mkdirRecurse(path.dirName);
-            write(path, content);
-        }
-
-        void cleanup() @system
-        {
-            import std.file : rmdirRecurse;
-
-            try
-                rmdirRecurse(root);
-            catch (Exception)
-            {
-            }
-        }
+        auto t = TmpFS.create(
+            "sparkles-dmd-lsp-" ~ name ~ "-" ~ thisProcessID.to!string);
+        t.ensureDir();
+        return t;
     }
 
     private void requireDub() @system
@@ -1204,19 +1185,18 @@ version (unittest)
     import std.path : buildPath;
 
     requireDub();
-    auto t = TempProject.create("none-root");
-    scope (exit) t.cleanup();
+    auto t = tempProject("none-root");
 
     // The dmd shape: an explicitly none-target root with an inline
     // subpackage (dub describe on the root fails; the file belongs to the
     // subpackage, whose sources live under the root directory itself).
-    t.put("dub.sdl",
+    t.writeFileAt("dub.sdl",
         "name \"umbrella\"\ntargetType \"none\"\n"
         ~ "subPackage {\n    name \"core\"\n    targetType \"library\"\n"
         ~ "    sourcePaths \"src\"\n    importPaths \"src\"\n}\n");
-    t.put("src/core_mod.d", "module core_mod;\nint x;\n");
+    t.writeFileAt("src/core_mod.d", "module core_mod;\nint x;\n");
 
-    const file = t.root.buildPath("src", "core_mod.d");
+    const file = t.dir.buildPath("src", "core_mod.d");
     DubProject proj;
     synchronized (dubTestSync)
     {
@@ -1241,28 +1221,27 @@ version (unittest)
     import std.path : buildPath;
 
     requireDub();
-    auto t = TempProject.create("bare-root");
-    scope (exit) t.cleanup();
+    auto t = tempProject("bare-root");
 
     // The monorepo-umbrella shape: a root with only path subpackages and no
     // sources of its own. A stray file directly under the root belongs to no
     // subpackage: the fallback must fail with the candidates named, never
     // crash (PRJ7). A file inside the subpackage never reaches the fallback
     // at all - the innermost recipe wins (PRJ1).
-    t.put("dub.sdl", "name \"mono\"\nsubPackage \"libs/thing\"\n");
-    t.put("libs/thing/dub.sdl",
+    t.writeFileAt("dub.sdl", "name \"mono\"\nsubPackage \"libs/thing\"\n");
+    t.writeFileAt("libs/thing/dub.sdl",
         "name \"thing\"\ntargetType \"library\"\n"
         ~ "sourcePaths \"src\"\nimportPaths \"src\"\n");
-    t.put("libs/thing/src/thing_mod.d", "module thing_mod;\nint y;\n");
-    t.put("stray.d", "module stray;\n");
+    t.writeFileAt("libs/thing/src/thing_mod.d", "module thing_mod;\nint y;\n");
+    t.writeFileAt("stray.d", "module stray;\n");
 
     DubProject inner, stray;
     synchronized (dubTestSync)
     {
         clearDubProjectCache();
         scope (exit) clearDubProjectCache();
-        inner = dubProjectFor(t.root.buildPath("libs", "thing", "src", "thing_mod.d"));
-        stray = dubProjectFor(t.root.buildPath("stray.d"));
+        inner = dubProjectFor(t.dir.buildPath("libs", "thing", "src", "thing_mod.d"));
+        stray = dubProjectFor(t.dir.buildPath("stray.d"));
     }
     assert(inner.usable, inner.error);
     assert(inner.subpackage.length == 0); // its own recipe, no fallback
@@ -1275,27 +1254,26 @@ version (unittest)
 @("project.subpackageNames.recipeForms")
 @system unittest
 {
-    auto t = TempProject.create("names");
-    scope (exit) t.cleanup();
+    auto t = tempProject("names");
 
-    t.put("dub.sdl",
+    t.writeFileAt("dub.sdl",
         "name \"m\"\n"
         ~ "subPackage \"libs/alpha\"\n"
         ~ "subPackage {\n    name \"beta\"\n    targetType \"library\"\n}\n");
-    t.put("libs/alpha/dub.sdl", "name \"alpha-real\"\n");
+    t.writeFileAt("libs/alpha/dub.sdl", "name \"alpha-real\"\n");
 
     import std.path : buildPath;
 
-    const refs = subpackageNames(t.root.buildPath("dub.sdl"));
+    const refs = subpackageNames(t.dir.buildPath("dub.sdl"));
     assert(refs.length == 2);
     assert(refs[0].name == "alpha-real"); // path ref: name from its recipe
     assert(refs[0].dir.length);
     assert(refs[1].name == "beta"); // inline block
     assert(refs[1].dir.length == 0);
 
-    t.put("dub.json",
+    t.writeFileAt("dub.json",
         `{"name":"m","subPackages":["libs/alpha",{"name":"gamma"}]}`);
-    const jrefs = subpackageNames(t.root.buildPath("dub.json"));
+    const jrefs = subpackageNames(t.dir.buildPath("dub.json"));
     assert(jrefs.length == 2);
     assert(jrefs[0].name == "alpha-real");
     assert(jrefs[1].name == "gamma");
