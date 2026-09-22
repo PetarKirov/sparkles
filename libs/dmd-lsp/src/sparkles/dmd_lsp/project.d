@@ -1144,8 +1144,8 @@ version (unittest)
     `TmpFS`'s default prefix would give every test routed through here the
     same directory. The pid keeps concurrent test *processes* apart.
 
-    `ensureDir` up front so the fixture owns the tree: a `dub describe` run
-    inside it leaves a `.dub` cache directory the file list alone would miss.
+    The fixture owns the tree, so the `.dub` cache directory a `dub describe`
+    run leaves inside it is removed with it.
 
     A template with the test-utils import in its body: a module-scope
     `version (unittest)` import is evaluated by every `-unittest` consumer that
@@ -1160,7 +1160,6 @@ version (unittest)
 
         auto t = TmpFS.create(
             "sparkles-dmd-lsp-" ~ name ~ "-" ~ thisProcessID.to!string);
-        t.ensureDir();
         return t;
     }
 

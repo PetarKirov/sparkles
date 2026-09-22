@@ -1374,7 +1374,6 @@ unittest
     // package's library configuration excludes, so hue cannot import it.
     auto tmp = TmpFS.create("hue-explorer-git-test");
     const root = tmp.dir;
-    tmp.ensureDir(); // `git init` must not be the one that creates it
     try
     {
         if (runGit(["init", "-q", root]).status != 0)

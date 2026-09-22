@@ -75,7 +75,6 @@ struct TmpGitRepo
         import std.exception : enforce;
 
         auto fs = TmpFS.create(prefix);
-        fs.ensureDir();
 
         const result = runGit(["-c", "init.defaultBranch=main", "init", "-q", fs.dir()]);
         enforce(result.status == 0, "git init failed: " ~ result.output);

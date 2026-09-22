@@ -234,7 +234,6 @@ version (unittest)
         // prefix is the *calling* function, which every test routed through
         // here would share.
         auto tmp = TmpFS.create(stem);
-        tmp.ensureDir();
         return tmp;
     }
 }

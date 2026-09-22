@@ -224,7 +224,6 @@ unittest
 {
     // When inTreePackageNames returns nothing (no dub.sdl), code passes through unchanged.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const root = tmp.dir();
 
     const code = `dependency "sparkles" version="*"`;
@@ -294,7 +293,6 @@ unittest
 unittest
 {
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const root = tmp.dir();
 
     // Missing file returns null
@@ -339,6 +337,5 @@ unittest
 
     // No root dub.sdl → empty
     auto emptyTmp = TmpFS.create("ci-in-tree-empty");
-    emptyTmp.ensureDir();
     assert(inTreePackageNames(emptyTmp.dir()).length == 0);
 }
