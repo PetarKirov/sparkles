@@ -682,12 +682,11 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
 {
     import sparkles.build_primitives.git_env : runGit;
     import sparkles.test_runner.skip : skipTest;
+    import sparkles.test_utils.tmpfs : TmpFS;
     import std.algorithm.searching : endsWith;
     import std.conv : to;
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
-    import std.path : buildPath, relativePath;
+    import std.path : relativePath;
     import std.string : splitLines, split, strip;
-    import std.uuid : randomUUID;
 
     // A missing git is a degraded environment, not a failure: skip loudly
     // rather than returning early and counting it as a pass.
@@ -699,34 +698,22 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
     catch (Exception)
         return skipTest("git is not on PATH");
 
-    const root = buildPath(tempDir(), "sparkles-gitignore-" ~ randomUUID.toString());
-    mkdirRecurse(buildPath(root, "logs"));
-    // Best effort: a cleanup failure (git leaves read-only objects behind on
-    // some platforms) must not mask the assertion that actually fired.
-    // `scope(exit)` cannot host a `catch`, so the handler is a local function.
-    static void removeQuietly(string dir) nothrow
-    {
-        try
-            rmdirRecurse(dir);
-        catch (Exception)
-        {
-        }
-    }
-
-    scope (exit)
-        removeQuietly(root);
+    // `TmpFS` owns the scratch tree: it creates the directory, names the files,
+    // and removes the whole thing — the `.git` git is about to create
+    // included — without a cleanup failure masking a real assertion.
+    auto tmp = TmpFS.create();
+    const rootIgnore = tmp.writeFileAt(".gitignore", "# comment\n\n*.log\nbuild/\n");
+    const nestedIgnore = tmp.writeFileAt("logs/.gitignore", "!keep.log\n");
+    const root = tmp.dir();
 
     // `runGit` scrubs GIT_DIR and friends. Inheriting them here would point
     // `git init` at whatever repository is running the test suite, which has
     // twice left `core.bare = true` in this repository's own config.
     assert(runGit(["init", "-q", root]).status == 0, "git init failed");
 
-    write(buildPath(root, ".gitignore"), "# comment\n\n*.log\nbuild/\n");
-    write(buildPath(root, "logs", ".gitignore"), "!keep.log\n");
-
     GitIgnoreStack stack;
-    stack.push("", GitIgnore.fromFile(buildPath(root, ".gitignore")));
-    stack.push("logs", GitIgnore.fromFile(buildPath(root, "logs", ".gitignore")));
+    stack.push("", GitIgnore.fromFile(rootIgnore));
+    stack.push("logs", GitIgnore.fromFile(nestedIgnore));
 
     // Paths chosen so that each exercises a different deciding rule: the root
     // pattern, the nested negation, and the directory-only rule.
