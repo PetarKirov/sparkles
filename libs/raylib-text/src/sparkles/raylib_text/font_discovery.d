@@ -218,15 +218,19 @@ package bool isUndecoratedFace(scope const(char)[] path) @safe
 // *processes* (a CI matrix leg beside a local `dub test`, or a retried job)
 // would share it, and one run's cleanup would delete the other's fixture
 // mid-assert.
+//
+// A template rather than a plain function, with the test-utils import inside
+// its body: a module-scope `version (unittest)` import is evaluated by every
+// `-unittest` consumer that merely *imports* this module, and consumers do not
+// carry a test-utils edge. A template body is analyzed only when instantiated,
+// and only this module's own tests instantiate it.
 version (unittest)
 {
-    import sparkles.test_utils.tmpfs : TmpFS;
-
-    private TmpFS uniqueTestDir(string stem) @safe
+    private auto uniqueTestDir()(string stem) @safe
     {
-        import std.uuid : randomUUID;
+        import sparkles.test_utils.tmpfs : TmpFS;
 
-        // A UUID rather than `TmpFS`'s default per-function prefix: that
+        // `stem` rather than `TmpFS`'s default per-function prefix: that
         // prefix is the *calling* function, which every test routed through
         // here would share.
         auto tmp = TmpFS.create(stem);

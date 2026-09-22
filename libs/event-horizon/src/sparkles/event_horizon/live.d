@@ -1996,13 +1996,16 @@ unittest
 
 version (unittest)
 {
-    import sparkles.test_utils.tmpfs : TmpFS;
-
     // `marker` plus the pid, rather than `TmpFS`'s default prefix: that
     // default is the *calling* function, so every test routed through this
     // helper would share one directory, and the runner is parallel.
-    private TmpFS makeProbeDir(string marker) @system
+    //
+    // A template with the test-utils import in its body, not a module-scope
+    // `version (unittest)` import: the latter is evaluated by every `-unittest`
+    // consumer that imports this module, and consumers carry no test-utils edge.
+    private auto makeProbeDir()(string marker) @system
     {
+        import sparkles.test_utils.tmpfs : TmpFS;
         import core.sys.posix.sys.stat : chmod;
         import core.sys.posix.unistd : getpid;
         import std.conv : text;
@@ -2072,6 +2075,8 @@ unittest
 
     // The pid keeps two concurrent test processes apart, as the hand-rolled
     // name it replaces did.
+    import sparkles.test_utils.tmpfs : TmpFS;
+
     auto tmp = TmpFS.create(text("eh-path-cwd-probe-", getpid()));
     const root = tmp.dir;
     const script = tmp.writeFileAt("bin/cwdprobe", "#!/bin/sh\nprintf cwd-relative\n");
@@ -2130,6 +2135,8 @@ unittest
 
     Sched s;
     schedOrSkip(s);
+
+    import sparkles.test_utils.tmpfs : TmpFS;
 
     auto tmp = TmpFS.create(text("eh-path-search-probe-", getpid()));
     const root = tmp.dir;
