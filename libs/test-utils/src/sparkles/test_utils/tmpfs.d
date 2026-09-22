@@ -68,9 +68,32 @@ struct TmpFS
             return;
 
         try
+        {
+            clearReadOnly(dir);
             rmdirRecurse(dir);
+        }
         catch (Exception)
         {
+        }
+    }
+
+    /// On Windows a read-only file refuses deletion outright, and git marks
+    /// every object it writes read-only — so a fixture that ran `git commit`
+    /// would otherwise outlive itself. Elsewhere the attribute has no such
+    /// meaning and the walk is skipped.
+    private static void clearReadOnly(string root)
+    {
+        version (Windows)
+        {
+            import core.sys.windows.winnt : FILE_ATTRIBUTE_READONLY;
+            import std.file : dirEntries, getAttributes, setAttributes, SpanMode;
+
+            foreach (entry; dirEntries(root, SpanMode.depth, false))
+            {
+                const attrs = getAttributes(entry.name);
+                if (attrs & FILE_ATTRIBUTE_READONLY)
+                    setAttributes(entry.name, attrs & ~FILE_ATTRIBUTE_READONLY);
+            }
         }
     }
 
