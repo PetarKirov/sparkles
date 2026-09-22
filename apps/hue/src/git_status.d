@@ -520,7 +520,6 @@ unittest
     // the fixture leaks with no error anywhere. Poll it, or give the fixture
     // a retrying teardown the way `explorer.globs.snacksPrecedence` does.
     auto fixture = TmpFS.create();
-    fixture.ensureDir();
     const root = fixture.dir;
     try
     {

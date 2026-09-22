@@ -1011,10 +1011,9 @@ unittest
     import sparkles.docs.source_set : SourceEntry, SourceSet;
     import sparkles.test_utils.tmpfs : TmpFS;
 
-    // `writeGallery` fills this tree itself, so the fixture only has to own
-    // it: `ensureDir` is what makes the destructor remove the whole thing.
+    // `writeGallery` fills this tree itself; the fixture owns it, so the
+    // destructor removes the whole thing.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const outDir = tmp.dir();
 
     static SourceEntry entry(string rel, string name)
@@ -1067,7 +1066,6 @@ unittest
     import sparkles.test_utils.tmpfs : TmpFS;
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const outDir = tmp.dir();
 
     const set = SourceSet(entries: [
@@ -1238,7 +1236,6 @@ unittest
     import sparkles.test_utils.tmpfs : TmpFS;
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const outDir = tmp.dir();
 
     const set = SourceSet(entries: [

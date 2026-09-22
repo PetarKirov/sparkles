@@ -114,7 +114,6 @@ string runtimeSourcesProblem(scope const string[] importPaths) @safe
     // needs the directory *empty*, so a concurrent run of this same test in
     // another process must not be sharing it.
     auto tmp = TmpFS.create("sparkles-dmd-lsp");
-    tmp.ensureDir();
 
     assert(runtimeSourcesProblem([tmp.dir]).canFind("object.d"));
 

@@ -289,7 +289,6 @@ version (unittest)
 @system unittest
 {
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "nested", "deeper", "target.sdl");
     Doc document;
     document.config = sampleFixture();
@@ -311,7 +310,6 @@ version (unittest)
 @system unittest
 {
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "recipe.sdl");
     Doc document;
     document.config = sampleFixture();
@@ -332,7 +330,6 @@ version (unittest)
 @system unittest
 {
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "absent.sdl");
 
     const missing = readSDLFile!Doc(path);
@@ -357,7 +354,6 @@ version (unittest)
     import std.array : appender;
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
 
     enum broken = `config "unterminated`;
     const brokenPath = tmp.writeFile(broken, 1);
@@ -398,7 +394,6 @@ version (unittest)
     }
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "out.sdl");
 
     BrokenDoc broken;
@@ -424,7 +419,6 @@ version (unittest)
     import std.file : exists, mkdirRecurse, readText, remove, write;
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "occupied.sdl");
 
     // Occupy the target with a non-empty directory: rename(2) must refuse.
@@ -475,7 +469,6 @@ version (unittest)
         import core.sys.posix.sys.stat : chmod;
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const lockedDir = buildPath(tmp.dir(), "locked");
     mkdirRecurse(lockedDir);
     const path = buildPath(lockedDir, "target.sdl");
@@ -523,7 +516,6 @@ version (unittest)
     }
 
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "empty.sdl");
     const written = writeSDLFile(Empty.init, path);
     assert(!written.hasError, written.hasError ? written.error.toString : "");

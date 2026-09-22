@@ -5,16 +5,29 @@ module sparkles.test_utils.tmpfs;
 /**
 A scratch directory for a test, removed when the instance goes out of scope.
 
-Cleanup removes only what this instance made: the files it wrote, and the
-scratch directory itself when `ensureDir` was the thing that created it. A
-directory that already existed is left alone, so two instances sharing a
-`prefix` cannot delete each other's work.
+There are two ways to get one, and the difference is who owns the directory:
 
-One instance is not thread-safe: `writeFileAt` appends to its file list,
-`ensureDir` checks and then sets ownership, and the destructor reads both.
-That is the intended shape — one fixture per test, used from the test's own
-thread — and `create` itself is safe to call concurrently. Sharing a single
-instance across threads needs the caller's own synchronization.
+$(LIST
+    * $(LREF create) makes a fresh, uniquely named directory and $(B owns) it:
+    the whole tree — files written through this instance or behind its back,
+    subdirectories, everything — is removed with the instance. This is what a
+    test wants almost every time.
+    * $(LREF share) attaches to a directory that already exists and $(B does
+    not) own it: only the files this instance wrote are removed, and the
+    directory outlives it. This is for a test that deliberately has two
+    fixtures over one tree, or one that must not delete what another made.
+)
+
+Ownership is decided by which constructor ran, never by what a later call
+happened to find on disk — so it cannot be forgotten, and a test that writes
+into `dir()` through the code under test rather than through this fixture
+still gets its tree cleaned up.
+
+One instance is not thread-safe: `writeFileAt` appends to its file list and
+the destructor reads it. That is the intended shape — one fixture per test,
+used from the test's own thread — and `create` itself is safe to call
+concurrently. Sharing a single instance across threads needs the caller's own
+synchronization.
 
 Removal is best effort and never throws. A destructor that throws during
 unwinding replaces the assertion that actually failed with a cleanup error,
@@ -28,9 +41,7 @@ struct TmpFS
 
     enum uuid = 0;
 
-    const string basePath;
-    const string prefix;
-
+    private string root;
     private string[] files;
     private bool ownsDir;
 
@@ -46,11 +57,10 @@ struct TmpFS
         return files;
     }
 
-    pure nothrow @nogc
-    this(string prefix, string basePath)
+    private this(string root, bool ownsDir) pure nothrow @nogc
     {
-        this.basePath = basePath;
-        this.prefix = prefix;
+        this.root = root;
+        this.ownsDir = ownsDir;
     }
 
     ~this() nothrow
@@ -69,36 +79,16 @@ struct TmpFS
 
         try
         {
-            clearReadOnly(dir);
-            rmdirRecurse(dir);
+            clearReadOnly(root);
+            rmdirRecurse(root);
         }
         catch (Exception)
         {
         }
     }
 
-    /// On Windows a read-only file refuses deletion outright, and git marks
-    /// every object it writes read-only — so a fixture that ran `git commit`
-    /// would otherwise outlive itself. Elsewhere the attribute has no such
-    /// meaning and the walk is skipped.
-    private static void clearReadOnly(string root)
-    {
-        version (Windows)
-        {
-            import core.sys.windows.winnt : FILE_ATTRIBUTE_READONLY;
-            import std.file : dirEntries, getAttributes, setAttributes, SpanMode;
-
-            foreach (entry; dirEntries(root, SpanMode.depth, false))
-            {
-                const attrs = getAttributes(entry.name);
-                if (attrs & FILE_ATTRIBUTE_READONLY)
-                    setAttributes(entry.name, attrs & ~FILE_ATTRIBUTE_READONLY);
-            }
-        }
-    }
-
     /**
-    Creates a fixture rooted at a directory derived from `prefix`.
+    Creates a fresh scratch directory and returns the fixture that owns it.
 
     `prefix` names the fixture for a human reading `/tmp`; it does not have to
     be unique. The directory actually used appends a random token and a
@@ -110,15 +100,17 @@ struct TmpFS
         matrix sharing a runner — cannot share a directory and delete each
         other's fixtures mid-test.
         * A crashed run cannot leave a directory behind for the next run to
-        inherit. An inherited directory is one this instance did not create,
-        so it would never be cleaned (see the ownership rule above), and a
-        test could read a previous run's files. The token is random rather
-        than the process id for exactly this case: pids are recycled, so
-        `prefix-<pid>-1` recurs and would collide with the leftovers of a run
-        that died holding the same pid.
+        inherit and read a previous run's files from. The token is random
+        rather than the process id for exactly this case: pids are recycled,
+        so `prefix-<pid>-1` recurs and would collide with the leftovers of a
+        run that died holding the same pid.
         * Two fixtures in one test function cannot collide, so neither needs
         an artificial prefix to tell them apart.
     )
+
+    The directory exists when this returns, so a test may hand `dir()` to the
+    code under test immediately; whatever that code puts there is removed
+    with the fixture.
 
     `prefix` defaults to the calling function. That is a good name when the
     call sits in the test; from a shared helper it names the helper, which is
@@ -132,11 +124,28 @@ struct TmpFS
         static shared uint counter;
         const ordinal = atomicOp!"+="(counter, 1u);
 
-        auto result = TmpFS(
-            prefix ~ "-" ~ processToken() ~ "-" ~ ordinal.to!string,
-            basePath,
-        );
-        return result;
+        const root = buildPath(basePath,
+            prefix ~ "-" ~ processToken() ~ "-" ~ ordinal.to!string);
+        mkdirRecurse(root);
+        return TmpFS(root, true);
+    }
+
+    /**
+    Attaches to `existingDir`, which must already exist, without owning it.
+
+    Files written through the returned instance are removed with it; the
+    directory and anything else in it are left alone. Use it when a test
+    needs a second fixture over a tree that another fixture — or the test
+    itself — owns.
+    */
+    static TmpFS share(string existingDir)
+    in (existingDir.length > 0, "existingDir must not be empty")
+    {
+        import std.file : exists, isDir;
+
+        assert(existingDir.exists && existingDir.isDir,
+            "share() needs an existing directory: " ~ existingDir);
+        return TmpFS(existingDir, false);
     }
 
     string writeFile(string contents, uint suffix = uuid)
@@ -144,27 +153,18 @@ struct TmpFS
         import std.conv : to;
         import std.uuid : randomUUID;
 
-        ensureDir();
         string end = suffix == uuid ? randomUUID.toString() : suffix.to!string;
-        const filepath = buildPath(dir, "tmpfs-file#" ~ end);
+        const filepath = buildPath(root, "tmpfs-file#" ~ end);
         writeFile(filepath, contents);
         this.files ~= filepath;
         return filepath;
     }
 
-    string dir()
+    /// The scratch directory's path. It exists for as long as the instance
+    /// does (and, for $(LREF share), for as long as its real owner keeps it).
+    string dir() const pure nothrow @nogc
     {
-        return buildPath(basePath, prefix);
-    }
-
-    void ensureDir()
-    {
-        import std.file : exists;
-
-        if (!dir.exists)
-            ownsDir = true;
-
-        mkdirRecurse(dir);
+        return root;
     }
 
     /// Rejects a relative path that would leave the fixture.
@@ -192,6 +192,26 @@ struct TmpFS
             "relativePath must stay beneath the fixture: " ~ relativePath);
     }
 
+    /// On Windows a read-only file refuses deletion outright, and git marks
+    /// every object it writes read-only — so a fixture that ran `git commit`
+    /// would otherwise outlive itself. Elsewhere the attribute has no such
+    /// meaning and the walk is skipped.
+    private static void clearReadOnly(string root)
+    {
+        version (Windows)
+        {
+            import core.sys.windows.winnt : FILE_ATTRIBUTE_READONLY;
+            import std.file : dirEntries, getAttributes, setAttributes, SpanMode;
+
+            foreach (entry; dirEntries(root, SpanMode.depth, false))
+            {
+                const attrs = getAttributes(entry.name);
+                if (attrs & FILE_ATTRIBUTE_READONLY)
+                    setAttributes(entry.name, attrs & ~FILE_ATTRIBUTE_READONLY);
+            }
+        }
+    }
+
     /// Eight hex digits of randomness, drawn once per *thread* — `static`
     /// inside a function is thread-local in D, which also makes the lazy
     /// initialization race-free without a lock. Uniqueness is unaffected: two
@@ -214,16 +234,16 @@ struct TmpFS
     A directory containing no file cannot be brought into being by writing a
     file, and several tests mean exactly that: a `.git` marker, a package
     directory with no recipe in it, a tree whose emptiness is the assertion.
-    Removal is covered by the scratch directory's own, so nothing is tracked
-    here.
+    Removal is covered by the scratch directory's own when the instance owns
+    it; a $(LREF share)d instance leaves it behind, as it leaves everything
+    it did not write.
     */
     string ensureSubdir(string relativePath)
     in (relativePath.length > 0, "relativePath must not be empty")
     {
         enforceBeneath(relativePath);
 
-        ensureDir();
-        const path = buildPath(dir, relativePath);
+        const path = buildPath(root, relativePath);
         mkdirRecurse(path);
         return path;
     }
@@ -246,8 +266,7 @@ struct TmpFS
 
         enforceBeneath(relativePath);
 
-        ensureDir();
-        const filepath = buildPath(dir, relativePath);
+        const filepath = buildPath(root, relativePath);
         mkdirRecurse(filepath.dirName);
         writeFile(filepath, contents);
         this.files ~= filepath;
@@ -299,6 +318,29 @@ unittest
         assert(!f.exists);
 }
 
+/// `create` owns its directory from the start: something written into it
+/// behind the fixture's back — by the code under test, say — is removed with
+/// the fixture all the same.
+@("testUtils.tmpFS.createOwnsTheDirectoryImmediately")
+@safe unittest
+{
+    import std.file : exists, isDir, write;
+    import std.path : buildPath;
+
+    string root, stray;
+
+    {
+        auto tmp = TmpFS.create();
+        root = tmp.dir();
+        assert(root.exists && root.isDir, "the directory exists on return");
+
+        stray = buildPath(root, "written-by-the-code-under-test.txt");
+        write(stray, "x");
+    }
+
+    assert(!stray.exists && !root.exists, "owned, so the whole tree goes");
+}
+
 /// `writeFileAt` names the file, creates missing parents, and the whole
 /// scratch directory — nested directories included — is gone afterwards.
 @("testUtils.tmpFS.writeFileAtCreatesParentsAndCleansTheTree")
@@ -321,32 +363,33 @@ unittest
         assert(nested.exists && nested.readText == "entry\n");
     }
 
-    // The instance created the directory, so it removes the whole tree —
-    // the intermediate `logs/deeper` included, which the file list alone
-    // would have leaked.
+    // The instance owns the directory, so it removes the whole tree — the
+    // intermediate `logs/deeper` included, which the file list alone would
+    // have leaked.
     assert(!nested.exists);
     assert(!root.exists);
 }
 
-/// A directory the instance did not create outlives it: two instances that
-/// share a prefix must not delete each other's work.
-@("testUtils.tmpFS.doesNotRemoveADirectoryItDidNotCreate")
+/// A shared instance removes what it wrote and nothing else: the directory
+/// and its owner's files survive it.
+@("testUtils.tmpFS.shareDoesNotRemoveTheDirectory")
 @safe unittest
 {
-    import std.file : exists, mkdirRecurse, rmdirRecurse;
+    import std.file : exists;
 
-    auto outer = TmpFS.create();
-    outer.ensureDir();
-    const shared_ = outer.dir();
-    scope (exit)
-        rmdirRecurse(shared_);
+    auto owner = TmpFS.create();
+    const ownersFile = owner.writeFileAt("owners.txt", "keep");
+    string borrowed;
 
     {
-        auto inner = TmpFS.create(outer.prefix, outer.basePath);
-        inner.writeFileAt("inner.txt", "x");
+        auto borrower = TmpFS.share(owner.dir());
+        borrowed = borrower.writeFileAt("inner.txt", "x");
+        assert(borrowed.exists);
     }
 
-    assert(shared_.exists, "an inherited directory must survive the borrower");
+    assert(owner.dir().exists, "a shared directory must survive the borrower");
+    assert(ownersFile.exists, "and so must what its owner wrote");
+    assert(!borrowed.exists, "only the borrower's own file is gone");
 }
 
 /// Two fixtures created with the same name get different directories, so a
@@ -355,16 +398,12 @@ unittest
 @("testUtils.tmpFS.namesAreUniquePerInstance")
 @safe unittest
 {
+    import std.file : exists;
+
     auto first = TmpFS.create("same-name");
     auto second = TmpFS.create("same-name");
 
     assert(first.dir() != second.dir(), "fixture directories must not collide");
-
-    first.ensureDir();
-    second.ensureDir();
-
-    import std.file : exists;
-
     assert(first.dir().exists && second.dir().exists);
 }
 
@@ -396,6 +435,7 @@ unittest
 {
     import core.exception : AssertError;
     import std.exception : assertThrown;
+    import std.file : exists;
 
     auto tmp = TmpFS.create();
 
@@ -405,7 +445,18 @@ unittest
 
     // A `..` inside a *name* is not a climb, and stays allowed.
     const ok = tmp.writeFileAt("a..b/c..d.txt", "x");
-    import std.file : exists;
-
     assert(ok.exists);
+}
+
+/// `share` refuses a directory that is not there: attaching to nothing would
+/// silently turn every later write into a failure somewhere else.
+@("testUtils.tmpFS.shareRequiresAnExistingDirectory")
+@system unittest
+{
+    import core.exception : AssertError;
+    import std.exception : assertThrown;
+    import std.path : buildPath;
+
+    auto tmp = TmpFS.create();
+    assertThrown!AssertError(TmpFS.share(buildPath(tmp.dir(), "absent")));
 }

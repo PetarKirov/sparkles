@@ -569,7 +569,6 @@ Expected!(void, SaveRefusal) saveUserConfig(string path,
     import std.path : buildPath;
 
     auto fixture = TmpFS.create();
-    fixture.ensureDir();
     // The file does not exist yet — `saveUserConfig` creating it is the
     // behaviour under test — so only the directory is prepared here.
     const path = buildPath(fixture.dir, "config.json");

@@ -1301,11 +1301,10 @@ private bool hueUsable() @safe
     import sparkles.test_utils.tmpfs : TmpFS;
 
     // Its own directory: a passing test must not leave anything in the one a
-    // real sweep clears, nor race that sweep for it. `ensureDir` up front so
-    // the fixture owns the tree and removes the artifacts `renderFailure`
-    // writes into it — it never tells the caller their names.
+    // real sweep clears, nor race that sweep for it. The fixture owns the tree
+    // and removes the artifacts `renderFailure` writes into it — it never
+    // tells the caller their names.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const dir = tmp.dir();
 
     CaseResult r;
@@ -1405,10 +1404,9 @@ private bool hueUsable() @safe
     import std.file : readText;
     import std.path : baseName;
 
-    // `ensureDir` up front so the fixture owns the tree: `writeArtifacts`
-    // names the files it writes, and only whole-tree removal collects them.
+    // The fixture owns the tree: `writeArtifacts` names the files it writes,
+    // and only whole-tree removal collects them.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const dir = tmp.dir();
 
     CaseResult r;

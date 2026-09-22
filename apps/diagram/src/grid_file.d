@@ -107,7 +107,6 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
     // a throw here reaches the user as a stack trace instead of a sentence.
     // The scratch directory itself is that stand-in.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const dir = tmp.dir();
 
     GridConfig cfg;
@@ -144,11 +143,10 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
     // schema, asserted by driving both halves rather than by comment.
     //
     // `nested/` must *not* exist: creating the parent is part of the contract
-    // under test. So the fixture only claims the scratch root — `ensureDir`
-    // makes it the owner, and the destructor takes the whole tree, the
-    // directory `saveGridConfigFile` created included.
+    // under test. So the fixture only creates the scratch root; it owns it,
+    // and the destructor takes the whole tree, the directory
+    // `saveGridConfigFile` created included.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
     const path = buildPath(tmp.dir(), "nested", "grid.json");
 
     auto saved = gridPreset(GridPreset.dotPaper);
@@ -172,7 +170,6 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
     // A directory where the file should be: `write` throws, and the pane's
     // footer needs a sentence.
     auto tmp = TmpFS.create();
-    tmp.ensureDir();
 
     string err;
     assert(!saveGridConfigFile(tmp.dir(), GridConfig.init, err));
