@@ -20,6 +20,9 @@ configuration "unittest" {
 
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+    // Scratch-tree fixtures for the `git check-ignore` parity gate. test-utils
+    // depends only on `sparkles:base`, so this closes no dependency cycle.
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
