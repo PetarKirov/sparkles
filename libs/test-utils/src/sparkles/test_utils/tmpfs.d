@@ -69,17 +69,42 @@ struct TmpFS
     }
 
     /**
-    Creates a fixture rooted at `basePath/prefix`.
+    Creates a fixture rooted at a directory derived from `prefix`.
 
-    `prefix` defaults to the *calling* function, which gives each test its own
-    directory. Take care when calling this from a shared helper: every test
-    routed through one helper would then share one directory, and the test
-    runner executes tests in parallel. Pass an explicit, unique `prefix` in
-    that case.
+    `prefix` names the fixture for a human reading `/tmp`; it does not have to
+    be unique. The directory actually used appends the process id and a
+    per-process counter, which makes three problems impossible rather than
+    merely unlikely:
+
+    $(LIST
+        * Two concurrent runs of one suite — two worktrees, two agents, a CI
+        matrix sharing a runner — cannot share a directory and delete each
+        other's fixtures mid-test.
+        * A crashed run cannot leave a directory behind for the next run to
+        inherit. An inherited directory is one this instance did not create,
+        so it would never be cleaned (see the ownership rule above) and would
+        leak forever.
+        * Two fixtures in one test function cannot collide, so neither needs
+        an artificial prefix to tell them apart.
+    )
+
+    `prefix` defaults to the calling function. That is a good name when the
+    call sits in the test; from a shared helper it names the helper, which is
+    merely less informative — no longer a correctness problem.
     */
     static TmpFS create(string prefix = __FUNCTION__, string basePath = tempDir())
     {
-        auto result = TmpFS(prefix, basePath);
+        import core.atomic : atomicOp;
+        import std.conv : to;
+        import std.process : thisProcessID;
+
+        static shared uint counter;
+        const ordinal = atomicOp!"+="(counter, 1u);
+
+        auto result = TmpFS(
+            prefix ~ "-" ~ thisProcessID.to!string ~ "-" ~ ordinal.to!string,
+            basePath,
+        );
         return result;
     }
 
@@ -109,6 +134,29 @@ struct TmpFS
             ownsDir = true;
 
         mkdirRecurse(dir);
+    }
+
+    /**
+    Creates an empty directory at `relativePath` beneath $(LREF dir),
+    including any missing parents, and returns its full path.
+
+    A directory containing no file cannot be brought into being by writing a
+    file, and several tests mean exactly that: a `.git` marker, a package
+    directory with no recipe in it, a tree whose emptiness is the assertion.
+    Removal is covered by the scratch directory's own, so nothing is tracked
+    here.
+    */
+    string ensureSubdir(string relativePath)
+    in (relativePath.length > 0, "relativePath must not be empty")
+    {
+        import std.path : isAbsolute;
+
+        assert(!relativePath.isAbsolute, "relativePath must be relative");
+
+        ensureDir();
+        const path = buildPath(dir, relativePath);
+        mkdirRecurse(path);
+        return path;
     }
 
     /**
@@ -230,4 +278,43 @@ unittest
     }
 
     assert(shared_.exists, "an inherited directory must survive the borrower");
+}
+
+/// Two fixtures created with the same name get different directories, so a
+/// second concurrent run — or a second fixture in one test — cannot collide
+/// with the first.
+@("testUtils.tmpFS.namesAreUniquePerInstance")
+@safe unittest
+{
+    auto first = TmpFS.create("same-name");
+    auto second = TmpFS.create("same-name");
+
+    assert(first.dir() != second.dir(), "fixture directories must not collide");
+
+    first.ensureDir();
+    second.ensureDir();
+
+    import std.file : exists;
+
+    assert(first.dir().exists && second.dir().exists);
+}
+
+/// `ensureSubdir` expresses the thing a file write cannot: a directory whose
+/// emptiness is the point.
+@("testUtils.tmpFS.ensureSubdirMakesAnEmptyDirectory")
+@safe unittest
+{
+    import std.file : dirEntries, exists, isDir, SpanMode;
+
+    string marker;
+
+    {
+        auto tmp = TmpFS.create();
+        marker = tmp.ensureSubdir("repo/.git");
+
+        assert(marker.exists && marker.isDir);
+        assert(dirEntries(marker, SpanMode.shallow).empty, "must be empty");
+    }
+
+    assert(!marker.exists, "the scratch tree removes it");
 }
