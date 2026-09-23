@@ -30,14 +30,14 @@ import sparkles.tui.cell : writeStyle;
 import sparkles.tui.render : paintFull, serializeRow;
 import sparkles.ui.degradation : DegradationReport, degradationsOf;
 import sparkles.ui.geometry : Size;
-import sparkles.ui.tokens : capabilitiesOf, Profile;
+import sparkles.ui.tokens : Profile, TargetCapabilities;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_tui.grid_canvas : paintGrid;
 
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
 import gallery : Gallery;
-import state : GalleryState;
+import state : EmulatorChoice, GalleryState, narrowingOf;
 
 @safe:
 
@@ -66,6 +66,12 @@ struct RenderRequest
     /// exactly what the grid holds, so a render that names no profile is the
     /// one it always was.
     Profile profile = Profile.full;
+    /// The measured emulator to preview (`CAP10`), met with the profile.
+    EmulatorChoice emulator;
+
+    /// What the frame is painted for: the profile, inside the preset.
+    TargetCapabilities capabilities() const scope @safe pure nothrow @nogc
+        => narrowingOf(profile, emulator);
 }
 
 /// The frame `req` describes, as ANSI — the same bytes the terminal backend
@@ -81,7 +87,7 @@ string renderAnsi(in RenderRequest req)
     SharedBuffer!(char, 1 << 16) buf;
     // The profile's color tier is the one the bytes are folded to: at
     // `baseline` no color sequence is emitted at all (`CAP8`).
-    paintFull(buf, grid, capabilitiesOf(req.profile).colorDepth);
+    paintFull(buf, grid, req.capabilities.colorDepth);
     return buf[].idup;
 }
 
@@ -96,7 +102,7 @@ string renderFence(in RenderRequest req)
     import sparkles.base.buffer : SharedBuffer;
 
     auto grid = renderGrid(req);
-    const depth = capabilitiesOf(req.profile).colorDepth;
+    const depth = req.capabilities.colorDepth;
     SharedBuffer!(char, 1 << 16) buf;
     foreach (ushort y; 0 .. grid.rows)
     {
@@ -191,7 +197,7 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
         });
 
     const th = app.theme;
-    const caps = capabilitiesOf(req.profile);
+    const caps = req.capabilities;
     Grid grid;
     grid.resize(cast(ushort) req.width, cast(ushort) req.height);
     grid.clearTo(CellStyle(fg: Color.fromRgb(th.pageFg),

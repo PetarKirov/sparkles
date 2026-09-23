@@ -326,14 +326,12 @@ struct Gallery
     /// declares, and the switch still records the choice.
     private void applyProfile(H)(ref H h)
     {
-        import sparkles.ui.tokens : capabilitiesOf;
-
         static if (__traits(hasMember, H, "narrowTarget"))
         {
-            if (s.profile == ProfileChoice.native)
+            if (s.profile == ProfileChoice.native && s.emulator == EmulatorChoice.none)
                 h.widenTarget();
             else
-                h.narrowTarget(capabilitiesOf(profileOf(s.profile)));
+                h.narrowTarget(narrowingOf(s.profile, s.emulator));
         }
     }
 
@@ -1233,8 +1231,11 @@ struct Gallery
         // painted as", and a narrowed frame must say so or it reads as a bug.
         const themeTag = b.add(Widget(
             kind: WidgetKind.text,
-            text: s.profile == ProfileChoice.native ? s.themeName
-                : s.themeName ~ " · " ~ profileChoiceNames[s.profile],
+            text: s.themeName
+                ~ (s.emulator == EmulatorChoice.none ? ""
+                    : " · " ~ emulatorChoiceNames[s.emulator])
+                ~ (s.profile == ProfileChoice.native ? ""
+                    : " · " ~ profileChoiceNames[s.profile]),
             slot: Slot.chrome,
         ));
 
@@ -2585,4 +2586,26 @@ version (unittest)
     rec = drive(g, [charEvent('{')]);
     assert(g.s.profile == ProfileChoice.native);
     assert(rec.target == rec.declaredTarget, "native is no narrowing at all");
+}
+
+@("ui_gallery.gallery.emulatorBoundsTheProfileSwitch")
+@safe unittest
+{
+    import sparkles.ui.emulators : presetOf = capabilitiesOf, Emulator;
+    import sparkles.ui.tokens : capabilitiesOf, meet, Profile;
+
+    // `--emulator kitty`: the host paints for what kitty answered, the switch
+    // steps the profile inside it, and stepping back to `native` keeps the
+    // preset — it is fixed for the run, not one more rung.
+    const kitty = presetOf(Emulator.kitty);
+    Gallery g = Gallery(GalleryState(emulator: EmulatorChoice.kitty));
+    auto rec = drive(g, Event[].init);
+    assert(rec.target == meet(rec.declaredTarget, kitty));
+    rec = drive(g, [charEvent('}'), charEvent('}')]);
+    assert(g.s.profile == ProfileChoice.enhanced);
+    assert(rec.target == meet(rec.declaredTarget,
+        meet(capabilitiesOf(Profile.enhanced), kitty)));
+    rec = drive(g, [charEvent('{'), charEvent('{')]);
+    assert(g.s.profile == ProfileChoice.native);
+    assert(rec.target == meet(rec.declaredTarget, kitty), "native is the preset alone");
 }
