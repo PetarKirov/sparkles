@@ -175,6 +175,7 @@ struct Gallery
     WidgetTree view(H)(ref H h)
     {
         noteHost(h);
+        applyProfile(h);
 
         // The dock arranges the body band before anything reads a width:
         // `contentWidth` is a mirror of what the container tiled, and the
@@ -318,6 +319,22 @@ struct Gallery
             h.requestFrame();
 
         return b.finish(root);
+    }
+
+    /// Narrows the host to the live profile (`CAP5`), or widens it back to its
+    /// own declaration for `native`. A host without the errand paints what it
+    /// declares, and the switch still records the choice.
+    private void applyProfile(H)(ref H h)
+    {
+        import sparkles.ui.tokens : capabilitiesOf;
+
+        static if (__traits(hasMember, H, "narrowTarget"))
+        {
+            if (s.profile == ProfileChoice.native)
+                h.widenTarget();
+            else
+                h.narrowTarget(capabilitiesOf(profileOf(s.profile)));
+        }
     }
 
     /// Remembers the host's coordinate mapping without advancing a frame.
@@ -495,6 +512,8 @@ struct Gallery
             case GalleryCommand.scrollEnd: return scrollContent(int.max / 4);
             case GalleryCommand.themeNext: return cycleTheme(1);
             case GalleryCommand.themePrev: return cycleTheme(-1);
+            case GalleryCommand.profileNarrow: return stepProfile(1);
+            case GalleryCommand.profileWiden: return stepProfile(-1);
             case GalleryCommand.toggleNavPin:
                 s.navPinned = !s.navPinned;
                 return;
@@ -946,6 +965,21 @@ struct Gallery
         dock.scrollTo(paneInsp, 0, 0);
     }
 
+    /**
+    Moves the live profile one step narrower (`delta > 0`) or wider, clamped
+    between `baseline` and the ceiling the gallery was started with: the
+    switch previews less than the target can show, never more.
+    */
+    private void stepProfile(int delta) @safe
+    {
+        const to = cast(int) s.profile + delta;
+        if (to < cast(int) s.profileCeiling || to > cast(int) ProfileChoice.max)
+            return;
+        s.profile = cast(ProfileChoice) to;
+        s.toastText = "profile · " ~ profileChoiceNames[s.profile];
+        s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
+    }
+
     private void cycleTheme(int delta) @safe
     {
         const n = cast(long) themeNames.length;
@@ -1195,9 +1229,12 @@ struct Gallery
                 textStyle: TextStyle(bold: true),
             ));
 
+        // The profile rides beside the theme — both are "what this frame is
+        // painted as", and a narrowed frame must say so or it reads as a bug.
         const themeTag = b.add(Widget(
             kind: WidgetKind.text,
-            text: s.themeName,
+            text: s.profile == ProfileChoice.native ? s.themeName
+                : s.themeName ~ " · " ~ profileChoiceNames[s.profile],
             slot: Slot.chrome,
         ));
 
@@ -2515,4 +2552,37 @@ version (unittest)
     up.action = KeyAction.release;
     drive(g, [Event(down), Event(up)]);
     assert(g.s.themeIndex == 8, "the release did not cycle a second theme");
+}
+
+@("ui_gallery.gallery.profileSwitchStaysBelowItsCeiling")
+@safe unittest
+{
+    import sparkles.ui.tokens : capabilitiesOf, meet, Profile;
+
+    // Started at `--profile enhanced`: `}` reaches baseline and stops there,
+    // `{` comes back to enhanced and stops there — never wider than the
+    // terminal it was started as.
+    Gallery g = Gallery(GalleryState(profileCeiling: ProfileChoice.enhanced,
+        profile: ProfileChoice.enhanced));
+    auto rec = drive(g, [charEvent('}')]);
+    assert(g.s.profile == ProfileChoice.baseline);
+    assert(rec.target == meet(rec.declaredTarget, capabilitiesOf(Profile.baseline)),
+        "the host paints the frame for the narrowed target");
+    drive(g, [charEvent('}')]);
+    assert(g.s.profile == ProfileChoice.baseline, "baseline is the floor");
+    drive(g, [charEvent('{'), charEvent('{')]);
+    assert(g.s.profile == ProfileChoice.enhanced, "the ceiling is the roof");
+}
+
+@("ui_gallery.gallery.nativeIsTheDefaultAndWidensTheHost")
+@safe unittest
+{
+    // No `--profile`: the host paints what it declares, and the switch can
+    // step down through every profile and back to it.
+    Gallery g;
+    auto rec = drive(g, [charEvent('}')]);
+    assert(g.s.profile == ProfileChoice.full);
+    rec = drive(g, [charEvent('{')]);
+    assert(g.s.profile == ProfileChoice.native);
+    assert(rec.target == rec.declaredTarget, "native is no narrowing at all");
 }

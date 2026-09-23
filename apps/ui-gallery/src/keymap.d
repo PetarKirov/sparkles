@@ -52,6 +52,8 @@ enum GalleryCommand : ubyte
     pageJump,          /// `1`–`9`, `0` — the row's ranged arg names the page
     scrollPageUp, scrollPageDown, scrollHome, scrollEnd,
     themeNext, themePrev,
+    profileNarrow,     /// `}` — paint for the next narrower profile
+    profileWiden,      /// `{` — back toward the ceiling
     toggleNavPin,      /// `\` — show the page list on a narrow terminal
     toggleInspector,   /// `|` — dumpTree of the showing page
 
@@ -422,6 +424,10 @@ immutable Binding[] galleryBindings = [
         "next theme"),
     bind(GalleryScope.shell, chord('['), GalleryCommand.themePrev,
         "prev theme"),
+    bind(GalleryScope.shell, chord('}'), GalleryCommand.profileNarrow,
+        "narrower profile"),
+    bind(GalleryScope.shell, chord('{'), GalleryCommand.profileWiden,
+        "wider profile"),
     bind(GalleryScope.shell, chord('\\'), GalleryCommand.toggleNavPin,
         "pin the page list"),
     bind(GalleryScope.shell, chord('|'), GalleryCommand.toggleInspector,
