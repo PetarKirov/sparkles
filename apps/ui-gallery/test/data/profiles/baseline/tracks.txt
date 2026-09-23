@@ -1,8 +1,8 @@
  sparkles:ui the grid subset, resolved live                                         tokyo-night
-   Welcome           | Tracks · the grid subset
+   Welcome           | Tracks * the grid subset
    Primitives        |
    Layout            |
- ▸ Tracks            | auto sizes to content, fixed(n) takes exactly n, fr(w) shares what is
+ > Tracks            | auto sizes to content, fixed(n) takes exactly n, fr(w) shares what is
    Text              | left by weight, and minmax(a,b) is content clamped to a range. The
    Themes            | leftover is distributed with integer divmod and an explicit remainder,
    Slots             | so the parts always sum to exactly the whole.

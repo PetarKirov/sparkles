@@ -1,5 +1,5 @@
  sparkles:ui panes as a value                                                       tokyo-night
-   Welcome           | Dock · panes as a value                                                 #
+   Welcome           | Dock * panes as a value                                                 #
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | The arrangement is a flat arena of splits, tabbed groups and pane       #
@@ -9,17 +9,17 @@
    Decoration        |                                                                         #
    Grid              | +---------------------------------------------------------------------+ #
    Components        | | the arrangement                                                     | #
-   Tree              | | explorer          │ document  notes                                 | #
-   Property tree     | | 18 cells          │document                                         | #
-   Table             | | a file tree, say  │flexes                                           | #
-   Scrolling         | |                   │the thing being read                             | #
-   State             | |                   │                                                 | #
-   Split             | |                   │                                                 | #
- ▸ Dock              | |                   │                                                 | |
-   Terminal          | |                   │                                                 | |
-                     | |                   │                                                 | |
-                     | |                   │                                                 | |
-                     | |                   │                                                 | |
+   Tree              | | explorer          | document  notes                                 | #
+   Property tree     | | 18 cells          |document                                         | #
+   Table             | | a file tree, say  |flexes                                           | #
+   Scrolling         | |                   |the thing being read                             | #
+   State             | |                   |                                                 | #
+   Split             | |                   |                                                 | #
+ > Dock              | |                   |                                                 | |
+   Terminal          | |                   |                                                 | |
+                     | |                   |                                                 | |
+                     | |                   |                                                 | |
+                     | |                   |                                                 | |
                      | |                                                                     | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |

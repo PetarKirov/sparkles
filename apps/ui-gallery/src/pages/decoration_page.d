@@ -39,6 +39,13 @@ uint view(ref Builder b, in GalleryState s)
         borderSlot: Slot.border,
         borderRadius: 4,
     )), 14);
+    // Two px and up is the heavy family (design-system `GLY2`) — which has
+    // no arcs, so a radius here would be a published loss, not a corner.
+    boxes ~= specimen(b, "heavy (2px)", box(b, Decoration(
+        borderWidth: Insets.all(2),
+        borderStyle: BorderStyle.solid,
+        borderSlot: Slot.borderStrong,
+    )), 14);
     boxes ~= specimen(b, "dotted", box(b, Decoration(
         borderWidth: Insets.all(1),
         borderStyle: BorderStyle.dotted,

@@ -1,19 +1,19 @@
  sparkles:ui wrapping and measurement                                               tokyo-night
-   Welcome           | Text · wrapping and measurement                                         #
+   Welcome           | Text * wrapping and measurement                                         #
    Primitives        |                                                                         #
    Layout            |                                                                         #
-   Tracks            | Wrapped lines are slices of the input, never copies — the layout pass   #
- ▸ Text              | reports where the breaks go and the painter draws the same bytes.       #
+   Tracks            | Wrapped lines are slices of the input, never copies - the layout pass   #
+ > Text              | reports where the breaks go and the painter draws the same bytes.       #
    Themes            |                                                                         #
    Slots             | column 34 cells hang 2                                                  #
    Decoration        |                                                                         #
    Grid              | +---------------------------------------------------------------------+ #
-   Components        | | none — one line, clipped by whatever contains it                    | #
+   Components        | | none - one line, clipped by whatever contains it                    | #
    Tree              | | A widget names a semantic slot, ne                                  | #
    Property tree     | +---------------------------------------------------------------------+ #
    Table             |                                                                         #
    Scrolling         | +---------------------------------------------------------------------+ #
-   State             | | greedy — break as late as possible                                  | #
+   State             | | greedy - break as late as possible                                  | #
    Split             | | A widget names a semantic slot,                                     | #
    Dock              | | never a concrete colour, and the                                    | |
    Terminal          | | palette resolves it while the                                       | |
@@ -21,7 +21,7 @@
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
-                     | | balanced — minimum squared slack over all but the last line         | |
+                     | | balanced - minimum squared slack over all but the last line         | |
                      | | A widget names a semantic slot,                                     | |
                      | | never a concrete colour, and the                                    | |
                      | | palette resolves it while the                                       | |

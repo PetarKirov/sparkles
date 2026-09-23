@@ -1,5 +1,5 @@
  sparkles:ui data, interaction, view                                                tokyo-night
-   Welcome           | Tree · data, interaction, view                                          #
+   Welcome           | Tree * data, interaction, view                                          #
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | The data layer is a flat arena with index links and no interaction      #
@@ -9,24 +9,24 @@
    Decoration        |                                                                         #
    Grid              | +---------------------------------------------------------------------+ #
    Components        | | your view                                                           | #
- ▸ Tree              | | ├─ ▸ src/                                                           | #
-   Property tree     | | ├─ ▸ docs/                                                          | #
-   Table             | | └─ ▪ README.md                                                      | #
+ > Tree              | | +- > src/                                                           | #
+   Property tree     | | +- > docs/                                                          | #
+   Table             | | +- * README.md                                                      | #
    Scrolling         | +---------------------------------------------------------------------+ #
    State             |                                                                         #
    Split             | +---------------------------------------------------------------------+ #
    Dock              | | the same data, everything open                                      | |
-   Terminal          | | ├─ ▾ src/                                                           | |
-                     | | │  ├─ ▾ sparkles/                                                   | |
-                     | | │  │  ├─ ◆ widget.d                                                 | |
-                     | | │  │  ├─ ◆ layout.d                                                 | |
-                     | | │  │  └─ ◆ theme.d                                                  | |
-                     | | │  ├─ ▫ dub.sdl                                                     | |
-                     | | │  └─ ▾ components/                                                 | |
-                     | | │     ├─ ◆ chrome.d                                                 | |
-                     | | │     └─ ◆ tree_widget.d                                            | |
-                     | | ├─ ▾ docs/                                                          | |
-                     | | │  ├─ ▪ index.md                                                    | |
-                     | | │  └─ ▪ layout.md                                                   | |
+   Terminal          | | +- v src/                                                           | |
+                     | | |  +- v sparkles/                                                   | |
+                     | | |  |  +- * widget.d                                                 | |
+                     | | |  |  +- * layout.d                                                 | |
+                     | | |  |  +- * theme.d                                                  | |
+                     | | |  +- . dub.sdl                                                     | |
+                     | | |  +- v components/                                                 | |
+                     | | |     +- * chrome.d                                                 | |
+                     | | |     +- * tree_widget.d                                            | |
+                     | | +- v docs/                                                          | |
+                     | | |  +- * index.md                                                    | |
+                     | | |  +- * layout.md                                                   | |
                      |
- pages ↓ down ↑ up → expand ← collapse / up ⏎ toggle O open all C close all     ? keys   q quit
+ pages v down ^ up > expand < collapse / up < toggle O open all C close all     ? keys   q quit
