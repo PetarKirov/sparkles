@@ -23,11 +23,42 @@ import sparkles.ui.style :
     BorderStyle, FontRole, Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
+import sparkles.ui.tokens : TargetCapabilities;
 import sparkles.base.term_color : RgbColor;
 
 import std.range.primitives : isOutputRange, put;
 
 @safe:
+
+/**
+What the inline-style HTML target declares (`CAP1`) — a constant, since a
+browser needs no probing for what this writer emits: every color and glyph,
+`border-radius`, `box-shadow`, `rgba` fills, a sans face for
+`FontRole.docs`, `font-size` for a scaled run, wavy and dotted
+`text-decoration`, and pixel scrolling. Links and Nerd Font icons it does not
+carry yet (the site's own font stack is the design system's `WEB*` work),
+and its input is the pure-CSS `staticPointer`.
+*/
+enum TargetCapabilities htmlCapabilities = () {
+    import sparkles.base.term_caps : BlockTier;
+    import sparkles.base.term_color : ColorDepth;
+    import sparkles.input.capability : staticPointer;
+
+    TargetCapabilities c;
+    c.colorDepth = ColorDepth.trueColor;
+    c.unicode = true;
+    c.blocks = BlockTier.half;
+    c.extendedUnderline = true;
+    c.textSizing = true;
+    c.graphemeClusters = true;
+    c.subCellScroll = true;
+    c.proportionalText = true;
+    c.radius = true;
+    c.shadow = true;
+    c.alpha = true;
+    c.input = staticPointer;
+    return c;
+}();
 
 /**
 Renders `tree` as a semantic HTML fragment (a single root element, nested) with
@@ -646,4 +677,28 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 
     assert(s.canFind("background:"), "the fill itself still happens");
     assert(!s.canFind("padding:"), "but it must not widen the run");
+}
+
+@("ui.interp.html.capabilities.declared")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.canvas : BoxChrome, DrawOp, FillRect;
+    import sparkles.ui.degradation : degradationsOf;
+    import sparkles.ui.interp.html_semantic : semanticHtmlCapabilities;
+    import sparkles.ui.tokens : subsetOf;
+
+    // The semantic writer emits a subset of what the inline one does, and the
+    // inline one takes a decorated box with no substitution at all (`CAP6`).
+    assert(subsetOf(semanticHtmlCapabilities, htmlCapabilities));
+    static immutable BoxChrome chrome = () {
+        BoxChrome c;
+        c.border.width = Insets(1, 1, 1, 1);
+        c.borderRadius = 6;
+        c.shadow.alpha = 0x60;
+        return c;
+    }();
+    const DrawOp[1] ops = [DrawOp(FillRect(chrome: &chrome, hasBg: true, bgAlpha: 0x80))];
+    assert(degradationsOf(ops[], htmlCapabilities).empty);
+    assert(!degradationsOf(ops[], semanticHtmlCapabilities).empty);
 }

@@ -1085,3 +1085,49 @@ static assert(isCanvas!GridCanvas);
     assert(u[1, 1].style.underline == UnderlineStyle.curly);
     assert(degradationsOf(ops[], gridCapabilities)[Substitution.asciiBorder] == 0);
 }
+
+@("tui_canvas.capabilities.theThemeIsNotGatedOnATerminal")
+@safe unittest
+{
+    import std.algorithm : canFind;
+    import std.array : appender;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.interp.html : renderWidgetHtml;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : BoxBorder, Decoration, defaultTwoslashPalette, Slot;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // `CAP4`: one process, one theme, two targets. The cell target declared
+    // `unicode = false` and draws ASCII; the HTML target, rendered from the
+    // same tree and palette in the same process, is untouched by that.
+    auto b = Builder();
+    const label = b.add(Widget(kind: WidgetKind.text, text: "ok"));
+    Decoration d;
+    d.borderWidth = Insets.all(1);
+    d.borderStyle = BorderStyle.solid;
+    d.borderRadius = 4;
+    const box = b.container(WidgetKind.panel, [label], slot: Slot.surface,
+        padding: Insets.all(1), decoration: d);
+    auto tree = b.finish(box);
+    const pal = defaultTwoslashPalette();
+    const fg = RgbColor(0, 0, 0), bg = RgbColor(0xff, 0xff, 0xff);
+    auto ops = buildDisplayList(tree, layout(tree), pal, fg, bg);
+
+    Grid cells;
+    cells.resize(8, 3);
+    paintGrid(cells, bg, ops, caps: capabilitiesOf(Profile.baseline));
+    assert(cells[0, 0].grapheme == "+");
+
+    auto out_ = appender!string;
+    renderWidgetHtml(out_, tree, pal, fg, bg);
+    const html = out_[];
+    assert(html.canFind("border-radius"), "the HTML keeps its radius");
+    assert(!html.canFind("+--"), "and no ASCII chrome leaked in");
+
+    Grid unicode;
+    unicode.resize(8, 3);
+    paintGrid(unicode, bg, ops);
+    assert(unicode[0, 0].grapheme == "╭", "nor did the first paint change the theme");
+}
