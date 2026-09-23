@@ -7,4 +7,4 @@ targetType "executable"
 
 dependency "effects-direct" path="../effects-direct"
 dependency "effects-ts" path="../effects-ts"
-dependency "core-cli" path="../core-cli"
+dependency "sparkles:ui" path="../.."

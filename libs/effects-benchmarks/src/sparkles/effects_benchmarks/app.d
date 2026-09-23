@@ -5,7 +5,7 @@ import std.stdio : writeln;
 import std.conv : to;
 import std.datetime.systime : Clock;
 import core.volatile : volatileLoad, volatileStore;
-import sparkles.core_cli.ui.table : drawTable;
+import sparkles.ui.components.table : drawTable;
 
 import sparkles.effects_direct;
 import sparkles.effects_ts;
