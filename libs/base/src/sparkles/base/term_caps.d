@@ -344,6 +344,11 @@ TermCaps detectTermCaps(bool noColors = false) @safe
         const colors = !disabled && (force || caps.tty);
     }
 
+    // Block elements are a font fact no query answers; every monospace font
+    // that renders box drawing also carries the half and eighth blocks, so a
+    // Unicode terminal is assumed to have that tier and no finer one.
+    caps.blocks = caps.unicode ? BlockTier.half : BlockTier.none;
+
     // The color tier, folded through the emit decision: the classifier picks
     // the tier from $COLORTERM/$TERM, but a snapshot with colors off reports
     // `none` — `caps.colors` is a view of this one field.
@@ -388,6 +393,8 @@ unittest
     const auto_ = detectTermCaps();
     if (!auto_.colors)
         assert(auto_.colorDepth == ColorDepth.none);
+    // The block tier is assumed from Unicode and nothing finer.
+    assert(auto_.blocks == (auto_.unicode ? BlockTier.half : BlockTier.none));
 }
 
 /// `colors` is a view of `colorDepth`, and the embedded output affordances
