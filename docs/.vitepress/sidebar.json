@@ -712,6 +712,18 @@
       {
         "text": "wired",
         "link": "/libs/wired/"
+      },
+      {
+        "text": "markdown",
+        "link": "/libs/markdown/"
+      },
+      {
+        "text": "math",
+        "link": "/libs/math/"
+      },
+      {
+        "text": "test-utils",
+        "link": "/libs/test-utils/"
       }
     ]
   },
