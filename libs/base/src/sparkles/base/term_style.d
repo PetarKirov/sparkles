@@ -259,6 +259,11 @@ void writeStyleTransition(Writer, bool shapedUnderline = true)(
 
     if (from == to)
         return;
+    // With no color to emit, a change of color alone is no change at all —
+    // and an empty `ESC[m` would be SGR 0, a full reset.
+    if (depth == ColorDepth.none && from.attrs == to.attrs
+            && from.underline == to.underline)
+        return;
 
     put(w, "\x1b[");
     bool first = true;
@@ -322,12 +327,13 @@ void writeStyleTransition(Writer, bool shapedUnderline = true)(
     // the color slice differs (the attribute bits in 26-31 are ignored here).
     // On a change we emit straight from the packed word — writeSgrColorPacked
     // reads only bits 0-25, so no Color is ever materialized on this hot path.
-    if ((from.packed0 ^ to.packed0) & colorMask)
+    // `ColorDepth.none` is "no SGR color at all" — not the classic 16.
+    if (((from.packed0 ^ to.packed0) & colorMask) && depth != ColorDepth.none)
     {
         sep();
         writeSgrColorPacked(w, to.packed0, depth, ColorChannel.foreground);
     }
-    if ((from.packed1 ^ to.packed1) & colorMask)
+    if (((from.packed1 ^ to.packed1) & colorMask) && depth != ColorDepth.none)
     {
         sep();
         writeSgrColorPacked(w, to.packed1, depth, ColorChannel.background);
@@ -438,8 +444,9 @@ private void writeStyleColorAbsolute(Writer)(ref Writer w, uint packedWord,
     import std.range.primitives : put;
 
     // Kind tag lives in bits 24–25 of the packColor payload (low 26 bits).
+    // At `ColorDepth.none` no color is emitted — that is what the depth means.
     const kind = (packedWord >> 24) & 3;
-    if (kind == Color.Kind.unset || kind == Color.Kind.default_)
+    if (kind == Color.Kind.unset || kind == Color.Kind.default_ || depth == ColorDepth.none)
         return;
     put(w, ';');
     writeSgrColorPacked(w, packedWord, depth, channel);
@@ -462,6 +469,26 @@ unittest
         CompactTermStyle(fg: Color.fromRgb(10, 20, 30), bg: Color.fromRgb(1, 2, 3),
             attrs: TextAttr.italic, underline: UnderlineStyle.single), ColorDepth.trueColor))(
         "\x1b[0;3;4;38;2;10;20;30;48;2;1;2;3m");
+    // `ColorDepth.none` means no color parameter at all, palette or RGB —
+    // the attributes stay.
+    checkWriter!((ref w) => writeStyle(w,
+        CompactTermStyle(fg: Color.fromPalette(1), bg: Color.fromRgb(1, 2, 3),
+            attrs: TextAttr.bold), ColorDepth.none))("\x1b[0;1m");
+}
+
+@("term_style.writeStyleTransition.noColorAtDepthNone")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : checkWriter;
+
+    const red = CompactTermStyle(fg: Color.fromRgb(200, 0, 0));
+    const blue = CompactTermStyle(fg: Color.fromRgb(0, 0, 200));
+    // A color-only change emits nothing — not an empty `ESC[m`, which is a reset.
+    checkWriter!((ref w) => writeStyleTransition(w, red, blue, ColorDepth.none))("");
+    // An attribute change still goes out, without the color.
+    const boldBlue = CompactTermStyle(fg: Color.fromRgb(0, 0, 200), attrs: TextAttr.bold);
+    checkWriter!((ref w) => writeStyleTransition(w, red, boldBlue, ColorDepth.none))("\x1b[1m");
 }
 
 ///
