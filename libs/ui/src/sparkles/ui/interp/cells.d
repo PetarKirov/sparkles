@@ -19,8 +19,9 @@ import std.range.primitives : put;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
-import sparkles.ui.style : BorderStyle;
-import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
+import sparkles.ui.style : BorderStyle, BoxBorder;
+import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
+import sparkles.ui.tokens : BoxGlyphs, boxGlyphs, projectBorder, TargetCapabilities;
 import sparkles.ui.style : Visual;
 
 import sparkles.base.term_color :
@@ -96,27 +97,11 @@ catalog of the three one picture repeated, and made a dotted hover underline
 look like a solid one.
 */
 dchar dashedHorizontal(BorderStyle s) pure nothrow @nogc
-{
-    final switch (s) with (BorderStyle)
-    {
-        case none: case solid: return '─'; // ─
-        case dashed: return '╌';           // ╌ two long strokes
-        case dotted: return '┈';           // ┈ four short ones
-        case double_: return '═';          // ═
-    }
-}
+    => lightGlyphs(s, rounded: false).horizontal;
 
 /// ditto
 dchar dashedVertical(BorderStyle s) pure nothrow @nogc
-{
-    final switch (s) with (BorderStyle)
-    {
-        case none: case solid: return '│'; // │
-        case dashed: return '╎';           // ╎
-        case dotted: return '┊';           // ┊
-        case double_: return '║';          // ║
-    }
-}
+    => lightGlyphs(s, rounded: false).vertical;
 
 /**
 The four corner glyphs (top-left, top-right, bottom-left, bottom-right) of a
@@ -127,9 +112,21 @@ set (design-system `GLY2`: a published loss, not a silent one).
 */
 dchar[4] boxCorners(BorderStyle s, bool rounded) pure nothrow @nogc
 {
-    if (s == BorderStyle.double_)
-        return ['╔', '╗', '╚', '╝'];
-    return rounded ? ['╭', '╮', '╰', '╯'] : ['┌', '┐', '└', '┘'];
+    const g = lightGlyphs(s, rounded);
+    return [g.topLeft, g.topRight, g.bottomLeft, g.bottomRight];
+}
+
+// A one-px box in `s` on a Unicode cell target — `GLY2`'s one table, so this
+// grid and the terminal's cannot stroke the same border two ways. `none`
+// strokes as `solid`: a caller asking for a style's run wants a line.
+private BoxGlyphs lightGlyphs(BorderStyle s, bool rounded) pure nothrow @nogc
+{
+    BoxBorder b;
+    b.width = Insets(1, 1, 1, 1);
+    b.style = s == BorderStyle.none ? BorderStyle.solid : s;
+    TargetCapabilities cell;
+    cell.unicode = true;
+    return boxGlyphs(projectBorder(b, rounded ? 1 : 0, cell));
 }
 
 /**
