@@ -332,6 +332,41 @@ TargetCapabilities capabilitiesOf(Profile p) @safe pure nothrow @nogc
 }
 
 /**
+The most `a` and `b` both claim (`CAP9`'s lattice meet): every `bool` both
+must hold, every ordered enum or count the smaller, an image protocol only
+when both name the same one, nested capability structs field by field.
+`reducedMotion` is a preference, and either asking for it wins.
+
+What a host paints for when it is narrowed to a profile: its own declaration
+met with the profile's, so a window narrowed to `enhanced` loses what a
+256-color terminal lacks without gaining the hyperlinks it never had.
+*/
+TargetCapabilities meet(in TargetCapabilities a, in TargetCapabilities b)
+    @safe pure nothrow @nogc
+{
+    static T low(T)(in T x, in T y)
+    {
+        static if (is(immutable T == immutable bool))
+            return x && y;
+        else static if (is(immutable T == immutable ImageProtocol))
+            return x == y ? x : ImageProtocol.none;
+        else static if (is(T == struct))
+        {
+            T r;
+            static foreach (i, _; T.tupleof)
+                r.tupleof[i] = low(x.tupleof[i], y.tupleof[i]);
+            return r;
+        }
+        else
+            return x < y ? x : y;
+    }
+
+    auto r = low(a, b);
+    r.reducedMotion = a.reducedMotion || b.reducedMotion;
+    return r;
+}
+
+/**
 A terminal's declaration from one snapshot (`CAP1`): its output half verbatim,
 its input half through `fromTerminal`. The target-only axes stay off — a cell
 grid scrolls by whole cells, draws one face, and projects radius, shadow and
@@ -577,6 +612,36 @@ unittest
     assert(subsetOf(html, e) && !subsetOf(html, b));
     // A default-constructed declaration is the conservative one (CAP1).
     assert(subsetOf(TargetCapabilities.init, b));
+}
+
+@("ui.tokens.meet.isTheGreatestCommonLowerBound")
+@safe pure nothrow @nogc
+unittest
+{
+    const b = capabilitiesOf(Profile.baseline);
+    const e = capabilitiesOf(Profile.enhanced);
+    const f = capabilitiesOf(Profile.full);
+    foreach (x; [b, e, f])
+        foreach (y; [b, e, f])
+        {
+            const m = meet(x, y);
+            assert(subsetOf(m, x) && subsetOf(m, y), "a lower bound");
+            if (subsetOf(x, y))
+                assert(meet(x, y) == x, "the greatest one");
+        }
+    // Unordered protocols meet at `none`; a preference is kept if either
+    // side asks for it.
+    TargetCapabilities k, s;
+    k.images = ImageProtocol.kitty;
+    s.images = ImageProtocol.sixel;
+    s.reducedMotion = true;
+    assert(meet(k, s).images == ImageProtocol.none && meet(k, s).reducedMotion);
+    // A window narrowed to `enhanced` gains nothing it lacked.
+    TargetCapabilities window = f;
+    window.hyperlinks = false;
+    window.radius = true;
+    const narrowed = meet(window, e);
+    assert(!narrowed.hyperlinks && !narrowed.radius && narrowed.unicode);
 }
 
 @("ui.tokens.subsetOf.imagesAreNotOrdered")
