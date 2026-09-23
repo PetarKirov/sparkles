@@ -1,24 +1,24 @@
  sparkles:ui the semantic colour vocabulary                                         tokyo-night
-   Welcome           | Slots · the semantic vocabulary                                         #
+   Welcome           | Slots * the semantic vocabulary                                         #
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | Thirty-four roles. A widget names one; the palette turns it into a      #
    Text              | concrete foreground, background and alpha while the display list is     #
-   Themes            | built. Nothing below hardcodes a colour — press ] and every swatch      #
- ▸ Slots             | re-resolves.                                                            #
+   Themes            | built. Nothing below hardcodes a colour - press ] and every swatch      #
+ > Slots             | re-resolves.                                                            #
    Decoration        |                                                                         |
    Grid              | +---------------------------------------------------------------------+ |
    Components        | | text                                                                | |
-   Tree              | | inherit            Aa 0123    #a9b1d6       —                       | |
-   Property tree     | | textPrimary        Aa 0123    #a9b1d6       —                       | |
-   Table             | | textSecondary      Aa 0123    #8d93b3       —                       | |
-   Scrolling         | | muted              Aa 0123    #777d99       —                       | |
-   State             | | textDisabled       Aa 0123    #5b5f76 50%   —                       | |
-   Split             | | textInverse        Aa 0123    #1a1b26       —                       | |
-   Dock              | | code               Aa 0123    #a9b1d6       —                       | |
-   Terminal          | | docs               Aa 0123    #a0a0a0       —                       | |
-                     | | matched            Aa 0123    #a9b1d6       —                       | |
-                     | | unmatched          Aa 0123    #888888       —                       | |
+   Tree              | | inherit            Aa 0123    #a9b1d6       -                       | |
+   Property tree     | | textPrimary        Aa 0123    #a9b1d6       -                       | |
+   Table             | | textSecondary      Aa 0123    #8d93b3       -                       | |
+   Scrolling         | | muted              Aa 0123    #777d99       -                       | |
+   State             | | textDisabled       Aa 0123    #5b5f76 50%   -                       | |
+   Split             | | textInverse        Aa 0123    #1a1b26       -                       | |
+   Dock              | | code               Aa 0123    #a9b1d6       -                       | |
+   Terminal          | | docs               Aa 0123    #a0a0a0       -                       | |
+                     | | matched            Aa 0123    #a9b1d6       -                       | |
+                     | | unmatched          Aa 0123    #888888       -                       | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |

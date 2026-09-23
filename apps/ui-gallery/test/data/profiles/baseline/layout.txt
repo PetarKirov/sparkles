@@ -1,10 +1,10 @@
  sparkles:ui sizing, spacing, alignment                                             tokyo-night
-   Welcome           | Layout · sizing, spacing, alignment                                     #
+   Welcome           | Layout * sizing, spacing, alignment                                     #
    Primitives        |                                                                         #
- ▸ Layout            |                                                                         #
+ > Layout            |                                                                         #
    Tracks            | Four passes, each O(n): natural width up, allocation down,              #
    Text              | height-for-width up, placement down. Nothing iterates to a fixed point  #
-   Themes            | — the width/height cycle is broken by ordering.                         #
+   Themes            | - the width/height cycle is broken by ordering.                         #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
    Grid              | | the knobs                                                           | #

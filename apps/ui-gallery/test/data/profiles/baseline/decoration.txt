@@ -1,14 +1,14 @@
  sparkles:ui box and text chrome                                                    tokyo-night
-   Welcome           | Decoration · box and text chrome                                        #
+   Welcome           | Decoration * box and text chrome                                        #
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | A decoration is slot-referencing and presentation-free: it names which  #
    Text              | slot the border colour comes from, and the palette resolves it with     #
    Themes            | everything else.                                                        #
    Slots             |                                                                         #
- ▸ Decoration        | +---------------------------------------------------------------------+ #
+ > Decoration        | +---------------------------------------------------------------------+ #
    Grid              | | borders                                                             | #
-   Components        | | solid          +-----------+                                        | #
+   Components        | | solid          +-----------+                                        | |
    Tree              | |                | content   |                                        | |
    Property tree     | |                +-----------+                                        | |
    Table             | |                                                                     | |
@@ -16,15 +16,15 @@
    State             | |                | content   |                                        | |
    Split             | |                +-----------+                                        | |
    Dock              | |                                                                     | |
-   Terminal          | | dotted         +...........+                                        | |
+   Terminal          | | heavy (2px)    +-----------+                                        | |
+                     | |                | content   |                                        | |
+                     | |                +-----------+                                        | |
+                     | |                                                                     | |
+                     | | dotted         +...........+                                        | |
                      | |                : content   :                                        | |
                      | |                +...........+                                        | |
                      | |                                                                     | |
                      | | dashed         +-----------+                                        | |
-                     | |                | content   |                                        | |
-                     | |                +-----------+                                        | |
-                     | |                                                                     | |
-                     | | double         +-----------+                                        | |
                      | |                | content   |                                        | |
                      | |                +-----------+                                        | |
                      | |                                                                     | |
