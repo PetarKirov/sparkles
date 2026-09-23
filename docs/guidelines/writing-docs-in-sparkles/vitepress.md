@@ -4,25 +4,29 @@ This project uses [VitePress][] to generate the documentation site. See the [Vit
 
 ## Sidebar Configuration
 
-Every new page **must** be added to the [sidebar][vp-sidebar] in `docs/.vitepress/config.mts`.
+Every new page **must** be added to the [sidebar][vp-sidebar] in `docs/.vitepress/sidebar.json`.
+The sidebar tree (and the `srcExclude` list in `docs/.vitepress/docs-config.json`) are
+plain JSON data, not code: `config.mts` imports them, and `ci --check-docs-sidebar`
+reads the same files to verify that every published page is linked and every link
+resolves to a page. Never re-inline the sidebar into `config.mts`.
 
 ### Structure
 
-```typescript
-sidebar: [
+```json
+[
   {
-    text: 'Section Name',
-    collapsed: true, // collapsed by default for large sections
-    items: [
-      { text: 'Page Title', link: '/path/to/page' },
+    "text": "Section Name",
+    "collapsed": true,
+    "items": [
+      { "text": "Page Title", "link": "/path/to/page" },
       {
-        text: 'Subsection',
-        collapsed: true,
-        items: [{ text: 'Child Page', link: '/path/to/child' }],
-      },
-    ],
-  },
-];
+        "text": "Subsection",
+        "collapsed": true,
+        "items": [{ "text": "Child Page", "link": "/path/to/child" }]
+      }
+    ]
+  }
+]
 ```
 
 ### Rules
@@ -32,6 +36,7 @@ sidebar: [
 - Keep sidebar ordering consistent with the logical reading order
 - Use `collapsed: true` for sections with many items
 - Match the `text` value to the page's H1 title (or a short form of it)
+- Run `dub run :ci -- --check-docs-sidebar` after editing (the `check-docs-sidebar` pre-commit hook runs it on any change under `docs/`)
 
 ---
 

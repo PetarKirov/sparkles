@@ -15,7 +15,7 @@ Every docs change must satisfy **all** of these before committing:
 
 1. If a related page already exists in docs, **cross-reference it** (index pages, sibling docs, and back-links)
 2. Link to relevant **upstream resources** (specs, papers, official docs) — prefer deep-links to the most specific section
-3. New page added to sidebar in `docs/.vitepress/config.mts` — see [VitePress][]
+3. New page added to the sidebar in `docs/.vitepress/sidebar.json` — see [VitePress][]
 
 ### Auto-enforced by pre-commit hooks
 
@@ -33,7 +33,9 @@ Every docs change must satisfy **all** of these before committing:
 ```
 docs/
 ├── .vitepress/
-│   ├── config.mts          # Sidebar + nav config
+│   ├── config.mts          # Site config (nav, markdown, search)
+│   ├── sidebar.json        # Sidebar tree (single source of truth)
+│   ├── docs-config.json    # srcExclude: pages the site does not build
 │   └── theme/              # Theme overrides
 ├── guidelines/             # Style guides and idioms
 │   ├── idioms/             # Complex patterns, each in its own directory
@@ -73,7 +75,7 @@ docs/
 2. **Write content** using the matching [article template][Markdown Style]
 3. **Use reference-style links** throughout; place definitions at EOF
 4. **Cross-link** from relevant index pages and sibling docs
-5. **Add to sidebar** in `docs/.vitepress/config.mts` — see [VitePress][]
+5. **Add to sidebar** in `docs/.vitepress/sidebar.json` — see [VitePress][]
 6. **Run pre-commit hooks** to validate formatting, links, and examples — see [Sparkles MD Tooling][]
 7. **Commit** with a `docs(<scope>): ...` message — see [Conventions][]
 
