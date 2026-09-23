@@ -43,6 +43,26 @@ and test the ladder:
 A real terminal is rarely exactly one of them: its declaration is whatever it
 answers, and every flag degrades on its own.
 
+### Emulator presets
+
+To see what a page looks like in a particular terminal, there are also
+**presets** for eight emulators whose answers to a capability query were
+recorded: `xterm`, `apple-terminal`, `iterm2`, `alacritty`, `wezterm`, `kitty`,
+`ghostty` and `tmux`. A preset claims what its emulator answered — color depth,
+synchronized output, grapheme clustering, scheme reports, images, bracketed
+paste, key releases — and nothing no query can confirm, so it may show less
+than the emulator can, never more. The measured values are in the
+[capabilities specification](../specs/design-system/capabilities.md#emulator-presets).
+
+```bash
+ui-gallery --render --page primitives --emulator kitty --degradations
+ui-gallery --tui --emulator tmux --profile enhanced
+```
+
+Presets are not a ladder: kitty has key releases WezTerm lacks, and WezTerm
+clusters graphemes where kitty does not. A preset combines with a profile by
+taking what both allow.
+
 ## How a glyph degrades
 
 A component asks for the richest glyph it wants; the target caps it when the
