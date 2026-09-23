@@ -132,6 +132,23 @@ dashed borders and accent bars the live `--tui` did not — a headless render of
 different painter than the one that runs is worse than no render at all. A
 parity test in `sparkles:ui-tui` now holds the two canvases to the same picture.
 
+### Switching profile live
+
+```bash
+dub run :ui-gallery -- --tui                     # starts as the terminal declares
+dub run :ui-gallery -- --tui --profile enhanced  # starts narrowed to enhanced
+```
+
+`}` paints the running gallery for the next narrower profile and `{` goes back;
+the header names the profile beside the theme (`tokyo-night · baseline`). The
+switch only ever narrows: its ceiling is `--profile`, or the terminal's or
+window's own declaration when none is given, so a gallery started at
+`--profile enhanced` moves between `enhanced` and `baseline` and nothing wider.
+A narrowed frame is painted for what the profile and the target both have — a
+window previewing `enhanced` folds its colors to 256, projects its glyphs, and
+squares its corners, and a terminal previewing `baseline` emits no color and no
+non-ASCII byte at all.
+
 ### Rendering for a capability profile
 
 ```bash

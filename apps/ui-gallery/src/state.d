@@ -13,6 +13,8 @@ page grows.
 */
 module state;
 
+import sparkles.ui.tokens : Profile;
+import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
@@ -278,6 +280,45 @@ private size_t labelOf(scope char[] buf, string prefix, uint n) @safe pure nothr
     return len;
 }
 
+/**
+What the live frame is painted for (`CAP5`): the host's own declaration, or a
+documented profile it is narrowed to. Declaration order runs from the widest
+to the narrowest, so a `--profile` ceiling admits itself and every member
+after it — `--profile enhanced` offers `enhanced` and `baseline`, and nothing
+the terminal was not started with.
+
+The profile members are `sparkles.ui.tokens.Profile`'s, by name (checked
+below); `native` is the one thing a profile cannot say — no narrowing at all.
+*/
+enum ProfileChoice : ubyte
+{
+    native,   /// the host's declaration as it is
+    full,     /// narrowed to `Profile.full`
+    enhanced, /// narrowed to `Profile.enhanced`
+    baseline, /// narrowed to `Profile.baseline`
+}
+
+static foreach (m; __traits(allMembers, Profile))
+    static assert(__traits(hasMember, ProfileChoice, m),
+        "ProfileChoice must name every Profile: " ~ m);
+
+/// The documented profile a choice narrows to — `native` narrows to none.
+Profile profileOf(ProfileChoice c) @safe pure nothrow @nogc
+in (c != ProfileChoice.native)
+{
+    final switch (c)
+    {
+        case ProfileChoice.native: assert(0);
+        static foreach (m; __traits(allMembers, Profile))
+            case __traits(getMember, ProfileChoice, m):
+                return __traits(getMember, Profile, m);
+    }
+}
+
+/// The kebab-case names the header and the command line spell choices with.
+alias profileChoiceNames = wireNames!(AnyFormat, ProfileChoice,
+    resolveCaseStyle!(AnyFormat, ProfileChoice));
+
 /// The whole application, as one value.
 struct GalleryState
 {
@@ -294,6 +335,12 @@ struct GalleryState
 
     // ── theming ─────────────────────────────────────────────────────────────
     size_t themeIndex = 7; /// `tokyo-night` — the shared default (`CLI3`)
+
+    // ── capability profile (`CAP5`) ─────────────────────────────────────────
+    /// The widest choice the switch may reach — `--profile`, else `native`.
+    ProfileChoice profileCeiling;
+    /// What the frame is painted for now; never wider than the ceiling.
+    ProfileChoice profile;
 
     // ── shared machines ─────────────────────────────────────────────────────
     FocusState focus;    ///

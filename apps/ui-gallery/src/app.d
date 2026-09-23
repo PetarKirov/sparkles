@@ -20,7 +20,7 @@ import gallery : Gallery;
 import registry : pageIndexOf, pages;
 import render : renderAnsi, renderDegradations, renderPlain, RenderRequest;
 import sparkles.ui.tokens : Profile;
-import state : GalleryState, themeNames;
+import state : GalleryState, ProfileChoice, profileOf, themeNames;
 
 /**
 The gallery's command line.
@@ -55,10 +55,12 @@ struct Params
     bool renderPlain;
 
     @(Option("profile", description:
-        "With --render: paint for a documented capability profile — "
-        ~ "baseline (a pipe: no color, ASCII chrome), enhanced (256 colors, "
-        ~ "Unicode, links) or full (the default)."))
-    Profile profile = Profile.full;
+        "Paint for a documented capability profile — baseline (a pipe: no "
+        ~ "color, ASCII only), enhanced (256 colors, Unicode, links) or full "
+        ~ "— instead of what the terminal or window declares (native, the "
+        ~ "default). Live, it is the widest profile the } and { keys switch "
+        ~ "between."))
+    ProfileChoice profile;
 
     @(Option("degradations", description:
         "With --render: print what the frame gave up to its --profile "
@@ -120,7 +122,10 @@ int main(string[] args)
             keys: cli.keys,
             width: cli.windowWidth,
             height: cli.windowHeight,
-            profile: cli.profile,
+            // A render has no host to be native to: it paints the grid's own
+            // reach, which is exactly `full`.
+            profile: cli.profile == ProfileChoice.native ? Profile.full
+                : profileOf(cli.profile),
         );
         write(cli.degradations ? renderDegradations(req)
             : cli.renderPlain ? renderPlain(req) : renderAnsi(req));
@@ -167,6 +172,8 @@ int main(string[] args)
     auto app = Gallery(GalleryState(
         page: pageIndexOf(cli.page),
         themeIndex: themeIndexOf(cli.theme),
+        profileCeiling: cli.profile,
+        profile: cli.profile,
         termTabGlyphs: cli.termTabGlyphs,
     ));
     // A real run may fork shells; the recorded tests and --render, which
