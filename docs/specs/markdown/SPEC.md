@@ -332,7 +332,7 @@ Node origin is determined by the `SumType` variant itself — core CommonMark no
 
 ### Representation
 
-Nodes are plain structs composed via `std.sumtype.SumType` — no classes, no GC. Child lists use `SmallBuffer` arrays that fall back to arena allocation when the inline buffer overflows.
+Nodes are plain structs composed via `std.sumtype.SumType` — no classes, no GC. Child lists use `UniqueBuffer` arrays that fall back to arena allocation when the inline buffer overflows.
 
 ```d
 import std.sumtype : SumType;
@@ -437,7 +437,7 @@ AST nodes are allocated from a per-parse arena allocator (using `std.experimenta
 
 ### Event Stream Storage
 
-The event stream uses a growable `SmallBuffer`-like array. Events are appended sequentially with no per-event heap allocation in the common case. When the inline buffer is exhausted, the array falls back to arena-backed growth.
+The event stream uses a growable `UniqueBuffer`-like array. Events are appended sequentially with no per-event heap allocation in the common case. When the inline buffer is exhausted, the array falls back to arena-backed growth.
 
 ### Input Materialization Rules
 
@@ -550,7 +550,7 @@ ErrorAction onError(ParseError error);
 struct ParseContext
 {
     const(char)[] input;          // Current normalized input view (borrowed or owned)
-    SmallBuffer!(char, 4096) buf; // Scratch buffer for rewriting
+    UniqueBuffer!(char, 4096) buf; // Scratch buffer for rewriting
     string sourcePath;            // File path for diagnostics
     Limits limits;                // Active parser limits
     DiagnosticSink diagnostics;   // Error/warning accumulator
