@@ -11,6 +11,7 @@ parameters.
 +/
 module sparkles.ui.components.theme;
 
+import sparkles.ui.glyphs : Mark, markTable;
 import sparkles.base.term_style : Style, stylize;
 import sparkles.base.term_caps : OutputCapabilities;
 import sparkles.ui.components.box : BoxProps;
@@ -93,28 +94,48 @@ dchar bannerLineChar(BorderStyle style) pure nothrow @nogc
 
 /// The status-glyph vocabulary shared by checklists, result lines, and summaries.
 /// Defaults are the Unicode set; `statusGlyphs(unicode: false)` selects the ASCII
-/// fallbacks.
+/// fallbacks. The marks are the design system's (`sparkles.ui.glyphs.Mark`,
+/// `GLY3`), read from its table rather than spelled a second time here.
 struct StatusGlyphs
 {
-    string ok       = "✔";
-    string fail     = "✖";
-    string warn     = "⚠";
-    string info     = "•";
-    string pending  = "○";
-    string running  = "◐"; /// Static form; animated contexts use `spinnerFrame`.
-    string skipped  = "┄";
+    string ok       = markText(Mark.ok, true);
+    string fail     = markText(Mark.fail, true);
+    string warn     = markText(Mark.warn, true);
+    string info     = markText(Mark.info, true);
+    string pending  = markText(Mark.pending, true);
+    string running  = markText(Mark.running, true); /// Static form; animated contexts use `spinnerFrame`.
+    string skipped  = markText(Mark.skipped, true);
     string ellipsis = "…";
 }
 
+// One mark as text, in its Unicode or ASCII form — evaluated at compile time
+// for the initializers above and the ASCII set below.
+//
+// Built by concatenation onto a literal rather than `std.conv.to`: the
+// compiler keeps such a CTFE `string` as a literal, whereas `to!string`'s
+// buffer surfaces as an array literal that `@nogc` `statusGlyphs` would have
+// to allocate.
+private string markText(Mark m, bool unicode) pure nothrow
+{
+    import sparkles.base.text.utf : encodeUtf8;
+
+    char[4] buf;
+    const n = encodeUtf8(unicode ? markTable[m].unicode : markTable[m].ascii, buf);
+    string s = "";
+    foreach (c; buf[0 .. n])
+        s ~= c;
+    return s;
+}
+
+private static immutable StatusGlyphs asciiStatusGlyphs = StatusGlyphs(
+    ok: markText(Mark.ok, false), fail: markText(Mark.fail, false),
+    warn: markText(Mark.warn, false), info: markText(Mark.info, false),
+    pending: markText(Mark.pending, false), running: markText(Mark.running, false),
+    skipped: markText(Mark.skipped, false), ellipsis: "...");
+
 /// The glyph set for a terminal's unicode capability (see `TermCaps.unicode`).
 StatusGlyphs statusGlyphs(bool unicode) pure nothrow @nogc
-{
-    if (unicode)
-        return StatusGlyphs.init;
-    return StatusGlyphs(
-        ok: "+", fail: "x", warn: "!", info: "*",
-        pending: "o", running: "~", skipped: "-", ellipsis: "...");
-}
+    => unicode ? StatusGlyphs.init : asciiStatusGlyphs;
 
 /// Semantic style roles, so call sites say what they mean and the palette can
 /// change in one place.

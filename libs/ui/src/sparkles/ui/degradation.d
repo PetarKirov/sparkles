@@ -23,8 +23,10 @@ import sparkles.base.term_color : ColorDepth;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
     PopClip, PushClip, Rule, Scrollbar, TextRun;
+import sparkles.base.term_caps : BlockTier;
+import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
 import sparkles.ui.style : BorderStyle, FontRole;
-import sparkles.ui.tokens : BoxCharset, projectBorder, TargetCapabilities;
+import sparkles.ui.tokens : projectBorder, TargetCapabilities;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
     wireNames;
 
@@ -50,8 +52,13 @@ enum Substitution : ubyte
     @needs("colorDepth") colorDropped,       /// no SGR color at all
     @needs("unicode") asciiBorder,           /// box, bar and rule chrome drawn with `+-|`
     @needs("unicode") asciiScrollbar,        /// scrollbar drawn with `|` and `#`
+    @needs("unicode") asciiGlyph,            /// a glyph in text folded to ASCII (`GLY1`)
+    @needs("blocks") blocksFolded,           /// a block element thinned to a stroke or shade
+    @needs("braille") brailleFolded,         /// a braille cell coarsened to a shade
+    @needs("nerdFont") iconFolded,           /// a Nerd Font icon replaced by its mark or `?`
     @needs("radius") radiusAsGlyph,          /// a corner radius became rounded box corners
     @needs("radius") radiusDropped,          /// a corner radius became square corners
+    @needs("radius") weightDropped,          /// a heavy rounded border kept its arcs, drawn light (D31)
     @needs("shadow") shadowDropped,          /// a drop shadow was not drawn
     @needs("alpha") alphaFlattened,          /// translucency pre-composited or drawn opaque
     @needs("hyperlinks") linkAsText,         /// a link run painted as plain styled text
@@ -164,6 +171,32 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
             r.note(Substitution.monospaceDocs);
     }
 
+    // The glyphs of one operation the target cannot show, each noted once
+    // under the capability that stopped it (`GLY1`).
+    void glyphs(Text)(scope Text text)
+    {
+        import std.utf : byDchar;
+
+        bool[Substitution.max + 1] seen;
+        foreach (dchar g; text.byDchar)
+        {
+            const n = needOf(g);
+            if (admits(caps, n))
+                continue;
+            const s = !caps.unicode ? Substitution.asciiGlyph
+                : n == GlyphNeed.braille ? Substitution.brailleFolded
+                : n == GlyphNeed.nerdFont ? Substitution.iconFolded
+                : Substitution.blocksFolded;
+            if (!seen[s])
+                r.note(s);
+            seen[s] = true;
+        }
+    }
+
+    // A block-element stroke (an eighth-block accent, a solid thumb) on a
+    // Unicode target with no block tier.
+    const noBlocks = caps.unicode && caps.blocks == BlockTier.none;
+
     foreach (ref op; ops)
         op.match!(
             (in FillRect f) {
@@ -184,26 +217,41 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                     && !(ch.border.style == BorderStyle.solid && f.rect.height == 1);
                 if (ch.border.any && !caps.unicode && !underline)
                     r.note(Substitution.asciiBorder);
+                // A right-only accent is an eighth-block column.
+                if (ch.border.any && noBlocks && bw.right > 0 && bw.top == 0
+                        && bw.bottom == 0 && bw.left == 0)
+                    r.note(Substitution.blocksFolded);
                 if (underline && !caps.extendedUnderline
                         && (ch.border.style == BorderStyle.dotted
                             || ch.border.style == BorderStyle.dashed))
                     r.note(Substitution.plainUnderline);
                 if (ch.borderRadius > 0 && !caps.radius)
-                    r.note(projectBorder(ch.border, ch.borderRadius, caps).charset
-                        == BoxCharset.rounded
-                        ? Substitution.radiusAsGlyph : Substitution.radiusDropped);
+                {
+                    const p = projectBorder(ch.border, ch.borderRadius, caps);
+                    r.note(p.rounded ? Substitution.radiusAsGlyph : Substitution.radiusDropped);
+                    const bw2 = ch.border.width;
+                    if (p.rounded && (bw2.top >= 2 || bw2.right >= 2 || bw2.bottom >= 2
+                            || bw2.left >= 2))
+                        r.note(Substitution.weightDropped);
+                }
                 if (ch.shadow.any && !caps.shadow)
                     r.note(Substitution.shadowDropped);
             },
-            (in TextRun t) => ink(t.ink),
-            (in Glyph g) => ink(g.ink),
+            (in TextRun t) { ink(t.ink); glyphs(t.text); },
+            (in Glyph g) { ink(g.ink); dchar[1] one = [g.glyph]; glyphs(one[]); },
             (in Line l) {
                 ink(l.ink);
                 if (!caps.extendedUnderline && l.style == LineStyle.wavy)
                     r.note(Substitution.plainUnderline);
-                // A vertical line is drawn as a bar glyph on a cell target.
-                if (!caps.unicode && l.from.x == l.to.x && l.from.y != l.to.y)
-                    r.note(Substitution.asciiBorder);
+                // A vertical line is drawn as an eighth-block bar on a cell
+                // target.
+                if (l.from.x == l.to.x && l.from.y != l.to.y)
+                {
+                    if (!caps.unicode)
+                        r.note(Substitution.asciiBorder);
+                    else if (noBlocks)
+                        r.note(Substitution.blocksFolded);
+                }
             },
             (in Rule ru) {
                 ink(ru.ink);
@@ -214,6 +262,9 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                 color();
                 if (!caps.unicode)
                     r.note(Substitution.asciiScrollbar);
+                else if (noBlocks && (needOf(s.thumbGlyph) >= GlyphNeed.blocksHalf
+                        || needOf(s.trackGlyph) >= GlyphNeed.blocksHalf))
+                    r.note(Substitution.blocksFolded);
                 if (!caps.alpha && (s.fgAlpha != 0xFF || (s.trackLit && s.trackAlpha != 0xFF)))
                     r.note(Substitution.alphaFlattened);
             },
@@ -339,4 +390,49 @@ unittest
     r.counts[Substitution.colorDropped] = 7;
     checkToString(r, "color-dropped ×7 (colorDepth)\nascii-border ×3 (unicode)\n");
     assert(!r.empty && DegradationReport.init.empty);
+}
+
+@("ui.degradation.glyphTiers")
+@safe pure nothrow @nogc
+unittest
+{
+    TextRun t;
+    t.text = "✔ ▏⣿";
+    const DrawOp[1] ops = [DrawOp(t)];
+
+    // At baseline one substitution names the whole story: no Unicode at all.
+    const b = degradationsOf(ops[], capabilitiesOf(Profile.baseline));
+    assert(b[Substitution.asciiGlyph] == 1);
+    assert(b[Substitution.blocksFolded] == 0 && b[Substitution.iconFolded] == 0);
+
+    // At enhanced, each finer tier the target lacks is its own row; the
+    // half block it has is not one.
+    const e = degradationsOf(ops[], capabilitiesOf(Profile.enhanced));
+    assert(e[Substitution.asciiGlyph] == 0 && e[Substitution.blocksFolded] == 0);
+    assert(e[Substitution.brailleFolded] == 1 && e[Substitution.iconFolded] == 1);
+
+    assert(degradationsOf(ops[], capabilitiesOf(Profile.full)).empty);
+}
+
+@("ui.degradation.heavyRoundedKeepsItsArcs")
+@safe pure nothrow @nogc
+unittest
+{
+    // D31: a 2px rounded panel on a cell target keeps its arcs and says
+    // the weight went; a window honours both and says nothing.
+    static immutable BoxChrome panel = () {
+        BoxChrome c;
+        c.border.width = Insets(2, 2, 2, 2);
+        c.border.style = BorderStyle.solid;
+        c.borderRadius = 6;
+        return c;
+    }();
+    FillRect f;
+    f.chrome = &panel;
+    const DrawOp[1] ops = [DrawOp(f)];
+    const e = degradationsOf(ops[], capabilitiesOf(Profile.enhanced));
+    assert(e[Substitution.radiusAsGlyph] == 1 && e[Substitution.weightDropped] == 1);
+    auto window = capabilitiesOf(Profile.full);
+    window.radius = true;
+    assert(degradationsOf(ops[], window)[Substitution.weightDropped] == 0);
 }

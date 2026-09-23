@@ -387,17 +387,19 @@ bool subsetOf(in TargetCapabilities a, in TargetCapabilities b) @safe pure nothr
 
 // ── border projection (GLY2) ────────────────────────────────────────────────
 
-/// The box-drawing charset a cell target strokes a border with.
+/// The stroke family a cell target draws a border's edges with (`GLY2`).
 enum BoxCharset : ubyte
 {
     none,        /// no edge
     ascii,       /// `+-|`
-    light,       /// `┌─┐│└┘`
-    rounded,     /// `╭─╮│╰╯`
+    asciiDotted, /// `+.:` — a dotted border keeps its texture below `unicode`
+    light,       /// `┌─┐│└┘` (`╭╮╰╯` when rounded)
     heavy,       /// `┏━┓┃┗┛`
     double_,     /// `╔═╗║╚╝`
-    dashedLight, /// `┌┄┐┆└┘`
-    dashedHeavy, /// `┏┅┓┇┗┛`
+    dashedLight, /// `┌╌┐╎└┘` (`╭╮╰╯` when rounded)
+    dashedHeavy, /// `┏╍┓╏┗┛`
+    dottedLight, /// `┌┈┐┊└┘` (`╭╮╰╯` when rounded)
+    dottedHeavy, /// `┏┉┓┋┗┛`
 }
 
 /// What $(LREF projectBorder) decided, and whether it lost something the
@@ -405,16 +407,20 @@ enum BoxCharset : ubyte
 struct BorderProjection
 {
     BoxCharset charset;
-    bool lossy; /// the request could not be honoured exactly on this target
+    bool rounded; /// corners drawn as arcs — only the light families have them
+    bool lossy;   /// the request could not be honoured exactly on this target
 }
 
 /**
 Projects a px-typed border onto a cell target (`GLY2`): width `0` → none;
-below `unicode` → ASCII; `double_` → the double set (weight and radius are
-meaningless there, so a radius is reported lost); `dotted`/`dashed` → the
-dashed variants; width `≥ 2` → heavy; radius `> 0` → rounded — which exists
-only for the light set, so heavy-and-rounded degrades to heavy-square and says
-so.
+below `unicode` → ASCII (dotted keeps `.`/`:`); `double_` → the double set
+(weight and radius are meaningless there, so a radius is reported lost);
+`dashed`/`dotted` → their own dash runs; width `≥ 2` → the heavy family;
+radius `> 0` → arcs, which exist only for the light families. When a request
+wants both — heavy and rounded — the radius wins: the shape is what a reader
+recognises a panel by, so it draws light arcs and reports the weight lost
+(design-system D31). `double_` has no arcs at all and reports the radius
+lost.
 */
 BorderProjection projectBorder(in BoxBorder border, int radius, in TargetCapabilities caps)
     @safe pure nothrow @nogc
@@ -424,20 +430,58 @@ BorderProjection projectBorder(in BoxBorder border, int radius, in TargetCapabil
     const width = max(border.width.top, border.width.right, border.width.bottom,
         border.width.left);
     if (width <= 0 || border.style == BorderStyle.none)
-        return BorderProjection(BoxCharset.none, false);
+        return BorderProjection(BoxCharset.none);
     if (!caps.unicode)
-        return BorderProjection(BoxCharset.ascii, true);
+        return BorderProjection(border.style == BorderStyle.dotted
+            ? BoxCharset.asciiDotted : BoxCharset.ascii, lossy: true);
 
-    if (border.style == BorderStyle.double_)
-        return BorderProjection(BoxCharset.double_, radius > 0);
-    const heavy = width >= 2;
-    const dashed = border.style == BorderStyle.dashed || border.style == BorderStyle.dotted;
-    if (dashed)
-        return BorderProjection(heavy ? BoxCharset.dashedHeavy : BoxCharset.dashedLight,
-                                radius > 0);
-    if (heavy)
-        return BorderProjection(BoxCharset.heavy, radius > 0);
-    return BorderProjection(radius > 0 ? BoxCharset.rounded : BoxCharset.light, false);
+    // The radius wins over the weight (D31): arcs exist only in the light
+    // families, and a rounded panel drawn square reads as a different thing.
+    const heavy = width >= 2 && radius <= 0;
+    BoxCharset c;
+    final switch (border.style) with (BorderStyle)
+    {
+        case none: assert(0);
+        case solid:   c = heavy ? BoxCharset.heavy : BoxCharset.light; break;
+        case dashed:  c = heavy ? BoxCharset.dashedHeavy : BoxCharset.dashedLight; break;
+        case dotted:  c = heavy ? BoxCharset.dottedHeavy : BoxCharset.dottedLight; break;
+        case double_: c = BoxCharset.double_; break;
+    }
+    const arcs = c == BoxCharset.light || c == BoxCharset.dashedLight
+        || c == BoxCharset.dottedLight;
+    const weightLost = width >= 2 && !heavy && c != BoxCharset.double_;
+    return BorderProjection(c, rounded: radius > 0 && arcs,
+        lossy: (radius > 0 && !arcs) || weightLost);
+}
+
+/// The six glyphs a box in one family is stroked with.
+struct BoxGlyphs
+{
+    dchar horizontal, vertical;
+    dchar topLeft, topRight, bottomLeft, bottomRight;
+}
+
+/// The glyphs of a projection — the one table every cell painter strokes from
+/// (`GLY2`). `none` is blanks; the ASCII families are ASCII.
+BoxGlyphs boxGlyphs(in BorderProjection p) @safe pure nothrow @nogc
+{
+    static BoxGlyphs arcsOr(dchar h, dchar v, bool rounded)
+        => rounded ? BoxGlyphs(h, v, '╭', '╮', '╰', '╯')
+            : BoxGlyphs(h, v, '┌', '┐', '└', '┘');
+
+    final switch (p.charset) with (BoxCharset)
+    {
+        case none:        return BoxGlyphs(' ', ' ', ' ', ' ', ' ', ' ');
+        case ascii:       return BoxGlyphs('-', '|', '+', '+', '+', '+');
+        case asciiDotted: return BoxGlyphs('.', ':', '+', '+', '+', '+');
+        case light:       return arcsOr('─', '│', p.rounded);
+        case dashedLight: return arcsOr('╌', '╎', p.rounded);
+        case dottedLight: return arcsOr('┈', '┊', p.rounded);
+        case heavy:       return BoxGlyphs('━', '┃', '┏', '┓', '┗', '┛');
+        case dashedHeavy: return BoxGlyphs('╍', '╏', '┏', '┓', '┗', '┛');
+        case dottedHeavy: return BoxGlyphs('┉', '┋', '┏', '┓', '┗', '┛');
+        case double_:     return BoxGlyphs('═', '║', '╔', '╗', '╚', '╝');
+    }
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
@@ -594,29 +638,67 @@ unittest
     cell.unicode = true;
     TargetCapabilities dumb; // unicode = false
 
-    static BoxBorder box(int w, BorderStyle s) @safe pure nothrow @nogc
+    // `O7`, exhaustive: every (width, style, radius, unicode) the domain has,
+    // against a hand-written row — charset, arcs, loss, and the glyphs drawn.
+    static struct Row { int w; BorderStyle s; int r; bool uni; BoxCharset c; bool arcs;
+        bool lossy; dstring glyphs; }
+    alias S = BorderStyle;
+    alias C = BoxCharset;
+    static immutable Row[] rows = [
+        // width 0 and style none draw nothing, whatever else is asked.
+        Row(0, S.solid, 0, true, C.none, false, false, "      "),
+        Row(0, S.solid, 4, false, C.none, false, false, "      "),
+        Row(1, S.none, 4, true, C.none, false, false, "      "),
+        Row(2, S.none, 0, false, C.none, false, false, "      "),
+        // light families, square and arced
+        Row(1, S.solid, 0, true, C.light, false, false, "─│┌┐└┘"),
+        Row(1, S.solid, 4, true, C.light, true, false, "─│╭╮╰╯"),
+        Row(1, S.dashed, 0, true, C.dashedLight, false, false, "╌╎┌┐└┘"),
+        Row(1, S.dashed, 4, true, C.dashedLight, true, false, "╌╎╭╮╰╯"),
+        Row(1, S.dotted, 0, true, C.dottedLight, false, false, "┈┊┌┐└┘"),
+        Row(1, S.dotted, 4, true, C.dottedLight, true, false, "┈┊╭╮╰╯"),
+        // heavy families; heavy and rounded at once keeps the arcs and
+        // reports the weight lost (D31)
+        Row(2, S.solid, 0, true, C.heavy, false, false, "━┃┏┓┗┛"),
+        Row(3, S.solid, 4, true, C.light, true, true, "─│╭╮╰╯"),
+        Row(2, S.dashed, 0, true, C.dashedHeavy, false, false, "╍╏┏┓┗┛"),
+        Row(2, S.dashed, 4, true, C.dashedLight, true, true, "╌╎╭╮╰╯"),
+        Row(2, S.dotted, 0, true, C.dottedHeavy, false, false, "┉┋┏┓┗┛"),
+        Row(2, S.dotted, 4, true, C.dottedLight, true, true, "┈┊╭╮╰╯"),
+        // double: one weight, no arcs
+        Row(1, S.double_, 0, true, C.double_, false, false, "═║╔╗╚╝"),
+        Row(3, S.double_, 0, true, C.double_, false, false, "═║╔╗╚╝"),
+        Row(1, S.double_, 2, true, C.double_, false, true, "═║╔╗╚╝"),
+        // below unicode: ASCII, always a loss; dotted keeps its texture
+        Row(1, S.solid, 0, false, C.ascii, false, true, "-|++++"),
+        Row(2, S.solid, 4, false, C.ascii, false, true, "-|++++"),
+        Row(1, S.dashed, 0, false, C.ascii, false, true, "-|++++"),
+        Row(1, S.double_, 0, false, C.ascii, false, true, "-|++++"),
+        Row(1, S.dotted, 4, false, C.asciiDotted, false, true, ".:++++"),
+    ];
+
+    foreach (ref row; rows)
     {
         BoxBorder b;
-        b.width = Insets(w, w, w, w);
-        b.style = s;
-        return b;
+        b.width = Insets(row.w, row.w, row.w, row.w);
+        b.style = row.s;
+        const p = projectBorder(b, row.r, row.uni ? cell : dumb);
+        assert(p == BorderProjection(row.c, row.arcs, row.lossy));
+        const g = boxGlyphs(p);
+        assert([g.horizontal, g.vertical, g.topLeft, g.topRight, g.bottomLeft,
+            g.bottomRight] == row.glyphs);
     }
 
-    // GLY2, row by row.
-    assert(projectBorder(box(0, BorderStyle.solid), 0, cell) == BorderProjection(BoxCharset.none, false));
-    assert(projectBorder(box(1, BorderStyle.none), 4, cell) == BorderProjection(BoxCharset.none, false));
-    assert(projectBorder(box(1, BorderStyle.solid), 0, cell) == BorderProjection(BoxCharset.light, false));
-    assert(projectBorder(box(1, BorderStyle.solid), 4, cell) == BorderProjection(BoxCharset.rounded, false));
-    assert(projectBorder(box(2, BorderStyle.solid), 0, cell) == BorderProjection(BoxCharset.heavy, false));
-    // heavy has no rounded corners: degrade, and say so (CAP6).
-    assert(projectBorder(box(3, BorderStyle.solid), 4, cell) == BorderProjection(BoxCharset.heavy, true));
-    assert(projectBorder(box(1, BorderStyle.dashed), 0, cell) == BorderProjection(BoxCharset.dashedLight, false));
-    assert(projectBorder(box(1, BorderStyle.dotted), 0, cell) == BorderProjection(BoxCharset.dashedLight, false));
-    assert(projectBorder(box(2, BorderStyle.dashed), 0, cell) == BorderProjection(BoxCharset.dashedHeavy, false));
-    assert(projectBorder(box(1, BorderStyle.double_), 0, cell) == BorderProjection(BoxCharset.double_, false));
-    assert(projectBorder(box(3, BorderStyle.double_), 2, cell) == BorderProjection(BoxCharset.double_, true));
-    // below unicode everything is ASCII, and that is a loss.
-    assert(projectBorder(box(1, BorderStyle.solid), 4, dumb) == BorderProjection(BoxCharset.ascii, true));
+    // Every style × every width 0..3 × radius {0, 4} × unicode is in the
+    // domain above by construction; check the rows cover each style.
+    static foreach (s; [S.none, S.solid, S.dashed, S.dotted, S.double_])
+    {{
+        bool seen;
+        foreach (ref row; rows)
+            seen |= row.s == s;
+        assert(seen);
+    }}
+
     // a one-sided border still counts by its widest side.
     BoxBorder oneSide;
     oneSide.width = Insets(0, 0, 0, 3);
