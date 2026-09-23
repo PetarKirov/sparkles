@@ -6,12 +6,12 @@ A complete lookup table for the `io_uring` UABI: every `IORING_OP_*` opcode, eve
 
 The interface tables below are transcribed from a specific source snapshot:
 
-| Source                                               | Version / commit                                    | Repo-relative path                                                 |
-| ---------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
-| Kernel UABI header (opcode/flag enums)               | Linux **v7.3-rc4** (`93f51579e7df`)                 | `linux/include/uapi/linux/io_uring.h` (byte-identical to v7.1-rc6) |
-| Split UAPI (`zcrx`, `query`, `bpf_filter`)           | Linux **v7.3-rc4**                                  | `linux/include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`      |
-| Kernel opcode dispatch table (handler/attrs)         | Linux **v7.3-rc4**                                  | `linux/io_uring/opdef.c`                                           |
-| liburing user-space helpers (`prep_*`, `register_*`) | liburing **2.15-dev** (`40999f52`, post-`2.14` tag) | `liburing/src/include/liburing.h` (not re-walked for 7.2/7.3)      |
+| Source                                               | Version / commit                                | Repo-relative path                                                 |
+| ---------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------ |
+| Kernel UABI header (opcode/flag enums)               | Linux **v7.3-rc4** (`93f51579e7df`)             | `linux/include/uapi/linux/io_uring.h` (byte-identical to v7.1-rc6) |
+| Split UAPI (`zcrx`, `query`, `bpf_filter`)           | Linux **v7.3-rc4**                              | `linux/include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`      |
+| Kernel opcode dispatch table (handler/attrs)         | Linux **v7.3-rc4**                              | `linux/io_uring/opdef.c`                                           |
+| liburing user-space helpers (`prep_*`, `register_*`) | liburing **2.15** + 35 (`78dce99b`, 2026-09-11) | `liburing/src/include/liburing.h`                                  |
 
 > The interface is append-only and ABI-stable: every value below has the same numeric meaning on every kernel that defines it. Newer kernels add opcodes/flags at the end of each enum; they never renumber existing entries. The "Since" columns give the kernel release that first shipped each symbol (verified against `io_uring_enter(2)`, kernel.dk and LWN — see [Sources](#sources)). A current kernel will reject an unknown opcode with `-EINVAL` and report support via `IORING_REGISTER_PROBE`, so probe rather than assume.
 
@@ -454,7 +454,7 @@ User space rarely fills `struct io_uring_sqe` by hand. `liburing/src/include/lib
 | **Pipe**                | `pipe`, `pipe_direct`                                                                                                                                               | `_direct` installs fixed-fd slots                         |
 | **futex / waitid**      | `futex_wait`, `futex_wake`, `futex_waitv`, `waitid`                                                                                                                 | —                                                         |
 | **Message ring**        | `msg_ring`, `msg_ring_cqe_flags`, `msg_ring_fd`, `msg_ring_fd_alloc`                                                                                                | cross-ring messaging                                      |
-| **Pass-through cmd**    | `uring_cmd`, `uring_cmd128`, `cmd_sock`, `cmd_discard`, `cmd_getsockname`                                                                                           | NVMe / socket control via `URING_CMD`                     |
+| **Pass-through cmd**    | `uring_cmd`, `uring_cmd128`, `cmd_sock`, `cmd_discard`, `cmd_getsockname`, `cmd_zone_reset_all`                                                                     | NVMe / socket / zoned-block control via `URING_CMD`       |
 | **No-op**               | `nop`, `nop128`                                                                                                                                                     | `nop128` exercises 128-byte SQEs                          |
 
 ### Queue, submit, completion & data helpers
@@ -476,24 +476,26 @@ User space rarely fills `struct io_uring_sqe` by hand. `liburing/src/include/lib
 
 These wrap the [§7](#7-ioring_register---io_uring_register2-opcodes) opcodes:
 
-| Helper                                                                      | Backing opcode(s)                                |
-| --------------------------------------------------------------------------- | ------------------------------------------------ |
-| `io_uring_register_buffers` / `_sparse` / `_tags` / `_update_tag`           | `REGISTER_BUFFERS`, `BUFFERS2`, `BUFFERS_UPDATE` |
-| `io_uring_register_files` / `_sparse` / `_tags` / `_update` / `_update_tag` | `REGISTER_FILES`, `FILES2`, `FILES_UPDATE(2)`    |
-| `io_uring_register_file_alloc_range`                                        | `REGISTER_FILE_ALLOC_RANGE`                      |
-| `io_uring_register_eventfd` / `_async`                                      | `REGISTER_EVENTFD`, `EVENTFD_ASYNC`              |
-| `io_uring_register_probe`                                                   | `REGISTER_PROBE`                                 |
-| `io_uring_register_personality`                                             | `REGISTER_PERSONALITY`                           |
-| `io_uring_register_restrictions`                                            | `REGISTER_RESTRICTIONS`                          |
-| `io_uring_register_buf_ring`                                                | `REGISTER_PBUF_RING`                             |
-| `io_uring_register_ring_fd`                                                 | `REGISTER_RING_FDS`                              |
-| `io_uring_register_iowq_aff` / `_max_workers`                               | `REGISTER_IOWQ_AFF`, `IOWQ_MAX_WORKERS`          |
-| `io_uring_register_sync_cancel` / `_sync_msg`                               | `REGISTER_SYNC_CANCEL`, `SEND_MSG_RING`          |
-| `io_uring_register_napi`                                                    | `REGISTER_NAPI`                                  |
-| `io_uring_register_clock`                                                   | `REGISTER_CLOCK`                                 |
-| `io_uring_register_region` / `_wait_reg`                                    | `REGISTER_MEM_REGION` (+ fixed wait args)        |
-| `io_uring_register_ifq`                                                     | `REGISTER_ZCRX_IFQ`                              |
-| `io_uring_register_bpf_filter` / `_task`                                    | `REGISTER_BPF_FILTER`                            |
+| Helper                                                                      | Backing opcode(s)                                               |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `io_uring_register_buffers` / `_sparse` / `_tags` / `_update_tag`           | `REGISTER_BUFFERS`, `BUFFERS2`, `BUFFERS_UPDATE`                |
+| `io_uring_register_files` / `_sparse` / `_tags` / `_update` / `_update_tag` | `REGISTER_FILES`, `FILES2`, `FILES_UPDATE(2)`                   |
+| `io_uring_register_file_alloc_range`                                        | `REGISTER_FILE_ALLOC_RANGE`                                     |
+| `io_uring_register_eventfd` / `_async`                                      | `REGISTER_EVENTFD`, `EVENTFD_ASYNC`                             |
+| `io_uring_register_probe`                                                   | `REGISTER_PROBE`                                                |
+| `io_uring_register_personality`                                             | `REGISTER_PERSONALITY`                                          |
+| `io_uring_register_restrictions`                                            | `REGISTER_RESTRICTIONS`                                         |
+| `io_uring_register_buf_ring`                                                | `REGISTER_PBUF_RING`                                            |
+| `io_uring_register_ring_fd`                                                 | `REGISTER_RING_FDS`                                             |
+| `io_uring_register_iowq_aff` / `_max_workers`                               | `REGISTER_IOWQ_AFF`, `IOWQ_MAX_WORKERS`                         |
+| `io_uring_register_sync_cancel` / `_sync_msg`                               | `REGISTER_SYNC_CANCEL`, `SEND_MSG_RING`                         |
+| `io_uring_register_napi`                                                    | `REGISTER_NAPI`                                                 |
+| `io_uring_register_clock`                                                   | `REGISTER_CLOCK`                                                |
+| `io_uring_register_region` / `_wait_reg`                                    | `REGISTER_MEM_REGION` (+ fixed wait args)                       |
+| `io_uring_register_ifq`                                                     | `REGISTER_ZCRX_IFQ`                                             |
+| `io_uring_register_zcrx_ctrl`                                               | `REGISTER_ZCRX_CTRL` (copied header: `FLUSH_RQ`, `EXPORT` only) |
+| `io_uring_register_query`                                                   | `REGISTER_QUERY` (no ring fd; copied header omits `ZCRX_EVENT`) |
+| `io_uring_register_bpf_filter` / `_task`                                    | `REGISTER_BPF_FILTER`                                           |
 
 ### Provided-buffer ring helpers
 
@@ -556,7 +558,7 @@ For the design rationale behind these primitives — submission/completion rings
 [man7]: https://man7.org/linux/man-pages/man7/io_uring.7.html
 [uapi]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring.h
 [opdef]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/io_uring/opdef.c
-[liburing]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/src/include/liburing.h
+[liburing]: https://github.com/axboe/liburing/blob/78dce99b660fd1caaf70ef6573a88bae9bbf6476/src/include/liburing.h
 [axboe-pdf]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [wiki-611]: https://github.com/axboe/liburing/wiki/What%27s-new-with-io_uring-in-6.11-and-6.12
 [lwn-futex]: https://lwn.net/Articles/945891/

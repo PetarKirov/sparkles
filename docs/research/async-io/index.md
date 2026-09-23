@@ -26,11 +26,11 @@ This survey answers five questions:
 > to a deep-dive that was written and fact-checked independently; where this index
 > summarizes a system, the deep-dive is the source of truth. `io_uring` version markers here
 > are kept consistent with the [chronology][uring-timeline], which was checked against a
-> Linux **v7.3-rc4** tree (previously v7.1-rc6) paired with **liburing 2.15** — markers at
-> `6.13` and later are forward-dated relative to general public knowledge ("as observed in
-> this checkout"). The liburing helper columns were not re-walked for 7.2/7.3.
+> Linux **v7.3-rc4** tree (previously v7.1-rc6) paired with **liburing `78dce99b`**
+> (`liburing-2.15` plus 35 commits, 2026-09-11) — markers at `6.13` and later are
+> forward-dated relative to general public knowledge ("as observed in this checkout").
 
-**Last reviewed:** August 10, 2026. The `io_uring` ground truth moved from v7.1-rc6 to **v7.3-rc4** on September 23, 2026; the other deep-dives were not re-walked.
+**Last reviewed:** August 10, 2026. The `io_uring` ground truth moved from v7.1-rc6 to **v7.3-rc4** on September 23, 2026, and the liburing companion from the pre-2.15 snapshot to **`78dce99b`** the same day; the other deep-dives were not re-walked.
 
 ---
 
