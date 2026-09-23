@@ -26,7 +26,9 @@ import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.state : scrollbarThumb;
-import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.ui.degradation : projectColor;
+import sparkles.ui.glyphs : admits, projectGlyph;
+import sparkles.ui.style : BorderStyle, Shadow, Visual;
 import sparkles.ui.tokens : TargetCapabilities;
 
 /// The idle scrollbar rail thickness for a cell extent, in device pixels.
@@ -194,8 +196,57 @@ struct RaylibCanvas
     float originX = 0;         /// pixel x of cell column 0
     float originY = 0;         /// pixel y of cell row 0
 
-    /// This target's declaration (`CAP1`): $(LREF raylibCapabilities).
-    enum TargetCapabilities capabilities = raylibCapabilities;
+    /**
+    What this canvas paints for (`CAP1`): $(LREF raylibCapabilities) unless a
+    host narrowed it (`HostState.narrowTarget`) to preview a smaller target.
+    Narrowed, it folds colors to the depth, squares corners and drops shadows
+    the declaration lacks, and projects every glyph down its ladder (`GLY1`).
+    Border strokes stay vector: a window has no box glyphs to fold.
+    */
+    TargetCapabilities capabilities = raylibCapabilities;
+
+    // The visual as this target can show it.
+    private Visual narrowed(in Visual v) const @safe pure nothrow @nogc
+    {
+        Visual n = v;
+        const d = capabilities.colorDepth;
+        n.fg = projectColor(v.fg, d, false);
+        n.bg = projectColor(v.bg, d, true);
+        n.border.color = projectColor(v.border.color, d, false);
+        if (!capabilities.radius)
+            n.borderRadius = 0;
+        if (!capabilities.shadow)
+            n.shadow = Shadow.init;
+        return n;
+    }
+
+    // `text` as this target can show it: itself when every glyph is
+    // admitted, else a copy with each glyph projected — a wide one that
+    // folds fills both of its cells, as on the grid.
+    private const(char)[] projected(return scope const(char)[] text) const
+    {
+        import std.utf : byDchar, encode;
+        import sparkles.base.text.width : codepointWidth;
+
+        bool all = true;
+        foreach (dchar g; text.byDchar)
+            if (!admits(capabilities, g))
+            {
+                all = false;
+                break;
+            }
+        if (all)
+            return text;
+        char[] r;
+        foreach (dchar g; text.byDchar)
+        {
+            const p = projectGlyph(g, capabilities);
+            char[4] enc;
+            foreach (_; 0 .. (p != g && codepointWidth(g) == 2) ? 2 : 1)
+                r ~= enc[0 .. encode(enc, p)];
+        }
+        return r;
+    }
 
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
@@ -277,8 +328,9 @@ struct RaylibCanvas
     /// `borderRadius`), border (per-side, dotted/solid), and a popup arrow —
     /// each gated on the resolved `Visual`. A plain filled cell is the common
     /// fast path (no chrome ⇒ one `DrawRectangle`).
-    void fillRect(in Rect r, in Visual v) @system
+    void fillRect(in Rect r, in Visual visual) @system
     {
+        const v = narrowed(visual);
         const x = px(r.x), y = py(r.y);
         const w = cast(float)(r.width * cellW), h = cast(float)(r.height * cellH);
 
@@ -314,18 +366,20 @@ struct RaylibCanvas
 
     /// Draws `text` at `at`, selecting the real bold/italic/strike/underline face
     /// from the resolved `Visual`.
-    void textRun(in Point at, scope const(char)[] text, in Visual v) @system
+    void textRun(in Point at, scope const(char)[] text, in Visual visual) @system
     {
-        drawText(*fonts, cstr(text), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
+        const v = narrowed(visual);
+        drawText(*fonts, cstr(projected(text)), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
 
     /// Draws a single glyph `g` at `at` in `v.fg` (with its face).
-    void glyph(in Point at, dchar g, in Visual v) @system
+    void glyph(in Point at, dchar glyph, in Visual visual) @system
     {
         import std.utf : encode;
 
+        const v = narrowed(visual);
         char[4] enc;
-        const n = encode(enc, g);
+        const n = encode(enc, projectGlyph(glyph, capabilities));
         drawText(*fonts, cstr(enc[0 .. n]), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
 
@@ -341,8 +395,9 @@ struct RaylibCanvas
     between chrome and a stripe. Canvases without this get the cell-aligned
     line along the same edge.
     */
-    void rule(in Rect rect, RuleEdge edge, in Visual v) @system
+    void rule(in Rect rect, RuleEdge edge, in Visual visual) @system
     {
+        const v = narrowed(visual);
         const x0 = cast(int) px(rect.x);
         const y0 = cast(int) py(rect.y);
         const w = cast(int)(rect.width * cellW);
@@ -383,8 +438,11 @@ struct RaylibCanvas
     }
 
     /// Draws the semantic scrollbar op with the backend's continuous px rail.
-    void scrollbar(in Scrollbar op) @system
+    void scrollbar(in Scrollbar original) @system
     {
+        Scrollbar op = original;
+        op.fg = projectColor(original.fg, capabilities.colorDepth, false);
+        op.trackColor = projectColor(original.trackColor, capabilities.colorDepth, false);
         const r = scrollbarRail(op, cellW, cellH,
             cast(int) originX, cast(int) originY);
         if (!r.live)
@@ -405,8 +463,9 @@ struct RaylibCanvas
             rlFg(visualOf(op)));
     }
 
-    void line(in Point from, in Point to, in Visual v, LineStyle style) @system
+    void line(in Point from, in Point to, in Visual visual, LineStyle style) @system
     {
+        const v = narrowed(visual);
         const y0 = cast(int) py(from.y);
         const x0 = cast(int) px(from.x);
         const x1 = cast(int) px(to.x);
@@ -768,4 +827,28 @@ unittest
     // Not a terminal profile: it draws what no terminal can, and lacks OSC 8.
     assert(!subsetOf(c, capabilitiesOf(Profile.full)));
     assert(!c.hyperlinks && !c.subCellScroll, "M9's, not yet honoured");
+}
+
+@("uiRaylib.capabilities.narrowedPaintsLess")
+@system unittest
+{
+    import sparkles.base.term_color : xterm256ToRgb;
+    import sparkles.ui.tokens : capabilitiesOf, meet, Profile;
+
+    // A window narrowed to a terminal profile previews what that terminal
+    // would show: its colors, its corners, its glyphs.
+    RaylibCanvas c;
+    const v = Visual(fg: RgbColor(0x12, 0x34, 0x56), bg: RgbColor(0x20, 0x20, 0x30),
+        hasBg: true, borderRadius: 6, shadow: Shadow(dy: 2, alpha: 0x80));
+    assert(c.narrowed(v) == v, "undeclared-narrow: as authored");
+    assert(c.projected("✔ ⣿") == "✔ ⣿" || !c.capabilities.braille);
+
+    c.capabilities = meet(raylibCapabilities, capabilitiesOf(Profile.baseline));
+    const b = c.narrowed(v);
+    assert(b.fg == xterm256ToRgb(7) && b.bg == xterm256ToRgb(0), "no color at all");
+    assert(b.borderRadius == 0 && !b.shadow.any, "square, and flat");
+    assert(c.projected("✔ 日") == "+ ??", "ASCII only, wide glyphs keep their cells");
+
+    c.capabilities = meet(raylibCapabilities, capabilitiesOf(Profile.enhanced));
+    assert(c.projected(" ▏") == "✔ ▏", "the icon's Unicode mark; blocks stay");
 }
