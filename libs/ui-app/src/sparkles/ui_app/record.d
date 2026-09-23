@@ -484,3 +484,21 @@ unittest
     run(InputCapabilities(keyRelease: true));
     assert(usedHeldKeys);
 }
+
+@("ui_app.record.narrowTarget")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.tokens : capabilitiesOf, meet, Profile;
+
+    // A narrowing takes away and never adds (`CAP5`), and widening restores
+    // the declaration exactly.
+    RecordingHost h;
+    const declared = h.declaredTarget;
+    assert(h.target == declared);
+    h.narrowTarget(capabilitiesOf(Profile.baseline));
+    assert(h.target == meet(declared, capabilitiesOf(Profile.baseline)));
+    assert(!h.target.unicode && h.declaredTarget == declared);
+    h.widenTarget();
+    assert(h.target == declared);
+}
