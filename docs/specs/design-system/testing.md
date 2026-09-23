@@ -25,11 +25,12 @@ five emulators; others are `unverified` until a transcript is captured.
 
 ## Evidence ledger
 
-| Requirements                                                                 | Revision                | Command / test                                         | Configuration      | Result                   | Gap                                                 |
-| ---------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------ | ------------------ | ------------------------ | --------------------------------------------------- |
-| `TOK2`, `TOK5`, `CAP9`, `GLY2` (draft)                                       | _(this branch, dirty)_  | `dub test :ui -- -i "ui.tokens"`                       | linux-x86_64, ldc2 | see [PLAN M0](./PLAN.md) | draft types only; `Slot`/`Palette` not migrated     |
-| `CAP4`, `CAP6`, `CAP9`, `O1` (baseline)                                      | `feat/design-system-m2` | `dub test :ui`, `:ui-tui`, `:ui-raylib`, `:ui-gallery` | linux-x86_64, ldc2 | green                    | `O1` covers `baseline` only; text-run glyphs are M3 |
-| `GLY1`–`GLY3`, `ACC3`, `ACC4` (regions), `CAP8`, `O1` (three profiles), `O7` | `feat/design-system-m3` | `dub test :ui`, `:ui-tui`, `:ui-gallery`, `:base`      | linux-x86_64, ldc2 | green                    | `ACC4` covers the two focus regions only            |
+| Requirements                                                                 | Revision                              | Command / test                                         | Configuration      | Result                   | Gap                                                                                            |
+| ---------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------ | ------------------ | ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `TOK2`, `TOK5`, `CAP9`, `GLY2` (draft)                                       | _(this branch, dirty)_                | `dub test :ui -- -i "ui.tokens"`                       | linux-x86_64, ldc2 | see [PLAN M0](./PLAN.md) | draft types only; `Slot`/`Palette` not migrated                                                |
+| `CAP4`, `CAP6`, `CAP9`, `O1` (baseline)                                      | `feat/design-system-m2`               | `dub test :ui`, `:ui-tui`, `:ui-raylib`, `:ui-gallery` | linux-x86_64, ldc2 | green                    | `O1` covers `baseline` only; text-run glyphs are M3                                            |
+| `GLY1`–`GLY3`, `ACC3`, `ACC4` (regions), `CAP8`, `O1` (three profiles), `O7` | `feat/design-system-m3`               | `dub test :ui`, `:ui-tui`, `:ui-gallery`, `:base`      | linux-x86_64, ldc2 | green                    | `ACC4` covers the two focus regions only                                                       |
+| `CAP10`, `O7` (presets)                                                      | `feat/design-system-emulator-presets` | `dub test :ui`, `:ui-gallery`                          | linux-x86_64, ldc2 | green                    | the presets' rows are those the matrix holds; foot, zellij and Windows Terminal are unmeasured |
 
 Everything else is `unverified`.
 
