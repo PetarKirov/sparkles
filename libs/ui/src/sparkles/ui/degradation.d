@@ -19,7 +19,7 @@ module sparkles.ui.degradation;
 
 import std.traits : EnumMembers, getUDAs;
 
-import sparkles.base.term_color : ColorDepth;
+import sparkles.base.term_color : ColorDepth, RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
     PopClip, PushClip, Rule, Scrollbar, TextRun;
@@ -274,13 +274,34 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
     return r;
 }
 
+/**
+What `c` looks like on a target of color depth `d` — the fold a terminal does
+on the wire, for a target that paints RGB itself (a window previewing a
+narrower profile). `trueColor` keeps it; `ansi256` and `ansi16` snap it to the
+nearest palette entry as the xterm palette defines it; `none` has no color at
+all, so a background becomes the palette's black and anything drawn on it the
+default foreground.
+*/
+RgbColor projectColor(in RgbColor c, ColorDepth d, bool background)
+    @safe pure nothrow @nogc
+{
+    import sparkles.base.term_color : ansi16FromRgb, ansi256FromRgb, xterm256ToRgb;
+
+    final switch (d)
+    {
+        case ColorDepth.trueColor: return c;
+        case ColorDepth.ansi256:   return xterm256ToRgb(ansi256FromRgb(c));
+        case ColorDepth.ansi16:    return xterm256ToRgb(ansi16FromRgb(c));
+        case ColorDepth.none:      return xterm256ToRgb(background ? 0 : 7);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 version (unittest)
 {
-    import sparkles.base.term_color : RgbColor;
     import sparkles.ui.canvas : BoxChrome;
     import sparkles.ui.geometry : Insets, Point, Rect;
     import sparkles.ui.style : BoxBorder, Shadow;
@@ -435,4 +456,21 @@ unittest
     auto window = capabilitiesOf(Profile.full);
     window.radius = true;
     assert(degradationsOf(ops[], window)[Substitution.weightDropped] == 0);
+}
+
+@("ui.degradation.projectColor")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_color : xterm256ToRgb;
+
+    const orange = RgbColor(0xff, 0x87, 0x00);
+    assert(projectColor(orange, ColorDepth.trueColor, false) == orange);
+    assert(projectColor(orange, ColorDepth.ansi256, false) == orange, "palette-exact");
+    const odd = RgbColor(0x12, 0x34, 0x56);
+    const p256 = projectColor(odd, ColorDepth.ansi256, false);
+    assert(projectColor(p256, ColorDepth.ansi256, false) == p256, "idempotent");
+    // At `none` every color is one of two: nothing is carried by color.
+    assert(projectColor(orange, ColorDepth.none, true) == xterm256ToRgb(0));
+    assert(projectColor(odd, ColorDepth.none, false) == xterm256ToRgb(7));
 }
