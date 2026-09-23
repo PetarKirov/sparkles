@@ -31,7 +31,8 @@ out deliberately rather than by omission.
 module sparkles.ui_tui.session;
 
 import sparkles.tui : Grid, PosixEvents, Terminal, TerminalOptions;
-import sparkles.base.term_caps : TermSize;
+import sparkles.base.term_caps : detectTermCaps, TermCaps, TermSize;
+import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
 
 import sparkles.input : Event;
 
@@ -68,6 +69,11 @@ struct TerminalSession
     /// painting chrome by hand still needs it — see the module note.
     Grid grid;
 
+    /// What this terminal declares (`CAP1`), fixed at $(LREF open) — pass it
+    /// to `paintGrid` so the frame is painted for this terminal rather than
+    /// for the grid's full reach. See $(LREF sessionCapabilities).
+    TargetCapabilities target;
+
     /// The frame's OSC 8 URI table, indexed from 1 by a cell's `linkId` — set
     /// it while painting and the terminal itself makes those cells clickable.
     /// Public for the same reason `grid` is, and empty by default, so a
@@ -87,6 +93,7 @@ struct TerminalSession
             return s; // `active` stays false; the caller bails out
         s.events = PosixEvents.start();
         s.opened = true;
+        s.target = sessionCapabilities(detectTermCaps());
         return s;
     }
 
@@ -145,4 +152,55 @@ struct TerminalSession
     /// The declared input capabilities of this target (`TGT5`/`IXB10`): a
     /// terminal has hover and one whole-cell pointer.
     static auto capabilities() @safe pure nothrow @nogc => PosixEvents.capabilities;
+}
+
+/**
+A live session's declaration (`CAP1`): the environment's answers from `t`, with
+two standing adjustments that are debts, not policy.
+
+$(LIST
+    * $(B Input) is $(LREF TerminalSession.capabilities) — the same answer the
+        host already reports, so the two cannot disagree — until the session
+        records the modes it negotiates and `fromTerminal` derives the axes
+        (design-system M7, `CAP3`).
+    * $(B `hyperlinks` and `extendedUnderline`) stay on when color is: the
+        terminal backend has always emitted OSC 8 and SGR 4:3 without asking,
+        and a declaration that turned them off before a probe exists would
+        regress every capable terminal to fix the incapable ones. Each goes
+        when its M7 probe row lands.
+)
+
+Everything the environment does answer — `colorDepth`, `unicode` — is taken as
+is: a non-UTF-8 locale now gets ASCII chrome (`CAP8`).
+*/
+TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
+{
+    auto c = terminalCapabilities(t);
+    c.input = TerminalSession.capabilities;
+    c.hyperlinks = c.hyperlinks || t.colors;
+    c.extendedUnderline = c.extendedUnderline || t.colors;
+    return c;
+}
+
+@("ui_tui.session.sessionCapabilities")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_color : ColorDepth;
+
+    TermCaps color;
+    color.tty = true;
+    color.colorDepth = ColorDepth.ansi256;
+    color.unicode = true;
+    const c = sessionCapabilities(color);
+    assert(c.colorDepth == ColorDepth.ansi256 && c.unicode);
+    assert(c.hyperlinks && c.extendedUnderline, "the unprobed rows keep today's output");
+    assert(c.input == TerminalSession.capabilities);
+
+    // No color, no locale: nothing is assumed, and the chrome goes ASCII.
+    TermCaps dumb;
+    dumb.tty = true;
+    const d = sessionCapabilities(dumb);
+    assert(!d.unicode && !d.hyperlinks && !d.extendedUnderline);
+    assert(d.colorDepth == ColorDepth.none);
 }
