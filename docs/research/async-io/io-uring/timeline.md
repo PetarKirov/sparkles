@@ -4,7 +4,7 @@ A version-by-version chronology of the Linux `io_uring` interface, from its v5.1
 
 > **Scope and ground truth.** This document is a chronology, not a tutorial — for what these primitives _do_, see [io_uring features][doc-features]; for the opcode catalog, see [opcodes reference][doc-opcodes]. Version markers here are cross-checked against four sources: the [kernel UAPI header][io_uring.h] enum order (which is roughly chronological), the [liburing] man pages' "Available since" notes, the kernel git history (`git tag --contains` on the commit that adds each enum value), and external authorities (LWN, man7.org, kernel.dk). Where a marker is uncertain or where the liburing man page disagrees with the kernel git history, the discrepancy is called out inline rather than glossed over.
 
-> **About the checkout.** The figures here are taken from a Linux tree at **v7.3-rc4** (`93f51579e7df248780214094418f205253383cc5`, 2026-09-20; `VERSION=7 PATCHLEVEL=3 SUBLEVEL=0 EXTRAVERSION=-rc4` in `linux/Makefile`, "Baby Opossum Posse"). An earlier pass of this chronology stopped at **v7.1-rc6** (`e43ffb69e043`, 2026-05-31); the liburing companion of that pass is still **liburing 2.15** and was not re-walked for 7.2/7.3 helpers. The kernel tags run `… v6.18 → v6.19 → v7.0 → v7.1 → v7.2 → v7.3-rc4`; the jump to the `7.x` series happened _after_ `6.19`, not by skipping `6.13+`. **Markers at `6.13` and later are forward-dated relative to general public knowledge** (those tags carry 2025–2026 commit dates in this tree) and should be treated as "as observed in this checkout" rather than long-settled history. Everything through `~6.12` is independently corroborated by stable external sources. `include/uapi/linux/io_uring.h` is identical from v7.1-rc6 through v7.3-rc4. The UAPI that did move lives in `include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`.
+> **About the checkout.** The figures here are taken from a Linux tree at **v7.3-rc4** (`93f51579e7df248780214094418f205253383cc5`, 2026-09-20; `VERSION=7 PATCHLEVEL=3 SUBLEVEL=0 EXTRAVERSION=-rc4` in `linux/Makefile`, "Baby Opossum Posse"). An earlier pass of this chronology stopped at **v7.1-rc6** (`e43ffb69e043`, 2026-05-31) and cited a pre-tag liburing tree (`40999f52`, 2026-05-18, version header already saying 2.15). The liburing companion is now **`78dce99b`** (2026-09-11): the `liburing-2.15` tag (`d41bf922`, 2026-06-27) plus 35 commits. `liburing.spec` still says `Version: 2.15`. See [the liburing section](#liburing-companion). The kernel tags run `… v6.18 → v6.19 → v7.0 → v7.1 → v7.2 → v7.3-rc4`; the jump to the `7.x` series happened _after_ `6.19`, not by skipping `6.13+`. **Markers at `6.13` and later are forward-dated relative to general public knowledge** (those tags carry 2025–2026 commit dates in this tree) and should be treated as "as observed in this checkout" rather than long-settled history. Everything through `~6.12` is independently corroborated by stable external sources. `include/uapi/linux/io_uring.h` is identical from v7.1-rc6 through v7.3-rc4. The UAPI that did move lives in `include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`.
 
 ---
 
@@ -279,7 +279,7 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 - `IORING_FEAT_MIN_TIMEOUT` — `io_uring_submit_and_wait_min_timeout(3)`: wait for a batch with a minimum timeout that extends without extra context switches. (Git: `IORING_FEAT_MIN_TIMEOUT` first in `v6.12`.)
 - `IORING_REGISTER_SEND_MSG_RING` — issue a `MSG_RING` synchronously from `io_uring_register(2)`. (`io_uring_register.2`: "Available since kernel 6.13" — note this one is 6.13, see below.)
 
-> **Forward-dated boundary.** Everything from here on (`6.13+`) carries 2025–2026 commit dates _in this checkout's git tree_. Markers through v7.0 are read from `liburing 2.15` man pages and `git tag --contains` / `git merge-base --is-ancestor` in the v7.3-rc4 tree. The 7.1–7.3 entries below are taken from that tree's commit messages, because liburing 2.15 predates them. Treat the whole span as "as observed here."
+> **Forward-dated boundary.** Everything from here on (`6.13+`) carries 2025–2026 commit dates _in this checkout's git tree_. Markers through v7.0 are read from liburing man pages (tag `liburing-2.15`, plus `78dce99b` where a page moved) and `git tag --contains` / `git merge-base --is-ancestor` in the v7.3-rc4 tree. The 7.2 and 7.3 entries below are taken from that kernel tree: the liburing tag predates them, and `78dce99b` still has not copied their UAPI. `IORING_TIMEOUT_IMMEDIATE_ARG` is the exception — `man/io_uring_prep_timeout.3` in the 2.15 tag already says "Available since the 7.1 kernel." Treat the whole span as "as observed here."
 
 > **Worked example.** [`clock-min-timeout.d`][ex-clock] selects the wait clock with `IORING_REGISTER_CLOCK` and uses a min-timeout batched wait.
 
@@ -371,6 +371,30 @@ Tag `v7.3-rc4` is `93f51579e7df248780214094418f205253383cc5` (2026-09-20). `v7.3
 - Futex inflight tracking covers private waits only. `FUTEX_WAKE` is never inflight (`73e701909747`); a shared `FUTEX_WAIT` / `FUTEX_WAITV` is not either (`4d327bbd1cd2`). Both first appear in **`v7.3-rc1`**. The tracking exists so `do_exit` can cancel a wait that depends on the mm-private futex hash.
 - `IORING_OP_WAITID` honors task-work cancellation (`14572de82e50`, **`v7.3-rc1`**). When the callback runs from the fallback kworker, `tw.cancel` completes the request with `-ECANCELED` and skips the `siginfo` copy. `__do_wait` looks up children on `current`, which on that path is not the submitter.
 - `IORING_REGISTER_QUERY` rejects a user size above a page before `copy_struct_to_user` (`query.c:80`, `ba77efee1b95`, merged for 7.3).
+- `BLOCK_URING_CMD_ZONE_RESET_ALL` (`include/uapi/linux/blkdev.h`, commit `ca8f6548e6f7`, first tag **`v7.3-rc1`**) is a `URING_CMD` for zoned block devices: reset every sequential-write-required zone. It is not a new `IORING_OP_*`. liburing wraps it as `io_uring_prep_cmd_zone_reset_all` (below).
+
+---
+
+## liburing companion — 2.15 tag through `78dce99b` (September 11, 2026) {#liburing-companion}
+
+The opcode-helper snapshot this catalog used to name (`40999f52`, 2026-05-18) is one day before the two register helpers below, and about six weeks before the `liburing-2.15` tag (June 27). Both helpers shipped in 2.15:
+
+- `io_uring_register_query` (`e3242e33`, `liburing.h:368`) and `io_uring_register_zcrx_ctrl` (`af80c9fa`, `liburing.h:357`). `man/io_uring_register.2` and the new `io_uring_register_query.3` / `io_uring_register_zcrx_ctrl.3` still say both are "Available since kernel 6.15". That matches this chronology for `IORING_REGISTER_ZCRX_IFQ`, and it does not match it for `IORING_REGISTER_QUERY` (kernel 6.18) or `IORING_REGISTER_ZCRX_CTRL` (kernel 6.19). The query page lists `IO_URING_QUERY_OPCODES`, `_ZCRX`, and `_SCQ` only. The ctrl page's `struct zcrx_ctrl` union has `zc_flush` and `zc_export` only.
+- `IORING_TIMEOUT_IMMEDIATE_ARG` is documented on `io_uring_prep_timeout(3)`: when the flag is set, the `ts` argument is a nanosecond count cast to a pointer-sized integer, not a `timespec` pointer. There is no separate prep function.
+
+`78dce99b` is `liburing-2.15-35-g78dce99b`. The spec file is still version 2.15. The FFI symbol map grew a `LIBURING_2.16` section for one inline helper. Against kernel v7.3-rc4 the copied headers are behind:
+
+| Kernel UAPI at v7.3-rc4                                                               | In liburing `78dce99b`                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZCRX_FEATURE_EVENT`, `ZCRX_EVENT_ALLOC_FAIL`, `ZCRX_EVENT_COPY`, `struct zcrx_stats` | Absent. `src/include/liburing/io_uring.h` stops `enum zcrx_ctrl_op` at `ZCRX_CTRL_EXPORT` (`io_uring.h:1094`).                                                                                                       |
+| `ZCRX_CTRL_ARM_EVENT`, `ZCRX_CTRL_ADD_AREA`                                           | Absent from that enum, so `io_uring_register_zcrx_ctrl` cannot name them.                                                                                                                                            |
+| `IO_URING_QUERY_ZCRX_EVENT`                                                           | Absent. `src/include/liburing/io_uring/query.h` ends at `IO_URING_QUERY_SCQ`.                                                                                                                                        |
+| `io_uring_bpf_ctx.connect`                                                            | Absent from `src/include/liburing/io_uring/bpf_filter.h`. `test/cbpf_filter.c` (in the 2.15 tag, `f4b781ed`) already pokes the same layout with raw offsets: family at 16, port at 20, address at 24, `pdu_size` 24. |
+| `BLOCK_URING_CMD_ZONE_RESET_ALL`                                                      | `io_uring_prep_cmd_zone_reset_all` (`liburing.h:1690`, commit `fae20287`). `man/io_uring_prep_cmd_zone_reset_all.3` is headed "liburing-2.16" and says "Available since Linux 7.TBD."                                |
+
+Plain `SEND`/`RECV` still have no fixed-buffer prep helper. `io_uring_prep_send_zc_fixed` (`liburing.h:1158`) and `io_uring_prep_sendmsg_zc_fixed` (`liburing.h:1179`) are the only setters of `IORING_RECVSEND_FIXED_BUF`.
+
+Two queue fixes in this range are worth knowing if a loop uses the helpers rather than the rings directly. `io_uring_peek_batch_cqe` learned mixed 16/32-byte CQEs inside the 2.15 tag (`4279ae37`). After the tag, flushing a registered wait region checks `IORING_FEAT_EXT_ARG` first (`e620d33b`), and buffer-registration helpers reject a missing tags pointer when the caller asked for tags (`b041e95a`).
 
 ---
 
@@ -380,61 +404,62 @@ Columns mark which surveyed runtimes are _known to use_ a feature (✓), _can bu
 
 Legend for libraries: **Tok**=Tokio (`tokio-uring`), **Glo**=Glommio, **Mon**=monoio, **Asio**=Boost.Asio, **Sea**=Seastar, **libuv**, **Zig**=Zig std `Io`, **.NET**, **Eio**=OCaml Eio (`eio_linux`).
 
-| Feature                                         | Since kernel | liburing helper                  | Tok | Glo | Mon | Asio | Sea | libuv | Zig | .NET | Eio |
-| ----------------------------------------------- | ------------ | -------------------------------- | --- | --- | --- | ---- | --- | ----- | --- | ---- | --- |
-| SQ/CQ rings + `setup`/`enter`/`register`        | 5.1          | `io_uring_queue_init`            | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `READV`/`WRITEV`, `FSYNC`                       | 5.1          | `io_uring_prep_readv`            | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `READ_FIXED`/`WRITE_FIXED` (registered buffers) | 5.1          | `io_uring_prep_read_fixed`       | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ○    | ○   |
-| `POLL_ADD`/`POLL_REMOVE`                        | 5.1          | `io_uring_prep_poll_add`         | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `IORING_SETUP_SQPOLL` (kernel SQ thread)        | 5.1          | `io_uring_queue_init_params`     | ○   | ○   | ○   | —    | ○   | —     | ○   | ○    | ○   |
-| `IORING_SETUP_IOPOLL` (busy-poll completions)   | 5.1          | (setup flag)                     | —   | ✓   | —   | —    | ✓   | —     | —   | —    | —   |
-| `SENDMSG`/`RECVMSG`                             | 5.3          | `io_uring_prep_sendmsg`          | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `TIMEOUT` (+ `LINK_TIMEOUT` 5.5)                | 5.4 / 5.5    | `io_uring_prep_timeout`          | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `IORING_FEAT_SINGLE_MMAP`                       | 5.4          | (feat flag)                      | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `ACCEPT`/`CONNECT`, `ASYNC_CANCEL`              | 5.5          | `io_uring_prep_accept`           | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `IORING_FEAT_FAST_POLL`                         | 5.7          | (feat flag)                      | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `OPENAT`/`CLOSE`/`STATX`, `READ`/`WRITE`        | 5.6          | `io_uring_prep_openat`           | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `SEND`/`RECV` (buffer form)                     | 5.6          | `io_uring_prep_send`             | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `IORING_REGISTER_PROBE` (capability probe)      | 5.6          | `io_uring_get_probe`             | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `SPLICE`/`TEE`                                  | 5.7 / 5.8    | `io_uring_prep_splice`           | ○   | ○   | ○   | —    | ○   | —     | —   | —    | —   |
-| `PROVIDE_BUFFERS` (legacy provided buffers)     | 5.7          | `io_uring_prep_provide_buffers`  | ○   | ○   | ○   | —    | —   | —     | —   | —    | —   |
-| `IORING_FEAT_NODROP` / `CQE_SKIP` (5.17)        | 5.5 / 5.17   | (feat flag)                      | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
-| `IORING_REGISTER_RING_FDS` (registered ring)    | 5.18         | `io_uring_register_ring_fd`      | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ✓    | ✓   |
-| `MSG_RING`                                      | 5.18         | `io_uring_prep_msg_ring`         | ○   | ○   | ○   | —    | ○   | —     | —   | —    | —   |
-| Ring-provided buffers (`PBUF_RING`)             | 5.19         | `io_uring_setup_buf_ring`        | ✓   | ○   | ✓   | —    | ✓   | —     | ○   | ✓    | ○   |
-| Multishot `ACCEPT`                              | 5.19         | `io_uring_prep_multishot_accept` | ✓   | ○   | ✓   | —    | ✓   | —     | ○   | ○    | ○   |
-| `SOCKET`, `URING_CMD`, `SQE128`/`CQE32`         | 5.19         | `io_uring_prep_socket`           | ○   | ○   | ✓   | —    | ○   | —     | ○   | ○    | —   |
-| `SEND_ZC` (zero-copy send)                      | 6.0          | `io_uring_prep_send_zc`          | ○   | ○   | ✓   | —    | ✓   | —     | ○   | ○    | —   |
-| Multishot `RECV`                                | 6.0          | `io_uring_prep_recv_multishot`   | ✓   | ○   | ✓   | —    | ✓   | —     | ○   | ○    | ○   |
-| `IORING_SETUP_SINGLE_ISSUER`                    | 6.0          | (setup flag)                     | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ✓    | ✓   |
-| `IORING_SETUP_DEFER_TASKRUN` (+ COOP 5.19)      | 6.1          | (setup flag)                     | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ✓    | ✓   |
-| `SENDMSG_ZC`                                    | 6.1          | `io_uring_prep_sendmsg_zc`       | ○   | ○   | ✓   | —    | ✓   | —     | —   | —    | —   |
-| `IORING_TIMEOUT_MULTISHOT`                      | 6.4          | `io_uring_prep_timeout` (flag)   | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | ○   |
-| `IORING_SETUP_NO_MMAP`                          | 6.5          | (setup flag)                     | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `FUTEX_WAIT`/`WAKE`/`WAITV`                     | 6.7          | `io_uring_prep_futex_wait`       | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `WAITID` (man says 6.5 — actually 6.7)          | 6.7          | `io_uring_prep_waitid`           | ○   | —   | —   | —    | —   | —     | —   | ○    | —   |
-| `READ_MULTISHOT`                                | 6.7          | `io_uring_prep_read_multishot`   | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `FIXED_FD_INSTALL`                              | 6.8          | `io_uring_prep_fixed_fd_install` | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `IORING_REGISTER_NAPI` (busy-poll)              | 6.9          | `io_uring_register_napi`         | ○   | ✓   | ○   | —    | ✓   | —     | —   | —    | —   |
-| `FTRUNCATE`                                     | 6.9          | `io_uring_prep_ftruncate`        | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `IORING_FEAT_RECVSEND_BUNDLE`                   | 6.10         | `io_uring_prep_send_bundle`      | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `BIND`/`LISTEN`                                 | 6.11         | `io_uring_prep_bind`             | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `IORING_REGISTER_RESIZE_RINGS`                  | 6.13†        | `io_uring_resize_rings`          | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
-| `RECV_ZC` + `ZCRX_IFQ` (zero-copy recv)         | 6.15†        | `io_uring_register_ifq`          | —   | —   | ○   | —    | ○   | —     | —   | —    | —   |
-| `EPOLL_WAIT`                                    | 6.15†        | `io_uring_prep_epoll_wait`       | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `READV_FIXED`/`WRITEV_FIXED`                    | 6.15†        | `io_uring_prep_readv_fixed`      | ○   | ○   | ○   | —    | ○   | —     | —   | —    | —   |
-| `PIPE`                                          | 6.16†        | `io_uring_prep_pipe`             | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `IORING_SETUP_CQE_MIXED`                        | 6.18†        | (setup flag)                     | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `SQE_MIXED`, `NOP128`, `URING_CMD128`           | 6.19†        | `io_uring_prep_nop128`           | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `IORING_SETUP_SQ_REWIND`                        | 7.0†         | (setup flag)                     | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `IORING_TIMEOUT_IMMEDIATE_ARG`                  | 7.1†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| Registered buffer up to 1 TiB (`SZ_1T`)         | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `RECVSEND_FIXED_BUF` on plain `SEND`/`RECV`     | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| ZCRX events (`ALLOC_FAIL`, `COPY`, stats)       | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| BPF filter context for `CONNECT`                | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
-| `ZCRX_CTRL_ADD_AREA` (dynamic RX areas)         | 7.3†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| Feature                                         | Since kernel | liburing helper                    | Tok | Glo | Mon | Asio | Sea | libuv | Zig | .NET | Eio |
+| ----------------------------------------------- | ------------ | ---------------------------------- | --- | --- | --- | ---- | --- | ----- | --- | ---- | --- |
+| SQ/CQ rings + `setup`/`enter`/`register`        | 5.1          | `io_uring_queue_init`              | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `READV`/`WRITEV`, `FSYNC`                       | 5.1          | `io_uring_prep_readv`              | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `READ_FIXED`/`WRITE_FIXED` (registered buffers) | 5.1          | `io_uring_prep_read_fixed`         | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ○    | ○   |
+| `POLL_ADD`/`POLL_REMOVE`                        | 5.1          | `io_uring_prep_poll_add`           | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `IORING_SETUP_SQPOLL` (kernel SQ thread)        | 5.1          | `io_uring_queue_init_params`       | ○   | ○   | ○   | —    | ○   | —     | ○   | ○    | ○   |
+| `IORING_SETUP_IOPOLL` (busy-poll completions)   | 5.1          | (setup flag)                       | —   | ✓   | —   | —    | ✓   | —     | —   | —    | —   |
+| `SENDMSG`/`RECVMSG`                             | 5.3          | `io_uring_prep_sendmsg`            | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `TIMEOUT` (+ `LINK_TIMEOUT` 5.5)                | 5.4 / 5.5    | `io_uring_prep_timeout`            | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `IORING_FEAT_SINGLE_MMAP`                       | 5.4          | (feat flag)                        | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `ACCEPT`/`CONNECT`, `ASYNC_CANCEL`              | 5.5          | `io_uring_prep_accept`             | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `IORING_FEAT_FAST_POLL`                         | 5.7          | (feat flag)                        | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `OPENAT`/`CLOSE`/`STATX`, `READ`/`WRITE`        | 5.6          | `io_uring_prep_openat`             | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `SEND`/`RECV` (buffer form)                     | 5.6          | `io_uring_prep_send`               | ✓   | ✓   | ✓   | ○    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `IORING_REGISTER_PROBE` (capability probe)      | 5.6          | `io_uring_get_probe`               | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `SPLICE`/`TEE`                                  | 5.7 / 5.8    | `io_uring_prep_splice`             | ○   | ○   | ○   | —    | ○   | —     | —   | —    | —   |
+| `PROVIDE_BUFFERS` (legacy provided buffers)     | 5.7          | `io_uring_prep_provide_buffers`    | ○   | ○   | ○   | —    | —   | —     | —   | —    | —   |
+| `IORING_FEAT_NODROP` / `CQE_SKIP` (5.17)        | 5.5 / 5.17   | (feat flag)                        | ✓   | ✓   | ✓   | ✓    | ✓   | ✓     | ✓   | ✓    | ✓   |
+| `IORING_REGISTER_RING_FDS` (registered ring)    | 5.18         | `io_uring_register_ring_fd`        | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ✓    | ✓   |
+| `MSG_RING`                                      | 5.18         | `io_uring_prep_msg_ring`           | ○   | ○   | ○   | —    | ○   | —     | —   | —    | —   |
+| Ring-provided buffers (`PBUF_RING`)             | 5.19         | `io_uring_setup_buf_ring`          | ✓   | ○   | ✓   | —    | ✓   | —     | ○   | ✓    | ○   |
+| Multishot `ACCEPT`                              | 5.19         | `io_uring_prep_multishot_accept`   | ✓   | ○   | ✓   | —    | ✓   | —     | ○   | ○    | ○   |
+| `SOCKET`, `URING_CMD`, `SQE128`/`CQE32`         | 5.19         | `io_uring_prep_socket`             | ○   | ○   | ✓   | —    | ○   | —     | ○   | ○    | —   |
+| `SEND_ZC` (zero-copy send)                      | 6.0          | `io_uring_prep_send_zc`            | ○   | ○   | ✓   | —    | ✓   | —     | ○   | ○    | —   |
+| Multishot `RECV`                                | 6.0          | `io_uring_prep_recv_multishot`     | ✓   | ○   | ✓   | —    | ✓   | —     | ○   | ○    | ○   |
+| `IORING_SETUP_SINGLE_ISSUER`                    | 6.0          | (setup flag)                       | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ✓    | ✓   |
+| `IORING_SETUP_DEFER_TASKRUN` (+ COOP 5.19)      | 6.1          | (setup flag)                       | ✓   | ✓   | ✓   | —    | ✓   | —     | ○   | ✓    | ✓   |
+| `SENDMSG_ZC`                                    | 6.1          | `io_uring_prep_sendmsg_zc`         | ○   | ○   | ✓   | —    | ✓   | —     | —   | —    | —   |
+| `IORING_TIMEOUT_MULTISHOT`                      | 6.4          | `io_uring_prep_timeout` (flag)     | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | ○   |
+| `IORING_SETUP_NO_MMAP`                          | 6.5          | (setup flag)                       | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `FUTEX_WAIT`/`WAKE`/`WAITV`                     | 6.7          | `io_uring_prep_futex_wait`         | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `WAITID` (man says 6.5 — actually 6.7)          | 6.7          | `io_uring_prep_waitid`             | ○   | —   | —   | —    | —   | —     | —   | ○    | —   |
+| `READ_MULTISHOT`                                | 6.7          | `io_uring_prep_read_multishot`     | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `FIXED_FD_INSTALL`                              | 6.8          | `io_uring_prep_fixed_fd_install`   | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `IORING_REGISTER_NAPI` (busy-poll)              | 6.9          | `io_uring_register_napi`           | ○   | ✓   | ○   | —    | ✓   | —     | —   | —    | —   |
+| `FTRUNCATE`                                     | 6.9          | `io_uring_prep_ftruncate`          | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `IORING_FEAT_RECVSEND_BUNDLE`                   | 6.10         | `io_uring_prep_send_bundle`        | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `BIND`/`LISTEN`                                 | 6.11         | `io_uring_prep_bind`               | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `IORING_REGISTER_RESIZE_RINGS`                  | 6.13†        | `io_uring_resize_rings`            | ○   | ○   | ○   | —    | ○   | —     | —   | ○    | —   |
+| `RECV_ZC` + `ZCRX_IFQ` (zero-copy recv)         | 6.15†        | `io_uring_register_ifq`            | —   | —   | ○   | —    | ○   | —     | —   | —    | —   |
+| `EPOLL_WAIT`                                    | 6.15†        | `io_uring_prep_epoll_wait`         | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `READV_FIXED`/`WRITEV_FIXED`                    | 6.15†        | `io_uring_prep_readv_fixed`        | ○   | ○   | ○   | —    | ○   | —     | —   | —    | —   |
+| `PIPE`                                          | 6.16†        | `io_uring_prep_pipe`               | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `IORING_SETUP_CQE_MIXED`                        | 6.18†        | (setup flag)                       | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `SQE_MIXED`, `NOP128`, `URING_CMD128`           | 6.19†        | `io_uring_prep_nop128`             | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `IORING_SETUP_SQ_REWIND`                        | 7.0†         | (setup flag)                       | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `IORING_TIMEOUT_IMMEDIATE_ARG`                  | 7.1†         | `io_uring_prep_timeout` (flag)     | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| Registered buffer up to 1 TiB (`SZ_1T`)         | 7.2†         | —                                  | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `RECVSEND_FIXED_BUF` on plain `SEND`/`RECV`     | 7.2†         | —                                  | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| ZCRX events (`ALLOC_FAIL`, `COPY`, stats)       | 7.2†         | —                                  | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| BPF filter context for `CONNECT`                | 7.2†         | — (`test/cbpf_filter.c`)           | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `ZCRX_CTRL_ADD_AREA` (dynamic RX areas)         | 7.3†         | —                                  | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `URING_CMD` zone-reset-all                      | 7.3†         | `io_uring_prep_cmd_zone_reset_all` | —   | —   | —   | —    | —   | —     | —   | —    | —   |
 
-† Markers at 6.13 and beyond are forward-dated relative to public knowledge. Through 7.0 they are read from this checkout's `liburing 2.15` man pages and git tags; 7.1–7.3 are read from the v7.3-rc4 commit history (liburing 2.15 has no helper for them, hence `—`). `7.3` is still `-rc4` in this tree. Library-usage cells for these very-recent features are conservatively `—`/`○` because the surveyed libraries had not adopted them as of their last reviewed releases.
+† Markers at 6.13 and beyond are forward-dated relative to public knowledge. Through 7.1 they are read from the `liburing-2.15` man pages and the v7.3-rc4 git tags; 7.2–7.3 are read from that kernel tree. `78dce99b` wraps zone-reset-all and documents `IMMEDIATE_ARG`, and its copied headers do not yet name the 7.2 ZCRX-event, query, or BPF-connect structs (see the liburing section). `7.3` is still `-rc4` in the kernel tree. Library-usage cells for these very-recent features are conservatively `—`/`○` because the surveyed libraries had not adopted them as of their last reviewed releases.
 
 **Library-row caveats:**
 
@@ -514,7 +539,7 @@ a time with `dub run --single <file>`.
 - [Linux kernel source — `include/uapi/linux/io_uring/zcrx.h`][zcrx.h] (`ZCRX_FEATURE_EVENT`, `ZCRX_CTRL_ADD_AREA`; v7.3-rc4)
 - [Linux kernel source — `include/uapi/linux/io_uring/query.h`][query.h] (`IO_URING_QUERY_ZCRX_EVENT`; v7.3-rc4)
 - [Linux kernel source — `include/uapi/linux/io_uring/bpf_filter.h`][bpf.h] (`io_uring_bpf_ctx.connect`; v7.3-rc4)
-- [liburing repository][liburing] (man pages `io_uring_enter.2`, `io_uring_setup.2`, `io_uring_register.2`; version header `io_uring_version.h`)
+- [liburing repository][liburing] at `78dce99b` (2026-09-11; `liburing-2.15` plus 35 commits). Man pages `io_uring_enter.2`, `io_uring_setup.2`, `io_uring_register.2`, `io_uring_register_query.3`, `io_uring_register_zcrx_ctrl.3`, `io_uring_prep_cmd_zone_reset_all.3`
 - [io_uring_enter(2) — man7.org][man7-enter]
 - [io_uring_setup(2) — man7.org][man7-setup]
 - [io_uring_register(2) — man7.org][man7-register]
