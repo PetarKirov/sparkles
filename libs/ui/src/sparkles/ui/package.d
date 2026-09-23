@@ -19,6 +19,7 @@ public import sparkles.ui.style;
 public import sparkles.ui.theme;
 public import sparkles.ui.themes;
 public import sparkles.ui.tokens;
+public import sparkles.ui.degradation;
 public import sparkles.ui.canvas;
 public import sparkles.ui.widget;
 public import sparkles.ui.wrap;

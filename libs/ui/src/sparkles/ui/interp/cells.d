@@ -148,6 +148,36 @@ dchar accentGlyph(int px, bool left) pure nothrow @nogc
 }
 
 /**
+The ASCII stroke a chrome glyph folds to on a target without `unicode`
+(design-system `GLY2`'s `ascii` charset): a run along x → `-`, a run along y
+and the bar blocks → `|`, every corner, junction and notch → `+`, a filled
+block → `#` — except the finely dotted runs, which keep their texture as `.`
+and `:` so a dotted border stays distinguishable from a solid one. ASCII passes through, and so does anything outside the two chrome
+blocks — the glyphs inside text runs are the glyph channel's, not this table's.
+*/
+dchar asciiStroke(dchar g) pure nothrow @nogc
+{
+    switch (g)
+    {
+        case '┄', '┅', '┈', '┉':
+            return '.';
+        case '┆', '┇', '┊', '┋':
+            return ':';
+        case '─', '━', '╌', '╍', '═', '╴', '╶', '╸', '╺':
+            return '-';
+        case '│', '┃', '╎', '╏', '║', '╵', '╷', '╹', '╻':
+        case '▏', '▎', '▍', '▌', '▕', '▐':
+            return '|';
+        default:
+            if (g >= 0x2500 && g <= 0x257F)
+                return '+'; // corners, junctions, the arrow notch
+            if (g >= 0x2580 && g <= 0x259F)
+                return '#'; // full, half and shade blocks
+            return g;
+    }
+}
+
+/**
 A retained grid of $(LREF Cell)s (`width × height`, row-major) that paints the
 `sparkles:ui` primitives. Construct with the page fore/background (the cleared
 cell's colors and the blend base for translucent fills), paint a display list
@@ -799,4 +829,31 @@ static assert(isCanvas!CellGrid);
     // bar has to sit against the edge it names.
     foreach (px; 0 .. 8)
         assert(accentGlyph(px, true) != accentGlyph(px, false));
+}
+
+@("ui.cells.asciiStrokeCoversEveryChromeGlyph")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.ui.style : BorderStyle;
+
+    // Every glyph the chrome tables hand out folds to ASCII — the property a
+    // `baseline` frame rests on. Driven from the tables themselves, so a new
+    // style or weight cannot slip a non-ASCII stroke past the fold.
+    static foreach (s; [BorderStyle.none, BorderStyle.solid, BorderStyle.dashed,
+            BorderStyle.dotted, BorderStyle.double_])
+    {
+        // Dotted keeps a texture of its own; the rest are plain strokes.
+        assert(asciiStroke(dashedHorizontal(s)) == (s == BorderStyle.dotted ? '.' : '-'));
+        assert(asciiStroke(dashedVertical(s)) == (s == BorderStyle.dotted ? ':' : '|'));
+        foreach (rounded; [false, true])
+            foreach (c; boxCorners(s, rounded))
+                assert(asciiStroke(c) == '+');
+    }
+    foreach (px; 0 .. 8)
+        foreach (left; [false, true])
+            assert(asciiStroke(accentGlyph(px, left)) == '|');
+    assert(asciiStroke('┴') == '+', "the popup's arrow notch");
+    assert(asciiStroke('█') == '#' && asciiStroke('━') == '-');
+    // Text is not chrome: ASCII and non-chrome glyphs pass through.
+    assert(asciiStroke('a') == 'a' && asciiStroke('✓') == '✓');
 }
