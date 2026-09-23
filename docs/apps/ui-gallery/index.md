@@ -132,6 +132,31 @@ dashed borders and accent bars the live `--tui` did not — a headless render of
 different painter than the one that runs is worse than no render at all. A
 parity test in `sparkles:ui-tui` now holds the two canvases to the same picture.
 
+### Rendering for a capability profile
+
+```bash
+dub run :ui-gallery -- --render-plain --profile baseline --page decoration
+dub run :ui-gallery -- --render --profile enhanced --page decoration --degradations
+```
+
+`--profile` paints the frame for one of the design system's
+[documented profiles](../../specs/design-system/capabilities.md): `baseline`
+is a pipe or `TERM=dumb` (no color at all, ASCII chrome), `enhanced` is an
+ordinary 256-color emulator, and `full`, the default, is everything a terminal
+can show. `--degradations` prints what the frame gave up instead of the frame,
+one line per substitution with the capability it lacked:
+
+```text
+color-folded ×68 (colorDepth)
+radius-as-glyph ×1 (radius)
+alpha-flattened ×3 (alpha)
+```
+
+Every page's `baseline` render is a reviewed file under
+`apps/ui-gallery/test/data/profiles/baseline/`, and the catalog's tests fail
+when a page drifts from it. After a deliberate change, re-bless the files with
+`SPARKLES_UPDATE_GOLDENS=1 dub test :ui-gallery` and read the diff.
+
 ## Specification
 
 The traceable requirement inventory is the

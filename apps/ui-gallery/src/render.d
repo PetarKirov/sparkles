@@ -20,14 +20,16 @@ byte-for-byte the terminal.
 */
 module render;
 
-import std.array : appender;
+import std.array : appender, join;
 import std.conv : to;
 
 import sparkles.base.term_color : Color;
 import sparkles.input : charEvent, Event;
 import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.render : paintFull;
+import sparkles.ui.degradation : DegradationReport, degradationsOf;
 import sparkles.ui.geometry : Size;
+import sparkles.ui.tokens : capabilitiesOf, Profile;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_tui.grid_canvas : paintGrid;
 
@@ -45,6 +47,10 @@ struct RenderRequest
     string keys;         /// keystrokes delivered before the frame is taken
     int width = 96;      /// surface width in cells
     int height = 32;     /// surface height in cells
+    /// The documented capability profile to paint for (`CAP5`). `full` paints
+    /// exactly what the grid holds, so a render that names no profile is the
+    /// one it always was.
+    Profile profile = Profile.full;
 }
 
 /// The frame `req` describes, as ANSI — the same bytes the terminal backend
@@ -58,7 +64,9 @@ string renderAnsi(in RenderRequest req)
 
     auto grid = renderGrid(req);
     SharedBuffer!(char, 1 << 16) buf;
-    paintFull(buf, grid);
+    // The profile's color tier is the one the bytes are folded to: at
+    // `baseline` no color sequence is emitted at all (`CAP8`).
+    paintFull(buf, grid, capabilitiesOf(req.profile).colorDepth);
     return buf[].idup;
 }
 
@@ -104,9 +112,31 @@ string gridText(in Grid grid)
     return out_[];
 }
 
+/**
+What the frame `req` describes gave up to its profile (`CAP6`): one line per
+substitution taken, empty when the frame rendered exactly as authored.
+*/
+string renderDegradations(in RenderRequest req)
+{
+    DegradationReport report;
+    cast(void) paintFrame(req, report);
+    auto out_ = appender!string;
+    report.toString(out_);
+    return out_[];
+}
+
 /// The painted grid — the step both forms share, and the one that must be the
 /// terminal's own painter rather than a lookalike.
 Grid renderGrid(in RenderRequest req)
+{
+    DegradationReport ignored;
+    return paintFrame(req, ignored);
+}
+
+// The frame, painted for `req.profile`, and the report of the same operations
+// against the same declaration — one recording, so the two cannot describe
+// different frames.
+private Grid paintFrame(in RenderRequest req, out DegradationReport report)
 {
     auto app = Gallery(GalleryState(page: req.page));
 
@@ -124,11 +154,13 @@ Grid renderGrid(in RenderRequest req)
         });
 
     const th = app.theme;
+    const caps = capabilitiesOf(req.profile);
     Grid grid;
     grid.resize(cast(ushort) req.width, cast(ushort) req.height);
     grid.clearTo(CellStyle(fg: Color.fromRgb(th.pageFg),
         bg: Color.fromRgb(th.pageBg)));
-    paintGrid(grid, th.pageBg, rec.lastOps);
+    paintGrid(grid, th.pageBg, rec.lastOps, caps: caps);
+    report = degradationsOf(rec.lastOps, caps);
     return grid;
 }
 
@@ -210,4 +242,108 @@ Grid renderGrid(in RenderRequest req)
 
     const text = gridText(g);
     assert(text == "日本語ab\n", "the row is neither padded nor truncated");
+}
+
+// The directory the `baseline` goldens live in, beside this package's other
+// test data — found from this file rather than the working directory, which
+// is wherever `dub test` was run from.
+private string baselineGoldenDir()
+{
+    import std.path : buildNormalizedPath, dirName;
+
+    return buildNormalizedPath(__FILE_FULL_PATH__.dirName, "..", "test", "data",
+        "profiles", "baseline");
+}
+
+// A page's golden file name: its title, lower-case, spaces to dashes.
+private string goldenName(string title)
+{
+    import std.array : replace;
+    import std.uni : toLower;
+
+    return title.toLower.replace(" ", "-") ~ ".txt";
+}
+
+@("ui_gallery.render.baselineGoldens")
+@system unittest
+{
+    import std.file : exists, mkdirRecurse, readText, write;
+    import std.path : buildPath;
+    import std.process : environment;
+    import registry : pages;
+
+    // `O1`/`CAP5`: every page's `baseline` render — ASCII chrome, no color —
+    // is a reviewed file, and drift from it fails here. Bless a deliberate
+    // change with `SPARKLES_UPDATE_GOLDENS=1 dub test :ui-gallery`, then read
+    // the diff: that review is the oracle's independence.
+    const bless = environment.get("SPARKLES_UPDATE_GOLDENS", "") == "1";
+    const dir = baselineGoldenDir();
+    if (bless)
+        mkdirRecurse(dir);
+
+    string[] drifted;
+    foreach (i, ref p; pages)
+    {
+        const text = renderPlain(RenderRequest(page: i, profile: Profile.baseline));
+        const path = buildPath(dir, goldenName(p.title));
+        if (bless)
+            write(path, text);
+        else if (!path.exists || readText(path) != text)
+            drifted ~= p.title;
+    }
+    assert(drifted.length == 0, "baseline render drifted from its golden for: "
+        ~ drifted.join(", ") ~ " (bless with SPARKLES_UPDATE_GOLDENS=1)");
+}
+
+@("ui_gallery.render.baselineEmitsNoColor")
+@safe unittest
+{
+    import std.algorithm : canFind;
+    import registry : pages;
+
+    // `CAP8`: a pipe gets no color sequence the profile forbids — not a
+    // foreground, not a background, on any page.
+    foreach (i, ref p; pages)
+    {
+        const ansi = renderAnsi(RenderRequest(page: i, profile: Profile.baseline));
+        assert(!ansi.canFind("[38;") && !ansi.canFind(";38;")
+            && !ansi.canFind("[48;") && !ansi.canFind(";48;"),
+            p.title ~ " emits color at baseline");
+    }
+}
+
+@("ui_gallery.render.profilesOnlyEverLoseThings")
+@safe unittest
+{
+    import registry : pages;
+    import sparkles.ui.degradation : Substitution, substitutionCapabilities;
+
+    // `CAP9` as the gallery sees it: moving up the ladder never costs a
+    // capability more. Counted per capability, not per substitution — the
+    // same box is `radius-dropped` at baseline and `radius-as-glyph` above
+    // it, which is one loss getting smaller, not a new one appearing.
+    static uint[string] byCapability(in DegradationReport r)
+    {
+        uint[string] m;
+        foreach (s, c; r.counts)
+            m[substitutionCapabilities[s]] += c;
+        return m;
+    }
+
+    foreach (i, ref p; pages)
+    {
+        DegradationReport b, e, f;
+        cast(void) paintFrame(RenderRequest(page: i, profile: Profile.baseline), b);
+        cast(void) paintFrame(RenderRequest(page: i, profile: Profile.enhanced), e);
+        cast(void) paintFrame(RenderRequest(page: i, profile: Profile.full), f);
+        auto cb = byCapability(b), ce = byCapability(e), cf = byCapability(f);
+        foreach (cap, n; cf)
+            assert(n <= ce.get(cap, 0), p.title ~ ": full costs more " ~ cap);
+        foreach (cap, n; ce)
+            assert(n <= cb.get(cap, 0), p.title ~ ": enhanced costs more " ~ cap);
+        assert(f[Substitution.asciiBorder] == 0 && f[Substitution.colorDropped] == 0);
+        assert(renderPlain(RenderRequest(page: i))
+            == renderPlain(RenderRequest(page: i, profile: Profile.full)),
+            "an unprofiled render is the full one");
+    }
 }
