@@ -10,6 +10,98 @@
     ]
   },
   {
+    "text": "Design System",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "Overview",
+        "link": "/design-system/"
+      },
+      {
+        "text": "Glyphs",
+        "link": "/design-system/glyphs"
+      },
+      {
+        "text": "Catalog",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Welcome",
+            "link": "/design-system/catalog/welcome"
+          },
+          {
+            "text": "Primitives",
+            "link": "/design-system/catalog/primitives"
+          },
+          {
+            "text": "Layout",
+            "link": "/design-system/catalog/layout"
+          },
+          {
+            "text": "Tracks",
+            "link": "/design-system/catalog/tracks"
+          },
+          {
+            "text": "Text",
+            "link": "/design-system/catalog/text"
+          },
+          {
+            "text": "Themes",
+            "link": "/design-system/catalog/themes"
+          },
+          {
+            "text": "Slots",
+            "link": "/design-system/catalog/slots"
+          },
+          {
+            "text": "Decoration",
+            "link": "/design-system/catalog/decoration"
+          },
+          {
+            "text": "Grid",
+            "link": "/design-system/catalog/grid"
+          },
+          {
+            "text": "Components",
+            "link": "/design-system/catalog/components"
+          },
+          {
+            "text": "Tree",
+            "link": "/design-system/catalog/tree"
+          },
+          {
+            "text": "Property tree",
+            "link": "/design-system/catalog/property-tree"
+          },
+          {
+            "text": "Table",
+            "link": "/design-system/catalog/table"
+          },
+          {
+            "text": "Scrolling",
+            "link": "/design-system/catalog/scrolling"
+          },
+          {
+            "text": "State",
+            "link": "/design-system/catalog/state"
+          },
+          {
+            "text": "Split",
+            "link": "/design-system/catalog/split"
+          },
+          {
+            "text": "Dock",
+            "link": "/design-system/catalog/dock"
+          },
+          {
+            "text": "Terminal",
+            "link": "/design-system/catalog/terminal"
+          }
+        ]
+      }
+    ]
+  },
+  {
     "text": "Guidelines",
     "collapsed": true,
     "items": [
