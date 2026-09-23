@@ -193,7 +193,7 @@ struct TuiHost
         import sparkles.ui_tui.grid_canvas : GridCanvas;
 
         return GridCanvas(&session.grid, RgbColor(0, 0, 0),
-            capabilities: session.target);
+            capabilities: target);
     }
 }
 
@@ -224,6 +224,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 
     TuiHost host;
     host.session = &session;
+    host.declareTarget(session.target);
     // `HST19`. The size is the frame's to read (it re-queries every pass), so
     // seed it here too: a setup phase that saw a zero surface would lay out
     // against nothing, which is exactly what it exists to avoid.
@@ -245,9 +246,12 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         if (host.frameSkipped)
             return;
 
-        paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[],
-            caps: session.target);
+        const target = host.target;
+        paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[], caps: target);
         draw(host); // `HST13`: the application's own cells, before the diff
+        // The grid holds RGB; the depth it goes out at is the target's — the
+        // declared one, or a narrowed preview's (`CAP5`).
+        session.colorDepth(target.colorDepth);
         session.present();
     }
 

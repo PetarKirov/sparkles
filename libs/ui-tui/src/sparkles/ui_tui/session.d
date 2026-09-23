@@ -32,6 +32,7 @@ module sparkles.ui_tui.session;
 
 import sparkles.tui : Grid, PosixEvents, Terminal, TerminalOptions;
 import sparkles.base.term_caps : detectTermCaps, TermCaps, TermSize;
+import sparkles.base.term_color : ColorDepth;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
 
 import sparkles.input : Event;
@@ -121,6 +122,11 @@ struct TerminalSession
 
     /// Presents the surface — the retained diff, so only changed cells go out.
     void present() @system => term.draw(grid, links);
+
+    /// The color depth the diff folds to — normally `target.colorDepth`, and
+    /// narrower when a host previews a smaller profile. A change repaints the
+    /// next frame in full, so every cell is folded the same way.
+    void colorDepth(ColorDepth d) @system => term.colorDepth(d);
 
     /**
     Writes a control sequence straight to the terminal, outside the cell diff.

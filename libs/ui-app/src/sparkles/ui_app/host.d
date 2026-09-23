@@ -186,6 +186,8 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     // imports must travel with it rather than rely on this module's.
     private import core.time : Duration;
     private import sparkles.input : Mods;
+    private import sparkles.ui.tokens : capabilitiesOf, meet, Profile,
+        TargetCapabilities;
 
     // …and that includes the module the qualified alias below names. A
     // fully-qualified name has not been able to reach a module the site did
@@ -271,6 +273,43 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     private void noteModifiers(Mods m) @safe pure nothrow @nogc { _mods = m; }
 
     private Mods _mods;
+
+    /**
+    What this host's target declares (`CAP1`) — the terminal's snapshot, the
+    window's constants — set by its loop when it opens. A recorder, which has
+    no target, declares everything a terminal can show.
+    */
+    TargetCapabilities declaredTarget() const @safe pure nothrow @nogc => _declared;
+
+    /// Called by the loop, not the app.
+    private void declareTarget(in TargetCapabilities c) @safe pure nothrow @nogc
+    {
+        _declared = c;
+    }
+
+    /**
+    Paint as if the target could show no more than `ceiling`, from the next
+    frame on (`CAP5`): the effective $(LREF target) becomes the declaration
+    met with the ceiling, so a narrowing can take capabilities away but never
+    add one the target lacks. How an application previews its own
+    degradation live — `ui-gallery`'s profile switch.
+    */
+    void narrowTarget(in TargetCapabilities ceiling) @safe pure nothrow @nogc
+    {
+        _ceiling = ceiling;
+        _narrowed = true;
+    }
+
+    /// Undo $(LREF narrowTarget): paint for the full declaration again.
+    void widenTarget() @safe pure nothrow @nogc { _narrowed = false; }
+
+    /// What the host paints for: the declaration, narrowed if asked to be.
+    TargetCapabilities target() const @safe pure nothrow @nogc
+        => _narrowed ? meet(_declared, _ceiling) : _declared;
+
+    private TargetCapabilities _declared = capabilitiesOf(Profile.full);
+    private TargetCapabilities _ceiling;
+    private bool _narrowed;
 
     /// The per-frame display list, owned and reused by the host (`HST4`). An
     /// application appends; it never sizes or clears one.

@@ -34,7 +34,7 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
     PointerUnit, RunConfig, withRealSize;
-import sparkles.ui_raylib.raylib_canvas : RaylibCanvas;
+import sparkles.ui_raylib.raylib_canvas : raylibCapabilities, RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
 import sparkles.ui_raylib.window : Window;
 
@@ -126,7 +126,8 @@ struct GuiHost
     /// `apps/terminal` paints a VT screen cell by cell and would not survive
     /// being routed through a display list.
     RaylibCanvas canvas() @system
-        => RaylibCanvas(&session.fonts, &drawScratch, session.cellW, session.cellH);
+        => RaylibCanvas(&session.fonts, &drawScratch, session.cellW, session.cellH,
+            capabilities: target);
 
     /**
     The window, the `HST3` companion to $(LREF canvas).
@@ -170,6 +171,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
 
     GuiHost host;
     host.session = &session;
+    host.declareTarget(raylibCapabilities);
     host.capabilities = mousePointer;
     // The terminal-grade keyboard, where the application asked for it: the
     // capability declaration IS the switch — RaylibEvents reads it back.
