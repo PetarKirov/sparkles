@@ -908,8 +908,14 @@ unittest
     svc.submit(FormatRequest(source: "one\n", path: "x.txt", width: 80,
         formatter: reg.candidatesFor("txt")[0]));
 
+    // A timeout, not a measurement: the loop leaves the moment the worker
+    // answers, so a generous bound costs the happy path nothing. It has to be
+    // generous, because this is the FIRST process this binary spawns — cold
+    // loader, cold page cache — which measures at ~550 ms here against ~35-90 ms
+    // for every spawn after it. A 1 s bound sat inside that spread and made the
+    // test fail about half the time, on CI and locally alike.
     FormatCompletion c;
-    foreach (_; 0 .. 500)
+    foreach (_; 0 .. 5000)
     {
         if (svc.tryTake(c))
             break;
