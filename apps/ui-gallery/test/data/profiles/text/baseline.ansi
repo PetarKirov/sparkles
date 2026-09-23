@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mwrapping and measurement[0m                                               [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mText * wrapping and measurement[0m                                         [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mWrapped lines are slices of the input, never copies - the layout pass[0m   [0m#[0m
+[0m [0m> [0;1mText[0m             [0m [0m|[0m [0mreports where the breaks go and the painter draws the same bytes.[0m       [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0mcolumn[0m [0m34 cells[0m [0mhang[0m [0m2[0m                                                  [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mnone - one line, clipped by whatever contains it[0m                    [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m A widget names a semantic slot, ne                                  [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0;1mgreedy - break as late as possible[0m                                  [0m|[0m [0m#[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m A widget names a semantic slot,                                     [0m|[0m [0m#[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m never a concrete colour, and the                                    [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m palette resolves it while the                                       [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m display list is built.                                              [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1mbalanced - minimum squared slack over all but the last line[0m         [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m A widget names a semantic slot,                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m never a concrete colour, and the                                    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m palette resolves it while the                                       [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m display list is built.                                              [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0m [0m+ wider[0m [0m- narrower[0m [0mh hang indent[0m                                         [0m? keys   q quit[0m [0m

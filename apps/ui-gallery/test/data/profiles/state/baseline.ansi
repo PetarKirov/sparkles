@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mthe interaction machines[0m                                               [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mState * the interaction machines[0m                                        [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mEvery machine below is a plain value. Nothing here registers a callback[0m [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mor mutates a shared flag, which is why a scripted event list replayed[0m   [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mthrough the headless host reproduces exactly what your keystrokes[0m       [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0mproduce.[0m                                                                [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mHoverState - topmost wins[0m                                           [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0m  one       [0m [0m  two       [0m [0m  three     [0m                              [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0mhot[0m            [0mnothing[0m                                              [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mMove the pointer over a tile.[0m                                       [0m|[0m [0m|[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m> [0;1mState[0m            [0m [0m|[0m                                                                         [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0;1mPressState - arm, then activate on the same target[0m                  [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0marmed[0m          -                                                    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mactivated[0m      -                                                    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mPress one tile and release over another: nothing fires.[0m             [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1mFocusState - deterministic traversal[0m                                [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mfocused[0m        nothing                                              [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0morder[0m one > two > three > (wrap)                                    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mPress f to advance, F to go back.[0m                                   [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpage[0ma anchor selece extend selecf focus nF focus prd toggle foD fold polarp pulse[0m  [0m? keys   q q[0m

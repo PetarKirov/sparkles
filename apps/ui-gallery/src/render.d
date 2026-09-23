@@ -24,9 +24,10 @@ import std.array : appender, join;
 import std.conv : to;
 
 import sparkles.base.term_color : Color;
-import sparkles.input : charEvent, Event;
+import sparkles.input : charEvent, Event, Key, keyEvent;
 import sparkles.tui.cell : CellStyle, Grid;
-import sparkles.tui.render : paintFull;
+import sparkles.tui.cell : writeStyle;
+import sparkles.tui.render : paintFull, serializeRow;
 import sparkles.ui.degradation : DegradationReport, degradationsOf;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.tokens : capabilitiesOf, Profile;
@@ -39,6 +40,20 @@ import gallery : Gallery;
 import state : GalleryState;
 
 @safe:
+
+/// One `--keys` character as the event a terminal would deliver: the control
+/// characters a script can spell — tab, return, escape — are those keys, not
+/// typed text, so a render can reach a state that takes `Tab` to get to.
+Event keyOf(dchar c)
+{
+    switch (c)
+    {
+        case '\t': return keyEvent(Key.tab);
+        case '\r', '\n': return keyEvent(Key.enter);
+        case '\x1b': return keyEvent(Key.escape);
+        default: return charEvent(c);
+    }
+}
 
 /// What to render, and how big.
 struct RenderRequest
@@ -67,6 +82,28 @@ string renderAnsi(in RenderRequest req)
     // The profile's color tier is the one the bytes are folded to: at
     // `baseline` no color sequence is emitted at all (`CAP8`).
     paintFull(buf, grid, capabilitiesOf(req.profile).colorDepth);
+    return buf[].idup;
+}
+
+/**
+The frame `req` describes as the body of an `ansi` fence: each row's cells
+styled at the profile's color depth, no cursor addressing, a reset and a
+newline after every row — the form a Markdown renderer can color, and the
+style guide's fences are made of.
+*/
+string renderFence(in RenderRequest req)
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    auto grid = renderGrid(req);
+    const depth = capabilitiesOf(req.profile).colorDepth;
+    SharedBuffer!(char, 1 << 16) buf;
+    foreach (ushort y; 0 .. grid.rows)
+    {
+        serializeRow(buf, grid.row(y), depth);
+        writeStyle(buf, CellStyle.init, depth);
+        buf ~= '\n';
+    }
     return buf[].idup;
 }
 
@@ -142,7 +179,7 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
 
     Event[] script;
     foreach (dchar c; req.keys)
-        script ~= charEvent(c);
+        script ~= keyOf(c);
 
     const size = Size(req.width, req.height);
     auto rec = runAppRecorded(app, RunConfig.init, script,
@@ -244,27 +281,42 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
     assert(text == "日本語ab\n", "the row is neither padded nor truncated");
 }
 
-// The directory the `baseline` goldens live in, beside this package's other
+// The directory a page's profile goldens live in, beside this package's other
 // test data — found from this file rather than the working directory, which
 // is wherever `dub test` was run from.
-private string baselineGoldenDir()
-{
-    import std.path : buildNormalizedPath, dirName;
-
-    return buildNormalizedPath(__FILE_FULL_PATH__.dirName, "..", "test", "data",
-        "profiles", "baseline");
-}
-
-// A page's golden file name: its title, lower-case, spaces to dashes.
-private string goldenName(string title)
+private string goldenDir(string title)
 {
     import std.array : replace;
+    import std.path : buildNormalizedPath, dirName;
     import std.uni : toLower;
 
-    return title.toLower.replace(" ", "-") ~ ".txt";
+    return buildNormalizedPath(__FILE_FULL_PATH__.dirName, "..", "test", "data",
+        "profiles", title.toLower.replace(" ", "-"));
 }
 
-@("ui_gallery.render.baselineGoldens")
+/**
+Every file of one page's style-guide entry (`O1`): for each profile its
+`ansi` fence and its degradation report, plus the `baseline` frame as plain
+glyphs — the one a reviewer reads a layout diff in. The docs pages under
+`docs/design-system/catalog/` import these files, so what CI checks here is
+what the style guide shows.
+*/
+private string[2][] goldenFiles(size_t page)
+{
+    import std.conv : to;
+    import std.traits : EnumMembers;
+
+    string[2][] files;
+    files ~= ["baseline.txt", renderPlain(RenderRequest(page: page, profile: Profile.baseline))];
+    static foreach (p; EnumMembers!Profile)
+    {
+        files ~= [p.to!string ~ ".ansi", renderFence(RenderRequest(page: page, profile: p))];
+        files ~= [p.to!string ~ ".report", renderDegradations(RenderRequest(page: page, profile: p))];
+    }
+    return files;
+}
+
+@("ui_gallery.render.profileGoldens")
 @system unittest
 {
     import std.file : exists, mkdirRecurse, readText, write;
@@ -272,43 +324,67 @@ private string goldenName(string title)
     import std.process : environment;
     import registry : pages;
 
-    // `O1`/`CAP5`: every page's `baseline` render — ASCII chrome, no color —
-    // is a reviewed file, and drift from it fails here. Bless a deliberate
-    // change with `SPARKLES_UPDATE_GOLDENS=1 dub test :ui-gallery`, then read
-    // the diff: that review is the oracle's independence.
+    // `O1`/`CAP5`: every page, every profile, is a reviewed file, and drift
+    // from it fails here. Bless a deliberate change with
+    // `SPARKLES_UPDATE_GOLDENS=1 dub test :ui-gallery`, then read the diff —
+    // `baseline.txt` first: that review is the oracle's independence.
     const bless = environment.get("SPARKLES_UPDATE_GOLDENS", "") == "1";
-    const dir = baselineGoldenDir();
-    if (bless)
-        mkdirRecurse(dir);
-
     string[] drifted;
     foreach (i, ref p; pages)
     {
-        const text = renderPlain(RenderRequest(page: i, profile: Profile.baseline));
-        const path = buildPath(dir, goldenName(p.title));
+        const dir = goldenDir(p.title);
         if (bless)
-            write(path, text);
-        else if (!path.exists || readText(path) != text)
-            drifted ~= p.title;
+            mkdirRecurse(dir);
+        foreach (f; goldenFiles(i))
+        {
+            const path = buildPath(dir, f[0]);
+            if (bless)
+                write(path, f[1]);
+            else if (!path.exists || readText(path) != f[1])
+                drifted ~= p.title ~ "/" ~ f[0];
+        }
     }
-    assert(drifted.length == 0, "baseline render drifted from its golden for: "
+    assert(drifted.length == 0, "the profile renders drifted from their goldens: "
         ~ drifted.join(", ") ~ " (bless with SPARKLES_UPDATE_GOLDENS=1)");
 }
 
 @("ui_gallery.render.baselineEmitsNoColor")
 @safe unittest
 {
-    import std.algorithm : canFind;
+    import std.algorithm : canFind, splitter;
+    import std.conv : to;
     import registry : pages;
 
-    // `CAP8`: a pipe gets no color sequence the profile forbids — not a
-    // foreground, not a background, on any page.
-    foreach (i, ref p; pages)
+    // `CAP8`: a pipe gets no color sequence the profile forbids — no
+    // parameter of any SGR sequence may select a color, at any depth: not
+    // 24-bit, not 256, and not the classic 16 either (which this test once
+    // let through, and the writer once emitted).
+    static bool selectsColor(uint p)
+        => p == 38 || p == 48 || p == 58 || (p >= 30 && p <= 37)
+            || (p >= 40 && p <= 47) || (p >= 90 && p <= 97) || (p >= 100 && p <= 107);
+
+    foreach (i, ref pg; pages)
     {
-        const ansi = renderAnsi(RenderRequest(page: i, profile: Profile.baseline));
-        assert(!ansi.canFind("[38;") && !ansi.canFind(";38;")
-            && !ansi.canFind("[48;") && !ansi.canFind(";48;"),
-            p.title ~ " emits color at baseline");
+        const ansi = renderAnsi(RenderRequest(page: i, profile: Profile.baseline))
+            ~ renderFence(RenderRequest(page: i, profile: Profile.baseline));
+        for (size_t at = 0; at + 1 < ansi.length; ++at)
+        {
+            if (ansi[at] != '\x1b' || ansi[at + 1] != '[')
+                continue;
+            size_t end = at + 2;
+            while (end < ansi.length && ansi[end] >= 0x20 && ansi[end] < 0x40)
+                ++end;
+            if (end < ansi.length && ansi[end] == 'm')
+                foreach (param; ansi[at + 2 .. end].splitter(';'))
+                {
+                    // `4:3` is an underline shape (a sub-parameter), not a color.
+                    if (param.length == 0 || param.canFind(':'))
+                        continue;
+                    assert(!selectsColor(param.to!uint),
+                        pg.title ~ " emits color at baseline: " ~ ansi[at .. end + 1]);
+                }
+            at = end;
+        }
     }
 }
 
@@ -345,5 +421,43 @@ private string goldenName(string title)
         assert(renderPlain(RenderRequest(page: i))
             == renderPlain(RenderRequest(page: i, profile: Profile.full)),
             "an unprofiled render is the full one");
+    }
+}
+
+@("ui_gallery.render.focusIsVisibleInMonochrome")
+@safe unittest
+{
+    import registry : pages;
+
+    // `ACC4`: with no color at all, moving the keyboard between the page list
+    // and the page must change something a monochrome terminal shows — a
+    // glyph, or an attribute (reverse, bold, underline) — on every page.
+    // Colors are left out of the comparison on purpose: they are exactly
+    // what `baseline` cannot show.
+    // The page list only — the element that gains and loses focus. The whole
+    // frame would pass on the status bar's own "pages"/"page" label, which
+    // says where focus is without showing it on the focused thing.
+    static string mono(in Grid g)
+    {
+        import std.conv : to;
+
+        string r;
+        foreach (ushort y; 1 .. cast(ushort)(g.rows - 1))
+            foreach (ushort x; 0 .. 20)
+            {
+                const c = g[x, y];
+                r ~= c.grapheme;
+                r ~= (cast(uint) c.style.attrs.bits).to!string;
+                r ~= (cast(uint) c.style.underline).to!string;
+            }
+        return r;
+    }
+
+    foreach (i, ref p; pages)
+    {
+        const nav = mono(renderGrid(RenderRequest(page: i, profile: Profile.baseline)));
+        const content = mono(renderGrid(RenderRequest(page: i, keys: "\t",
+            profile: Profile.baseline)));
+        assert(nav != content, p.title ~ ": focus moved and nothing visible changed");
     }
 }

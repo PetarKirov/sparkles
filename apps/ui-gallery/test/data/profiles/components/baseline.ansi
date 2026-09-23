@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mthe application chrome[0m                                                 [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mComponents * application chrome[0m                                         [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mEvery one of these is a pure view: it appends a subtree and returns its[0m [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mroot. Behaviour lives in the state machines beside them, so the same[0m    [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mcomponent serves a terminal and a window with no second copy.[0m           [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mheaderBar - leading * centre * trailing[0m                             [0m|[0m [0m#[0m
+[0m [0m> [0;1mComponents[0m       [0m [0m|[0m [0m|[0m [0m [0;1mhue[0m                         [0mfile.d[0m                         [0mq quit[0m [0m [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m                                                                     [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m [0;1mfocused pane[0m                                                      [0m [0m|[0m [0m|[0m
+[0m [0m  Table[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m  Scrolling[0m         [0m|[0m                                                                         [0m|[0m
+[0m [0m  State[0m             [0m|[0m [0mThe groups are separated by grow spacers - the spelling the layout[0m      [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0mengine prescribes for distribution, since there is no margin and no[0m     [0m|[0m
+[0m [0m  Dock[0m              [0m|[0m [0mspace-between.[0m                                                          [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1mtabStrip - one active, the rest idle[0m                                [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m [0;1mconfig.js[0m [0m [0mconfig.ts[0m  [0m?.md[0m [0m                                       [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mfitLabels: false - each tab takes an equal share instead[0m            [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m      [0;1mconfig.js[0m      [0m     [0mconfig.ts[0m           [0m?.md[0m      [0m           [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0mActive and armed are different states, because they mean different[0m      [0m|[0m
+[0m                     [0m|[0m [0mthings: this one is showing, this one is being pressed. Conflating them[0m [0m|[0m
+[0m                     [0m|[0m [0mis why a hand-rolled strip flickers the wrong tab mid-drag.[0m             [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0m [0m< prev tab[0m [0m> next tab[0m [0m1-4 action row[0m [0mn scroll down[0m [0mp scroll up[0m           [0m? keys   q quit[0m [0m

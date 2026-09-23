@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mone value, reflected[0m                                                   [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mProperty tree * one value, reflected[0m                                    [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mPropertyTree!T reflects the subject below at compile time - no[0m          [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mregistry, no base class - and rebuilds one flat row snapshot from ref[0m   [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0msubject on every change. Disclosure, selection, the filter, and the[0m     [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0mundo/redo history are host-owned values beside it.[0m                      [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m/ starts the ranked fuzzy filter[0m                                        [0m#[0m
+[0m [0m  Components[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m> [0;1mProperty tree[0m    [0m [0m|[0m [0m|[0m [0;1mthe live tree[0m                                                       [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0m+- [0mname                   "background"  <needs EDT>[0m            [0m#[0m    [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m+- [0mvisible                [x] true                             [0m#[0m    [0m|[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0m+- [0mblend                  < normal >                           [0m#[0m    [0m|[0m [0m#[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m+- > [0mfill[0m                                                      [0m#[0m    [0m|[0m [0m#[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0m+- > [0mmetrics[0m                                                   [0m#[0m    [0m|[0m [0m#[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m+- > [0mdashes[0m               [3]                                  [0m#[0m    [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0m+- [0mid[0m o[0m                   42                                   [0m#[0m    [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0m+- [0mtint                   3368601                              [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m+- [0mhandle[0m o[0m               Handle(0x12648430)                   [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m+- > [0mextra[0m                {3 keys}                             [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m+- > [0mlinked[0m                                                    [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                [0m#[0m    [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpa[0mv ^ > e< coll< tog+ s- stv prevu uU r/ fin nexN preb revep read-e exteO opeC clor reset? keys[0m

@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mbox and text chrome[0m                                                    [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mDecoration * box and text chrome[0m                                        [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mA decoration is slot-referencing and presentation-free: it names which[0m  [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mslot the border colour comes from, and the palette resolves it with[0m     [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0meverything else.[0m                                                        [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m> [0;1mDecoration[0m       [0m [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mborders[0m                                                             [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0msolid[0m          [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m                [0m|[0m content   [0m|[0m                                        [0m|[0m [0m|[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m                [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mrounded[0m        [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m                [0m|[0m content   [0m|[0m                                        [0m|[0m [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m                [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0mheavy (2px)[0m    [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                [0m|[0m content   [0m|[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mdotted[0m         [0m+...........+[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                [0m:[0m content   [0m:[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                [0m+...........+[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mdashed[0m         [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                [0m|[0m content   [0m|[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                [0m+-----------+[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0m                                                                          [0m? keys   q quit[0m [0m
