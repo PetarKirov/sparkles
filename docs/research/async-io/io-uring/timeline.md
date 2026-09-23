@@ -1,10 +1,10 @@
 # io_uring — Chronology by Kernel Version
 
-A version-by-version chronology of the Linux `io_uring` interface, from its v5.1 introduction through the v7.1-rc6 development tree, recording exactly when each operation (`IORING_OP_*`), setup flag (`IORING_SETUP_*`), registration opcode (`IORING_REGISTER_*`), and feature flag (`IORING_FEAT_*`) first appeared.
+A version-by-version chronology of the Linux `io_uring` interface, from its v5.1 introduction through the v7.3-rc4 development tree, recording exactly when each operation (`IORING_OP_*`), setup flag (`IORING_SETUP_*`), registration opcode (`IORING_REGISTER_*`), and feature flag (`IORING_FEAT_*`) first appeared. From v7.1 onward it also records contract changes that reused an existing opcode — the `IORING_OP_*` enum itself did not grow.
 
 > **Scope and ground truth.** This document is a chronology, not a tutorial — for what these primitives _do_, see [io_uring features][doc-features]; for the opcode catalog, see [opcodes reference][doc-opcodes]. Version markers here are cross-checked against four sources: the [kernel UAPI header][io_uring.h] enum order (which is roughly chronological), the [liburing] man pages' "Available since" notes, the kernel git history (`git tag --contains` on the commit that adds each enum value), and external authorities (LWN, man7.org, kernel.dk). Where a marker is uncertain or where the liburing man page disagrees with the kernel git history, the discrepancy is called out inline rather than glossed over.
 
-> **About the checkout.** The figures here are taken from a Linux tree at **v7.1-rc6** (`VERSION=7 PATCHLEVEL=1 SUBLEVEL=0 EXTRAVERSION=-rc6` in `linux/Makefile`, "Baby Opossum Posse") paired with **liburing 2.15** (`IO_URING_VERSION_MAJOR 2`, `IO_URING_VERSION_MINOR 15` in `liburing/src/include/liburing/io_uring_version.h`). That tree's git tags run `… v6.12 → v6.13 → v6.14 → … → v6.18 → v6.19 → v7.0 → v7.1-rc6`; the jump to the `7.x` series happened _after_ `6.19`, not by skipping `6.13+`. **Markers at `6.13` and later are forward-dated relative to general public knowledge** (those tags carry 2025–2026 commit dates in this tree) and should be treated as "as observed in this checkout" rather than long-settled history. Everything through `~6.12` is independently corroborated by stable external sources.
+> **About the checkout.** The figures here are taken from a Linux tree at **v7.3-rc4** (`93f51579e7df248780214094418f205253383cc5`, 2026-09-20; `VERSION=7 PATCHLEVEL=3 SUBLEVEL=0 EXTRAVERSION=-rc4` in `linux/Makefile`, "Baby Opossum Posse"). An earlier pass of this chronology stopped at **v7.1-rc6** (`e43ffb69e043`, 2026-05-31); the liburing companion of that pass is still **liburing 2.15** and was not re-walked for 7.2/7.3 helpers. The kernel tags run `… v6.18 → v6.19 → v7.0 → v7.1 → v7.2 → v7.3-rc4`; the jump to the `7.x` series happened _after_ `6.19`, not by skipping `6.13+`. **Markers at `6.13` and later are forward-dated relative to general public knowledge** (those tags carry 2025–2026 commit dates in this tree) and should be treated as "as observed in this checkout" rather than long-settled history. Everything through `~6.12` is independently corroborated by stable external sources. `include/uapi/linux/io_uring.h` is identical from v7.1-rc6 through v7.3-rc4. The UAPI that did move lives in `include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`.
 
 ---
 
@@ -279,7 +279,7 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 - `IORING_FEAT_MIN_TIMEOUT` — `io_uring_submit_and_wait_min_timeout(3)`: wait for a batch with a minimum timeout that extends without extra context switches. (Git: `IORING_FEAT_MIN_TIMEOUT` first in `v6.12`.)
 - `IORING_REGISTER_SEND_MSG_RING` — issue a `MSG_RING` synchronously from `io_uring_register(2)`. (`io_uring_register.2`: "Available since kernel 6.13" — note this one is 6.13, see below.)
 
-> **Forward-dated boundary.** Everything from here on (`6.13+`) carries 2025–2026 commit dates _in this checkout's git tree_. The markers are read directly from `liburing 2.15` man pages and `git tag --contains` in the v7.1-rc6 tree; treat them as "as observed here," since they post-date widely-distributed reference material.
+> **Forward-dated boundary.** Everything from here on (`6.13+`) carries 2025–2026 commit dates _in this checkout's git tree_. Markers through v7.0 are read from `liburing 2.15` man pages and `git tag --contains` / `git merge-base --is-ancestor` in the v7.3-rc4 tree. The 7.1–7.3 entries below are taken from that tree's commit messages, because liburing 2.15 predates them. Treat the whole span as "as observed here."
 
 > **Worked example.** [`clock-min-timeout.d`][ex-clock] selects the wait clock with `IORING_REGISTER_CLOCK` and uses a min-timeout batched wait.
 
@@ -325,7 +325,7 @@ A large networking/throughput release in this tree:
 
 (Git: all three are added by commit `1cba30bf9fdd`, _"`io_uring`: add support for `IORING_SETUP_SQE_MIXED`"_, dated 2025-10-22, whose **first containing release tag is `v6.19`** in this tree.)
 
-> **Marker accuracy note.** The `liburing 2.15` `io_uring_enter.2` text labels `IORING_OP_NOP128` and `IORING_OP_URING_CMD128` "Available since 6.19". In this tree the `v6.19` tag does exist and contains the commit, so the man-page marker is internally consistent. There is no `6.x → 7.0` _skip_: the sequence is `… 6.18 → 6.19 → 7.0 → 7.1`. Anyone reading this against a _public_ kernel (≤ 6.13 as of early 2025) will not find these opcodes.
+> **Marker accuracy note.** The `liburing 2.15` `io_uring_enter.2` text labels `IORING_OP_NOP128` and `IORING_OP_URING_CMD128` "Available since 6.19". In this tree the `v6.19` tag does exist and contains the commit, so the man-page marker is internally consistent. There is no `6.x → 7.0` _skip_: the sequence is `… 6.18 → 6.19 → 7.0 → 7.1 → 7.2 → 7.3-rc`. Anyone reading this against a _public_ kernel (≤ 6.13 as of early 2025) will not find these opcodes.
 
 > **Worked example.** [`sqe-mixed.d`][ex-sqemixed] issues mixed 64/128-byte SQEs + `NOP128` with `IORING_SETUP_SQE_MIXED` (needs ≥6.19).
 
@@ -335,9 +335,42 @@ A large networking/throughput release in this tree:
 
 > **Worked example.** [`sq-rewind.d`][ex-sqrewind] rewinds the SQ tail to re-submit unconsumed SQEs with `IORING_SETUP_SQ_REWIND` (needs ≥7.0).
 
-## 7.1-rc6 — Current checkout (development, ≈ May 2026)
+## 7.1 — Immediate timeout argument, bundle and min-wait fixes (June 14, 2026)
 
-The tip of the tree used for this document. `enum io_uring_op` ends at `IORING_OP_URING_CMD128` then `IORING_OP_LAST`; no _new_ opcode appears between `v7.0` and `v7.1-rc6` beyond what 6.19/7.0 introduced. As an `-rc`, anything attributed to `7.1` proper is not yet finalized and is intentionally omitted.
+Tag `v7.1` is `8cd9520d35a6` (2026-06-14). `enum io_uring_op` still ends at `IORING_OP_URING_CMD128`. The release's new flag, and the fixes that landed after the v7.1-rc6 snapshot this chronology used to stop at, are:
+
+- `IORING_TIMEOUT_IMMEDIATE_ARG` — `sqe->addr` _is_ the nanosecond count, not a pointer to a `timespec`. Added by `d8345a21902a` ("`io_uring/timeout`: immediate timeout arg", 2026-03-09); first containing tag `v7.1-rc1`, so it ships in **7.1**. The earlier v7.1-rc6 pass recorded the flag in the [opcode reference][doc-opcodes] and left it out of this chronology because 7.1 was not yet a release.
+- Bundle recv keeps `IORING_CQE_F_BUF_MORE` across an in-kernel retry. `CQE_F_MASK` in `net.c` is `IORING_CQE_F_SOCK_NONEMPTY | IORING_CQE_F_MORE | IORING_CQE_F_BUF_MORE` (`net.c:844`, commit `ed46f39c47eb`). Dropping `BUF_MORE` made userspace advance a provided-buffer ring head the kernel was still using, on an incremental (`IOU_PBUF_RING_INC`) bundle.
+- A bundle no longer shortens the last peeked buffer to the remaining byte count (`70f4886bcbb9`, `kbuf.c`). The application already takes `min(buffer length, bytes left)`. Truncating and then failing the transfer left the buffer permanently smaller.
+- `min_wait_usec` wakes only once a completion has actually been posted. `29fe1bd01b99` sets the CQ tail target to `cq_min_tail + 1` after the minimum wait expires, so a spurious wakeup with an empty CQ no longer returns early.
+
+## 7.2 — Larger buffers, fixed-buffer send/recv, ZCRX events (August 16, 2026)
+
+Tag `v7.2` is `8d3ae59288f1` (2026-08-16). Still no new `IORING_OP_*` / `IORING_SETUP_*` / `IORING_FEAT_*` / `IORING_REGISTER_*` value. The user-visible contract changes:
+
+- **Registered buffers grow from 1 GiB to 1 TiB.** `io_validate_user_buf_range` (`rsrc.c:131`) rejects `ulen > SZ_1T` with `-EINVAL` (`rsrc.c:142`, commit `b4e41050b212`). The per-buffer length field in `struct io_mapped_ubuf` widened from `unsigned int` to `size_t` (`ca76b56a2a2a`) so the larger range fits. Huge pages are accounted once per page in a per-ring xarray (`hpage_acct`, `df0a52537c0f`): cloning a buffer table, or registering two ranges that share a huge page, no longer charges `RLIMIT_MEMLOCK` twice. Accounting stays against the user that created the ring.
+- **`IORING_RECVSEND_FIXED_BUF` works on plain `SEND` and `RECV`.** Before 7.2 the flag was honored only on `SEND_ZC`. Commit `57ed21fad402` accepts it in the send/recv flag masks, records `sqe->buf_index`, and imports the registered buffer at issue time. Prep rejects it unless the opcode is non-vectored `IORING_OP_SEND` or `IORING_OP_RECV` (`net.c:404`: "`registered buffer send only supported for plain IORING_OP_SEND`"), and it is mutually exclusive with buffer select, bundles, and (on recv) multishot. `SENDMSG` / `RECVMSG` still do not take it.
+- **ZCRX can tell the application it fell off the zero-copy path.** `ZCRX_FEATURE_EVENT` (`zcrx.h:68`) plus `struct zcrx_event_desc` (`zcrx.h:88`), passed in `io_uring_zcrx_ifq_reg.event_desc` (`zcrx.h:111`, carved out of the old `__resv`). Two event types (`zcrx.h:71`): `ZCRX_EVENT_ALLOC_FAIL` (the page pool could not allocate) and `ZCRX_EVENT_COPY` (a fragment was copied). The kernel posts one CQE per armed type, with the descriptor's `user_data` and the event bit in `cqe->res`; the application re-arms with `IORING_REGISTER_ZCRX_CTRL` / `ZCRX_CTRL_ARM_EVENT` (`zcrx.h:118`, dispatched at `zcrx.c:1619`). Optional `struct zcrx_stats` (`zcrx.h:83`, `copy_count` / `copy_bytes`) lives in the refill region at `stats_offset` when `ZCRX_EVENT_DESC_FLAG_STATS` is set, and is updated in place on every copy fallback. `IO_URING_QUERY_ZCRX_EVENT` (`query.h:26`) reports the event bitmask, `sizeof(struct zcrx_stats)`, and the required alignment (`query.c:48`, `io_query_zcrx_notif`). The series landed as `0719e10d826a`, `255180f7034f`, `6935f631465f`, and was renamed from "notification" to "event" before the 7.2 tag (`e366c15e1610`).
+- **BPF filters can see a `CONNECT` target.** `struct io_uring_bpf_ctx` gains a `connect` arm (`bpf_filter.h:37`): `family`, and for `AF_INET` / `AF_INET6` a network-order `port` plus `v4_addr` or `v6_addr`. `io_connect_bpf_populate` (`net.c:1717`, commit `899bea8248ce`) fills those fields only when `addr_len` covers them, so a short address cannot leak a previous connect's sockaddr.
+- **Provided-buffer addresses are checked, and a peek is capped.** `access_ok` on every ring-provided buffer as it is selected (`kbuf.c:215`, `46800585ae04`). `io_ring_buffers_peek` caps the imported length at `MAX_RW_COUNT` (`kbuf.c:270`, `0b88f4705899`), the same per-call ceiling the rest of Linux uses.
+- **`IORING_REGISTER_RESIZE_RINGS` keeps the SQ index array.** Pending entries are copied through the old `sq_array` into the new one (`1fe703cc708f`). Resizing a ring that still has the indirection array used to repoint `ctx->sq_array` and then submit the wrong SQE.
+- **`MSG_RING` will not paint a 32-byte CQE onto a 16-byte ring.** `io_msg_ring_cqe_flags` (`msg_ring.c:105`, `15cd3ccf9b17`) returns `-EINVAL` when `IORING_MSG_RING_FLAGS_PASS` carries `IORING_CQE_F_32` and the target was created with neither `IORING_SETUP_CQE32` nor `IORING_SETUP_CQE_MIXED`.
+- **Per-task restrictions survive `exec`.** `bc0e8faf90e7` splits task-context teardown so the exec-cancel path frees the io_uring task context and keeps the restriction. A ring created after `exec` stays inside the restriction installed before it.
+- **IOPOLL short reads report the bytes already transferred.** `c554246ff4c6` runs the same `io_fixup_rw_res` the non-polled path uses, so a later EOF returns the partial count instead of zero.
+- **Task work is a FIFO, not a reversed llist.** Both the `DEFER_TASKRUN` local list and the ordinary task-work list moved onto `mpscq` (`io_uring/mpscq.h`, `d46ab2c98aba` and `de7341ffe49e`). No new flag. Producers are wait-free; the consumer pops in queue order and no longer calls `llist_reverse_order`. A `NULL` pop means "the producer has not linked the tail yet," which is not the same as empty — see the comment at the top of `mpscq.h`.
+
+## 7.3-rc4 — Current checkout (development, September 20, 2026)
+
+Tag `v7.3-rc4` is `93f51579e7df248780214094418f205253383cc5` (2026-09-20). `v7.3` itself is not tagged. `enum io_uring_op` still ends at `IORING_OP_URING_CMD128`. Anything below is an `-rc` and can still move before 7.3 final. First containing tag is noted per item.
+
+- `ZCRX_CTRL_ADD_AREA` (`zcrx.h:119`, `struct zcrx_ctrl_add_area` at `zcrx.h:138`) adds another memory area to a live ZCRX interface queue. Commit `3c8a5e271594` ("`io_uring/zcrx`: add dynamic area provisioning"), first tag **`v7.3-rc1`**. Registration no longer has to guess the working set: `area_ptr` points at a `struct io_uring_zcrx_area_reg`, and `io_zcrx_ctrl` dispatches the op at `zcrx.c:1621`.
+- `MSG_TRUNC` recv no longer consumes more of a provided buffer than was filled. The socket layer returns the full datagram length; `6028b543884f` (first tag **`v7.3-rc3`**, liburing issue 1619) advances the buffer by the bytes actually copied and still reports the full length in `cqe->res`.
+- IOPOLL completions **or** provided-buffer CQE flags into flags the opcode already set (`47ccc3f1c615`, **`v7.3-rc3`**). Assigning them used to clear `IORING_CQE_F_32` on a mixed ring.
+- A `DEFER_TASKRUN` ring that queues task work from a waitqueue wakeup defers its eventfd signal (`cd305ee3633a`, **`v7.3-rc1`**, `IOU_F_TWQ_IN_WAKE`). Signaling inline held an arbitrary waitqueue lock and could re-enter epoll.
+- A multishot `URING_CMD` that returns a non-negative result inline is completed, not orphaned (`360941242f09`, **`v7.3-rc1`**). A handler that wants to keep the request returns `-EIOCBQUEUED` or `-EAGAIN`, the same as any other command.
+- Futex inflight tracking covers private waits only. `FUTEX_WAKE` is never inflight (`73e701909747`); a shared `FUTEX_WAIT` / `FUTEX_WAITV` is not either (`4d327bbd1cd2`). Both first appear in **`v7.3-rc1`**. The tracking exists so `do_exit` can cancel a wait that depends on the mm-private futex hash.
+- `IORING_OP_WAITID` honors task-work cancellation (`14572de82e50`, **`v7.3-rc1`**). When the callback runs from the fallback kworker, `tw.cancel` completes the request with `-ECANCELED` and skips the `siginfo` copy. `__do_wait` looks up children on `current`, which on that path is not the submitter.
+- `IORING_REGISTER_QUERY` rejects a user size above a page before `copy_struct_to_user` (`query.c:80`, `ba77efee1b95`, merged for 7.3).
 
 ---
 
@@ -394,8 +427,14 @@ Legend for libraries: **Tok**=Tokio (`tokio-uring`), **Glo**=Glommio, **Mon**=mo
 | `IORING_SETUP_CQE_MIXED`                        | 6.18†        | (setup flag)                     | —   | —   | —   | —    | —   | —     | —   | —    | —   |
 | `SQE_MIXED`, `NOP128`, `URING_CMD128`           | 6.19†        | `io_uring_prep_nop128`           | —   | —   | —   | —    | —   | —     | —   | —    | —   |
 | `IORING_SETUP_SQ_REWIND`                        | 7.0†         | (setup flag)                     | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `IORING_TIMEOUT_IMMEDIATE_ARG`                  | 7.1†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| Registered buffer up to 1 TiB (`SZ_1T`)         | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `RECVSEND_FIXED_BUF` on plain `SEND`/`RECV`     | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| ZCRX events (`ALLOC_FAIL`, `COPY`, stats)       | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| BPF filter context for `CONNECT`                | 7.2†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
+| `ZCRX_CTRL_ADD_AREA` (dynamic RX areas)         | 7.3†         | —                                | —   | —   | —   | —    | —   | —     | —   | —    | —   |
 
-† Markers at 6.13 and beyond are forward-dated relative to public knowledge; they are read from this checkout's `liburing 2.15` man pages and v7.1-rc6 git tags. Library-usage cells for these very-recent features are conservatively `—`/`○` because the surveyed libraries had not adopted them as of their last reviewed releases.
+† Markers at 6.13 and beyond are forward-dated relative to public knowledge. Through 7.0 they are read from this checkout's `liburing 2.15` man pages and git tags; 7.1–7.3 are read from the v7.3-rc4 commit history (liburing 2.15 has no helper for them, hence `—`). `7.3` is still `-rc4` in this tree. Library-usage cells for these very-recent features are conservatively `—`/`○` because the surveyed libraries had not adopted them as of their last reviewed releases.
 
 **Library-row caveats:**
 
@@ -471,7 +510,10 @@ a time with `dub run --single <file>`.
 
 ## Sources
 
-- [Linux kernel source — `include/uapi/linux/io_uring.h`][io_uring.h] (enum `io_uring_op`, flag defines; the v7.1-rc6 checkout)
+- [Linux kernel source — `include/uapi/linux/io_uring.h`][io_uring.h] (enum `io_uring_op`, flag defines; identical from v7.1-rc6 through the v7.3-rc4 checkout)
+- [Linux kernel source — `include/uapi/linux/io_uring/zcrx.h`][zcrx.h] (`ZCRX_FEATURE_EVENT`, `ZCRX_CTRL_ADD_AREA`; v7.3-rc4)
+- [Linux kernel source — `include/uapi/linux/io_uring/query.h`][query.h] (`IO_URING_QUERY_ZCRX_EVENT`; v7.3-rc4)
+- [Linux kernel source — `include/uapi/linux/io_uring/bpf_filter.h`][bpf.h] (`io_uring_bpf_ctx.connect`; v7.3-rc4)
 - [liburing repository][liburing] (man pages `io_uring_enter.2`, `io_uring_setup.2`, `io_uring_register.2`; version header `io_uring_version.h`)
 - [io_uring_enter(2) — man7.org][man7-enter]
 - [io_uring_setup(2) — man7.org][man7-setup]
@@ -485,7 +527,10 @@ a time with `dub run --single <file>`.
 
 <!-- References -->
 
-[io_uring.h]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
+[io_uring.h]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring.h
+[zcrx.h]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring/zcrx.h
+[query.h]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring/query.h
+[bpf.h]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring/bpf_filter.h
 [liburing]: https://github.com/axboe/liburing
 [man7-enter]: https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 [man7-setup]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html

@@ -2,9 +2,9 @@
 
 A semantic catalog of the `io_uring` submission/registration surface, organized by capability rather than by opcode number. Each area states what it is, the concrete SQEs / `IOSQE_*` flags / `IORING_REGISTER_*` ops that drive it, the kernel source file(s) that implement it, and why it matters when building an event loop. For the flat opcode and register-op tables see [`./opcodes-reference.md`](./opcodes-reference.md); for the "since Linux vX.Y" provenance of every flag see [`./timeline.md`](./timeline.md). The architectural model (reactor vs. proactor, the SQ/CQ rings, task-work delivery) is covered in [`./index.md`](./index.md).
 
-> **Scope and ground truth.** Type names, struct fields, and flag spellings in this document are quoted verbatim from a `v7.1-rc6` Linux source tree (`linux/io_uring/*` and `linux/include/uapi/linux/io_uring.h`) and a post-2.14 `liburing` checkout. Version markers ("since Linux 6.x") are cross-checked against liburing man pages and Jens Axboe's per-release update notes — see [Sources](#sources). Where a feature is brand new (kernel 6.16 / 7.x), it is flagged as such; an event loop targeting a stable distro kernel must probe (`IORING_REGISTER_PROBE` / `IORING_REGISTER_QUERY`) rather than assume.
+> **Scope and ground truth.** Type names, struct fields, and flag spellings in this document are quoted from a Linux tree at **v7.3-rc4** (`93f51579e7df248780214094418f205253383cc5`, 2026-09-20). The previous pass was **v7.1-rc6**. `include/uapi/linux/io_uring.h` is identical across that range — no new `IORING_OP_*`, `IORING_SETUP_*`, `IORING_FEAT_*`, or `IORING_REGISTER_*` value. The UAPI that moved is the split headers `include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`, plus the behavior of several existing opcodes (see [Timeline](./timeline.md) from 7.1 on). The liburing checkout cited below is still the post-2.14 / 2.15 tree from the earlier pass; it was not re-walked for 7.2/7.3 helpers. Version markers ("since Linux 6.x") are cross-checked against liburing man pages and Jens Axboe's per-release update notes — see [Sources](#sources). Where a feature is brand new (kernel 6.16 / 7.x), it is flagged as such; an event loop targeting a stable distro kernel must probe (`IORING_REGISTER_PROBE` / `IORING_REGISTER_QUERY`) rather than assume.
 
-The reader's mental model should be: `io_uring` is **two channels**. The _submission channel_ is the SQE — a fixed 64-byte (or 128-byte) struct whose 80-byte tail is a union reinterpreted per opcode (`linux/include/uapi/linux/io_uring.h:32`, `struct io_uring_sqe`). The _control channel_ is `io_uring_register(2)` — a multiplexed syscall (`linux/io_uring/register.c:739`, `__io_uring_register`) that mutates ring-wide state: fixed resource tables, buffer groups, restrictions, clocks, NAPI, BPF filters. Most "features" below live on exactly one of these two channels, and the most powerful ones (fixed buffers, provided-buffer rings, zero-copy) span both: you `register` the resource once, then reference it by index from many SQEs.
+The reader's mental model should be: `io_uring` is **two channels**. The _submission channel_ is the SQE — a fixed 64-byte (or 128-byte) struct whose 80-byte tail is a union reinterpreted per opcode (`linux/include/uapi/linux/io_uring.h:32`, `struct io_uring_sqe`). The _control channel_ is `io_uring_register(2)` — a multiplexed syscall (`linux/io_uring/register.c:750`, `__io_uring_register`) that mutates ring-wide state: fixed resource tables, buffer groups, restrictions, clocks, NAPI, BPF filters. Most "features" below live on exactly one of these two channels, and the most powerful ones (fixed buffers, provided-buffer rings, zero-copy) span both: you `register` the resource once, then reference it by index from many SQEs.
 
 ---
 
@@ -27,12 +27,14 @@ Per-request `fget`/`fput` reference counting and per-request page pinning (`get_
 | Auto-slot range     | `IORING_REGISTER_FILE_ALLOC_RANGE` (`struct io_uring_file_index_range`)               | Constrain which fixed-file slots `IORING_FILE_INDEX_ALLOC` (`~0U`) may auto-allocate into, so ops like `openat`/`accept` that return a direct descriptor stay inside an app-reserved band.                                                                                             |
 | Clone buffers       | `IORING_REGISTER_CLONE_BUFFERS` (`struct io_uring_clone_buffers`)                     | Share a _source_ ring's already-pinned buffer table into the current ring without re-pinning pages. `src_off`/`dst_off`/`nr` clone a sub-range; `IORING_REGISTER_SRC_REGISTERED` treats `src_fd` as a registered ring fd; `IORING_REGISTER_DST_REPLACE` overwrites existing dst slots. |
 | Vectored fixed RW   | `IORING_OP_READV_FIXED` / `WRITEV_FIXED`                                              | Scatter/gather _into_ a registered buffer: the `iovec` segments must all fall within one fixed buffer (`io_prep_readv_fixed`, `io_prep_writev_fixed` in `rw.c`). Combines the registered-buffer fast path with vectored I/O.                                                           |
+| Per-buffer size cap | `io_validate_user_buf_range`                                                          | One registered buffer may be at most `SZ_1T` (1 TiB) on 64-bit (`rsrc.c:142`); a larger range returns `-EINVAL`. Linux 7.2 raised this from 1 GiB (`b4e41050b212`). `RLIMIT_MEMLOCK` still applies.                                                                                    |
+| Plain send/recv     | `IORING_RECVSEND_FIXED_BUF` on `IORING_OP_SEND` / `RECV`                              | Since 7.2 (`57ed21fad402`) the flag imports `sqe->buf_index` on the non-zerocopy send and recv paths. Prep accepts it only for those two opcodes (`net.c:404`) and rejects buffer-select, bundles, and recv multishot beside it.                                                       |
 
 ### Kernel source
 
-- `linux/io_uring/rsrc.c` — registration core. `io_sqe_files_register` (`rsrc.c:529`) honors `IORING_RSRC_REGISTER_SPARSE` ("allow sparse sets", `rsrc.c:557`); `io_sqe_buffers_register` (`rsrc.c:861`); `io_register_clone_buffers` (`rsrc.c:1261`) → `io_clone_buffers` (`rsrc.c:1149`); the SPARSE flag is validated at `rsrc.c:396`.
+- `linux/io_uring/rsrc.c` — registration core. `io_sqe_files_register` (`rsrc.c:616`) honors `IORING_RSRC_REGISTER_SPARSE` ("allow sparse sets", `rsrc.c:644`); `io_sqe_buffers_register` (`rsrc.c:950`); `io_register_clone_buffers` (`rsrc.c:1459`) → `io_clone_buffers` (`rsrc.c:1339`); the SPARSE flag is validated at `rsrc.c:483`. The 1 TiB ceiling is `io_validate_user_buf_range` (`rsrc.c:131`). Huge pages are refcounted in a per-ring xarray so a cloned table charges each page once (`df0a52537c0f`).
 - `linux/io_uring/filetable.c` — the fixed-file slot table and `IORING_REGISTER_FILE_ALLOC_RANGE` (`io_register_file_alloc_range`).
-- `linux/io_uring/rw.c` — `io_read_fixed` (`rw.c:1222`), `io_write_fixed` (`rw.c:1233`), `io_prep_readv_fixed` (`rw.c:426`), `io_prep_writev_fixed` (`rw.c:436`).
+- `linux/io_uring/rw.c` — `io_read_fixed` (`rw.c:1226`), `io_write_fixed` (`rw.c:1237`), `io_prep_readv_fixed` (`rw.c:412`), `io_prep_writev_fixed` (`rw.c:422`).
 
 ### Why it matters for an event loop
 
@@ -63,11 +65,15 @@ For receive paths the application does not know _which_ connection will have dat
 
 ### Incremental consumption in detail
 
-With `IOU_PBUF_RING_INC` (Linux 6.12), the app registers a few very large buffers rather than many small ones. Each completion of a given buffer ID continues from where the previous one stopped; the kernel advances an internal offset (`io_kbuf_inc_commit` in `kbuf.c:35` walks the donated length, writing back `buf->addr += this_len` and `buf->len -= this_len`). While the buffer still has room, the CQE carries `IORING_CQE_F_BUF_MORE`; only when it is exhausted does the buffer ID return to the app's control. For any _non_-incremental ring, every completion that reports a buffer ID hands that buffer fully back. The header documents this precisely at `io_uring.h:520` (`IORING_CQE_F_BUF_MORE`) and `io_uring.h:889` (`IOU_PBUF_RING_INC`).
+With `IOU_PBUF_RING_INC` (Linux 6.12), the app registers a few very large buffers rather than many small ones. Each completion of a given buffer ID continues from where the previous one stopped. `io_kbuf_inc_commit` (`kbuf.c:36`) walks the donated length: while the entry still has room past `min_left`, it `WRITE_ONCE`s `buf->addr += this_len` and the remaining length (`kbuf.c:52`); an exhausted entry is zeroed and the head advances (`kbuf.c:56`). While the buffer still has room, the CQE carries `IORING_CQE_F_BUF_MORE`; only when it is exhausted does the buffer ID return to the app's control. For any _non_-incremental ring, every completion that reports a buffer ID hands that buffer fully back. The header documents this precisely at `io_uring.h:520` (`IORING_CQE_F_BUF_MORE`) and `io_uring.h:889` (`IOU_PBUF_RING_INC`).
+
+Two 7.1 fixes matter for anyone combining bundles with incremental buffers. A bundle recv retry ORs the new iteration's flags through `CQE_F_MASK`, and since `ed46f39c47eb` that mask includes `IORING_CQE_F_BUF_MORE` (`net.c:844`) — without it the completion dropped the bit and userspace advanced a head the kernel still owned. The kernel also stopped truncating the last peeked bundle buffer to the remaining byte count (`70f4886bcbb9`); the application already uses `min(buffer length, bytes left)`, and a truncate followed by a failed transfer left the buffer permanently short.
+
+Linux 7.2 adds two checks on the select path. Every ring-provided address is passed through `access_ok` as it is taken (`kbuf.c:215`, `46800585ae04`). A multi-buffer peek caps the imported length at `MAX_RW_COUNT` (`kbuf.c:270`, the comment calls it "the universal Linux per-call IO maximum"). Linux 7.3-rc3 (`6028b543884f`) stops a `MSG_TRUNC` recv from consuming that much of the provided buffer when the datagram was larger than the buffer: the buffer advances by the bytes copied, and `cqe->res` still carries the full length.
 
 ### Kernel source
 
-- `linux/io_uring/kbuf.c` — `struct io_uring_buf_ring` plumbing, `io_ring_head_to_buf` macro (`kbuf.c:24`), `io_kbuf_inc_commit` (`kbuf.c:35`), and `MAX_BIDS_PER_BGID = 1 << 16` (`kbuf.c:21`, the 16-bit BID limit).
+- `linux/io_uring/kbuf.c` — `struct io_uring_buf_ring` plumbing, `io_ring_head_to_buf` macro (`kbuf.c:25`), `io_kbuf_inc_commit` (`kbuf.c:36`), and `MAX_BIDS_PER_BGID = 1 << 16` (`kbuf.c:22`, the 16-bit BID limit).
 - `linux/include/uapi/linux/io_uring.h:857` — `struct io_uring_buf`, `io_uring_buf_ring`, `io_uring_buf_reg`, `io_uring_buf_status`, and the `io_uring_register_pbuf_ring_flags` enum.
 
 ### Why it matters for an event loop
@@ -91,16 +97,16 @@ A **multishot** SQE is armed once and produces _many_ CQEs over its lifetime, ea
 | `IORING_OP_POLL_ADD` + `IORING_POLL_ADD_MULTI`         | Readiness change      | The poll mask in `cqe->res`; level vs. edge via `IORING_POLL_ADD_LEVEL`. |
 | `IORING_OP_ACCEPT` + `IORING_ACCEPT_MULTISHOT`         | New connection        | A new connected fd (or a direct descriptor) per CQE.                     |
 | `IORING_OP_RECV` / `RECVMSG` + `IORING_RECV_MULTISHOT` | Inbound data          | Bytes received; pairs with `IOSQE_BUFFER_SELECT` + a buffer ring.        |
-| `IORING_OP_READ_MULTISHOT`                             | File/pipe readable    | Repeated reads into provided buffers (`io_read_mshot`, `rw.c:1040`).     |
+| `IORING_OP_READ_MULTISHOT`                             | File/pipe readable    | Repeated reads into provided buffers (`io_read_mshot`, `rw.c:1042`).     |
 | `IORING_OP_TIMEOUT` + `IORING_TIMEOUT_MULTISHOT`       | Each interval elapses | A periodic tick; `off` is the desired completion count.                  |
 | `IORING_OP_URING_CMD` + `IORING_URING_CMD_MULTISHOT`   | Driver-defined        | passthrough multishot; requires buffer select.                           |
 
 ### Kernel source
 
-- `linux/io_uring/poll.c` — `__io_arm_poll_handler` (`poll.c:552`); multishot reposts a CQE with `IORING_CQE_F_MORE` at `poll.c:305` (`io_req_post_cqe(req, mask, IORING_CQE_F_MORE)`).
+- `linux/io_uring/poll.c` — `__io_arm_poll_handler` (`poll.c:553`); multishot reposts a CQE with `IORING_CQE_F_MORE` at `poll.c:306` (`io_req_post_cqe(req, mask, IORING_CQE_F_MORE)`).
 - `linux/io_uring/net.c` — `io_recv`, `io_recvmsg`, `io_accept` honor their multishot flags; `IORING_ACCEPT_MULTISHOT` is defined at `io_uring.h:456`.
 - `linux/io_uring/timeout.c` — `IORING_TIMEOUT_MULTISHOT` handling (`timeout.c:85`, `timeout.c:99`).
-- `linux/io_uring/rw.c` — `io_read_mshot` / `io_read_mshot_prep` (`rw.c:450`, `rw.c:1040`).
+- `linux/io_uring/rw.c` — `io_read_mshot` / `io_read_mshot_prep` (`rw.c:436`, `rw.c:1042`).
 
 ### Why it matters
 
@@ -152,32 +158,35 @@ SQPOLL is the headline "syscall-free" mode — at the cost of a dedicated, busy-
 1. The ordinary CQE reports how many bytes were accepted into the send queue.
 2. A second **notification CQE**, flagged `IORING_CQE_F_NOTIF`, fires later, telling the app the buffer is finally free to reuse.
 
-The notification machinery is `struct io_notif_data` (`notif.c`), built atop the stack's `ubuf_info` ref-counted zerocopy callback. `IORING_SEND_ZC_REPORT_USAGE` asks the kernel to report, in the notif CQE's `res`, whether zerocopy actually happened — `IORING_NOTIF_USAGE_ZC_COPIED` (bit 31) means the stack fell back to copying (small payloads aren't worth pinning). `IORING_RECVSEND_FIXED_BUF` sends from a _registered_ buffer; `IORING_SEND_VECTORIZED` (`net.c:379`, `net.c:403`) lets `SEND[_ZC]` take an `iovec`.
+The notification machinery is `struct io_notif_data` (`notif.c`), built atop the stack's `ubuf_info` ref-counted zerocopy callback. `IORING_SEND_ZC_REPORT_USAGE` asks the kernel to report, in the notif CQE's `res`, whether zerocopy actually happened — `IORING_NOTIF_USAGE_ZC_COPIED` (bit 31) means the stack fell back to copying (small payloads aren't worth pinning). `IORING_RECVSEND_FIXED_BUF` sends from a _registered_ buffer. Since Linux 7.2 that flag is also honored on plain `IORING_OP_SEND` and `IORING_OP_RECV` (`57ed21fad402`, accepted at `net.c:404`); before that only the `SEND_ZC` path imported it. `IORING_SEND_VECTORIZED` (`net.c:359`, included in `SENDMSG_FLAGS` at `net.c:391`) lets `SEND[_ZC]` take an `iovec`. On plain send the fixed-buffer flag and the vectored flag are mutually exclusive.
 
 ### Zero-copy receive (`RECV_ZC` + ZCRX)
 
 `IORING_OP_RECV_ZC` plus the **ZCRX interface-queue registration** `IORING_REGISTER_ZCRX_IFQ` (kernel 6.15) removes the kernel→user copy on the _receive_ side. The app pre-registers a memory area and a refill ring against a specific NIC hardware RX queue; the driver DMAs incoming packets straight into that area, and `RECV_ZC` completions point the app at the data in place. Completed regions are returned to the kernel via the refill ring (`struct io_uring_zcrx_rqe`).
 
-| Concept            | Type / op                                                   | Source                                                      |
-| ------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| ifq registration   | `IORING_REGISTER_ZCRX_IFQ` + `struct io_uring_zcrx_ifq_reg` | `zcrx.c`, `include/uapi/linux/io_uring/zcrx.h:73`           |
-| Memory area        | `struct io_uring_zcrx_area_reg` (`area_ptr`)                | `io_zcrx_create_area`, `zcrx.c:440`                         |
-| Refill-queue entry | `struct io_uring_zcrx_rqe`                                  | `zcrx.h:15`                                                 |
-| Completion entry   | `struct io_uring_zcrx_cqe`                                  | `zcrx.h:21`                                                 |
-| Aux config         | `IORING_REGISTER_ZCRX_CTRL` (`enum zcrx_ctrl_op`)           | `register.c:948`                                            |
-| The recv op        | `IORING_OP_RECV_ZC`                                         | `io_recvzc` (`net.c:1283`), `io_recvzc_prep` (`net.c:1255`) |
-| DMABUF area        | `IORING_ZCRX_AREA_DMABUF`                                   | `zcrx.h:39` (DMABUF support extended in 6.16)               |
+| Concept                     | Type / op                                                   | Source                                                                                                              |
+| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| ifq registration            | `IORING_REGISTER_ZCRX_IFQ` + `struct io_uring_zcrx_ifq_reg` | `io_register_zcrx` (`zcrx.c:961`); struct at `zcrx.h:99`                                                            |
+| Memory area                 | `struct io_uring_zcrx_area_reg` (`area_ptr`)                | `io_zcrx_create_area` (`zcrx.c:591`)                                                                                |
+| Refill-queue entry          | `struct io_uring_zcrx_rqe`                                  | `zcrx.h:15`                                                                                                         |
+| Completion entry            | `struct io_uring_zcrx_cqe`                                  | `zcrx.h:21`                                                                                                         |
+| Aux config                  | `IORING_REGISTER_ZCRX_CTRL` (`enum zcrx_ctrl_op`)           | case at `register.c:959`; dispatch `io_zcrx_ctrl` (`zcrx.c:1595`)                                                   |
+| The recv op                 | `IORING_OP_RECV_ZC`                                         | `io_recvzc` (`net.c:1322`), `io_recvzc_prep` (`net.c:1294`)                                                         |
+| DMABUF area                 | `IORING_ZCRX_AREA_DMABUF`                                   | `zcrx.h:39` (DMABUF support extended in 6.16)                                                                       |
+| Out-of-buffer / copy events | `ZCRX_FEATURE_EVENT`, `struct zcrx_event_desc`              | `zcrx.h:68`, `zcrx.h:88`; re-arm with `ZCRX_CTRL_ARM_EVENT` (`zcrx.h:118`). Linux 7.2.                              |
+| Copy statistics             | `struct zcrx_stats` (`copy_count`, `copy_bytes`)            | `zcrx.h:83`, placed in the refill region at `stats_offset`. Queried via `IO_URING_QUERY_ZCRX_EVENT` (`query.h:26`). |
+| Extra area                  | `ZCRX_CTRL_ADD_AREA` + `struct zcrx_ctrl_add_area`          | `zcrx.h:119`, `zcrx.h:138`; `zcrx.c:1621`. Linux 7.3-rc1 (`3c8a5e271594`).                                          |
 
 ### Kernel source
 
 - `linux/io_uring/notif.c` — `io_notif_tw_complete` (`notif.c:15`) sets `IORING_NOTIF_USAGE_ZC_COPIED` (`notif.c:31`) and accounts pinned pages.
-- `linux/io_uring/net.c` — a shared `io_sendmsg_zc` (`net.c:1488`) issues both `IORING_OP_SEND_ZC` and `IORING_OP_SENDMSG_ZC` (see `opdef.c`; both prep via `io_send_zc_prep`, `net.c:1335`), `io_send_zc_import` (`net.c:1458`), cleanup `io_send_zc_cleanup` (`net.c:1318`).
-- `linux/io_uring/zcrx.c` — the whole ifq/area/page-pool provider (`io_zcrx_ifq_alloc`, `zcrx.c:524`).
+- `linux/io_uring/net.c` — a shared `io_sendmsg_zc` (`net.c:1527`) issues both `IORING_OP_SEND_ZC` and `IORING_OP_SENDMSG_ZC` (see `opdef.c`; both prep via `io_send_zc_prep`, `net.c:1374`), `io_send_zc_import` (`net.c:1497`), cleanup `io_send_zc_cleanup` (`net.c:1357`).
+- `linux/io_uring/zcrx.c` — the whole ifq/area/page-pool provider (`io_zcrx_ifq_alloc`, `zcrx.c:599`). `io_zcrx_ctrl` (`zcrx.c:1595`) switches `FLUSH_RQ`, `EXPORT`, `ARM_EVENT`, and `ADD_AREA`.
 - Flags: `IORING_CQE_F_NOTIF` (`io_uring.h:541`), `IORING_NOTIF_USAGE_ZC_COPIED` (`io_uring.h:451`), `IORING_SEND_ZC_REPORT_USAGE` (`io_uring.h:440`).
 
 ### Why it matters
 
-Zero-copy is where `io_uring` decisively diverges from epoll: epoll can tell you a socket is readable, but you still `recv` into a kernel buffer and copy. ZCRX cuts the copy entirely for line-rate ingest, and `SEND_ZC` does the same for egress — at the cost of a **two-phase completion model** the event loop must understand (a send "completes" twice). Designs that hide this (Tokio, Seastar — [`../seastar.md`](../seastar.md)) must keep the buffer alive until the `F_NOTIF` CQE. See [`liburing/examples/send-zerocopy.c`] and [`liburing/examples/zcrx.c`], and the kernel's [io_uring zero copy Rx][zcrx-doc] document.
+Zero-copy is where `io_uring` decisively diverges from epoll: epoll can tell you a socket is readable, but you still `recv` into a kernel buffer and copy. ZCRX cuts the copy entirely for line-rate ingest, and `SEND_ZC` does the same for egress — at the cost of a **two-phase completion model** the event loop must understand (a send "completes" twice). Designs that hide this (Tokio, Seastar — [`../seastar.md`](../seastar.md)) must keep the buffer alive until the `F_NOTIF` CQE. From 7.2 the receive side can also post a separate event CQE when it had to copy or could not allocate (`ZCRX_EVENT_COPY`, `ZCRX_EVENT_ALLOC_FAIL`); the loop re-arms that event with `ZCRX_CTRL_ARM_EVENT` or it will not fire again, and it can watch `zcrx_stats` in the refill region for the cumulative copy count. From 7.3-rc1 `ZCRX_CTRL_ADD_AREA` grows the region after registration, so the working set does not have to be guessed up front. See [`liburing/examples/send-zerocopy.c`] and [`liburing/examples/zcrx.c`], and the kernel's [io_uring zero copy Rx][zcrx-doc] document.
 
 > **Worked examples.** [`send-zc.d`][ex-sendzc] performs a zero-copy `SEND_ZC` over loopback and asserts the transfer-CQE → notification-CQE pattern; [`recv-zc.d`][ex-recvzc] does zero-copy receive via a registered ZCRX interface queue (SKIPs without a capable NIC).
 
@@ -230,7 +239,7 @@ Links let the loop fuse `accept → recv`, `connect → send`, or `openat → re
 
 ### Kernel source
 
-- `linux/io_uring/msg_ring.c` — `io_msg_ring` dispatch (`msg_ring.c:284`) switches `IORING_MSG_DATA` → `io_msg_ring_data` (`msg_ring.c:148`) / `IORING_MSG_SEND_FD` → `io_msg_send_fd` (`msg_ring.c:234`); the ringless path `io_uring_sync_msg_ring` (`msg_ring.c:320`) rejects `MSG_SEND_FD` (`msg_ring.c:325`). Remote posting via `io_msg_data_remote` (`msg_ring.c:96`).
+- `linux/io_uring/msg_ring.c` — `io_msg_ring` dispatch (`msg_ring.c:304`) switches `IORING_MSG_DATA` → `io_msg_ring_data` (`msg_ring.c:168`) / `IORING_MSG_SEND_FD` → `io_msg_send_fd` (`msg_ring.c:254`); the ringless path `io_uring_sync_msg_ring` (`msg_ring.c:335`) rejects `MSG_SEND_FD` (`msg_ring.c:348`). Remote posting via `io_msg_data_remote` (`msg_ring.c:113`). `io_msg_ring_cqe_flags` (`msg_ring.c:105`) rejects `IORING_CQE_F_32` passed at a ring that is neither `CQE32` nor `CQE_MIXED` (Linux 7.2, `15cd3ccf9b17`).
 - Flags: `enum io_uring_msg_ring_flags` and `IORING_MSG_RING_*` at `io_uring.h:463`–`476`.
 
 ### Why it matters
@@ -308,7 +317,7 @@ A near-complete async socket API: connection setup, data transfer, and teardown 
 
 | Category | Ops                                                                                | Notes                                                                                                         |
 | -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Setup    | `IORING_OP_SOCKET`, `IORING_OP_BIND`, `IORING_OP_LISTEN`, `IORING_OP_CONNECT`      | `SOCKET` can create a _direct descriptor_ (`io_socket`, `net.c:1699`); `BIND`/`LISTEN` are the newest (6.11). |
+| Setup    | `IORING_OP_SOCKET`, `IORING_OP_BIND`, `IORING_OP_LISTEN`, `IORING_OP_CONNECT`      | `SOCKET` can create a _direct descriptor_ (`io_socket`, `net.c:1778`); `BIND`/`LISTEN` are the newest (6.11). |
 | Accept   | `IORING_OP_ACCEPT`                                                                 | `IORING_ACCEPT_MULTISHOT`, `IORING_ACCEPT_DONTWAIT`, `IORING_ACCEPT_POLL_FIRST` (`io_uring.h:456`).           |
 | Send     | `IORING_OP_SEND`, `IORING_OP_SENDMSG`, `IORING_OP_SEND_ZC`, `IORING_OP_SENDMSG_ZC` | Flags below.                                                                                                  |
 | Recv     | `IORING_OP_RECV`, `IORING_OP_RECVMSG`, `IORING_OP_RECV_ZC`                         | Multishot + buffer-select.                                                                                    |
@@ -320,7 +329,7 @@ A near-complete async socket API: connection setup, data transfer, and teardown 
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `IORING_RECVSEND_POLL_FIRST`  | Arm poll _before_ attempting the transfer, skipping a likely-`EAGAIN` first try.                                                                                                                               |
 | `IORING_RECV_MULTISHOT`       | Repeated recv completions (`IORING_CQE_F_MORE`).                                                                                                                                                               |
-| `IORING_RECVSEND_FIXED_BUF`   | Use a registered buffer (`buf_index`).                                                                                                                                                                         |
+| `IORING_RECVSEND_FIXED_BUF`   | Use a registered buffer (`buf_index`). On `SEND_ZC` since 6.0; on plain `SEND`/`RECV` since 7.2 (`net.c:347`, `net.c:404`).                                                                                    |
 | `IORING_RECVSEND_BUNDLE`      | With `IOSQE_BUFFER_SELECT`: grab _as many contiguous buffers as available_ and send/recv them in one op; `cqe->res` is the byte count, starting `bid` in `cqe->flags`. Gated by `IORING_FEAT_RECVSEND_BUNDLE`. |
 | `IORING_SEND_VECTORIZED`      | `SEND[_ZC]` takes an `iovec` pointer.                                                                                                                                                                          |
 | `IORING_SEND_ZC_REPORT_USAGE` | Report copy-vs-zerocopy in the notif CQE.                                                                                                                                                                      |
@@ -329,7 +338,7 @@ Plus `IORING_CQE_F_SOCK_NONEMPTY` (`io_uring.h:540`) — set on a recv CQE when 
 
 ### Kernel source
 
-- `linux/io_uring/net.c` — every op above; `SENDMSG_FLAGS` mask (`net.c:421`) shows which flags `sendmsg` accepts; `BUNDLE` handling at `net.c:439`/`net.c:520`/`net.c:877`; `io_accept`/`io_connect`/`io_bind`/`io_listen` at `net.c:1608`/`1751`/`1844`/`1873`.
+- `linux/io_uring/net.c` — every op above; `SENDMSG_FLAGS` mask (`net.c:390`) shows which flags `sendmsg` accepts, including `IORING_RECVSEND_FIXED_BUF` since 7.2; `BUNDLE` handling at `net.c:418`/`net.c:499`/`net.c:877`; `io_accept`/`io_connect`/`io_bind`/`io_listen` at `net.c:1647`/`1830`/`1922`/`1951`. `io_connect_bpf_populate` (`net.c:1717`) fills the BPF `connect` context.
 
 ### Why it matters
 
@@ -393,7 +402,7 @@ Ops: `IORING_OP_TIMEOUT`, `IORING_OP_TIMEOUT_REMOVE`, `IORING_OP_LINK_TIMEOUT`.
 
 ### Why it matters
 
-Every event loop needs timers: I/O deadlines, periodic heartbeats, scheduler quanta. Doing them as SQEs keeps timers in the _same_ completion stream as I/O, so there is one wait point, not two. `min_timeout` is the subtle but high-value knob — it lets a latency-tolerant loop sleep just long enough to coalesce a batch of CQEs, trading a few microseconds of latency for far fewer wakeups. Link timeouts (above) reuse this machinery to bound any other op.
+Every event loop needs timers: I/O deadlines, periodic heartbeats, scheduler quanta. Doing them as SQEs keeps timers in the _same_ completion stream as I/O, so there is one wait point, not two. `min_timeout` is the subtle but high-value knob — it lets a latency-tolerant loop sleep just long enough to coalesce a batch of CQEs, trading a few microseconds of latency for far fewer wakeups. Linux 7.1 (`29fe1bd01b99`) fixed the wake condition: once `min_wait_usec` has elapsed the kernel still waits for one posted CQE, so an empty ring does not return early on a spurious wakeup. Link timeouts (above) reuse this machinery to bound any other op.
 
 > **Worked examples.** [`timeout-link-timeout.d`][ex-timeout] fires a standalone relative `TIMEOUT` (completing with `-ETIME`) and a `LINK_TIMEOUT`; [`multishot-timeout.d`][ex-mstimeout] arms one `TIMEOUT_MULTISHOT` recurring timer; [`clock-min-timeout.d`][ex-clock] selects the wait clock with `IORING_REGISTER_CLOCK` and uses a min-timeout batched wait.
 
@@ -418,7 +427,7 @@ Every event loop needs timers: I/O deadlines, periodic heartbeats, scheduler qua
 
 ### Kernel source
 
-- `linux/io_uring/uring_cmd.c` — `io_uring_cmd_prep` (`uring_cmd.c:184`); cancelable commands via `IORING_URING_CMD_CANCELABLE` and `io_uring_cmd_mark_cancelable` (`uring_cmd.c:101`); completion `__io_uring_cmd_done` (`uring_cmd.c:150`).
+- `linux/io_uring/uring_cmd.c` — `io_uring_cmd_prep` (`uring_cmd.c:186`); cancelable commands via `IORING_URING_CMD_CANCELABLE` and `io_uring_cmd_mark_cancelable` (`uring_cmd.c:103`); completion `__io_uring_cmd_done` (`uring_cmd.c:152`). A multishot command that finishes inline (a non-negative return) is completed; keeping the request means returning `-EIOCBQUEUED` or `-EAGAIN` (`360941242f09`, Linux 7.3-rc1).
 - `linux/io_uring/cmd_net.c` — the socket command implementations.
 - Flags: `IORING_URING_CMD_FIXED` / `_MULTISHOT` at `io_uring.h:334`.
 
@@ -455,7 +464,7 @@ Direct descriptors are strictly faster (no fd-table lock), so a high-performance
 Two ops let `io_uring` and epoll coexist during migration: `IORING_OP_EPOLL_CTL` runs `epoll_ctl(2)` async, and `IORING_OP_EPOLL_WAIT` (kernel 6.15) lets a ring _wait on an epoll instance_ as just another SQE.
 
 - `IORING_OP_EPOLL_CTL` — `io_epoll_ctl` (`epoll.c:51`) calls `do_epoll_ctl` for add/mod/del without blocking the loop.
-- `IORING_OP_EPOLL_WAIT` — `io_epoll_wait` (`epoll.c:79`); completes when the epoll set has events.
+- `IORING_OP_EPOLL_WAIT` — `io_epoll_wait` (`epoll.c:90`); completes when the epoll set has events.
 
 ### Why it matters
 
@@ -473,16 +482,16 @@ The register channel also manages the ring _itself_: resizing, supplying memory,
 
 ### Register ops
 
-| Op                                              | Purpose                                                                                                                                                     | Source / struct                                                                                              |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `IORING_REGISTER_RESIZE_RINGS`                  | Grow/shrink SQ/CQ at runtime without tearing down the ring                                                                                                  | `io_register_resize_rings` (`register.c:498`)                                                                |
-| `IORING_REGISTER_MEM_REGION`                    | App supplies a memory region (`struct io_uring_region_desc`) for ring/wait-arg storage; `IORING_MEM_REGION_REG_WAIT_ARG` exposes it as registered wait args | `io_register_mem_region` (`register.c:692`); structs at `io_uring.h:751`/`:765`                              |
-| `IORING_REGISTER_QUERY`                         | Introspect capabilities (opcodes, zcrx, SQ/CQ) via `struct io_uring_query_hdr`                                                                              | `query.c`; `IO_URING_QUERY_OPCODES`/`_ZCRX`/`_SCQ` (`query.h:23`)                                            |
-| `IORING_REGISTER_PROBE`                         | Legacy capability probe — which opcodes are supported (`struct io_uring_probe`)                                                                             | `register.c:808`; `io_uring.h:805`                                                                           |
-| `IORING_REGISTER_RESTRICTIONS`                  | Sandbox: whitelist allowed register-ops, SQE opcodes, and SQE flags before enabling the ring                                                                | `io_uring.h:820`/`:958`; applied while disabled (`IORING_SETUP_R_DISABLED` + `IORING_REGISTER_ENABLE_RINGS`) |
-| `IORING_REGISTER_PERSONALITY` / `UNREGISTER`    | Register a credential set; SQEs reference it via `sqe->personality` to act as another identity                                                              | `register.c:814`; `IORING_FEAT_CUR_PERSONALITY`                                                              |
-| `IORING_REGISTER_RING_FDS`                      | See [msg_ring section](#msg_ring-and-registered-ring-fds)                                                                                                   | `register.c:867`                                                                                             |
-| `IORING_REGISTER_IOWQ_AFF` / `IOWQ_MAX_WORKERS` | Pin / cap the io-wq worker pool (`IO_WQ_BOUND`/`IO_WQ_UNBOUND`)                                                                                             | `register.c:849`/`:861`; `io_uring.h:733`                                                                    |
+| Op                                              | Purpose                                                                                                                                                                                           | Source / struct                                                                                                                                                            |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IORING_REGISTER_RESIZE_RINGS`                  | Grow/shrink SQ/CQ at runtime without tearing down the ring. Since 7.2 the copy walks the old SQ index array, so a ring that still has one submits the same SQEs after the resize (`1fe703cc708f`) | `io_register_resize_rings` (`register.c:498`)                                                                                                                              |
+| `IORING_REGISTER_MEM_REGION`                    | App supplies a memory region (`struct io_uring_region_desc`) for ring/wait-arg storage; `IORING_MEM_REGION_REG_WAIT_ARG` exposes it as registered wait args                                       | `io_register_mem_region` (`register.c:703`); structs at `io_uring.h:751`/`:765`                                                                                            |
+| `IORING_REGISTER_QUERY`                         | Introspect capabilities. `IO_URING_QUERY_ZCRX_EVENT` (7.2) reports the ZCRX event bitmask, `zcrx_stats` size, and the alignment `stats_offset` must satisfy                                       | `query.c`; opcodes at `query.h:23` (`OPCODES`/`ZCRX`/`SCQ`/`ZCRX_EVENT`); filler `io_query_zcrx_notif` (`query.c:48`). A user size above a page is `-E2BIG` (`query.c:80`) |
+| `IORING_REGISTER_PROBE`                         | Legacy capability probe — which opcodes are supported (`struct io_uring_probe`)                                                                                                                   | case at `register.c:819` (`io_probe` at `register.c:41`); `io_uring.h:805`                                                                                                 |
+| `IORING_REGISTER_RESTRICTIONS`                  | Sandbox: whitelist allowed register-ops, SQE opcodes, and SQE flags before enabling the ring. Since 7.2 a per-task restriction survives `exec` (`bc0e8faf90e7`)                                   | `io_uring.h:820`/`:958`; applied while disabled (`IORING_SETUP_R_DISABLED` + `IORING_REGISTER_ENABLE_RINGS`)                                                               |
+| `IORING_REGISTER_PERSONALITY` / `UNREGISTER`    | Register a credential set; SQEs reference it via `sqe->personality` to act as another identity                                                                                                    | `io_register_personality` (`register.c:90`); `IORING_FEAT_CUR_PERSONALITY`                                                                                                 |
+| `IORING_REGISTER_RING_FDS`                      | See [msg_ring section](#msg_ring-and-registered-ring-fds)                                                                                                                                         | case at `register.c:878`                                                                                                                                                   |
+| `IORING_REGISTER_IOWQ_AFF` / `IOWQ_MAX_WORKERS` | Pin / cap the io-wq worker pool (`IO_WQ_BOUND`/`IO_WQ_UNBOUND`)                                                                                                                                   | `io_register_iowq_aff` (`register.c:315`), `io_register_iowq_max_workers` (`register.c:352`); `io_uring.h:733`                                                             |
 
 ### Capability probing
 
@@ -500,10 +509,11 @@ The right pattern for portable code is `IORING_REGISTER_QUERY` (new) falling bac
 
 ### What it is
 
-`IORING_REGISTER_BPF_FILTER` (very new, kernel 7.x) attaches BPF programs that gate SQE submission: before a request is issued, registered filters run and can _reject_ it. This is a finer-grained, programmable sibling of `IORING_REGISTER_RESTRICTIONS` — instead of a static opcode whitelist, the policy is an attached program.
+`IORING_REGISTER_BPF_FILTER` (kernel 7.0) attaches BPF programs that gate SQE submission: before a request is issued, registered filters run and can _reject_ it. This is a finer-grained, programmable sibling of `IORING_REGISTER_RESTRICTIONS` — instead of a static opcode whitelist, the policy is an attached program.
 
 - Kernel: `linux/io_uring/bpf_filter.c` — `__io_uring_run_bpf_filters` (`bpf_filter.c:57`) returns 0 to _allow_; filters are an RCU-protected list (`struct io_bpf_filter`, `bpf_filter.c:17`); the comment at `bpf_filter.c:3` notes it "Supports SQE opcodes for now."
 - Companion: `linux/io_uring/bpf-ops.c` defines the BPF-callable operations.
+- The context struct the program loads from is `struct io_uring_bpf_ctx` (`include/uapi/linux/io_uring/bpf_filter.h:13`). It has carried `socket` (family/type/protocol) and `open` (flags/mode/resolve) arms since the opcode landed. Linux 7.2 adds a `connect` arm (`bpf_filter.h:37`): `family` always, and for `AF_INET` / `AF_INET6` a network-order `port` plus `v4_addr` or `v6_addr[16]`. `io_connect_bpf_populate` (`net.c:1717`, `899bea8248ce`) fills those fields only when `addr_len` covers them. Filters may issue `BPF_LD|BPF_W|BPF_ABS` at 4-byte-aligned offsets and mask for the sub-word `port`.
 
 ### Why it matters
 
@@ -513,22 +523,22 @@ For a multi-tenant or sandboxed deployment, BPF filtering lets the host express 
 
 ## Key design decisions and trade-offs
 
-| Decision                                                                    | Rationale                                                                                                            | Trade-off                                                                                                                                         |
-| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Reference resources (files, buffers) by _index_ after one-time registration | Removes `fget`/`fput` and `get_user_pages` from the per-op hot path — the dominant cost at high IOPS                 | App must manage a slot table and reclaim via tags; registration is a heavier, infrequent control-channel call                                     |
-| Buffer rings with kernel-side buffer _selection_                            | Decouples memory from connections; the kernel picks a buffer only when data lands, so N idle sockets cost ~0 buffers | Two-level bookkeeping (head moved by kernel, tail by app); `IORING_CQE_F_BUF_MORE` adds a partial-completion state the app must track             |
-| Multishot SQEs (`IORING_CQE_F_MORE`)                                        | One submission yields many completions — submission cost approaches zero for accept/recv-heavy loops                 | A single SQE now has open-ended lifetime and CQ pressure; CQ overflow handling (`IORING_FEAT_NODROP`, `IORING_SETUP_CQSIZE`) becomes load-bearing |
-| Split-completion zero-copy send (`F_NOTIF`)                                 | True zero-copy egress requires holding pages until the NIC is done — a second CQE is the honest signal               | App must keep buffers alive past the first CQE; `IORING_NOTIF_USAGE_ZC_COPIED` reveals the stack may have copied anyway for small payloads        |
-| Static link chains (`IOSQE_IO_LINK`)                                        | Express `accept→recv`, `connect→send` as one batched submission with no userspace round-trip                         | The dependency DAG is fixed at submit time — cannot branch on a result; dynamic dependencies need userspace orchestration                         |
-| `uring_cmd` opaque passthrough                                              | Expose driver/socket-specific commands (NVMe, `getsockopt`, TX timestamps) without growing the opcode enum           | Loses type safety and self-description; needs `SQE128`; capabilities vary per device/driver and must be discovered out-of-band                    |
-| Multiplexed `io_uring_register(2)` control channel                          | One syscall for all ring-wide state mutation keeps the SQE union lean and the fast path narrow                       | Register ops are a sprawling, versioned enum (38+ ops at 7.1) that _must_ be probed; new ops appear every release                                 |
-| Direct descriptors + `FIXED_FD_INSTALL` bridge                              | Keep fds off the process table for speed, materialize a real fd only when an external API demands one                | Two descriptor namespaces to reason about; mistakes (passing a slot index where a real fd is expected, or vice versa) are easy and silent         |
+| Decision                                                                    | Rationale                                                                                                            | Trade-off                                                                                                                                                                          |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reference resources (files, buffers) by _index_ after one-time registration | Removes `fget`/`fput` and `get_user_pages` from the per-op hot path — the dominant cost at high IOPS                 | App must manage a slot table and reclaim via tags; registration is a heavier, infrequent control-channel call                                                                      |
+| Buffer rings with kernel-side buffer _selection_                            | Decouples memory from connections; the kernel picks a buffer only when data lands, so N idle sockets cost ~0 buffers | Two-level bookkeeping (head moved by kernel, tail by app); `IORING_CQE_F_BUF_MORE` adds a partial-completion state the app must track                                              |
+| Multishot SQEs (`IORING_CQE_F_MORE`)                                        | One submission yields many completions — submission cost approaches zero for accept/recv-heavy loops                 | A single SQE now has open-ended lifetime and CQ pressure; CQ overflow handling (`IORING_FEAT_NODROP`, `IORING_SETUP_CQSIZE`) becomes load-bearing                                  |
+| Split-completion zero-copy send (`F_NOTIF`)                                 | True zero-copy egress requires holding pages until the NIC is done — a second CQE is the honest signal               | App must keep buffers alive past the first CQE; `IORING_NOTIF_USAGE_ZC_COPIED` reveals the stack may have copied anyway for small payloads                                         |
+| Static link chains (`IOSQE_IO_LINK`)                                        | Express `accept→recv`, `connect→send` as one batched submission with no userspace round-trip                         | The dependency DAG is fixed at submit time — cannot branch on a result; dynamic dependencies need userspace orchestration                                                          |
+| `uring_cmd` opaque passthrough                                              | Expose driver/socket-specific commands (NVMe, `getsockopt`, TX timestamps) without growing the opcode enum           | Loses type safety and self-description; needs `SQE128`; capabilities vary per device/driver and must be discovered out-of-band                                                     |
+| Multiplexed `io_uring_register(2)` control channel                          | One syscall for all ring-wide state mutation keeps the SQE union lean and the fast path narrow                       | The register enum still ends at `IORING_REGISTER_LAST` (38) through v7.3-rc4. Growth since 7.1 is inside the split zcrx/query/bpf headers, and that surface still has to be probed |
+| Direct descriptors + `FIXED_FD_INSTALL` bridge                              | Keep fds off the process table for speed, materialize a real fd only when an external API demands one                | Two descriptor namespaces to reason about; mistakes (passing a slot index where a real fd is expected, or vice versa) are easy and silent                                          |
 
 ---
 
 ## Sources
 
-- [Linux kernel `io_uring/` source][linux-iou] — the canonical implementation; all function/struct references above are from a `v7.1-rc6` tree (`rsrc.c`, `kbuf.c`, `net.c`, `zcrx.c`, `notif.c`, `futex.c`, `cancel.c`, `timeout.c`, `msg_ring.c`, `sqpoll.c`, `napi.c`, `uring_cmd.c`, `openclose.c`, `epoll.c`, `register.c`, `bpf_filter.c`, `query.c`, `opdef.c`).
+- [Linux kernel `io_uring/` source][linux-iou] — the canonical implementation; function/struct references above are from the **v7.3-rc4** tree (`rsrc.c`, `kbuf.c`, `net.c`, `zcrx.c`, `notif.c`, `futex.c`, `cancel.c`, `timeout.c`, `msg_ring.c`, `sqpoll.c`, `napi.c`, `uring_cmd.c`, `openclose.c`, `epoll.c`, `register.c`, `bpf_filter.c`, `query.c`, `opdef.c`, `mpscq.h`). The v7.1-rc6 pass is the baseline this update moved forward from.
 - [UAPI header `include/uapi/linux/io_uring.h`][uapi] — every `IORING_*` / `IOSQE_*` flag enum and on-the-wire struct quoted here.
 - [io_uring zero copy Rx — kernel documentation][zcrx-doc] — ZCRX ifq/area/refill model.
 - [liburing repository][liburing] — man pages and the `examples/` programs (`send-zerocopy.c`, `zcrx.c`, `proxy.c`, `io_uring-cp.c`, `napi-busy-poll-server.c`).
@@ -544,8 +554,8 @@ For a multi-tenant or sandboxed deployment, BPF filtering lets the host express 
 
 <!-- References -->
 
-[linux-iou]: https://github.com/torvalds/linux/tree/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring
-[uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
+[linux-iou]: https://github.com/torvalds/linux/tree/93f51579e7df248780214094418f205253383cc5/io_uring
+[uapi]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring.h
 [zcrx-doc]: https://docs.kernel.org/networking/iou-zcrx.html
 [liburing]: https://github.com/axboe/liburing
 [reg2]: https://man7.org/linux/man-pages/man2/io_uring_register.2.html

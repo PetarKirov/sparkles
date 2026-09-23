@@ -15,7 +15,7 @@ This survey answers five questions:
    Seastar, libuv, Zig `std.Io`, .NET, Java, Go, Python, and OCaml Eio differ in I/O model,
    backend, and concurrency model? See the [catalog](#master-catalog) and [comparison][comparison].
 4. **`io_uring` features** — exactly which operations, setup flags, and registration opcodes
-   exist, and in which kernel version they landed, through **Linux v7.1-rc6**. See the
+   exist, and in which kernel version they landed, through **Linux v7.3-rc4**. See the
    [io_uring reference](#io_uring-reference).
 5. **Interplay with algebraic effect systems** — how do effect handlers, fibers, and
    continuations resume suspended computations from a completion, and how does that relate
@@ -26,10 +26,11 @@ This survey answers five questions:
 > to a deep-dive that was written and fact-checked independently; where this index
 > summarizes a system, the deep-dive is the source of truth. `io_uring` version markers here
 > are kept consistent with the [chronology][uring-timeline], which was checked against a
-> Linux **v7.1-rc6** tree paired with **liburing 2.15** — markers at `6.13` and later are
-> forward-dated relative to general public knowledge ("as observed in this checkout").
+> Linux **v7.3-rc4** tree (previously v7.1-rc6) paired with **liburing 2.15** — markers at
+> `6.13` and later are forward-dated relative to general public knowledge ("as observed in
+> this checkout"). The liburing helper columns were not re-walked for 7.2/7.3.
 
-**Last reviewed:** August 10, 2026
+**Last reviewed:** August 10, 2026. The `io_uring` ground truth moved from v7.1-rc6 to **v7.3-rc4** on September 23, 2026; the other deep-dives were not re-walked.
 
 ---
 
@@ -143,7 +144,7 @@ span two layers (e.g. libuv is both a reactor _and_ a runtime).
 
 A high-confidence timeline interleaving **`io_uring` kernel milestones** (cross-checked
 against the [chronology][uring-timeline]) with **event-loop / runtime milestones**. Dates
-at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" — see the
+at `6.13` and later are forward-dated "as observed in the v7.3-rc4 checkout" — see the
 [timeline][uring-timeline] for the caveat.
 
 | Date           | `io_uring` kernel milestone                                                                   | Event-loop / runtime milestone                                                                                          |
@@ -169,7 +170,10 @@ at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" —
 | May 2025\*     | **v6.15** — zero-copy receive (`RECV_ZC` + `ZCRX_IFQ`), `EPOLL_WAIT`, vectored fixed I/O      | —                                                                                                                       |
 | 2025–2026      | —                                                                                             | **.NET `io_uring` engine** proposed ([PR #124374], opt-in, not merged); **Zig `std.Io`** vtable in development for 0.16 |
 | Apr 2026\*     | **v7.0** — SQ rewind                                                                          | —                                                                                                                       |
-| **May 2026\*** | **v7.1-rc6** — current checkout (liburing 2.15)                                               | This survey's ground truth                                                                                              |
+| May 2026\*     | **v7.1-rc6** — previous `io_uring` pass of this survey                                        | —                                                                                                                       |
+| Jun 2026\*     | **v7.1** — `TIMEOUT_IMMEDIATE_ARG`; bundle `BUF_MORE` and min-timeout wake fixes              | —                                                                                                                       |
+| Aug 2026\*     | **v7.2** — registered buffers to 1 TiB, fixed buffers on plain send/recv, ZCRX events         | —                                                                                                                       |
+| **Sep 2026\*** | **v7.3-rc4** — current `io_uring` checkout (`ZCRX_CTRL_ADD_AREA` and the rc fixes)            | `io_uring` ground truth for this survey                                                                                 |
 
 <sub>\* Forward-dated relative to general public knowledge — see the [timeline caveat][uring-timeline].</sub>
 
@@ -202,7 +206,7 @@ at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" —
 
 - **[Programming Model][uring-index]** — rings, SQE/CQE layout, syscalls, operating modes (SQPOLL/IOPOLL/`DEFER_TASKRUN`/io-wq).
 - **[Features & Flags][uring-features]** — `io_uring` features grouped by semantic area.
-- **[Timeline][uring-timeline]** — kernel-version chronology v5.1 → v7.1-rc6 + a feature/version/library matrix.
+- **[Timeline][uring-timeline]** — kernel-version chronology v5.1 → v7.3-rc4 + a feature/version/library matrix.
 - **[Opcodes Reference][uring-opcodes]** — full `IORING_OP_*` / flag reference tables.
 
 ### Library deep-dives
@@ -239,7 +243,7 @@ at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" —
 Each deep-dive carries its own primary-source citations; the authoritative artifacts behind
 this index's classifications are:
 
-- **io_uring** — Linux UAPI header `include/uapi/linux/io_uring.h` (v7.1-rc6 tree), [liburing] man pages (`io_uring_enter/setup/register`), Jens Axboe's ["Efficient IO with io_uring"][axboe-pdf], and LWN's ["The rapid growth of io_uring"][lwn-growth]. See the [chronology][uring-timeline] for per-version provenance.
+- **io_uring** — Linux UAPI header `include/uapi/linux/io_uring.h` plus the split `io_uring/{zcrx,query,bpf_filter}.h` headers (v7.3-rc4 tree, `93f51579e7df`), [liburing] man pages (`io_uring_enter/setup/register`), Jens Axboe's ["Efficient IO with io_uring"][axboe-pdf], and LWN's ["The rapid growth of io_uring"][lwn-growth]. See the [chronology][uring-timeline] for per-version provenance.
 - **Reactor/Proactor taxonomy** — Schmidt et al., _Pattern-Oriented Software Architecture, Vol. 2_ (POSA2), as applied in [techniques][techniques].
 - **GCD / libdispatch** — the `swift-corelibs-libdispatch` tree, its `man/` pages, and the macOS SDK `dispatch/` headers, as cited in the [GCD deep-dive][gcd].
 - **Per-system sources** — repository trees, official docs, and design write-ups cited in each linked deep-dive ([Tokio][tokio], [Glommio][glommio], [monoio][monoio], [Boost.Asio][boost-asio], [Seastar][seastar], [libuv][libuv], [Zig][zig-io], [.NET][dotnet], [Java][java], [Go][go], [Python][python], [OCaml Eio][eio]).

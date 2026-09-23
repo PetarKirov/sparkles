@@ -3,6 +3,8 @@
 The shared-memory, completion-based asynchronous I/O interface for Linux: two ring buffers shared between user space and the kernel let an application batch arbitrary syscalls and reap their results without a syscall per operation.
 
 > **Scope.** This is the entry point for the `io_uring` sub-section. It explains the model from first principles — the submission and completion rings, the SQE/CQE entry layouts, the three syscalls, the head/tail producer-consumer protocol and its memory ordering, the submission→kernel→completion lifecycle, and the operating modes (default task-work, SQPOLL, IOPOLL/`HYBRID_IOPOLL`, the `*_TASKRUN`/`SINGLE_ISSUER` tuning knobs, and io-wq offload). It contrasts `io_uring`'s _completion_ (Proactor) model against epoll's _readiness_ (Reactor) model. For the feature surface and capability flags see [Features & Flags][features]; for the historical progression of kernel versions see [Timeline][timeline]; for a per-opcode catalog see [Opcodes Reference][opcodes]. For where this sits among other async-I/O techniques across the survey, see [Techniques][techniques].
+>
+> **Ground truth.** The kernel mechanics below were re-read against Linux **v7.3-rc4** (`93f51579e7df248780214094418f205253383cc5`, 2026-09-20). The previous pass of this page was v7.1-rc6. The task-work queue changed in 7.2 (see [Operating modes](#operating-modes)); the ring protocol and the setup-flag table did not.
 
 | Field         | Value                                                                                          |
 | ------------- | ---------------------------------------------------------------------------------------------- |
@@ -312,6 +314,8 @@ For integration with existing event loops, `io_uring_register(2)` with `IORING_R
 
 With no flags, submission is an `io_uring_enter` call and completion is interrupt-driven. The subtlety is _where_ the completion (filling the CQE, freeing the request) runs. To make completions appear in the submitting task's context — important for credentials, cancellation, and cache locality — the kernel uses the **task-work** mechanism (`io_req_task_work_add` in `linux/io_uring/io_uring.c`). By default delivering task work may fire an **inter-processor interrupt (IPI)** to force the target CPU to run it promptly, which is why the default is sometimes called "interrupt-driven."
 
+Since Linux 7.2 both the ordinary task-work list and the `DEFER_TASKRUN` local list are an `mpscq` (`io_uring/mpscq.h`, commits `d46ab2c98aba` and `de7341ffe49e`) rather than an llist that the consumer reversed. Producers stay wait-free (one `xchg` plus a link store). The consumer pops in queue order. A `NULL` from `mpscq_pop` means a producer has published the tail and has not yet linked it — the header comment says that is not "queue empty," and the consumer retries later. No setup flag changed; completion ordering of task work is FIFO without the old O(n) reverse.
+
 ### The TASKRUN family — taming task-work cost
 
 The IPI and forced kernel transition are pure overhead when the submitter is going to enter the kernel soon anyway. The `*_TASKRUN` flags progressively relax this:
@@ -447,8 +451,8 @@ Stacking these — SQPOLL + IOPOLL + fixed files/buffers + `DEFER_TASKRUN` — y
 [setup2]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
 [enter2]: https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 [register2]: https://man7.org/linux/man-pages/man2/io_uring_register.2.html
-[linux-io_uring]: https://github.com/torvalds/linux/tree/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring
-[uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
+[linux-io_uring]: https://github.com/torvalds/linux/tree/93f51579e7df248780214094418f205253383cc5/io_uring
+[uapi]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring.h
 [liburing]: https://github.com/axboe/liburing
 [kernel-dk]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [lwn-growth]: https://lwn.net/Articles/810414/
