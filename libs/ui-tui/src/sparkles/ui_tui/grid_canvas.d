@@ -31,14 +31,41 @@ import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
 // canvases each choosing their own box-drawing runs is how they came to
 // disagree, with `--render` showing dashes the live terminal did not.
-import sparkles.ui.interp.cells : accentGlyph, blend, boxCorners,
+import sparkles.ui.interp.cells : accentGlyph, asciiStroke, blend, boxCorners,
     dashedHorizontal, dashedVertical;
 import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.ui.tokens : TargetCapabilities;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 @safe:
+
+/**
+What a cell grid holds before any terminal narrows it (`CAP1`): every color
+(the terminal's `Screen` folds to its real depth on the way out), Unicode
+chrome, the half-block tier the accent bars use, link ids and styled
+underlines. The chrome a pixel target honours — radius, shadow, alpha, a
+second face, sub-cell scrolling — a grid always projects.
+
+The default for a canvas nobody declared anything to, so every existing caller
+paints exactly what it did; a live terminal passes its own declaration
+(`TerminalSession.target`), and `ui-gallery --profile` passes a profile's.
+*/
+enum TargetCapabilities gridCapabilities = () {
+    import sparkles.base.term_caps : BlockTier;
+    import sparkles.base.term_color : ColorDepth;
+    import sparkles.input.capability : cellPointer;
+
+    TargetCapabilities c;
+    c.colorDepth = ColorDepth.trueColor;
+    c.unicode = true;
+    c.blocks = BlockTier.half;
+    c.hyperlinks = true;
+    c.extendedUnderline = true;
+    c.input = cellPointer;
+    return c;
+}();
 
 /**
 Paints a display list into `grid` through a $(LREF GridCanvas) with `pageBg` as
@@ -48,9 +75,10 @@ $(REF paint, sparkles,ui,interp,immediate)) keeps the borrowed-`Grid` canvas
 the whole path stays `@safe` under dip1000.
 */
 void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
-    int originX = 0, int originY = 0, Rect clip = Rect.init)
+    int originX = 0, int originY = 0, Rect clip = Rect.init,
+    in TargetCapabilities caps = gridCapabilities)
 {
-    auto canvas = GridCanvas(&grid, pageBg, originX, originY);
+    auto canvas = GridCanvas(&grid, pageBg, originX, originY, caps);
     if (!clip.empty)
         canvas.pushClip(clip); // an outer viewport in canvas cell coordinates
     foreach (ref op; ops)
@@ -142,8 +170,12 @@ private void paintScrollbarCells(ref scope GridCanvas canvas, in DrawOp op)
             const p = vertical
                 ? Point(cross + across, op.rect.y + at)
                 : Point(op.rect.x + at, cross + across);
-            canvas.glyph(p, thumb ? op.barThumbGlyph : op.barTrackGlyph,
-                visual);
+            // Below `unicode` the thumb must still read against the track, so
+            // it takes the solid fill rather than a second stroke (`GLY2`).
+            const g = canvas.capabilities.unicode
+                ? (thumb ? op.barThumbGlyph : op.barTrackGlyph)
+                : (thumb ? '#' : vertical ? '|' : '-');
+            canvas.glyph(p, g, visual);
         }
     }
 }
@@ -160,6 +192,11 @@ struct GridCanvas
     RgbColor pageBg; /// blend base for translucent fills / unset backgrounds
     int originX = 0; /// grid column of cell x = 0 (place a laid-out subtree)
     int originY = 0; /// grid row of cell y = 0
+    /// What the target can show (`CAP1`): below `unicode` the chrome strokes
+    /// fold to ASCII, without `hyperlinks` a cell carries no link id, and
+    /// without `extendedUnderline` every underline is a straight one — each a
+    /// row of `sparkles.ui.degradation`'s report.
+    TargetCapabilities capabilities = gridCapabilities;
 
     /// The active clip stack in canvas cell coordinates (empty = unclipped).
     /// The display list pushes *effective* (pre-intersected) rects, but an
@@ -213,6 +250,15 @@ struct GridCanvas
         if (clips.length)
             clips = clips[0 .. $ - 1];
     }
+
+    /// A chrome glyph as this target can stroke it.
+    private dchar stroke(dchar g) const scope pure nothrow @nogc
+        => capabilities.unicode ? g : asciiStroke(g);
+
+    /// An underline style as this target can draw it.
+    private UnderlineStyle underlineOf(UnderlineStyle u) const scope pure nothrow @nogc
+        => capabilities.extendedUnderline || u == UnderlineStyle.none
+            ? u : UnderlineStyle.single;
 
     private ref auto cell(int x, int y) scope
         => (*grid)[cast(ushort)(originX + x), cast(ushort)(originY + y)];
@@ -310,7 +356,7 @@ struct GridCanvas
                 auto c = &cell(x, r.y);
                 auto st = c.style;
                 st.fg = Color.fromRgb(v.border.color);
-                c.setCodepoint('─', 1, st);
+                c.setCodepoint(stroke('─'), 1, st);
             }
     }
 
@@ -327,7 +373,7 @@ struct GridCanvas
             auto c = &cell(x, y);
             auto st = c.style;
             st.fg = fg;
-            c.setCodepoint(g, 1, st);
+            c.setCodepoint(stroke(g), 1, st);
         }
 
         const x1 = r.x + r.width - 1;
@@ -352,7 +398,7 @@ struct GridCanvas
     /// heavy `┃` for a border 2+ wide (the callout).
     private void barColumn(in Rect r, in Visual v) scope
     {
-        const g = v.border.width.left >= 2 ? '┃' : '│';
+        const g = stroke(v.border.width.left >= 2 ? '┃' : '│');
         foreach (y; r.y .. r.y + r.height)
             if (inBounds(r.x, y))
             {
@@ -371,7 +417,7 @@ struct GridCanvas
     {
         const bw = v.border.width;
         const x = left ? r.x : r.x + r.width - 1;
-        const g = accentGlyph(left ? bw.left : bw.right, left);
+        const g = stroke(accentGlyph(left ? bw.left : bw.right, left));
         foreach (y; r.y .. r.y + r.height)
             if (inBounds(x, y))
             {
@@ -395,7 +441,7 @@ struct GridCanvas
             if (inBounds(x, y))
             {
                 auto c = &cell(x, y);
-                c.style.underline = us;
+                c.style.underline = underlineOf(us);
                 c.style.underlineColor = Color.fromRgb(v.border.color);
             }
     }
@@ -418,7 +464,7 @@ struct GridCanvas
             auto c = &cell(x, y);
             auto st = c.style;
             st.fg = fg;
-            c.setCodepoint(g, 1, st);
+            c.setCodepoint(stroke(g), 1, st);
         }
 
         // The style's own dash run, from the cell grid's table rather than a
@@ -492,15 +538,16 @@ struct GridCanvas
         // strip's bottom border); one another op composited stays.
         if (v.underline != UnderlineStyle.none)
         {
-            st.underline = v.underline;
+            st.underline = underlineOf(v.underline);
             st.underlineColor = st.fg;
         }
         if (v.hasBg)
             st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
-        c.setCodepoint(cp, w, st, v.linkId);
+        const link = capabilities.hyperlinks ? v.linkId : 0;
+        c.setCodepoint(cp, w, st, link);
         // A wide glyph claims the next column as a zero-width continuation.
         if (w == 2 && inBounds(x + 1, y))
-            cell(x + 1, y).setCodepoint(' ', 0, st, v.linkId);
+            cell(x + 1, y).setCodepoint(' ', 0, st, link);
     }
 
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
@@ -515,8 +562,8 @@ struct GridCanvas
                 if (inBounds(x, y))
                 {
                     auto c = &cell(x, y);
-                    c.style.underline = style == LineStyle.wavy
-                        ? UnderlineStyle.curly : UnderlineStyle.single;
+                    c.style.underline = underlineOf(style == LineStyle.wavy
+                        ? UnderlineStyle.curly : UnderlineStyle.single);
                     c.style.underlineColor = Color.fromRgb(v.fg);
                 }
             return;
@@ -527,7 +574,7 @@ struct GridCanvas
         // glyph where an underline rides alongside it; that asymmetry is the
         // cell grid's, not this function's.
         const x = from.x;
-        const g = accentGlyph(1, left: true);
+        const g = stroke(accentGlyph(1, left: true));
         foreach (y; from.y .. to.y)
             if (inBounds(x, y))
             {
@@ -967,4 +1014,74 @@ static assert(isCanvas!GridCanvas);
     foreach (x; 0 .. 6)
         assert(g[cast(ushort) x, 1].style.underline == UnderlineStyle.single,
             "the rule covers its whole rect, last cell included");
+}
+
+@("tui_canvas.capabilities.painterDoesWhatTheReportSays")
+@safe unittest
+{
+    import sparkles.ui.canvas : BoxChrome, lineOp, Scrollbar, textRunOp;
+    import sparkles.ui.degradation : degradationsOf, Substitution;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    // `CAP6`'s other half: the report is a promise about the painter, so each
+    // row it claims at `baseline` is checked against the cells this canvas
+    // actually writes.
+    static immutable BoxChrome box = () {
+        BoxChrome c;
+        c.border.width = Insets(1, 1, 1, 1);
+        c.border.style = BorderStyle.dashed;
+        c.borderRadius = 4;
+        c.border.color = RgbColor(0x88, 0x88, 0x88);
+        return c;
+    }();
+    auto link = Visual(fg: RgbColor(0x40, 0x80, 0xff), linkId: 1,
+        underline: UnderlineStyle.curly);
+    Scrollbar bar;
+    bar.rect = Rect(9, 0, 1, 4);
+    bar.content = 8;
+    bar.viewport = 4;
+    bar.edge = RuleEdge.right;
+    bar.expandPercent = 100;
+    const DrawOp[4] ops = [
+        fillRectOp(Rect(0, 0, 6, 4), chrome: &box),
+        textRunOp(Rect(1, 1, 2, 1), "go", visual: link),
+        lineOp(Point(7, 0), Point(7, 3)),
+        DrawOp(bar),
+    ];
+
+    const caps = capabilitiesOf(Profile.baseline);
+    const report = degradationsOf(ops[], caps);
+    assert(report[Substitution.asciiBorder] == 2); // the box, the vertical line
+    assert(report[Substitution.radiusDropped] == 1);
+    assert(report[Substitution.asciiScrollbar] == 1);
+    assert(report[Substitution.linkAsText] == 1);
+    assert(report[Substitution.plainUnderline] == 1);
+
+    Grid g;
+    g.resize(10, 4);
+    paintGrid(g, RgbColor(0, 0, 0), ops[], caps: caps);
+
+    foreach (y; 0 .. 4)
+        foreach (x; 0 .. 10)
+        {
+            const c = g[cast(ushort) x, cast(ushort) y];
+            foreach (ch; c.grapheme)
+                assert(ch < 0x80, "a baseline frame paints only ASCII chrome");
+            assert(c.linkId == 0, "no hyperlink without `hyperlinks`");
+            assert(c.style.underline == UnderlineStyle.none
+                || c.style.underline == UnderlineStyle.single);
+        }
+    assert(g[0, 0].grapheme == "+" && g[5, 3].grapheme == "+", "square ASCII corners");
+    assert(g[1, 0].grapheme == "-" && g[0, 1].grapheme == "|");
+    assert(g[7, 1].grapheme == "|");
+    assert(g[1, 1].style.underline == UnderlineStyle.single);
+
+    // The same list at the grid's own reach keeps every glyph it asked for.
+    Grid u;
+    u.resize(10, 4);
+    paintGrid(u, RgbColor(0, 0, 0), ops[]);
+    assert(u[0, 0].grapheme == "╭" && u[1, 1].linkId == 1);
+    assert(u[1, 1].style.underline == UnderlineStyle.curly);
+    assert(degradationsOf(ops[], gridCapabilities)[Substitution.asciiBorder] == 0);
 }

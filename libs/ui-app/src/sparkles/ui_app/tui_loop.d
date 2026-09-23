@@ -192,7 +192,8 @@ struct TuiHost
         import sparkles.base.term_color : RgbColor;
         import sparkles.ui_tui.grid_canvas : GridCanvas;
 
-        return GridCanvas(&session.grid, RgbColor(0, 0, 0));
+        return GridCanvas(&session.grid, RgbColor(0, 0, 0),
+            capabilities: session.target);
     }
 }
 
@@ -244,7 +245,8 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         if (host.frameSkipped)
             return;
 
-        paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[]);
+        paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[],
+            caps: session.target);
         draw(host); // `HST13`: the application's own cells, before the diff
         session.present();
     }
