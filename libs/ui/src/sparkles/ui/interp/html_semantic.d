@@ -28,10 +28,33 @@ import std.range.primitives : isOutputRange, put;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : Palette, resolveSlot, Slot, Visual;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.tokens : TargetCapabilities;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.base.term_color : RgbColor;
 
 @safe:
+
+/**
+What the semantic HTML target declares (`CAP1`): narrower than the inline
+writer's $(REF htmlCapabilities, sparkles,ui,interp,html), because the slot
+stylesheet carries only colors — with their alpha — and one monospace face.
+Box chrome, text sizing and link targets arrive with the design system's
+generated stylesheet (`WEB1`–`WEB6`), which widens this declaration as it
+lands.
+*/
+enum TargetCapabilities semanticHtmlCapabilities = () {
+    import sparkles.base.term_color : ColorDepth;
+    import sparkles.input.capability : staticPointer;
+
+    TargetCapabilities c;
+    c.colorDepth = ColorDepth.trueColor;
+    c.unicode = true;
+    c.graphemeClusters = true;
+    c.subCellScroll = true;
+    c.alpha = true;
+    c.input = staticPointer;
+    return c;
+}();
 
 /**
 Writes the stylesheet: the structural base classes (`.spk`, `.spk-row`, …),

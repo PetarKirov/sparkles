@@ -27,6 +27,7 @@ import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.ui.tokens : TargetCapabilities;
 
 /// The idle scrollbar rail thickness for a cell extent, in device pixels.
 int railIdlePx(int cellExtent) @safe pure nothrow @nogc
@@ -150,6 +151,33 @@ TextStyle rlTextStyle(in Visual v) pure nothrow @nogc @safe
 }
 
 /**
+What the raylib window declares (`CAP1`) — constants, because a window needs
+no probing for what this canvas draws: every color, procedural box drawing and
+the bundled font's block elements, the bundled Nerd Font's icons, and the chrome
+a pixel target honours rather than projects — rounded rects, drop shadows,
+alpha. What it does not draw yet stays off: link targets, styled underlines (a
+`TextStyle` underline is straight), a second face or a scaled run (the grid
+keeps mono at 1em), and sub-cell scrolling (design-system M9 turns those on).
+Input is the mouse `RaylibEvents` synthesizes.
+*/
+enum TargetCapabilities raylibCapabilities = () {
+    import sparkles.base.term_caps : BlockTier;
+    import sparkles.base.term_color : ColorDepth;
+    import sparkles.input.capability : mousePointer;
+
+    TargetCapabilities c;
+    c.colorDepth = ColorDepth.trueColor;
+    c.unicode = true;
+    c.blocks = BlockTier.half;
+    c.nerdFont = true;
+    c.radius = true;
+    c.shadow = true;
+    c.alpha = true;
+    c.input = mousePointer;
+    return c;
+}();
+
+/**
 The raylib canvas: a `sparkles:ui` drawing backend over a `FontSet`. Cell
 coordinates are scaled to pixels through `cellW`/`cellH` and offset by
 `originX`/`originY` (move the origin between `paint` calls to place laid-out
@@ -165,6 +193,9 @@ struct RaylibCanvas
     int cellH;                 /// one cell's pixel height
     float originX = 0;         /// pixel x of cell column 0
     float originY = 0;         /// pixel y of cell row 0
+
+    /// This target's declaration (`CAP1`): $(LREF raylibCapabilities).
+    enum TargetCapabilities capabilities = raylibCapabilities;
 
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
@@ -720,4 +751,21 @@ unittest
     // Borders wider than the box do not invert it into negative geometry.
     foreach (e; borderEdges(0, 0, 2, 2, Insets.all(5)))
         assert(!e.empty || e.w <= 0 || e.h <= 0);
+}
+
+@("uiRaylib.capabilities.aWindowHonoursBoxChrome")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.tokens : capabilitiesOf, declaredCapabilities, Profile,
+        subsetOf;
+
+    // `CAP1`: the canvas declares, and the toolkit reads it by introspection.
+    static assert(declaredCapabilities(RaylibCanvas.init) == raylibCapabilities);
+    const c = raylibCapabilities;
+    assert(c.radius && c.shadow && c.alpha, "the chrome a pixel target honours");
+    assert(c.nerdFont, "the bundle ships FiraCode Nerd Font Mono");
+    // Not a terminal profile: it draws what no terminal can, and lacks OSC 8.
+    assert(!subsetOf(c, capabilitiesOf(Profile.full)));
+    assert(!c.hyperlinks && !c.subCellScroll, "M9's, not yet honoured");
 }
