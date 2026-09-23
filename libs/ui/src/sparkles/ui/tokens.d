@@ -8,18 +8,20 @@ declaration and its documented profiles
 and the border projection onto a cell target
 ([`GLY2`](../../../../../docs/specs/design-system/glyphs.md)).
 
-Nothing here is wired into $(REF Slot, sparkles,ui,style) resolution or the
-backends yet — that is the plan's M1/M2. What this module fixes now is the
-$(I vocabulary): the names, the precedence and the projection tables, each with
-the test that makes its row of the spec falsifiable.
+This module is the $(I vocabulary): the names, the precedence and the
+projection tables, each with the test that makes its row of the spec
+falsifiable. Slot resolution consumes the paths and states
+($(MREF sparkles,ui,style)); the backends declare the capabilities, and
+$(MREF sparkles,ui,degradation) reports what a declaration cost a frame.
 */
 module sparkles.ui.tokens;
 
 import std.traits : EnumMembers;
 
-import sparkles.base.term_caps : BlockTier, ImageProtocol, OutputCapabilities;
+import sparkles.base.term_caps : BlockTier, ImageProtocol, OutputCapabilities, TermCaps;
 import sparkles.base.term_color : ColorDepth;
-import sparkles.input.capability : cellPointer, InputCapabilities, staticPointer;
+import sparkles.input.capability : cellPointer, fromTerminal, InputCapabilities,
+    staticPointer;
 import sparkles.input.tier : InteractionTier;
 import sparkles.ui.style : BorderStyle, BoxBorder, InteractionState, Slot;
 import sparkles.ui.widget : WidgetTree;
@@ -330,6 +332,28 @@ TargetCapabilities capabilitiesOf(Profile p) @safe pure nothrow @nogc
 }
 
 /**
+A terminal's declaration from one snapshot (`CAP1`): its output half verbatim,
+its input half through `fromTerminal`. The target-only axes stay off — a cell
+grid scrolls by whole cells, draws one face, and projects radius, shadow and
+alpha rather than honouring them.
+*/
+TargetCapabilities terminalCapabilities(in TermCaps t) @safe pure nothrow @nogc
+    => TargetCapabilities(output: t.output, input: fromTerminal(t));
+
+/**
+What `target` declares (`CAP1`), by introspection: its `capabilities` member
+when it has one of type $(LREF TargetCapabilities), else the conservative
+`.init` — a target that has not thought about the question claims nothing.
+*/
+TargetCapabilities declaredCapabilities(T)(auto ref const T target)
+{
+    static if (is(typeof(target.capabilities) : const TargetCapabilities))
+        return target.capabilities;
+    else
+        return TargetCapabilities.init;
+}
+
+/**
 `true` iff `a` claims nothing `b` does not (`CAP9`): every `bool` implies,
 every ordered enum or count is `<=`, an image protocol is a subset only of
 itself or of `none`, and nested capability structs are compared field-wise.
@@ -524,6 +548,40 @@ unittest
     a.images = ImageProtocol.none;
     b.images = ImageProtocol.iterm2;
     assert(subsetOf(a, b));
+}
+
+@("ui.tokens.terminalCapabilities.bothHalvesFromOneSnapshot")
+@safe pure nothrow @nogc
+unittest
+{
+    TermCaps t;
+    t.colorDepth = ColorDepth.ansi256;
+    t.unicode = true;
+    t.hyperlinks = true;
+    t.mouseSgr = true;
+    t.anyMotion = true;
+    t.bracketedPaste = true;
+    const c = terminalCapabilities(t);
+    assert(c.output == t.output);
+    assert(c.input == fromTerminal(t));
+    assert(c.input.hover && c.input.pasteEvents && !c.input.focusEvents);
+    // The target-only axes are a window's, never a terminal's.
+    assert(!c.subCellScroll && !c.proportionalText && !c.radius && !c.shadow && !c.alpha);
+    // An unprobed snapshot declares the baseline exactly (`CAP8`).
+    assert(terminalCapabilities(TermCaps.init) == capabilitiesOf(Profile.baseline));
+}
+
+@("ui.tokens.declaredCapabilities.byIntrospection")
+@safe pure nothrow @nogc
+unittest
+{
+    static struct Silent {}
+    static struct Declares { TargetCapabilities capabilities; }
+
+    Declares d;
+    d.capabilities.unicode = true;
+    assert(declaredCapabilities(Silent()) == TargetCapabilities.init);
+    assert(declaredCapabilities(d).unicode);
 }
 
 @("ui.tokens.projectBorder.table")
