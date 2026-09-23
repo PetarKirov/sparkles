@@ -18,7 +18,8 @@ import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
 import gallery : Gallery;
 import registry : pageIndexOf, pages;
-import render : renderAnsi, renderPlain, RenderRequest;
+import render : renderAnsi, renderDegradations, renderPlain, RenderRequest;
+import sparkles.ui.tokens : Profile;
 import state : GalleryState, themeNames;
 
 /**
@@ -52,6 +53,18 @@ struct Params
         "As --render, but glyphs only with no colour — the form the golden "
         ~ "snapshots compare against."))
     bool renderPlain;
+
+    @(Option("profile", description:
+        "With --render: paint for a documented capability profile — "
+        ~ "baseline (a pipe: no color, ASCII chrome), enhanced (256 colors, "
+        ~ "Unicode, links) or full (the default)."))
+    Profile profile = Profile.full;
+
+    @(Option("degradations", description:
+        "With --render: print what the frame gave up to its --profile "
+        ~ "instead of the frame — one line per substitution, none when it "
+        ~ "rendered as authored."))
+    bool degradations;
 
     @(Option("keys|k", description:
         "With --render: keystrokes to deliver before the frame is taken, "
@@ -107,8 +120,10 @@ int main(string[] args)
             keys: cli.keys,
             width: cli.windowWidth,
             height: cli.windowHeight,
+            profile: cli.profile,
         );
-        write(cli.renderPlain ? renderPlain(req) : renderAnsi(req));
+        write(cli.degradations ? renderDegradations(req)
+            : cli.renderPlain ? renderPlain(req) : renderAnsi(req));
         return 0;
     }
 
