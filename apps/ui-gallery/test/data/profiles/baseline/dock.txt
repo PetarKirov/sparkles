@@ -15,9 +15,9 @@
    Scrolling         | |                   │the thing being read                             | #
    State             | |                   │                                                 | #
    Split             | |                   │                                                 | #
- ▸ Dock              | |                   │                                                 | |
+ · Dock              | |                   │                                                 | |
    Terminal          | |                   │                                                 | |
-                     | |                   │                                                 | |
+   Overlays          | |                   │                                                 | |
                      | |                   │                                                 | |
                      | |                   │                                                 | |
                      | |                                                                     | |
@@ -29,4 +29,4 @@
                      | | panes            2 visible of 3                                     | |
                      | | dividers         1                                                  | |
                      |
- pageh narrol wid, prev . next f focus nexw dock e dock n dock ns dock sor reset layo? keys   q
+ pagh narrol wid, prev . next f focus nexw dock e dock n dock nos dock sor reset layo? keys   q

@@ -14,10 +14,10 @@
    Table             | |                         │                                           | #
    Scrolling         | |                         │                                           | #
    State             | +---------------------------------------------------------------------+ #
- ▸ Split             |                                                                         #
+ · Split             |                                                                         #
    Dock              | +---------------------------------------------------------------------+ #
    Terminal          | | the machine                                                         | #
-                     | | size             24                                                 | #
+   Overlays          | | size             24                                                 | #
                      | | dragging         no                                                 | #
                      | | bounds           10 … 60                                            | #
                      | | pointer shape    default_                                           | #
@@ -29,4 +29,4 @@
                      | back to an arrow the instant you move.                                  |
                      |                                                                         |
                      |
- pages ← narrower → wider                                                       ? keys   q quit
+ page ← narrower → wider                                                        ? keys   q quit

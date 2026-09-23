@@ -329,7 +329,7 @@ uint viewLantern(B)(ref Builder b, ref LabelArena arena,
         children: rows[].dup,
     ));
     return b.add(Widget(
-        kind: WidgetKind.popup,
+        kind: WidgetKind.panel,
         children: [stack],
         slot: Slot.surface,
         paintBackground: true,

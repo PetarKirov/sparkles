@@ -1,0 +1,32 @@
+ sparkles:ui anchored surfaces, four ways                                           tokyo-night
+   Welcome           | Overlays · anchored surfaces, four ways                                 #
+   Primitives        |                                                                         #
+   Layout            |                                                                         #
+   Tracks            | A context menu, a tooltip, a dropdown and a hovercard are not four      #
+   Text              | widget types. They are four policies over one record, one anchor and    #
+   Themes            | one placement solve — so each specimen below prints the whole decision  #
+   Slots             | it resolved to, including the side it asked for beside the side it got. #
+   Decoration        |                                                                         #
+   Grid              | +---------------------------------------------------------------------+ #
+   Components        | | right-click anywhere in this box                                    | #
+   Tree              | |                                                                     | #
+   Property tree     | |                                                                     | #
+   Table             | |                                                                     | #
+   Scrolling         | | a point anchor is materialised 1×1, never 0×0 (ANC4)                | #
+   State             | +---------------------------------------------------------------------+ #
+   Split             |                                                                         #
+   Dock              | +---------------------------------------------------------------------+ #
+   Terminal          | | hover a chip · the caret follows the resolved edge                  | #
+ · Overlays          | | below    above    left    right                                     | #
+                     | | one arrowCellOf, four backends — and it is suppressed, not clamped ont#
+                     | +---------------------------------------------------------------------+ |
+                     |                                                                         |
+                     | +---------------------------------------------------------------------+ |
+                     | | a dropdown that caps rather than flips                              | |
+                     | | [ theme ▾ ]                                                         | |
+                     | | Enter or click opens · ↑↓ moves · Enter commits · Esc closes        | |
+                     | | committed      nord                                                 | |
+                     | +---------------------------------------------------------------------+ |
+                     |                                                                         |
+                     |
+ page o open/close the dropdown                                                 ? keys   q quit

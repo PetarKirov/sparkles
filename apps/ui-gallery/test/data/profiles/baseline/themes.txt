@@ -4,7 +4,7 @@
    Layout            |                                                                         #
    Tracks            | A theme is one runtime-swappable value with four channels: syntax       #
    Text              | rules, the slot palette, scalar metrics, and glyphs. Press ] and watch  #
- ▸ Themes            | the whole window follow — nothing here is a preview pane.               #
+ · Themes            | the whole window follow — nothing here is a preview pane.               #
    Slots             |                                                                         #
    Decoration        | selected tokyo-night (8 of 36) dark                                     #
    Grid              |                                                                         #
@@ -17,7 +17,7 @@
    Split             | |   github-light                                                      | #
    Dock              | |   github-dark-dimmed                                                | #
    Terminal          | | ▸ tokyo-night                                                       | #
-                     | |   solarized-dark                                                    | #
+   Overlays          | |   solarized-dark                                                    | #
                      | |   solarized-light                                                   | #
                      | |   catppuccin-mocha                                                  | |
                      | |   catppuccin-macchiato                                              | |
@@ -29,4 +29,4 @@
                      | | error warn info muted code docs                                     | |
                      | |                                                                     | |
                      |
- pages                                                                          ? keys   q quit
+ page                                                                           ? keys   q quit

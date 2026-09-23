@@ -13,6 +13,7 @@ module registry;
 
 import sparkles.input : PointerEvent;
 import sparkles.ui.layout : Frame;
+import sparkles.ui.overlay.arena : OverlayArena;
 import sparkles.ui.widget : Builder, WidgetTree;
 
 import keymap : GalleryCommand, GalleryScope;
@@ -58,6 +59,9 @@ import pages.tracks_page : tracksOnCommand = handleCommand,
 import pages.welcome : welcomeView = view;
 import pages.grid_page : gridOnCommand = handleCommand,
     gridView = view;
+import pages.overlays_page : overlaysArena = overlaysOf,
+    overlaysOnCommand = handleCommand, overlaysOnPointer = handlePointer,
+    overlaysView = view;
 
 @safe:
 
@@ -112,6 +116,17 @@ struct Page
     */
     bool function(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
         in Frame[] frames) @safe onPointer;
+
+    /**
+    The page's anchored overlays for this frame, or `null`.
+
+    Called after `view` with the tree it just built, because a record must name
+    the node it emits and only the tree knows the indices — a page finds its
+    own nodes by `Widget.key`, a name it chose. Rebuilt every frame from the
+    page's state, so openness is membership and no handle outlives a frame
+    (`LYR1`).
+    */
+    OverlayArena function(in GalleryState s, in WidgetTree tree) @safe overlays;
 }
 
 /**
@@ -156,6 +171,9 @@ static immutable Page[] pages = [
     Page("Terminal", "a shell as a widget", &terminalView,
         GalleryScope.pageTerminal, &terminalOnCommand, &terminalOnActivate,
         &terminalOnPointer),
+    Page("Overlays", "anchored surfaces, four ways", &overlaysView,
+        GalleryScope.pageOverlays, &overlaysOnCommand, null,
+        &overlaysOnPointer, &overlaysArena),
 ];
 
 /// The Property page's index — the shell needs it by name: its live filter

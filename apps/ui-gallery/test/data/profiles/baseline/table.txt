@@ -11,13 +11,13 @@
    Components        |                                                                         #
    Tree              | +---------------------------------------------------------------------+ #
    Property tree     | | widget view — buildTableWidgets                                     | #
- ▸ Table             | | preset rounded   row rules    stub col                              | #
+ · Table             | | preset rounded   row rules    stub col                              | #
    Scrolling         | |                                                                     | |
    State             | | ╭──────────────────────────────╮                                    | |
    Split             | | │          Q3 restock          │                                    | |
    Dock              | | ├────────┬────────┬────────────┤                                    | |
    Terminal          | | │ item   │  price │ notes      │                                    | |
-                     | | ┝━━━━━━━━┿━━━━━━━━┿━━━━━━━━━━━━┥                                    | |
+   Overlays          | | ┝━━━━━━━━┿━━━━━━━━┿━━━━━━━━━━━━┥                                    | |
                      | | │ widget │  12.5  │ steady     │                                    | |
                      | | ├────────┼────────┼────────────┤                                    | |
                      | | │ gadget │   3.75 │ bulk order │                                    | |
@@ -29,4 +29,4 @@
                      | +---------------------------------------------------------------------+ |
                      | | string view — drawTable, the same bytes                             | |
                      |
- pagesg glyphsr row ruless stub col< cols left> cols righ, rows up . rows down   ? keys   q quit
+ pageg glyphsr row ruless stub col< cols left> cols right, rows up . rows down   ? keys   q quit

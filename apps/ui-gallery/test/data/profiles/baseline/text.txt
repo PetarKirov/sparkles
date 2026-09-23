@@ -3,7 +3,7 @@
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | Wrapped lines are slices of the input, never copies — the layout pass   #
- ▸ Text              | reports where the breaks go and the painter draws the same bytes.       #
+ · Text              | reports where the breaks go and the painter draws the same bytes.       #
    Themes            |                                                                         #
    Slots             | column 34 cells hang 2                                                  #
    Decoration        |                                                                         #
@@ -17,7 +17,7 @@
    Split             | | A widget names a semantic slot,                                     | #
    Dock              | | never a concrete colour, and the                                    | |
    Terminal          | | palette resolves it while the                                       | |
-                     | | display list is built.                                              | |
+   Overlays          | | display list is built.                                              | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
@@ -29,4 +29,4 @@
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      |
- pages + wider - narrower h hang indent                                         ? keys   q quit
+ page + wider - narrower h hang indent                                          ? keys   q quit

@@ -6,7 +6,7 @@
    Text              | slot the border colour comes from, and the palette resolves it with     #
    Themes            | everything else.                                                        #
    Slots             |                                                                         #
- ▸ Decoration        | +---------------------------------------------------------------------+ #
+ · Decoration        | +---------------------------------------------------------------------+ #
    Grid              | | borders                                                             | #
    Components        | | solid          +-----------+                                        | #
    Tree              | |                | content   |                                        | |
@@ -17,7 +17,7 @@
    Split             | |                +-----------+                                        | |
    Dock              | |                                                                     | |
    Terminal          | | dotted         +...........+                                        | |
-                     | |                : content   :                                        | |
+   Overlays          | |                : content   :                                        | |
                      | |                +...........+                                        | |
                      | |                                                                     | |
                      | | dashed         +-----------+                                        | |
@@ -29,4 +29,4 @@
                      | |                +-----------+                                        | |
                      | |                                                                     | |
                      |
- pages                                                                          ? keys   q quit
+ page                                                                           ? keys   q quit
