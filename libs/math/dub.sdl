@@ -10,8 +10,6 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
 
-dependency "sparkles:core-cli" version="*"
-
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"

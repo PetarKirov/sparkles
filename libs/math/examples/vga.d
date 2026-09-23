@@ -1,14 +1,21 @@
 #!/usr/bin/env dub
 
 /+ dub.sdl:
-name "vga"
-dependency "sparkles:math" version="*"
-targetPath "build"
+    name "vga"
+    dependency "sparkles:math" path="../../.."
+    targetPath "build"
+
+    // The build this repo ships nix artifacts with: optimised, assertions
+    // live, `debug {}` blocks out. Neither `debug` (which turns those blocks
+    // on) nor `release` (which deletes every assert expression).
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
 +/
 
 import std.stdio : writeln, writefln;
 
-import sparkles.core_cli.prettyprint : prettyPrint;
+import sparkles.base.prettyprint : prettyPrint;
 import sparkles.math.vga;
 
 void main()

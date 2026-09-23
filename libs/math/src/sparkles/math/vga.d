@@ -1280,7 +1280,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     /// Writes coefficients as `a + b*e1 + c*e12`.
     void toString(W)(scope ref W writer) const
     {
-        import sparkles.core_cli.text_writers : writeValue;
+        import sparkles.base.text.writers : writeValue;
         import std.range.primitives : put;
 
         bool wroteTerm;
@@ -1350,7 +1350,7 @@ if (isMultivector!T)
 /// Serializes a blade mask like `0b101` as the index sequence `13`.
 public void writeBladeIndices(Writer)(ref Writer w, size_t mask)
 {
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.base.text.writers : writeInteger;
 
     size_t currentMask = mask;
     size_t basisIndex = 0;
@@ -1778,10 +1778,10 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-    import sparkles.core_cli.text_writers : writeValue;
+    import sparkles.base.buffer : UniqueBuffer;
+    import sparkles.base.text.writers : writeValue;
 
-    SmallBuffer!(char, 64) buf;
+    UniqueBuffer!(char, 64) buf;
 
     auto mv = Basis!(int, 3).e12;
     // static assert(hasNogcOutputRangeToString!(typeof(mv)));
