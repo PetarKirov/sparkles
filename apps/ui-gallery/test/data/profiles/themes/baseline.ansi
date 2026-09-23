@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mthirty-six built-ins, live[0m                                             [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mThemes * thirty-six built-ins[0m                                           [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mA theme is one runtime-swappable value with four channels: syntax[0m       [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mrules, the slot palette, scalar metrics, and glyphs. Press ] and watch[0m  [0m#[0m
+[0m [0m> [0;1mThemes[0m           [0m [0m|[0m [0mthe whole window follow - nothing here is a preview pane.[0m               [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m [0mselected[0m [0;1mtokyo-night[0m [0m(8 of 36)[0m [0mdark[0m                                     [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m                                                                         [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0;1mthe catalog[0m                                                         [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m  dracula[0m                                                           [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0m  nord[0m                                                              [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m  monokai[0m                                                           [0m|[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0m  github-dark[0m                                                       [0m|[0m [0m#[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m  github-light[0m                                                      [0m|[0m [0m#[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0m  github-dark-dimmed[0m                                                [0m|[0m [0m#[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m> [0;1mtokyo-night[0m                                                      [0m [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0m  solarized-dark[0m                                                    [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0m  solarized-light[0m                                                   [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0m  catppuccin-mocha[0m                                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m  catppuccin-macchiato[0m                                              [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m  catppuccin-frappe[0m                                                 [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1ma scene, in this theme[0m                                              [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0merror[0m [0mwarn[0m [0minfo[0m [0mmuted[0m code [0mdocs[0m                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0m                                                                          [0m? keys   q quit[0m [0m

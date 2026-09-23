@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0ma shell as a widget[0m                                                    [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mTerminal * a shell as a widget[0m                                           [0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                          [0m
+[0m [0m  Layout[0m            [0m|[0m                                                                          [0m
+[0m [0m  Tracks[0m            [0m|[0m [0m        [0m+ new[0m                [0mx close[0m               [0mhold: fail[0m        [0m    [0m
+[0m [0m  Text[0m              [0m|[0m                                                                          [0m
+[0m [0m  Themes[0m            [0m|[0m [0m+-------------------------------------------------------------------+[0m    [0m
+[0m [0m  Slots[0m             [0m|[0m [0m|[0m [0;1mno terminal yet[0m                                                   [0m|[0m    [0m
+[0m [0m  Decoration[0m        [0m|[0m [0m|[0m [0mPress n (or + new) to spawn your shell on a pty. The emulator is[0m  [0m|[0m    [0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0msparkles:terminal-view - libghostty under a component - and this[0m  [0m|[0m    [0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0mpane is its first embedding: sized by layout, painted through the[0m [0m|[0m    [0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mhost's draw phase, keyed like any other widget.[0m                   [0m|[0m    [0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m                                                                   [0m|[0m    [0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mThe keyboard is complete, including Ctrl chords; the wheel and[0m    [0m|[0m    [0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mShift+PgUp/PgDn walk the scrollback. Mouse inside the pane[0m        [0m|[0m    [0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0m(selection, links) waits on the mouse-event conversion.[0m           [0m|[0m    [0m
+[0m [0m  Split[0m             [0m|[0m [0m+-------------------------------------------------------------------+[0m    [0m
+[0m [0m  Dock[0m              [0m|[0m                                                                          [0m
+[0m [0m> [0;1mTerminal[0m         [0m [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0mn new shelx close shelh prev tabl next tab[0m [0me keep exited< focus the shell[0m  [0m? keys   q quit[0m

@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mpanes as a value[0m                                                       [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mDock * panes as a value[0m                                                 [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mThe arrangement is a flat arena of splits, tabbed groups and pane[0m       [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mleaves. Everything below is derived from it: the rects, the tab strips,[0m [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mthe reserved header rows, and where a pointer event goes. Nothing here[0m  [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0mkeeps a second copy of any of that.[0m                                     [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0;1mthe arrangement[0m                                                     [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0mexplorer[0m          [0m|[0m [0;1mdocument[0m [0m [0mnotes[0m [0m                               [0m [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0m18 cells          [0m|[0;1mdocument[0m                                        [0m [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0ma file tree, say[0m  [0m|[0mflexes                                          [0m [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0m                  [0m|[0mthe thing being read[0m                            [0m [0m|[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m#[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m#[0m
+[0m [0m> [0;1mDock[0m             [0m [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0m                  [0m|[0m                                                [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m                    [0m                                                [0m [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m                                                                         [0m|[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1mthe container[0m                                                       [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mfocused[0m          [0mdocument[0m                                           [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mpanes[0m            2 visible of 3                                     [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mdividers[0m         1                                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpage[0mh narrol wid, prev . next f focus nexw dock e dock n dock ns dock sor reset layo? keys   q [0m

@@ -1,0 +1,32 @@
+[0m [0;1msparkles:ui[0m [0mwhat this build is[0m                                                     [0mtokyo-night[0m [0m
+[0m [0m> [0;1mWelcome[0m          [0m [0m|[0m [0;1msparkles:ui - the catalog[0m                                               [0m#[0m
+[0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
+[0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mEvery page below is built from the same widget tree, laid out by the[0m    [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0msame engine and painted through the same display list - in a terminal[0m   [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mand in a window. Where the two differ, the difference is the finding.[0m   [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mthis build[0m                                                          [0m|[0m [0m#[0m
+[0m [0m  Components[0m        [0m|[0m [0m|[0m [0mbackend[0m            tui                                              [0m|[0m [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m|[0m [0msurface[0m            96 x 32 cells                                    [0m|[0m [0m#[0m
+[0m [0m  Property tree[0m     [0m|[0m [0m|[0m [0mtheme[0m              tokyo-night                                      [0m|[0m [0m#[0m
+[0m [0m  Table[0m             [0m|[0m [0m|[0m [0mtier served[0m        1 * interactive (keys, pointer, wheel)           [0m|[0m [0m#[0m
+[0m [0m  Scrolling[0m         [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  State[0m             [0m|[0m                                                                         [0m#[0m
+[0m [0m  Split[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m [0m  Dock[0m              [0m|[0m [0m|[0m [0;1minput capabilities[0m                                                  [0m|[0m [0m#[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0mhover[0m              [0m [0;1myes[0m [0m                                            [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0msub-cell pointer[0m   [0m [0mno[0m [0m                                             [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0mkey release[0m        [0m [0mno[0m [0m                                             [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0mmulti-pointer[0m      [0m [0mno[0m [0m                                             [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m                     [0m|[0m                                                                         [0m#[0m
+[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0;1mkeys[0m                                                                [0m|[0m [0m#[0m
+[0m                     [0m|[0m [0m|[0m [0;1m^ v / j k[0m [0mmove within the focused region[0m                            [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1mTab[0m [0msidebar = page[0m                                                  [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1mEnter[0m [0mopen the selected page[0m                                        [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0;1m[ ][0m [0mprevious / next theme[0m                                           [0m|[0m [0m|[0m
+[0m                     [0m|[0m                                                                          [0m
+[0m [0;1mpages[0m                                                                          [0m? keys   q quit[0m [0m

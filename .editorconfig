@@ -46,10 +46,13 @@ indent_size = unset
 insert_final_newline = unset
 trim_trailing_whitespace = unset
 
-# ui-gallery's per-profile render goldens: golden columns are layout.
+# ui-gallery's per-profile render goldens: byte-exact frames (ANSI fences
+# carry escape sequences; golden columns are layout; a report can be empty).
 [apps/ui-gallery/test/data/profiles/**]
 indent_style = unset
 indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
 
 # Exact upstream DUB recipe snapshot; preserve its original tab indentation.
 [libs/wired/src/sparkles/wired/sdl/fixtures/*.snapshot.sdl]
