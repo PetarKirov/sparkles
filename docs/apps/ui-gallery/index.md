@@ -149,6 +149,18 @@ window previewing `enhanced` folds its colors to 256, projects its glyphs, and
 squares its corners, and a terminal previewing `baseline` emits no color and no
 non-ASCII byte at all.
 
+`--emulator` previews a measured terminal instead — `kitty`, `ghostty`,
+`wezterm`, `iterm2`, `alacritty`, `xterm`, `apple-terminal` or `tmux`:
+
+```bash
+dub run :ui-gallery -- --tui --emulator tmux     # what tmux answered, and no more
+```
+
+The preset is fixed for the run, since no emulator is simply "narrower" than
+another; `}` and `{` then step the profile inside it, and the header names both
+(`tokyo-night · tmux · baseline`). With `--render` the flag paints the one
+frame the same way.
+
 ### Rendering for a capability profile
 
 ```bash

@@ -20,7 +20,7 @@ import gallery : Gallery;
 import registry : pageIndexOf, pages;
 import render : renderAnsi, renderDegradations, renderPlain, RenderRequest;
 import sparkles.ui.tokens : Profile;
-import state : GalleryState, ProfileChoice, profileOf, themeNames;
+import state : EmulatorChoice, GalleryState, ProfileChoice, profileOf, themeNames;
 
 /**
 The gallery's command line.
@@ -61,6 +61,14 @@ struct Params
         ~ "default). Live, it is the widest profile the } and { keys switch "
         ~ "between."))
     ProfileChoice profile;
+
+    @(Option("emulator", description:
+        "Paint as a measured terminal emulator would show it — xterm, "
+        ~ "apple-terminal, iterm2, alacritty, wezterm, kitty, ghostty or tmux "
+        ~ "— from the replies it gave the capability battery; what the battery "
+        ~ "cannot ask stays off. Met with --profile, and fixed for a live run "
+        ~ "while } and { step the profile within it."))
+    EmulatorChoice emulator;
 
     @(Option("degradations", description:
         "With --render: print what the frame gave up to its --profile "
@@ -126,6 +134,7 @@ int main(string[] args)
             // reach, which is exactly `full`.
             profile: cli.profile == ProfileChoice.native ? Profile.full
                 : profileOf(cli.profile),
+            emulator: cli.emulator,
         );
         write(cli.degradations ? renderDegradations(req)
             : cli.renderPlain ? renderPlain(req) : renderAnsi(req));
@@ -174,6 +183,7 @@ int main(string[] args)
         themeIndex: themeIndexOf(cli.theme),
         profileCeiling: cli.profile,
         profile: cli.profile,
+        emulator: cli.emulator,
         termTabGlyphs: cli.termTabGlyphs,
     ));
     // A real run may fork shells; the recorded tests and --render, which

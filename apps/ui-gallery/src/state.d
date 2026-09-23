@@ -13,8 +13,11 @@ page grows.
 */
 module state;
 
-import sparkles.ui.tokens : Profile;
-import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
+import sparkles.base.term_color : ColorDepth;
+import sparkles.ui.emulators : capabilitiesOf, Emulator;
+import sparkles.ui.tokens : capabilitiesOf, meet, Profile, TargetCapabilities;
+import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
+    wireNames;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
@@ -319,6 +322,57 @@ in (c != ProfileChoice.native)
 alias profileChoiceNames = wireNames!(AnyFormat, ProfileChoice,
     resolveCaseStyle!(AnyFormat, ProfileChoice));
 
+/**
+Which measured emulator the frame previews (`CAP10`), if any: `none`, or one
+member per `sparkles.ui.emulators.Emulator`, by name. Unlike the profile it is
+fixed for the run — presets are a partial order, so there is no "next" one to
+step to — and the profile switch narrows within it.
+*/
+mixin(() {
+    string s = "@WireCase(CaseStyle.kebabCase)\nenum EmulatorChoice : ubyte { none";
+    foreach (m; __traits(allMembers, Emulator))
+        s ~= ", " ~ m;
+    return s ~ " }";
+}());
+
+/// The preset a choice names — `none` names none.
+Emulator emulatorOf(EmulatorChoice c) @safe pure nothrow @nogc
+in (c != EmulatorChoice.none)
+    => cast(Emulator)(c - 1);
+
+/// The kebab-case names the header and the command line spell presets with.
+alias emulatorChoiceNames = wireNames!(AnyFormat, EmulatorChoice,
+    resolveCaseStyle!(AnyFormat, EmulatorChoice));
+
+/**
+What a frame is painted for at profile `p` inside preset `e` — the two met,
+so each can only take away from the other.
+*/
+TargetCapabilities narrowingOf(Profile p, EmulatorChoice e) @safe pure nothrow @nogc
+    => e == EmulatorChoice.none ? capabilitiesOf(p)
+        : meet(capabilitiesOf(p), capabilitiesOf(emulatorOf(e)));
+
+/// Ditto, for the live choice: `native` is the preset alone. `native` with no
+/// preset is no narrowing at all, and has no answer here.
+TargetCapabilities narrowingOf(ProfileChoice p, EmulatorChoice e) @safe pure nothrow @nogc
+in (p != ProfileChoice.native || e != EmulatorChoice.none)
+    => p == ProfileChoice.native ? capabilitiesOf(emulatorOf(e))
+        : narrowingOf(profileOf(p), e);
+
+@("ui_gallery.state.emulatorChoiceMirrorsEmulator")
+@safe pure nothrow @nogc unittest
+{
+    static foreach (m; __traits(allMembers, Emulator))
+        assert(emulatorOf(__traits(getMember, EmulatorChoice, m))
+            == __traits(getMember, Emulator, m));
+    assert(emulatorChoiceNames[EmulatorChoice.appleTerminal] == "apple-terminal");
+    // The profile only takes away from the preset.
+    const kitty = narrowingOf(ProfileChoice.native, EmulatorChoice.kitty);
+    const kittyEnhanced = narrowingOf(ProfileChoice.enhanced, EmulatorChoice.kitty);
+    assert(kitty.colorDepth == ColorDepth.trueColor);
+    assert(kittyEnhanced.colorDepth == ColorDepth.ansi256 && !kittyEnhanced.hyperlinks);
+}
+
 /// The whole application, as one value.
 struct GalleryState
 {
@@ -341,6 +395,8 @@ struct GalleryState
     ProfileChoice profileCeiling;
     /// What the frame is painted for now; never wider than the ceiling.
     ProfileChoice profile;
+    /// The measured emulator previewed (`--emulator`), fixed for the run.
+    EmulatorChoice emulator;
 
     // ── shared machines ─────────────────────────────────────────────────────
     FocusState focus;    ///
