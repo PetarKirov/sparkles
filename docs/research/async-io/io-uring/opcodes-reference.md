@@ -6,11 +6,12 @@ A complete lookup table for the `io_uring` UABI: every `IORING_OP_*` opcode, eve
 
 The interface tables below are transcribed from a specific source snapshot:
 
-| Source                                               | Version / commit                                    | Repo-relative path                    |
-| ---------------------------------------------------- | --------------------------------------------------- | ------------------------------------- |
-| Kernel UABI header (all enums/flags)                 | Linux **v7.1-rc6**                                  | `linux/include/uapi/linux/io_uring.h` |
-| Kernel opcode dispatch table (handler/attrs)         | Linux **v7.1-rc6**                                  | `linux/io_uring/opdef.c`              |
-| liburing user-space helpers (`prep_*`, `register_*`) | liburing **2.15-dev** (`40999f52`, post-`2.14` tag) | `liburing/src/include/liburing.h`     |
+| Source                                               | Version / commit                                    | Repo-relative path                                                 |
+| ---------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ |
+| Kernel UABI header (opcode/flag enums)               | Linux **v7.3-rc4** (`93f51579e7df`)                 | `linux/include/uapi/linux/io_uring.h` (byte-identical to v7.1-rc6) |
+| Split UAPI (`zcrx`, `query`, `bpf_filter`)           | Linux **v7.3-rc4**                                  | `linux/include/uapi/linux/io_uring/{zcrx,query,bpf_filter}.h`      |
+| Kernel opcode dispatch table (handler/attrs)         | Linux **v7.3-rc4**                                  | `linux/io_uring/opdef.c`                                           |
+| liburing user-space helpers (`prep_*`, `register_*`) | liburing **2.15-dev** (`40999f52`, post-`2.14` tag) | `liburing/src/include/liburing.h` (not re-walked for 7.2/7.3)      |
 
 > The interface is append-only and ABI-stable: every value below has the same numeric meaning on every kernel that defines it. Newer kernels add opcodes/flags at the end of each enum; they never renumber existing entries. The "Since" columns give the kernel release that first shipped each symbol (verified against `io_uring_enter(2)`, kernel.dk and LWN — see [Sources](#sources)). A current kernel will reject an unknown opcode with `-EINVAL` and report support via `IORING_REGISTER_PROBE`, so probe rather than assume.
 
@@ -18,7 +19,7 @@ The interface tables below are transcribed from a specific source snapshot:
 
 ## 1. `IORING_OP_*` — submission opcodes
 
-The opcode is `sqe->opcode` (a `__u8`). Values are the ordinal position in `enum io_uring_op` (`io_uring.h:255`). The terminal sentinel is `IORING_OP_LAST`. The kernel maps each opcode to a `prep`/`issue` handler pair in the `io_issue_defs[]` table (`opdef.c:54`) and to a human-readable name + `cleanup`/`fail` hooks in `io_cold_defs[]` (`opdef.c:594`). `io_uring_get_opcode()` (`opdef.c:852`) returns the name; `io_uring_op_supported()` (`opdef.c:859`) reports whether a `prep` other than `io_eopnotsupp_prep` is wired up (opcodes behind `CONFIG_NET`/`CONFIG_FUTEX`/`CONFIG_EPOLL` compile out to `-EOPNOTSUPP`).
+The opcode is `sqe->opcode` (a `__u8`). Values are the ordinal position in `enum io_uring_op` (`io_uring.h:255`). The terminal sentinel is `IORING_OP_LAST`. The kernel maps each opcode to a `prep`/`issue` handler pair in the `io_issue_defs[]` table (`opdef.c:54`) and to a human-readable name + `cleanup`/`fail` hooks in `io_cold_defs[]` (`opdef.c:596`). `io_uring_get_opcode()` (`opdef.c:854`) returns the name; `io_uring_op_supported()` (`opdef.c:861`) reports whether a `prep` other than `io_eopnotsupp_prep` is wired up (opcodes behind `CONFIG_NET`/`CONFIG_FUTEX`/`CONFIG_EPOLL` compile out to `-EOPNOTSUPP`). `enum io_uring_op` did not grow between v7.1-rc6 and v7.3-rc4.
 
 The "Kernel handler" column is the `.issue` function from `io_issue_defs[]`; the "liburing prep" column is the primary `io_uring_prep_*` helper. Many ops also have `_direct`/`_fixed`/`_multishot` variant helpers (see [§10](#10-liburing-prep_-helper-families)).
 
@@ -238,47 +239,47 @@ From `io_uring.h:538`. The upper 16 bits of `cqe->flags` carry the buffer ID whe
 
 From `enum io_uring_register_op` (`io_uring.h:652`). The high bit `IORING_REGISTER_USE_REGISTERED_RING` (`1U << 31`) is OR-ed into the opcode to operate on a _registered_ ring-fd index instead of a real fd. The sentinel is `IORING_REGISTER_LAST`.
 
-| Val | `IORING_REGISTER_*`         | Purpose                                                  | Since |
-| --: | --------------------------- | -------------------------------------------------------- | ----- |
-|   0 | `REGISTER_BUFFERS`          | Register fixed I/O buffers                               | 5.1   |
-|   1 | `UNREGISTER_BUFFERS`        | Drop all fixed buffers                                   | 5.1   |
-|   2 | `REGISTER_FILES`            | Register a fixed-file table                              | 5.1   |
-|   3 | `UNREGISTER_FILES`          | Drop the fixed-file table                                | 5.1   |
-|   4 | `REGISTER_EVENTFD`          | Attach an eventfd for completion notifications           | 5.2   |
-|   5 | `UNREGISTER_EVENTFD`        | Detach the eventfd                                       | 5.2   |
-|   6 | `REGISTER_FILES_UPDATE`     | Update slots in the fixed-file table                     | 5.5   |
-|   7 | `REGISTER_EVENTFD_ASYNC`    | eventfd notifications only for async (io-wq) completions | 5.6   |
-|   8 | `REGISTER_PROBE`            | Query which opcodes the kernel supports                  | 5.6   |
-|   9 | `REGISTER_PERSONALITY`      | Register a credential set; returns a personality ID      | 5.6   |
-|  10 | `UNREGISTER_PERSONALITY`    | Drop a personality                                       | 5.6   |
-|  11 | `REGISTER_RESTRICTIONS`     | Restrict allowed ops/flags (for sandboxing a ring)       | 5.10  |
-|  12 | `REGISTER_ENABLE_RINGS`     | Enable a ring created with `IORING_SETUP_R_DISABLED`     | 5.10  |
-|  13 | `REGISTER_FILES2`           | Register files with resource tags                        | 5.13  |
-|  14 | `REGISTER_FILES_UPDATE2`    | Tagged fixed-file update                                 | 5.13  |
-|  15 | `REGISTER_BUFFERS2`         | Register buffers with resource tags                      | 5.13  |
-|  16 | `REGISTER_BUFFERS_UPDATE`   | Tagged fixed-buffer update                               | 5.13  |
-|  17 | `REGISTER_IOWQ_AFF`         | Set io-wq worker CPU affinity                            | 5.14  |
-|  18 | `UNREGISTER_IOWQ_AFF`       | Clear io-wq worker affinity                              | 5.14  |
-|  19 | `REGISTER_IOWQ_MAX_WORKERS` | Get/set max bound & unbound io-wq workers                | 5.15  |
-|  20 | `REGISTER_RING_FDS`         | Register ring-fds for `IORING_ENTER_REGISTERED_RING`     | 5.18  |
-|  21 | `UNREGISTER_RING_FDS`       | Unregister ring-fds                                      | 5.18  |
-|  22 | `REGISTER_PBUF_RING`        | Register a provided-buffer _ring_ (the modern fast path) | 5.19  |
-|  23 | `UNREGISTER_PBUF_RING`      | Unregister a provided-buffer ring                        | 5.19  |
-|  24 | `REGISTER_SYNC_CANCEL`      | Synchronous cancel API (cancel from the register path)   | 6.0   |
-|  25 | `REGISTER_FILE_ALLOC_RANGE` | Reserve a fixed-file slot range for auto-allocation      | 6.0   |
-|  26 | `REGISTER_PBUF_STATUS`      | Query head/consumption status of a provided-buffer group | 6.8   |
-|  27 | `REGISTER_NAPI`             | Configure NAPI busy-poll for the ring                    | 6.9   |
-|  28 | `UNREGISTER_NAPI`           | Disable NAPI busy-poll                                   | 6.9   |
-|  29 | `REGISTER_CLOCK`            | Choose the clock source for ring timeouts                | 6.12  |
-|  30 | `REGISTER_CLONE_BUFFERS`    | Clone registered buffers from another ring               | 6.12  |
-|  31 | `REGISTER_SEND_MSG_RING`    | Send an `MSG_RING` without owning a source ring          | 6.13  |
-|  32 | `REGISTER_ZCRX_IFQ`         | Register a netdev hw RX queue for zero-copy receive      | 6.15  |
-|  33 | `REGISTER_RESIZE_RINGS`     | Resize the SQ/CQ rings in place                          | 6.13  |
-|  34 | `REGISTER_MEM_REGION`       | Register a user memory region (e.g. fixed wait args)     | 6.13  |
-|  35 | `REGISTER_QUERY`            | Query `io_uring` attributes (`linux/io_uring/query.h`)   | 6.18  |
-|  36 | `REGISTER_ZCRX_CTRL`        | Auxiliary zero-copy-RX control (`enum zcrx_ctrl_op`)     | 6.19  |
-|  37 | `REGISTER_BPF_FILTER`       | Register a BPF filtering program for the ring            | 7.0   |
-|  38 | `REGISTER_LAST`             | _Sentinel_                                               | —     |
+| Val | `IORING_REGISTER_*`         | Purpose                                                                                               | Since |
+| --: | --------------------------- | ----------------------------------------------------------------------------------------------------- | ----- |
+|   0 | `REGISTER_BUFFERS`          | Register fixed I/O buffers                                                                            | 5.1   |
+|   1 | `UNREGISTER_BUFFERS`        | Drop all fixed buffers                                                                                | 5.1   |
+|   2 | `REGISTER_FILES`            | Register a fixed-file table                                                                           | 5.1   |
+|   3 | `UNREGISTER_FILES`          | Drop the fixed-file table                                                                             | 5.1   |
+|   4 | `REGISTER_EVENTFD`          | Attach an eventfd for completion notifications                                                        | 5.2   |
+|   5 | `UNREGISTER_EVENTFD`        | Detach the eventfd                                                                                    | 5.2   |
+|   6 | `REGISTER_FILES_UPDATE`     | Update slots in the fixed-file table                                                                  | 5.5   |
+|   7 | `REGISTER_EVENTFD_ASYNC`    | eventfd notifications only for async (io-wq) completions                                              | 5.6   |
+|   8 | `REGISTER_PROBE`            | Query which opcodes the kernel supports                                                               | 5.6   |
+|   9 | `REGISTER_PERSONALITY`      | Register a credential set; returns a personality ID                                                   | 5.6   |
+|  10 | `UNREGISTER_PERSONALITY`    | Drop a personality                                                                                    | 5.6   |
+|  11 | `REGISTER_RESTRICTIONS`     | Restrict allowed ops/flags (for sandboxing a ring)                                                    | 5.10  |
+|  12 | `REGISTER_ENABLE_RINGS`     | Enable a ring created with `IORING_SETUP_R_DISABLED`                                                  | 5.10  |
+|  13 | `REGISTER_FILES2`           | Register files with resource tags                                                                     | 5.13  |
+|  14 | `REGISTER_FILES_UPDATE2`    | Tagged fixed-file update                                                                              | 5.13  |
+|  15 | `REGISTER_BUFFERS2`         | Register buffers with resource tags                                                                   | 5.13  |
+|  16 | `REGISTER_BUFFERS_UPDATE`   | Tagged fixed-buffer update                                                                            | 5.13  |
+|  17 | `REGISTER_IOWQ_AFF`         | Set io-wq worker CPU affinity                                                                         | 5.14  |
+|  18 | `UNREGISTER_IOWQ_AFF`       | Clear io-wq worker affinity                                                                           | 5.14  |
+|  19 | `REGISTER_IOWQ_MAX_WORKERS` | Get/set max bound & unbound io-wq workers                                                             | 5.15  |
+|  20 | `REGISTER_RING_FDS`         | Register ring-fds for `IORING_ENTER_REGISTERED_RING`                                                  | 5.18  |
+|  21 | `UNREGISTER_RING_FDS`       | Unregister ring-fds                                                                                   | 5.18  |
+|  22 | `REGISTER_PBUF_RING`        | Register a provided-buffer _ring_ (the modern fast path)                                              | 5.19  |
+|  23 | `UNREGISTER_PBUF_RING`      | Unregister a provided-buffer ring                                                                     | 5.19  |
+|  24 | `REGISTER_SYNC_CANCEL`      | Synchronous cancel API (cancel from the register path)                                                | 6.0   |
+|  25 | `REGISTER_FILE_ALLOC_RANGE` | Reserve a fixed-file slot range for auto-allocation                                                   | 6.0   |
+|  26 | `REGISTER_PBUF_STATUS`      | Query head/consumption status of a provided-buffer group                                              | 6.8   |
+|  27 | `REGISTER_NAPI`             | Configure NAPI busy-poll for the ring                                                                 | 6.9   |
+|  28 | `UNREGISTER_NAPI`           | Disable NAPI busy-poll                                                                                | 6.9   |
+|  29 | `REGISTER_CLOCK`            | Choose the clock source for ring timeouts                                                             | 6.12  |
+|  30 | `REGISTER_CLONE_BUFFERS`    | Clone registered buffers from another ring                                                            | 6.12  |
+|  31 | `REGISTER_SEND_MSG_RING`    | Send an `MSG_RING` without owning a source ring                                                       | 6.13  |
+|  32 | `REGISTER_ZCRX_IFQ`         | Register a netdev hw RX queue for zero-copy receive                                                   | 6.15  |
+|  33 | `REGISTER_RESIZE_RINGS`     | Resize the SQ/CQ rings in place                                                                       | 6.13  |
+|  34 | `REGISTER_MEM_REGION`       | Register a user memory region (e.g. fixed wait args)                                                  | 6.13  |
+|  35 | `REGISTER_QUERY`            | Query `io_uring` attributes (`linux/io_uring/query.h`)                                                | 6.18  |
+|  36 | `REGISTER_ZCRX_CTRL`        | Zero-copy-RX control. `FLUSH_RQ`/`EXPORT` since 6.19; `ARM_EVENT` since 7.2; `ADD_AREA` since 7.3-rc1 | 6.19  |
+|  37 | `REGISTER_BPF_FILTER`       | Register a BPF filtering program for the ring                                                         | 7.0   |
+|  38 | `REGISTER_LAST`             | _Sentinel_                                                                                            | —     |
 
 Auxiliary register-path enums:
 
@@ -302,6 +303,24 @@ Auxiliary register-path enums:
 |   2 | `IORING_RESTRICTION_SQE_FLAGS_ALLOWED`  | Whitelist SQE flags                         |
 |   3 | `IORING_RESTRICTION_SQE_FLAGS_REQUIRED` | Require these SQE flags on every submission |
 
+### Split-header additions, v7.2 and v7.3-rc
+
+`include/uapi/linux/io_uring.h` gained nothing between v7.1-rc6 and v7.3-rc4. The new symbols live in the split UAPI headers beside it. `io_uring.h` `#include`s `linux/io_uring/zcrx.h` (`io_uring.h:13`). `query.h` and `bpf_filter.h` are separate headers; the kernel pulls them in from `query.c` and `bpf_filter.h` / `net.h`. Together they are the whole of the new UAPI:
+
+| Symbol                                      | Header / line     | Meaning                                                                                                    | Since   |
+| ------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------- | ------- |
+| `ZCRX_FEATURE_EVENT`                        | `zcrx.h:68`       | Ifq advertises event CQEs (out of buffers, copy fallback)                                                  | 7.2     |
+| `ZCRX_EVENT_ALLOC_FAIL` / `ZCRX_EVENT_COPY` | `zcrx.h:71`       | `enum zcrx_event_type`. One armed CQE per type; `cqe->res` carries the type bit                            | 7.2     |
+| `struct zcrx_event_desc`                    | `zcrx.h:88`       | Passed via `io_uring_zcrx_ifq_reg.event_desc` (`zcrx.h:111`): `user_data`, `type_mask`, `flags`            | 7.2     |
+| `ZCRX_EVENT_DESC_FLAG_STATS`                | `zcrx.h:80`       | `stats_offset` locates a `struct zcrx_stats` inside the refill region                                      | 7.2     |
+| `struct zcrx_stats`                         | `zcrx.h:83`       | `copy_count`, `copy_bytes` — updated in place on every copy fallback                                       | 7.2     |
+| `ZCRX_CTRL_ARM_EVENT`                       | `zcrx.h:118`      | Re-arm one event type after its CQE (`struct zcrx_ctrl_arm_event`)                                         | 7.2     |
+| `ZCRX_CTRL_ADD_AREA`                        | `zcrx.h:119`      | Add a `struct io_uring_zcrx_area_reg` to a live ifq (`struct zcrx_ctrl_add_area`, `zcrx.h:138`)            | 7.3-rc1 |
+| `IO_URING_QUERY_ZCRX_EVENT`                 | `query.h:26`      | Fills `struct io_uring_query_zcrx_event` (`query.h:66`): event flags, stats size, alignment                | 7.2     |
+| `io_uring_bpf_ctx.connect`                  | `bpf_filter.h:37` | `family`, network-order `port`, `v4_addr` / `v6_addr[16]`. Populated only when `addr_len` covers the field | 7.2     |
+
+`ZCRX_CTRL_FLUSH_RQ` and `ZCRX_CTRL_EXPORT` were already in the v7.1-rc6 header; only `ARM_EVENT` and `ADD_AREA` are new `zcrx_ctrl_op` values. The kernel copy of the query result is still named `zcrx_notif` inside `io_query_zcrx_notif` (`query.c:48`) — the UAPI name is `event`.
+
 ---
 
 ## 8. Per-op flag enums
@@ -310,14 +329,14 @@ Each op family squeezes its own flags into a free SQE field. The table below rec
 
 ### 8.1 recv / send — `sqe->ioprio` (`io_uring.h:437`)
 
-| Bit | Macro                         | Effect                                                                | Since |
-| --: | ----------------------------- | --------------------------------------------------------------------- | ----- |
-|   0 | `IORING_RECVSEND_POLL_FIRST`  | Arm poll up-front; skip the initial transfer attempt                  | 5.19  |
-|   1 | `IORING_RECV_MULTISHOT`       | Multishot recv — keep posting CQEs (sets `IORING_CQE_F_MORE`)         | 6.0   |
-|   2 | `IORING_RECVSEND_FIXED_BUF`   | Use a registered buffer (`buf_index`) for the transfer                | 6.0   |
-|   3 | `IORING_SEND_ZC_REPORT_USAGE` | Report zero-copy usage in the notification `cqe->res`                 | 6.2   |
-|   4 | `IORING_RECVSEND_BUNDLE`      | With `BUFFER_SELECT`, grab many contiguous provided buffers in one op | 6.10  |
-|   5 | `IORING_SEND_VECTORIZED`      | `SEND[_ZC]` takes an iovec pointer for vectored sends                 | 6.17  |
+| Bit | Macro                         | Effect                                                                              | Since |
+| --: | ----------------------------- | ----------------------------------------------------------------------------------- | ----- |
+|   0 | `IORING_RECVSEND_POLL_FIRST`  | Arm poll up-front; skip the initial transfer attempt                                | 5.19  |
+|   1 | `IORING_RECV_MULTISHOT`       | Multishot recv — keep posting CQEs (sets `IORING_CQE_F_MORE`)                       | 6.0   |
+|   2 | `IORING_RECVSEND_FIXED_BUF`   | Registered buffer (`buf_index`). `SEND_ZC` since 6.0; plain `SEND`/`RECV` since 7.2 | 6.0   |
+|   3 | `IORING_SEND_ZC_REPORT_USAGE` | Report zero-copy usage in the notification `cqe->res`                               | 6.2   |
+|   4 | `IORING_RECVSEND_BUNDLE`      | With `BUFFER_SELECT`, grab many contiguous provided buffers in one op               | 6.10  |
+|   5 | `IORING_SEND_VECTORIZED`      | `SEND[_ZC]` takes an iovec pointer for vectored sends                               | 6.17  |
 
 Companion: `IORING_NOTIF_USAGE_ZC_COPIED` (`1U << 31`, `io_uring.h:451`) in the notification `cqe->res` means data was copied (zero-copy did _not_ happen).
 
@@ -535,8 +554,8 @@ For the design rationale behind these primitives — submission/completion rings
 [man-enter]: https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 [man-setup]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
 [man7]: https://man7.org/linux/man-pages/man7/io_uring.7.html
-[uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
-[opdef]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring/opdef.c
+[uapi]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/include/uapi/linux/io_uring.h
+[opdef]: https://github.com/torvalds/linux/blob/93f51579e7df248780214094418f205253383cc5/io_uring/opdef.c
 [liburing]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/src/include/liburing.h
 [axboe-pdf]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [wiki-611]: https://github.com/axboe/liburing/wiki/What%27s-new-with-io_uring-in-6.11-and-6.12
