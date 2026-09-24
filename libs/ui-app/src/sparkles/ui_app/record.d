@@ -101,9 +101,16 @@ struct RecordingHost
     void title(scope const(char)[] t) pure nothrow { titles ~= t.idup; }
     void writeOutOfBand(scope const(char)[] seq) pure nothrow { outOfBand ~= seq.idup; }
 
-    /// Accepted and dropped, as on the terminal arm: a recording host paints
-    /// no pixels, so an image reaches it as `IMG4`'s placeholder.
-    void images(const(ImageRegistry)*) @safe pure nothrow @nogc {}
+    /// Kept, as the terminal arm keeps it: a recording host paints nothing,
+    /// but whoever paints its op stream afterwards (a `--render`) resolves the
+    /// handles in it through $(LREF imageRegistry).
+    void images(const(ImageRegistry)* registry) @safe pure nothrow @nogc
+    {
+        imageRegistry = registry;
+    }
+
+    /// The registry the application bound (borrowed), or `null`.
+    const(ImageRegistry)* imageRegistry;
 
     /// Accepted and dropped: a recording host keeps the op stream, brackets
     /// included, and applies nothing. A test that wants to check an effect

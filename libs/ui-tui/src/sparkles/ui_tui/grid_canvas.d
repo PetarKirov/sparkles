@@ -34,6 +34,8 @@ import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.glyphs : projectGlyph;
 import sparkles.ui.interp.cells : accentGlyph, blend;
 import sparkles.ui.effect : EffectId, EffectRegistry, Tier0Fn, Tier0Input;
+import sparkles.ui.image : defaultCellPixels, ImageRegistry;
+import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
 import sparkles.ui.tokens : boxGlyphs, projectBorder, TargetCapabilities;
@@ -82,10 +84,12 @@ the whole path stays `@safe` under dip1000.
 void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
     int originX = 0, int originY = 0, Rect clip = Rect.init,
     in TargetCapabilities caps = gridCapabilities,
-    in EffectContext effects = EffectContext.init)
+    in EffectContext effects = EffectContext.init,
+    scope const(ImageRegistry)* images = null)
 {
     auto canvas = GridCanvas(&grid, pageBg, originX, originY, caps);
     canvas.effects = effects;
+    canvas.images = images;
     if (!clip.empty)
         canvas.pushClip(clip); // an outer viewport in canvas cell coordinates
     foreach (ref op; ops)
@@ -105,12 +109,7 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
                 break;
             case image:
-                // `IMG5`'s fallback half. No terminal image protocol is
-                // wired up yet — detection is the terminal's answer to give,
-                // and nothing in the tree gives it — so every image takes
-                // `IMG4`'s placeholder, through the SHARED routine rather
-                // than a second one written here.
-                paintImagePlaceholder(canvas, op.rect, op.imageAlt, op.visual);
+                canvas.image(op);
                 break;
             case pushEffect:
                 canvas.pushEffect(op.rect, op.effectId);
@@ -246,6 +245,36 @@ struct GridCanvas
 
     /// The effect registry and page colours, or all-null for "no effects".
     EffectContext effects;
+
+    /// The images the display list's handles address (borrowed), or `null`:
+    /// every image then takes `IMG4`'s placeholder.
+    const(ImageRegistry)* images;
+
+    /**
+    Draws an image op down `GLY9`'s ladder, from its first cell rung: a grid
+    has no channel for an image protocol yet (`IMG5`), so whatever the
+    declaration says of `images`, the picture is drawn in cells — the
+    finest block raster the target's `blocks` tier holds, else braille —
+    and where there is no cell rung, or no pixels to raster, it is the alt
+    text, through the SHARED placeholder routine rather than a second one.
+    */
+    void image(in DrawOp op) scope
+    {
+        import sparkles.base.term_caps : ImageProtocol;
+
+        TargetCapabilities cells = capabilities;
+        cells.images = ImageProtocol.none;
+        const rung = imageRungOf(cells);
+        const data = images is null ? null : images.lookup(op.imageHandle);
+        if (rung == ImageRung.alt || data is null || data.rgba.length == 0)
+        {
+            paintImagePlaceholder(this, op.rect, op.imageAlt, op.visual);
+            return;
+        }
+        const vis = op.visual;
+        paintImageRaster(this, op.rect, *data, op.imageFit, rung, defaultCellPixels,
+            vis.hasBg ? vis.bg : pageBg);
+    }
 
     /// The open effect brackets, innermost last. An unresolvable id still
     /// occupies a slot so `popEffect` stays paired with `pushEffect` — an
@@ -1408,4 +1437,48 @@ static assert(isCanvas!GridCanvas);
         fillRectOp(Rect(0, 0, 2, 1), Slot.inherit, fill),
     ], 0, 0, Rect.init, effects: ctx);
     assert(odd[0, 0].style.bg.rgb == white, "an unclosed bracket never fires");
+}
+
+@("ui_tui.grid_canvas.imageTakesTheCellLadder")
+@safe unittest
+{
+    import sparkles.ui.canvas : imageOp;
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui.image : ImageFit, ImageRegistry;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    // `GLY9` in a real grid: a two-pixel picture, red over blue, filling one
+    // 8×16 cell. At the half-block tier it is exactly one `▀` in red on
+    // blue; with no Unicode it is the alt text; with no registry to resolve
+    // the handle it is the alt text too.
+    static immutable ubyte[8] px = [200, 0, 0, 255, 0, 0, 200, 255];
+    ImageRegistry reg;
+    const h = reg.register(px[], Size(1, 2), "flag");
+    const op = imageOp(Rect(0, 0, 1, 1), h, ImageFit.fill, "flag");
+
+    Grid g;
+    g.resize(6, 1);
+    paintGrid(g, RgbColor(0, 0, 0), [op], caps: capabilitiesOf(Profile.enhanced), images: &reg);
+    assert(g[0, 0].grapheme == "▀");
+    assert(g[0, 0].style.fg.rgb == RgbColor(200, 0, 0));
+    assert(g[0, 0].style.bg.rgb == RgbColor(0, 0, 200));
+
+    // The same frame declared as `full` (a protocol) still rasters: the grid
+    // has no protocol channel, so the cell ladder is what it can do — in
+    // sextants, the finest block raster `full`'s octant tier holds.
+    Grid f;
+    f.resize(6, 1);
+    paintGrid(f, RgbColor(0, 0, 0), [op], caps: capabilitiesOf(Profile.full), images: &reg);
+    assert(f[0, 0].grapheme == "\U0001FB02", "SEXTANT-12: the top third lit");
+
+    const wide = imageOp(Rect(0, 0, 6, 1), h, ImageFit.fill, "flag");
+    Grid b;
+    b.resize(6, 1);
+    paintGrid(b, RgbColor(0, 0, 0), [wide], caps: capabilitiesOf(Profile.baseline), images: &reg);
+    assert(b[0, 0].grapheme == "[" && b[1, 0].grapheme == "f", "the alt text, bracketed");
+
+    Grid n;
+    n.resize(6, 1);
+    paintGrid(n, RgbColor(0, 0, 0), [wide], caps: capabilitiesOf(Profile.enhanced));
+    assert(n[0, 0].grapheme == "[", "no registry: the alt text, not a hole");
 }
