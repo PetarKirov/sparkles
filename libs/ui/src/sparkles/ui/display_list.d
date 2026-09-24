@@ -685,13 +685,13 @@ unittest
 {
     import std.algorithm : filter, map;
     import std.array : array;
-    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.effect : Builtin, EffectRegistry;
     import sparkles.ui.layout : layout;
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.widget : Builder;
 
     EffectRegistry reg;
-    const builtin = builtinEffects(reg);
+    alias builtin = Builtin;
 
     uint[] build(ref Builder b, bool withEffect)
     {

@@ -41,7 +41,7 @@ import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
 import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.effect : applyThemeEffects, builtinEffects, EffectBinding,
+import sparkles.ui.effect : applyThemeEffects, Builtin, EffectBinding,
     EffectParam, EffectRegistry, ThemeEffects;
 import sparkles.ui.image : ImageRegistry;
 import state;
@@ -368,9 +368,10 @@ struct Gallery
             s.sampleImage = images.register(imagePixels, swatchSize,
                 "a colour swatch");
         }
-        if (!s.effects.scanlines.valid)
+        if (fxParams is null)
         {
-            s.effects = builtinEffects(fx);
+            // The built-ins are already in `fx` — every registry starts with
+            // them (`EFX15`) — so this only tunes and, on request, rebinds.
             // `EFX16`, as a runnable demonstration: `UIG_EFFECTS=off` makes
             // the THEME rebind the built-ins to nothing. Nothing in any page
             // changes — the widgets still name the same ids — and every
@@ -387,7 +388,7 @@ struct Gallery
             // wants to be legible, so the shell says so — without touching
             // the registered effect, and without the page knowing.
             fxParams = [EffectParam("uAmount", [0.55f, 0, 0, 0], 1)];
-            fx.setParams(s.effects.curvature, fxParams);
+            fx.setParams(Builtin.curvature, fxParams);
 
             if (environment.get("UIG_EFFECTS") == "off")
             {
@@ -396,7 +397,7 @@ struct Gallery
                 off.phosphor = EffectBinding(bound: true, enabled: false);
                 off.dim = EffectBinding(bound: true, enabled: false);
                 off.spectrum = EffectBinding(bound: true, enabled: false);
-                applyThemeEffects(fx, s.effects, off);
+                applyThemeEffects(fx, off);
             }
         }
         // The host borrows the registry for the frame it is about to paint.

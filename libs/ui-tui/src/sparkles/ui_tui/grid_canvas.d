@@ -1455,13 +1455,13 @@ static assert(isCanvas!GridCanvas);
 @safe unittest
 {
     import sparkles.ui.canvas : fillRectOp, popEffectOp, pushEffectOp;
-    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.effect : Builtin, EffectRegistry;
     import sparkles.ui.style : Slot, Visual;
 
     // `EFX24`'s claim, checked: a terminal showing scanlines is the proof
     // that the tier split is real and not a GPU feature wearing a label.
     EffectRegistry reg;
-    const builtin = builtinEffects(reg);
+    alias builtin = Builtin;
     const ctx = EffectContext(&reg, RgbColor(0xFF, 0xFF, 0xFF));
 
     const white = RgbColor(0xFF, 0xFF, 0xFF);
@@ -1500,11 +1500,11 @@ static assert(isCanvas!GridCanvas);
 @safe unittest
 {
     import sparkles.ui.canvas : fillRectOp, popEffectOp, pushEffectOp;
-    import sparkles.ui.effect : builtinEffects, EffectRegistry;
+    import sparkles.ui.effect : Builtin, EffectRegistry;
     import sparkles.ui.style : Slot, Visual;
 
     EffectRegistry reg;
-    const builtin = builtinEffects(reg);
+    alias builtin = Builtin;
     const ctx = EffectContext(&reg, RgbColor(0xFF, 0xFF, 0xFF));
 
     const white = RgbColor(0xFF, 0xFF, 0xFF);
