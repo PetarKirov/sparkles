@@ -35,8 +35,8 @@ GUI → mobile. First consumers: `ui-gallery` and the docs site; `hue` and
 
 _Updated at each interruption; one section, not a diary._
 
-- **Checked revision:** `feat/design-system-more-emulators`, on top of PR
-  #514 (emulator presets, merged).
+- **Checked revision:** `feat/design-system-image-ladder`, on top of PR #516
+  (more emulators) and #494 (images and effects in `sparkles:ui`), both merged.
 - **Done (M0–M2):** tokens, state overlays, target declarations, the
   degradation report, `ui-gallery --profile`/`--degradations`.
 - **Done (M3):** `sparkles.ui.glyphs` — tiers, the one-cell
@@ -55,15 +55,18 @@ _Updated at each interruption; one section, not a diary._
   `cage` on the wlroots headless backend, Ghostty under `xvfb-run`), their
   probe reports checked in and re-read by test; multiplexer presets are the
   meet over their hosts, with DA1's sixel dropped under a multiplexer (D33,
-  `CAP7` partial).
+  `CAP7` partial). The image ladder's cell rungs (`GLY9` partial, D34): a
+  block or braille raster in the terminal and in a narrowed window.
 - **Unverified / open:** the sub-cell hairline rule (`GLY2a`); per-role glyph
   preferences beyond marks (`GLY1`); `ACC4` for every focusable inside pages;
   the `CAP2` table audit; the icon table (`GLY4`). From M1: per-state
   attributes/metrics; `actionBar` and the scrollbar onto overlays.
 - **Blockers:** none. M4 needs the brand design exercise (owner, D23).
-- **Next executable actions:** (1) M7's probes feed `fromReplies` at run
-  time — the query parsing the transcript test does is the seed; (2) Windows
-  Terminal and the Linux console need a person at the machine; (3) M4, once
+- **Next executable actions:** (1) `GLY9`'s protocol rung: a passthrough
+  channel in `sparkles:tui`'s `Screen` and kitty/sixel emission from `ui-tui`
+  (`IMG5`), then the octant table; (2) M7's probes feed `fromReplies` at run
+  time — the query parsing the transcript test does is the seed; (3) Windows
+  Terminal and the Linux console need a person at the machine; (4) M4, once
   the owner's design session has happened.
 
 → [Overview](./index.md) · [Testing](./testing.md)
