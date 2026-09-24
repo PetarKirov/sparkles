@@ -113,7 +113,14 @@
                 # headers (`wayland_xdg_shell_client_protocol.h`) from src/.
                 # `.spv`: libs/vulkan-wsi string-imports its triangle shaders
                 # from `src/shaders/`.
-                file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i" || file.hasExt "h" || file.hasExt "spv"
+                file:
+                file.hasExt "d"
+                || file.hasExt "c"
+                || file.hasExt "i"
+                || file.hasExt "h"
+                || file.hasExt "spv"
+                # sparkles:ui's generated effect GLSL, string-imported by effect.d
+                || file.hasExt "frag"
               ) (fromRoot dir)
             )
             (
