@@ -92,6 +92,9 @@ depends on what the target can show:
 | none of these                        | its alt text, `[a colour swatch]`    |
 
 A cell holds two colours, so each cell's sub-cells are split into two groups
-by colour, and the glyph draws one over the other. A terminal has no channel
-for an image protocol yet, so today it always takes a raster rung. The
-[Primitives](./catalog/primitives.md) page's swatch shows each profile's rung.
+by colour, and the glyph draws one over the other. A terminal draws the
+picture itself when the application asked it (the images probe) and it
+answered for the kitty graphics protocol, as kitty, Ghostty, WezTerm and
+iTerm2 do. A sixel terminal is rastered for now. The
+[Primitives](./catalog/primitives.md) page's swatch shows each profile's
+rung.
