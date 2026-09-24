@@ -168,24 +168,22 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 return RunOutcome.noBackend;
 
         case Backend.tui:
-            static if (__traits(compiles, { import sparkles.ui_app.tui_loop; }))
+            // Gated on the configuration alone, like the GUI arm — never on
+            // `__traits(compiles, …)`. A compile guard here turned any error
+            // in `tui_loop` into a build that silently had no terminal arm.
+            version (UiAppTui)
             {
-                version (UiAppTui)
+                version (Posix)
                 {
-                    version (Posix)
-                    {
-                        version (Android)
-                            return RunOutcome.noBackend;
-                        else
-                        {
-                            import sparkles.ui_app.tui_loop : runTui;
-
-                            return runTui!(present, handle, draw, setup)(cfg)
-                                ? RunOutcome.ok : RunOutcome.openFailed;
-                        }
-                    }
-                    else
+                    version (Android)
                         return RunOutcome.noBackend;
+                    else
+                    {
+                        import sparkles.ui_app.tui_loop : runTui;
+
+                        return runTui!(present, handle, draw, setup)(cfg)
+                            ? RunOutcome.ok : RunOutcome.openFailed;
+                    }
                 }
                 else
                     return RunOutcome.noBackend;
@@ -296,19 +294,25 @@ unittest
     // so this instantiates the callbacks against BOTH host types — which is
     // the property that makes "an application never names a canvas" true
     // rather than aspirational.
-    static assert(__traits(compiles, {
+    // run must compile against both arms — compiled for real, never called, so a failure is the
+    // compiler's own diagnostic rather than a gagged `__traits(compiles)`.
+    static void typeCheck4()
+    {
         RunConfig cfg;
         BackendPolicy policy;
         run!(
             (ref h) { h.requestFrame(); },
             (ref h, in Event e) { h.quit(); },
         )(cfg, policy);
-    }), "run must compile against both arms");
+    }
 
     // With every phase supplied, including `HST19`'s — the shape a migrated
     // application uses, where the setup phase is what lays out against a
     // surface that does not exist until the arm has opened it.
-    static assert(__traits(compiles, {
+    // the setup and draw phases must compile against both arms — compiled for real, never called, so a failure is the
+    // compiler's own diagnostic rather than a gagged `__traits(compiles)`.
+    static void typeCheck5()
+    {
         RunConfig cfg;
         BackendPolicy policy;
         run!(
@@ -317,5 +321,5 @@ unittest
             (ref h) { auto c = h.canvas; },
             (ref h) { const sz = h.size; },
         )(cfg, policy);
-    }), "the setup and draw phases must compile against both arms");
+    }
 }

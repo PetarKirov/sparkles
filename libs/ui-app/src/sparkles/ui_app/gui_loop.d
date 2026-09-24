@@ -351,7 +351,10 @@ unittest
     cast(void) &runGui!((ref GuiHost h) { h.ops() ~= DrawOp.init; },
             (ref GuiHost h, in Event e) { h.quit(); });
 
-    static assert(__traits(compiles, (ref GuiHost h) {
+    // Compiled for real, never called, so a failure is the
+    // compiler's own diagnostic rather than a gagged `__traits(compiles)`.
+    static void typeCheck1(ref GuiHost h)
+    {
         h.pointerShape(PointerShape.grab);
         h.clipboard("copied");
         h.title("a title");
@@ -361,7 +364,7 @@ unittest
         auto c = h.canvas;
         cast(void) h.window.width; // the `HST3` window handle
         Mods m = h.modifiers;
-    }));
+    }
 
     // The optional `HST15` errands are present on this host, and refused
     // (false) outside a live async arm — the raylib-paced-fallback answer.

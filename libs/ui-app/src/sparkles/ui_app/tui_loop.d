@@ -494,22 +494,28 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 @system
 unittest
 {
-    static assert(__traits(compiles, {
+    // the terminal arm must compile against the host contract — compiled for real, never called, so a failure is the
+    // compiler's own diagnostic rather than a gagged `__traits(compiles)`.
+    static void typeCheck4()
+    {
         RunConfig cfg;
         runTui!((ref TuiHost h) { h.ops() ~= DrawOp.init; },
                 (ref TuiHost h, in Event e) { h.quit(); })(cfg);
-    }), "the terminal arm must compile against the host contract");
+    }
 
     // The errands, likewise: each is a separate template instantiation the
     // frame loop never reaches.
-    static assert(__traits(compiles, (ref TuiHost h) {
+    // Compiled for real, never called, so a failure is the
+    // compiler's own diagnostic rather than a gagged `__traits(compiles)`.
+    static void typeCheck5(ref TuiHost h)
+    {
         h.pointerShape(PointerShape.grab);
         h.clipboard("copied");
         h.title("a title");
         h.writeOutOfBand("\x1b[0m");
         h.toggleFullscreen();
         h.fontSize(h.fontSizePx + 2);
-    }));
+    }
 
     // The optional `HST15` errands are present on this host, and refused
     // (false) outside a live async arm — the blocking-fallback answer.

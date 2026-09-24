@@ -1654,12 +1654,12 @@ version (unittest)
 @safe unittest
 {
     import sparkles.ui_app.record : RecordingHost;
-    import sparkles.ui_app.run_app : isAppFor;
+    import sparkles.ui_app.run_app : enforceAppFor;
 
     // The concept, checked against the host every test drives it on. A member
     // template that failed to instantiate would otherwise surface as a
     // mysterious "not a component" at the call site.
-    static assert(isAppFor!(Gallery, RecordingHost));
+    static assert(enforceAppFor!(Gallery, RecordingHost));
 }
 
 @("ui_gallery.gallery.drawsBeforeAnythingHappensToIt")
