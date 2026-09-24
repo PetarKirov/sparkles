@@ -96,12 +96,6 @@
             "length": 15,
             "line": 10,
             "start": 423,
-            "tags": [
-                [
-                    "param",
-                    "snake_case_name the text to escape, underscores and all"
-                ]
-            ],
             "text": "(parameter) string snake_case_name",
             "type": "hover"
         },
@@ -111,12 +105,6 @@
             "length": 5,
             "line": 10,
             "start": 444,
-            "tags": [
-                [
-                    "param",
-                    "count how many replacements to allow; the count spelling in this sentence suppresses the usual identifier emphasis"
-                ]
-            ],
             "text": "(parameter) int count",
             "type": "hover"
         },
@@ -126,12 +114,6 @@
             "length": 15,
             "line": 10,
             "start": 454,
-            "tags": [
-                [
-                    "param",
-                    "snake_case_name the text to escape, underscores and all"
-                ]
-            ],
             "text": "(parameter) string snake_case_name",
             "type": "hover"
         }

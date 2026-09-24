@@ -68,7 +68,7 @@
         },
         {
             "character": 25,
-            "docs": "``filter`!(predicate)(`range`)` returns a new `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.math.operations : isClose;\nimport std.range;\n\nint[] arr = [ 1, 2, 3, 4, 5 ];\n\n// Filter below 3\nauto small = filter!(a => a < 3)(arr);\nassert(equal(small, [ 1, 2 ]));\n\n// Filter again, but with Uniform Function Call Syntax (UFCS)\nauto sum = arr.filter!(a => a < 3);\nassert(equal(sum, [ 1, 2 ]));\n\n// In combination with chain() to span multiple ranges\nint[] a = [ 3, -2, 400 ];\nint[] b = [ 100, -101, 102 ];\nauto r = chain(a, b).filter!(a => a > 0);\nassert(equal(r, [ 3, 400, 100, 102 ]));\n\n// Mixing convertible types is fair game, too\ndouble[] c = [ 2.5, 3.0 ];\nauto r1 = chain(c, a, b).filter!(a => cast(int) a != a);\nassert(isClose(r1, [ 2.5 ]));\n```\n",
+            "docs": "`filter!(predicate)(range)` returns a new `range` containing only elements `x` in `range` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.math.operations : isClose;\nimport std.range;\n\nint[] arr = [ 1, 2, 3, 4, 5 ];\n\n// Filter below 3\nauto small = filter!(a => a < 3)(arr);\nassert(equal(small, [ 1, 2 ]));\n\n// Filter again, but with Uniform Function Call Syntax (UFCS)\nauto sum = arr.filter!(a => a < 3);\nassert(equal(sum, [ 1, 2 ]));\n\n// In combination with chain() to span multiple ranges\nint[] a = [ 3, -2, 400 ];\nint[] b = [ 100, -101, 102 ];\nauto r = chain(a, b).filter!(a => a > 0);\nassert(equal(r, [ 3, 400, 100, 102 ]));\n\n// Mixing convertible types is fair game, too\ndouble[] c = [ 2.5, 3.0 ];\nauto r1 = chain(c, a, b).filter!(a => cast(int) a != a);\nassert(isClose(r1, [ 2.5 ]));\n```\n",
             "length": 6,
             "line": 3,
             "signature": {
@@ -150,7 +150,7 @@
                 ],
                 [
                     "returns",
-                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\nwill also be a forward `range`."
+                    "An input `range` that contains the filtered elements. If `range` is at least a forward `range`, the return value of `filter`\nwill also be a forward `range`."
                 ],
                 [
                     "see",
@@ -162,7 +162,7 @@
                 ],
                 [
                     "returns",
-                    "A `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`."
+                    "A `range` containing only elements `x` in `range` for\nwhich `predicate(x)` returns `true`."
                 ]
             ],
             "text": "sample.scaled.FilterResult!(__lambda_L7_C34, int[]) sample.scaled.filter!(int[])(int[] range) pure nothrow @nogc @safe",
@@ -194,7 +194,7 @@
         },
         {
             "character": 24,
-            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.range : chain, only;\nauto squares =\n    chain(only(1, 2, 3, 4), only(5, 6)).map!(a => a * a);\nassert(equal(squares, only(1, 4, 9, 16, 25, 36)));\n```\n\nMultiple functions can be passed to ``map``. In that case, the\nelement type of ``map`` is a tuple containing one element for each\nfunction.\n\n```d unittest\nauto sums = [2, 4, 6, 8];\nauto products = [1, 4, 9, 16];\n\nsize_t i = 0;\nforeach (result; [ 1, 2, 3, 4 ].map!(\"a + a\", \"a * a\"))\n{\n    assert(result[0] == sums[i]);\n    assert(result[1] == products[i]);\n    ++i;\n}\n```\n\nYou may alias ``map`` with some function(s) to a symbol and use\nit separately:\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.conv : to;\n\nalias stringize = map!(to!string);\nassert(equal(stringize([ 1, 2, 3, 4 ]), [ \"1\", \"2\", \"3\", \"4\" ]));\n```\n",
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call `map!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.\n\n### Examples\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.range : chain, only;\nauto squares =\n    chain(only(1, 2, 3, 4), only(5, 6)).map!(a => a * a);\nassert(equal(squares, only(1, 4, 9, 16, 25, 36)));\n```\n\nMultiple functions can be passed to `map`. In that case, the\nelement type of `map` is a tuple containing one element for each\nfunction.\n\n```d unittest\nauto sums = [2, 4, 6, 8];\nauto products = [1, 4, 9, 16];\n\nsize_t i = 0;\nforeach (result; [ 1, 2, 3, 4 ].map!(\"a + a\", \"a * a\"))\n{\n    assert(result[0] == sums[i]);\n    assert(result[1] == products[i]);\n    ++i;\n}\n```\n\nYou may alias `map` with some function(s) to a symbol and use\nit separately:\n\n```d unittest\nimport std.algorithm.comparison : equal;\nimport std.conv : to;\n\nalias stringize = map!(to!string);\nassert(equal(stringize([ 1, 2, 3, 4 ]), [ \"1\", \"2\", \"3\", \"4\" ]));\n```\n",
             "length": 3,
             "line": 4,
             "signature": {
@@ -361,7 +361,7 @@
         },
         {
             "character": 19,
-            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
+            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range `r`.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
             "signature": {
@@ -508,7 +508,7 @@
         },
         {
             "character": 19,
-            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
+            "docs": "Allocates an `array` and initializes it with copies of the elements\nof range `r`.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
             "start": 208,
