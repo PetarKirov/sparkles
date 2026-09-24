@@ -1,0 +1,43 @@
+== Environment ==
+TERM                  = xterm-ghostty
+COLORTERM             = truecolor
+TERM_PROGRAM          = ghostty
+TERM_PROGRAM_VERSION  = 1.3.1
+NO_COLOR              = (unset)
+CLICOLOR              = (unset)
+CLICOLOR_FORCE        = (unset)
+FORCE_COLOR           = (unset)
+TMUX                  = (unset)
+STY                   = (unset)
+ZELLIJ                = 0
+SSH_TTY               = (unset)
+LC_ALL                = (unset)
+LC_CTYPE              = (unset)
+LANG                  = en_US.UTF-8
+
+== detectTermCaps() — the env-derived guess ==
+tty=true colors=true colorDepth=trueColor unicode=true size=62x20
+
+NOTE: running inside tmux/screen/zellij — query responses below
+describe the multiplexer, not the outer terminal.
+
+== Queries (fence arrived after 0 ms) ==
+query            sent                 reply
+XTVERSION        ESC[>0q              Zellij(4501)
+kitty-kbd        ESC[?u               flags=0
+mode 2004        ESC[?2004$p          —
+mode 2026        ESC[?2026$p          2 (recognized, reset)
+mode 2027        ESC[?2027$p          —
+mode 2031        ESC[?2031$p          2 (recognized, reset)
+mode 2048        ESC[?2048$p          —
+XTGETTCAP RGB    ESC P+q524742        invalid
+XTGETTCAP Tc     ESC P+q5463          invalid
+XTGETTCAP Su     ESC P+q5375          invalid
+OSC 10 fg        ESC]10;?BEL          rgb:ffff/ffff/ffff
+OSC 11 bg        ESC]11;?BEL          rgb:2828/2c2c/3434
+kitty-gfx        ESC_G…a=q…           OK
+DA2              ESC[>c               0;4501;1
+DA1 (fence)      ESC[c                62;52
+
+== Raw response buffer ==
+ESCP>|Zellij(4501)ESC\ESC[?0uESC[?2026;2$yESC[?2031;2$yESCP0+rESC\ESCP0+rESC\ESCP0+rESC\ESC]10;rgb:ffff/ffff/ffffESC\ESC_Gi=31;OKESC\ESC]11;rgb:2828/2c2c/3434ESC\ESC[>0;4501;1cESC[?62;52c
