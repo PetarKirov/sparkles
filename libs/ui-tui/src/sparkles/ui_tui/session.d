@@ -32,6 +32,7 @@ module sparkles.ui_tui.session;
 
 import sparkles.tui : Grid, ImagePlacement, PosixEvents, Terminal, TerminalOptions;
 import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSize;
+import sparkles.ui.geometry : Size;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
 
@@ -109,11 +110,9 @@ struct TerminalSession
         auto caps = detectTermCaps();
         if (r.probeImages)
         {
-            // Only kitty is drawn (`IMG5`); a sixel answer is declared as
-            // none until there is a sixel encoder, so the frame's report
-            // says the image was rastered rather than claiming the protocol.
-            const answered = s.term.probeImages();
-            caps.images = answered == ImageProtocol.kitty ? answered : ImageProtocol.none;
+            // Kitty or sixel — both are drawn (`IMG5`); a sixel answer the
+            // terminal cannot size is already `none`.
+            caps.images = s.term.probeImages();
             s.typedAhead = s.term.takeTypedAhead();
         }
         s.target = sessionCapabilities(caps);
@@ -145,6 +144,14 @@ struct TerminalSession
     /// Presents the surface — the retained diff, so only changed cells go out,
     /// and the frame's image placements over them.
     void present() @system => term.draw(grid, links, placements);
+
+    /// The cell size in pixels, where the terminal reports it; `0`s where it
+    /// does not.
+    Size cellPixels() @system
+    {
+        const c = term.cellPixels();
+        return Size(c.width, c.height);
+    }
 
     /// The input that arrived during the probe, for a caller reading the
     /// terminal itself; $(LREF next) replays whatever this did not take.

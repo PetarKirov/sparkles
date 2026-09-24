@@ -135,12 +135,14 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
     in TargetCapabilities caps = gridCapabilities,
     in EffectContext effects = EffectContext.init,
     scope const(ImageRegistry)* images = null,
-    scope ImagePlacement[]* placements = null)
+    scope ImagePlacement[]* placements = null,
+    Size cellPixels = defaultCellPixels)
 {
     auto canvas = GridCanvas(&grid, pageBg, originX, originY, caps);
     canvas.effects = effects;
     canvas.images = images;
     canvas.placements = placements;
+    canvas.cellPixels = cellPixels;
     if (!clip.empty)
         canvas.pushClip(clip); // an outer viewport in canvas cell coordinates
     foreach (ref op; ops)
@@ -301,16 +303,22 @@ struct GridCanvas
     /// every image then takes `IMG4`'s placeholder.
     const(ImageRegistry)* images;
 
-    /// Where kitty image placements go (`IMG5`), or `null`: the frame's
-    /// images are then rastered into the grid.
+    /// Where image placements go (`IMG5`), or `null`: the frame's images are
+    /// then rastered into the grid.
     ImagePlacement[]* placements;
+
+    /// The terminal's cell size in pixels, which a placement's fit is worked
+    /// out in — the real one where the terminal reports it.
+    Size cellPixels = defaultCellPixels;
 
     /**
     Draws an image op down `GLY9`'s ladder.
 
-    The top rung is the picture itself: on a target that draws kitty images,
-    with somewhere to put the placement, the image's cells are blanked and a
-    placement is recorded for the terminal to draw over them. Two cases still
+    The top rung is the picture itself: on a target that draws kitty or sixel
+    images, with somewhere to put the placement, the image's cells are
+    blanked and a placement is recorded for the terminal to draw. A sixel
+    image on the grid's last row is rastered instead (the terminal would
+    scroll under it). Two cases still
     take the cell rungs, because a placement cannot honour them: an image not
     wholly visible (a placement is not clipped cell by cell), and one inside
     an effect bracket (a tier-0 effect transforms cells, and the picture is
@@ -327,7 +335,12 @@ struct GridCanvas
         const data = images is null ? null : images.lookup(op.imageHandle);
         const vis = op.visual;
         const backdrop = vis.hasBg ? vis.bg : pageBg;
-        if (capabilities.images == ImageProtocol.kitty && placements !is null
+        // Sixel leaves the cursor below the picture, so one on the last row
+        // would scroll the screen: that image takes the cell rungs.
+        const protocol = capabilities.images == ImageProtocol.kitty
+            || (capabilities.images == ImageProtocol.sixel
+                && op.rect.y + originY + op.rect.height < grid.rows);
+        if (protocol && placements !is null
             && data !is null && data.rgba.length && effectStack.length == 0
             && wholeInView(op.rect))
         {
@@ -337,7 +350,7 @@ struct GridCanvas
             fillRect(op.rect, blank);
             *placements ~= kittyPlacement(op.imageHandle.value, *data,
                 Rect(op.rect.x + originX, op.rect.y + originY, op.rect.width, op.rect.height),
-                op.imageFit, defaultCellPixels);
+                op.imageFit, cellPixels);
             return;
         }
 
@@ -1639,4 +1652,36 @@ static assert(isCanvas!GridCanvas);
     const o = kittyPlacement(1, img, rect, ImageFit.cover, cell);
     assert(o.cols == 4 && o.rows == 4);
     assert(o.cropW == 5 && o.cropH == 10 && o.cropX == 7 && o.cropY == 0);
+}
+
+@("ui_tui.grid_canvas.sixelIsPlacedButNotOnTheLastRow")
+@safe unittest
+{
+    import sparkles.base.term_caps : ImageProtocol;
+    import sparkles.ui.canvas : imageOp;
+    import sparkles.ui.image : ImageFit, ImageRegistry;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    static immutable ubyte[8] px = [200, 0, 0, 255, 0, 0, 200, 255];
+    ImageRegistry reg;
+    const h = reg.register(px[], Size(1, 2), "flag");
+    TargetCapabilities sixel = capabilitiesOf(Profile.enhanced);
+    sixel.images = ImageProtocol.sixel;
+
+    // Mid-screen: a placement, like kitty.
+    Grid g;
+    g.resize(4, 3);
+    ImagePlacement[] placed;
+    paintGrid(g, RgbColor(0, 0, 0), [imageOp(Rect(0, 1, 2, 1), h, ImageFit.fill, "flag")],
+        caps: sixel, images: &reg, placements: &placed);
+    assert(placed.length == 1);
+
+    // On the last row the cursor would land below the picture and scroll
+    // the screen: rastered instead.
+    placed = null;
+    Grid b;
+    b.resize(4, 3);
+    paintGrid(b, RgbColor(0, 0, 0), [imageOp(Rect(0, 2, 2, 1), h, ImageFit.fill, "flag")],
+        caps: sixel, images: &reg, placements: &placed);
+    assert(placed.length == 0 && b[0, 2].grapheme == "▀");
 }

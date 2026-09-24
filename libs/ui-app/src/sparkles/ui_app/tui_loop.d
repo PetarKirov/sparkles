@@ -255,6 +255,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 {
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui_tui.grid_canvas : paintGrid;
+    import sparkles.ui.image : defaultCellPixels;
     import sparkles.base.term_color : RgbColor;
 
     auto session = TerminalSession.open(TerminalRequest(
@@ -287,12 +288,15 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
             return;
 
         const target = host.target;
-        // A terminal that draws kitty images gets them as placements beside
-        // the grid (`IMG5`); any other gets them rastered into it.
+        // A terminal that draws kitty or sixel images gets them as
+        // placements beside the grid (`IMG5`), worked out at its real cell
+        // size; any other gets them rastered into it.
         session.placements.length = 0;
+        const px = session.cellPixels();
         paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[], caps: target,
             effects: host.effectContext, images: host.imageRegistry,
-            placements: &session.placements);
+            placements: &session.placements,
+            cellPixels: px.width > 0 && px.height > 0 ? px : defaultCellPixels);
         draw(host); // `HST13`: the application's own cells, before the diff
         // The grid holds RGB; the depth it goes out at is the target's — the
         // declared one, or a narrowed preview's (`CAP5`).
