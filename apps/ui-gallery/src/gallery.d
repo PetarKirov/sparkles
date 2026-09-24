@@ -216,11 +216,15 @@ struct Gallery
         // reads the state they update. A pure page cannot do any of this.
         syncTerminals(h);
 
-        // `UIG_SHOT=<file>`: the GPU arm's self-verification hook — spawn
-        // three shells, run a command, scroll back, screenshot, quit. How
-        // this page's pixels get checked from a test script, no human and
-        // no display assumptions in the way (the terminal-view component
-        // has the same idea in `debugScreenshotAndExit`).
+        // `UIG_SHOT=<file>`: the GPU arm's self-verification hook — let the
+        // page settle, screenshot, quit. How a page's pixels get checked
+        // from a test script, no human and no display assumptions in the
+        // way (the terminal-view component has the same idea in
+        // `debugScreenshotAndExit`). On the Terminal page it also spawns
+        // three shells, runs a command and scrolls back, so the capture
+        // shows the tabs and scrollback. Only there: every other page's
+        // capture used to fork three shells it never showed, which made a
+        // demo of an image or an effect depend on the pty layer.
         static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
         {
             import std.process : environment;
@@ -229,9 +233,10 @@ struct Gallery
             if (shot !is null)
             {
                 dbgFrame++;
-                if (dbgFrame == 30 || dbgFrame == 40 || dbgFrame == 50)
+                const onTerminal = pages[s.page].title == "Terminal";
+                if (onTerminal && (dbgFrame == 30 || dbgFrame == 40 || dbgFrame == 50))
                     s.terms.spawnRequested = true;
-                if (dbgFrame == 80 && s.terms.any)
+                if (onTerminal && dbgFrame == 80 && s.terms.any)
                     if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
                         () @trusted {
                             import sparkles.terminal_view.input : pty_write;
@@ -239,7 +244,7 @@ struct Gallery
                             static immutable cmd = "seq 1 100\r";
                             pty_write(tv.s.pty_fd, cmd.ptr, cmd.length);
                         }();
-                if (dbgFrame == 200)
+                if (onTerminal && dbgFrame == 200)
                     scrollTerminal(-30);
                 // Through the host: the capture must land between the last draw
                 // call and the swap, which only the arm knows. raylib's
