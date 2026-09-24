@@ -42,6 +42,11 @@ struct ImageTextures
         _registry = registry;
     }
 
+    /// The decoded image `handle` names, or `null` — what a canvas narrowed
+    /// below its own pixels rasters in cells instead of uploading (`GLY9`).
+    const(ImageData)* lookup(ImageHandle handle) const @safe nothrow @nogc
+        => _registry is null ? null : _registry.lookup(handle);
+
     /**
     The texture for `handle`, uploading it if absent or stale, or `null` when
     the handle names nothing or carries no pixels to upload.
