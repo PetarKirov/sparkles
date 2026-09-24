@@ -37,20 +37,21 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
     if (s.length >= 2 && s[0] == '[' && s[1] == '<')
         return decodeMouse(s[2 .. $]);
 
-    // Parse `p1 [; p2 …] final`. Params are decimal; `:` starts a Kitty
-    // subfield (shifted/base key, event-type) — keep the first subfield
-    // of each `;` parameter and ignore the rest, or `[99:67;5u` is NoEvent.
+    // Parse `p1 [; p2 …] final`. Keep the Kitty shifted-key subfield in
+    // the first parameter: `[47:63;2u` means `?`, not `/`. Other subfields
+    // (base-layout key and event type) are outside this decoder's vocabulary.
     uint[3] p;
+    uint shiftedKey;
     size_t np;
     size_t i = 1;
     bool sawDigit;
-    bool skipSub;
+    size_t subfield;
     for (; i < s.length; ++i)
     {
         const c = s[i];
         if (c == ':')
         {
-            skipSub = true;
+            ++subfield;
             continue;
         }
         if (c == ';')
@@ -58,13 +59,15 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
             if (np < p.length)
                 ++np;
             sawDigit = false;
-            skipSub = false;
+            subfield = 0;
             continue;
         }
         if (c >= '0' && c <= '9')
         {
-            if (!skipSub && np < p.length)
+            if (subfield == 0 && np < p.length)
                 p[np] = p[np] * 10 + (c - '0');
+            else if (np == 0 && subfield == 1)
+                shiftedKey = shiftedKey * 10 + (c - '0');
             sawDigit = true;
             continue;
         }
@@ -126,7 +129,11 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
                     case '\t':       return keyEvent(Key.tab, mods);
                     case 0x7f, 0x08: return keyEvent(Key.backspace, mods);
                     case 0x1b:       return keyEvent(Key.escape, mods);
-                    default:         return charEvent(cast(dchar) p[0], mods);
+                    default:
+                        if (mods.shift && shiftedKey != 0)
+                            return Event(KeyEvent(Key.char_, cast(dchar) shiftedKey,
+                                mods, KeyAction.press, cast(dchar) p[0]));
+                        return charEvent(cast(dchar) p[0], mods);
                 }
             }
             return Event(NoEvent());
@@ -452,6 +459,13 @@ unittest
     assert(decodeEscape("[99;5u") == ctrlC);
     assert(decodeEscape("[99:67;5u") == ctrlC);
     assert(decodeEscape("[99::99;5u") == ctrlC);
+    // Kitty's alternate-key field carries the printable shifted character.
+    assert(decodeEscape("[91:123;2u") == Event(KeyEvent(Key.char_,
+        '{', Mods(shift: true), KeyAction.press, '[')));
+    assert(decodeEscape("[93:125;2u") == Event(KeyEvent(Key.char_,
+        '}', Mods(shift: true), KeyAction.press, ']')));
+    assert(decodeEscape("[47:63;2u") == Event(KeyEvent(Key.char_,
+        '?', Mods(shift: true), KeyAction.press, '/')));
     assert(decodeEscape("[27u") == keyEvent(Key.escape));
     assert(decodeEscape("[27;1:1u") == keyEvent(Key.escape));
     // Enter with Super

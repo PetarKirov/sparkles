@@ -556,6 +556,27 @@ unittest
     assert(nk(Key.tab, help).cmd == GalleryCommand.none);
 }
 
+@("ui_gallery.keymap.kittyShiftedPunctuation")
+unittest
+{
+    import sparkles.input.events : match;
+    import sparkles.tui.input : decodeEscape;
+
+    bool resolves(const(char)[] sequence, GalleryCommand want,
+        GalleryContext ctx = GalleryContext.init)
+    {
+        return decodeEscape(sequence).match!(
+            (in KeyEvent k) => commandFor(k, ctx).cmd == want,
+            _ => false);
+    }
+
+    assert(resolves("[91:123;2u", GalleryCommand.profileWiden));
+    assert(resolves("[93:125;2u", GalleryCommand.profileNarrow));
+    assert(resolves("[47:63;2u", GalleryCommand.showHelp));
+    assert(resolves("[47:63;2u", GalleryCommand.helpClose,
+        GalleryContext(helpShown: true)));
+}
+
 @("ui_gallery.keymap.rangedRowsCarryTheirTarget")
 @safe pure nothrow @nogc
 unittest

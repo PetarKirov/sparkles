@@ -160,7 +160,7 @@ unittest
     assert(setup.canFind("\x1b[?1049h"), setup);         // alt-screen
     assert(setup.canFind("\x1b[?1000;1002;1006h"), setup); // SGR mouse
     assert(setup.canFind("\x1b[?7l"), setup);            // autowrap off
-    assert(setup.canFind("\x1b[>9u"), setup);            // Kitty flags 1|8
+    assert(setup.canFind("\x1b[>13u"), setup);           // Kitty flags 1|4|8
 
 
     // First frame: a full paint, sync-framed, with the content.
