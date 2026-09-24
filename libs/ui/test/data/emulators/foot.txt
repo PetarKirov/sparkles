@@ -1,0 +1,40 @@
+== Environment ==
+TERM                  = foot
+COLORTERM             = truecolor
+TERM_PROGRAM          = (unset)
+TERM_PROGRAM_VERSION  = (unset)
+NO_COLOR              = (unset)
+CLICOLOR              = (unset)
+CLICOLOR_FORCE        = (unset)
+FORCE_COLOR           = (unset)
+TMUX                  = (unset)
+STY                   = (unset)
+ZELLIJ                = (unset)
+SSH_TTY               = (unset)
+LC_ALL                = (unset)
+LC_CTYPE              = (unset)
+LANG                  = en_US.UTF-8
+
+== detectTermCaps() — the env-derived guess ==
+tty=true colors=true colorDepth=trueColor unicode=true size=213x53
+
+== Queries (fence arrived after 0 ms) ==
+query            sent                 reply
+XTVERSION        ESC[>0q              foot(1.25.0)
+kitty-kbd        ESC[?u               flags=0
+mode 2004        ESC[?2004$p          2 (recognized, reset)
+mode 2026        ESC[?2026$p          2 (recognized, reset)
+mode 2027        ESC[?2027$p          1 (set)
+mode 2031        ESC[?2031$p          2 (recognized, reset)
+mode 2048        ESC[?2048$p          2 (recognized, reset)
+XTGETTCAP RGB    ESC P+q524742        8
+XTGETTCAP Tc     ESC P+q5463          ok
+XTGETTCAP Su     ESC P+q5375          ok
+OSC 10 fg        ESC]10;?BEL          rgb:ffff/ffff/ffff
+OSC 11 bg        ESC]11;?BEL          rgb:2424/2424/2424
+kitty-gfx        ESC_G…a=q…           —
+DA2              ESC[>c               1;012500;0
+DA1 (fence)      ESC[c                62;4;22;28;52
+
+== Raw response buffer ==
+ESCP>|foot(1.25.0)ESC\ESC[?0uESC[?2004;2$yESC[?2026;2$yESC[?2027;1$yESC[?2031;2$yESC[?2048;2$yESCP1+r524742=38ESC\ESCP1+r5463ESC\ESCP1+r5375ESC\ESC]10;rgb:ffff/ffff/ffffBELESC]11;rgb:2424/2424/2424BELESC[>1;012500;0cESC[?62;4;22;28;52c
