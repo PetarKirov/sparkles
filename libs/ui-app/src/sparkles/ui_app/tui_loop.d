@@ -168,11 +168,20 @@ struct TuiHost
     /// ditto
     void writeOutOfBand(scope const(char)[] seq) @system => session.writeOutOfBand(seq);
 
-    /// Accepted and dropped: a cell grid resolves no handles, so every image
-    /// takes `IMG4`'s placeholder. Present so an application binds its
-    /// registry once, on whichever host it got, rather than branching on the
-    /// target for something only one of them can use.
-    void images(const(ImageRegistry)*) @safe pure nothrow @nogc {}
+    /**
+    Binds the image registry the grid resolves handles against (`IMG3`), so
+    each image is drawn down `GLY9`'s cell ladder — a block raster at the
+    target's `blocks` tier, else braille — instead of its alt text.
+
+    Borrowed: the application owns the registry, and it must outlive the run.
+    A host never given one paints `IMG4`'s placeholder for every image.
+    */
+    void images(const(ImageRegistry)* registry) @safe pure nothrow @nogc
+    {
+        imageRegistry = registry;
+    }
+
+    private const(ImageRegistry)* imageRegistry;
 
     /**
     Binds the effect registry this host's grid resolves ids against (`EFX9`).
@@ -221,8 +230,10 @@ struct TuiHost
         import sparkles.base.term_color : RgbColor;
         import sparkles.ui_tui.grid_canvas : GridCanvas;
 
-        return GridCanvas(&session.grid, RgbColor(0, 0, 0),
+        auto c = GridCanvas(&session.grid, RgbColor(0, 0, 0),
             capabilities: target);
+        c.images = imageRegistry;
+        return c;
     }
 }
 
@@ -277,7 +288,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 
         const target = host.target;
         paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[], caps: target,
-            effects: host.effectContext);
+            effects: host.effectContext, images: host.imageRegistry);
         draw(host); // `HST13`: the application's own cells, before the diff
         // The grid holds RGB; the depth it goes out at is the target's — the
         // declared one, or a narrowed preview's (`CAP5`).

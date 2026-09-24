@@ -25,6 +25,7 @@ import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match
     ImageDraw, PopClip, PopEffect, PushClip, PushEffect, Rule, Scrollbar, TextRun;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
+import sparkles.ui.image_raster : ImageRung, imageRungOf;
 import sparkles.ui.style : BorderStyle, FontRole;
 import sparkles.ui.tokens : projectBorder, TargetCapabilities;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
@@ -65,6 +66,8 @@ enum Substitution : ubyte
     @needs("extendedUnderline") plainUnderline, /// a curly, dotted or dashed underline became a straight one
     @needs("textSizing") textSizeIgnored,    /// a scaled run painted at 1em
     @needs("proportionalText") monospaceDocs, /// a docs run painted in the monospace face
+    @needs("images") imageRastered,          /// an image drawn in cells: a block or braille raster (`GLY9`)
+    @needs("images") imageAsAlt,             /// an image shown as its alt text (`IMG4`)
 }
 
 /// The kebab-case names (`ascii-border`, …), from the enum's own `@WireCase`.
@@ -268,9 +271,27 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                 if (!caps.alpha && (s.fgAlpha != 0xFF || (s.trackLit && s.trackAlpha != 0xFF)))
                     r.note(Substitution.alphaFlattened);
             },
-            // An image is its `IMG4` placeholder on any target without a
-            // raster primitive: a bracketed alt text, in the op's colours.
-            (in ImageDraw i) { color(); glyphs(i.alt); },
+            // An image takes `GLY9`'s ladder: the target's own means, else
+            // a raster in the finest cells it has, else `IMG4`'s bracketed
+            // alt text in the op's colours. A raster's glyphs are the rung's
+            // own, so only its colours can fold further.
+            (in ImageDraw i) {
+                final switch (imageRungOf(caps))
+                {
+                    case ImageRung.native:
+                        break;
+                    case ImageRung.alt:
+                        r.note(Substitution.imageAsAlt);
+                        color();
+                        glyphs(i.alt);
+                        break;
+                    case ImageRung.braille, ImageRung.halfBlocks,
+                            ImageRung.quadrants, ImageRung.sextants:
+                        r.note(Substitution.imageRastered);
+                        color();
+                        break;
+                }
+            },
             (in PushClip _) {},
             (in PopClip _) {},
             // An effect's degradation is its own declaration (`EFX3`), not
@@ -480,4 +501,34 @@ unittest
     // At `none` every color is one of two: nothing is carried by color.
     assert(projectColor(orange, ColorDepth.none, true) == xterm256ToRgb(0));
     assert(projectColor(odd, ColorDepth.none, false) == xterm256ToRgb(7));
+}
+
+@("ui.degradation.imagesTakeTheLadder")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_caps : ImageProtocol;
+    import sparkles.ui.canvas : imageOp;
+    import sparkles.ui.geometry : Rect;
+    import sparkles.ui.image : ImageFit, ImageHandle;
+    import sparkles.ui.tokens : capabilitiesOf, meet, Profile;
+
+    // GLY9: one image, three documented targets, three rungs.
+    const DrawOp[1] ops = [imageOp(Rect(0, 0, 8, 4), ImageHandle(1), ImageFit.contain, "logo")];
+
+    const b = degradationsOf(ops[], capabilitiesOf(Profile.baseline));
+    assert(b[Substitution.imageAsAlt] == 1 && b[Substitution.imageRastered] == 0);
+
+    const e = degradationsOf(ops[], capabilitiesOf(Profile.enhanced));
+    assert(e[Substitution.imageRastered] == 1 && e[Substitution.imageAsAlt] == 0);
+    assert(e[Substitution.asciiGlyph] == 0, "a raster's glyphs are its tier's own");
+
+    assert(degradationsOf(ops[], capabilitiesOf(Profile.full)).empty);
+
+    // A window draws its own pixels; previewing `full` it still does, and
+    // previewing `enhanced` it rasters like the terminal would.
+    TargetCapabilities window = capabilitiesOf(Profile.full);
+    window.images = ImageProtocol.pixels;
+    assert(degradationsOf(ops[], meet(window, capabilitiesOf(Profile.full)))[Substitution.imageRastered] == 0);
+    assert(degradationsOf(ops[], meet(window, capabilitiesOf(Profile.enhanced)))[Substitution.imageRastered] == 1);
 }

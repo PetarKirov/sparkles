@@ -23,6 +23,7 @@ module render;
 import std.array : appender, join;
 import std.conv : to;
 
+import sparkles.base.term_caps : ImageProtocol;
 import sparkles.base.term_color : Color;
 import sparkles.input : charEvent, Event, Key, keyEvent;
 import sparkles.tui.cell : CellStyle, Grid;
@@ -198,7 +199,11 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
         });
 
     const th = app.theme;
-    const caps = req.capabilities;
+    // The grid has no image-protocol channel yet (`IMG5`): whatever the
+    // profile names, an image is drawn down the cell ladder, so the report
+    // must say so rather than claim the protocol rung was reached.
+    TargetCapabilities caps = req.capabilities;
+    caps.images = ImageProtocol.none;
     Grid grid;
     grid.resize(cast(ushort) req.width, cast(ushort) req.height);
     grid.clearTo(CellStyle(fg: Color.fromRgb(th.pageFg),
@@ -208,7 +213,7 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
     // the terminal does not.
     auto fxP = (() @trusted => &app.fx)();
     paintGrid(grid, th.pageBg, rec.lastOps, caps: caps,
-        effects: EffectContext(fxP, th.pageFg));
+        effects: EffectContext(fxP, th.pageFg), images: rec.imageRegistry);
     report = degradationsOf(rec.lastOps, caps);
     return grid;
 }
