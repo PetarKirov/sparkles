@@ -24,14 +24,22 @@ const float w2 = 0.1216216216;
 const float w3 = 0.0540540541;
 const float w4 = 0.0162162162;
 
+// Each tap multiplied and accumulated on its own, in the CRT's original
+// order: a paired `(a + b) * w` is the same sum on paper but not the same
+// float rounding, and the CRT's migration onto this effect was checked
+// byte-for-byte against the pass it replaced.
 vec3 blur(vec2 uv, vec2 dir)
 {
     vec2 s = dir * uBloomRadius / uResolution;
     vec3 sum = SAMPLE(texture0, uv).rgb * w0;
-    sum += (SAMPLE(texture0, uv + s * 1.0).rgb + SAMPLE(texture0, uv - s * 1.0).rgb) * w1;
-    sum += (SAMPLE(texture0, uv + s * 2.0).rgb + SAMPLE(texture0, uv - s * 2.0).rgb) * w2;
-    sum += (SAMPLE(texture0, uv + s * 3.0).rgb + SAMPLE(texture0, uv - s * 3.0).rgb) * w3;
-    sum += (SAMPLE(texture0, uv + s * 4.0).rgb + SAMPLE(texture0, uv - s * 4.0).rgb) * w4;
+    sum += SAMPLE(texture0, uv + s * 1.0).rgb * w1;
+    sum += SAMPLE(texture0, uv - s * 1.0).rgb * w1;
+    sum += SAMPLE(texture0, uv + s * 2.0).rgb * w2;
+    sum += SAMPLE(texture0, uv - s * 2.0).rgb * w2;
+    sum += SAMPLE(texture0, uv + s * 3.0).rgb * w3;
+    sum += SAMPLE(texture0, uv - s * 3.0).rgb * w3;
+    sum += SAMPLE(texture0, uv + s * 4.0).rgb * w4;
+    sum += SAMPLE(texture0, uv - s * 4.0).rgb * w4;
     return sum;
 }
 
@@ -40,11 +48,15 @@ void main()
     vec2 uv = fragTexCoord;
 #if BLOOM_PASS == 0
     // Bright-pass extraction, smoothly, so a pixel drifting across the cut
-    // does not pop. A transparent pixel is black here, and contributes none.
-    vec4 c = SAMPLE(texture0, uv);
-    float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-    float keep = smoothstep(uBloomThreshold, uBloomThreshold + 0.25, lum) * c.a;
-    OUT_COLOR = vec4(c.rgb * keep, 1.0);
+    // does not pop. A pixel the subtree left transparent is already black
+    // (the bracket clears to 0,0,0,0), so it contributes nothing without
+    // weighting by alpha — and weighting by it would be wrong: antialiased
+    // text blended onto an opaque fill leaves alpha just under 1 in a render
+    // target, which dimmed every glyph edge's glow.
+    vec3 c = SAMPLE(texture0, uv).rgb;
+    float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float keep = smoothstep(uBloomThreshold, uBloomThreshold + 0.25, lum);
+    OUT_COLOR = vec4(c * keep, 1.0);
 #elif BLOOM_PASS == 1
     OUT_COLOR = vec4(blur(uv, vec2(1.0, 0.0)), 1.0);
 #elif BLOOM_PASS == 2
