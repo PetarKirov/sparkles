@@ -32,6 +32,7 @@ import std.algorithm : canFind;
 import sparkles.base.term_color : RgbColor;
 import sparkles.shader : clamp, v2, v3, vec3, x, y, z;
 import sparkles.ui.geometry : Point, Size;
+import sparkles.ui.glsl_dialect : activePrologue;
 static import sparkles.ui.effect_shaders;
 
 /**
@@ -166,8 +167,54 @@ struct EffectImpl
     /// bracket's size in cells, for a tier-0 transform's `at`) and whatever
     /// $(LREF EffectParam)s the effect declares. Desktop GLSL 330, or ES 100
     /// on Android.
+    ///
+    /// Ignored when $(LREF passes) is non-empty.
     string source;
+
+    /**
+    A multi-pass artifact (tier 2), in order; empty for the one-pass case.
+
+    Each pass is a complete fragment shader of its own. The last one
+    composites into whatever the bracket sits on; every earlier one renders
+    into an intermediate the backend owns. See $(LREF EffectPass) for how a
+    pass names what it samples.
+    */
+    EffectPass[] passes;
 }
+
+/**
+One pass of a multi-pass artifact — how a tier-2 effect is declared $(I as
+data) (`EFX11`, `EFX21`).
+
+The images a pass can read are numbered: `0` is the bracket's own rendering,
+and `k` is what pass `k - 1` produced. A pass samples image $(LREF from) as
+`texture0` — the quad it is drawn with — and each of $(LREF inputs) as
+`texture1`, `texture2`, … in order. So bloom is four passes: extract `0` at
+half size, blur that horizontally, blur that vertically, then composite
+from `0` with image `3` as `texture1`.
+
+The backend supplies, when a pass declares them: `uResolution` (this pass's
+output size in pixels), `uExtentCells` (the bracket's size in cells) and
+`uTime` (the frame clock, which a capture pins). Everything else is an
+$(LREF EffectParam).
+*/
+struct EffectPass
+{
+    /// A complete fragment shader, as `EffectImpl.source`.
+    string source;
+    /// Output size as a divisor of the bracket's: `1` is full size, `2` half.
+    /// Ignored for the last pass, which always draws at the bracket's size.
+    ubyte downscale = 1;
+    /// The image drawn as `texture0`. $(LREF previousImage) (the default)
+    /// means the one just before this pass.
+    ubyte from = previousImage;
+    /// Further images, bound as `texture1` onward.
+    ubyte[] inputs;
+}
+
+/// $(LREF EffectPass.from)'s default: whatever the previous pass produced
+/// (the bracket itself, for the first pass).
+enum ubyte previousImage = ubyte.max;
 
 /**
 One named scalar an effect reads at paint time (`EFX21`).
@@ -409,6 +456,14 @@ enum Builtin : EffectId
     /// says so. The built-in set's proof that the tier boundary is real in
     /// both directions, and the shape `EFX21`'s CRT is built from.
     curvature = EffectId(5),
+    /**
+    A glow around whatever is bright — $(B tier 2), four passes over
+    intermediates the backend owns (`EffectPass`). The built-in set's
+    multi-pass member, and the half of the CRT a single pass could not
+    express. A cell grid cannot sample a neighbourhood, so it paints the
+    subtree unaffected and says so.
+    */
+    bloom = EffectId(6),
 }
 
 /**
@@ -436,8 +491,43 @@ EffectRecord[] builtinRecords() @safe pure nothrow
             impls: [EffectImpl(glslBackend, curvatureGlsl)],
             params: [EffectParam("uAmount", [0.18f, 0, 0, 0], 1)],
         ),
+        EffectRecord(
+            name: "bloom",
+            tier: EffectTier.layer,
+            degradation: Degradation.unaffected,
+            impls: [EffectImpl(glslBackend, passes: bloomPasses)],
+            // The CRT's defaults (`CRT3`).
+            params: [
+                EffectParam("uBloomThreshold", [0.65f, 0, 0, 0], 1),
+                EffectParam("uBloomRadius", [2.0f, 0, 0, 0], 1),
+                EffectParam("uBloomIntensity", [0.35f, 0, 0, 0], 1),
+            ],
+        ),
     ];
 }
+
+/**
+The `bloom` built-in's four passes: extract the bright part at half size,
+blur it horizontally, then vertically, then add it back over the bracket.
+
+Hand-written GLSL (`shaders/tier2/bloom.frag`), one body compiled four ways by
+a `BLOOM_PASS` define. Public because a larger tier-2 effect — the CRT —
+reuses them as its own first three passes rather than keeping a second copy.
+*/
+EffectPass[] bloomPasses() @safe pure nothrow
+{
+    return [
+        EffectPass(bloomPassSource!0, downscale: 2, from: 0),
+        EffectPass(bloomPassSource!1, downscale: 2),
+        EffectPass(bloomPassSource!2, downscale: 2),
+        EffectPass(bloomPassSource!3, from: 0, inputs: [3]),
+    ];
+}
+
+/// One pass of `bloom`, in this build's GLSL dialect.
+enum string bloomPassSource(int pass) = activePrologue
+    ~ "#define BLOOM_PASS " ~ cast(char)('0' + pass) ~ "\n"
+    ~ import("tier2/bloom.frag");
 
 // The unseeded registry's view: the same records, evaluated at compile time.
 private static immutable EffectRecord[] builtinTable = builtinRecords();
@@ -573,6 +663,32 @@ enum string curvatureGlsl = import("curvature" ~ glslDialect);
     EffectRegistry other;
     assert(other.lookup(Builtin.phosphor) !is null,
         "one registry's rebinding is not another's");
+}
+
+@("ui.effect.bloom.isAMultiPassTier2Effect")
+@safe pure nothrow unittest
+{
+    EffectRegistry reg;
+    const rec = reg.lookup(Builtin.bloom);
+    assert(rec.tier == EffectTier.layer);
+    // `EFX9`/`EFX12`: a neighbourhood is not something a cell samples, so
+    // there is no transform to run and the degradation says so.
+    assert(!rec.honouredByCells && rec.degradation == Degradation.unaffected);
+
+    const impl = rec.implFor(glslBackend);
+    assert(impl.source is null && impl.passes.length == 4);
+    // The chain as data: half-size extract from the bracket, two blurs of
+    // what came before, and a full-size composite of the bracket with the
+    // blurred glow as `texture1`.
+    assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
+    assert(impl.passes[1].from == previousImage && impl.passes[2].downscale == 2);
+    assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
+    foreach (i, ref p; impl.passes)
+    {
+        assert(p.source.canFind("#version"), "each pass is a complete shader");
+        assert(p.source.canFind("BLOOM_PASS"));
+    }
+    assert(impl.passes[3].source.canFind("uBloomIntensity"));
 }
 
 @("ui.effect.builtins.areHonouredByACellGrid")

@@ -35,7 +35,7 @@ import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
     PointerUnit, RunConfig, withRealSize;
 import sparkles.base.term_color : RgbColor;
-import sparkles.base.term_color : RgbColor;
+import raylib : GetTime;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_raylib.effect_gpu : EffectGpu;
@@ -53,6 +53,7 @@ struct GuiHost
     private SharedBuffer!(char, 4096) drawScratch;
     private ImageTextures imageTextures;
     private EffectGpu effectGpu;
+    private float pinnedClock = -1; /// `pinEffectClock`; negative = live
 
     /// `true` when the event-horizon arm paces (raylib never sleeps);
     /// `false` on the raylib-paced fallback (no ring available).
@@ -145,6 +146,21 @@ struct GuiHost
     */
     void effects(const(EffectRegistry)* registry, RgbColor) @system
         => effectGpu.attach(registry);
+
+    /**
+    Pins the clock every effect's `uTime` reads to `seconds`, for the rest of
+    the run; a negative value unpins it (`DBG1`).
+
+    An animated effect — the CRT's jitter, roll and flicker — makes two
+    captures of the same frame differ, and a byte-comparison of them then
+    reports a change under test that is not there. A capture hook pins the
+    clock once, before the first frame, and every effect's animation is
+    frozen at the same phase in every run.
+    */
+    void pinEffectClock(float seconds) @safe pure nothrow @nogc
+    {
+        pinnedClock = seconds;
+    }
 
     /// A window has no out-of-band channel: the terminal's escape sequences
     /// address a terminal. Accepted and dropped so an application does not have
@@ -274,6 +290,8 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         session.window.beginFrame();
         session.window.resetClip();
         session.window.clear(RgbColor(0, 0, 0));
+        host.effectGpu.clock(host.pinnedClock >= 0
+            ? host.pinnedClock : cast(float) GetTime());
         auto canvas = host.canvas;
         paint(canvas, host.ops()[]);
         draw(host); // `HST13`: the application's own renderer, inside the bracket
