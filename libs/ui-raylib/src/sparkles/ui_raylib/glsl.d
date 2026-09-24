@@ -14,8 +14,11 @@ device. This module is what stops that from being re-invented per shader.
 */
 module sparkles.ui_raylib.glsl;
 
+// Plain WYSIWYG strings, not `q{}` token strings: `#define` is not a D token,
+// and a token string holding one is a deprecation on every build.
+
 /// The desktop dialect.
-enum string glslPrologue = q{
+enum string glslPrologue = `
 #version 330
 
 in vec2 fragTexCoord;
@@ -24,10 +27,10 @@ out vec4 finalColor;
 
 #define SAMPLE texture
 #define OUT_COLOR finalColor
-};
+`;
 
 /// The OpenGL ES dialect, for the Android build.
-enum string glslPrologueEs = q{
+enum string glslPrologueEs = `
 #version 100
 precision mediump float;
 
@@ -36,7 +39,7 @@ varying vec4 fragColor;
 
 #define SAMPLE texture2D
 #define OUT_COLOR gl_FragColor
-};
+`;
 
 /// The dialect this build compiles for.
 version (Android)
