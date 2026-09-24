@@ -28,8 +28,9 @@ module sparkles.tui.probe;
 import sparkles.base.term_caps : ImageProtocol;
 
 /// The `images` battery: kitty's graphics query (a 1×1 RGB image, id 31, that
-/// is queried and never stored), fenced by primary DA.
-enum string imageQuery = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c";
+/// is queried and never stored), the cell's pixel size (`CSI 16 t`, which
+/// sixel needs), fenced by primary DA.
+enum string imageQuery = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[16t\x1b[c";
 
 /// What the `images` battery was answered with.
 struct ImageReplies
@@ -37,6 +38,7 @@ struct ImageReplies
     bool kitty;  /// the graphics query was answered `OK`
     bool sixel;  /// DA1 listed attribute `4`
     bool fenced; /// DA1 arrived: every earlier reply is in
+    ushort cellWidth, cellHeight; /// `CSI 16 t`'s answer, `0` when unanswered
 
     /**
     The protocol these answers declare — kitty first, since it is the one the
@@ -76,6 +78,32 @@ ImageReplies splitImageReplies(in ubyte[] bytes, ref ubyte[] rest) @safe pure no
                 r.kitty = true;
             i += end + 2;
             continue;
+        }
+        if (startsWith(at, "\x1b[6;"))
+        {
+            // `CSI 6 ; height ; width t`: the cell's pixel size.
+            uint[2] v;
+            size_t j = 4, k;
+            while (j < at.length && k < 2)
+            {
+                const c = at[j];
+                if (c >= '0' && c <= '9')
+                    v[k] = v[k] * 10 + (c - '0');
+                else if (c == ';')
+                    ++k;
+                else
+                    break;
+                ++j;
+            }
+            if (j == at.length)
+                break; // cut off
+            if (at[j] == 't' && k == 1)
+            {
+                r.cellHeight = cast(ushort) v[0];
+                r.cellWidth = cast(ushort) v[1];
+                i += j + 1;
+                continue;
+            }
         }
         if (startsWith(at, "\x1b[?"))
         {
@@ -137,6 +165,16 @@ private bool listsAttribute(in ubyte[] params, char attribute) @safe pure nothro
     const r = splitImageReplies(cast(const(ubyte)[]) "\x1b_Gi=31;OK\x1b\\\x1b[?62;22;52c", rest);
     assert(r.kitty && !r.sixel && r.fenced && rest.length == 0);
     assert(r.protocol(false) == ImageProtocol.kitty);
+}
+
+@("tui.probe.images.cellPixelSize")
+@safe pure nothrow unittest
+{
+    // foot's answer to `CSI 16 t`, among the others.
+    ubyte[] rest;
+    const r = splitImageReplies(cast(const(ubyte)[]) "\x1b[6;13;6t\x1b[?62;4;22c", rest);
+    assert(r.cellWidth == 6 && r.cellHeight == 13 && r.sixel && r.fenced);
+    assert(rest.length == 0);
 }
 
 @("tui.probe.images.sixelIsTheTerminalsOwnOnly")

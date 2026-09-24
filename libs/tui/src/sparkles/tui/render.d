@@ -30,6 +30,7 @@ struct Screen
     {
         Grid _prev;
         bool _havePrev;
+        bool _scrolled;
         ColorDepth _depth = ColorDepth.trueColor;
     }
 
@@ -39,6 +40,38 @@ struct Screen
     {
         _havePrev = false;
     }
+
+    /**
+    Marks the cells of a rect as not matching anything, so the next
+    $(LREF render) rewrites them — for content the terminal holds that the
+    retained grid cannot see, like a sixel image's pixels, once it is gone.
+    */
+    void damage(int x, int y, int cols, int rows) @safe pure nothrow @nogc
+    {
+        if (!_havePrev)
+            return;
+        foreach (yy; (y < 0 ? 0 : y) .. (y + rows < _prev.rows ? y + rows : _prev.rows))
+            foreach (xx; (x < 0 ? 0 : x) .. (x + cols < _prev.cols ? x + cols : _prev.cols))
+                _prev[cast(ushort) xx, cast(ushort) yy].len = 0; // no real cell is empty
+    }
+
+    /// Whether rendering `target` would rewrite any cell of the rect — asked
+    /// before $(LREF render), while the retained grid holds the last frame.
+    bool changedWithin(in Grid target, int x, int y, int cols, int rows) const
+        @safe pure nothrow @nogc
+    {
+        if (repaintsFully(target))
+            return true;
+        foreach (yy; (y < 0 ? 0 : y) .. (y + rows < target.rows ? y + rows : target.rows))
+            foreach (xx; (x < 0 ? 0 : x) .. (x + cols < target.cols ? x + cols : target.cols))
+                if (target[cast(ushort) xx, cast(ushort) yy] != _prev[cast(ushort) xx, cast(ushort) yy])
+                    return true;
+        return false;
+    }
+
+    /// Whether the last $(LREF render) scrolled a band of the terminal —
+    /// which moves whatever the terminal drew there, images included.
+    bool scrolled() const @safe pure nothrow @nogc => _scrolled;
 
     /// Whether the next $(LREF render) of `target` repaints every cell — the
     /// first frame, a resize, or after $(LREF invalidate) — which is when
@@ -73,6 +106,7 @@ struct Screen
     void render(Writer)(in Grid target, ref Writer w,
         scope const(char)[][] links = null)
     {
+        _scrolled = false;
         const resized = target.cols != _prev.cols || target.rows != _prev.rows;
         if (!_havePrev || resized)
         {
@@ -230,6 +264,7 @@ struct Screen
             put(w, 'L'); // IL == SD-by-n with the cursor on the region's top row
         }
         put(w, "\x1b[r"); // reset the scroll region to full screen
+        _scrolled = true;
 
         // Mirror the terminal's shift in the retained grid (blank the vacated
         // rows with the default cell — they differ from `target`'s exposed
