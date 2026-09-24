@@ -17,7 +17,7 @@ targetPath "build"
 importPaths "src" "../test-runner/src" "../math/src"
 // The built-in effects' fragment shaders, generated from `effect_shaders.d`
 // by `dub run :shader-compile` and string-imported by `effect.d`.
-stringImportPaths "shaders/generated"
+stringImportPaths "src/sparkles/ui/shaders"
 
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to

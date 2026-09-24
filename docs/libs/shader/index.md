@@ -67,3 +67,17 @@ varying named after the parameter (which is how GLSL links it to the vertex
 stage), each `@uniform` a uniform of that name, each `Sampler2D` a sampled image
 at the next binding, and the return value the colour output. Everything in the
 function body is ordinary D over this vocabulary — the same D the CPU runs.
+
+## Regenerating the GLSL
+
+```bash
+nix run .#shader-compile            # regenerate libs/ui/src/sparkles/ui/shaders/
+nix run .#shader-compile -- --verify
+```
+
+Run it from the repository root, on Linux. The package carries its own
+compiler — dlang.nix's `ldc-vulkan`, LDC with dcompute's Vulkan target and the
+`@fragment` stage, built against LLVM main with the SPIR-V backend — plus
+spirv-tools, spirv-cross and glslang, so neither the devshell nor a local
+compiler build is needed. The generated GLSL is committed, so building
+`sparkles:ui` or hue never needs any of this.

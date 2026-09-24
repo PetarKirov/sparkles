@@ -109,9 +109,16 @@
               fs.fileFilter (
                 # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
                 # `.css`/`.svg` string-import view assets (e.g. sparkles:twoslash's
-                # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`).
+                # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`)
+                # and `.frag` shaders (sparkles:ui's generated effect GLSL, which
+                # `effect.d` string-imports from `src/sparkles/ui/shaders/`).
                 file:
-                file.hasExt "d" || file.hasExt "c" || file.hasExt "i" || file.hasExt "css" || file.hasExt "svg"
+                file.hasExt "d"
+                || file.hasExt "c"
+                || file.hasExt "i"
+                || file.hasExt "css"
+                || file.hasExt "svg"
+                || file.hasExt "frag"
               ) (fromRoot path)
             ) sourceDirs
           );

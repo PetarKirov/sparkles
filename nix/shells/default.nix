@@ -285,7 +285,7 @@
 
         # SPIR-V → GLSL, for `shader-compile`: the single-source effects under
         # `libs/ui/shaders/` compile to SPIR-V through the dcompute-enabled LDC
-        # (`$SPARKLES_SHADER_LDC`), and spirv-cross turns that into the GLSL
+        # (dlang.nix's `ldc-vulkan`), and spirv-cross turns that into the GLSL
         # `sparkles:ui-raylib` loads. Committed like the `.spv` above, so CI
         # needs neither — `shader-compile --verify` skips without the compiler.
         pkgs.spirv-tools
