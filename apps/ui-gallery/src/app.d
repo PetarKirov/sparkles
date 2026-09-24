@@ -7,6 +7,7 @@ which backend opens is the host's decision, and the same `view` runs on either.
 */
 module app;
 
+import std.array : join;
 import std.stdio : stderr, write, writefln, writeln;
 import std.traits : isDynamicArray, isSomeString;
 
@@ -19,6 +20,7 @@ import sparkles.ui_app.run_app : runApp;
 import gallery : Gallery;
 import registry : pageIndexOf, pages;
 import render : renderAnsi, renderDegradations, renderPlain, RenderRequest;
+import sparkles.ui.emulators : emulatorNames;
 import sparkles.ui.tokens : Profile;
 import state : EmulatorChoice, GalleryState, ProfileChoice, profileOf, themeNames;
 
@@ -63,9 +65,9 @@ struct Params
     ProfileChoice profile;
 
     @(Option("emulator", description:
-        "Paint as a measured terminal emulator would show it — xterm, "
-        ~ "apple-terminal, iterm2, alacritty, wezterm, kitty, ghostty or tmux "
-        ~ "— from the replies it gave the capability battery; what the battery "
+        "Paint as a measured terminal emulator would show it — "
+        ~ emulatorNames[0 .. $ - 1].join(", ") ~ " or " ~ emulatorNames[$ - 1]
+        ~ " — from the replies it gave the capability battery; what the battery "
         ~ "cannot ask stays off. Met with --profile, and fixed for a live run "
         ~ "while } and { step the profile within it."))
     EmulatorChoice emulator;
