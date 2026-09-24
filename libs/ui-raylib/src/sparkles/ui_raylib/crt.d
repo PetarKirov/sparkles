@@ -1,11 +1,12 @@
 /**
-CRT monitor shader effect behind the `sparkles:ui-raylib` seam (`UIA7`).
+The CRT monitor, as an effect behind the `sparkles:ui-raylib` seam (`UIA7`,
+`EFX21`).
 
-Encapsulates the post-processing render texture, GLSL shader compilation for
-desktop (GLSL 330) and Android (GLSL 100 ES), barrel distortion curvature,
-mouse-driven 3D asteroid curvature tilt, mouse magnification lens distortion,
-animated scanlines and roll bars, RGB phosphor triad mask, chromatic aberration,
-and vignette.
+Barrel curvature fitted to the screen, a mouse-directed tilt and magnifier,
+scanlines and a roll bar, an RGB phosphor mask, chromatic aberration, bloom
+and a vignette, plus reactions to the UI's structure (`EFX23`) — written once
+for desktop GLSL 330 and Android ES 100, and run by the effect backend as a
+four-pass tier-2 effect on the frame's root bracket.
 */
 module sparkles.ui_raylib.crt;
 
@@ -14,7 +15,12 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
 import sparkles.ui.glsl_dialect : activePrologue;
 public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
+import std.algorithm : map;
+import std.array : array;
+
 import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
+import sparkles.ui.effect : Degradation, EffectId, EffectParam, EffectRecord,
+    EffectRegistry;
 import sparkles.ui.frame_list : firstOfSlot, focusedExtent, FrameList,
     scrollbarThumbOf, textAt;
 import sparkles.ui.geometry : Point, Rect;
@@ -483,86 +489,56 @@ void main()
 }
 };
 
-/// The composed fragment shader this build loads.
-private enum crtFragmentShader = activePrologue ~ crtUniforms ~ crtShaderBody;
-
 /**
-The bloom shader body (`CRT3`): one program, three passes, selected by
-`uBloomPass`.
+The CRT's composite pass, as the effect backend runs it.
 
-Separable, because a radius-`r` gaussian costs `2r` taps in two passes instead
-of `r*r` in one; and at half resolution, because bloom is low-frequency by
-definition and the halving is four times less work nobody can see.
+The body predates the effect pipeline and reads `resolution` and `time`; the
+backend supplies those to every pass as `uResolution` and `uTime`, so two
+defines rename them rather than the body being rewritten around new names.
+`texture1` is the blurred bright pass — image 3 of the chain.
 */
-private enum bloomShaderBody = q{
-uniform sampler2D texture0;
-uniform vec4 colDiffuse;
-uniform vec2 resolution;
-uniform float uBloomPass;
-uniform float uBloomThreshold;
-uniform float uBloomRadius;
+private enum crtFragmentShader = activePrologue
+    ~ "#define resolution uResolution\n#define time uTime\n"
+    ~ crtUniforms ~ crtShaderBody;
 
-// A 9-tap gaussian, normalized. Weights are the row of Pascal's triangle that
-// approximates sigma ~ 2 closely enough for a glow nobody measures.
-const float w0 = 0.2270270270;
-const float w1 = 0.1945945946;
-const float w2 = 0.1216216216;
-const float w3 = 0.0540540541;
-const float w4 = 0.0162162162;
+/// Every value the CRT's passes read, in the order `writeParams` sets them.
+private static immutable string[] crtParamNames = [
+    "mouse", "mouseTilt", "mouseMagnify", "cursorShape", "uCurvature",
+    "uScanlines", "uMask", "uChromaAberration", "uVignette", "uFlicker",
+    "uBrightness", "uLensRadius", "uLensPower", "uBloomIntensity",
+    "uBloomThreshold", "uBloomRadius", "uUiReactive", "uFocusHalo",
+    "uHoverGlow", "uSelectionBloom", "uDividerTension", "uFocusRect",
+    "uHoverRect", "uSelectRect", "uSplitDivider", "uScrollbarThumb",
+];
 
-void main()
+// The shader's cursor code (`CRT6`): which sprite `renderCursor` draws.
+private float cursorShapeCode(PointerShape s) @safe pure nothrow @nogc
 {
-    vec2 uv = fragTexCoord;
-
-    if (uBloomPass < 0.5)
+    switch (s) with (PointerShape)
     {
-        // Bright-pass extraction: keep only what is above the threshold, and
-        // keep it smoothly, so a pixel drifting across the cut does not pop.
-        vec3 c = SAMPLE(texture0, uv).rgb;
-        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        float keep = smoothstep(uBloomThreshold, uBloomThreshold + 0.25, lum);
-        OUT_COLOR = vec4(c * keep, 1.0);
-        return;
+        case text:     return 1.0f;
+        case pointer:  return 2.0f;
+        case ewResize: return 3.0f;
+        default:       return 0.0f;
     }
-
-    // Blur, along whichever axis this pass owns.
-    vec2 dir = (uBloomPass < 1.5) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-    vec2 step1 = dir * uBloomRadius / resolution;
-
-    vec3 sum = SAMPLE(texture0, uv).rgb * w0;
-    sum += SAMPLE(texture0, uv + step1 * 1.0).rgb * w1;
-    sum += SAMPLE(texture0, uv - step1 * 1.0).rgb * w1;
-    sum += SAMPLE(texture0, uv + step1 * 2.0).rgb * w2;
-    sum += SAMPLE(texture0, uv - step1 * 2.0).rgb * w2;
-    sum += SAMPLE(texture0, uv + step1 * 3.0).rgb * w3;
-    sum += SAMPLE(texture0, uv - step1 * 3.0).rgb * w3;
-    sum += SAMPLE(texture0, uv + step1 * 4.0).rgb * w4;
-    sum += SAMPLE(texture0, uv - step1 * 4.0).rgb * w4;
-
-    OUT_COLOR = vec4(sum, 1.0);
 }
-};
-
-/// ditto
-private enum bloomFragmentShader = activePrologue ~ bloomShaderBody;
-
 
 /**
-Manages the CRT post-processing effect.
+The CRT's parameters — the tube's shape, its knobs and the pointer — and the
+effect it is drawn as.
 
-Allocates and owns an off-screen render texture matching the screen dimensions,
-loads and applies the CRT post-processing shader during presentation, and
-handles resizing and resource cleanup.
+It owns no GPU object. The CRT is a tier-2 effect ($(LREF effectRecord)): an
+application registers it, brackets the root of its frame with the id, and
+calls $(LREF writeParams) each frame; the effect backend runs the passes like
+any other effect's (`EFX21`). What stays here is what the CPU needs too — the
+projection that maps a pointer through the curved glass for input
+(`PTR2`) — and the values the shader reads.
 */
 struct CrtEffect
 {
     private CrtProjection proj_;
     private PointerShape shape_ = PointerShape.default_;
     private bool systemPointer_;
-    // `DBG1`: a golden capture of an ANIMATED effect is only reproducible if
-    // its clock is. Negative means live.
-    private float pinnedTime_ = -1;
-
 
     private float scanlines_ = 0.12f;
     private float mask_ = 1.0f;
@@ -574,54 +550,12 @@ struct CrtEffect
     private float bloomThreshold_ = 0.65f;
     private float bloomRadius_ = 2.0f;
 
-    private bool shaderLoaded;
-    private Shader shader;
-    private RenderTexture2D target;
-    // `CRT3`: the half-resolution ping-pong the three bloom passes bounce
-    // between. Half because bloom is low-frequency by definition.
-    private RenderTexture2D bloomA;
-    private RenderTexture2D bloomB;
-    private bool bloomLoaded;
-    private Shader bloomShader;
-    private int bloomPassLoc = -1;
-    private int bloomThresholdLoc = -1;
-    private int bloomRadiusLoc = -1;
-    private int bloomResLoc = -1;
-    private int bloomTexLoc = -1;
-    private int bloomIntensityLoc = -1;
-    private int resLoc = -1;
-    private int timeLoc = -1;
-    private int mouseLoc = -1;
-    private int tiltLoc = -1;
-    private int magnifyLoc = -1;
-    private int cursorShapeLoc = -1;
-    private int curvatureLoc = -1;
-    private int scanlinesLoc = -1;
-    private int maskLoc = -1;
-    private int chromaLoc = -1;
-    private int vignetteLoc = -1;
-    private int flickerLoc = -1;
-    private int brightnessLoc = -1;
-    private int lensRadiusLoc = -1;
-    private int lensPowerLoc = -1;
-
     private bool uiReactive_ = true;
     private float focusHalo_ = 1.0f;
     private float hoverGlow_ = 1.0f;
     private float selectionBloom_ = 1.0f;
     private float dividerTension_ = 1.0f;
     private CrtUiContext uiContext_;
-
-    private int uiReactiveLoc = -1;
-    private int focusHaloLoc = -1;
-    private int hoverGlowLoc = -1;
-    private int selectionBloomLoc = -1;
-    private int dividerTensionLoc = -1;
-    private int focusRectLoc = -1;
-    private int hoverRectLoc = -1;
-    private int selectRectLoc = -1;
-    private int splitDividerLoc = -1;
-    private int scrollbarThumbLoc = -1;
 
     @disable this(this);
 
@@ -675,19 +609,6 @@ struct CrtEffect
     bool drawsOwnPointer() const @safe pure nothrow @nogc
         => proj_.enabled && !systemPointer_;
 
-    /**
-    Pins the shader clock, so a golden capture of an animated effect is
-    reproducible (`DBG1`).
-
-    Four terms are driven by time — the sync jitter, the roll bar, the phosphor
-    flicker and the focus pulse — so two runs of one binary cannot otherwise
-    produce the same bytes, and every byte-comparison oracle over a CRT frame
-    is uninformative. Negative restores the live clock.
-    */
-    void pinnedTime(float seconds) @safe pure nothrow @nogc { pinnedTime_ = seconds; }
-
-    /// ditto
-    float pinnedTime() const @safe pure nothrow @nogc => pinnedTime_;
 
     /// ditto
     void systemPointer(bool on) @safe pure nothrow @nogc { systemPointer_ = on; }
@@ -825,322 +746,128 @@ struct CrtEffect
         const @safe pure nothrow @nogc
         => proj_.mapScreenToUi(screenX, screenY, screenW, screenH);
 
-    private void ensureShader() @system
-    {
-        if (shaderLoaded)
-            return;
-        shader = LoadShaderFromMemory(null, crtFragmentShader.ptr);
-        shaderLoaded = IsShaderValid(shader);
-        if (shaderLoaded)
-        {
-            resLoc = GetShaderLocation(shader, "resolution".ptr);
-            timeLoc = GetShaderLocation(shader, "time".ptr);
-            mouseLoc = GetShaderLocation(shader, "mouse".ptr);
-            tiltLoc = GetShaderLocation(shader, "mouseTilt".ptr);
-            magnifyLoc = GetShaderLocation(shader, "mouseMagnify".ptr);
-            cursorShapeLoc = GetShaderLocation(shader, "cursorShape".ptr);
-            curvatureLoc = GetShaderLocation(shader, "uCurvature".ptr);
-            scanlinesLoc = GetShaderLocation(shader, "uScanlines".ptr);
-            maskLoc = GetShaderLocation(shader, "uMask".ptr);
-            chromaLoc = GetShaderLocation(shader, "uChromaAberration".ptr);
-            vignetteLoc = GetShaderLocation(shader, "uVignette".ptr);
-            flickerLoc = GetShaderLocation(shader, "uFlicker".ptr);
-            brightnessLoc = GetShaderLocation(shader, "uBrightness".ptr);
-            lensRadiusLoc = GetShaderLocation(shader, "uLensRadius".ptr);
-            lensPowerLoc = GetShaderLocation(shader, "uLensPower".ptr);
-            uiReactiveLoc = GetShaderLocation(shader, "uUiReactive".ptr);
-            focusHaloLoc = GetShaderLocation(shader, "uFocusHalo".ptr);
-            hoverGlowLoc = GetShaderLocation(shader, "uHoverGlow".ptr);
-            selectionBloomLoc = GetShaderLocation(shader, "uSelectionBloom".ptr);
-            dividerTensionLoc = GetShaderLocation(shader, "uDividerTension".ptr);
-            focusRectLoc = GetShaderLocation(shader, "uFocusRect".ptr);
-            hoverRectLoc = GetShaderLocation(shader, "uHoverRect".ptr);
-            selectRectLoc = GetShaderLocation(shader, "uSelectRect".ptr);
-            splitDividerLoc = GetShaderLocation(shader, "uSplitDivider".ptr);
-            scrollbarThumbLoc = GetShaderLocation(shader, "uScrollbarThumb".ptr);
-            bloomIntensityLoc = GetShaderLocation(shader, "uBloomIntensity".ptr);
-            bloomTexLoc = GetShaderLocation(shader, "texture1".ptr);
-        }
-
-        bloomShader = LoadShaderFromMemory(null, bloomFragmentShader.ptr);
-        bloomLoaded = IsShaderValid(bloomShader);
-        if (bloomLoaded)
-        {
-            bloomPassLoc = GetShaderLocation(bloomShader, "uBloomPass".ptr);
-            bloomThresholdLoc = GetShaderLocation(bloomShader, "uBloomThreshold".ptr);
-            bloomRadiusLoc = GetShaderLocation(bloomShader, "uBloomRadius".ptr);
-            bloomResLoc = GetShaderLocation(bloomShader, "resolution".ptr);
-        }
-    }
-
     /**
-    Runs the three bloom passes (`CRT3`) and leaves the result in `bloomA`.
+    The CRT as an effect record (`EFX21`): a tier-2 effect in four passes —
+    `bloom`'s bright-pass and two blurs at half size, then the tube itself,
+    drawing the bracket (`from: 0`) with the blurred glow as `texture1`.
 
-    Bright-pass extract into A, blur A horizontally into B, blur B vertically
-    back into A — the separable pair, at half resolution. Returns false when
-    bloom is off or unavailable, in which case the composite skips it.
+    Register it once and bracket the ROOT of the frame with the id: the CRT is
+    then one more effect in the pipeline, not a pass the application wraps
+    around it. The values it reads each frame are $(LREF writeParams)'s.
     */
-    private bool runBloomPasses(int screenW, int screenH) @system
+    static EffectRecord effectRecord() @safe pure nothrow
     {
-        if (!bloomLoaded || bloomIntensity_ <= 0)
-            return false;
+        import sparkles.ui.effect : bloomPasses, EffectImpl, EffectPass,
+            EffectTier, glslBackend;
 
-        const bw = screenW / 2, bh = screenH / 2;
-        if (bw <= 0 || bh <= 0)
-            return false;
-
-        ensureBloomTargets(bw, bh);
-        if (bloomA.id == 0 || bloomB.id == 0)
-            return false;
-
-        float[2] res = [cast(float) bw, cast(float) bh];
-        if (bloomResLoc >= 0)
-            SetShaderValue(bloomShader, bloomResLoc, res.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC2);
-        if (bloomThresholdLoc >= 0)
-            SetShaderValue(bloomShader, bloomThresholdLoc, &bloomThreshold_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (bloomRadiusLoc >= 0)
-            SetShaderValue(bloomShader, bloomRadiusLoc, &bloomRadius_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-
-        void pass(float which, ref RenderTexture2D from, ref RenderTexture2D into)
-        {
-            if (bloomPassLoc >= 0)
-                SetShaderValue(bloomShader, bloomPassLoc, &which, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-            BeginTextureMode(into);
-            BeginShaderMode(bloomShader);
-            DrawTexturePro(
-                from.texture,
-                Rectangle(0, 0, cast(float) from.texture.width, cast(float) -from.texture.height),
-                Rectangle(0, 0, cast(float) into.texture.width, cast(float) into.texture.height),
-                Vector2(0, 0), 0.0f, Color(255, 255, 255, 255));
-            EndShaderMode();
-            EndTextureMode();
-        }
-
-        pass(0.0f, target, bloomA);  // bright-pass extract
-        pass(1.0f, bloomA, bloomB);  // blur horizontally
-        pass(2.0f, bloomB, bloomA);  // blur vertically
-        return true;
-    }
-
-    private void ensureBloomTargets(int w, int h) @system
-    {
-        static void fit(ref RenderTexture2D rt, int w, int h)
-        {
-            if (rt.id != 0 && (rt.texture.width != w || rt.texture.height != h))
-            {
-                UnloadRenderTexture(rt);
-                rt = RenderTexture2D.init;
-            }
-            if (rt.id == 0)
-                rt = LoadRenderTexture(w, h);
-        }
-        fit(bloomA, w, h);
-        fit(bloomB, w, h);
-    }
-
-    private void ensureTarget(int w, int h) @system
-    {
-        if (target.id != 0 && (target.texture.width != w || target.texture.height != h))
-        {
-            UnloadRenderTexture(target);
-            target = RenderTexture2D.init;
-        }
-        if (target.id == 0 && w > 0 && h > 0)
-        {
-            target = LoadRenderTexture(w, h);
-        }
-    }
-
-    /**
-    Begins off-screen capture into the render texture if CRT mode is enabled.
-    Must be paired with $(LREF end).
-
-    Cursor visibility is $(B not) touched here — see $(LREF drawsOwnPointer).
-    */
-    void begin(int screenW, int screenH) @system
-    {
-        if (!proj_.enabled)
-            return;
-
-        ensureShader();
-        if (!shaderLoaded)
-            return;
-        ensureTarget(screenW, screenH);
-        if (target.id == 0)
-            return;
-        BeginTextureMode(target);
-    }
-
-    /**
-    Ends off-screen capture and renders the result through the CRT shader
-    onto the screen backbuffer, compositing the CRT-styled cursor.
-    */
-    void end(int screenW, int screenH, float mouseX = 0, float mouseY = 0) @system
-    {
-        if (!proj_.enabled || !shaderLoaded || target.id == 0)
-            return;
-
-        proj_.pointer = PointF(mouseX, mouseY);
-
-        EndTextureMode();
-
-        // `CRT3`: the bloom chain runs on the captured frame, before the
-        // composite that reads its result.
-        const hasBloom = runBloomPasses(screenW, screenH);
-
-        if (resLoc >= 0)
-        {
-            float[2] res = [cast(float) screenW, cast(float) screenH];
-            SetShaderValue(shader, resLoc, res.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC2);
-        }
-        if (timeLoc >= 0)
-        {
-            float t = pinnedTime_ >= 0 ? pinnedTime_ : cast(float) GetTime();
-            SetShaderValue(shader, timeLoc, &t, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        }
-        if (mouseLoc >= 0)
-        {
-            float[2] m = [mouseX, cast(float) screenH - mouseY];
-            SetShaderValue(shader, mouseLoc, m.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC2);
-        }
-        if (tiltLoc >= 0)
-        {
-            float tv = proj_.tilt ? 1.0f : 0.0f;
-            SetShaderValue(shader, tiltLoc, &tv, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        }
-        if (magnifyLoc >= 0)
-        {
-            float mv = proj_.magnify ? 1.0f : 0.0f;
-            SetShaderValue(shader, magnifyLoc, &mv, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        }
-        if (cursorShapeLoc >= 0)
-        {
-            // `PTR1`: negative means the window system's pointer is the only
-            // one on screen, and the shader must draw none.
-            float sc = -1.0f;
-            if (!systemPointer_)
-                switch (shape_) with (PointerShape)
-                {
-                    case text:     sc = 1.0f; break;
-                    case pointer:  sc = 2.0f; break;
-                    case ewResize: sc = 3.0f; break;
-                    default:       sc = 0.0f; break;
-                }
-            SetShaderValue(shader, cursorShapeLoc, &sc, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        }
-        if (curvatureLoc >= 0)
-            SetShaderValue(shader, curvatureLoc, &proj_.curvature, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (scanlinesLoc >= 0)
-            SetShaderValue(shader, scanlinesLoc, &scanlines_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (maskLoc >= 0)
-            SetShaderValue(shader, maskLoc, &mask_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (chromaLoc >= 0)
-            SetShaderValue(shader, chromaLoc, &chromaticAberration_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (vignetteLoc >= 0)
-            SetShaderValue(shader, vignetteLoc, &vignette_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (flickerLoc >= 0)
-            SetShaderValue(shader, flickerLoc, &flicker_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (brightnessLoc >= 0)
-            SetShaderValue(shader, brightnessLoc, &brightness_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (lensRadiusLoc >= 0)
-            SetShaderValue(shader, lensRadiusLoc, &proj_.lensRadius, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (lensPowerLoc >= 0)
-            SetShaderValue(shader, lensPowerLoc, &proj_.lensPower, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (uiReactiveLoc >= 0)
-        {
-            float rv = uiReactive_ ? 1.0f : 0.0f;
-            SetShaderValue(shader, uiReactiveLoc, &rv, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        }
-        if (focusHaloLoc >= 0)
-            SetShaderValue(shader, focusHaloLoc, &focusHalo_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (hoverGlowLoc >= 0)
-            SetShaderValue(shader, hoverGlowLoc, &hoverGlow_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (selectionBloomLoc >= 0)
-            SetShaderValue(shader, selectionBloomLoc, &selectionBloom_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        if (dividerTensionLoc >= 0)
-            SetShaderValue(shader, dividerTensionLoc, &dividerTension_, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-
-        if (focusRectLoc >= 0)
-        {
-            float[4] b = toShaderBox(uiContext_.focusBox, cast(float) screenW, cast(float) screenH);
-            SetShaderValue(shader, focusRectLoc, b.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC4);
-        }
-        if (hoverRectLoc >= 0)
-        {
-            float[4] b = toShaderBox(uiContext_.hoverBox, cast(float) screenW, cast(float) screenH);
-            SetShaderValue(shader, hoverRectLoc, b.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC4);
-        }
-        if (selectRectLoc >= 0)
-        {
-            float[4] b = toShaderBox(uiContext_.selectBox, cast(float) screenW, cast(float) screenH);
-            SetShaderValue(shader, selectRectLoc, b.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC4);
-        }
-        if (splitDividerLoc >= 0)
-        {
-            float[4] b = toShaderBox(uiContext_.splitDivider, cast(float) screenW, cast(float) screenH);
-            SetShaderValue(shader, splitDividerLoc, b.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC4);
-        }
-        if (scrollbarThumbLoc >= 0)
-        {
-            float[4] b = toShaderBox(uiContext_.scrollbarThumb, cast(float) screenW, cast(float) screenH);
-            SetShaderValue(shader, scrollbarThumbLoc, b.ptr, ShaderUniformDataType.SHADER_UNIFORM_VEC4);
-        }
-
-        if (bloomIntensityLoc >= 0)
-        {
-            const bi = hasBloom ? bloomIntensity_ : 0.0f;
-            SetShaderValue(shader, bloomIntensityLoc, &bi, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
-        }
-        BeginShaderMode(shader);
-        // AFTER `BeginShaderMode`: a sampler binding attaches to the active
-        // program, so setting it beforehand binds into whatever was last bound.
-        if (hasBloom && bloomTexLoc >= 0)
-            SetShaderValueTexture(shader, bloomTexLoc, bloomA.texture);
-        DrawTextureRec(
-            target.texture,
-            Rectangle(0, 0, cast(float) target.texture.width, cast(float) -target.texture.height),
-            Vector2(0, 0),
-            Color(255, 255, 255, 255)
+        EffectPass[] passes = bloomPasses()[0 .. 3];
+        passes ~= EffectPass(crtFragmentShader, from: 0, inputs: [3]);
+        return EffectRecord(
+            name: "crt",
+            tier: EffectTier.layer,
+            // A terminal has no tube: the frame paints as it is.
+            degradation: Degradation.unaffected,
+            impls: [EffectImpl(glslBackend, passes: passes)],
+            params: crtParamNames.map!(n => EffectParam(n)).array,
         );
-        EndShaderMode();
     }
 
-    /// Releases GPU resources (render texture and compiled shader) and restores cursor.
-    void release() @system nothrow @nogc
+    /**
+    Writes this frame's values into `id`'s record — every knob, the pointer
+    and the UI context — in place, with no allocation (`EffectRegistry.setParam`).
+
+    `mouseX`/`mouseY` are the pointer in UI pixels; the shader wants Y up, as
+    it always did. The clock is not here: the host supplies `uTime` to every
+    effect, and pins it for a capture (`DBG1`).
+    */
+    void writeParams(ref EffectRegistry reg, EffectId id, int screenW,
+        int screenH, float mouseX, float mouseY) @safe pure nothrow
     {
-        if (target.id != 0)
+        proj_.pointer = PointF(mouseX, mouseY);
+        void f(string n, float v) { reg.setParam(id, n, [v, 0, 0, 0], 1); }
+        void box(string n, in UiRect r)
         {
-            UnloadRenderTexture(target);
-            target = RenderTexture2D.init;
+            reg.setParam(id, n, toShaderBox(r, screenW, screenH), 4);
         }
-        if (bloomA.id != 0)
-        {
-            UnloadRenderTexture(bloomA);
-            bloomA = RenderTexture2D.init;
-        }
-        if (bloomB.id != 0)
-        {
-            UnloadRenderTexture(bloomB);
-            bloomB = RenderTexture2D.init;
-        }
-        if (bloomLoaded)
-        {
-            UnloadShader(bloomShader);
-            bloomShader = Shader.init;
-            bloomLoaded = false;
-        }
-        if (shaderLoaded)
-        {
-            UnloadShader(shader);
-            shader = Shader.init;
-            shaderLoaded = false;
-        }
+
+        reg.setParam(id, "mouse", [mouseX, screenH - mouseY, 0, 0], 2);
+        f("mouseTilt", proj_.tilt ? 1 : 0);
+        f("mouseMagnify", proj_.magnify ? 1 : 0);
+        f("cursorShape", systemPointer_ ? -1.0f : cursorShapeCode(shape_));
+        f("uCurvature", proj_.curvature);
+        f("uScanlines", scanlines_);
+        f("uMask", mask_);
+        f("uChromaAberration", chromaticAberration_);
+        f("uVignette", vignette_);
+        f("uFlicker", flicker_);
+        f("uBrightness", brightness_);
+        f("uLensRadius", proj_.lensRadius);
+        f("uLensPower", proj_.lensPower);
+        f("uBloomIntensity", bloomIntensity_);
+        f("uBloomThreshold", bloomThreshold_);
+        f("uBloomRadius", bloomRadius_);
+        f("uUiReactive", uiReactive_ ? 1 : 0);
+        f("uFocusHalo", focusHalo_);
+        f("uHoverGlow", hoverGlow_);
+        f("uSelectionBloom", selectionBloom_);
+        f("uDividerTension", dividerTension_);
+        box("uFocusRect", uiContext_.focusBox);
+        box("uHoverRect", uiContext_.hoverBox);
+        box("uSelectRect", uiContext_.selectBox);
+        box("uSplitDivider", uiContext_.splitDivider);
+        box("uScrollbarThumb", uiContext_.scrollbarThumb);
+    }
+}
+
+@("ui_raylib.crt.isATier2EffectOnTheRoot")
+@safe unittest
+{
+    import std.algorithm : canFind;
+    import sparkles.ui.effect : EffectTier, glslBackend;
+
+    // `EFX21`: the CRT is a record like any other — bloom's three passes,
+    // then the tube compositing the bracket with the glow as `texture1`.
+    auto rec = CrtEffect.effectRecord();
+    assert(rec.tier == EffectTier.layer && !rec.honouredByCells);
+    const impl = rec.implFor(glslBackend);
+    assert(impl.passes.length == 4);
+    assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
+    assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
+    // The backend supplies the clock and the size; the body keeps its names.
+    assert(impl.passes[3].source.canFind("#define time uTime"));
+    // Every parameter is read by some pass (the threshold and radius by
+    // bloom's, the rest by the tube's) — one no pass declares is a knob that
+    // silently does nothing.
+    foreach (name; crtParamNames)
+    {
+        bool read;
+        foreach (ref pass; impl.passes)
+            read = read || pass.source.canFind(name);
+        assert(read, name);
     }
 
-    ~this() @system nothrow @nogc
+    // `writeParams` updates in place: the list does not grow frame on frame.
+    EffectRegistry reg;
+    const id = reg.register(rec);
+    CrtEffect crt;
+    crt.curvature = 0.3f;
+    crt.setUiContext(CrtUiContext(focusBox: UiRect(100, 50, 200, 100)));
+    crt.writeParams(reg, id, 800, 600, 400, 100);
+    const n = reg.lookup(id).params.length;
+    crt.writeParams(reg, id, 800, 600, 410, 110);
+    assert(reg.lookup(id).params.length == n && n == crtParamNames.length);
+
+    float[4] valueOf(string name)
     {
-        release();
+        foreach (ref p; reg.lookup(id).params)
+            if (p.name == name)
+                return p.value;
+        assert(false, name);
     }
+    assert(valueOf("uCurvature")[0] == 0.3f);
+    assert(valueOf("mouse")[0 .. 2] == [410.0f, 490.0f], "Y up, as the shader wants");
+    assert(valueOf("uFocusRect") == toShaderBox(UiRect(100, 50, 200, 100), 800, 600));
+    assert(crt.pointerPos == PointF(410, 110), "the projection sees the pointer too");
 }
 
 @("ui_raylib.crt.defaults")
