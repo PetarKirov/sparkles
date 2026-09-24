@@ -14,6 +14,12 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
 import sparkles.ui.glsl_dialect : activePrologue;
 public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
+import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
+import sparkles.ui.frame_list : firstOfSlot, focusedExtent, FrameList,
+    scrollbarThumbOf, textAt;
+import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.state : ThumbGeometry;
+import sparkles.ui.style : Slot;
 
 
 /// UI structure context passed to the CRT shader to drive localized phosphor reactions.
@@ -24,6 +30,110 @@ struct CrtUiContext
     UiRect selectBox;
     UiRect splitDivider;
     UiRect scrollbarThumb;
+}
+
+/**
+The context, $(B harvested from what the frame emitted) (`EFX23`) — never
+re-derived by the application.
+
+Every rect comes out of `frame`, the one op stream the frame painted, by the
+slot the paint site already gave it:
+
+$(UL
+    $(LI `focusBox` — the last focused group's painted extent: a modal over
+        the panes, else the focused pane.)
+    $(LI `selectBox` — the first `Slot.selection` operation inside the focused
+        extent, else anywhere: the tree's selected row, or a text selection's
+        first line.)
+    $(LI `splitDivider` — the first `Slot.border` rule, as a 4 px band around
+        the hairline it draws.)
+    $(LI `hoverBox` — the topmost text run under `pointerCell`: what the
+        pointer is over, as drawn.)
+    $(LI `scrollbarThumb` — the thumb of the first `Slot.thumb` scrollbar,
+        from the extents the operation carries, through the same formula the
+        bar is painted with.)
+)
+
+What a frame did not emit stays empty, and the shader skips an empty rect.
+*/
+CrtUiContext crtUiContextOf(in FrameList frame, in Point pointerCell,
+    int cellW, int cellH) @safe pure nothrow @nogc
+{
+    static UiRect px(in Rect r, int cw, int ch)
+        => UiRect(cast(float)(r.x * cw), cast(float)(r.y * ch),
+            cast(float)(r.width * cw), cast(float)(r.height * ch));
+
+    CrtUiContext c;
+    const ops = frame.ops;
+
+    Rect focus;
+    if (focusedExtent(frame, focus))
+        c.focusBox = px(focus, cellW, cellH);
+
+    Rect sel;
+    if (firstOfSlot(ops, Slot.selection, sel, focus)
+        || firstOfSlot(ops, Slot.selection, sel))
+        c.selectBox = px(sel, cellW, cellH);
+
+    foreach (ref const op; ops)
+        if (op.kind == OpKind.rule && op.slot == Slot.border)
+        {
+            const r = op.rect;
+            // A vertical divider's hairline is centred in its cell column.
+            const cx = r.x * cellW + cellW / 2;
+            c.splitDivider = UiRect(cast(float)(cx - 2), cast(float)(r.y * cellH),
+                4.0f, cast(float)(r.height * cellH));
+            break;
+        }
+
+    Rect hover;
+    if (textAt(ops, pointerCell, hover))
+        c.hoverBox = px(hover, cellW, cellH);
+
+    Rect track;
+    ThumbGeometry thumb;
+    if (scrollbarThumbOf(ops, Slot.thumb, cellH, cellH, track, thumb))
+        c.scrollbarThumb = UiRect(cast(float)(track.x * cellW),
+            cast(float)(track.y * cellH + thumb.start),
+            cast(float) cellW, cast(float) thumb.extent);
+    return c;
+}
+
+@("uiRaylib.crt.uiContextIsHarvestedFromTheFrame")
+@safe nothrow unittest
+{
+    import sparkles.ui.canvas : fillRectOp, RecordingCanvas, ruleOp, Scrollbar,
+        textRunOp;
+
+    // A tree pane and a focused document pane, a divider between them, a
+    // scrolled document bar — emitted the way a paint site does.
+    RecordingCanvas c;
+    FrameList f;
+    f.beginGroup(focused: false);
+    f.emit(c, fillRectOp(Rect(0, 3, 20, 1), Slot.selection)); // tree's row
+    f.emit(c, textRunOp(Rect(1, 5, 8, 1), "apps.d"));
+    f.endGroup();
+    f.emit(c, ruleOp(Rect(20, 0, 1, 30), RuleEdge.centerX, Slot.border));
+    f.beginGroup(focused: true);
+    f.emit(c, fillRectOp(Rect(21, 1, 59, 29)));
+    f.emit(c, fillRectOp(Rect(30, 8, 12, 1), Slot.selection)); // text selection
+    f.emit(c, DrawOp(Scrollbar(rect: Rect(79, 1, 1, 29), content: 290,
+        viewport: 29, offset: 0, edge: RuleEdge.right, slot: Slot.thumb)));
+    f.endGroup();
+
+    const ctx = crtUiContextOf(f, Point(3, 5), 10, 20);
+    assert(ctx.focusBox == UiRect(210, 20, 590, 580), "the focused pane, as painted");
+    assert(ctx.selectBox == UiRect(300, 160, 120, 20),
+        "the selection inside the focused pane wins over the tree's");
+    assert(ctx.splitDivider == UiRect(203, 0, 4, 600), "centred on the hairline");
+    assert(ctx.hoverBox == UiRect(10, 100, 80, 20), "the text under the pointer");
+    // 29 rows of 20 px, a tenth visible, at the top: 58 px from the top.
+    assert(ctx.scrollbarThumb == UiRect(790, 20, 10, 58));
+
+    // Nothing emitted, nothing harvested.
+    FrameList empty;
+    const none = crtUiContextOf(empty, Point(0, 0), 10, 20);
+    assert(none.focusBox.empty && none.hoverBox.empty && none.scrollbarThumb.empty);
 }
 
 // The prologues moved to `sparkles.ui.glsl_dialect` when a second shader needed
