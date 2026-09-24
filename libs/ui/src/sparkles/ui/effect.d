@@ -258,9 +258,9 @@ struct EffectRecord
     /// Per-backend artifacts (`EFX13`), looked up by key.
     EffectImpl[] impls;
 
-    /// Values the artifact reads at paint time (`EFX21`). Replaced wholesale
-    /// by `setParams`, never mutated in place, so a frame either sees the old
-    /// set or the new one.
+    /// Values the artifact reads at paint time (`EFX21`) — replaced wholesale
+    /// by `setParams`, or one at a time by `setParam`. Either happens between
+    /// frames, so a frame sees one consistent set.
     EffectParam[] params;
 
     /// Whether a cell grid can honour this — i.e. whether there is a transform
@@ -356,6 +356,32 @@ struct EffectRegistry
         seed();
         if (auto slot = slotOf(id))
             slot.params = params;
+    }
+
+    /**
+    Sets one value `id`'s artifact reads, by name — in place, without
+    replacing the list (`EFX21`).
+
+    The per-frame call for an effect with many parameters: the CRT writes
+    about twenty-five every frame, and replacing its list each time would be
+    an allocation per frame for nothing. An unknown name is appended, so the
+    first frame declares what later frames update.
+    */
+    void setParam(EffectId id, string name, float[4] value, ubyte arity)
+        pure nothrow
+    {
+        seed();
+        auto slot = slotOf(id);
+        if (slot is null)
+            return;
+        foreach (ref p; slot.params)
+            if (p.name == name)
+            {
+                p.value = value;
+                p.arity = arity;
+                return;
+            }
+        slot.params ~= EffectParam(name, value, arity);
     }
 
     /// Forgets `id`'s record. The slot is kept, so the id is never reissued.
