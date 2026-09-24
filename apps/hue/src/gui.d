@@ -110,8 +110,9 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, Visual,
 import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.canvas : DrawOp, LineStyle, match, OpKind, RuleEdge,
-    Scrollbar;
+import sparkles.ui.canvas : DrawOp, fillRectOp, LineStyle, match, OpKind,
+    popClipOp, pushClipOp, RuleEdge, ruleOp, Scrollbar;
+import sparkles.ui.frame_list : FrameList;
 import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
 import sparkles.ui.layout : Frame, layout;
@@ -127,7 +128,7 @@ import sparkles.ui_app.backend : BackendPolicy;
 import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : run, RunOutcome;
-import sparkles.ui_raylib : CrtEffect, CrtUiContext, UiRect, namedKey, RaylibCanvas, traceLevelTag, traceLogTo,
+import sparkles.ui_raylib : CrtEffect, CrtUiContext, crtUiContextOf, UiRect, namedKey, RaylibCanvas, traceLevelTag, traceLogTo,
     Window, WindowRequest, toRaylibCursor;
 
 
@@ -1199,6 +1200,29 @@ int runGui(GuiArgs guiArgs) @system
     // every frame, so a panel that is up costs no allocation to repaint.
     CmdBufferT!(FrameArena!(), 256) ltnOps;
 
+    // `EFX23`: the frame's widget drawing as ONE op stream in absolute cells.
+    // Every paint site whose origin is a whole cell emits into it, which
+    // paints the operation at once — the order against the pixel chrome
+    // below is exactly what it was — and leaves it there to be read: the
+    // CRT's focus, selection, divider, hover and thumb are harvested from
+    // it (`crtUiContextOf`) instead of re-derived.
+    FrameList frameList;
+
+    // The canvas every emitted operation paints through: origin 0, because
+    // the operations already carry their absolute cells.
+    RaylibCanvas uiCanvas() => RaylibCanvas(fontsP, &buf, fonts.cellW(),
+        fonts.cellH());
+
+    // A paint site's origin in cells. Every widget origin in this window is
+    // a whole number of cells (the tree's width, the one-cell pad, the
+    // header rows); one that is not must not be silently rounded into the
+    // wrong place, so it is refused loudly instead.
+    static int cellsOf(long px, int cell) pure nothrow @nogc
+    {
+        assert(px % cell == 0, "a widget origin that is not a whole cell");
+        return cast(int)(px / cell);
+    }
+
     // The picker preview's cell blit: the document pane paints a `Grid`
     // (exactly what the terminal shows), and this draws those cells through
     // the font set — background runs coalesced, glyphs with their real
@@ -1406,9 +1430,8 @@ int runGui(GuiArgs guiArgs) @system
         auto wt = b.finish(b.add(colW));
         auto ops = buildDisplayList(wt, layout(wt),
             themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-        auto c = RaylibCanvas(fontsP, &buf, fonts.cellW(), fonts.cellH(),
-            x, y);
-        paint(c, ops);
+        auto c = uiCanvas();
+        frameList.emit(c, ops, cellsOf(x, fonts.cellW()), cellsOf(y, fonts.cellH()));
     }
 
 
@@ -1504,6 +1527,8 @@ int runGui(GuiArgs guiArgs) @system
         // move it. Chrome that can become a widget should (UIA2); this is the
         // seam for what has not yet.
         auto chrome = RaylibCanvas(fontsP, &buf, cellW, cellH);
+        // Every emitted operation paints through this one (see `frameList`).
+        auto ui = uiCanvas();
 
         static int barInt(long value) pure nothrow @nogc
             => value < int.min ? int.min
@@ -1513,9 +1538,9 @@ int runGui(GuiArgs guiArgs) @system
         void drawBar(in Rect rect, RuleEdge edge, long content, long viewport,
             long offset, float expand, bool trackLit, in RgbColor trackColor,
             in RgbColor thumbColor, dchar trackGlyph = '│',
-            dchar thumbGlyph = '█')
+            dchar thumbGlyph = '█', Slot slot = Slot.inherit)
         {
-            chrome.scrollbar(Scrollbar(
+            frameList.emit(ui, DrawOp(Scrollbar(
                 rect: rect,
                 content: barInt(content),
                 viewport: barInt(viewport),
@@ -1527,7 +1552,8 @@ int runGui(GuiArgs guiArgs) @system
                 edge: edge,
                 trackGlyph: trackGlyph,
                 thumbGlyph: thumbGlyph,
-            ));
+                slot: slot,
+            )));
         }
         // GL scissor state is global; a scissor leaked from any earlier path
         // (or left over across the buffer swap) would CLIP the clear below —
@@ -1535,6 +1561,7 @@ int runGui(GuiArgs guiArgs) @system
         // frame from a clean state so the clear always covers the window.
         crt.begin(screenW, screenH);
         window.resetClip();
+        frameList.reset();
 
         if (flashDebug)
             window.clear((frame / 30) % 2 == 0
@@ -1547,6 +1574,11 @@ int runGui(GuiArgs guiArgs) @system
             // alone (the tree pane and header fill their own rects).
             chrome.fillPixels(treePx(), 0, screenW - treePx(), screenH, vm.pageBg);
         }
+
+        // The document pane, as one named region (`EFX23`): its header, its
+        // content passes and its tints, focused exactly when its header says.
+        const docFocused = !pn.treeFocused || !pn.treeVisible;
+        frameList.beginGroup(focused: docFocused);
 
         // The document pane's header — the SHARED chrome (headerBar +
         // Slot.chromeFocused + bold title), same look as the TUI's.
@@ -1566,7 +1598,7 @@ int runGui(GuiArgs guiArgs) @system
                     : vm.showPreview ? "preview"
                     : vm.plainSyntax ? "plain" : "raw"),
                 text(vm.top + 1, "/", total),
-                focused: !pn.treeFocused || !pn.treeVisible);
+                focused: docFocused);
         }
 
         // The one painter: the active tree's precomputed ops through the
@@ -1580,11 +1612,11 @@ int runGui(GuiArgs guiArgs) @system
         // pass sees only `[0, pinned)` and the document pass only what starts
         // at `pinned`, so neither needs to know which ops are whose. With no
         // horizontal scroll `pinned` is 0 and this is the single pass it was.
-        void paintOps(float originPx, in Rect clip)
+        void paintOps(int originPx, in Rect clip)
         {
-            auto canvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                originPx, cast(float)(docY0 - vm.top * cellH));
-            canvas.pushClip(clip);
+            const dx = cellsOf(originPx, cellW);
+            const dy = cellsOf(docY0, cellH) - cast(int) vm.top;
+            frameList.emit(ui, pushClipOp(clip), dx, dy);
             foreach (ref sourceOp; vm.ops)
             {
                 const oy = sourceOp.rect.y;
@@ -1627,9 +1659,9 @@ int runGui(GuiArgs guiArgs) @system
                         (ref _) {},
                     );
                 }
-                paint(canvas, (&op)[0 .. 1]);
+                frameList.emit(ui, op, dx, dy);
             }
-            canvas.popClip();
+            frameList.emit(ui, popClipOp());
         }
         {
             // The pane's base clip: content (an unwrappable code line inside
@@ -1637,9 +1669,8 @@ int runGui(GuiArgs guiArgs) @system
             // header — the same rule the tree pane follows.
             const visCols = (docRight - rightPad - gutterPx) / cellW;
             if (pinned > 0)
-                paintOps(cast(float) gutterPx,
-                    Rect(0, cast(int) vm.top, pinned, docRows));
-            paintOps(cast(float)(gutterPx - dhx * cellW),
+                paintOps(gutterPx, Rect(0, cast(int) vm.top, pinned, docRows));
+            paintOps(gutterPx - dhx * cellW,
                 Rect(pinned + dhx, cast(int) vm.top, visCols - pinned, docRows));
         }
 
@@ -1649,7 +1680,8 @@ int runGui(GuiArgs guiArgs) @system
         // content-anchored rect, and none of them stopped at the pane: a
         // wide table's tint bled into the inspector panel, which is exactly
         // where the document's own glyphs were bleeding too.
-        void tintCells(int xStartCol, long screenRow, int wCols, in Visual v)
+        void tintCells(int xStartCol, long screenRow, int wCols, in Visual v,
+            Slot slot = Slot.inherit)
         {
             if (screenRow < 0 || screenRow >= docRows || wCols <= 0)
                 return;
@@ -1668,14 +1700,16 @@ int runGui(GuiArgs guiArgs) @system
             const x1 = base + end > lastCol ? lastCol : base + end;
             if (x1 <= x0)
                 return;
-            chrome.fillRect(Rect(x0, cast(int)(docY0 / cellH + screenRow),
-                x1 - x0, 1), v);
+            frameList.emit(ui, fillRectOp(Rect(x0,
+                cast(int)(docY0 / cellH + screenRow), x1 - x0, 1), slot, v));
         }
         // Selection highlight — a translucent tint. `tintRow` takes content columns
         // (0 = the content origin, i.e. after `gutterPx`).
+        // `Slot.selection`, so the CRT's selection glow finds it by name.
         void tintRow(long screenRow, int xStartCol, int xEndCol)
             => tintCells(xStartCol, screenRow, xEndCol - xStartCol,
-                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true));
+                Visual(bg: vm.quoteBars[1], bgAlpha: 80, hasBg: true),
+                Slot.selection);
         // Tint a source byte range on the widget path: the toolkit derives the
         // char-precise rects (document cell coordinates) once for any backend.
         void tintSrcRange(long lo, long hi)
@@ -1849,6 +1883,8 @@ int runGui(GuiArgs guiArgs) @system
             }
         }
 
+        frameList.endGroup(); // the document pane
+
         // The explorer pane (XPL2): the tree's widget view painted through
         // RaylibCanvas at the window's left edge, viewport-sliced, with a
         // hairline divider. The whole pane clips at its own width.
@@ -1862,9 +1898,12 @@ int runGui(GuiArgs guiArgs) @system
             chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
             // The divider rule, in the toolkit's vocabulary (UIA2): hue
             // names the column and the edge, the backend decides how thin a
-            // hairline is on this display.
-            chrome.rule(Rect(treeCols, 0, 1, screenRows),
-                RuleEdge.centerX, Visual(fg: vm.gutterFg));
+            // hairline is on this display. `Slot.border` names it as THE
+            // split, for the CRT's divider tension.
+            frameList.emit(ui, ruleOp(Rect(treeCols, 0, 1, screenRows),
+                RuleEdge.centerX, Slot.border, Visual(fg: vm.gutterFg)));
+
+            frameList.beginGroup(focused: pn.treeFocused);
 
             // The explorer pane's header — the shared chrome, focused when
             // the tree holds the input focus.
@@ -1892,12 +1931,12 @@ int runGui(GuiArgs guiArgs) @system
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
-            auto tCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                cast(float)(-thx * cellW), cast(float)((treeTopRows + 1) * cellH));
-            tCanvas.pushClip(Rect(thx, 0, treeBodyCols - thx,
-                pn.tree.bodyRows));
-            paint(tCanvas, tOps);
-            tCanvas.popClip();
+            const tdy = treeTopRows + 1;
+            frameList.emit(ui, pushClipOp(Rect(thx, 0, treeBodyCols - thx,
+                pn.tree.bodyRows)), -thx, tdy);
+            frameList.emit(ui, tOps, -thx, tdy);
+            frameList.emit(ui, popClipOp());
+            frameList.endGroup(); // the explorer pane
 
             // The live-filter input line, pinned to the pane's bottom row
             // (the GUI pane has no status bar; the TUI shows it there).
@@ -1929,8 +1968,8 @@ int runGui(GuiArgs guiArgs) @system
                 pn.insp.focused = pn.inspFocused;
 
                 // The pane's left divider, in the toolkit's vocabulary.
-                chrome.rule(Rect(ir.x - 1, ir.y, 1, ir.height),
-                    RuleEdge.centerX, Visual(fg: vm.gutterFg));
+                frameList.emit(ui, ruleOp(Rect(ir.x - 1, ir.y, 1, ir.height),
+                    RuleEdge.centerX, Slot.inherit, Visual(fg: vm.gutterFg)));
 
                 import sparkles.ui.geometry : SizeSpec;
                 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -1946,12 +1985,12 @@ int runGui(GuiArgs guiArgs) @system
                 // is painted with — one scrollbar look (SCV1).
                 auto iOps = buildDisplayList(iwt, layout(iwt),
                     vm.palette, vm.pageFg, vm.pageBg);
-                auto iCanvas = RaylibCanvas(fontsP, &buf, cellW,
-                    cellH, cast(float)(ir.x * cellW),
-                    cast(float)(ir.y * cellH));
-                iCanvas.pushClip(Rect(0, 0, ir.width, ir.height));
-                paint(iCanvas, iOps);
-                iCanvas.popClip();
+                frameList.beginGroup(focused: pn.inspFocused);
+                frameList.emit(ui, pushClipOp(Rect(0, 0, ir.width, ir.height)),
+                    ir.x, ir.y);
+                frameList.emit(ui, iOps, ir.x, ir.y);
+                frameList.emit(ui, popClipOp());
+                frameList.endGroup();
             }
         }
 
@@ -1968,7 +2007,9 @@ int runGui(GuiArgs guiArgs) @system
             if (bf.vLive)
                 drawBar(bf.vTrack, RuleEdge.right, bf.vExtents.content,
                     bf.vExtents.viewport, sv.v.offset, sv.vAnim.percent,
-                    sv.v.hovered || sv.v.dragging, track, thumb);
+                    sv.v.hovered || sv.v.dragging, track, thumb, '│', '█',
+                    // The document's own bar is the one the CRT flares.
+                    bf.pane == docPane ? Slot.thumb : Slot.inherit);
         }
 
         // A header bar when navigating a document set (`GNV2`): the entry name and
@@ -1997,6 +2038,11 @@ int runGui(GuiArgs guiArgs) @system
                 RuleEdge.bottom, Visual(fg: vm.gutterFg));
             auto barOps = buildDisplayList(barTree, barFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
+            // Not emitted into `frameList`: the bar hangs off the window's
+            // PIXEL bottom edge (`toolbarY = screenH - cellH`), which is not
+            // a whole cell unless the window happens to be. Like the lantern
+            // and the toast, it keeps a canvas at its own pixel origin; none
+            // of the three is anything the CRT harvests.
             auto barCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
                 0, cast(float) toolbarY);
             paint(barCanvas, barOps);
@@ -2059,6 +2105,8 @@ int runGui(GuiArgs guiArgs) @system
 
                 const panelY = screenH - panel.height * cellH
                     - (inputMode ? cellH : 0);
+                // Not emitted into `frameList`: the panel hangs off the
+                // window's PIXEL bottom edge, which is not a whole cell.
                 // A reused sink, so a panel that is up every frame costs no
                 // allocation to repaint (`NFR2`).
                 // A scissor from the viewer pane is still live at this
@@ -2079,17 +2127,8 @@ int runGui(GuiArgs guiArgs) @system
         // tree the terminal paints, centered and one row down — then the
         // preview panel's framed hole is filled with the live document
         // pane's cells, drawn through the font set.
-        // `EFX23`: the focus halo must outline what the frame ACTUALLY
-        // painted. The modal paint sites below already know their panel's
-        // rect — they just placed it — so they record it here and the halo
-        // reads it, instead of rebuilding the view and re-running layout a
-        // second time purely to rediscover a number that was already on the
-        // stack. That second layout was the per-frame cost the architecture
-        // review flagged, and the duplicated centring beneath it was how the
-        // halo drifted off the picker in the first place.
-        UiRect paintedFocus;
-        bool hasPaintedFocus;
-
+        // Each modal below is a focused region of the frame list: the halo
+        // outlines what the modal's operations actually painted (`EFX23`).
         if (!filePicker.empty && filePicker.get.state.active)
         {
             const cellsW = screenW / cellW;
@@ -2100,21 +2139,14 @@ int runGui(GuiArgs guiArgs) @system
                 Constraints(maxW: 2 * pkGeometry.panelCols));
             const pkPanel = pkFrames[pkTree.root].rect;
             const pkOriginX = pickerOriginCol(cellsW, pkPanel.width);
-            paintedFocus = UiRect(cast(float)(pkOriginX * cellW),
-                cast(float)(pickerOriginRow * cellH),
-                cast(float)(pkPanel.width * cellW),
-                cast(float)(pkPanel.height * cellH));
-            hasPaintedFocus = true;
             window.resetClip();
             chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset(); // sequential reuse of the guide's sink (`NFR2`)
             buildDisplayListInto(pkTree, pkFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                 ltnOps);
-            auto pkCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                cast(float)(pkOriginX * cellW),
-                cast(float)(pickerOriginRow * cellH));
-            paint(pkCanvas, ltnOps[]);
+            frameList.beginGroup(focused: true);
+            frameList.emit(ui, ltnOps[], pkOriginX, pickerOriginRow);
 
             const hole = pickerPreviewRect(pkTree, pkFrames);
             if (filePickerDoc !is null && hole.width > 0 && hole.height > 0)
@@ -2154,6 +2186,7 @@ int runGui(GuiArgs guiArgs) @system
                         vm.sbTrack, vm.sbThumb);
                 }
             }
+            frameList.endGroup(); // the picker
         }
 
         // The settings pane, over everything — the same widget tree the
@@ -2170,11 +2203,6 @@ int runGui(GuiArgs guiArgs) @system
             const sPanel = sFrames[sTree.root].rect;
             const sX = (cellsW - sPanel.width) / 2;
             const sY = (cellsH - sPanel.height) / 2;
-            paintedFocus = UiRect(cast(float)((sX > 0 ? sX : 0) * cellW),
-                cast(float)((sY > 0 ? sY : 0) * cellH),
-                cast(float)(sPanel.width * cellW),
-                cast(float)(sPanel.height * cellH));
-            hasPaintedFocus = true;
             window.resetClip();
             chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
             ltnOps.reset();
@@ -2182,10 +2210,9 @@ int runGui(GuiArgs guiArgs) @system
             // must be the same chrome as every other bar in the window.
             buildDisplayListInto(sTree, sFrames,
                 vm.palette, vm.pageFg, vm.pageBg, ltnOps);
-            auto sCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                cast(float)((sX > 0 ? sX : 0) * cellW),
-                cast(float)((sY > 0 ? sY : 0) * cellH));
-            paint(sCanvas, ltnOps[]);
+            frameList.beginGroup(focused: true);
+            frameList.emit(ui, ltnOps[], sX > 0 ? sX : 0, sY > 0 ? sY : 0);
+            frameList.endGroup(); // the settings pane
         }
 
         // The DSV columns palette (`DSB3`) — the same shared widget tree
@@ -2209,103 +2236,22 @@ int runGui(GuiArgs guiArgs) @system
                 buildDisplayListInto(pTree, pFrames,
                     themes[vm.themeIdx].effectivePalette, vm.pageFg,
                     vm.pageBg, ltnOps);
-                auto pCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                    cast(float)((pX > 0 ? pX : 0) * cellW),
-                    cast(float)((pY > 0 ? pY : 0) * cellH));
-                paint(pCanvas, ltnOps[]);
+                frameList.beginGroup(focused: true);
+                frameList.emit(ui, ltnOps[], pX > 0 ? pX : 0, pY > 0 ? pY : 0);
+                frameList.endGroup(); // the DSV palette
             }
         }
 
         window.resetClip(); // never let a scissor survive the frame
 
+        // `EFX23`: everything the CRT reacts to, harvested from what this
+        // frame emitted — the focused region, the selection, the split, the
+        // text under the pointer, the document's thumb — not re-derived.
         if (crt.enabled && crt.uiReactive)
         {
-            CrtUiContext uiCtx;
-
-            // 1. Focused container. A modal reports the rect it painted
-            // (`EFX23`); the two non-modal cases are whole panes, whose
-            // geometry is a subtraction rather than a layout.
-            if (hasPaintedFocus)
-            {
-                uiCtx.focusBox = paintedFocus;
-            }
-            else if (pn.treeVisible && pn.treeFocused)
-            {
-                uiCtx.focusBox = UiRect(0, 0, cast(float) treePx(), cast(float) screenH);
-            }
-            else
-            {
-                const docLeft = treePx();
-                const dRight = docRight;
-                uiCtx.focusBox = UiRect(cast(float) docLeft, 0, cast(float)(dRight - docLeft), cast(float) screenH);
-            }
-
-            // 2. Dock split divider
-            if (pn.treeVisible && treePx() > 0)
-            {
-                uiCtx.splitDivider = UiRect(cast(float)(treePx() - 2), 0, 4.0f, cast(float) screenH);
-            }
-
-            // 3. Selection
-            if (pn.treeVisible && pn.treeFocused && pn.tree.sel >= 0
-                && pn.tree.sel >= pn.tree.top && pn.tree.sel < pn.tree.top + pn.tree.bodyRows)
-            {
-                const selY = hdrY + cellH + (pn.tree.sel - pn.tree.top) * cellH;
-                uiCtx.selectBox = UiRect(0, cast(float) selY, cast(float) treePx(), cast(float) cellH);
-            }
-            else if (drag.regime == Regime.text && drag.selMax() > drag.selMin())
-            {
-                foreach (r; selectionRects(vm.tree, vm.frames, cast(size_t) drag.selMin(), cast(size_t) drag.selMax()))
-                {
-                    const selRow = r.y - vm.top;
-                    if (selRow >= 0 && selRow < screenH / cellH)
-                    {
-                        const sx = gutterPx + (r.x - dhx) * cellW;
-                        const sy = docY0 + selRow * cellH;
-                        uiCtx.selectBox = UiRect(cast(float) sx, cast(float) sy,
-                            cast(float)(r.width * cellW), cast(float) cellH);
-                        break;
-                    }
-                }
-            }
-
-            // 4. Hover rect
-            if (rawPointerPos.x >= 0 && rawPointerPos.x < screenW && rawPointerPos.y >= 0 && rawPointerPos.y < screenH)
-            {
-                if (pn.treeVisible && rawPointerPos.x < treePx() && rawPointerPos.y >= hdrY + cellH)
-                {
-                    const treeRow = (cast(int) rawPointerPos.y - hdrY - cellH) / cellH;
-                    if (treeRow >= 0 && treeRow < pn.tree.bodyRows && (treeRow + pn.tree.top) < cast(long) pn.tree.rows.length)
-                    {
-                        uiCtx.hoverBox = UiRect(0, cast(float)(hdrY + cellH + treeRow * cellH),
-                            cast(float) treePx(), cast(float) cellH);
-                    }
-                }
-                else if (rawPointerPos.y < hdrY + cellH)
-                {
-                    const btnCol = cast(int)(rawPointerPos.x / (6 * cellW));
-                    uiCtx.hoverBox = UiRect(cast(float)(btnCol * 6 * cellW), cast(float) hdrY,
-                        cast(float)(6 * cellW), cast(float) cellH);
-                }
-            }
-
-            // 5. Scrollbar thumb
-            foreach (ref const bf; pn.dock.bars)
-            {
-                if (bf.pane == docPane && bf.vLive && bf.vExtents.viewport > 0 && bf.vExtents.content > bf.vExtents.viewport)
-                {
-                    const sv = pn.dock.scrollOf(docPane);
-                    const trackH = bf.vTrack.height * cellH;
-                    import std.algorithm.comparison : max;
-                    const thumbH = max(cellH, cast(int)(trackH * (cast(float) bf.vExtents.viewport / bf.vExtents.content)));
-                    const maxOff = max(1L, bf.vExtents.content - bf.vExtents.viewport);
-                    const thumbY = bf.vTrack.y * cellH + cast(int)((trackH - thumbH) * (cast(float) sv.v.offset / maxOff));
-                    const sbX = bf.vTrack.x * cellW;
-                    uiCtx.scrollbarThumb = UiRect(cast(float) sbX, cast(float) thumbY, cast(float) cellW, cast(float) thumbH);
-                    break;
-                }
-            }
-
+            const pointerCell = Point(cast(int)(rawPointerPos.x / cellW),
+                cast(int)(rawPointerPos.y / cellH));
+            const uiCtx = crtUiContextOf(frameList, pointerCell, cellW, cellH);
             crt.setUiContext(uiCtx);
         }
         }
