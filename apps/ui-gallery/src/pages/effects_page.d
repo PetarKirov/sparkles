@@ -109,6 +109,17 @@ uint view(ref Builder b, in GalleryState s)
     ]);
     body_ ~= spacer(b);
 
+    // Tier 2 reads a NEIGHBOURHOOD of the layer — a blur, a glow — which
+    // one cell's own colour cannot answer. Bloom is four passes declared as
+    // data (`EffectPass`): extract the bright part at half size, blur it
+    // both ways, add it back. The window runs all four; the terminal paints
+    // the panel unaffected, which is what the effect declares.
+    body_ ~= section(b, "tier 2 · reads the layer (window only)", [
+        sample(b, "bloom", fx.bloom, w),
+        para(b, layerNote(s), w > 8 ? w - 6 : w),
+    ]);
+    body_ ~= spacer(b);
+
     body_ ~= section(b, "the tiers", [
         kv(b, "0 · color", "position + its own colour → colour. Cell grid: yes."),
         kv(b, "1 · distortion", "rewrites position. Needs a texture."),
@@ -117,9 +128,9 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
     body_ ~= para(b,
         "Tier 0 is the part of the vocabulary every target can honour, which "
-        ~ "is why four of the five built-ins are tier 0: naming one costs "
-        ~ "an application nothing on a terminal. The fifth is here so the "
-        ~ "boundary is visible from both sides.", w);
+        ~ "is why four of the six built-ins are tier 0: naming one costs "
+        ~ "an application nothing on a terminal. The other two are here so "
+        ~ "the boundary is visible from both sides.", w);
 
     return column(b, body_);
 }
@@ -132,6 +143,13 @@ private string degradationNote(in GalleryState s)
         ? "This target renders the bracket to a texture, so the panel above is warped."
         : "This target has no texture, so the panel above is painted unaffected — "
         ~ "the degradation the effect declares, not a silent omission.";
+
+/// ditto, for tier 2.
+private string layerNote(in GalleryState s)
+    => s.guiCellW > 0
+        ? "Four passes: bright-pass at half size, blur across, blur down, add back."
+        : "A cell cannot see its neighbours, so the panel above is painted "
+        ~ "unaffected — the degradation bloom declares.";
 
 /// One specimen: a labelled panel of ordinary widgets under `effect`.
 private uint sample(ref Builder b, string caption, EffectId effect, int width)
@@ -253,11 +271,12 @@ private uint nested(ref Builder b, EffectId effect, int width)
     assert(pushes == ops.count!(o => o.kind == OpKind.popEffect));
 
 
-    // Five tier-0 specimens, two effected raster specimens, the CRT's two
-    // nested brackets, and the nesting demonstration's two. The "none"
+    // Six single specimens (four tier 0, curvature, bloom), two effected
+    // raster specimens, the CRT's two nested brackets, and the nesting
+    // demonstration's two. The "none"
     // specimens must NOT emit one: a null id is the absence of an effect,
     // not an effect that does nothing.
-    assert(pushes == 11, "every specimen that names an id, and only those");
+    assert(pushes == 12, "every specimen that names an id, and only those");
 
     const ids = ops.filter!(o => o.kind == OpKind.pushEffect).array;
     size_t cellHonoured, textureOnly;
@@ -279,5 +298,5 @@ private uint nested(ref Builder b, EffectId effect, int width)
     }
     // Both sides of the tier boundary are on the page. A catalogue showing
     // only the tier a terminal can run would be showing the easy half.
-    assert(cellHonoured == 9 && textureOnly == 2);
+    assert(cellHonoured == 9 && textureOnly == 3);
 }
