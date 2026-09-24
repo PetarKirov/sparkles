@@ -258,7 +258,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
     import sparkles.base.term_color : RgbColor;
 
     auto session = TerminalSession.open(TerminalRequest(
-        mouse: cfg.mouse, motion: cfg.motion));
+        mouse: cfg.mouse, motion: cfg.motion, probeImages: cfg.probeImages));
     if (!session.active)
         return false;
 
@@ -287,8 +287,12 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
             return;
 
         const target = host.target;
+        // A terminal that draws kitty images gets them as placements beside
+        // the grid (`IMG5`); any other gets them rastered into it.
+        session.placements.length = 0;
         paintGrid(session.grid, RgbColor(0, 0, 0), host.ops()[], caps: target,
-            effects: host.effectContext, images: host.imageRegistry);
+            effects: host.effectContext, images: host.imageRegistry,
+            placements: &session.placements);
         draw(host); // `HST13`: the application's own cells, before the diff
         // The grid holds RGB; the depth it goes out at is the target's — the
         // declared one, or a narrowed preview's (`CAP5`).
@@ -338,6 +342,8 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         }
 
         EventChannel events;
+        // What arrived during the capability probe goes to the pump first.
+        auto typedAhead = session.takeTypedAhead();
         // `cfg` is a scope parameter — closures must not capture it (a
         // captured parameter slot, not the referent); everything the
         // fibers touch below is a plain local of this frame, which
@@ -346,7 +352,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
 
         sched.run(() {
             cast(void) withScope!((ref sc) {
-                sc.spawnDaemon(() { pumpTerminalInput(sched, events, 0); });
+                sc.spawnDaemon(() { pumpTerminalInput(sched, events, 0, typedAhead); });
                 version (linux)
                     if (winchOk)
                         sc.spawnDaemon(() { pumpResizeSignals(sched, events, winch); });
