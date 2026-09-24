@@ -12,7 +12,7 @@ module sparkles.ui_raylib.crt;
 import raylib;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.gesture : PointF;
-import sparkles.ui_raylib.glsl : activePrologue;
+import sparkles.ui.glsl_dialect : activePrologue;
 public import sparkles.ui_raylib.crt_projection : CrtProjection, toShaderBox, UiRect;
 
 
@@ -26,7 +26,7 @@ struct CrtUiContext
     UiRect scrollbarThumb;
 }
 
-// The prologues moved to `sparkles.ui_raylib.glsl` when a second shader needed
+// The prologues moved to `sparkles.ui.glsl_dialect` when a second shader needed
 // them: the effect compiler builds fragment shaders the same way, and a
 // per-shader copy of the dual-dialect trick is the duplication this file
 // already removed once.
