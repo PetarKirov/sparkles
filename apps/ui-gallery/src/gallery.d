@@ -161,6 +161,7 @@ struct Gallery
     /// first frame beside the image one and bound to the host the same way.
     EffectRegistry fx;
     private EffectParam[] fxParams;
+    private EffectParam[] bloomParams; /// ditto, for `Builtin.bloom`
 
     private enum PaneId paneNav = 1;
     private enum PaneId paneContent = 2;
@@ -233,6 +234,11 @@ struct Gallery
             if (shot !is null)
             {
                 dbgFrame++;
+                // Freeze every effect's animation at one phase, so two
+                // captures of the same page are byte-comparable (`DBG1`).
+                static if (__traits(hasMember, H, "pinEffectClock"))
+                    if (dbgFrame == 1)
+                        h.pinEffectClock(1.0f);
                 const onTerminal = pages[s.page].title == "Terminal";
                 if (onTerminal && (dbgFrame == 30 || dbgFrame == 40 || dbgFrame == 50))
                     s.terms.spawnRequested = true;
@@ -389,6 +395,17 @@ struct Gallery
             // the registered effect, and without the page knowing.
             fxParams = [EffectParam("uAmount", [0.55f, 0, 0, 0], 1)];
             fx.setParams(Builtin.curvature, fxParams);
+            // Likewise bloom: the CRT's threshold keeps the glow to what is
+            // nearly white, which on a catalogue panel is almost nothing.
+            // Lower and stronger, so the specimen reads as a glow. (The radius is
+            // a tap SPACING: past ~2 texels the nine taps leave gaps, and the
+            // glow turns into a dotted halftone.)
+            bloomParams = [
+                EffectParam("uBloomThreshold", [0.3f, 0, 0, 0], 1),
+                EffectParam("uBloomRadius", [1.5f, 0, 0, 0], 1),
+                EffectParam("uBloomIntensity", [1.6f, 0, 0, 0], 1),
+            ];
+            fx.setParams(Builtin.bloom, bloomParams);
 
             if (environment.get("UIG_EFFECTS") == "off")
             {
