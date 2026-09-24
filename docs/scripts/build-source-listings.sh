@@ -37,4 +37,15 @@ rm -rf "$out"
     --repo-root "$repo_root" \
     --repo-url "https://github.com/PetarKirov/sparkles/blob/main" \
     --out "$out" >&2
+before="$(du -sk --apparent-size "$out" | cut -f1)"
+
+# Post-pass (docs/specs/docs/site.md, DOC12): minify the HTML, the shared CSS
+# and JS assets, and the tree JSON. `<pre>` content is left byte-for-byte
+# alone, which is what makes this safe for a site whose whole point is source
+# text. Nixpkgs-pinned through the flake, not `npx`.
+minify="$(nix build "$repo_root#minify" --no-link --print-out-paths)/bin/minify"
+(cd "$out" && "$minify" --quiet --recursive --output . .)
+after="$(du -sk --apparent-size "$out" | cut -f1)"
+
 echo "build-source-listings: wrote $(find "$out" -name '*.html' | wc -l) pages to $out_rel" >&2
+echo "build-source-listings: minified ${before} KiB -> ${after} KiB" >&2

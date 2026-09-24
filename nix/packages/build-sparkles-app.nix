@@ -108,10 +108,17 @@
               path:
               fs.fileFilter (
                 # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
-                # `.css`/`.svg` string-import view assets (e.g. sparkles:twoslash's
-                # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`).
+                # `.css`/`.svg`/`.js` string-import view assets (e.g.
+                # sparkles:twoslash's `views/twoslash.css` and
+                # `views/icons/**/*.svg`, sparkles:docs' `views/explorer.js` —
+                # all pulled in via `import()`).
                 file:
-                file.hasExt "d" || file.hasExt "c" || file.hasExt "i" || file.hasExt "css" || file.hasExt "svg"
+                file.hasExt "d"
+                || file.hasExt "c"
+                || file.hasExt "i"
+                || file.hasExt "css"
+                || file.hasExt "js"
+                || file.hasExt "svg"
               ) (fromRoot path)
             ) sourceDirs
           );

@@ -148,6 +148,38 @@ string writeStylesheetFile(string path, scope const(char)[] css) @system
     return path;
 }
 
+/++
+The `assets/<stem>-<hash>.<ext>` name for a piece of shared content
+(`DOC12`) — the site's stylesheet, behaviour script, explorer module and file
+tree all ship under one.
+
+Content-addressed so a CDN (and the reader's cache) can hold each asset
+$(I immutably): a byte that did not change keeps its URL and is never
+re-fetched, and one that did gets a new URL rather than a stale hit. The
+digest is truncated SHA-1 — this names bytes, it does not authenticate them.
++/
+string assetName(scope const(char)[] stem, scope const(char)[] ext,
+    scope const(char)[] content) @safe
+{
+    import std.digest : toHexString, LetterCase;
+    import std.digest.sha : sha1Of;
+
+    const hex = sha1Of(content).toHexString!(LetterCase.lower);
+    return "assets/" ~ stem.idup ~ "-" ~ hex[0 .. 8].idup ~ "." ~ ext.idup;
+}
+
+/// Writes `content` at $(LREF assetName) under `outDir` and returns the
+/// gallery-root-relative href pages link it by.
+string writeContentAddressedAsset(string outDir, scope const(char)[] stem,
+    scope const(char)[] ext, scope const(char)[] content) @system
+{
+    import std.path : buildPath;
+
+    const href = assetName(stem, ext, content);
+    writeStylesheetFile(buildPath(outDir, href), content);
+    return href;
+}
+
 /// $(LREF writeStylesheetFile) at $(LREF stylesheetAssetPath) under `outDir`.
 string writeStylesheetAsset(string outDir, scope const(char)[] css) @system
 {
@@ -258,4 +290,16 @@ private const(char)[][] lines(string s) @safe pure nothrow
     if (start < s.length)
         outp ~= s[start .. $];
     return outp;
+}
+
+/// The asset name is the content's fingerprint: same bytes, same href;
+/// changed bytes, a href no cache can confuse with the old one.
+@("docs.assets.assetName.isContentAddressed")
+@safe
+unittest
+{
+    const a = assetName("shell", "css", "body { color: red }");
+    assert(a == assetName("shell", "css", "body { color: red }"));
+    assert(a != assetName("shell", "css", "body { color: blue }"));
+    assert(a.length == "assets/shell-".length + 8 + ".css".length, a);
 }

@@ -28,7 +28,7 @@ import std.regex : matchFirst, regex;
 
 import expected : Expected;
 import sparkles.wired.json : JsonError, readJSONFile;
-import sparkles.wired.policy : WireOptional;
+import sparkles.wired.policy : WireOptional, WireSkip;
 
 import sparkles.docs.options : ChromePalette, escapeInto;
 
@@ -53,23 +53,23 @@ struct SidebarItem
 
     /// Route the entry links to (`/overview`, `/libs/base/`), or empty for a
     /// group heading that is not itself a page.
-    @WireOptional() string link;
+    @WireOptional(WireSkip.whenDefault) string link;
 
     /// Whether a group renders collapsed. Absent for leaf entries.
-    @WireOptional() bool collapsed;
+    @WireOptional(WireSkip.whenDefault) bool collapsed;
 
     /// Child entries of a group; empty for a leaf.
-    @WireOptional() SidebarItem[] items;
+    @WireOptional(WireSkip.whenDefault) SidebarItem[] items;
 
     /// Anchor `target` for the rendered link (VitePress's `DefaultTheme`
     /// honors it). The listing entries set `_blank`: a `/src/…` route is a
     /// static page, and a plain sidebar link would be intercepted by the SPA
     /// router — which has no such route — and 404, where a real navigation
     /// serves the file (`DSC7`).
-    @WireOptional() string target;
+    @WireOptional(WireSkip.whenDefault) string target;
 
     /// Anchor `rel` for the rendered link.
-    @WireOptional() string rel;
+    @WireOptional(WireSkip.whenDefault) string rel;
 }
 
 /// The contents of `docs-config.json`.
@@ -223,7 +223,7 @@ string sidebarNav(in SidebarItem[] items, scope const(char)[] siteBase = null) @
 
 /// The tree's items alone — no `<aside>`/`<nav>` wrapper — for embedding
 /// inside another nav: the explorer sidebar nests this under its `docs/`
-/// node (`page_shell.explorerNav`, `DOC11`).
+/// node (`explorer.explorerScript`, `DOC11`/`DOC12`).
 string sidebarItemsHtml(in SidebarItem[] items, scope const(char)[] siteBase = null) @safe pure
 {
     auto w = appender!string;
@@ -291,6 +291,10 @@ string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init
     import std.conv : text;
 
     auto w = appender!string;
+    // An explorer aside arrives empty and is filled by its client module
+    // (`DOC12`). Without JavaScript it stays empty, and a 16.5em blank column
+    // reads as a broken sidebar — so an empty one takes no space at all.
+    w ~= "  .site-sidebar:empty { display: none; }\n";
     w ~= "  .site-sidebar { flex: none; width: 16.5em; overflow-y: auto;\n";
     w ~= text("                  padding: 0.9em 1.1em 1.5em; box-sizing: border-box;\n");
     w ~= text("                  background: ", c.surface, "; border-right: 1px solid ",
