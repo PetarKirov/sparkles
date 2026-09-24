@@ -28,9 +28,10 @@ import core.sys.posix.unistd : STDIN_FILENO, STDOUT_FILENO, write;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : classifyColorDepth, ColorDepth;
 import sparkles.base.term_control : CtlSeq, DecMode, writeEscapeSeq, writeMouseTracking;
-import sparkles.base.term_caps : StdStream, terminalSize, TermSize;
+import sparkles.base.term_caps : ImageProtocol, StdStream, terminalSize, TermSize;
 
 import sparkles.tui.cell : Grid;
+import sparkles.tui.images : ImagePlacement, KittyImages;
 import sparkles.tui.render : Screen;
 
 /// What $(LREF Terminal.open) sets up (and $(LREF Terminal.close) tears down).
@@ -53,6 +54,8 @@ struct Terminal
         termios _orig;
         TerminalOptions _opts;
         Screen _screen;
+        KittyImages _images;
+        ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
         int _inFd = STDIN_FILENO;
         int _outFd = STDOUT_FILENO;
@@ -124,6 +127,7 @@ struct Terminal
         if (_opts.hideCursor)
             writeEscapeSeq!(CtlSeq.showCursor)(s);
         writeEscapeSeq!(CtlSeq.popKeyboardMode)(s);
+        _images.clear(s); // the terminal need not keep our pixels
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
         writeAll(_outFd, s[]);
@@ -144,13 +148,86 @@ struct Terminal
     /// `links` is the frame's OSC 8 URI table, indexed from 1 by a cell's
     /// `linkId` (see $(REF Screen.render, sparkles,tui,render)); omit it and no
     /// hyperlink sequence is emitted.
-    void draw(in Grid grid, scope const(char)[][] links = null) @trusted
+    ///
+    /// `images` are the frame's kitty image placements (`IMG5`), drawn over
+    /// the cells inside the same synchronized frame — each transmitted once,
+    /// placed when new or moved, deleted when gone
+    /// ($(REF KittyImages, sparkles,tui,images)). Only pass them to a
+    /// terminal that answered for kitty ($(LREF probeImages)).
+    void draw(in Grid grid, scope const(char)[][] links = null,
+        in ImagePlacement[] images = null) @trusted
     {
         _buf.clear();
         writeEscapeSeq!(CtlSeq.syncBegin)(_buf);
+        const repaint = _screen.repaintsFully(grid);
         _screen.render(grid, _buf, links);
+        _images.update(_buf, images, repaint);
         writeEscapeSeq!(CtlSeq.syncEnd)(_buf);
         writeAll(_outFd, _buf[]);
+    }
+
+    /**
+    Asks the terminal which image protocol it draws (`CAP3`, M7's `images`
+    row) — the kitty graphics query, fenced by primary DA — and waits at most
+    `timeoutMs` for the fence. A terminal that answers nothing costs the
+    timeout and declares `none`.
+
+    Apple Terminal is not asked: it prints the graphics query's payload as
+    text (the capability case study caught it doing so). Under a multiplexer
+    DA1's sixel attribute is not believed (`CAP7`).
+
+    Anything else that arrives meanwhile — a key typed during the probe — is
+    kept, and handed to the input decoder by $(LREF takeTypedAhead).
+    */
+    ImageProtocol probeImages(int timeoutMs = 250) @trusted
+    {
+        import core.sys.posix.poll : poll, pollfd, POLLIN;
+        import core.sys.posix.unistd : read;
+        import core.time : MonoTime, msecs;
+        import sparkles.tui.probe : imageQuery, ImageReplies, splitImageReplies;
+
+        if (!_active || env("TERM_PROGRAM") == "Apple_Terminal")
+            return ImageProtocol.none;
+        const multiplexer = env("TMUX").length || env("STY").length || env("ZELLIJ").length;
+
+        writeAll(_outFd, imageQuery);
+        const deadline = MonoTime.currTime + timeoutMs.msecs;
+        ubyte[] got;
+        ubyte[] rest;
+        ImageReplies r;
+        for (;;)
+        {
+            const left = (deadline - MonoTime.currTime).total!"msecs";
+            if (left <= 0)
+                break;
+            pollfd pfd;
+            pfd.fd = _inFd;
+            pfd.events = POLLIN;
+            if (poll(&pfd, 1, cast(int) left) <= 0)
+                break;
+            ubyte[256] chunk = void;
+            const n = read(_inFd, chunk.ptr, chunk.length);
+            if (n <= 0)
+                break;
+            got ~= chunk[0 .. n];
+            rest = null;
+            r = splitImageReplies(got, rest);
+            if (r.fenced)
+                break;
+        }
+        if (!r.fenced && rest is null)
+            rest = got;
+        _typedAhead ~= rest;
+        return r.protocol(multiplexer != 0);
+    }
+
+    /// What arrived on the input stream during a probe that was not a reply,
+    /// in order — the caller's input decoder takes it before reading more.
+    ubyte[] takeTypedAhead() @safe pure
+    {
+        auto t = _typedAhead;
+        _typedAhead = null;
+        return t;
     }
 
     /// Force the next $(LREF draw) to repaint in full (after out-of-band output,
@@ -178,14 +255,13 @@ struct Terminal
 /// Classify the terminal's color depth from `$COLORTERM`/`$TERM` without the
 /// throwing/GC `std.process` path, so `open` stays `nothrow @nogc`.
 private ColorDepth detectColorDepthEnv() @trusted nothrow @nogc
-{
-    static const(char)[] env(const(char)* name) @trusted nothrow @nogc
-    {
-        const p = getenv(name);
-        return p ? p[0 .. strlen(p)] : null;
-    }
+    => classifyColorDepth(env("COLORTERM"), env("TERM"));
 
-    return classifyColorDepth(env("COLORTERM"), env("TERM"));
+// An environment variable, without `std.process`'s throwing, allocating path.
+private const(char)[] env(const(char)* name) @trusted nothrow @nogc
+{
+    const p = getenv(name);
+    return p ? p[0 .. strlen(p)] : null;
 }
 
 /// Write all of `data` to `fd`, looping over partial / EINTR-interrupted writes.

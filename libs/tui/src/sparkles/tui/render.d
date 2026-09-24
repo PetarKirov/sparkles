@@ -40,6 +40,12 @@ struct Screen
         _havePrev = false;
     }
 
+    /// Whether the next $(LREF render) of `target` repaints every cell — the
+    /// first frame, a resize, or after $(LREF invalidate) — which is when
+    /// anything drawn over the cells (an image) must be drawn again too.
+    bool repaintsFully(in Grid target) const @safe pure nothrow @nogc
+        => !_havePrev || target.cols != _prev.cols || target.rows != _prev.rows;
+
     /// Fold colors to this terminal's real depth (truecolor cells degrade to the
     /// nearest 256/16 entry). The next frame repaints in full so the new depth
     /// applies uniformly.
