@@ -26,6 +26,7 @@ import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
 import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
+import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui_raylib.effect_gpu : EffectGpu, scissorInTarget;
@@ -168,7 +169,7 @@ keeps mono at 1em), and sub-cell scrolling (design-system M9 turns those on).
 Input is the mouse `RaylibEvents` synthesizes.
 */
 enum TargetCapabilities raylibCapabilities = () {
-    import sparkles.base.term_caps : BlockTier;
+    import sparkles.base.term_caps : BlockTier, ImageProtocol;
     import sparkles.base.term_color : ColorDepth;
     import sparkles.input.capability : mousePointer;
 
@@ -180,6 +181,10 @@ enum TargetCapabilities raylibCapabilities = () {
     c.radius = true;
     c.shadow = true;
     c.alpha = true;
+    // A window draws the decoded pixels itself (`IMG`): the top of the
+    // image order, so narrowing it to a protocol profile keeps real images
+    // and narrowing it below one sends them down the cell ladder (`GLY9`).
+    c.images = ImageProtocol.pixels;
     c.input = mousePointer;
     return c;
 }();
@@ -457,10 +462,27 @@ struct RaylibCanvas
     this falls through to the same `IMG4` placeholder a canvas without the
     primitive would get. Degrading identically is the point; a GPU backend
     silently drawing nothing would be the one case `IMG4` does not cover.
+
+    Narrowed below its own pixels — previewing `enhanced`, or a terminal
+    preset — the window draws what that target would (`GLY9`): the picture
+    rastered in cells by the same routine the terminal uses, at this window's
+    real cell size, or the alt text where the target has no cell rung.
     */
     void image(in Rect r, ImageHandle handle, ImageFit fit,
         scope const(char)[] alt, in Visual v) @system
     {
+        const rung = imageRungOf(capabilities);
+        if (rung != ImageRung.native)
+        {
+            const data = images is null ? null : images.lookup(handle);
+            if (rung == ImageRung.alt || data is null || data.rgba.length == 0)
+                paintImagePlaceholder(this, r, alt, v);
+            else
+                paintImageRaster(this, r, *data, fit, rung, Size(cellW, cellH),
+                    v.hasBg ? v.bg : RgbColor(0, 0, 0));
+            return;
+        }
+
         Texture2D* tex = images is null ? null : images.resolve(handle);
         if (tex is null)
         {

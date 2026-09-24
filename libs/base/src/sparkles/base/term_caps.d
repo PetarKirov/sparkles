@@ -216,13 +216,18 @@ enum BlockTier : ubyte
     octant,   /// the 2×4 octants (Unicode 16)
 }
 
-/// Which inline-image protocol a target accepts ($(LREF OutputCapabilities.images)).
+/**
+How a target shows raster images ($(LREF OutputCapabilities.images)): a
+terminal's inline-image protocol, or `pixels` for a target that composites
+decoded pixels itself — a window, which shows anything any protocol could.
+*/
 enum ImageProtocol : ubyte
 {
     none,
     sixel,  /// DEC sixel
     iterm2, /// OSC 1337
     kitty,  /// the kitty graphics protocol
+    pixels, /// the target draws decoded pixels itself (a window)
 }
 
 /**

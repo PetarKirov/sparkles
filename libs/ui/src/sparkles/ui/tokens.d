@@ -334,7 +334,9 @@ TargetCapabilities capabilitiesOf(Profile p) @safe pure nothrow @nogc
 /**
 The most `a` and `b` both claim (`CAP9`'s lattice meet): every `bool` both
 must hold, every ordered enum or count the smaller, an image protocol only
-when both name the same one, nested capability structs field by field.
+when both name the same one — or the other one, where one side is a window's
+`pixels`, which reaches whatever a protocol does — nested capability structs
+field by field.
 `reducedMotion` is a preference, and either asking for it wins.
 
 What a host paints for when it is narrowed to a profile: its own declaration
@@ -349,7 +351,8 @@ TargetCapabilities meet(in TargetCapabilities a, in TargetCapabilities b)
         static if (is(immutable T == immutable bool))
             return x && y;
         else static if (is(immutable T == immutable ImageProtocol))
-            return x == y ? x : ImageProtocol.none;
+            return x == y || y == ImageProtocol.pixels ? x
+                : x == ImageProtocol.pixels ? y : ImageProtocol.none;
         else static if (is(T == struct))
         {
             T r;
@@ -391,7 +394,8 @@ TargetCapabilities declaredCapabilities(T)(auto ref const T target)
 /**
 `true` iff `a` claims nothing `b` does not (`CAP9`): every `bool` implies,
 every ordered enum or count is `<=`, an image protocol is a subset only of
-itself or of `none`, and nested capability structs are compared field-wise.
+itself and of a window's `pixels` (and `none` of everything), and nested
+capability structs are compared field-wise.
 `reducedMotion` is a preference, not a capability, and is ignored.
 */
 bool subsetOf(in TargetCapabilities a, in TargetCapabilities b) @safe pure nothrow @nogc
@@ -401,7 +405,7 @@ bool subsetOf(in TargetCapabilities a, in TargetCapabilities b) @safe pure nothr
         static if (is(immutable T == immutable bool))
             return !x || y;
         else static if (is(immutable T == immutable ImageProtocol))
-            return x == ImageProtocol.none || x == y;
+            return x == ImageProtocol.none || x == y || y == ImageProtocol.pixels;
         else static if (is(T == struct))
         {
             static foreach (i, _; T.tupleof)
@@ -657,6 +661,13 @@ unittest
     a.images = ImageProtocol.none;
     b.images = ImageProtocol.iterm2;
     assert(subsetOf(a, b));
+    // A window's own pixels reach anything a protocol does, and no protocol
+    // reaches a window: `pixels` is the top of the order.
+    a.images = ImageProtocol.kitty;
+    b.images = ImageProtocol.pixels;
+    assert(subsetOf(a, b) && !subsetOf(b, a));
+    assert(meet(a, b).images == ImageProtocol.kitty && meet(b, a).images == ImageProtocol.kitty);
+    assert(meet(b, b).images == ImageProtocol.pixels);
 }
 
 @("ui.tokens.terminalCapabilities.bothHalvesFromOneSnapshot")
