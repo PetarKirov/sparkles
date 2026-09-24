@@ -46,9 +46,10 @@ answers, and every flag degrades on its own.
 ### Emulator presets
 
 To see what a page looks like in a particular terminal, there are also
-**presets** for eight emulators whose answers to a capability query were
-recorded: `xterm`, `apple-terminal`, `iterm2`, `alacritty`, `wezterm`, `kitty`,
-`ghostty` and `tmux`. A preset claims what its emulator answered — color depth,
+**presets** for ten emulators and multiplexers whose answers to a capability
+query were recorded: `xterm`, `apple-terminal`, `iterm2`, `alacritty`, `foot`,
+`wezterm`, `kitty`, `ghostty`, `tmux` and `zellij`. A preset claims what its
+emulator answered — color depth,
 synchronized output, grapheme clustering, scheme reports, images, bracketed
 paste, key releases — and nothing no query can confirm, so it may show less
 than the emulator can, never more. The measured values are in the

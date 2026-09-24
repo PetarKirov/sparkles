@@ -35,8 +35,8 @@ GUI → mobile. First consumers: `ui-gallery` and the docs site; `hue` and
 
 _Updated at each interruption; one section, not a diary._
 
-- **Checked revision:** `feat/design-system-emulator-presets`, on top of PR
-  #513 (live profile switching, merged); M3 merged as PR #512.
+- **Checked revision:** `feat/design-system-more-emulators`, on top of PR
+  #514 (emulator presets, merged).
 - **Done (M0–M2):** tokens, state overlays, target declarations, the
   degradation report, `ui-gallery --profile`/`--degradations`.
 - **Done (M3):** `sparkles.ui.glyphs` — tiers, the one-cell
@@ -49,16 +49,21 @@ _Updated at each interruption; one section, not a diary._
   color in `sparkles:base`.
 - **Done (after M3):** `ui-gallery` switches its profile live (`}`/`{`),
   narrowing the host with `meet` and never above where it started (#513);
-  emulator presets (`CAP10`, D32) — eight measured emulators' recorded
-  replies, mapped by `fromReplies`, previewed with `ui-gallery --emulator`.
+  emulator presets (`CAP10`, D32) — measured emulators' recorded replies,
+  mapped by `fromReplies`, previewed with `ui-gallery --emulator` (#514);
+  foot, and tmux and zellij under real hosts, measured headlessly (foot in
+  `cage` on the wlroots headless backend, Ghostty under `xvfb-run`), their
+  probe reports checked in and re-read by test; multiplexer presets are the
+  meet over their hosts, with DA1's sixel dropped under a multiplexer (D33,
+  `CAP7` partial).
 - **Unverified / open:** the sub-cell hairline rule (`GLY2a`); per-role glyph
   preferences beyond marks (`GLY1`); `ACC4` for every focusable inside pages;
   the `CAP2` table audit; the icon table (`GLY4`). From M1: per-state
   attributes/metrics; `actionBar` and the scrollbar onto overlays.
 - **Blockers:** none. M4 needs the brand design exercise (owner, D23).
-- **Next executable actions:** (1) measure the missing emulators (foot, zellij,
-  Windows Terminal, the Linux console) with `query-probe.d --markdown` and add
-  their presets; (2) M7's probes feed `fromReplies` at run time; (3) M4, once
+- **Next executable actions:** (1) M7's probes feed `fromReplies` at run
+  time — the query parsing the transcript test does is the seed; (2) Windows
+  Terminal and the Linux console need a person at the machine; (3) M4, once
   the owner's design session has happened.
 
 → [Overview](./index.md) · [Testing](./testing.md)
