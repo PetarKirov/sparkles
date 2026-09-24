@@ -150,7 +150,8 @@ squares its corners, and a terminal previewing `baseline` emits no color and no
 non-ASCII byte at all.
 
 `--emulator` previews a measured terminal instead — `kitty`, `ghostty`,
-`wezterm`, `iterm2`, `alacritty`, `xterm`, `apple-terminal` or `tmux`:
+`wezterm`, `foot`, `iterm2`, `alacritty`, `xterm`, `apple-terminal`, or the
+multiplexers `tmux` and `zellij`:
 
 ```bash
 dub run :ui-gallery -- --tui --emulator tmux     # what tmux answered, and no more
