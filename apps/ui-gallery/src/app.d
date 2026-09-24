@@ -178,6 +178,9 @@ int main(string[] args)
         // close button — would be drawn as if hover worked and never light
         // up. Costs one input event per pointer move.
         motion: true,
+        // Ask the terminal whether it draws kitty images, so the Primitives
+        // swatch is the picture itself there, not its cell raster (`IMG5`).
+        probeImages: true,
     };
 
     auto app = Gallery(GalleryState(
