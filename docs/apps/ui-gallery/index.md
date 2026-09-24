@@ -114,8 +114,9 @@ width it was dragged to. The bar
 widens while the pointer rests on it; on a target with no frame clock it widens
 at once, and on one with no pointer at all it is permanently wide.
 
-In a terminal that draws kitty images — kitty, Ghostty, WezTerm, iTerm2 —
-the Primitives page's swatch is the picture itself: the gallery asks the
+In a terminal that draws kitty images — kitty, Ghostty, WezTerm, iTerm2 — or
+sixel ones — foot — the Primitives page's swatch is the picture itself: the
+gallery asks the
 terminal at startup (a query fenced by DA1, answered in milliseconds), and
 elsewhere the swatch is drawn in block characters.
 
