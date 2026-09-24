@@ -17,7 +17,7 @@ window.
 module pages.effects_page;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.effect : EffectId;
+import sparkles.ui.effect : Builtin, EffectId;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.image : ImageFit;
 import sparkles.ui.style : Slot;
@@ -32,7 +32,7 @@ import state : GalleryState, swatchSize;
 uint view(ref Builder b, in GalleryState s)
 {
     const w = s.contentWidth;
-    const fx = s.effects;
+    alias fx = Builtin;
 
     uint[] body_;
     body_ ~= heading(b, "Effects · a bracket, not a post-pass");
@@ -232,7 +232,7 @@ private uint nested(ref Builder b, EffectId effect, int width)
 {
     import sparkles.ui.canvas : OpKind;
     import sparkles.ui.display_list : buildDisplayList;
-    import sparkles.ui.effect : builtinEffects, Degradation, EffectRegistry,
+    import sparkles.ui.effect : Builtin, Degradation, EffectRegistry,
         EffectTier;
     import sparkles.ui.layout : layout;
     import sparkles.ui.style : defaultTwoslashPalette;
@@ -241,7 +241,6 @@ private uint nested(ref Builder b, EffectId effect, int width)
 
     EffectRegistry reg;
     GalleryState s;
-    s.effects = builtinEffects(reg);
 
     auto b = Builder();
     auto tree = b.finish(view(b, s));

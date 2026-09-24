@@ -18,7 +18,6 @@ import sparkles.ui.emulators : capabilitiesOf, Emulator;
 import sparkles.ui.tokens : capabilitiesOf, meet, Profile, TargetCapabilities;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
     wireNames;
-import sparkles.ui.effect : BuiltinEffects;
 import sparkles.ui.image : ImageHandle;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
@@ -411,12 +410,6 @@ struct GalleryState
     Timeline toast;      /// the transient "theme: nord" notice
     string toastText;    /// ditto
     bool hasFrameClock;  /// ditto — see `toastConfigFor`
-
-    /// The built-in effect ids (`EFX15`), registered once by the shell for
-    /// the same reason `sampleImage` is: only the shell has a host to bind a
-    /// registry to. Null until then, and a null id is `EFX17`'s "paint it
-    /// unaffected", so the page reads the same either way.
-    BuiltinEffects effects;
 
     /// The Primitives page's specimen image (`IMG3`) — registered once by the
     /// shell, which is the side that has a host to bind the registry to. Null

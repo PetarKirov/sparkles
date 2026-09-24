@@ -246,22 +246,33 @@ $(B Ids are never reused) (`EFX14`). `remove` clears a record and keeps its
 slot: a registry that reissued an id would silently repaint a subtree with
 someone else's effect, and nothing about the frame would look wrong.
 
-$(B The built-ins are registered, not special-cased) (`EFX15`, `EFX19`).
-$(LREF builtinEffects) fills a registry with them and hands back their ids, so
-there is exactly one resolution path — the compile-time one `EFX19` rules out
-would otherwise arrive here first, as a `final switch` on a built-in id.
+$(B Every registry starts with the built-ins) (`EFX15`), at the fixed ids
+$(LREF Builtin) names, so an application can put `Builtin.scanlines` on a
+widget without registering anything. They are still $(I registered), not
+special-cased (`EFX19`): the first mutation seeds the registry by passing each
+of $(LREF builtinRecords) through $(LREF register), and until then the `const`
+view answers from that same table, computed at compile time. One definition,
+one resolution path — no `final switch` on a built-in id anywhere.
+
+$(B Why seeding is lazy.) A D struct has no default constructor, and a host
+receives the registry as `const(EffectRegistry)*`: a registry the application
+declared and never touched must still resolve every constant, and `lookup`
+must stay `@nogc`. So an unseeded registry reads the compile-time table, and
+the first `register`/`replace`/`setParams`/`remove` copies it in.
 */
 struct EffectRegistry
 {
     private EffectRecord[] _records;
+    private bool _seeded;
 
 @safe:
 
-    /// Registers `record`, returning the id that addresses it.
+    /// Registers `record`, returning the id that addresses it. The first
+    /// application-registered effect gets the id after the last $(LREF Builtin).
     EffectId register(EffectRecord record) pure nothrow
     {
-        _records ~= record;
-        return EffectId(cast(uint) _records.length);
+        seed();
+        return append(record);
     }
 
     /// ditto — the common case: a tier-0 transform under a name, optionally
@@ -278,8 +289,9 @@ struct EffectRegistry
     paints it, so a swap lands whole or not at all, never half-applied across
     one subtree.
     */
-    void replace(EffectId id, EffectRecord record) pure nothrow @nogc
+    void replace(EffectId id, EffectRecord record) pure nothrow
     {
+        seed();
         if (auto slot = slotOf(id))
             *slot = record;
     }
@@ -292,15 +304,17 @@ struct EffectRegistry
     number and changing an effect are different events: one happens sixty
     times a second, the other when a shader is reloaded.
     */
-    void setParams(EffectId id, EffectParam[] params) pure nothrow @nogc
+    void setParams(EffectId id, EffectParam[] params) pure nothrow
     {
+        seed();
         if (auto slot = slotOf(id))
             slot.params = params;
     }
 
     /// Forgets `id`'s record. The slot is kept, so the id is never reissued.
-    void remove(EffectId id) pure nothrow @nogc
+    void remove(EffectId id) pure nothrow
     {
+        seed();
         if (auto slot = slotOf(id))
             *slot = EffectRecord.init;
     }
@@ -314,9 +328,10 @@ struct EffectRegistry
     */
     const(EffectRecord)* lookup(EffectId id) const pure nothrow @nogc return
     {
-        if (!id.valid || id.value > _records.length)
+        const records = view;
+        if (!id.valid || id.value > records.length)
             return null;
-        const r = &_records[id.value - 1];
+        const r = &records[id.value - 1];
         return r.name is null && r.tier0 is null ? null : r;
     }
 
@@ -328,8 +343,31 @@ struct EffectRegistry
         return r is null ? null : r.tier0;
     }
 
-    /// How many ids have been issued (including removed ones).
-    size_t length() const pure nothrow @nogc => _records.length;
+    /// How many ids have been issued (including removed ones, and the
+    /// built-ins every registry starts with).
+    size_t length() const pure nothrow @nogc => view.length;
+
+    // What the registry holds: its own records once seeded, the compile-time
+    // built-in table before.
+    private const(EffectRecord)[] view() const pure nothrow @nogc return
+        => _seeded ? _records : builtinTable[];
+
+    // The one place the built-ins enter a registry: each goes through the
+    // same append `register` uses, so their ids are the ones `Builtin` names.
+    private void seed() pure nothrow
+    {
+        if (_seeded)
+            return;
+        _seeded = true;
+        foreach (r; builtinRecords())
+            append(r);
+    }
+
+    private EffectId append(EffectRecord record) pure nothrow
+    {
+        _records ~= record;
+        return EffectId(cast(uint) _records.length);
+    }
 
     private EffectRecord* slotOf(EffectId id) pure nothrow @nogc return
         => !id.valid || id.value > _records.length
@@ -340,26 +378,9 @@ struct EffectRegistry
 // The built-in set (`EFX15`).
 // ---------------------------------------------------------------------------
 
-/// The ids $(LREF builtinEffects) registers, in the order it registers them.
-struct BuiltinEffects
-{
-    EffectId scanlines; /// alternate rows darkened — a CRT's horizontal raster
-    EffectId phosphor;  /// tinted toward a monochrome phosphor's colour
-    EffectId dim;       /// uniformly darkened, for an inactive pane
-    /// A 24-bit hue sweep across the bracket's COLUMNS, at each cell's own
-    /// luminance. The built-in set's per-column member: `scanlines` varies
-    /// down the rows and needs height to read, so a four-row panel shows it
-    /// as barely anything — this one varies along the axis a panel always
-    /// has, and puts a distinct truecolor value in every cell.
-    EffectId spectrum;
-    /// Barrel distortion — $(B tier 1), so a cell grid cannot honour it and
-    /// says so. The built-in set's proof that the tier boundary is real in
-    /// both directions, and the shape `EFX21`'s CRT is built from.
-    EffectId curvature;
-}
-
 /**
-Registers the built-in effects into `reg` and returns their ids (`EFX15`).
+The built-in effects' ids (`EFX15`): constants, valid in every
+$(LREF EffectRegistry) from the moment it is declared.
 
 Four are tier 0, which is deliberate: the built-in set is the part of the
 vocabulary every target can honour, so naming one costs an application nothing
@@ -368,26 +389,65 @@ phosphor tint proves the tier split is real — is these. Each one is
 $(B one function) in $(MREF sparkles,ui,effect_shaders): the terminal calls
 it through $(LREF tier0Fn), and the GPU runs the GLSL `shader-compile`
 generated from it (`EFX20`).
+
+The values are the order $(LREF builtinRecords) lists them in, which a test
+pins; appending is the only compatible change, since an id is never reused
+(`EFX14`).
 */
-BuiltinEffects builtinEffects(ref EffectRegistry reg) @safe pure nothrow
+enum Builtin : EffectId
 {
-    BuiltinEffects b;
-    b.scanlines = reg.registerTier0("scanlines", &scanlinesTier0, scanlinesGlsl);
-    b.phosphor = reg.registerTier0("phosphor", &phosphorTier0, phosphorGlsl);
-    b.dim = reg.registerTier0("dim", &dimTier0, dimGlsl);
-    b.spectrum = reg.registerTier0("spectrum", &spectrumTier0, spectrumGlsl);
-    b.curvature = reg.register(EffectRecord(
-        name: "curvature",
-        tier: EffectTier.distortion,
-        // No tier-0 transform: warping position is not something a cell grid
-        // can approximate, and claiming otherwise is what `EFX12` exists to
-        // stop. A terminal states the degradation instead of faking it.
-        degradation: Degradation.unaffected,
-        impls: [EffectImpl(glslBackend, curvatureGlsl)],
-        params: [EffectParam("uAmount", [0.18f, 0, 0, 0], 1)],
-    ));
-    return b;
+    scanlines = EffectId(1), /// alternate rows darkened — a CRT's horizontal raster
+    phosphor = EffectId(2),  /// tinted toward a monochrome phosphor's colour
+    dim = EffectId(3),       /// uniformly darkened, for an inactive pane
+    /// A 24-bit hue sweep across the bracket's COLUMNS, at each cell's own
+    /// luminance. The built-in set's per-column member: `scanlines` varies
+    /// down the rows and needs height to read, so a four-row panel shows it
+    /// as barely anything — this one varies along the axis a panel always
+    /// has, and puts a distinct truecolor value in every cell.
+    spectrum = EffectId(4),
+    /// Barrel distortion — $(B tier 1), so a cell grid cannot honour it and
+    /// says so. The built-in set's proof that the tier boundary is real in
+    /// both directions, and the shape `EFX21`'s CRT is built from.
+    curvature = EffectId(5),
 }
+
+/**
+The built-in records, in $(LREF Builtin)'s order — the single definition both
+a seeded registry and an unseeded one's `const` view are made from.
+*/
+EffectRecord[] builtinRecords() @safe pure nothrow
+{
+    return [
+        EffectRecord(name: "scanlines", tier: EffectTier.color,
+            tier0: &scanlinesTier0, impls: [EffectImpl(glslBackend, scanlinesGlsl)]),
+        EffectRecord(name: "phosphor", tier: EffectTier.color,
+            tier0: &phosphorTier0, impls: [EffectImpl(glslBackend, phosphorGlsl)]),
+        EffectRecord(name: "dim", tier: EffectTier.color,
+            tier0: &dimTier0, impls: [EffectImpl(glslBackend, dimGlsl)]),
+        EffectRecord(name: "spectrum", tier: EffectTier.color,
+            tier0: &spectrumTier0, impls: [EffectImpl(glslBackend, spectrumGlsl)]),
+        EffectRecord(
+            name: "curvature",
+            tier: EffectTier.distortion,
+            // No tier-0 transform: warping position is not something a cell
+            // grid can approximate, and claiming otherwise is what `EFX12`
+            // exists to stop. A terminal states the degradation instead.
+            degradation: Degradation.unaffected,
+            impls: [EffectImpl(glslBackend, curvatureGlsl)],
+            params: [EffectParam("uAmount", [0.18f, 0, 0, 0], 1)],
+        ),
+    ];
+}
+
+// The unseeded registry's view: the same records, evaluated at compile time.
+private static immutable EffectRecord[] builtinTable = builtinRecords();
+
+// `Builtin`'s values ARE positions in that table; a reordering fails here
+// rather than silently renaming every effect on screen.
+static foreach (m; __traits(allMembers, Builtin))
+    static assert(builtinTable[__traits(getMember, Builtin, m).value - 1].name == m,
+        "Builtin." ~ m ~ " does not name the record at its position");
+static assert(builtinTable.length == __traits(allMembers, Builtin).length);
 
 /// The built-ins' tier-0 transforms, as the cell grid calls them: each is
 /// $(LREF tier0Adapter) over the one function in
@@ -426,8 +486,8 @@ enum string curvatureGlsl = import("curvature" ~ glslDialect);
     // function, or the GPU target silently degrades on an effect the
     // terminal honours — which is the inversion this gate exists to end.
     EffectRegistry reg;
-    const b = builtinEffects(reg);
-    foreach (id; [b.scanlines, b.phosphor, b.dim, b.spectrum])
+    alias b = Builtin;
+    foreach (EffectId id; [b.scanlines, b.phosphor, b.dim, b.spectrum])
     {
         const rec = reg.lookup(id);
         assert(rec.tier0 !is null, "the CPU half");
@@ -459,7 +519,7 @@ enum string curvatureGlsl = import("curvature" ~ glslDialect);
     assert(reg.lookup(EffectId.init) is null);
     assert(reg.tier0Of(EffectId.init) is null);
 
-    const b = builtinEffects(reg);
+    alias b = Builtin;
     assert(b.scanlines.valid && b.phosphor.valid && b.dim.valid);
     assert(b.scanlines != b.phosphor && b.phosphor != b.dim);
     assert(reg.lookup(b.scanlines).name == "scanlines");
@@ -483,6 +543,36 @@ enum string curvatureGlsl = import("curvature" ~ glslDialect);
         tier: EffectTier.color, tier0: &dimTier0));
     assert(reg.lookup(b.phosphor).name == "amber");
     assert(b.phosphor.valid, "the id survives its record being swapped");
+}
+
+@("ui.effect.builtins.areConstantsInEveryRegistry")
+@safe pure nothrow unittest
+{
+    // `EFX15`: a registry nobody has touched — reached only through the
+    // `const` pointer a host receives — already resolves every built-in.
+    EffectRegistry fresh;
+    const(EffectRegistry)* view = &fresh;
+    static foreach (m; __traits(allMembers, Builtin))
+        assert(view.lookup(__traits(getMember, Builtin, m)).name == m);
+    assert(view.tier0Of(Builtin.dim) is &dimTier0);
+    assert(view.lookup(Builtin.curvature).tier == EffectTier.distortion);
+    assert(view.length == __traits(allMembers, Builtin).length);
+
+    // ... and it is the same registry after the first mutation: seeding goes
+    // through `register`, so the ids do not move and an application's first
+    // effect lands after the last built-in.
+    const mine = fresh.registerTier0("mine", &dimTier0);
+    assert(mine.value == __traits(allMembers, Builtin).length + 1);
+    assert(fresh.lookup(Builtin.scanlines).name == "scanlines");
+    assert(fresh.lookup(mine).name == "mine");
+
+    // A built-in is mutable like any record — rebinding is how a theme turns
+    // one off (`EFX16`) — and removing one keeps its id dead (`EFX14`).
+    fresh.remove(Builtin.phosphor);
+    assert(fresh.lookup(Builtin.phosphor) is null);
+    EffectRegistry other;
+    assert(other.lookup(Builtin.phosphor) !is null,
+        "one registry's rebinding is not another's");
 }
 
 @("ui.effect.builtins.areHonouredByACellGrid")
@@ -595,10 +685,11 @@ struct ThemeEffects
 }
 
 /**
-Applies `bindings` to the built-ins already registered in `reg` (`EFX16`).
+Applies `bindings` to `reg`'s built-ins (`EFX16`).
 
-Idempotent against the original set: it rebinds from `builtin`'s ids, so
-calling it again with different bindings does not compound. An application
+Idempotent against the original set: it rebinds each $(LREF Builtin) id from
+the built-in's own transform, so calling it again with different bindings does
+not compound. An application
 calls it when the theme changes, between frames — which is exactly the window
 `EFX18` says a rebind is safe in.
 */
@@ -606,8 +697,8 @@ calls it when the theme changes, between frames — which is exactly the window
 // `scope const`, and a binding's `tier0`/`glsl` then cannot be stored into the
 // registry at all — the documented dip1000 clash, relaxed on exactly the
 // parameter that needs it rather than on the function's safety.
-void applyThemeEffects(ref EffectRegistry reg, in BuiltinEffects builtin,
-    ThemeEffects bindings) @safe pure nothrow
+void applyThemeEffects(ref EffectRegistry reg, ThemeEffects bindings)
+    @safe pure nothrow
 {
     static void bind(ref EffectRegistry reg, EffectId id, EffectBinding b,
         string name, Tier0Fn fallback, string fallbackGlsl) @safe pure nothrow
@@ -627,12 +718,12 @@ void applyThemeEffects(ref EffectRegistry reg, in BuiltinEffects builtin,
             impls: glsl is null ? null : [EffectImpl(glslBackend, glsl)]));
     }
 
-    bind(reg, builtin.scanlines, bindings.scanlines, "scanlines",
+    bind(reg, Builtin.scanlines, bindings.scanlines, "scanlines",
         &scanlinesTier0, scanlinesGlsl);
-    bind(reg, builtin.phosphor, bindings.phosphor, "phosphor",
+    bind(reg, Builtin.phosphor, bindings.phosphor, "phosphor",
         &phosphorTier0, phosphorGlsl);
-    bind(reg, builtin.dim, bindings.dim, "dim", &dimTier0, dimGlsl);
-    bind(reg, builtin.spectrum, bindings.spectrum, "spectrum",
+    bind(reg, Builtin.dim, bindings.dim, "dim", &dimTier0, dimGlsl);
+    bind(reg, Builtin.spectrum, bindings.spectrum, "spectrum",
         &spectrumTier0, spectrumGlsl);
 }
 
@@ -640,18 +731,18 @@ void applyThemeEffects(ref EffectRegistry reg, in BuiltinEffects builtin,
 @safe pure nothrow unittest
 {
     EffectRegistry reg;
-    const b = builtinEffects(reg);
+    alias b = Builtin;
 
     // Untouched by default: an all-default `ThemeEffects` is not an
     // instruction to clear everything.
-    applyThemeEffects(reg, b, ThemeEffects.init);
+    applyThemeEffects(reg, ThemeEffects.init);
     assert(reg.lookup(b.scanlines).name == "scanlines");
     assert(reg.tier0Of(b.dim) !is null);
 
     // Off: the id stays on the widget, and resolves to nothing.
     ThemeEffects off;
     off.scanlines = EffectBinding(bound: true, enabled: false);
-    applyThemeEffects(reg, b, off);
+    applyThemeEffects(reg, off);
     assert(reg.lookup(b.scanlines) is null, "rebound to nothing");
     assert(b.scanlines.valid, "the id itself is unchanged — no view moves");
     assert(reg.tier0Of(b.phosphor) !is null, "siblings are untouched");
@@ -660,17 +751,17 @@ void applyThemeEffects(ref EffectRegistry reg, in BuiltinEffects builtin,
     ThemeEffects swap;
     swap.phosphor = EffectBinding(bound: true, tier0: &dimTier0,
         glsl: dimGlsl);
-    applyThemeEffects(reg, b, swap);
+    applyThemeEffects(reg, swap);
     assert(reg.tier0Of(b.phosphor) is &dimTier0);
     assert(reg.lookup(b.phosphor).implFor(glslBackend).source == dimGlsl);
 
     // A swap that names only the CPU half keeps the built-in's GPU half, so
     // a partial binding cannot silently desynchronise the two.
     EffectRegistry reg2;
-    const b2 = builtinEffects(reg2);
+    alias b2 = Builtin;
     ThemeEffects half;
     half.dim = EffectBinding(bound: true, tier0: &scanlinesTier0);
-    applyThemeEffects(reg2, b2, half);
+    applyThemeEffects(reg2, half);
     assert(reg2.tier0Of(b2.dim) is &scanlinesTier0);
     assert(reg2.lookup(b2.dim).implFor(glslBackend).source == dimGlsl);
 }
