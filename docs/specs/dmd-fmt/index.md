@@ -346,6 +346,32 @@ The container settles it: **one `;` at a container's top level means `,` does
 not terminate there.** A member list has no semicolon to find, and a body that
 terminates its statements with one has no use for a comma that also does.
 
+### D14 — Nothing is written that has not been verified
+
+`verifyFormat` existed from M1 and was reached only from the test suite. The
+`dmd-fmt` CLI formatted and wrote — so when the printer dropped a braced
+block, the corrupted text went to the file with no complaint, and stayed
+shippable for weeks. A verifier the writer does not consult is a test, not a
+guarantee.
+
+So the gate moves into the library, as `formatVerified`: format and verify in
+one step, returning **null text** on failure. A caller cannot write what it
+was not given. The CLI runs every mode through it — stdin, stdout, `--check`,
+`--inplace` — and a failure is refusal, not a warning printed beside output
+already on disk.
+
+**Exit code 3, distinct from 1.** `--check` returning 1 means your file is not
+formatted; 3 means the formatter is broken. A CI job must be able to tell
+those apart, and a batch keeps going after a refusal so a run over a tree
+reports every one it has rather than the first.
+
+There is deliberately no `--no-verify`. The check costs a second lex, and the
+thing it buys is the only reason to trust a tool that rewrites your source in
+place. A file the formatter cannot handle safely is a bug to fix, not a flag
+to pass — and D9's rewrite tier makes that stricter still, since each opt-in
+rewrite ships its own verifier and each of those becomes a gate on the same
+path.
+
 ## Spike results
 
 | Spike                                | Result         | Where                                      |
@@ -436,16 +462,16 @@ unary-vs-binary token disambiguation. D9 keeps that as the always-on tier and
 adds the rewrite tier around it; nothing below is invalidated by the scope
 revision.
 
-| Milestone                | Delivered as                                                                                                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M1 verifier              | `verify.d` — tier-3 token equality, the separate DDoc-attachment check (double-lex), bounded idempotence harness                                                              |
-| M2 `Doc` IR + engine     | `doc.d` — Lindig's strict worklist with `fits` over the rest of the worklist, `conditionalGroup` in the IR, injected display-column measurer, mid-document start, lazy indent |
-| M3 printer + valve       | `printer.d` — spine+group walk emitting `Doc`; verbatim by default (`dfmt off/on`, `asm`, directives, tail, multi-line literals/comments); broken input never invents tokens  |
-| M4 author signals        | blank-run collapse, magic trailing comma (read, never written; explodes a flat list, pins a broken one — D13), author-aligned comments and table literals preserved verbatim  |
-| M5 edits                 | `edits.d` — minimal line edits via `sparkles:diff`, `--check` in the `dmd-fmt` CLI (dub config `cli`)                                                                         |
-| M6 range/cursor/suppress | `formatRange` (format-all/filter per D2), `mapCursor`, the single suppression mechanism; on-type stays an LSP-server concern built from these primitives                      |
-| M7 configuration         | `.editorconfig` discovery honoring dfmt's keys; unimplemented `dfmt_*` keys ignored (documented migration posture)                                                            |
-| M8 differential          | `differential.d` — the stability triad gates over the corpus (repo trees + `expressionsem.d`); the similarity index is a ratchet (measured mean 0.927; tripwire floor 0.85)   |
+| Milestone                | Delivered as                                                                                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1 verifier              | `verify.d` — tier-3 token equality, the separate DDoc-attachment check (double-lex), bounded idempotence harness                                                                |
+| M2 `Doc` IR + engine     | `doc.d` — Lindig's strict worklist with `fits` over the rest of the worklist, `conditionalGroup` in the IR, injected display-column measurer, mid-document start, lazy indent   |
+| M3 printer + valve       | `printer.d` — spine+group walk emitting `Doc`; verbatim by default (`dfmt off/on`, `asm`, directives, tail, multi-line literals/comments); broken input never invents tokens    |
+| M4 author signals        | blank-run collapse, magic trailing comma (read, never written; explodes a flat list, pins a broken one — D13), author-aligned comments and table literals preserved verbatim    |
+| M5 edits                 | `edits.d` — minimal line edits via `sparkles:diff`, `--check` in the `dmd-fmt` CLI (dub config `cli`); every write goes through `formatVerified` first, exit 3 on refusal (D14) |
+| M6 range/cursor/suppress | `formatRange` (format-all/filter per D2), `mapCursor`, the single suppression mechanism; on-type stays an LSP-server concern built from these primitives                        |
+| M7 configuration         | `.editorconfig` discovery honoring dfmt's keys; unimplemented `dfmt_*` keys ignored (documented migration posture)                                                              |
+| M8 differential          | `differential.d` — the stability triad gates over the corpus (repo trees + `expressionsem.d`); the similarity index is a ratchet (measured mean 0.927; tripwire floor 0.85)     |
 
 **M9 stays deferred by its own gate**: the proposal promotes cost search
 only if greedy output proves materially worse than dfmt on the M8 corpus —
