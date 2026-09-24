@@ -2458,10 +2458,10 @@ unittest
 {
     import sparkles.input : charEvent;
     import sparkles.ui_app.host : RunConfig;
-    import sparkles.ui_app.run_app : isAppFor, runAppRecorded;
+    import sparkles.ui_app.run_app : enforceAppFor, runAppRecorded;
     import sparkles.ui_app.record : RecordingHost;
 
-    static assert(isAppFor!(WorkspaceTui, RecordingHost),
+    static assert(enforceAppFor!(WorkspaceTui, RecordingHost),
         "the workspace must satisfy the component contract the host is"
         ~ " written against — that is what lets a scripted run drive it");
 

@@ -66,6 +66,31 @@ enum bool isAppFor(A, Host) = __traits(compiles, (ref A a, ref Host h) {
 });
 
 /**
+$(LREF isAppFor), for a `static assert` whose failure should say $(I why).
+
+`isAppFor` answers through `__traits(compiles, …)`, which gags every error
+inside it: a component whose `view` has a typo deep in a template fails the
+check with nothing but the assert's own sentence, and finding the real
+diagnostic meant deleting the guard. This evaluates to the same answer, but
+when it is `false` it first analyses the same body $(I outside) the gag, so
+the compiler reports the actual error — with an instantiation trace back to
+the assert — before the assert fires.
+
+---
+static assert(enforceAppFor!(MyApp, RecordingHost));
+---
+*/
+template enforceAppFor(A, Host)
+{
+    static if (!isAppFor!(A, Host))
+        alias explain = typeof((ref A a, ref Host h) {
+            WidgetTree tree = a.view(h);
+            a.handle(h, Event.init);
+        });
+    enum bool enforceAppFor = isAppFor!(A, Host);
+}
+
+/**
 A theme, resolved to what one frame needs: the slot palette and the page colors.
 
 Resolved once per run from `--theme` by $(LREF appThemeOf). A component that
@@ -482,20 +507,27 @@ unittest
 }
 
 // `runApp` dispatches through `run`, whose `final switch` compiles every arm —
-// so this one static assert type-checks the generic component against BOTH
-// live host types, which is what makes "written once, runs on either" a
-// checked property rather than an aspiration.
+// so this type-checks the generic component against BOTH live host types,
+// which is what makes "written once, runs on either" a checked property
+// rather than an aspiration.
+//
+// The calls sit in a nested function that is compiled but never called, not
+// inside `static assert(__traits(compiles, …))`: a gagged check reports only
+// its own sentence, and an error three templates down in `runGui` then has to
+// be found by deleting the guard. Compiled for real, a failure here is the
+// compiler's own diagnostic.
 @("ui_app.run_app.instantiates")
 @system
 unittest
 {
-    static assert(__traits(compiles, {
+    static void typeChecksEveryArm()
+    {
         CounterApp app;
         RunConfig cfg;
         BackendPolicy policy;
         cast(void) runApp(app, cfg, policy);
         cast(void) runApp(app, cfg);
-    }), "runApp must compile against every arm this build carries");
+    }
 
     // A PAINTING component too: `paint` goes through `host.canvas`, which
     // both live hosts expose (RaylibCanvas / GridCanvas) precisely so a
@@ -516,12 +548,24 @@ unittest
         }
     }
 
-    static assert(__traits(compiles, {
+    static void typeChecksADrawPhase()
+    {
         PaintingApp app;
         RunConfig cfg;
         BackendPolicy policy;
         cast(void) runApp(app, cfg, policy);
-    }), "a draw-phase component must compile against every arm too");
+    }
+}
+
+@("ui_app.run_app.enforceAppForAgreesWithIsAppFor")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(enforceAppFor!(CounterApp, RecordingHost));
+    // A non-component is still rejected — `enforceAppFor` is not weaker; it
+    // only reports more. (Not instantiated with a broken component here:
+    // its whole point is that doing so is a compile error.)
+    static assert(!isAppFor!(int, RecordingHost));
 }
 
 @("ui_app.run_app.aComponentMaySupplyTheFramesTheme")

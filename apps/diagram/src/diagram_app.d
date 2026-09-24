@@ -345,11 +345,11 @@ version (unittest)
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Slot;
     import sparkles.ui_app.gui_options : GuiOptions;
     import sparkles.ui_app.host : RunConfig;
-    import sparkles.ui_app.run_app : appThemeOf, isAppFor, runAppRecorded;
+    import sparkles.ui_app.run_app : appThemeOf, enforceAppFor, runAppRecorded;
     import sparkles.ui_app.record : RecordingHost;
     import world : Tool;
 
-    static assert(isAppFor!(DiagramApp, RecordingHost));
+    static assert(enforceAppFor!(DiagramApp, RecordingHost));
 
     private Event press(int x, int y, PointerButton b = PointerButton.left)
         @safe pure nothrow @nogc
