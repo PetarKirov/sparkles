@@ -352,7 +352,20 @@ struct RaylibCanvas
             return; // `EFX3`: unaffected, and `popEffect` is a no-op to match
 
         const x = cast(int) px(r.x), y = cast(int) py(r.y);
-        const w = r.width * cellW, h = r.height * cellH;
+        // Never larger than the surface it is drawn on. Nothing past the edge
+        // is visible, and a bracket over a whole window — the CRT's, on the
+        // root — then gets a texture EXACTLY the window's size even though
+        // the window is rarely a whole number of cells: the partial cell at
+        // the edge belongs to the bracket that reaches it. A canvas that
+        // flips its scissor against the screen's height is right inside such
+        // a bracket for the same reason.
+        const surfaceW = fx.depth ? fx.currentTargetWidth : GetScreenWidth();
+        const surfaceH = fx.depth ? fx.currentTargetHeight : GetScreenHeight();
+        int w = r.width * cellW, h = r.height * cellH;
+        if (surfaceW > 0 && x + w > surfaceW)
+            w = surfaceW - x;
+        if (surfaceH > 0 && y + h > surfaceH)
+            h = surfaceH - y;
         if (fx.open(id, r, x, y, w, h))
         {
             savedOrigins ~= [originX, originY];
