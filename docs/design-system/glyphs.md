@@ -76,3 +76,22 @@ The heavy and double families have no rounded corners. A border both heavy and
 rounded keeps its arcs, drawn light, and reports the weight lost; a rounded
 double border keeps square corners and reports the radius lost. The [Decoration](./catalog/decoration.md)
 page shows every row.
+
+## Images
+
+An image keeps the cells layout gave it on every target; what fills them
+depends on what the target can show:
+
+| Target has                           | The image is drawn as                |
+| ------------------------------------ | ------------------------------------ |
+| an image protocol, or its own pixels | the picture itself                   |
+| sextants (or octants)                | 2×3 blocks per cell: `🬀 🬂 🬇 … ▌ ▐ █` |
+| quadrants                            | 2×2 blocks per cell: `▘ ▚ ▙ ▟ …`     |
+| half blocks                          | 1×2 per cell: `▀ ▄`                  |
+| braille only                         | 2×4 dots per cell: `⠁ ⡀ ⣀ ⣿ …`       |
+| none of these                        | its alt text, `[a colour swatch]`    |
+
+A cell holds two colours, so each cell's sub-cells are split into two groups
+by colour, and the glyph draws one over the other. A terminal has no channel
+for an image protocol yet, so today it always takes a raster rung. The
+[Primitives](./catalog/primitives.md) page's swatch shows each profile's rung.
