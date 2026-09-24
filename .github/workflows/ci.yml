@@ -413,7 +413,7 @@ jobs:
     # of that compiles the LDC fork from source — far more than 20 minutes.
     # `with-cachix.sh` pushes each path as it completes, so even a run that
     # hits this cap leaves progress in the cache for the next one.
-    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 90 || 20 }}
+    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 60 || 40 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -588,7 +588,7 @@ jobs:
     # The site embeds the wasm modules, which need the wasm toolchain; when
     # the cache lacks it (see `nix-build`) this job rebuilds it too, and 30
     # minutes was not enough for that.
-    timeout-minutes: 75
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
