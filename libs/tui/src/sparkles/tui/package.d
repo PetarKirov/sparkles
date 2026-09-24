@@ -17,6 +17,7 @@ module sparkles.tui;
 public import sparkles.tui.cell;
 public import sparkles.tui.render;
 public import sparkles.tui.images;
+public import sparkles.tui.sixel;
 public import sparkles.tui.probe;
 public import sparkles.tui.terminal;
 public import sparkles.tui.input;

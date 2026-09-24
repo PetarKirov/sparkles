@@ -256,7 +256,7 @@ unittest
     // The scripted peer: a key typed early, then Ghostty's measured replies
     // — the graphics query answered, then the DA1 fence.
     feed(pty.master, "j\x1b_Gi=31;OK\x1b\\\x1b[?62;22;52c");
-    assert(term.probeImages(1000) == ImageProtocol.kitty);
+    assert(term.probeImages(1000, false) == ImageProtocol.kitty);
     assert(drain(pty.master, rb).canFind(imageQuery), "the battery went out");
 
     // The key typed during the probe is not lost: it is the first event.
@@ -303,6 +303,10 @@ unittest
         pty.slave, pty.slave);
     char[] rb;
     drain(pty.master, rb);
+    // The terminal answered for kitty — draw speaks what the probe found.
+    feed(pty.master, "\x1b_Gi=31;OK\x1b\\\x1b[?62;52c");
+    cast(void) term.probeImages(1000, false);
+    drain(pty.master, rb);
 
     static immutable ubyte[4] px = [1, 2, 3, 255];
     const place = [ImagePlacement(image: 3, rgba: px[], width: 1, height: 1,
@@ -323,4 +327,68 @@ unittest
     // Teardown frees the pixels.
     term.close();
     assert(drain(pty.master, rb).canFind("\x1b_Ga=d,d=I,i=3,q=2\x1b\\"));
+}
+
+@("integration.pty.sixelNeedsPixelsAndRedrawsWhatItLeft")
+@system
+unittest
+{
+    import core.sys.posix.sys.ioctl : ioctl, TIOCSWINSZ, winsize;
+    import std.algorithm.searching : canFind;
+    import sparkles.base.term_caps : ImageProtocol;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.tui.images : ImagePlacement;
+    import sparkles.tui.sixel : CellPixels;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    scope (exit) term.close();
+    char[] rb;
+    drain(pty.master, rb);
+
+    // foot's measured reply: sixel in DA1, no kitty. A pty reports no pixel
+    // size and nothing answered `CSI 16 t`, so sixel cannot be sized, and is
+    // not claimed.
+    feed(pty.master, "\x1b[?62;4;22;28;52c");
+    assert(term.probeImages(1000, false) == ImageProtocol.none);
+    drain(pty.master, rb);
+
+    // The terminal's own answer to `CSI 16 t` is enough, before the window
+    // has a size (foot, freshly started under a compositor).
+    feed(pty.master, "\x1b[6;13;6t\x1b[?62;4;22;28;52c");
+    assert(term.probeImages(1000, false) == ImageProtocol.sixel);
+    assert(term.cellPixels() == CellPixels(6, 13));
+    drain(pty.master, rb);
+
+    // With the window's pixels known (8×16 cells), it is.
+    winsize ws;
+    ws.ws_col = 10;
+    ws.ws_row = 4;
+    ws.ws_xpixel = 80;
+    ws.ws_ypixel = 64;
+    ioctl(pty.master, TIOCSWINSZ, &ws);
+    feed(pty.master, "\x1b[?62;4;22;28;52c");
+    assert(term.probeImages(1000, false) == ImageProtocol.sixel);
+    drain(pty.master, rb);
+
+    static immutable ubyte[4] px = [200, 0, 0, 255];
+    auto at = ImagePlacement(image: 5, rgba: px[], width: 1, height: 1,
+        x: 2, y: 0, cols: 2, rows: 1);
+    Grid g;
+    g.resize(10, 4);
+    term.draw(g, null, [at]);
+    const first = drain(pty.master, rb).idup;
+    assert(first.canFind("\x1b[1;3H\x1bP0;1;0q\"1;1;16;16"), first);
+
+    // Steady: no sixel. Gone: no sixel, and the cells it covered are
+    // repainted — the diff rewrites row 1 from column 3.
+    term.draw(g, null, [at]);
+    assert(!drain(pty.master, rb).canFind("\x1bP"));
+    term.draw(g, null, null);
+    const gone = drain(pty.master, rb).idup;
+    assert(!gone.canFind("\x1bP") && gone.canFind("\x1b[1;3H"), gone);
 }

@@ -32,6 +32,7 @@ import sparkles.base.term_caps : ImageProtocol, StdStream, terminalSize, TermSiz
 
 import sparkles.tui.cell : Grid;
 import sparkles.tui.images : ImagePlacement, KittyImages;
+import sparkles.tui.sixel : CellPixels, SixelImages;
 import sparkles.tui.render : Screen;
 
 /// What $(LREF Terminal.open) sets up (and $(LREF Terminal.close) tears down).
@@ -55,6 +56,9 @@ struct Terminal
         TerminalOptions _opts;
         Screen _screen;
         KittyImages _images;
+        SixelImages _sixel;
+        ImageProtocol _protocol; // what the probe found, and draw speaks
+        CellPixels _answeredCell; // the terminal's own answer to `CSI 16 t`
         ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
         int _inFd = STDIN_FILENO;
@@ -149,21 +153,56 @@ struct Terminal
     /// `linkId` (see $(REF Screen.render, sparkles,tui,render)); omit it and no
     /// hyperlink sequence is emitted.
     ///
-    /// `images` are the frame's kitty image placements (`IMG5`), drawn over
-    /// the cells inside the same synchronized frame — each transmitted once,
-    /// placed when new or moved, deleted when gone
-    /// ($(REF KittyImages, sparkles,tui,images)). Only pass them to a
-    /// terminal that answered for kitty ($(LREF probeImages)).
+    /// `images` are the frame's image placements (`IMG5`), drawn inside the
+    /// same synchronized frame in the protocol $(LREF probeImages) found:
+    /// kitty places them over the cells (each transmitted once, placed when
+    /// new or moved, deleted when gone —
+    /// $(REF KittyImages, sparkles,tui,images)); sixel writes them into the
+    /// cells, so the cells an image leaves are repainted and an image whose
+    /// cells were rewritten is drawn again ($(REF SixelImages,
+    /// sparkles,tui,sixel)). A terminal that answered neither draws none.
+    /// A hardware scroll moves what the terminal drew, so after one every
+    /// image is placed again.
     void draw(in Grid grid, scope const(char)[][] links = null,
         in ImagePlacement[] images = null) @trusted
     {
         _buf.clear();
         writeEscapeSeq!(CtlSeq.syncBegin)(_buf);
-        const repaint = _screen.repaintsFully(grid);
+        const full = _screen.repaintsFully(grid);
+        const none = _protocol != ImageProtocol.kitty && _protocol != ImageProtocol.sixel;
+        const ImagePlacement[] shown = none ? null : images;
+
+        bool[] rewritten;
+        if (_protocol == ImageProtocol.sixel)
+        {
+            _sixel.prepare(shown, (int x, int y, int c, int r) { _screen.damage(x, y, c, r); });
+            rewritten = new bool[](shown.length);
+            foreach (i, ref f; shown)
+                rewritten[i] = _screen.changedWithin(grid, f.x, f.y, f.cols, f.rows);
+        }
         _screen.render(grid, _buf, links);
-        _images.update(_buf, images, repaint);
+        const replace = full || _screen.scrolled;
+        if (_protocol == ImageProtocol.sixel)
+            _sixel.emit(_buf, shown, cellPixels(), replace, rewritten);
+        else
+            _images.update(_buf, shown, replace);
         writeEscapeSeq!(CtlSeq.syncEnd)(_buf);
         writeAll(_outFd, _buf[]);
+    }
+
+    /// The device size of one cell: the kernel's window size where it carries
+    /// pixels, else what the terminal answered to the probe's `CSI 16 t` — a
+    /// terminal can know its cell before its window has a size — else `0`s.
+    CellPixels cellPixels() @trusted @nogc
+    {
+        import core.sys.posix.sys.ioctl : ioctl, TIOCGWINSZ, winsize;
+
+        winsize ws;
+        if (ioctl(_outFd, TIOCGWINSZ, &ws) == 0 && ws.ws_col && ws.ws_row
+            && ws.ws_xpixel && ws.ws_ypixel)
+            return CellPixels(cast(ushort)(ws.ws_xpixel / ws.ws_col),
+                cast(ushort)(ws.ws_ypixel / ws.ws_row));
+        return _answeredCell;
     }
 
     /**
@@ -173,13 +212,16 @@ struct Terminal
     timeout and declares `none`.
 
     Apple Terminal is not asked: it prints the graphics query's payload as
-    text (the capability case study caught it doing so). Under a multiplexer
-    DA1's sixel attribute is not believed (`CAP7`).
+    text (the capability case study caught it doing so). Under a
+    `multiplexer` (by default, $(LREF underMultiplexer)) DA1's sixel
+    attribute is not believed (`CAP7`), and sixel is not claimed where the
+    kernel reports no cell pixel size ($(LREF cellPixels)). The answer is
+    also what $(LREF draw) speaks.
 
     Anything else that arrives meanwhile — a key typed during the probe — is
     kept, and handed to the input decoder by $(LREF takeTypedAhead).
     */
-    ImageProtocol probeImages(int timeoutMs = 250) @trusted
+    ImageProtocol probeImages(int timeoutMs = 250, bool multiplexer = underMultiplexer()) @trusted
     {
         import core.sys.posix.poll : poll, pollfd, POLLIN;
         import core.sys.posix.unistd : read;
@@ -188,7 +230,6 @@ struct Terminal
 
         if (!_active || env("TERM_PROGRAM") == "Apple_Terminal")
             return ImageProtocol.none;
-        const multiplexer = env("TMUX").length || env("STY").length || env("ZELLIJ").length;
 
         writeAll(_outFd, imageQuery);
         const deadline = MonoTime.currTime + timeoutMs.msecs;
@@ -218,7 +259,18 @@ struct Terminal
         if (!r.fenced && rest is null)
             rest = got;
         _typedAhead ~= rest;
-        return r.protocol(multiplexer != 0);
+        _answeredCell = CellPixels(r.cellWidth, r.cellHeight);
+        auto p = r.protocol(multiplexer);
+        // Sixel draws real pixels: without the cell's pixel size there is no
+        // way to size one, so the terminal is taken not to draw them.
+        if (p == ImageProtocol.sixel)
+        {
+            const c = cellPixels();
+            if (c.width == 0 || c.height == 0)
+                p = ImageProtocol.none;
+        }
+        _protocol = p;
+        return p;
     }
 
     /// What arrived on the input stream during a probe that was not a reply,
@@ -256,6 +308,11 @@ struct Terminal
 /// throwing/GC `std.process` path, so `open` stays `nothrow @nogc`.
 private ColorDepth detectColorDepthEnv() @trusted nothrow @nogc
     => classifyColorDepth(env("COLORTERM"), env("TERM"));
+
+/// Whether this process runs under a terminal multiplexer (`$TMUX`, `$STY`,
+/// `$ZELLIJ`) — whose answers describe it, not the terminal behind it (`CAP7`).
+bool underMultiplexer() @safe nothrow @nogc
+    => env("TMUX").length || env("STY").length || env("ZELLIJ").length;
 
 // An environment variable, without `std.process`'s throwing, allocating path.
 private const(char)[] env(const(char)* name) @trusted nothrow @nogc
