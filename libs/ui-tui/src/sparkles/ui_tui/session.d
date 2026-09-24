@@ -30,8 +30,8 @@ out deliberately rather than by omission.
 */
 module sparkles.ui_tui.session;
 
-import sparkles.tui : Grid, PosixEvents, Terminal, TerminalOptions;
-import sparkles.base.term_caps : detectTermCaps, TermCaps, TermSize;
+import sparkles.tui : Grid, ImagePlacement, PosixEvents, Terminal, TerminalOptions;
+import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSize;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
 
@@ -51,6 +51,10 @@ struct TerminalRequest
     /// Any-event tracking (1003) rather than drag-only (1002), so bare motion
     /// reports too — what a hover affordance needs, at one event per move.
     bool motion;
+    /// Ask the terminal which image protocol it draws (`CAP3`'s `images`
+    /// row) before the first frame. Off by default: see
+    /// $(REF Terminal.probeImages, sparkles,tui,terminal).
+    bool probeImages;
 }
 
 /**
@@ -81,6 +85,14 @@ struct TerminalSession
     /// surface with no hyperlinks emits no hyperlink sequences.
     const(char)[][] links;
 
+    /// The frame's kitty image placements (`IMG5`), drawn over the cells by
+    /// $(LREF present) — set while painting, by a canvas that knows the
+    /// terminal draws kitty images. Empty by default.
+    ImagePlacement[] placements;
+
+    // Input that arrived during the probe, for whichever reader goes first.
+    private ubyte[] typedAhead;
+
     @disable this(this);
 
     /// Enters raw mode and starts the input reader.
@@ -94,7 +106,17 @@ struct TerminalSession
             return s; // `active` stays false; the caller bails out
         s.events = PosixEvents.start();
         s.opened = true;
-        s.target = sessionCapabilities(detectTermCaps());
+        auto caps = detectTermCaps();
+        if (r.probeImages)
+        {
+            // Only kitty is drawn (`IMG5`); a sixel answer is declared as
+            // none until there is a sixel encoder, so the frame's report
+            // says the image was rastered rather than claiming the protocol.
+            const answered = s.term.probeImages();
+            caps.images = answered == ImageProtocol.kitty ? answered : ImageProtocol.none;
+            s.typedAhead = s.term.takeTypedAhead();
+        }
+        s.target = sessionCapabilities(caps);
         return s;
     }
 
@@ -120,8 +142,18 @@ struct TerminalSession
         return sz;
     }
 
-    /// Presents the surface — the retained diff, so only changed cells go out.
-    void present() @system => term.draw(grid, links);
+    /// Presents the surface — the retained diff, so only changed cells go out,
+    /// and the frame's image placements over them.
+    void present() @system => term.draw(grid, links, placements);
+
+    /// The input that arrived during the probe, for a caller reading the
+    /// terminal itself; $(LREF next) replays whatever this did not take.
+    ubyte[] takeTypedAhead() @safe pure
+    {
+        auto t = typedAhead;
+        typedAhead = null;
+        return t;
+    }
 
     /// The color depth the diff folds to — normally `target.colorDepth`, and
     /// narrower when a host previews a smaller profile. A change repaints the
@@ -143,6 +175,7 @@ struct TerminalSession
     {
         import core.time : msecs;
 
+        replayTypedAhead();
         return events.ready(ms.msecs);
     }
 
@@ -152,7 +185,17 @@ struct TerminalSession
     {
         import core.time : msecs;
 
+        replayTypedAhead();
         return timeoutMs < 0 ? events.next() : events.next(timeoutMs.msecs);
+    }
+
+    private void replayTypedAhead() @safe nothrow
+    {
+        if (typedAhead.length)
+        {
+            events.unread(typedAhead);
+            typedAhead = null;
+        }
     }
 
     /// The declared input capabilities of this target (`TGT5`/`IXB10`): a

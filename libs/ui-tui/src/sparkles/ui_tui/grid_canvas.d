@@ -21,6 +21,7 @@
 module sparkles.ui_tui.grid_canvas;
 
 import sparkles.tui.cell : CellStyle, Grid;
+import sparkles.tui.images : ImagePlacement;
 
 import sparkles.base.text.width : codepointWidth;
 
@@ -34,7 +35,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.glyphs : projectGlyph;
 import sparkles.ui.interp.cells : accentGlyph, blend;
 import sparkles.ui.effect : EffectId, EffectRegistry, Tier0Fn, Tier0Input;
-import sparkles.ui.image : defaultCellPixels, ImageRegistry;
+import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, ImageRegistry;
 import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
@@ -44,6 +45,54 @@ import sparkles.base.term_color : Color, RgbColor, toRgb;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 @safe:
+
+/**
+The kitty placement that shows `img` in the cells of `rect` under `fit` (grid
+coordinates), for a terminal whose cells are `cell` pixels: `fill` scales the
+picture to the rect; `contain` shrinks the cell span to the picture's placed
+extent and shifts it by the leftover pixels inside its first cell; `cover`
+keeps the rect and crops the source to the part that shows. The terminal
+scales to whole cells, so a `contain` whose extent is not a whole number of
+cells is stretched to the next one — at most a cell's worth.
+*/
+ImagePlacement kittyPlacement(uint id, const ImageData img, in Rect rect, ImageFit fit,
+    in Size cell) @safe pure nothrow @nogc
+{
+    auto p = ImagePlacement(image: id, generation: img.generation, rgba: img.rgba,
+        width: cast(ushort) img.size.width, height: cast(ushort) img.size.height,
+        x: cast(ushort) rect.x, y: cast(ushort) rect.y,
+        cols: cast(ushort) rect.width, rows: cast(ushort) rect.height);
+    const dest = Rect(0, 0, rect.width * cell.width, rect.height * cell.height);
+    final switch (fit)
+    {
+        case ImageFit.fill:
+            break;
+        case ImageFit.contain:
+            const placed = fitRect(dest, img.size, fit);
+            const x0 = placed.x / cell.width, y0 = placed.y / cell.height;
+            const x1 = (placed.x + placed.width + cell.width - 1) / cell.width;
+            const y1 = (placed.y + placed.height + cell.height - 1) / cell.height;
+            p.x = cast(ushort)(rect.x + x0);
+            p.y = cast(ushort)(rect.y + y0);
+            p.cols = cast(ushort)(x1 - x0);
+            p.rows = cast(ushort)(y1 - y0);
+            p.offsetX = cast(ushort)(placed.x % cell.width);
+            p.offsetY = cast(ushort)(placed.y % cell.height);
+            break;
+        case ImageFit.cover:
+            const placed = fitRect(dest, img.size, fit); // larger than dest
+            if (placed.width <= 0 || placed.height <= 0)
+                break;
+            // The source pixels under `dest`: the picture's own overflow, cut
+            // off symmetrically.
+            p.cropW = cast(ushort)(long(img.size.width) * dest.width / placed.width);
+            p.cropH = cast(ushort)(long(img.size.height) * dest.height / placed.height);
+            p.cropX = cast(ushort)((img.size.width - p.cropW) / 2);
+            p.cropY = cast(ushort)((img.size.height - p.cropH) / 2);
+            break;
+    }
+    return p;
+}
 
 /**
 What a cell grid holds before any terminal narrows it (`CAP1`): every color
@@ -85,11 +134,13 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
     int originX = 0, int originY = 0, Rect clip = Rect.init,
     in TargetCapabilities caps = gridCapabilities,
     in EffectContext effects = EffectContext.init,
-    scope const(ImageRegistry)* images = null)
+    scope const(ImageRegistry)* images = null,
+    scope ImagePlacement[]* placements = null)
 {
     auto canvas = GridCanvas(&grid, pageBg, originX, originY, caps);
     canvas.effects = effects;
     canvas.images = images;
+    canvas.placements = placements;
     if (!clip.empty)
         canvas.pushClip(clip); // an outer viewport in canvas cell coordinates
     foreach (ref op; ops)
@@ -250,30 +301,69 @@ struct GridCanvas
     /// every image then takes `IMG4`'s placeholder.
     const(ImageRegistry)* images;
 
+    /// Where kitty image placements go (`IMG5`), or `null`: the frame's
+    /// images are then rastered into the grid.
+    ImagePlacement[]* placements;
+
     /**
-    Draws an image op down `GLY9`'s ladder, from its first cell rung: a grid
-    has no channel for an image protocol yet (`IMG5`), so whatever the
-    declaration says of `images`, the picture is drawn in cells — the
-    finest block raster the target's `blocks` tier holds, else braille —
-    and where there is no cell rung, or no pixels to raster, it is the alt
-    text, through the SHARED placeholder routine rather than a second one.
+    Draws an image op down `GLY9`'s ladder.
+
+    The top rung is the picture itself: on a target that draws kitty images,
+    with somewhere to put the placement, the image's cells are blanked and a
+    placement is recorded for the terminal to draw over them. Two cases still
+    take the cell rungs, because a placement cannot honour them: an image not
+    wholly visible (a placement is not clipped cell by cell), and one inside
+    an effect bracket (a tier-0 effect transforms cells, and the picture is
+    not cells).
+
+    Below it, the finest block raster the `blocks` tier holds, else braille;
+    and where there is no cell rung, or no pixels, the alt text through the
+    SHARED placeholder routine rather than a second one.
     */
     void image(in DrawOp op) scope
     {
         import sparkles.base.term_caps : ImageProtocol;
 
+        const data = images is null ? null : images.lookup(op.imageHandle);
+        const vis = op.visual;
+        const backdrop = vis.hasBg ? vis.bg : pageBg;
+        if (capabilities.images == ImageProtocol.kitty && placements !is null
+            && data !is null && data.rgba.length && effectStack.length == 0
+            && wholeInView(op.rect))
+        {
+            Visual blank;
+            blank.bg = backdrop;
+            blank.hasBg = true;
+            fillRect(op.rect, blank);
+            *placements ~= kittyPlacement(op.imageHandle.value, *data,
+                Rect(op.rect.x + originX, op.rect.y + originY, op.rect.width, op.rect.height),
+                op.imageFit, defaultCellPixels);
+            return;
+        }
+
         TargetCapabilities cells = capabilities;
         cells.images = ImageProtocol.none;
         const rung = imageRungOf(cells);
-        const data = images is null ? null : images.lookup(op.imageHandle);
         if (rung == ImageRung.alt || data is null || data.rgba.length == 0)
         {
             paintImagePlaceholder(this, op.rect, op.imageAlt, op.visual);
             return;
         }
-        const vis = op.visual;
-        paintImageRaster(this, op.rect, *data, op.imageFit, rung, defaultCellPixels,
-            vis.hasBg ? vis.bg : pageBg);
+        paintImageRaster(this, op.rect, *data, op.imageFit, rung, defaultCellPixels, backdrop);
+    }
+
+    // Whether every cell of `r` (canvas coordinates) is on the grid and
+    // inside every pushed clip.
+    private bool wholeInView(in Rect r) const scope
+    {
+        const x = r.x + originX, y = r.y + originY;
+        if (x < 0 || y < 0 || x + r.width > grid.cols || y + r.height > grid.rows)
+            return false;
+        foreach (c; clips)
+            if (r.x < c.x || r.y < c.y || r.x + r.width > c.x + c.width
+                || r.y + r.height > c.y + c.height)
+                return false;
+        return true;
     }
 
     /// The open effect brackets, innermost last. An unresolvable id still
@@ -1481,4 +1571,72 @@ static assert(isCanvas!GridCanvas);
     n.resize(6, 1);
     paintGrid(n, RgbColor(0, 0, 0), [wide], caps: capabilitiesOf(Profile.enhanced));
     assert(n[0, 0].grapheme == "[", "no registry: the alt text, not a hole");
+}
+
+@("ui_tui.grid_canvas.kittyPlacementsNotCells")
+@safe unittest
+{
+    import sparkles.base.term_caps : ImageProtocol;
+    import sparkles.ui.canvas : imageOp, pushClipOp, popClipOp;
+    import sparkles.ui.image : ImageFit, ImageRegistry;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    // A terminal that answered for kitty, and somewhere to put placements:
+    // the image's cells are blanked and one placement records it, at the
+    // grid position the canvas origin puts it.
+    static immutable ubyte[8] px = [200, 0, 0, 255, 0, 0, 200, 255];
+    ImageRegistry reg;
+    const h = reg.register(px[], Size(1, 2), "flag");
+    const op = imageOp(Rect(1, 0, 2, 1), h, ImageFit.fill, "flag");
+    TargetCapabilities kitty = capabilitiesOf(Profile.enhanced);
+    kitty.images = ImageProtocol.kitty;
+
+    Grid g;
+    g.resize(6, 2);
+    ImagePlacement[] placed;
+    paintGrid(g, RgbColor(0, 0, 0), [op], 0, 1, Rect.init, caps: kitty, images: &reg,
+        placements: &placed);
+    assert(placed.length == 1);
+    assert(placed[0].image == h.value && placed[0].x == 1 && placed[0].y == 1);
+    assert(placed[0].cols == 2 && placed[0].rows == 1);
+    assert(g[1, 1].grapheme == " ", "the cells under a placement are blank");
+
+    // Partly clipped: rastered instead, since a placement is not clipped.
+    placed = null;
+    Grid c;
+    c.resize(6, 2);
+    paintGrid(c, RgbColor(0, 0, 0), [pushClipOp(Rect(0, 0, 2, 1)), op, popClipOp()],
+        caps: kitty, images: &reg, placements: &placed);
+    assert(placed.length == 0 && c[1, 0].grapheme == "▀");
+
+    // No sink to put a placement in: rastered too.
+    Grid n;
+    n.resize(6, 2);
+    paintGrid(n, RgbColor(0, 0, 0), [op], caps: kitty, images: &reg);
+    assert(n[1, 0].grapheme == "▀");
+}
+
+@("ui_tui.grid_canvas.kittyPlacementHonoursTheFit")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.ui.image : ImageFit;
+
+    // A 2:1 picture in a 4×4-cell rect of 8×16 px cells (32×64 px).
+    const img = ImageData(size: Size(20, 10));
+    const rect = Rect(10, 5, 4, 4);
+    const cell = Size(8, 16);
+
+    const fill = kittyPlacement(1, img, rect, ImageFit.fill, cell);
+    assert(fill.x == 10 && fill.y == 5 && fill.cols == 4 && fill.rows == 4);
+
+    // `contain`: 32×16 px through the middle — one row, starting 24 px down,
+    // i.e. row 1 plus 8 px.
+    const c = kittyPlacement(1, img, rect, ImageFit.contain, cell);
+    assert(c.x == 10 && c.cols == 4 && c.y == 6 && c.rows == 1 + 1 && c.offsetY == 8);
+
+    // `cover`: the whole rect, the source cropped to its middle quarter
+    // width: 64 px tall means 128 px wide, of which 32 show.
+    const o = kittyPlacement(1, img, rect, ImageFit.cover, cell);
+    assert(o.cols == 4 && o.rows == 4);
+    assert(o.cropW == 5 && o.cropH == 10 && o.cropX == 7 && o.cropY == 0);
 }

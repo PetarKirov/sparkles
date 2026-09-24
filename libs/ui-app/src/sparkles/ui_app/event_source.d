@@ -154,7 +154,7 @@ read with `escapeTimeoutMs`; expiry flushes it (a bare `ESC` becomes the
 escape key). On EOF or a read error, one `EndOfInput` and the pump ends.
 */
 void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
-    int escapeTimeoutMs = 40)
+    scope const(ubyte)[] typedAhead = null, int escapeTimeoutMs = 40)
 {
     import core.lifetime : move;
     import core.time : msecs;
@@ -168,6 +168,10 @@ void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
     {
         cast(void) events.put(sched, e);
     }
+
+    // Input that arrived before this pump did (a capability probe read it),
+    // decoded first so nothing typed at startup is lost.
+    assembler.feed(typedAhead, &emit);
 
     for (;;)
     {

@@ -104,6 +104,14 @@ struct RunConfig
     The terminal target ignores it — a tty cannot report releases (`INP16`).
     */
     bool keyRelease;
+    /**
+    TUI: ask the terminal which image protocol it draws before the first
+    frame (`CAP3`, the `images` row) — a query and a DA1 fence, bounded by a
+    short timeout — so images reach it as pictures rather than cell rasters.
+    Off by default: it puts query bytes on the wire at startup, and a
+    terminal that answers nothing costs the timeout.
+    */
+    bool probeImages;
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
     PointerUnit pointerUnit;    /// what pointer positions are measured in (`HST18`)
