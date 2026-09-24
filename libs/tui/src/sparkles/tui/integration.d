@@ -232,3 +232,95 @@ unittest
     feed(pty.master, "q");
     assert(events.next() == charEvent('q'), "q");
 }
+
+@("integration.pty.probeImagesAnswersAndKeepsTypedKeys")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.base.term_caps : ImageProtocol;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.tui.probe : imageQuery;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    assert(term.active);
+    scope (exit) term.close();
+    char[] rb;
+    drain(pty.master, rb);
+
+    // The scripted peer: a key typed early, then Ghostty's measured replies
+    // — the graphics query answered, then the DA1 fence.
+    feed(pty.master, "j\x1b_Gi=31;OK\x1b\\\x1b[?62;22;52c");
+    assert(term.probeImages(1000) == ImageProtocol.kitty);
+    assert(drain(pty.master, rb).canFind(imageQuery), "the battery went out");
+
+    // The key typed during the probe is not lost: it is the first event.
+    auto events = PosixEvents.start(pty.slave);
+    events.unread(term.takeTypedAhead());
+    assert(events.next() == charEvent('j'));
+}
+
+@("integration.pty.probeImagesSilentTerminalCostsTheTimeout")
+@system
+unittest
+{
+    import core.time : MonoTime;
+    import sparkles.base.term_caps : ImageProtocol;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    scope (exit) term.close();
+
+    // Nothing answers (a bare pty): `none`, after the timeout and not forever.
+    const t0 = MonoTime.currTime;
+    assert(term.probeImages(60) == ImageProtocol.none);
+    assert((MonoTime.currTime - t0).total!"msecs" < 1000);
+}
+
+@("integration.pty.imagesGoOutInsideTheFrame")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.tui.images : ImagePlacement;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    char[] rb;
+    drain(pty.master, rb);
+
+    static immutable ubyte[4] px = [1, 2, 3, 255];
+    const place = [ImagePlacement(image: 3, rgba: px[], width: 1, height: 1,
+        x: 1, y: 0, cols: 2, rows: 1)];
+    Grid g;
+    g.resize(4, 1);
+    term.draw(g, null, place);
+    const first = drain(pty.master, rb).idup;
+    // Transmitted and placed inside the synchronized frame.
+    const begin = first.countUntil("\x1b[?2026h"), end = first.countUntil("\x1b[?2026l");
+    const t = first.countUntil("\x1b_Ga=t"), p = first.countUntil("\x1b_Ga=p");
+    assert(begin >= 0 && t > begin && p > t && end > p, first);
+
+    // A steady frame: no graphics at all.
+    term.draw(g, null, place);
+    assert(!drain(pty.master, rb).canFind("\x1b_G"));
+
+    // Teardown frees the pixels.
+    term.close();
+    assert(drain(pty.master, rb).canFind("\x1b_Ga=d,d=I,i=3,q=2\x1b\\"));
+}

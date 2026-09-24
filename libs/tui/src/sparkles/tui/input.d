@@ -292,6 +292,8 @@ version (Posix)
         {
             import core.sys.posix.poll : poll, pollfd, POLLIN;
 
+            if (_replayAt < _replay.length)
+                return true;
             pollfd pfd;
             pfd.fd = _fd;
             pfd.events = POLLIN;
@@ -304,7 +306,7 @@ version (Posix)
         Event next() @trusted nothrow
         {
             char b;
-            const n = read(_fd, &b, 1);
+            const n = fromReplay(b) ? 1 : read(_fd, &b, 1);
             if (n < 0)
                 return errno == EINTR
                     ? Event(ResizeEvent()) : Event(EndOfInput());
@@ -330,6 +332,8 @@ version (Posix)
         {
             import core.sys.posix.poll : poll, pollfd, POLLIN;
 
+            if (_replayAt < _replay.length)
+                return next(); // replayed input is ready now
             pollfd pfd;
             pfd.fd = _fd;
             pfd.events = POLLIN;
@@ -385,8 +389,33 @@ version (Posix)
             return charEvent(cp);
         }
 
+        /**
+        Queues `bytes` to be decoded before anything more is read from the
+        terminal — input that arrived while something else was reading the
+        stream (a capability probe), so no keystroke is lost to it.
+        */
+        void unread(scope const(ubyte)[] bytes) @safe nothrow
+        {
+            _replay = _replay[_replayAt .. $] ~ bytes;
+            _replayAt = 0;
+        }
+
+        private ubyte[] _replay;
+        private size_t _replayAt;
+
+        // The next replayed byte, if any.
+        private bool fromReplay(ref char b) @safe nothrow @nogc
+        {
+            if (_replayAt >= _replay.length)
+                return false;
+            b = cast(char) _replay[_replayAt++];
+            return true;
+        }
+
         private bool readRaw(ref char b) @trusted nothrow
         {
+            if (fromReplay(b))
+                return true;
             return read(_fd, &b, 1) == 1;
         }
 
@@ -394,6 +423,8 @@ version (Posix)
         {
             import core.sys.posix.poll : poll, pollfd, POLLIN;
 
+            if (fromReplay(b))
+                return true;
             pollfd pfd;
             pfd.fd = _fd;
             pfd.events = POLLIN;
