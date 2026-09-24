@@ -111,7 +111,10 @@ import sparkles.ui.components.chrome : actionBar, headerBar;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, fillRectOp, LineStyle, match, OpKind,
-    popClipOp, pushClipOp, RuleEdge, ruleOp, Scrollbar;
+    popClipOp, popEffectOp, pushClipOp, pushEffectOp, RuleEdge, ruleOp,
+    Scrollbar;
+import sparkles.ui.effect : EffectRegistry;
+import sparkles.ui_raylib.effect_gpu : EffectGpu;
 import sparkles.ui.frame_list : FrameList;
 import sparkles.ui.cmd_buffer : CmdBufferT;
 import sparkles.ui.arena : FrameArena;
@@ -396,15 +399,19 @@ int runGui(GuiArgs guiArgs) @system
     {
         applyCrtConfig(crt, configStore.resolved.appearance.crt,
             configStore.resolved.appearance.pointer, capture);
-        if (capture.screenshotPath.length)
-            crt.pinnedTime = 1.0f; // `DBG1`: an animated effect needs a pinned clock
     }
     else
-    {
         applyCrtCapture(crt, capture);
-        if (capture.screenshotPath.length)
-            crt.pinnedTime = 1.0f;
-    }
+
+    // `EFX21`: the CRT is an effect on the frame's root, resolved through a
+    // registry like any other rather than a pass wrapped around the frame.
+    // Registered once; `CrtEffect.writeParams` updates its values every frame.
+    EffectRegistry fxRegistry;
+    const crtEffect = fxRegistry.register(CrtEffect.effectRecord());
+    // The host's effect backend — every canvas this window paints through
+    // takes it, so a scissor inside the bracket is placed in the bracket's
+    // texture, not on the screen.
+    EffectGpu* effectGpuP;
     PointF rawPointerPos;
     with (gs)
 
@@ -1036,8 +1043,6 @@ int runGui(GuiArgs guiArgs) @system
         vm.searchPolicy = configStore.resolved.search.searchPolicy;
         applyCrtConfig(crt, configStore.resolved.appearance.crt,
             configStore.resolved.appearance.pointer, capture);
-        if (capture.screenshotPath.length)
-            crt.pinnedTime = 1.0f; // `DBG1`: an animated effect needs a pinned clock
         if (!filePicker.empty)
         {
             filePicker.get.stepBudget =
@@ -1210,8 +1215,12 @@ int runGui(GuiArgs guiArgs) @system
 
     // The canvas every emitted operation paints through: origin 0, because
     // the operations already carry their absolute cells.
-    RaylibCanvas uiCanvas() => RaylibCanvas(fontsP, &buf, fonts.cellW(),
-        fonts.cellH());
+    RaylibCanvas uiCanvas()
+    {
+        auto c = RaylibCanvas(fontsP, &buf, fonts.cellW(), fonts.cellH());
+        c.fx = effectGpuP;
+        return c;
+    }
 
     // A paint site's origin in cells. Every widget origin in this window is
     // a whole number of cells (the tree's width, the one-cell pad, the
@@ -1559,9 +1568,17 @@ int runGui(GuiArgs guiArgs) @system
         // (or left over across the buffer swap) would CLIP the clear below —
         // exactly the "documents ghost over each other" failure. Start every
         // frame from a clean state so the clear always covers the window.
-        crt.begin(screenW, screenH);
         window.resetClip();
         frameList.reset();
+
+        // `EFX21`: the CRT brackets the frame's ROOT — one more effect in the
+        // op stream, over every cell of the window (the partial cell at the
+        // edge included; the canvas sizes the bracket to the surface).
+        const crtOn = crt.enabled;
+        if (crtOn)
+            frameList.emit(ui, pushEffectOp(Rect(0, 0,
+                (screenW + cellW - 1) / cellW, (screenH + cellH - 1) / cellH),
+                crtEffect));
 
         if (flashDebug)
             window.clear((frame / 30) % 2 == 0
@@ -2244,18 +2261,25 @@ int runGui(GuiArgs guiArgs) @system
 
         window.resetClip(); // never let a scissor survive the frame
 
-        // `EFX23`: everything the CRT reacts to, harvested from what this
-        // frame emitted — the focused region, the selection, the split, the
-        // text under the pointer, the document's thumb — not re-derived.
-        if (crt.enabled && crt.uiReactive)
+        if (crtOn)
         {
-            const pointerCell = Point(cast(int)(rawPointerPos.x / cellW),
-                cast(int)(rawPointerPos.y / cellH));
-            const uiCtx = crtUiContextOf(frameList, pointerCell, cellW, cellH);
-            crt.setUiContext(uiCtx);
+            // `EFX23`: everything the CRT reacts to, harvested from what this
+            // frame emitted — the focused region, the selection, the split,
+            // the text under the pointer, the document's thumb — not
+            // re-derived.
+            if (crt.uiReactive)
+            {
+                const pointerCell = Point(cast(int)(rawPointerPos.x / cellW),
+                    cast(int)(rawPointerPos.y / cellH));
+                crt.setUiContext(crtUiContextOf(frameList, pointerCell, cellW, cellH));
+            }
+            // Then this frame's values, and the bracket closes: the backend
+            // runs the four passes and composites the tube onto the window.
+            crt.writeParams(fxRegistry, crtEffect, screenW, screenH,
+                rawPointerPos.x, rawPointerPos.y);
+            frameList.emit(ui, popEffectOp());
         }
         }
-        crt.end(geom.screenW, geom.screenH, rawPointerPos.x, rawPointerPos.y);
         painted = true;
     }
 
@@ -4076,6 +4100,17 @@ int runGui(GuiArgs guiArgs) @system
         {
             windowP = &(h.window());
             fontsP = h.canvas.fonts;
+            effectGpuP = h.canvas.fx;
+
+            // The registry the CRT's id resolves in, bound once: the host
+            // borrows it for the run.
+            auto fxP = (() @trusted => &fxRegistry)();
+            h.effects(fxP, vm.pageFg);
+            // `DBG1`: a capture of an animated effect is reproducible only if
+            // its clock is. The host pins it for every effect, the CRT's
+            // jitter, roll and flicker included.
+            if (capture.screenshotPath.length)
+                h.pinEffectClock(1.0f);
         }
 
         pn.tree.chromeRows = 0; // the GUI pane is all tree rows
