@@ -151,7 +151,7 @@ $(B Why a string beside a D function, and why that is not duplication.) The
 built-ins' GLSL is $(I generated) from the same D function the `tier0`
 pointer calls (`EFX20`): `shader-compile` compiles
 $(MREF sparkles,ui,effect_shaders) through LDC's Vulkan target to SPIR-V and
-spirv-cross to the GLSL under `libs/ui/shaders/generated/`, which this module
+spirv-cross to the GLSL under `libs/ui/src/sparkles/ui/shaders/`, which this module
 string-imports. Nothing here is written twice; the string is an artifact of
 the function, the way an object file is.
 */
@@ -400,8 +400,8 @@ alias dimTier0 = tier0Adapter!(sparkles.ui.effect_shaders.dim);
 /// ditto
 alias spectrumTier0 = tier0Adapter!(sparkles.ui.effect_shaders.spectrum);
 
-// The generated fragment shaders (`libs/ui/shaders/generated/`), in the
-// dialect this build's GL speaks. Regenerate with `dub run :shader-compile`;
+// The generated fragment shaders (`libs/ui/src/sparkles/ui/shaders/`), in the
+// dialect this build's GL speaks. Regenerate with `nix run .#shader-compile`;
 // `--verify` is the guard that they still come from the D source.
 version (Android)
     private enum string glslDialect = ".es.frag";

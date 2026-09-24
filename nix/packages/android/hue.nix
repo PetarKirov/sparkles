@@ -112,7 +112,7 @@
             ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
               -preview=in -preview=dip1000 \
               ${toString (map (v: "-d-version=${v}") versions)} \
-              -J=apps/hue/src -J=libs/twoslash/src/sparkles/twoslash/views \
+              -J=apps/hue/src -J=libs/twoslash/src/sparkles/twoslash/views -J=libs/ui/src/sparkles/ui/shaders \
               ${toString (map (dir: "-I=${dir}") srcDirs)} \
               ${toString (map (d: ''-I="$(echo dub-imports/${d.name}/*/source)"'') dubDeps)} \
               -P-U__SIZEOF_INT128__ \
