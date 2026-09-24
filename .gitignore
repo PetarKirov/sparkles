@@ -100,6 +100,7 @@ screenshot*.png
 
 # Compiled output of the effects/images acceptance demo (dub run --single)
 /docs/specs/ui/demos/imgshot
+/docs/specs/ui/demos/broken_app
 /docs/specs/ui/demos/dub.selections.json
 
 # Compiled output of the wired-inline bench-engine generator (dub run --single)

@@ -206,12 +206,12 @@ imposes rather than a choice:
 
 ## The CRT, re-expressed (`EFX21`–`EFX24`)
 
-| ID    | Requirement                                                                                                                                                                                                                                                                 | Status  | Traces to                                                                                                                                                                                                                                  |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| EFX21 | The CRT must be expressible as an effect bracketed on the **root node**, not as a frame-level pass outside the pipeline.                                                                                                                                                    | partial | The mechanism is proven: a tier-1 effect (`curvature`) on a bracket, with the `EffectParam` channel a CRT needs — see `ui-gallery`'s Effects page under `--gui`. **Hue's CRT is not migrated**; what it still needs is below               |
-| EFX22 | `sparkles:ui-app` must not grow a separate post-process bracket. `EFX21` is that feature; two mechanisms for one thing is what this spec exists to avoid.                                                                                                                   | full    | grep-checkable — searching `libs/ui-app/src` for the words post-process or post-pass (spelled as one word, case-insensitively) finds nothing, and `EFX21`'s bracket is the mechanism that would otherwise have justified one               |
-| EFX23 | Once `EFX21` holds, `CrtUiContext` must be **harvested from the display list** — the rects the frame actually emitted, per `Slot` — never re-derived by an application. The present hand-derivation in `hue` is the debt this retires.                                      | partial | The double relayout is gone: hue's modal paint sites record the rect they painted and the halo reads it (`gui.d` `paintedFocus`). Harvesting **per `Slot` from one display list** awaits hue's GUI emitting a single op stream — see below |
-| EFX24 | The CRT's curvature and lens are tier-1; its scanlines, phosphor mask and vignette are tier-0 and must therefore survive to `ui-tui`. A terminal showing scanlines and a phosphor tint is the proof that the tier split is real and not a GPU feature wearing a tier label. | full    | Tier 0 in a terminal: `ui-gallery --render --page effects` shows scanlines, phosphor, dim and spectrum; `ui_tui.grid_canvas.tier0EffectLandsInTheTerminal`. Tier 1 in a window: the same page under `--gui`                                |
+| ID    | Requirement                                                                                                                                                                                                                                                                 | Status | Traces to                                                                                                                                                                                                                                                                                                                                                        |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EFX21 | The CRT must be expressible as an effect bracketed on the **root node**, not as a frame-level pass outside the pipeline.                                                                                                                                                    | full   | `CrtEffect.effectRecord` — a four-pass tier-2 record (`bloomPasses`' three, then the tube) — registered by hue and emitted as the first `pushEffect` of its frame (`gui.d` `crtEffect`); `CrtEffect.writeParams` updates its values in place each frame; `ui_raylib.crt.isATier2EffectOnTheRoot`. Checked byte-for-byte against the pass it replaced (see below) |
+| EFX22 | `sparkles:ui-app` must not grow a separate post-process bracket. `EFX21` is that feature; two mechanisms for one thing is what this spec exists to avoid.                                                                                                                   | full   | grep-checkable — searching `libs/ui-app/src` for the words post-process or post-pass (spelled as one word, case-insensitively) finds nothing, and `EFX21`'s bracket is the mechanism that would otherwise have justified one                                                                                                                                     |
+| EFX23 | Once `EFX21` holds, `CrtUiContext` must be **harvested from the display list** — the rects the frame actually emitted, per `Slot` — never re-derived by an application. The present hand-derivation in `hue` is the debt this retires.                                      | full   | `sparkles.ui.frame_list` (`FrameList`, `focusedExtent`, `firstOfSlot`, `textAt`, `scrollbarThumbOf`) and `crtUiContextOf` (`uiContextIsHarvestedFromTheFrame`); hue emits every whole-cell paint site into one `FrameList` and calls it — the per-site derivations, and the rects the modals used to stash for the halo, are gone                                |
+| EFX24 | The CRT's curvature and lens are tier-1; its scanlines, phosphor mask and vignette are tier-0 and must therefore survive to `ui-tui`. A terminal showing scanlines and a phosphor tint is the proof that the tier split is real and not a GPU feature wearing a tier label. | full   | Tier 0 in a terminal: `ui-gallery --render --page effects` shows scanlines, phosphor, dim and spectrum; `ui_tui.grid_canvas.tier0EffectLandsInTheTerminal`. Tier 1 in a window: the same page under `--gui`                                                                                                                                                      |
 
 ### Why the registry landed in gate 2
 
@@ -237,29 +237,42 @@ does not yet have. It is also the clearest evidence so far that the tier axis
 is the right one — the split fell along "what can read what", not along "which
 backend is fancier".
 
-### What the CRT's migration still needs
+### How the CRT became an effect
 
-`EFX21` is `partial` because the mechanism works and the migration does not
-fit through it yet. Two things are missing, and neither is a surprise:
+`EFX21` and `EFX23` were `partial` for two different reasons, and each needed
+its own piece of machinery rather than a special case for the CRT.
 
-- **Multi-pass.** The CRT's bloom is three passes over two ping-pong targets
-  (bright-pass extract, blur H, blur V). An effect bracket is one pass: one
-  texture in, one shader, one composite. Expressing bloom needs either a
-  multi-pass `EffectImpl` or a tier-2 effect that owns its own intermediates.
-  This is the real work, and it is what `EFX11`'s "no more than one texture
-  per nesting level" will have to be revisited against.
-- **A frame clock.** Four CRT terms read `GetTime()`, and `DBG1` needs them
-  pinned for a reproducible capture. `EffectParam` can carry the clock, so
-  this is wiring rather than design — but it must be wired, not assumed.
+- **Multi-pass, as data.** The CRT's bloom is three passes over two ping-pong
+  targets, and a bracket was one pass. `EffectPass` declares a pass as data —
+  a complete shader, an output downscale, the image it draws and the images
+  it samples — and `EffectGpu.close` runs the chain over intermediates pooled
+  per (depth, stage, size). `bloom` became the first tier-2 built-in, and the
+  CRT is bloom's first three passes plus the tube's composite
+  (`CrtEffect.effectRecord`). `EFX11`'s "one texture per nesting level" now
+  reads "beyond the intermediates a multi-pass effect declares".
+- **A clock.** Five of the CRT's terms read the time — the sync jitter, the
+  roll bar, the phosphor flicker, the focus pulse and the aberration wobble
+  (the old count of four missed the last). The backend supplies `uTime` to
+  every pass from `EffectGpu.clock`, which the host sets per frame or pins for
+  a capture (`pinEffectClock`), so `DBG1` holds for every effect.
+- **One op stream.** hue painted through about ten canvases, one per origin,
+  so there was no list to harvest from. Every paint site whose origin is a
+  whole cell now emits into one `FrameList`, which translates, records and
+  paints at once — the order against the pixel chrome that stays outside
+  (the toast, the popup, sub-cell hairlines, anything anchored to the
+  window's pixel edge) is unchanged — and `crtUiContextOf` reads the focus,
+  selection, split, hover and thumb out of it by `Slot`.
 
-`EFX23` is `partial` for a different reason. The requirement asks for the
-rects **harvested from the display list, per `Slot`**, and hue's GUI does not
-emit one display list: it paints through several canvases at several origins
-(the tree, the document, each modal). The half that could be fixed without
-that restructuring has been: the modal paint sites now record the rect they
-actually painted and the halo reads it, so the second `buildView` + `layout`
-per frame is gone along with the duplicated centring that first put the halo
-off the picker. The remaining half is a hue refactor, not an effects one.
+The evidence is byte-level, with the clock pinned. The CRT-off frames — the
+readme, the tree, a preview, a search, the inspector, the key guide, the
+picker, the settings pane — are identical before and after both changes.
+With the CRT on, the effect path is identical to the pass it replaced once
+its intermediates are filtered the same way (nearest texel); as shipped they
+filter bilinearly, which is what turns a half-size glow from a halftone into
+a glow, and the frames differ in about 0.5% of pixels by at most 1/255. The
+comparison also found a real bug — the bright pass weighted by alpha, which
+antialiased text leaves just under 1 — and it was fixed rather than
+tolerated.
 
 ## Decisions
 
@@ -310,8 +323,9 @@ off the picker. The remaining half is a hue refactor, not an effects one.
    not a gate". It was not: a glow is several passes over intermediates, and
    a bracket was one pass. Multi-pass is now declared as data (`EffectPass`)
    and run by `EffectGpu.close`.
-4. **The CRT re-expressed** (`EFX21`–`EFX23`) — **partial**. The mechanism is
-   proven and the double relayout is gone; what remains is stated below.
+4. ~~**The CRT re-expressed** (`EFX21`–`EFX23`)~~ — **delivered**: the CRT
+   is a tier-2 effect on the root of one op stream, and its UI context is
+   harvested from it — see "How the CRT became an effect".
 
 5. ~~**One source, two targets** (`EFX20`, `EFX25`–`EFX27`)~~ — **delivered**,
    without waiting for a Vulkan `isCanvas` backend: the GPU artifact is GLSL
