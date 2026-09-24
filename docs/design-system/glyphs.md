@@ -94,7 +94,7 @@ depends on what the target can show:
 A cell holds two colours, so each cell's sub-cells are split into two groups
 by colour, and the glyph draws one over the other. A terminal draws the
 picture itself when the application asked it (the images probe) and it
-answered for the kitty graphics protocol, as kitty, Ghostty, WezTerm and
-iTerm2 do. A sixel terminal is rastered for now. The
+answered for the kitty graphics protocol (kitty, Ghostty, WezTerm, iTerm2) or
+for sixel (foot, and XTerm built with it). The
 [Primitives](./catalog/primitives.md) page's swatch shows each profile's
 rung.
