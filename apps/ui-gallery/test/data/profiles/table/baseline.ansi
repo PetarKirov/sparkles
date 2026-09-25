@@ -29,4 +29,4 @@
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0;1mstring view - drawTable, the same bytes[0m                             [0m|[0m [0m|[0m
 [0m                     [0m|[0m                                                                          [0m
-[0m [0;1mpages[0mg glyphsr row ruless stub col< cols left> cols righ, rows up[0m [0m. rows down[0m   [0m? keys   q quit[0m
+[0m [0;1mpages[0m [0mg glyphs[0m [0mr row rules[0m [0ms stub col[0m [0m< cols left[0m [0m> cols right[0m [0m, rows up[0m       [0m? keys   q quit[0m [0m

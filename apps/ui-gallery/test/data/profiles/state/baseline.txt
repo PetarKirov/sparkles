@@ -29,4 +29,4 @@
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      |
- pagea anchor selece extend selecf focus nF focus prd toggle foD fold polarp pulse  ? keys   q q
+ pages a anchor selection e extend selection f focus next F focus prev          ? keys   q quit

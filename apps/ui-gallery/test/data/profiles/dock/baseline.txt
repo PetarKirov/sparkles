@@ -29,4 +29,4 @@
                      | | panes            2 visible of 3                                     | |
                      | | dividers         1                                                  | |
                      |
- pageh narrol wid, prev . next f focus nexw dock e dock n dock ns dock sor reset layo? keys   q
+ pages h narrower l wider , prev tab . next tab f focus next pane w dock west   ? keys   q quit

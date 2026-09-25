@@ -1479,10 +1479,22 @@ struct Gallery
 
     private uint statusBar(ref Builder b) @safe
     {
+        import sparkles.ui.geometry : cellsOf;
+
+        enum string helpText = "? keys   q quit";
+        const region = s.region == Region.nav ? "pages" : "page";
+
+        // What the bar can hold: the surface less its one-cell padding each
+        // side, the region label, and the help chip with its gap — which is
+        // never dropped, because it is the way to every binding a full bar
+        // had no room for.
+        long budget = cast(long) s.surface.width - 2 - cellsOf(region)
+            - 1 - cellsOf(helpText);
+
         uint[] hints;
         hints ~= b.add(Widget(
             kind: WidgetKind.text,
-            text: s.region == Region.nav ? "pages" : "page",
+            text: region,
             slot: Slot.chromeAccent,
             textStyle: TextStyle(bold: true),
         ));
@@ -1490,20 +1502,30 @@ struct Gallery
         // copy this used to be could drift from the handlers; a listing
         // cannot. One chip per command (the first spelling wins), so `+`
         // and `=` do not both claim a chip in a one-line bar.
+        //
+        // Only as many as FIT, in table order. A row that overflows does not
+        // clip its texts, it shrinks them — and a text painted at its full
+        // length into a box a cell narrower overwrites its neighbour, which
+        // is how the Terminal page's bar read "pagesn new shelx close shel…"
+        // in both targets. A dropped chip is still on `?`.
         bool[GalleryCommand.max + 1] seenCmd;
         foreach (ref bnd; reachableBindings())
             if (bnd.scope_ == pages[s.page].scope_
                 && bnd.scope_ != GalleryScope.always && !seenCmd[bnd.cmd])
             {
                 seenCmd[bnd.cmd] = true;
-                hints ~= b.add(Widget(kind: WidgetKind.text,
-                    text: chordText(bnd.path[0]) ~ " " ~ bnd.desc,
+                const hint = chordText(bnd.path[0]) ~ " " ~ bnd.desc;
+                const need = 1 + cellsOf(hint); // the gap before it, then it
+                if (need > budget)
+                    break;
+                budget -= need;
+                hints ~= b.add(Widget(kind: WidgetKind.text, text: hint,
                     slot: Slot.chrome));
             }
 
         const help = b.add(Widget(
             kind: WidgetKind.text,
-            text: "? keys   q quit",
+            text: helpText,
             slot: Slot.chrome,
         ));
         return headerBar(b, hints, null, [help]);
