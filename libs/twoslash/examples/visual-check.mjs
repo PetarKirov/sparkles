@@ -11,7 +11,7 @@
 //
 // NOT part of the build. Needs node + a Chromium/Chrome and a built hue:
 //   dub build :hue
-//   node visual-check.mjs        # or: yarn visual
+//   yarn visual                  # bare `node` cannot see the PnP install
 // The devshell provides Chromium and exports CHROME_BIN; otherwise the script
 // searches PATH and skips cleanly (exit 0) if no browser is found.
 

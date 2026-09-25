@@ -3854,6 +3854,7 @@ __metadata:
     vitepress: "npm:^1.6.4"
     vitepress-plugin-group-icons: "npm:^1.7.5"
     vitepress-plugin-mermaid: "npm:^2.0.17"
+    vue: "npm:^3.5.13"
     wrangler: "npm:^4.63.0"
   languageName: unknown
   linkType: soft

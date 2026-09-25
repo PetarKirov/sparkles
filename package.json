@@ -19,6 +19,7 @@
     "vitepress": "^1.6.4",
     "vitepress-plugin-group-icons": "^1.7.5",
     "vitepress-plugin-mermaid": "^2.0.17",
+    "vue": "^3.5.13",
     "wrangler": "^4.63.0"
   }
 }

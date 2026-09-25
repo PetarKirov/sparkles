@@ -18,13 +18,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [[ ! -d node_modules/twoslash ]]; then
-    echo "Installing fixture-generator deps (twoslash + typescript)…"
-    if command -v yarn >/dev/null 2>&1; then
-        yarn install
-    else
-        corepack yarn install
-    fi
+yarn_cmd=(yarn)
+if ! command -v yarn >/dev/null 2>&1; then
+    yarn_cmd=(corepack yarn)
 fi
 
-node regen.mjs
+# Plug'n'Play has no node_modules tree. .pnp.cjs is the install marker.
+if [[ ! -f .pnp.cjs ]]; then
+    echo "Installing fixture-generator deps (twoslash + typescript)…"
+    "${yarn_cmd[@]}" install
+fi
+
+# `yarn node` loads the PnP resolver. A bare `node` cannot see the packages.
+"${yarn_cmd[@]}" node regen.mjs
