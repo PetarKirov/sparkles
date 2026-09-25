@@ -369,6 +369,13 @@ struct GuiCapture
     string settings;
     /// ditto
     bool settingsSet;
+    /// `HUE_GUI_TREE_FILTER`: open the explorer's live filter before the
+    /// first frame with the value typed into it (an empty but set value just
+    /// opens it) — the filter line only exists between keystrokes, and where
+    /// it sits against the tree's bars is exactly what a screenshot catches.
+    string treeFilter;
+    /// ditto
+    bool treeFilterSet;
     /// `HUE_GUI_CRT`: force CRT shader effect on.
     bool crt;
     /// `HUE_GUI_CRT_TILT`: force CRT mouse tilt curvature on.
@@ -425,6 +432,9 @@ struct GuiCapture
         const st = get("HUE_GUI_SETTINGS", null);
         c.settingsSet = st !is null;
         c.settings = st;
+        const tf = get("HUE_GUI_TREE_FILTER", null);
+        c.treeFilterSet = tf !is null;
+        c.treeFilter = tf;
         try
             c.forceHover = get("HUE_GUI_HOVER", null).length
                 ? get("HUE_GUI_HOVER", null).to!int : -1;
@@ -482,6 +492,7 @@ unittest
         "HUE_GUI_CRT_MAGNIFY": "1",
         "HUE_GUI_POINTER_MODE": "system",
         "HUE_GUI_POINTER": "123.5,456",
+        "HUE_GUI_TREE_FILTER": "dub",
     ];
     c = GuiCapture.fromEnv(&get);
     assert(c.screenshotPath == "shot.png" && c.screenshotFrame == 40);
@@ -493,6 +504,7 @@ unittest
         "an empty lantern is SET (it shows the root listing)");
     assert(c.forceHover == 3);
     assert(c.pointerSet && c.pointer == PointF(123.5, 456));
+    assert(c.treeFilterSet && c.treeFilter == "dub");
 
     // The faithful quirk: garbage HUE_GUI_TOP also skips the font override,
     // exactly as the inline try/catch did.
