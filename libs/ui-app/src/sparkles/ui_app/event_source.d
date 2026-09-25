@@ -57,9 +57,18 @@ struct EscapeAssembler
                 break;
             case State.utf8:
                 break;
+            case State.controlString:
+                // An introducer and nothing after it within the window was
+                // Alt+key after all; a string cut off by the deadline is a
+                // reply's, and is dropped.
+                if (!_inString)
+                    sink(decodeEscape(_buf[0 .. 1]));
+                break;
         }
         _state = State.idle;
         _len = 0;
+        _inString = false;
+        _stringEsc = false;
     }
 
 private:
@@ -68,6 +77,10 @@ private:
         idle,
         escape, /// after ESC: accumulating intro + params until the final byte
         utf8,   /// accumulating continuation bytes
+        /// after `ESC P`/`_`/`]`/`^`/`X`: a control string (a DCS, APC, OSC,
+        /// PM or SOS — a terminal's reply, never a keystroke) until its
+        /// terminator, `ESC \` or, for OSC, BEL
+        controlString,
     }
 
     void step(Sink)(char c, scope Sink sink)
@@ -98,6 +111,11 @@ private:
                     // The introducer decides the shape: `[`/`O` open a
                     // sequence; anything else is Alt+key, complete now.
                     _buf[_len++] = c;
+                    if (c == 'P' || c == '_' || c == ']' || c == '^' || c == 'X')
+                    {
+                        _state = State.controlString;
+                        return;
+                    }
                     if (c != '[' && c != 'O')
                     {
                         sink(decodeEscape(_buf[0 .. 1]));
@@ -118,6 +136,29 @@ private:
                 }
                 return;
 
+            case State.controlString:
+                _inString = true;
+                if (_stringEsc)
+                {
+                    _stringEsc = false;
+                    if (c == '\\')
+                    {
+                        _state = State.idle; // ST: the string, dropped whole
+                        return;
+                    }
+                    // Not ST: the string was unterminated; this ESC starts
+                    // whatever comes next.
+                    _state = State.escape;
+                    _len = 0;
+                    step(c, sink);
+                    return;
+                }
+                if (c == '\x1b')
+                    _stringEsc = true;
+                else if (c == '\x07')
+                    _state = State.idle; // BEL ends an OSC
+                return;
+
             case State.utf8:
                 _cp = (_cp << 6) | ((cast(ubyte) c) & 0x3F);
                 if (--_need == 0)
@@ -132,6 +173,8 @@ private:
     char[32] _buf;
     size_t _len;
     State _state;
+    bool _inString;  // a control string has at least one byte past its introducer
+    bool _stringEsc; // an ESC inside a control string: ST if `\\` follows
     uint _need;
     dchar _cp;
 }
@@ -328,4 +371,33 @@ unittest
     got = feedChunks("\xc3", "\xa9"); // é
     assert(got.length == 1);
     assert(got[0] == charEvent('é'));
+}
+
+@("ui_app.assembler.controlStringsAreNeverKeys")
+@safe
+unittest
+{
+    // A terminal's late reply — here foot's `XTGETTCAP` answers, measured
+    // arriving after a probe had given up — is a DCS, never keystrokes: it
+    // is dropped whole, even split across chunks, and the key after it
+    // still decodes.
+    auto got = feedChunks("\x1bP1+r524742=38\x1b", "\\\x1bP1+r5463\x1b\\j");
+    assert(got == [charEvent('j')]);
+    // An OSC reply ends at BEL; an APC at ST.
+    got = feedChunks("\x1b]11;rgb:2424/2424/2424\x07\x1b_Gi=31;OK\x1b\\k");
+    assert(got == [charEvent('k')]);
+}
+
+@("ui_app.assembler.altIntroducerIsStillAKey")
+@safe
+unittest
+{
+    // `ESC P` with nothing after it within the window is Alt+P, as before:
+    // only a burst makes it a string.
+    EscapeAssembler a;
+    Event[] got;
+    a.feed(cast(const(ubyte)[]) "\x1bP", (Event e) { got ~= e; });
+    assert(got.length == 0 && a.pending);
+    a.flush((Event e) { got ~= e; });
+    assert(got == [charEvent('P', Mods(alt: true))]);
 }
