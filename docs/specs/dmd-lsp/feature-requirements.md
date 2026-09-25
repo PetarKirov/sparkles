@@ -94,6 +94,14 @@ the pipeline behavior. v1 markers: `^?`, the `---cut---` family, `@errors:` /
 | EXT8 | **The oracle serves its whole analyzed set, not one file.** One `--serve` analysis already covers every module its input transitively imports, so the protocol must expose that: a `{"files": true}` request answers the list of analyzed module paths, and `{"payload": "<path>"}` / `{"tip": <nodeIndex>, "file": "<path>"}` answer the lazy payload and tips for **any** file in the set (node indices are per file). A path outside the set answers `{"error": …}` so the client knows to spawn its own analysis rather than guess. This is what lets a viewer move between files of one project — and a diff viewer between files of one side — without a process per file (hue [`LIV8`](../hue/twoslash.md)). | not started                                                            | proposed `--serve` extension over `EXT7`; `AnalyzedModule` lookup by filename |
 | EXT9 | **API-surface digest**: a `{"digest": "<path>"}` request answers that module's declared symbols with their resolved signatures, attributes and effects — a stable, order-independent summary cheap enough to request for every changed file in a review. Comparing two revisions' digests yields the per-file semantic verdict hue's diff badges render (_signatures changed_ / _implementation only_ / _doc only_ / _type-preserving_, [`DVT4`](../hue/diff-view.md)); it is deliberately coarser than a per-identifier comparison, which stays on-demand.                                                                                                                                                         | not started                                                            | proposed digest emitter over the `TIP` oracle; hue `DVT4`                     |
 
+## Target profiles (`TGT`)
+
+Analyzing as LDC, and as the dcompute LDC's device compile of `@compute`
+shader modules — the profile, the runtime, the `shader-units.json` device
+configuration, LDC's device-code rules and the host/device diagnostic merge —
+is specified on its own page: [Target profiles & device code](./targets.md)
+(`TGT1`–`TGT9`).
+
 ## Non-goals (v1)
 
 - **Re-analysis in one process** (`dmdReinit`/`dmdStatics`) — see `COR2`.

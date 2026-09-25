@@ -68,6 +68,26 @@ stage), each `@uniform` a uniform of that name, each `Sampler2D` a sampled image
 at the next binding, and the return value the colour output. Everything in the
 function body is ordinary D over this vocabulary — the same D the CPU runs.
 
+## Editor support
+
+hue's live types (and anything else on `sparkles:dmd-lsp`) analyze a shader
+module the way the device build compiles it, so `texture0.sample(uv)` is not an
+error and a string literal in device code is:
+
+- A `@compute(CompileFor.deviceOnly)` module is analyzed only as device code:
+  the dcompute LDC's druntime (`$SPARKLES_LDC_IMPORT_PATH`, which the devshell
+  exports on Linux), `-d-version=SparklesShaderDevice`, and LDC's rules for
+  device code, with LDC's own messages.
+- A `@compute(CompileFor.hostAndDevice)` module is analyzed both ways. An error
+  both sides report shows as it is; one only a single side reports carries a
+  `[host]` or `[device]` tag.
+
+The device side's settings come from `shader-units.json` at the repository
+root: each unit's sources, import roots, device versions and dcompute target.
+`shader-compile` reads the same file, so a new shader module is added there
+once and both the build and the editor follow. See
+[Target profiles & device code](../../specs/dmd-lsp/targets.md).
+
 ## Regenerating the GLSL
 
 ```bash
@@ -75,7 +95,8 @@ nix run .#shader-compile            # regenerate libs/ui/src/sparkles/ui/shaders
 nix run .#shader-compile -- --verify
 ```
 
-Run it from the repository root, on Linux. The package carries its own
+Run it from the repository root, on Linux; the units it compiles are listed
+in `shader-units.json`. The package carries its own
 compiler — dlang.nix's `ldc-vulkan`, LDC with dcompute's Vulkan target and the
 `@fragment` stage, built against LLVM main with the SPIR-V backend — plus
 spirv-tools, spirv-cross and glslang, so neither the devshell nor a local
