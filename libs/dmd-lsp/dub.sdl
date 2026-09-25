@@ -15,7 +15,7 @@ importPaths "src"
 // package (and its dependents) compile the dmd.* module interfaces with the
 // same declarations the library was built with.
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
+    version="6bae6e58e6110933db4e92649fe32521dfb47e1a"
 
 // (An `lflags "--undefined=_D3dmd8astenums7Edition6__initZ"` workaround for
 // linux-dmd used to live here: astenums.o sat in frontend.a while dmd:lexer
