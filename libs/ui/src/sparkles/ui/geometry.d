@@ -208,6 +208,37 @@ size_t cellsOf(scope const(char)[] s) @safe pure nothrow @nogc
     return cols;
 }
 
+/**
+The longest prefix of `s` that spans at most `cols` display columns, by the
+same count as $(LREF cellsOf) — so a run cut here measures exactly what the
+layout gave it. Never splits a codepoint; `cols <= 0` yields the empty slice.
+*/
+inout(char)[] takeCells(return scope inout(char)[] s, long cols)
+    @safe pure nothrow @nogc
+{
+    if (cols <= 0)
+        return s[0 .. 0];
+    long seen;
+    foreach (i, char c; s)
+        if ((c & 0xC0) != 0x80 && seen++ == cols)
+            return s[0 .. i];
+    return s;
+}
+
+@("ui.geometry.takeCells")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(takeCells("abc", 2) == "ab");
+    assert(takeCells("abc", 3) == "abc");
+    assert(takeCells("abc", 9) == "abc");
+    assert(takeCells("abc", 0) == "" && takeCells("abc", -4) == "");
+    // A multi-byte codepoint is kept whole or dropped whole.
+    assert(takeCells("a — b", 2) == "a ");
+    assert(takeCells("a — b", 3) == "a —");
+    assert(cellsOf(takeCells("a — b", 3)) == 3);
+}
+
 @("ui.geometry.cellsOf")
 @safe pure nothrow @nogc
 unittest
