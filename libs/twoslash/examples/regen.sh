@@ -9,7 +9,8 @@
 # twoslash-compatible source (twoslash today, sparkles:dmd-lsp in the future)
 # yields the same `{ code, nodes }` shape.
 #
-# Requires node + npm (already on the docs-site toolchain). Usage:
+# Requires node + Yarn Berry (already on the docs-site toolchain; Node's
+# Corepack is the fallback when `yarn` itself is not on PATH). Usage:
 #
 #   ./regen.sh                 # install deps (if needed) and regenerate
 #
@@ -19,7 +20,11 @@ cd "$(dirname "$0")"
 
 if [[ ! -d node_modules/twoslash ]]; then
     echo "Installing fixture-generator deps (twoslash + typescript)…"
-    npm install --no-audit --no-fund
+    if command -v yarn >/dev/null 2>&1; then
+        yarn install
+    else
+        corepack yarn install
+    fi
 fi
 
 node regen.mjs

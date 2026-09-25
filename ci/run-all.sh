@@ -17,7 +17,7 @@
 #   9. Android APK closure (all-android; x86_64-linux only)
 #  10. Lint & local link check (prek run --all-files)
 #  11. Markdown runnable example verification (ci --verify)
-#  12. Documentation site build (npm run docs:build)
+#  12. Documentation site build (yarn docs:build)
 #
 # Usage:
 #   ci/run-all.sh [options]
@@ -330,11 +330,11 @@ fi
 # --- Stage 12: Documentation Site Build ------------------------------------
 
 if [ "$skip_docs" -eq 0 ]; then
-  if ci_have npm && [ -f "${repo_root}/package.json" ]; then
+  if ci_have yarn && [ -f "${repo_root}/package.json" ]; then
     run_stage "Documentation site build" \
-      env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}" npm run docs:build
+      env NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}" yarn docs:build
   else
-    ci_notice "Skipping documentation build (npm not found on PATH or package.json absent)"
+    ci_notice "Skipping documentation build (yarn not found on PATH or package.json absent)"
   fi
 fi
 

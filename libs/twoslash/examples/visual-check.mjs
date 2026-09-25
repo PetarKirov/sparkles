@@ -11,7 +11,7 @@
 //
 // NOT part of the build. Needs node + a Chromium/Chrome and a built hue:
 //   dub build :hue
-//   node visual-check.mjs        # or: npm run visual
+//   node visual-check.mjs        # or: yarn visual
 // The devshell provides Chromium and exports CHROME_BIN; otherwise the script
 // searches PATH and skips cleanly (exit 0) if no browser is found.
 

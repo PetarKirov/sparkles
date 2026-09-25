@@ -10,7 +10,8 @@ on:
       # must redeploy the docs too.
       - 'libs/twoslash/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'yarn.lock'
+      - '.yarnrc.yml'
   # No `branches` filter: a stacked PR's base is a feature branch, and its
   # preview matters as much as a PR against main. The deploy is a preview
   # either way — `ci/deploy-cloudflare-pages.sh` keys it on the PR's head
@@ -24,7 +25,8 @@ on:
       # must redeploy the docs too.
       - 'libs/twoslash/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'yarn.lock'
+      - '.yarnrc.yml'
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +36,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # npm ci + the wasm nix build + VitePress build + Cloudflare deploy run ~5m
+    env:
+      # Corepack asks before downloading the packageManager pin. CI must not.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    # yarn install + the wasm nix build + VitePress build + Cloudflare deploy run ~5m
     # uncontended; runner contention during stacked-PR storms stretches the
     # nix setup/teardown past 15m, cancelling after the deploy had succeeded.
     timeout-minutes: 30
@@ -48,7 +53,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # `npm run docs:build` first runs `build:wasm`, which invokes
+      # `yarn docs:build` first runs `build:wasm`, which invokes
       # `nix build .#table-wasm` to compile the drawTable playground module.
       # Install Nix and wire up the binary cache so the ldc-wasm toolchain is
       # pulled from the cache rather than built from source.
@@ -66,10 +71,28 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
+
+      # setup-node's `cache: yarn` calls `yarn --version` while the action
+      # runs, before Corepack has put Yarn on PATH. Enable Corepack first,
+      # then cache the folder Yarn itself reports.
+      - name: Enable Corepack
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: corepack enable
+
+      - name: Get Yarn cache directory
+        id: yarn-cache
+        run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Yarn
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: yarn install --immutable
 
       # The README badges read these from the deployed site. Regenerating them
       # here rather than committing them keeps the number honest: it is
@@ -90,7 +113,7 @@ jobs:
       - name: Build VitePress site
         env:
           NODE_OPTIONS: --max-old-space-size=8192
-        run: npm run docs:build
+        run: yarn docs:build
 
       # Shared with CircleCI — see ci/README.md. The script wraps the same two
       # calls `cloudflare/wrangler-action` and `actions/github-script` made:

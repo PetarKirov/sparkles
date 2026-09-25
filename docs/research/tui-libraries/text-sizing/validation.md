@@ -162,7 +162,7 @@ across different fonts is not the same contract as cell-allocation equality.
 - The catalog-scoped offline blob check resolved every checked citation; foot's
   Codeberg source paths were also verified directly against its local Git tree.
 - The full docs build completed with
-  `NODE_OPTIONS=--max-old-space-size=12288 npm run docs:build`. The default Node
+  `NODE_OPTIONS=--max-old-space-size=12288 yarn docs:build`. The default Node
   heap had exhausted its 4 GiB limit on the full site.
 - Source-listing generation reported an unrelated `twoslash-extract` failure for
   `libs/ui/src/sparkles/ui/layout.d` (status `-11`) and skipped that generated
@@ -180,7 +180,7 @@ dub run :ci -- --verify --files docs/research/tui-libraries/text-sizing/validati
 dub run :ci -- --check-docs-sidebar
 dub run :ci -- --check-vcs-urls
 dub run :ci -- --check-blob-paths
-npm run docs:build
+yarn docs:build
 ```
 
 To restrict the blob audit to this catalog, append

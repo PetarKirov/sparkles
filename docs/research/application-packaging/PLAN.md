@@ -456,7 +456,7 @@ autosquashed only after user approval.
 
 - Prettier is clean across the catalog and VitePress configuration.
 - `dub run :ci -- --verify --files 'docs/research/application-packaging/*.md'` passes.
-- `npm run docs:build` passes after escaping literal Go-template delimiters and allowing
+- `yarn docs:build` passes after escaping literal Go-template delimiters and allowing
   links to repository `.nix` source files.
 - `lychee` passes for all catalog pages and the sidebar.
 - The complete pre-commit suite passes over the catalog, grounding artifacts, sidebar,
@@ -564,7 +564,7 @@ Run, in order:
 ```bash
 npx prettier --write 'docs/research/application-packaging/**/*.md' \
     docs/.vitepress/config.mts
-npm run docs:build
+yarn docs:build
 dub run :ci -- --verify --files 'docs/research/application-packaging/*.md'
 git diff --check
 ```
@@ -638,7 +638,7 @@ combine the densely cross-linked catalog into one coherent research commit as pe
 - [x] Baseline is grounded in current Sparkles source/workflows.
 - [x] Recommendations are linked to evidence and staged by artifact/trust capability.
 - [x] VitePress sidebar is grouped by category.
-- [x] `npm run docs:build` passes.
+- [x] `yarn docs:build` passes.
 - [x] Runnable/manifest examples, if any, pass their declared verification.
 - [x] No untracked research survives only in delegated worktrees.
 - [x] Branch history is reviewed and ready for autosquash/reorder.

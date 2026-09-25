@@ -148,6 +148,14 @@
         # The wasm runtime it hands off to is `pkgs.nodejs` below.
         pkgs.lld
         pkgs.nodejs
+        # Yarn Berry 4 for the VitePress site (`yarn docs:build`) and the
+        # twoslash fixture generator. `package.json#packageManager` selects
+        # the release. `corepack enable` cannot write shims into the Nix
+        # store, so this is a Corepack passthrough named `yarn`.
+        (pkgs.writeShellScriptBin "yarn" ''
+          export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+          exec ${pkgs.nodejs}/bin/corepack yarn "$@"
+        '')
 
         # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
         pkgs.curl # libcurl, linked by its --ci-stats subcommand
