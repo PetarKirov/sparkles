@@ -32,6 +32,7 @@ module sparkles.ui_tui.session;
 
 import sparkles.tui : Grid, ImagePlacement, PosixEvents, Terminal, TerminalOptions;
 import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSize;
+import sparkles.base.term_replies : applyReplies, TerminalReplies;
 import sparkles.ui.geometry : Size;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
@@ -52,10 +53,10 @@ struct TerminalRequest
     /// Any-event tracking (1003) rather than drag-only (1002), so bare motion
     /// reports too — what a hover affordance needs, at one event per move.
     bool motion;
-    /// Ask the terminal which image protocol it draws (`CAP3`'s `images`
-    /// row) before the first frame. Off by default: see
-    /// $(REF Terminal.probeImages, sparkles,tui,terminal).
-    bool probeImages;
+    /// Ask the terminal what it can do (`CAP3`) before the first frame: the
+    /// query battery, fenced by DA1. Off by default: see
+    /// $(REF Terminal.probe, sparkles,tui,terminal).
+    bool probe;
 }
 
 /**
@@ -91,6 +92,10 @@ struct TerminalSession
     /// terminal draws kitty images. Empty by default.
     ImagePlacement[] placements;
 
+    /// What the terminal answered, when the session asked (`TerminalRequest.probe`)
+    /// — every row of the battery, the input modes it does not apply included.
+    TerminalReplies replies;
+
     // Input that arrived during the probe, for whichever reader goes first.
     private ubyte[] typedAhead;
 
@@ -108,11 +113,18 @@ struct TerminalSession
         s.events = PosixEvents.start();
         s.opened = true;
         auto caps = detectTermCaps();
-        if (r.probeImages)
+        if (r.probe)
         {
-            // Kitty or sixel — both are drawn (`IMG5`); a sixel answer the
-            // terminal cannot size is already `none`.
-            caps.images = s.term.probeImages();
+            // The answers' output rows — depth, sync, graphemes, scheme
+            // reports, images, the cell size — onto the environment's
+            // snapshot, by the one mapping presets use too. The image
+            // protocol is the one the terminal will actually draw: a sixel
+            // answer it cannot size is `none`.
+            s.replies = s.term.probe();
+            applyReplies(caps, s.replies);
+            caps.images = s.term.imageProtocol;
+            const px = s.term.cellPixels();
+            caps.cellPixelSize = px.width != 0 && px.height != 0;
             s.typedAhead = s.term.takeTypedAhead();
         }
         s.target = sessionCapabilities(caps);

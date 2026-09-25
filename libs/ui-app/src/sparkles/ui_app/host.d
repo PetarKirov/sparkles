@@ -105,13 +105,14 @@ struct RunConfig
     */
     bool keyRelease;
     /**
-    TUI: ask the terminal which image protocol it draws before the first
-    frame (`CAP3`, the `images` row) — a query and a DA1 fence, bounded by a
-    short timeout — so images reach it as pictures rather than cell rasters.
-    Off by default: it puts query bytes on the wire at startup, and a
-    terminal that answers nothing costs the timeout.
+    TUI: ask the terminal what it can do before the first frame (`CAP3`) — the
+    query battery, fenced by DA1, bounded by a short timeout — so the target
+    declares what the terminal answered: 24-bit colour, synchronized output,
+    grapheme clustering, scheme reports, and images as pictures rather than
+    cell rasters. Off by default: it puts query bytes on the wire at startup,
+    and a terminal that answers nothing costs the timeout.
     */
-    bool probeImages;
+    bool probeTerminal;
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
     PointerUnit pointerUnit;    /// what pointer positions are measured in (`HST18`)
