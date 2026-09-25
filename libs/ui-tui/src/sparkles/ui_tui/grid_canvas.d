@@ -1567,12 +1567,12 @@ static assert(isCanvas!GridCanvas);
     assert(g[0, 0].style.bg.rgb == RgbColor(0, 0, 200));
 
     // The same frame declared as `full` (a protocol) still rasters: the grid
-    // has no protocol channel, so the cell ladder is what it can do — in
-    // sextants, the finest block raster `full`'s octant tier holds.
+    // has no protocol sink here, so the cell ladder is what it can do — in
+    // octants, `full`'s tier, where two pixels fill exactly the top half.
     Grid f;
     f.resize(6, 1);
     paintGrid(f, RgbColor(0, 0, 0), [op], caps: capabilitiesOf(Profile.full), images: &reg);
-    assert(f[0, 0].grapheme == "\U0001FB02", "SEXTANT-12: the top third lit");
+    assert(f[0, 0].grapheme == "▀", "octants 1–4: the top half, as the table draws it");
 
     const wide = imageOp(Rect(0, 0, 6, 1), h, ImageFit.fill, "flag");
     Grid b;

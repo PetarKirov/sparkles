@@ -48,9 +48,13 @@ GlyphNeed needOf(dchar g)
         return GlyphNeed.blocksQuadrant;
     if (g >= 0x2580 && g <= 0x2595)
         return GlyphNeed.blocksHalf;
-    if (g >= 0x1FB00 && g <= 0x1FB3B)
+    // The sextants, and the quarter blocks of the same Unicode 13 block the
+    // octant raster borrows (a font with one has the other).
+    if (g >= 0x1FB00 && g <= 0x1FB3B || g == 0x1FB82 || g == 0x1FB85
+        || g == 0x1FBE6 || g == 0x1FBE7)
         return GlyphNeed.blocksSextant;
-    if (g >= 0x1CD00 && g <= 0x1CDE5)
+    // The octants, and the Unicode 16 quarter blocks they draw corners with.
+    if (g >= 0x1CD00 && g <= 0x1CDE5 || g >= 0x1CEA0 && g <= 0x1CEAF)
         return GlyphNeed.blocksOctant;
     if (g >= 0x2800 && g <= 0x28FF)
         return GlyphNeed.braille;

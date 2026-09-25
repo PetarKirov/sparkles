@@ -286,7 +286,7 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                         glyphs(i.alt);
                         break;
                     case ImageRung.braille, ImageRung.halfBlocks,
-                            ImageRung.quadrants, ImageRung.sextants:
+                            ImageRung.quadrants, ImageRung.sextants, ImageRung.octants:
                         r.note(Substitution.imageRastered);
                         color();
                         break;
