@@ -1,0 +1,6 @@
+name "effects-direct"
+description "Direct-style algebraic effects prototype"
+authors "Sparkles"
+copyright "Copyright © 2026, Sparkles"
+license "MIT"
+targetType "library"

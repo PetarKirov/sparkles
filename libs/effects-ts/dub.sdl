@@ -1,0 +1,6 @@
+name "effects-ts"
+description "Effect-TS style algebraic effects prototype"
+authors "Sparkles"
+copyright "Copyright © 2026, Sparkles"
+license "MIT"
+targetType "library"
