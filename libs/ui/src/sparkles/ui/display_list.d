@@ -122,26 +122,37 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     final switch (node.kind) with (WidgetKind)
     {
         case text:
+            // A painter takes a run's advance from the text itself, so a run
+            // longer than the width layout gave it would paint over whatever
+            // lies beside it — a border, a scrollbar, the next cell of a row.
+            // Layout shrinks an overfull row's text below its natural width;
+            // the cut to that width happens here, once, for every backend.
+            import sparkles.ui.geometry : takeCells;
+
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
-                ops.textRun(rect, node.text, node.slot, vis);
+                ops.textRun(rect, takeCells(node.text, rect.width), node.slot,
+                    vis);
                 break;
             }
             // A wrapped run: one op per broken line, stacked down the frame.
-            // Each op keeps the node's allocated content width (the painters
-            // take their advance from the text itself).
             const inner = rect.deflate(node.padding);
             foreach (li, ln; lines)
                 ops.textRun(
                     Rect(inner.x, inner.y + cast(int) li, inner.width, 1),
-                    ln, node.slot, vis);
+                    takeCells(ln, inner.width), node.slot, vis);
             break;
         case rich:
             // One op per styled span, advancing along the row (one row per
             // wrapped line); each span resolves its own slot/chrome against
             // the node's as fallback, and a `paintBackground` span (an inline
             // pill) fills its cells first.
+            //
+            // Unlike a plain run, spans are NOT cut to the frame: a rich row is
+            // a content line, and a line wider than its pane is scrolled into
+            // view by the enclosing clip and offset (hue's raw view sizes its
+            // horizontal bar from exactly this overflow).
             import sparkles.ui.geometry : cellsOf;
             import sparkles.ui.style : TextStyle;
             import sparkles.ui.widget : TextSpan;
@@ -450,6 +461,45 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     assert(ops[1].kind == OpKind.textRun && ops[1].text == "one");
     assert(ops[2].kind == OpKind.textRun && ops[2].text == "two");
     assert(ops[3].kind == OpKind.popClip);
+}
+
+@("ui.display_list.textIsCutToTheWidthLayoutGaveIt")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.wrap : TextWrap;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    // An overfull row — a label and a value in 12 cells that want 18 — and
+    // a wrapped run with a word longer than its line. Layout shrinks the
+    // value and lets the word overflow; neither op may paint past its frame,
+    // or it lands on whatever is beside it (the gallery's panel border).
+    auto b = Builder();
+    const label = b.add(Widget(kind: WidgetKind.text, text: "tier  "));
+    const value = b.add(Widget(kind: WidgetKind.text, text: "interactive!"));
+    const row = b.add(Widget(kind: WidgetKind.row, children: [label, value],
+        width: SizeSpec.fixed(12)));
+    const para = b.add(Widget(kind: WidgetKind.text, text: "a unbreakable",
+        wrap: TextWrap.greedy, width: SizeSpec.fixed(6)));
+    auto tree = b.finish(b.add(Widget(kind: WidgetKind.column,
+        children: [row, para])));
+
+    auto frames = layout(tree);
+    auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+
+    import sparkles.ui.geometry : cellsOf;
+
+    foreach (ref op; ops)
+        if (op.kind == OpKind.textRun)
+            assert(cellsOf(op.text) <= op.rect.width, op.text);
+    const v = frames[value].rect;
+    assert(v.width < cellsOf("interactive!"), "the row was overfull");
+    assert(ops[1].kind == OpKind.textRun
+        && ops[1].text == "interactive!"[0 .. v.width]);
+    assert(ops[$ - 1].text == "unbrea", "the long word is cut at its line");
 }
 
 @("ui.display_list.richTextEmitsOneRunPerSpan")
