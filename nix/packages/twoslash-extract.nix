@@ -64,10 +64,15 @@
               pkgs.gitMinimal
             ];
             importPaths = "${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos";
+            # The device side of a `@compute` module (TGT3); Linux only.
+            ldcImportPaths =
+              lib.optionalString (config.packages ? ldc-import-paths)
+                "--set-default SPARKLES_LDC_IMPORT_PATH ${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos";
           in
           ''
             wrapProgram $out/bin/${finalAttrs.pname} \
               --set-default SPARKLES_DMD_IMPORT_PATH ${importPaths} \
+              ${ldcImportPaths} \
               --prefix PATH : ${path}
           '';
 

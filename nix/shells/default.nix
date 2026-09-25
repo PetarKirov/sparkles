@@ -383,6 +383,13 @@
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
         export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
 
+        ${lib.optionalString (config.packages ? ldc-import-paths) ''
+          # The dcompute LDC's druntime/phobos sources, for sparkles:dmd-lsp's
+          # LDC profiles — shader (device) code imports `ldc.dcompute` (TGT3).
+          # Linux only; tests skip when unset.
+          export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
+        ''}
+
         ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           # libdw/libelf (elfutils), libpfm, libkqueue — for `dub run --single`
           # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
