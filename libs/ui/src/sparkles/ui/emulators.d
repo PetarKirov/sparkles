@@ -11,9 +11,10 @@ $(LIST
         `query-probe.d`; research branch `research/term-capabilities` at
         `9ee7df44`), transcribed verbatim onto the member as a $(LREF replies)
         UDA;
-    * $(LREF fromReplies), the one pure mapping from replies to flags. It reads
-        answers, never a name, so it is the same function a runtime probe
-        would feed (`CAP3`: capabilities come from answers, not identity).
+    * $(LREF fromReplies), which reads answers, never a name, through the one
+        mapping a live probe feeds too
+        ($(REF applyReplies, sparkles,base,term_replies); `CAP3`: capabilities
+        come from answers, not identity).
 )
 
 Only what the battery asks is claimed from it: color depth, synchronized
@@ -31,60 +32,23 @@ module sparkles.ui.emulators;
 
 import std.traits : EnumMembers, getUDAs;
 
-import sparkles.base.term_caps : BlockTier, ImageProtocol;
+import sparkles.base.term_caps : BlockTier, ImageProtocol, TermCaps;
 import sparkles.base.term_color : classifyColorDepth, ColorDepth;
-import sparkles.input.tier : InteractionTier;
-import sparkles.ui.tokens : meet, TargetCapabilities;
+import sparkles.base.term_replies : applyReplies, available, ModeReply, TcapReply,
+    TerminalReplies;
+import sparkles.ui.tokens : meet, TargetCapabilities, terminalCapabilities;
 import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
     wireNames;
 
-/// One `DECRPM` reply to a `DECRQM` mode query, or its absence — the
-/// default, as a row that does not name a mode recorded no reply for it.
-enum ModeReply : ubyte
-{
-    none,             /// no reply before the DA1 fence
-    notRecognized,    /// `0`
-    set,              /// `1`
-    reset,            /// `2` — recognized, and the application may set it
-    permanentlySet,   /// `3`
-    permanentlyReset, /// `4`
-}
-
-/// `true` iff the mode is on or can be turned on.
-bool available(ModeReply m) @safe pure nothrow @nogc
-    => m == ModeReply.set || m == ModeReply.reset
-        || m == ModeReply.permanentlySet;
-
-/// One `XTGETTCAP` reply.
-enum TcapReply : ubyte
-{
-    none,    /// no reply before the fence
-    valid,   /// the capability was answered
-    invalid, /// the terminal answered that it has no such capability
-}
-
 /**
-What one emulator answered the query battery with — a row of the matrix,
-columns in its order, the ones this module maps and nothing else. The strings
-are the replies' own bytes.
+What one emulator answered the query battery with: a row's label, and the
+answers themselves in the vocabulary a live probe records them in
+($(REF TerminalReplies, sparkles,base,term_replies)).
 */
 struct replies
 {
-    string measured;     /// the row's label: emulator, version and platform
-    string term;         /// `$TERM` inside the emulator
-    string colorterm;    /// `$COLORTERM`, empty when unset
-    string da1;          /// primary DA's parameters, empty when unanswered
-    bool kittyKeyboard;  /// the kitty keyboard query (`CSI ? u`) was answered
-    ModeReply paste;     /// mode 2004
-    ModeReply sync;      /// mode 2026
-    ModeReply graphemes; /// mode 2027
-    ModeReply scheme;    /// mode 2031
-    TcapReply rgb;       /// `XTGETTCAP RGB`
-    TcapReply tc;        /// `XTGETTCAP Tc`
-    bool kittyGraphics;  /// the kitty graphics query was answered `OK`
-    /// `$TMUX`, `$STY` or `$ZELLIJ` was set: the replies are a multiplexer's,
-    /// and describe the host terminal only where it relays them (`CAP7`).
-    bool multiplexer;
+    string measured;         /// the row's label: emulator, version and platform
+    TerminalReplies answers; /// the replies, and the environment they came with
 }
 
 /**
@@ -102,92 +66,92 @@ Rows not in the case study's matrix were collected with its probe
 @WireCase(CaseStyle.kebabCase)
 enum Emulator : ubyte
 {
-    @replies("XTerm 403 (Linux)", term: "xterm", da1: "64;1;2;6;9;15;16;17;18;21;22;28;29",
+    @replies("XTerm 403 (Linux)", TerminalReplies(term: "xterm", da1: "64;1;2;6;9;15;16;17;18;21;22;28;29",
         paste: ModeReply.reset, sync: ModeReply.notRecognized,
         graphemes: ModeReply.notRecognized, scheme: ModeReply.notRecognized,
-        rgb: TcapReply.valid, tc: TcapReply.invalid)
+        rgb: TcapReply.valid, tc: TcapReply.invalid))
     xterm,
 
-    @replies("Apple Terminal (macOS 26.3)", term: "xterm-256color", colorterm: "truecolor",
-        da1: "1;2")
+    @replies("Apple Terminal (macOS 26.3)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
+        da1: "1;2"))
     appleTerminal,
 
-    @replies("iTerm2 3.6.10 (macOS)", term: "xterm-256color", colorterm: "truecolor",
+    @replies("iTerm2 3.6.10 (macOS)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
         da1: "64;1;2;4;6;17;18;21;22;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.permanentlyReset, scheme: ModeReply.reset,
-        rgb: TcapReply.valid, tc: TcapReply.invalid, kittyGraphics: true)
+        rgb: TcapReply.valid, tc: TcapReply.invalid, kittyGraphics: true))
     iterm2,
 
-    @replies("Alacritty 0.16.1 (Linux)", term: "alacritty", colorterm: "truecolor",
+    @replies("Alacritty 0.16.1 (Linux)", TerminalReplies(term: "alacritty", colorterm: "truecolor",
         da1: "6", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset,
-        graphemes: ModeReply.notRecognized, scheme: ModeReply.notRecognized)
+        graphemes: ModeReply.notRecognized, scheme: ModeReply.notRecognized))
     alacritty,
 
     // foot.txt
-    @replies("foot 1.25.0 (Linux, headless cage)", term: "foot", colorterm: "truecolor",
+    @replies("foot 1.25.0 (Linux, headless cage)", TerminalReplies(term: "foot", colorterm: "truecolor",
         da1: "62;4;22;28;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.set, scheme: ModeReply.reset,
-        rgb: TcapReply.valid, tc: TcapReply.valid)
+        rgb: TcapReply.valid, tc: TcapReply.valid))
     foot,
 
-    @replies("WezTerm 2025-10-14 (Linux)", term: "xterm-256color", colorterm: "truecolor",
+    @replies("WezTerm 2025-10-14 (Linux)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
         da1: "65;4;6;18;22;52",
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.permanentlySet, scheme: ModeReply.notRecognized,
-        rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true)
+        rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true))
     wezterm,
 
-    @replies("kitty 0.44.0 (Linux)", term: "xterm-kitty", colorterm: "truecolor",
+    @replies("kitty 0.44.0 (Linux)", TerminalReplies(term: "xterm-kitty", colorterm: "truecolor",
         da1: "62;52;", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.notRecognized, scheme: ModeReply.reset,
-        rgb: TcapReply.invalid, tc: TcapReply.valid, kittyGraphics: true)
+        rgb: TcapReply.invalid, tc: TcapReply.valid, kittyGraphics: true))
     kitty,
 
-    @replies("Ghostty 1.3.1 (Linux, macOS 26.3)", term: "xterm-ghostty",
+    @replies("Ghostty 1.3.1 (Linux, macOS 26.3)", TerminalReplies(term: "xterm-ghostty",
         colorterm: "truecolor", da1: "62;22;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.set, scheme: ModeReply.reset,
-        rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true)
+        rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true))
     ghostty,
 
     // The matrix row, then tmux-foot.txt and tmux-ghostty.txt: tmux answers
     // alike under every host, sixel attribute included — even in Ghostty,
     // which draws no sixel.
-    @replies("tmux 3.6a (detached, or on a bare pty)", term: "tmux-256color",
+    @replies("tmux 3.6a (detached, or on a bare pty)", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4",
-        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true)
-    @replies("tmux 3.6a in foot 1.25.0", term: "tmux-256color",
+        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true))
+    @replies("tmux 3.6a in foot 1.25.0", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4",
-        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true)
-    @replies("tmux 3.6a in Ghostty 1.3.1", term: "tmux-256color",
+        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true))
+    @replies("tmux 3.6a in Ghostty 1.3.1", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4",
-        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true)
+        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true))
     tmux,
 
     // zellij-bare.txt, zellij-foot.txt, zellij-ghostty.txt: zellij's image
     // answers follow its host — kitty graphics in Ghostty, refused in foot,
     // and both protocols claimed with no host at all.
-    @replies("zellij 0.45.1 on a bare pty", term: "xterm-256color", colorterm: "truecolor",
+    @replies("zellij 0.45.1 on a bare pty", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
         da1: "62;4;52", kittyKeyboard: true,
         paste: ModeReply.none, sync: ModeReply.reset,
         graphemes: ModeReply.none, scheme: ModeReply.reset,
         rgb: TcapReply.invalid, tc: TcapReply.invalid, kittyGraphics: true,
-        multiplexer: true)
-    @replies("zellij 0.45.1 in foot 1.25.0", term: "foot", colorterm: "truecolor",
+        multiplexer: true))
+    @replies("zellij 0.45.1 in foot 1.25.0", TerminalReplies(term: "foot", colorterm: "truecolor",
         da1: "62;4;52", kittyKeyboard: true,
         paste: ModeReply.none, sync: ModeReply.reset,
         graphemes: ModeReply.none, scheme: ModeReply.reset,
-        rgb: TcapReply.invalid, tc: TcapReply.invalid, multiplexer: true)
-    @replies("zellij 0.45.1 in Ghostty 1.3.1", term: "xterm-ghostty", colorterm: "truecolor",
+        rgb: TcapReply.invalid, tc: TcapReply.invalid, multiplexer: true))
+    @replies("zellij 0.45.1 in Ghostty 1.3.1", TerminalReplies(term: "xterm-ghostty", colorterm: "truecolor",
         da1: "62;52", kittyKeyboard: true,
         paste: ModeReply.none, sync: ModeReply.reset,
         graphemes: ModeReply.none, scheme: ModeReply.reset,
         rgb: TcapReply.invalid, tc: TcapReply.invalid, kittyGraphics: true,
-        multiplexer: true)
+        multiplexer: true))
     zellij,
 }
 
@@ -209,55 +173,32 @@ static immutable replies[][] emulatorReplies = () {
     return t;
 }();
 
-/// `true` iff primary DA's parameters list `attribute` after the class —
-/// the first parameter is the device class, never an attribute.
-private bool listsAttribute(in char[] da1, in char[] attribute) @safe pure nothrow @nogc
-{
-    size_t start, field;
-    foreach (i; 0 .. da1.length + 1)
-        if (i == da1.length || da1[i] == ';')
-        {
-            if (field++ > 0 && da1[start .. i] == attribute)
-                return true;
-            start = i + 1;
-        }
-    return false;
-}
-
 /**
-What a set of replies declares — the only facts the battery answers:
-
-$(LIST
-    * color depth: `$COLORTERM`/`$TERM` as `detectTermCaps` classifies them,
-        raised to 24-bit when `XTGETTCAP` answers `RGB` or `Tc`;
-    * `syncOutput`, `graphemeClusters`, `colorSchemeNotify` and bracketed
-        paste when their mode is on or can be set;
-    * key releases when the kitty keyboard protocol answers;
-    * kitty images when the graphics query answers, else sixel when DA1
-        lists attribute `4` — but not under a multiplexer (`CAP7`), where the
-        attribute is a static advertisement, not a confirmed passthrough:
-        tmux lists it inside Ghostty, which draws no sixel. The graphics
-        query is a round trip, so it stands.
-)
+What a set of replies declares: the environment they came with, as
+`detectTermCaps` classifies it, with the answers applied by
+$(REF applyReplies, sparkles,base,term_replies) — the same mapping a live
+probe feeds, so a preset is what the probe would declare in that emulator —
+plus the input modes a previewed application would negotiate where the
+emulator answered for them: bracketed paste, focus reports, and the kitty
+keyboard (key releases).
 
 Everything else stays off; $(LREF capabilitiesOf) adds the shared floor.
 */
-TargetCapabilities fromReplies(in replies r) @safe pure nothrow @nogc
+TargetCapabilities fromReplies(in TerminalReplies r) @safe pure nothrow @nogc
 {
-    TargetCapabilities c;
-    c.colorDepth = r.rgb == TcapReply.valid || r.tc == TcapReply.valid
-        ? ColorDepth.trueColor : classifyColorDepth(r.colorterm, r.term);
-    c.syncOutput = r.sync.available;
-    c.graphemeClusters = r.graphemes.available;
-    c.colorSchemeNotify = r.scheme.available;
-    c.images = r.kittyGraphics ? ImageProtocol.kitty
-        : !r.multiplexer && listsAttribute(r.da1, "4") ? ImageProtocol.sixel
-        : ImageProtocol.none;
-    c.input.tier = InteractionTier.interactive;
-    c.input.pasteEvents = r.paste.available;
-    c.input.keyRelease = r.kittyKeyboard;
-    return c;
+    TermCaps t;
+    t.tty = true;
+    t.colorDepth = classifyColorDepth(r.colorterm, r.term);
+    applyReplies(t, r);
+    t.bracketedPaste = r.paste.available;
+    t.focusReporting = r.focus.available;
+    t.kittyKeyboard = r.kittyKeyboard;
+    return terminalCapabilities(t);
 }
+
+/// ditto — a recorded row.
+TargetCapabilities fromReplies(in replies r) @safe pure nothrow @nogc
+    => fromReplies(r.answers);
 
 /**
 An emulator's declaration: what every row recorded for it declares
@@ -384,16 +325,14 @@ unittest
 {
     // No reply at all is the bare pty: a tier of color from the environment
     // and nothing else — the mapping has no name to lean on.
-    replies bare = {measured: "no emulator", term: "xterm-256color",
-        paste: ModeReply.none, sync: ModeReply.none,
-        graphemes: ModeReply.none, scheme: ModeReply.none};
+    TerminalReplies bare = {term: "xterm-256color"};
     const c = fromReplies(bare);
     assert(c.colorDepth == ColorDepth.ansi256);
     assert(!c.syncOutput && !c.graphemeClusters && !c.colorSchemeNotify);
     assert(c.images == ImageProtocol.none && !c.input.pasteEvents);
 
     // The permanent answers: 3 is on, 4 is off for good.
-    replies r = bare;
+    TerminalReplies r = bare;
     r.graphemes = ModeReply.permanentlySet;
     assert(fromReplies(r).graphemeClusters);
     r.graphemes = ModeReply.permanentlyReset;
@@ -460,23 +399,35 @@ unittest
 @("ui.emulators.rowsAreTheirTranscripts")
 @system unittest
 {
-    import std.algorithm.searching : canFind, findSplit, startsWith;
+    import std.algorithm.searching : findSplit, startsWith;
+    import std.array : replace;
     import std.string : lineSplitter, strip;
+    import sparkles.base.term_replies : parseReplies;
     import sparkles.ui.test_utils : readFromTestDir;
 
-    // The rows collected for this module are transcribed from the probe's
-    // own reports, checked in beside it: each is re-read here, so a row
-    // cannot drift from its evidence.
-    static replies parse(string report)
+    // `O5`: the rows collected for this module are the probe reports checked
+    // in beside it — and each report's raw reply bytes are fed here through
+    // the parser a live probe uses, so a row can drift neither from its
+    // evidence nor from what the probe would make of the same bytes.
+    static TerminalReplies parse(string report)
     {
-        static ModeReply mode(string v) =>
-            v == "—" ? ModeReply.none : cast(ModeReply)(v[0] - '0' + 1);
-        static TcapReply tcap(string v) =>
-            v == "—" ? TcapReply.none : v == "invalid" ? TcapReply.invalid : TcapReply.valid;
-
-        replies r;
+        TerminalReplies r;
+        bool raw;
         foreach (line; report.lineSplitter)
         {
+            if (raw)
+            {
+                // The report spells the control bytes out.
+                const bytes = line.replace("ESC", "\x1b").replace("BEL", "\x07");
+                ubyte[] rest;
+                parseReplies(cast(const(ubyte)[]) bytes, r, rest);
+                break;
+            }
+            if (line.startsWith("== Raw response buffer =="))
+            {
+                raw = true;
+                continue;
+            }
             const env = line.findSplit(" = ");
             if (env[1].length && !line.startsWith(" "))
             {
@@ -486,24 +437,6 @@ unittest
                 if (key == "COLORTERM" && set) r.colorterm = value;
                 if ((key == "TMUX" || key == "STY" || key == "ZELLIJ") && set)
                     r.multiplexer = true;
-                continue;
-            }
-            // `query  sent  reply`: the reply starts at the report's column 37.
-            if (line.length < 37)
-                continue;
-            const q = line[0 .. 17].strip, v = line[37 .. $].strip;
-            switch (q)
-            {
-                case "kitty-kbd":     r.kittyKeyboard = v != "—"; break;
-                case "mode 2004":     r.paste = mode(v); break;
-                case "mode 2026":     r.sync = mode(v); break;
-                case "mode 2027":     r.graphemes = mode(v); break;
-                case "mode 2031":     r.scheme = mode(v); break;
-                case "XTGETTCAP RGB": r.rgb = tcap(v); break;
-                case "XTGETTCAP Tc":  r.tc = tcap(v); break;
-                case "kitty-gfx":     r.kittyGraphics = v == "OK"; break;
-                case "DA1 (fence)":   r.da1 = v == "—" ? "" : v; break;
-                default: break;
             }
         }
         return r;
@@ -521,8 +454,9 @@ unittest
     foreach (ev; evidence)
     {
         auto parsed = parse(readFromTestDir(ev.file));
-        auto row = emulatorReplies[ev.e][ev.row];
-        parsed.measured = row.measured;
+        const row = emulatorReplies[ev.e][ev.row].answers;
+        assert(parsed.fenced, ev.file ~ ": the DA1 fence is in the bytes");
+        parsed.fenced = row.fenced; // a transcribed row does not record the fence
         assert(parsed == row, ev.file);
     }
 }
