@@ -14,16 +14,21 @@ the structured `Diagnostic` model instead of a rendered wire string.
 module sparkles.dmd_lsp.testing;
 
 import sparkles.dmd_lsp.api : AnalyzedModule, Analyzer, AnalyzerConfig, DiagKind;
+import sparkles.dmd_lsp.options : TargetProfile, runtimeImportVariable;
 
 /// An `AnalyzerConfig` for tests; skips the test when the environment cannot
-/// support semantic analysis.
-AnalyzerConfig analyzerConfigForTest(string[] dflags = null) @system
+/// support semantic analysis under `profile` — its runtime variable
+/// (`$SPARKLES_DMD_IMPORT_PATH`, or `$SPARKLES_LDC_IMPORT_PATH` for LDC) is
+/// unset.
+AnalyzerConfig analyzerConfigForTest(string[] dflags = null,
+    TargetProfile profile = TargetProfile.dmd) @system
 {
     import std.process : environment;
 
-    enum reason = "SPARKLES_DMD_IMPORT_PATH not set (enter `nix develop`)";
+    const variable = runtimeImportVariable(profile);
+    const reason = variable ~ " not set (enter `nix develop`)";
 
-    if (!environment.get("SPARKLES_DMD_IMPORT_PATH", "").length)
+    if (!environment.get(variable, "").length)
     {
         // The runner is a `configuration "unittest"` dependency, so it is
         // absent from the plain `library` build this module is also compiled
@@ -37,17 +42,17 @@ AnalyzerConfig analyzerConfigForTest(string[] dflags = null) @system
         else
             throw new Exception(reason);
     }
-    return AnalyzerConfig(dflags: dflags);
+    return AnalyzerConfig(dflags: dflags, profile: profile);
 }
 
 /// Analyzes `source` and asserts its error messages: `expected` are
 /// substrings, one per expected error, matched in order. An empty `expected`
 /// asserts a clean analysis.
 AnalyzedModule checkErrors(string source, string[] expected = null,
-    string[] dflags = null,
+    string[] dflags = null, TargetProfile profile = TargetProfile.dmd,
     string file = __FILE__, size_t line = __LINE__) @system
 {
-    auto analyzer = Analyzer(analyzerConfigForTest(dflags));
+    auto analyzer = Analyzer(analyzerConfigForTest(dflags, profile));
     auto result = analyzer.analyze("test.d", source);
     assertErrors(result, expected, file, line);
     return result;
@@ -67,9 +72,10 @@ inside `Loc.filename`'s file-table search.)
 */
 void withAnalysis(string source, scope void delegate(AnalyzedModule) @system queries,
     string[] expected = null, string[] dflags = null,
+    TargetProfile profile = TargetProfile.dmd,
     string file = __FILE__, size_t line = __LINE__) @system
 {
-    auto analyzer = Analyzer(analyzerConfigForTest(dflags));
+    auto analyzer = Analyzer(analyzerConfigForTest(dflags, profile));
     auto result = analyzer.analyze("test.d", source);
     assertErrors(result, expected, file, line);
     queries(result);
@@ -276,4 +282,66 @@ void checkTip(AnalyzedModule m, uint line, uint col, string expected,
     checkErrors(src, null);
     checkErrors(src, ["assignment to struct rvalue `foo()` is discarded"],
         dflags: ["-edition=2024"]);
+}
+
+@("dmd_lsp.testing.betterCPredefinesItsVersion")
+@system unittest
+{
+    // `-betterC` reaches the params before the predefined set is derived
+    // from them, as on the real compiler.
+    checkErrors(q{
+        version (D_BetterC) {} else static assert(0, "no D_BetterC");
+        version (D_ModuleInfo) static assert(0, "D_ModuleInfo under -betterC");
+    }, null, ["-betterC"]);
+}
+
+@("dmd_lsp.testing.profile.dmdRejectsNarrowVectors")
+@system unittest
+{
+    // The regression direction of `TGT2`: DMD's own x86 rules still apply.
+    checkErrors(q{
+        __vector(float[2]) v;
+    }, ["not supported"]);
+}
+
+@("dmd_lsp.testing.profile.ldcPredefinesAndVectors")
+@system unittest
+{
+    checkErrors(q{
+        version (LDC) {} else static assert(0, "no LDC");
+        version (DigitalMars) static assert(0, "DigitalMars under LDC");
+        version (LDC_DCompute) static assert(0, "LDC_DCompute on the host");
+
+        alias vec2 = __vector(float[2]);
+        alias vec3 = __vector(float[3]);
+        vec2 f(vec2 a, vec2 b) => a * b + a / b - a;
+        vec3 g(vec3 a) => -a * a;
+    }, null, null, TargetProfile.ldc);
+}
+
+@("dmd_lsp.testing.profile.ldcDeviceResolvesDcompute")
+@system unittest
+{
+    // The device profile predefines `LDC_DCompute` and reads `ldc.dcompute`
+    // from the LDC runtime — including the vector-gated `sample`.
+    checkErrors(q{
+        @compute(CompileFor.deviceOnly) module test;
+        import ldc.dcompute;
+
+        version (LDC_DCompute) {} else static assert(0, "no LDC_DCompute");
+
+        alias vec2 = __vector(float[2]);
+        alias vec4 = __vector(float[4]);
+
+        @fragment vec4 shade(@input vec2 uv, Sampler2D tex) => tex.sample(uv);
+    }, null, null, TargetProfile.ldcDevice);
+}
+
+@("dmd_lsp.testing.profile.dcomputeTargetsSelectDevice")
+@system unittest
+{
+    // A flag list copied from a real device build selects the profile.
+    checkErrors(q{
+        version (LDC_DCompute) {} else static assert(0, "no LDC_DCompute");
+    }, null, ["-mdcompute-targets=vulkan-130"], TargetProfile.ldc);
 }
