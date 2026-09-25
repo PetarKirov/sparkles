@@ -203,6 +203,7 @@
         ./nix/packages/build-sparkles-app.nix
         ./nix/packages/default.nix
         ./nix/packages/dmd-import-paths.nix
+        ./nix/packages/ldc-import-paths.nix
         ./nix/packages/dub-builder
         ./nix/packages/fonts.nix
         ./nix/packages/hue.nix
