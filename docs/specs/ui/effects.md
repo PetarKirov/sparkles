@@ -92,9 +92,9 @@ terminals' detection, not ours. `IMG5` is scoped accordingly below.
 `IMG5` was first delivered half: the protocol needed two things the toolkit
 does not own, and both now exist in `sparkles:tui`.
 
-- **Detection.** `Terminal.probeImages` sends the kitty graphics query fenced
+- **Detection.** `Terminal.probe` sends the query battery — the kitty graphics query among it — fenced
   by primary DA and waits for the fence or a short timeout (`CAP3`'s
-  `images` row). It is opt-in (`RunConfig.probeImages`) because it puts
+  `images` row). It is opt-in (`RunConfig.probeTerminal`) because it puts
   bytes on the wire at startup. It skips Apple Terminal, which prints the
   query, and it does not believe DA1's sixel under a multiplexer. Keys typed
   meanwhile are replayed to the input decoder.
