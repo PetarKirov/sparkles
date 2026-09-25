@@ -7,7 +7,8 @@ target reaches, the image keeps the cells layout gave it.
 A target that composites pixels itself, or speaks an image protocol, reaches
 the top rung and never comes here. Below it, the picture is drawn $(I in
 cells): each cell is split into a grid of sub-cells — 1×2 for half blocks,
-2×2 for quadrants, 2×3 for sextants, 2×4 for braille — each sub-cell samples
+2×2 for quadrants, 2×3 for sextants, 2×4 for octants and braille — each
+sub-cell samples
 the image by area, and the cell becomes one glyph whose pattern separates its
 sub-cells into two colours, the glyph's foreground and the cell's background.
 That is two colours per cell, which is what a terminal cell holds.
@@ -16,14 +17,17 @@ $(LREF paintImageRaster) draws through any canvas's `fillRect` and `glyph`,
 the way `paintImagePlaceholder` draws the alt rung, so the terminal and a
 window previewing a narrower target share one routine and cannot drift.
 
-Octants (2×4, Unicode 16) are not a rung yet: their code points are not a
-formula over the pattern, and the table is not in the tree. A target with the
-octant tier rasters in sextants.
+Octants (2×4, Unicode 16) are a table rather than a formula: Unicode encodes
+230 patterns as `BLOCK OCTANT-…` and draws the other 26 with characters that
+already existed. The table is `blockOctantGlyphs`, generated with the rest of
+`sparkles.base.text.unicode_tables` from the pinned Unicode data, where each of
+the 26 is checked by name.
 */
 module sparkles.ui.image_raster;
 
 import sparkles.base.term_caps : BlockTier, ImageProtocol;
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.unicode_tables : blockOctantGlyphs;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.image : fitRect, ImageData, ImageFit;
 import sparkles.ui.style : Visual;
@@ -37,6 +41,7 @@ enum ImageRung : ubyte
     halfBlocks, /// `▀ ▄`: 1×2 per cell
     quadrants,  /// `▘ ▚ ▙ …`: 2×2 per cell
     sextants,   /// the Legacy Computing sextants: 2×3 per cell
+    octants,    /// the Unicode 16 octants: 2×4 per cell
     native,     /// pixels, or a terminal image protocol: not drawn in cells
 }
 
@@ -51,7 +56,9 @@ ImageRung imageRungOf(in TargetCapabilities caps) @safe pure nothrow @nogc
         return ImageRung.native;
     if (!caps.unicode)
         return ImageRung.alt;
-    if (caps.blocks >= BlockTier.sextant)
+    if (caps.blocks == BlockTier.octant)
+        return ImageRung.octants;
+    if (caps.blocks == BlockTier.sextant)
         return ImageRung.sextants;
     if (caps.blocks == BlockTier.quadrant)
         return ImageRung.quadrants;
@@ -69,6 +76,7 @@ Size subCells(ImageRung rung) @safe pure nothrow @nogc
         case ImageRung.halfBlocks: return Size(1, 2);
         case ImageRung.quadrants:  return Size(2, 2);
         case ImageRung.sextants:   return Size(2, 3);
+        case ImageRung.octants:    return Size(2, 4);
         case ImageRung.braille:    return Size(2, 4);
     }
 }
@@ -104,6 +112,8 @@ in (pattern < (1u << (subCells(rung).width * subCells(rung).height)))
             if (pattern == 42) return '▐';
             if (pattern == 63) return '█';
             return cast(dchar)(0x1FB00 + pattern - 1 - (pattern > 21) - (pattern > 42));
+        case ImageRung.octants:
+            return blockOctantGlyphs[pattern];
         case ImageRung.braille:
             // Braille numbers its dots down the left column first (1-2-3),
             // then the right (4-5-6), and the bottom row last (7, 8).
@@ -328,7 +338,9 @@ unittest
 
     TargetCapabilities c = capabilitiesOf(Profile.full);
     c.images = ImageProtocol.none;
-    assert(imageRungOf(c) == ImageRung.sextants, "octants raster as sextants");
+    assert(imageRungOf(c) == ImageRung.octants);
+    c.blocks = BlockTier.sextant;
+    assert(imageRungOf(c) == ImageRung.sextants);
     c.blocks = BlockTier.quadrant;
     assert(imageRungOf(c) == ImageRung.quadrants);
     c.blocks = BlockTier.none;
@@ -349,13 +361,15 @@ unittest
     // admits, so the painter's glyph projection never folds a raster.
     static struct Tier { ImageRung rung; TargetCapabilities caps; }
     TargetCapabilities half = capabilitiesOf(Profile.enhanced);
-    TargetCapabilities quad = half, sext = half, dots;
+    TargetCapabilities quad = half, sext = half, oct = half, dots;
     quad.blocks = BlockTier.quadrant;
     sext.blocks = BlockTier.sextant;
+    oct.blocks = BlockTier.octant;
     dots.unicode = true;
     dots.braille = true;
-    const Tier[4] tiers = [Tier(ImageRung.halfBlocks, half), Tier(ImageRung.quadrants, quad),
-        Tier(ImageRung.sextants, sext), Tier(ImageRung.braille, dots)];
+    const Tier[5] tiers = [Tier(ImageRung.halfBlocks, half), Tier(ImageRung.quadrants, quad),
+        Tier(ImageRung.sextants, sext), Tier(ImageRung.octants, oct),
+        Tier(ImageRung.braille, dots)];
     foreach (t; tiers)
     {
         const sub = subCells(t.rung);
@@ -374,6 +388,14 @@ unittest
     assert(patternGlyph(ImageRung.sextants, 62) == '\U0001FB3B');  // SEXTANT-23456
     assert(patternGlyph(ImageRung.sextants, 20) == '\U0001FB13');  // SEXTANT-35
     assert(patternGlyph(ImageRung.sextants, 22) == '\U0001FB14');  // SEXTANT-235
+    // The octant table's two kinds of entry, against the code chart: an
+    // encoded octant (BLOCK OCTANT-3 is U+1CD00; OCTANT-12345678 is not one
+    // — it is the full block), and the characters it borrows.
+    assert(patternGlyph(ImageRung.octants, 0b0000_0100) == '\U0001CD00');
+    assert(patternGlyph(ImageRung.octants, 0xFF) == '█');
+    assert(patternGlyph(ImageRung.octants, 0b0001_0100) == '\U0001FBE6'); // 3, 5
+    assert(patternGlyph(ImageRung.octants, 0b0000_0011) == '\U0001FB82'); // 1, 2
+    assert(patternGlyph(ImageRung.octants, 0b0000_0101) == '▘');          // 1, 3
     // Braille's dot order: top-left is dot 1, top-right dot 4, the bottom
     // row dots 7 and 8.
     assert(patternGlyph(ImageRung.braille, 0b01) == '⠁');

@@ -10,8 +10,9 @@
  * Generator for `sparkles.base.text.unicode_tables`.
  *
  * Emits East Asian Width (UAX #11), emoji variation-selector bases (UTS #51),
- * and the normalization/case-fold/word-break tables needed by the bounded text
- * analyzer as `@safe pure nothrow @nogc` lookup functions. Property sets use
+ * the normalization/case-fold/word-break tables needed by the bounded text
+ * analyzer as `@safe pure nothrow @nogc` lookup functions, and the glyph for
+ * every 2×4 block-octant pattern (`blockOctantGlyphs`). Property sets use
  * Phobos's `CodepointSet.toSourceCode`; sequence mappings use compact sorted
  * indexes over flat immutable data arrays.
  *
@@ -143,6 +144,7 @@ int main(string[] args)
         ambiguous.toSourceCode("isEastAsianAmbiguous"),
         emojiVsBase.toSourceCode("isEmojiVsBase"),
         analysis.toSourceCode,
+        blockOctantTableSource(unicodeData),
     ].join("\n"));
 
     styledWriteln(i"{green wrote} {cyan $(outFile)}");
@@ -697,13 +699,115 @@ WordBreakClass wordBreakClass(dchar ch) @safe pure nothrow @nogc
     return source.data;
 }
 
+/**
+The glyph for each of the 256 patterns of a 2×4 block cell, as D source.
+
+Unicode 16 encodes 230 patterns as `BLOCK OCTANT-<cells>` (cells numbered
+row by row: 1 2 / 3 4 / 5 6 / 7 8) and draws the other 26 with characters
+that already existed. Those are listed here by pattern and by name, and each
+name is checked against `UnicodeData.txt`, so a wrong code point stops the
+generator instead of drawing the wrong shape.
+*/
+private string blockOctantTableSource(string unicodeData)
+{
+    static struct Borrowed
+    {
+        uint pattern;
+        uint codePoint;
+        string name;
+    }
+
+    static immutable Borrowed[] borrowed = [
+        Borrowed(0, 0x0020, "SPACE"),
+        Borrowed(1, 0x1CEA8, "LEFT HALF UPPER ONE QUARTER BLOCK"),
+        Borrowed(2, 0x1CEAB, "RIGHT HALF UPPER ONE QUARTER BLOCK"),
+        Borrowed(3, 0x1FB82, "UPPER ONE QUARTER BLOCK"),
+        Borrowed(5, 0x2598, "QUADRANT UPPER LEFT"),
+        Borrowed(10, 0x259D, "QUADRANT UPPER RIGHT"),
+        Borrowed(15, 0x2580, "UPPER HALF BLOCK"),
+        Borrowed(20, 0x1FBE6, "MIDDLE LEFT ONE QUARTER BLOCK"),
+        Borrowed(40, 0x1FBE7, "MIDDLE RIGHT ONE QUARTER BLOCK"),
+        Borrowed(63, 0x1FB85, "UPPER THREE QUARTERS BLOCK"),
+        Borrowed(64, 0x1CEA3, "LEFT HALF LOWER ONE QUARTER BLOCK"),
+        Borrowed(80, 0x2596, "QUADRANT LOWER LEFT"),
+        Borrowed(85, 0x258C, "LEFT HALF BLOCK"),
+        Borrowed(90, 0x259E, "QUADRANT UPPER RIGHT AND LOWER LEFT"),
+        Borrowed(95, 0x259B, "QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER LEFT"),
+        Borrowed(128, 0x1CEA0, "RIGHT HALF LOWER ONE QUARTER BLOCK"),
+        Borrowed(160, 0x2597, "QUADRANT LOWER RIGHT"),
+        Borrowed(165, 0x259A, "QUADRANT UPPER LEFT AND LOWER RIGHT"),
+        Borrowed(170, 0x2590, "RIGHT HALF BLOCK"),
+        Borrowed(175, 0x259C, "QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER RIGHT"),
+        Borrowed(192, 0x2582, "LOWER ONE QUARTER BLOCK"),
+        Borrowed(240, 0x2584, "LOWER HALF BLOCK"),
+        Borrowed(245, 0x2599, "QUADRANT UPPER LEFT AND LOWER LEFT AND LOWER RIGHT"),
+        Borrowed(250, 0x259F, "QUADRANT UPPER RIGHT AND LOWER LEFT AND LOWER RIGHT"),
+        Borrowed(252, 0x2586, "LOWER THREE QUARTERS BLOCK"),
+        Borrowed(255, 0x2588, "FULL BLOCK"),
+    ];
+
+    uint[256] table;
+    bool[256] have;
+    string[uint] names;
+    foreach (line; unicodeData.lineSplitter)
+    {
+        auto fields = line.splitter(';');
+        if (fields.empty)
+            continue;
+        const code = parseHex(fields.front);
+        fields.popFront();
+        const name = fields.front;
+        names[code] = name;
+        enum prefix = "BLOCK OCTANT-";
+        if (!name.startsWith(prefix))
+            continue;
+        uint pattern;
+        foreach (c; name[prefix.length .. $])
+            pattern |= 1u << (c - '1');
+        if (have[pattern])
+            throw new Exception(format("two octants for pattern %s", pattern));
+        have[pattern] = true;
+        table[pattern] = code;
+    }
+    foreach (b; borrowed)
+    {
+        if (have[b.pattern])
+            throw new Exception(format("pattern %s is also an octant", b.pattern));
+        const actual = names.get(b.codePoint, "?");
+        if (actual != b.name)
+            throw new Exception(format("U+%04X is %s, not %s", b.codePoint, actual, b.name));
+        have[b.pattern] = true;
+        table[b.pattern] = b.codePoint;
+    }
+    foreach (p, h; have)
+        if (!h)
+            throw new Exception(format("no glyph for pattern %s", p));
+
+    auto source = appender!string;
+    source.put("/// The glyph that draws each 2×4 block pattern: bit `i` is cell `i + 1`\n");
+    source.put("/// of Unicode's row-by-row octant numbering (1 2 / 3 4 / 5 6 / 7 8). 230\n");
+    source.put("/// entries are `BLOCK OCTANT-…`; the other 26 are the older block\n");
+    source.put("/// characters Unicode draws those patterns with.\n");
+    source.put("immutable dchar[256] blockOctantGlyphs = [\n");
+    foreach (p, cp; table)
+    {
+        if (p % 8 == 0)
+            source.put("    ");
+        source.formattedWrite("0x%05X,", cp);
+        source.put(p % 8 == 7 ? "\n" : " ");
+    }
+    source.put("];\n");
+    return source.data;
+}
+
 private string header(string ver)
 {
     return format(`
         // Generated by libs/base/tools/gen_unicode_tables.d — DO NOT EDIT.
         //
         // Unicode %s width, emoji, normalization, folding, combining-class,
-        // and word-break properties used by sparkles' text primitives.
+        // word-break properties, and the block-octant glyphs, used by
+        // sparkles' text primitives and cell rasters.
         // Regenerate by running ./libs/base/tools/gen_unicode_tables.d.
         module sparkles.base.text.unicode_tables;
     `.outdent[1 .. $], ver);
