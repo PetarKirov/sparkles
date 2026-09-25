@@ -85,7 +85,8 @@ depends on what the target can show:
 | Target has                           | The image is drawn as                |
 | ------------------------------------ | ------------------------------------ |
 | an image protocol, or its own pixels | the picture itself                   |
-| sextants (or octants)                | 2×3 blocks per cell: `🬀 🬂 🬇 … ▌ ▐ █` |
+| octants                              | 2×4 blocks per cell: `𜴀 𜴁 … ▘ ▀ █`   |
+| sextants                             | 2×3 blocks per cell: `🬀 🬂 🬇 … ▌ ▐ █` |
 | quadrants                            | 2×2 blocks per cell: `▘ ▚ ▙ ▟ …`     |
 | half blocks                          | 1×2 per cell: `▀ ▄`                  |
 | braille only                         | 2×4 dots per cell: `⠁ ⡀ ⣀ ⣿ …`       |

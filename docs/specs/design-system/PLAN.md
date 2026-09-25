@@ -35,8 +35,8 @@ GUI → mobile. First consumers: `ui-gallery` and the docs site; `hue` and
 
 _Updated at each interruption; one section, not a diary._
 
-- **Checked revision:** `feat/tui-sixel`, stacked on PR #519 (kitty images in
-  the terminal).
+- **Checked revision:** `feat/design-system-octants`, on top of PR #520 (sixel,
+  merged).
 - **Done (M0–M2):** tokens, state overlays, target declarations, the
   degradation report, `ui-gallery --profile`/`--degradations`.
 - **Done (M3):** `sparkles.ui.glyphs` — tiers, the one-cell
@@ -60,17 +60,18 @@ _Updated at each interruption; one section, not a diary._
   protocol rung for kitty (`IMG5`): the opt-in `images` probe (`CAP3`'s first
   query row) and placements beside the grid, checked live in kitty; sixel
   (`sparkles.tui.sixel`), checked live in foot, with `CSI 16 t` for the cell
-  size.
+  size. Octants (`GLY9` full): `blockOctantGlyphs`, generated with the rest
+  of `sparkles.base.text.unicode_tables` by `libs/base/tools/gen_unicode_tables.d`,
+  the 26 borrowed characters checked by name.
 - **Unverified / open:** the sub-cell hairline rule (`GLY2a`); per-role glyph
   preferences beyond marks (`GLY1`); `ACC4` for every focusable inside pages;
   the `CAP2` table audit; the icon table (`GLY4`). From M1: per-state
   attributes/metrics; `actionBar` and the scrollbar onto overlays.
 - **Blockers:** none. M4 needs the brand design exercise (owner, D23).
-- **Next executable actions:** (1) the octant table, so octant targets
-  raster at 2×4; (2) M7's other probe rows on the `images` row's battery and
-  fence, feeding `fromReplies` at run
-  time — the query parsing the transcript test does is the seed; (3) Windows
-  Terminal and the Linux console need a person at the machine; (4) M4, once
-  the owner's design session has happened.
+- **Next executable actions:** (1) M7's other probe rows on the `images`
+  row's battery and fence, feeding `fromReplies` at run time — the query
+  parsing the transcript test does is the seed; (2) Windows Terminal and the
+  Linux console need a person at the machine; (3) M4, once the owner's design
+  session has happened.
 
 → [Overview](./index.md) · [Testing](./testing.md)
