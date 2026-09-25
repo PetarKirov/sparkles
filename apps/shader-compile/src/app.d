@@ -18,10 +18,13 @@ tool wrapped with it and the SPIR-V tools — the one command to run. A caller
 who built that LDC some other way points `$SPARKLES_SHADER_LDC` (or `--ldc`)
 at it and runs `dub run :shader-compile` instead.
 
-$(B Why a table of units rather than arguments.) The shader sources, their
-import roots and their output directory are facts about this repository, and
-a generator that had to be told them on every run would be told wrong
-eventually. Run it from the repository root.
+$(B Why a manifest of units rather than arguments.) The shader sources, their
+import roots, their output directory and the flags the device build passes
+are facts about this repository, and a generator that had to be told them on
+every run would be told wrong eventually. They live in `shader-units.json` at
+the repository root, which `sparkles:dmd-lsp` also reads, so an editor
+analyzes a shader the way this tool compiles it (`TGT6`). Run it from the
+repository root.
 */
 module app;
 
@@ -42,27 +45,44 @@ import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliE
 /// One set of shader sources and where their GLSL goes.
 struct Unit
 {
-    string name;         /// how the command line names it
-    string[] sources;    /// D modules, compiled together (a device module is self-contained)
-    string[] importDirs; /// `-I` roots
-    string outDir;       /// where `<entry>.frag` and `<entry>.es.frag` land
+    string name;          /// how the command line names it
+    string[] sources;     /// D modules, compiled together (a device module is self-contained)
+    string[] importPaths; /// `-I` roots
+    string outDir;        /// where `<entry>.frag` and `<entry>.es.frag` land
 }
 
-/// The repository's shader units.
-immutable Unit[] units = [
-    Unit(
-        name: "effects",
-        sources: [
-            "libs/shader/src/sparkles/shader/attributes.d",
-            "libs/shader/src/sparkles/shader/types.d",
-            "libs/shader/src/sparkles/shader/math.d",
-            "libs/ui/src/sparkles/ui/effect_shaders.d",
-            "libs/ui/shaders/effects.d",
-        ],
-        importDirs: ["libs/shader/src", "libs/ui/src"],
-        outDir: "libs/ui/src/sparkles/ui/shaders",
-    ),
-];
+/// `shader-units.json`: the repository's shader units and the device build's
+/// flags. Paths are repository-relative.
+struct Manifest
+{
+    string target;           /// `-mdcompute-targets=`
+    string[] deviceVersions; /// `-d-version=`, on every unit
+    string[] dflags;         /// further flags, on every unit
+    Unit[] units;            ///
+}
+
+/// Parses the manifest at `path`.
+Manifest loadManifest(string path = "shader-units.json")
+{
+    import std.json : JSONValue, parseJSON;
+
+    static string[] strings(JSONValue v, string key)
+    {
+        string[] items;
+        if (auto member = key in v)
+            foreach (e; member.array)
+                items ~= e.str;
+        return items;
+    }
+
+    auto doc = parseJSON(path.readText);
+    auto manifest = Manifest(doc["target"].str, strings(doc, "deviceVersions"),
+        strings(doc, "dflags"));
+    foreach (u; doc["units"].array)
+        manifest.units ~= Unit(u["name"].str, strings(u, "sources"),
+            strings(u, "importPaths"), u["outDir"].str);
+    return manifest;
+}
 
 struct CliParams
 {
@@ -94,7 +114,14 @@ int main(string[] args)
     const cli = parsed.value;
 
     const ldc = cli.ldc.length ? cli.ldc : environment.get("SPARKLES_SHADER_LDC", "ldc2");
-    immutable(Unit)[] selected = cli.unitNames.length
+    if (!"shader-units.json".exists)
+    {
+        stderr.writeln("shader-compile: no shader-units.json here; run it from the repository root");
+        return 2;
+    }
+    const manifest = loadManifest();
+    const units = manifest.units;
+    const(Unit)[] selected = cli.unitNames.length
         ? units.filter!(u => cli.unitNames.canFind(u.name)).array
         : units[];
     if (selected.length != (cli.unitNames.length ? cli.unitNames.length : units.length))
@@ -106,7 +133,7 @@ int main(string[] args)
     int worst = 0;
     foreach (unit; selected)
     {
-        const r = run(unit, ldc, cli.verify, cli.keep, cli.quiet);
+        const r = run(unit, manifest, ldc, cli.verify, cli.keep, cli.quiet);
         if (r > worst)
             worst = r;
     }
@@ -114,7 +141,7 @@ int main(string[] args)
 }
 
 /// The outcome of one unit: 0 ok, 1 drift or failure, 3 toolchain absent.
-int run(in Unit unit, string ldc, bool verify, bool keep, bool quiet)
+int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, bool quiet)
 {
     const scratch = buildPath(tempDir, "sparkles-shader-compile-" ~ unit.name);
     if (scratch.exists)
@@ -126,11 +153,13 @@ int run(in Unit unit, string ldc, bool verify, bool keep, bool quiet)
 
     // 1. D -> SPIR-V. One invocation for the whole unit: the device module is
     //    one SPIR-V module, and it has no linker to find an import.
-    const spv = buildPath(scratch, unit.name ~ "_vulkan130_64.spv");
-    auto cmd = [ldc, "-O2", "-c", "-m64", "-mdcompute-targets=vulkan-130",
-        "-mdcompute-file-prefix=" ~ unit.name, "-od=" ~ scratch,
-        "-d-version=SparklesShaderDevice", "-preview=in", "-preview=dip1000"]
-        ~ unit.importDirs.map!(d => "-I" ~ d).array ~ unit.sources;
+    // LDC names the module `<prefix>_<target without dashes>_64.spv`.
+    const spv = buildPath(scratch, unit.name ~ "_" ~ manifest.target.replace("-", "") ~ "_64.spv");
+    auto cmd = [ldc, "-O2", "-c", "-m64", "-mdcompute-targets=" ~ manifest.target,
+        "-mdcompute-file-prefix=" ~ unit.name, "-od=" ~ scratch]
+        ~ manifest.deviceVersions.map!(v => "-d-version=" ~ v).array
+        ~ manifest.dflags
+        ~ unit.importPaths.map!(d => "-I" ~ d).array ~ unit.sources;
     const compiled = tryExecute(cmd);
     if (compiled.status != 0)
     {
@@ -343,3 +372,19 @@ private bool isToolchainAbsent(in Run r)
     || r.output.canFind("not built with Vulkan DCompute support")
     || r.output.canFind("Unrecognised or invalid DCompute targets")
     || r.output.canFind("undefined identifier `fragment`");
+
+@("shader-compile.manifest.repository")
+@system unittest
+{
+    import std.path : dirName;
+
+    // The repository's own manifest, whichever directory `dub test` runs in:
+    // every path it names must exist.
+    const root = __FILE_FULL_PATH__.dirName.buildPath("..", "..", "..");
+    const manifest = loadManifest(root.buildPath("shader-units.json"));
+    assert(manifest.target == "vulkan-130");
+    assert(manifest.units.length);
+    foreach (unit; manifest.units)
+        foreach (path; unit.sources ~ unit.importPaths ~ [unit.outDir])
+            assert(root.buildPath(path).exists, path);
+}
