@@ -26,7 +26,7 @@ import expected : Expected, ok, err;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.tui.cell : Cell, CellStyle, Color, Grid;
-import sparkles.tui.input : charEvent, Event, Key, keyEvent, Mods, Point,
+import sparkles.tui.input : charEvent, Event, Key, keyEvent, Mods, NoEvent, Point,
     PointerAction, PointerButton, PointerEvent, PosixEvents;
 import sparkles.tui.terminal : Terminal, TerminalOptions;
 
@@ -391,4 +391,33 @@ unittest
     term.draw(g, null, null);
     const gone = drain(pty.master, rb).idup;
     assert(!gone.canFind("\x1bP") && gone.canFind("\x1b[1;3H"), gone);
+}
+
+@("integration.pty.lateRepliesAreNotKeys")
+@system
+unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    assert(term.active);
+    scope (exit) term.close();
+    char[] rb;
+    drain(pty.master, rb);
+
+    // foot, freshly started, answered after the probe had given up: its
+    // `XTGETTCAP` replies reached the input stream, and were decoded as
+    // Alt+P, `1`, `+`, `r`… Measured. They are a terminal's, and dropped.
+    auto events = PosixEvents.start(pty.slave);
+    feed(pty.master, "\x1bP1+r524742=38\x1b\\\x1b]11;rgb:0/0/0\x07q");
+    Event e;
+    do
+        e = events.next();
+    while (e == Event(NoEvent()));
+    assert(e == charEvent('q'), "the key after the replies, and nothing before it");
 }

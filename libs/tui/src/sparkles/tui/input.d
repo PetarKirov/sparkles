@@ -358,6 +358,26 @@ version (Posix)
             if (!readTimed(intro, escapeTimeout))
                 return keyEvent(Key.escape);
             buf[n++] = intro;
+            // A control string — DCS, APC, OSC, PM, SOS — is a terminal's
+            // reply (to a probe that already gave up, or to someone else's
+            // query), never a keystroke: drop it through its terminator. An
+            // introducer with nothing after it within the window was Alt+key.
+            if (intro == 'P' || intro == '_' || intro == ']' || intro == '^' || intro == 'X')
+            {
+                char c;
+                if (!readTimed(c, escapeTimeout))
+                    return decodeEscape(buf[0 .. 1]);
+                for (bool esc; ; )
+                {
+                    if (esc && c == '\\')
+                        return Event(NoEvent());
+                    if (!esc && c == '\x07')
+                        return Event(NoEvent()); // BEL ends an OSC
+                    esc = c == '\x1b';
+                    if (!readTimed(c, escapeTimeout))
+                        return Event(NoEvent()); // cut off: dropped all the same
+                }
+            }
             if (intro == '[' || intro == 'O')
             {
                 char c;
