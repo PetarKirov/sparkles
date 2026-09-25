@@ -1024,6 +1024,10 @@
           {
             "text": "Dub-Project Context",
             "link": "/specs/dmd-lsp/project"
+          },
+          {
+            "text": "Target Profiles & Device Code",
+            "link": "/specs/dmd-lsp/targets"
           }
         ]
       },

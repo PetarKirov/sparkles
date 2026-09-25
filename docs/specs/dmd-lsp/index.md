@@ -76,12 +76,13 @@ resolved to `line`/`character` against the post-cut display code.
 
 ## Documentation map
 
-| Page                                              | What it covers                                                                                                                                                     |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Overview** (this page)                          | what `sparkles:dmd-lsp` is · architecture · why the fork · milestones · module coverage                                                                            |
-| [Feature requirements](./feature-requirements.md) | the requirement inventory: build & pinning (`BLD`), semantic core (`COR`), type oracle (`TIP`), ddoc (`DOC`), analyzer (`NTN`), extractor (`EXT`)                  |
-| [DDoc test plan](./ddoc.md)                       | the whole DDoc language as a traceable test matrix (`DDC1`–`DDC84`), grounded in `spec/ddoc.dd`; supersedes `DOC3` as the requirement of record for ddoc rendering |
-| [Dub-project context](./project.md)               | analyzing files that belong to a real project (`PRJ`): recipe discovery, `dub describe`, the translation to `AnalyzerConfig`, and the viewer path that consumes it |
+| Page                                              | What it covers                                                                                                                                                                                                 |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Overview** (this page)                          | what `sparkles:dmd-lsp` is · architecture · why the fork · milestones · module coverage                                                                                                                        |
+| [Feature requirements](./feature-requirements.md) | the requirement inventory: build & pinning (`BLD`), semantic core (`COR`), type oracle (`TIP`), ddoc (`DOC`), analyzer (`NTN`), extractor (`EXT`)                                                              |
+| [DDoc test plan](./ddoc.md)                       | the whole DDoc language as a traceable test matrix (`DDC1`–`DDC84`), grounded in `spec/ddoc.dd`; supersedes `DOC3` as the requirement of record for ddoc rendering                                             |
+| [Dub-project context](./project.md)               | analyzing files that belong to a real project (`PRJ`): recipe discovery, `dub describe`, the translation to `AnalyzerConfig`, and the viewer path that consumes it                                             |
+| [Target profiles & device code](./targets.md)     | analyzing as LDC and as the dcompute LDC's device compile (`TGT`): the frontend profile, LDC's runtime, `@compute` shader modules, LDC's device-code rules, and merging a module's host and device diagnostics |
 
 ## Milestones
 
@@ -119,6 +120,10 @@ DMD dependency; Track B needs the fork pin.
 | L26       | B     | Imported-symbol ddoc (`DOC4`) + fork `+ls.3` (complete `typeInfoExp`)                                                                   | full                                                                   |
 | L27       | —     | Tooltip markdown defects: ddoc indentation read as code, unterminated fence                                                             | full                                                                   |
 | L28       | B     | GFM tables + numbered lists; `ditto`; documented unittests as labelled examples; fork `+ls.4` (unittest bodies outside the root module) | full                                                                   |
+| L29       | B     | Target profiles: LDC predefines + LLVM vector model (fork `+ls.5`), LDC runtime (`TGT1`–`TGT4`)                                         | full                                                                   |
+| L30       | B     | `@compute` detection + `shader-units.json` device configuration (`TGT5`, `TGT6`)                                                        | full                                                                   |
+| L31       | B     | LDC's device-code rules + `@fragment` interface checks (`TGT7`, `TGT8`)                                                                 | full                                                                   |
+| L32       | —     | Host + device diagnostics merged in one payload; `twoslash-extract --side` (`TGT9`)                                                     | full                                                                   |
 
 Issue #124's D3 (completions, references) and D4 (JSON-RPC LSP server) are
 follow-on milestones behind the same core.
