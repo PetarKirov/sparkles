@@ -17,7 +17,7 @@ references, the module outline).
 module sparkles.dmd_lsp.api;
 
 public import sparkles.dmd_lsp.diag : Diagnostic, DiagKind, DiagPos;
-public import sparkles.dmd_lsp.options : AnalyzerConfig;
+public import sparkles.dmd_lsp.options : AnalyzerConfig, TargetProfile;
 public import sparkles.dmd_lsp.signature : Abbrev, AbbrevKind, BreakGroup,
     BreakPoint, Contract, ContractKind, EffectSpan, Effects, SigTrust,
     SignatureInfo;
@@ -124,6 +124,15 @@ struct Analyzer
         Module.rootModule = mod;
         if (!_sink.hasErrors)
             fullSemantic(mod);
+
+        // The device build's own pass over `@compute` code (`TGT7`): it runs
+        // after semantic, and only on a tree semantic called sound.
+        if (!_sink.hasErrors && _config.effectiveProfile == TargetProfile.ldcDevice)
+        {
+            import sparkles.dmd_lsp.dcompute : dcomputeSemantic;
+
+            dcomputeSemantic(mod);
+        }
 
         return AnalyzedModule(mod, _sink.diagnostics);
     }

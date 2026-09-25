@@ -345,3 +345,92 @@ void checkTip(AnalyzedModule m, uint line, uint col, string expected,
         version (LDC_DCompute) {} else static assert(0, "no LDC_DCompute");
     }, null, ["-mdcompute-targets=vulkan-130"], TargetProfile.ldc);
 }
+
+// LDC's device-code rules (`TGT7`): the messages are the dcompute LDC's own.
+
+@("dmd_lsp.testing.dcompute.rules")
+@system unittest
+{
+    enum header = "@compute(CompileFor.deviceOnly) module test;\nimport ldc.dcompute;\n";
+    alias device = (string src, string[] expected, string file = __FILE__, size_t line = __LINE__)
+        => checkErrors(header ~ src, expected, null, TargetProfile.ldcDevice, file, line);
+
+    device(q{ int f() { return 1; } }, null);
+    device(q{ int g; }, ["global variables not allowed in `@compute` code"]);
+    device(q{ class C {} }, ["interfaces and classes not allowed in `@compute` code"]);
+    device(q{ void f() { int[int] aa; } },
+        ["associative arrays not allowed in `@compute` code"]);
+    device(q{ int* f() { return new int; } }, ["cannot use `new` in `@compute` code"]);
+    device(q{ void f(ref int[] a) { a ~= 1; } },
+        ["cannot use operator `~=` in `@compute` code"]);
+    device(q{ int[] f(int[] a) { return a ~ a; } },
+        ["cannot use operator `~` in `@compute` code"]);
+    device(q{ void f(ref int[] a) { a.length = 2; } },
+        ["setting `length` in `@compute` code not allowed"]);
+    device(q{ int[] f(int x) { return [x, x]; } },
+        ["array literal in `@compute` code not allowed"]);
+    device(q{ string f() { return "abc"; } },
+        ["string literals not allowed in `@compute` code"]);
+    device(q{ void f(Exception e) { throw e; } }, ["no exceptions in `@compute` code"]);
+    device(q{ int f(int function() g) { return g(); } },
+        ["function pointers and delegates are not allowed in `@compute` code"]);
+    device(q{
+        import core.stdc.stdlib : abs;
+        int f(int x) { return abs(x); }
+    }, ["can only call functions from other `@compute` modules in `@compute` code"]);
+}
+
+@("dmd_lsp.testing.dcompute.allowed")
+@system unittest
+{
+    // What stays legal: `ldc.intrinsics` and `ldc.dcompute` calls, `__ctfe`-
+    // only and host-reflected branches, `static assert` messages, and code
+    // in a `version` branch the compile never takes.
+    checkErrors(q{
+        @compute(CompileFor.deviceOnly) module test;
+        import ldc.dcompute;
+        import ldc.intrinsics : llvm_sqrt;
+
+        static assert(true, "a message the device never sees");
+        version (none) { int neverCompiled; }
+
+        float f(float x)
+        {
+            if (__ctfe)
+            {
+                string s = "compile time only";
+                return s.length;
+            }
+            if (__dcompute_reflect(ReflectTarget.Host))
+            {
+                auto p = new int;
+            }
+            return llvm_sqrt(x);
+        }
+    }, null, null, TargetProfile.ldcDevice);
+}
+
+@("dmd_lsp.testing.dcompute.hostModuleUnchecked")
+@system unittest
+{
+    // A module without `@compute` is host code, even under the device
+    // profile: the rules apply to `@compute` modules only.
+    checkErrors(q{ int g; string s = "fine"; }, null, null, TargetProfile.ldcDevice);
+}
+
+@("dmd_lsp.testing.dcompute.fragmentParameters")
+@system unittest
+{
+    enum header = "@compute(CompileFor.deviceOnly) module test;\nimport ldc.dcompute;\n"
+        ~ "alias vec2 = __vector(float[2]); alias vec4 = __vector(float[4]);\n";
+
+    checkErrors(header ~ q{
+        @fragment vec4 ok(@input vec2 uv, @uniform vec4 tint, Sampler2D tex)
+            => tex.sample(uv) * tint;
+    }, null, null, TargetProfile.ldcDevice);
+
+    checkErrors(header ~ q{
+        @fragment vec4 bad(vec2 uv, Sampler2D tex) => tex.sample(uv);
+    }, ["`@fragment` parameter `uv` must be marked `@input` or `@uniform`, or be a `Sampler2D`"],
+        null, TargetProfile.ldcDevice);
+}
