@@ -1986,6 +1986,37 @@ version (unittest)
     assert(g.s.navCols == navMinCols, "the floor held");
 }
 
+@("ui_gallery.gallery.aSidebarAtItsFloorKeepsItsCaptionsOffTheBorder")
+@safe unittest
+{
+    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.geometry : cellsOf;
+
+    // Dragged to its floor the sidebar is narrower than "Property tree".
+    // The caption used to paint its full length anyway — over the bar's
+    // gutter and the border that closes the pane — because the list's text
+    // runs were cut by nothing narrower than the pane's own clip.
+    Gallery g;
+    auto rec = drive(g, [
+        pointerAt(PointerAction.press, navWidth, 5),
+        pointerAt(PointerAction.drag, 2, 5),
+        pointerAt(PointerAction.release, 2, 5),
+    ], 120, 40);
+    assert(g.s.navCols == navMinCols);
+
+    const listRight = navMinCols - gutterCells;
+    bool sawCut;
+    foreach (ref op; rec.frames[$ - 1].ops)
+        if (op.kind == OpKind.textRun && op.rect.x < listRight
+            && op.rect.y > 0 && op.rect.y < 39)
+        {
+            assert(op.rect.x + cast(int) cellsOf(op.text) <= listRight,
+                op.text);
+            sawCut |= op.text == "Property";
+        }
+    assert(sawCut, "the long caption is there, cut to the list's width");
+}
+
 @("ui_gallery.gallery.draggingTheInspectorDividerKeepsTheCentreFlexible")
 @safe unittest
 {
