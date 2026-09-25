@@ -29,4 +29,4 @@
                      | | grow(n)    take a weighted share of what is left                    | |
                      | | fixed(n)   exactly n cells                                          | |
                      |
- pagesw width moa align A align g gapp paddinv third's visibili+ wider- narrower  ? keys   q qui
+ pages w width mode a align x A align y g gap p padding v third's visibility    ? keys   q quit

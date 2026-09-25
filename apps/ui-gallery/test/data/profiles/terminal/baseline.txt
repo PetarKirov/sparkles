@@ -29,4 +29,4 @@
                      |
                      |
                      |
- pagesn new shelx close shelh prev tabl next tab e keep exited< focus the shell  ? keys   q quit
+ pages n new shell x close shell h prev tab l next tab e keep exited            ? keys   q quit

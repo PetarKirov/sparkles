@@ -29,4 +29,4 @@
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
                      |
- pav ^ > e< coll< tog+ s- stv prevu uU r/ fin nexN preb revep read-e exteO opeC clor reset? keys
+ pages v down ^ up > expand < collapse / fold < toggle / edit + step up         ? keys   q quit

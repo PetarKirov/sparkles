@@ -29,4 +29,4 @@
 [0m                     [0m|[0m [0m|[0m [0mgrow(n)[0m    [0mtake a weighted share of what is left[0m                    [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0mfixed(n)[0m   [0mexactly n cells[0m                                          [0m|[0m [0m|[0m
 [0m                     [0m|[0m                                                                          [0m
-[0m [0;1mpages[0mw width moa align A align g gapp paddinv third's visibili+ wider- narrower[0m  [0m? keys   q qui[0m
+[0m [0;1mpages[0m [0mw width mode[0m [0ma align x[0m [0mA align y[0m [0mg gap[0m [0mp padding[0m [0mv third's visibility[0m    [0m? keys   q quit[0m [0m
