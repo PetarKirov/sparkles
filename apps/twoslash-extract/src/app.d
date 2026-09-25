@@ -14,6 +14,7 @@ import std.stdio : stderr, writeln;
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.dmd_lsp.api : AnalyzerConfig;
+import sparkles.twoslash.protocol : TwoslashReturn;
 
 struct CliParams
 {
@@ -56,6 +57,9 @@ struct CliParams
     @(Option("stdout", description: "Write the payload as one compact JSON line on stdout instead of a file."))
     bool toStdout;
 
+    @(Option("side", description: "Which compilation of a dcompute module to analyze (spec TGT5-TGT9). `auto` (the default) follows the module's `@compute` attribute: a deviceOnly module is analyzed as the dcompute LDC compiles it (`shader-units.json`); a hostAndDevice module as host code, with the device side's errors merged in and every error only one side reports tagged `[host]`/`[device]`. `host` or `device` analyzes that side alone."))
+    string side = "auto";
+
     @(Option("serve", description: "Oracle mode: analyze once, print the lazy payload as line 1 on stdout, then answer `{tip: <nodeIndex>}` JSON-line requests on stdin with the node's resolved content until EOF (spec EXT7)."))
     bool serve;
 }
@@ -85,6 +89,12 @@ int main(string[] args)
         return 2;
     }
     const target = cli.inputs[0];
+
+    if (cli.side != "auto" && cli.side != "host" && cli.side != "device")
+    {
+        stderr.writeln("error: --side must be auto, host or device, not `", cli.side, "`");
+        return 2;
+    }
 
     import std.file : exists, isDir;
 
@@ -125,17 +135,26 @@ private int runServe(in CliParams cli, string samplePath)
     import sparkles.twoslash_d.emit : declareDPayload;
     import sparkles.wired.json : toJSON;
 
+    const source = readText(samplePath);
+    const plan = sidePlan(cli, source);
     AnalyzerConfig config;
-    if (!buildConfig(cli, samplePath, config))
+    if (!buildConfig(cli, samplePath, plan.side, config))
         return 1;
 
-    auto live = LiveTwoslash.start(samplePath, readText(samplePath), config);
+    auto live = LiveTwoslash.start(samplePath, source, config);
     scope (exit) live.shutdown();
     foreach (w; live.result.warnings)
         stderr.writeln("warning: ", samplePath, ": ", w);
 
-    declareDPayload(live.result.payload);
-    auto payloadJson = toJSON(live.result.payload);
+    // The served payload carries the device side's errors too; `origin`
+    // maps its node indices back to the ones the live analysis answers by.
+    auto payload = live.result.payload;
+    size_t[] origin;
+    if (plan.mergeDevice)
+        origin = mergeDeviceSide(cli, samplePath, payload);
+
+    declareDPayload(payload);
+    auto payloadJson = toJSON(payload);
     if (payloadJson.hasError)
     {
         stderr.writeln("error: ", payloadJson.error.toString());
@@ -154,7 +173,12 @@ private int runServe(in CliParams cli, string samplePath)
             if (tipReq is null || tipReq.type != JSONType.integer)
                 throw new Exception("expected {\"tip\": <nodeIndex>}");
             const idx = cast(size_t) tipReq.integer;
-            const tip = live.tipForNode(idx);
+            // A merged-in device error has no live node behind it: an empty tip.
+            const liveIdx = !origin.length ? idx
+                : idx < origin.length ? origin[idx] : size_t.max;
+            const tip = liveIdx == size_t.max
+                ? typeof(live.tipForNode(0)).init
+                : live.tipForNode(liveIdx);
 
             reply["node"] = JSONValue(idx);
             reply["text"] = JSONValue(tip.found
@@ -229,6 +253,8 @@ private int runDirectory(in CliParams cli, string dir)
             child ~= ["--dub-config", cli.dubConfig];
         if (cli.dubBuild.length)
             child ~= ["--dub-build", cli.dubBuild];
+        if (cli.side != "auto")
+            child ~= "--side=" ~ cli.side;
         if (cli.verify)
             child ~= "--verify";
         if (cli.quiet)
@@ -260,13 +286,16 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
         outPath = samplePath.setExtension("twoslash.json");
 
     const source = readText(samplePath);
+    const plan = sidePlan(cli, source);
     AnalyzerConfig config;
-    if (!buildConfig(cli, samplePath, config))
+    if (!buildConfig(cli, samplePath, plan.side, config))
         return 1;
 
     auto result = analyzeTwoslash(samplePath, source, config, cli.lazyHovers);
     foreach (w; result.warnings)
         stderr.writeln("warning: ", samplePath, ": ", w);
+    if (plan.mergeDevice)
+        mergeDeviceSide(cli, samplePath, result.payload);
 
     declareDPayload(result.payload);
 
@@ -275,14 +304,110 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
         : writePayload(cli, samplePath, outPath, result.payload);
 }
 
+/// Which compilation of the sample an analysis stands in for.
+enum Side
+{
+    host,   /// the ordinary (DMD) compile
+    device, /// the dcompute LDC's device compile
+}
+
+/// The analysis a sample gets: which side, and whether the device side's
+/// diagnostics are merged into it (`TGT9`).
+struct SidePlan
+{
+    Side side;        ///
+    bool mergeDevice; ///
+}
+
+/// Resolves `--side` against the sample's `@compute` attribute (`TGT5`).
+SidePlan sidePlan(in CliParams cli, scope const(char)[] source) @safe
+{
+    import sparkles.dmd_lsp.device : ComputeMode, computeModeOf;
+
+    switch (cli.side)
+    {
+        case "host": return SidePlan(Side.host);
+        case "device": return SidePlan(Side.device);
+        default:
+            final switch (computeModeOf(source))
+            {
+                case ComputeMode.none: return SidePlan(Side.host);
+                case ComputeMode.deviceOnly: return SidePlan(Side.device);
+                case ComputeMode.hostAndDevice: return SidePlan(Side.host, mergeDevice: true);
+            }
+    }
+}
+
+@("twoslash-extract.sidePlan")
+@safe unittest
+{
+    const hostAndDevice = "@compute(CompileFor.hostAndDevice) module m;";
+    assert(sidePlan(CliParams(), "module m;") == SidePlan(Side.host));
+    assert(sidePlan(CliParams(), "@compute module m;") == SidePlan(Side.device));
+    assert(sidePlan(CliParams(), hostAndDevice) == SidePlan(Side.host, true));
+    assert(sidePlan(CliParams(side: "device"), hostAndDevice) == SidePlan(Side.device));
+    assert(sidePlan(CliParams(side: "host"), "@compute module m;") == SidePlan(Side.host));
+}
+
+/**
+Analyzes the sample's device side in a child process (`EXT2`: one analysis
+per process) and merges its errors into `payload` (`TGT9`); returns the node
+index mapping `mergeSideDiagnostics` produces.
+
+A device side that cannot be analyzed — no dcompute runtime on this machine,
+say — is a warning, not a failure: the host analysis stands on its own.
+*/
+private size_t[] mergeDeviceSide(in CliParams cli, string samplePath,
+    ref TwoslashReturn payload)
+{
+    import std.file : thisExePath;
+    import std.process : Config, execute;
+
+    import sparkles.twoslash_d.merge : mergeSideDiagnostics;
+    import sparkles.wired.json : fromJSON;
+
+    string[] child = [thisExePath, samplePath, "--side=device", "--stdout",
+        "--lazy", "--quiet"];
+    foreach (p; cli.importPaths)
+        child ~= ["--import", p];
+    if (cli.dflags.length)
+        child ~= "--dflags=" ~ cli.dflags;
+    if (cli.dub)
+        child ~= "--dub";
+    if (cli.dubConfig.length)
+        child ~= ["--dub-config", cli.dubConfig];
+    if (cli.dubBuild.length)
+        child ~= ["--dub-build", cli.dubBuild];
+
+    enum hostOnly = ": the device side could not be analyzed; showing the host side only";
+    const r = execute(child, null, Config.stderrPassThrough);
+    if (r.status != 0)
+    {
+        stderr.writeln("warning: ", samplePath, hostOnly);
+        return null;
+    }
+    auto device = fromJSON!TwoslashReturn(r.output);
+    if (device.hasError)
+    {
+        stderr.writeln("warning: ", samplePath, hostOnly, " (", device.error.toString(), ")");
+        return null;
+    }
+    return mergeSideDiagnostics(payload, "host", device.value, "device");
+}
+
 /**
 Assembles the analysis configuration one way for every mode: explicit
 `--import`/`--dflags` first, then (with `--dub`) the enclosing project's
 settings, then the environment's druntime/phobos tail.
 */
-private bool buildConfig(in CliParams cli, string samplePath,
+private bool buildConfig(in CliParams cli, string samplePath, Side side,
     out AnalyzerConfig config)
 {
+    import std.algorithm.searching : canFind;
+
+    import sparkles.dmd_lsp.device : deviceConfigFor;
+    import sparkles.dmd_lsp.options : runtimeImportPaths;
+
     import std.algorithm.iteration : filter, splitter;
     import std.array : array;
 
@@ -300,9 +425,20 @@ private bool buildConfig(in CliParams cli, string samplePath,
     if (cli.unittests)
         config.dflags ~= "-unittest";
 
-    // `--import` prepends to the environment default rather than replacing it.
+    // The device side is the compile `shader-units.json` describes, not the
+    // dub build (`TGT6`); explicit `--import`s still come first.
+    if (side == Side.device)
+    {
+        auto device = deviceConfigFor(samplePath, config);
+        device.importPaths = cli.importPaths
+            ~ device.importPaths.filter!(p => !cli.importPaths.canFind(p)).array;
+        config = device;
+    }
+
+    // `--import` prepends to the environment default rather than replacing it;
+    // the default is the profile's runtime (DMD's, or the dcompute LDC's).
     if (config.importPaths.length)
-        config.importPaths ~= AnalyzerConfig().effectiveImportPaths;
+        config.importPaths ~= runtimeImportPaths(config.effectiveProfile);
 
     // Reject an environment that cannot analyze *before* touching the frontend:
     // its own answer to a missing `object.d` is `fatal()`, which under the
@@ -310,7 +446,8 @@ private bool buildConfig(in CliParams cli, string samplePath,
     // caller spawning this as an oracle (hue) then sees only a status code.
     import sparkles.dmd_lsp.options : runtimeSourcesProblem;
 
-    if (const problem = runtimeSourcesProblem(config.effectiveImportPaths))
+    if (const problem = runtimeSourcesProblem(config.effectiveImportPaths,
+            config.effectiveProfile))
     {
         stderr.writeln("error: ", problem);
         return false;
