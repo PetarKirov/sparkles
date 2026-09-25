@@ -1,5 +1,9 @@
 {
   "dependencies": {
+    "argparse": {
+      "sha256": "1p3496rcndgaf68mxizfi4wrkf5frgzzfpp9frlvbjnkinizb2q9",
+      "version": "2.0.2"
+    },
     "bolts": {
       "sha256": "1klz02r13r3yq8vcw1gkv39r02vpnv7wlhhb5kkjnybc3s86w1q8",
       "version": "1.3.1"

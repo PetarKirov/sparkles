@@ -1252,6 +1252,28 @@
         ]
       },
       {
+        "text": "Markdown",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/specs/markdown/"
+          },
+          {
+            "text": "Parser Spec",
+            "link": "/specs/markdown/SPEC"
+          },
+          {
+            "text": "Testing Spec",
+            "link": "/specs/markdown/TESTING"
+          },
+          {
+            "text": "Inspect Tree Example Plan",
+            "link": "/specs/markdown/examples/inspect_tree"
+          }
+        ]
+      },
+      {
         "text": "Nix",
         "collapsed": true,
         "items": [
