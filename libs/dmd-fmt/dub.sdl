@@ -15,13 +15,13 @@ importPaths "src"
 // dmd:frontend — parse-only, never fullSemantic. Same pin as libs/dmd-lsp —
 // see docs/specs/dmd-lsp/ (BLD1/BLD2) for the pin and upgrade procedure.
 dependency "dmd:lexer" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
+    version="6bae6e58e6110933db4e92649fe32521dfb47e1a"
 dependency "sparkles:diff" path="../.."
 // The case runner's failure report only: `drawBox` frames each pane and
 // `hjoin` puts them in columns (cases.d). The formatter itself never draws.
 dependency "sparkles:ui" path="../.."
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="c562711dbd4685c4e4f7bd5ff46e1a306c932259"
+    version="6bae6e58e6110933db4e92649fe32521dfb47e1a"
 
 // Deliberately NO -preview=in / -preview=dip1000 (the repo standard): the
 // dmd.* module interfaces this package imports are not dip1000-clean — the
