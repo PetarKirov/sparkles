@@ -259,7 +259,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
     import sparkles.base.term_color : RgbColor;
 
     auto session = TerminalSession.open(TerminalRequest(
-        mouse: cfg.mouse, motion: cfg.motion, probeImages: cfg.probeImages));
+        mouse: cfg.mouse, motion: cfg.motion, probe: cfg.probeTerminal));
     if (!session.active)
         return false;
 

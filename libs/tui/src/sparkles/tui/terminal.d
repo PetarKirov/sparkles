@@ -29,6 +29,7 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : classifyColorDepth, ColorDepth;
 import sparkles.base.term_control : CtlSeq, DecMode, writeEscapeSeq, writeMouseTracking;
 import sparkles.base.term_caps : ImageProtocol, StdStream, terminalSize, TermSize;
+import sparkles.base.term_replies : TerminalReplies;
 
 import sparkles.tui.cell : Grid;
 import sparkles.tui.images : ImagePlacement, KittyImages;
@@ -154,7 +155,7 @@ struct Terminal
     /// hyperlink sequence is emitted.
     ///
     /// `images` are the frame's image placements (`IMG5`), drawn inside the
-    /// same synchronized frame in the protocol $(LREF probeImages) found:
+    /// same synchronized frame in the protocol $(LREF probe) found:
     /// kitty places them over the cells (each transmitted once, placed when
     /// new or moved, deleted when gone —
     /// $(REF KittyImages, sparkles,tui,images)); sixel writes them into the
@@ -206,36 +207,49 @@ struct Terminal
     }
 
     /**
-    Asks the terminal which image protocol it draws (`CAP3`, M7's `images`
-    row) — the kitty graphics query, fenced by primary DA — and waits at most
-    `timeoutMs` for the fence. A terminal that answers nothing costs the
-    timeout and declares `none`.
+    Asks the terminal what it can do (`CAP3`): writes
+    $(REF queryBattery, sparkles,base,term_replies) and reads until the DA1
+    fence or `timeoutMs`, and returns the answers — with the environment they
+    came with (`$TERM`, `$COLORTERM`, and whether a `multiplexer` sits in
+    between; by default $(LREF underMultiplexer)). A terminal that answers
+    nothing costs the timeout and answers nothing. The default is a second,
+    as the capability case study's probe used: the fence ends it as soon as a
+    terminal answers, and a terminal that has just started can take longer
+    than a quarter of one (measured: foot, fresh under a compositor). Replies
+    that arrive after it anyway are dropped by the input decoders, which
+    never read a control string as keys.
 
-    Apple Terminal is not asked: it prints the graphics query's payload as
-    text (the capability case study caught it doing so). Under a
-    `multiplexer` (by default, $(LREF underMultiplexer)) DA1's sixel
-    attribute is not believed (`CAP7`), and sixel is not claimed where the
-    kernel reports no cell pixel size ($(LREF cellPixels)). The answer is
-    also what $(LREF draw) speaks.
+    Not asked at all: Apple Terminal, which prints the queries' payloads as
+    text (the capability case study caught it doing so), and the Linux
+    console, which is not known to swallow them.
+
+    The answers also set what $(LREF draw) speaks: the image protocol
+    $(REF applyReplies, sparkles,base,term_replies) derives from them, except
+    sixel where no cell pixel size is known ($(LREF cellPixels)) — its
+    pixels could not be sized. See $(LREF imageProtocol).
 
     Anything else that arrives meanwhile — a key typed during the probe — is
     kept, and handed to the input decoder by $(LREF takeTypedAhead).
     */
-    ImageProtocol probeImages(int timeoutMs = 250, bool multiplexer = underMultiplexer()) @trusted
+    TerminalReplies probe(int timeoutMs = 1000, bool multiplexer = underMultiplexer()) @trusted
     {
         import core.sys.posix.poll : poll, pollfd, POLLIN;
         import core.sys.posix.unistd : read;
         import core.time : MonoTime, msecs;
-        import sparkles.tui.probe : imageQuery, ImageReplies, splitImageReplies;
+        import sparkles.base.term_caps : TermCaps;
+        import sparkles.base.term_replies : applyReplies, parseReplies, queryBattery;
 
-        if (!_active || env("TERM_PROGRAM") == "Apple_Terminal")
-            return ImageProtocol.none;
+        TerminalReplies r;
+        r.term = env("TERM").idup;
+        r.colorterm = env("COLORTERM").idup;
+        r.multiplexer = multiplexer;
+        if (!_active || env("TERM_PROGRAM") == "Apple_Terminal" || r.term == "linux")
+            return r;
 
-        writeAll(_outFd, imageQuery);
+        writeAll(_outFd, queryBattery);
         const deadline = MonoTime.currTime + timeoutMs.msecs;
         ubyte[] got;
         ubyte[] rest;
-        ImageReplies r;
         for (;;)
         {
             const left = (deadline - MonoTime.currTime).total!"msecs";
@@ -252,7 +266,10 @@ struct Terminal
                 break;
             got ~= chunk[0 .. n];
             rest = null;
-            r = splitImageReplies(got, rest);
+            auto again = TerminalReplies(term: r.term, colorterm: r.colorterm,
+                multiplexer: r.multiplexer);
+            parseReplies(got, again, rest);
+            r = again;
             if (r.fenced)
                 break;
         }
@@ -260,7 +277,10 @@ struct Terminal
             rest = got;
         _typedAhead ~= rest;
         _answeredCell = CellPixels(r.cellWidth, r.cellHeight);
-        auto p = r.protocol(multiplexer);
+
+        TermCaps derived;
+        applyReplies(derived, r);
+        auto p = derived.images;
         // Sixel draws real pixels: without the cell's pixel size there is no
         // way to size one, so the terminal is taken not to draw them.
         if (p == ImageProtocol.sixel)
@@ -270,8 +290,12 @@ struct Terminal
                 p = ImageProtocol.none;
         }
         _protocol = p;
-        return p;
+        return r;
     }
+
+    /// The image protocol $(LREF draw) speaks: what $(LREF probe) found and
+    /// this terminal can draw, `none` before a probe.
+    ImageProtocol imageProtocol() const @safe pure @nogc => _protocol;
 
     /// What arrived on the input stream during a probe that was not a reply,
     /// in order — the caller's input decoder takes it before reading more.
