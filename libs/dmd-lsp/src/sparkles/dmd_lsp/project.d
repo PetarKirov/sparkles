@@ -30,7 +30,7 @@ extractor) pays no analysis cost for it.
 */
 module sparkles.dmd_lsp.project;
 
-import sparkles.dmd_lsp.options : AnalyzerConfig;
+import sparkles.dmd_lsp.options : AnalyzerConfig, runtimeImportPaths;
 
 /// Which view of the project to describe. An empty field means "dub's own
 /// default" — the same settings a plain `dub build` would use (`PRJ3`).
@@ -90,8 +90,9 @@ struct DubProject
     bool usable() const @safe pure nothrow @nogc => found && error.length == 0;
 
     /**
-    `analyzer` plus the frontend-matched druntime/phobos import paths from
-    `$SPARKLES_DMD_IMPORT_PATH` (`PRJ6`).
+    `analyzer` plus the frontend-matched druntime/phobos import paths of its
+    profile — `$SPARKLES_DMD_IMPORT_PATH`, or `$SPARKLES_LDC_IMPORT_PATH` for
+    an LDC profile (`PRJ6`, `TGT3`).
 
     dub reports the project's own sources and its dependencies; it says
     nothing about the runtime the analysis needs, and the two must not be
@@ -99,11 +100,12 @@ struct DubProject
     */
     AnalyzerConfig withRuntimeImports() const @safe
         => AnalyzerConfig(
-            importPaths: analyzer.importPaths ~ AnalyzerConfig().effectiveImportPaths,
+            importPaths: analyzer.importPaths ~ runtimeImportPaths(analyzer.effectiveProfile),
             stringImportPaths: analyzer.stringImportPaths.dup,
             versionIds: analyzer.versionIds.dup,
             debugIds: analyzer.debugIds.dup,
-            dflags: analyzer.dflags.dup);
+            dflags: analyzer.dflags.dup,
+            profile: analyzer.profile);
 }
 
 /**

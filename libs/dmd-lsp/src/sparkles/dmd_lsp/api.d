@@ -61,7 +61,8 @@ struct Analyzer
         import sparkles.dmd_lsp.init_ : dmdGlobalsLock, initAnalyzer;
         import sparkles.dmd_lsp.options : runtimeSourcesProblem;
 
-        if (const problem = runtimeSourcesProblem(config.effectiveImportPaths))
+        if (const problem = runtimeSourcesProblem(config.effectiveImportPaths,
+                config.effectiveProfile))
             throw new Exception(problem);
 
         dmdGlobalsLock.lock();

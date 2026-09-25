@@ -44,14 +44,36 @@ void initAnalyzer(ref DiagnosticSink sink, in AnalyzerConfig config) @system
     import std.algorithm.iteration : each;
     import std.functional : toDelegate;
 
-    import dmd.frontend : addImport, addStringImport, initDMD;
-    import dmd.globals : global;
+    import dmd.cond : VersionCondition;
+    import dmd.frontend : ContractChecks, addImport, addStringImport, initDMD;
+    import dmd.globals : global, Param;
+    import dmd.target : target;
+    import sparkles.dmd_lsp.options : TargetProfile;
 
+    const profile = config.effectiveProfile;
+
+    // The dflags go in through the hook, before the frontend derives its
+    // predefined versions from the params — so `-betterC` yields `D_BetterC`
+    // (and drops `D_ModuleInfo`/`D_TypeInfo`/`D_Exceptions`) as it does on
+    // the real compiler.
     initDMD(
         (const ref loc, headerColor, header, messageFormat, args, p1, p2) nothrow
             => sink.handle(loc, headerColor, header, messageFormat, args, p1, p2),
         null,
-        config.versionIds);
+        config.versionIds,
+        ContractChecks(),
+        profile == TargetProfile.dmd ? "DigitalMars" : "LDC",
+        (ref Param _) { applyDflags(config.dflags); });
+
+    // An LLVM backend lowers every `__vector` shape; DMD's x86 backend only
+    // 16- and 32-byte ones (`TGT2`). The target is a process global that
+    // outlives a session, so the flag is set either way.
+    target.unrestrictedVectors = profile != TargetProfile.dmd;
+    if (profile != TargetProfile.dmd)
+        if (const llvm = ldcLlvmVersionIdent(config.effectiveImportPaths))
+            VersionCondition.addPredefinedGlobalIdent(llvm);
+    if (profile == TargetProfile.ldcDevice)
+        VersionCondition.addPredefinedGlobalIdent("LDC_DCompute");
 
     // Analysis-mode parameters (dmdSetupParams's batch-relevant subset):
     // uncapped diagnostics, no object emission, warnings/deprecations as
@@ -72,7 +94,6 @@ void initAnalyzer(ref DiagnosticSink sink, in AnalyzerConfig config) @system
         global.params.useDeprecated = DiagnosticReporting.inform;
     }
 
-    applyDflags(config.dflags);
     applyDebugIds(config.debugIds);
 
     const importPaths = config.effectiveImportPaths;
@@ -80,6 +101,54 @@ void initAnalyzer(ref DiagnosticSink sink, in AnalyzerConfig config) @system
     config.stringImportPaths.each!addStringImport;
 
     installCPreprocessor(importPaths);
+}
+
+/**
+The `LDC_LLVM_<major>` version identifier LDC predefines for the LLVM it was
+built against, or null when the runtime names none (`TGT4`).
+
+`ldc.intrinsics` refuses to compile without one. The LLVM version is a fact
+about the compiler binary, not its sources, so it is read off the runtime
+the analysis uses: the newest major that `ldc/intrinsics.di` accepts, which
+for a runtime paired with its compiler is the one it was built against.
+*/
+string ldcLlvmVersionIdent(scope const string[] importPaths) @safe
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.searching : maxElement;
+    import std.conv : to;
+    import std.file : exists, readText;
+    import std.path : buildPath;
+    import std.regex : ctRegex, matchAll;
+
+    foreach (dir; importPaths)
+        foreach (name; ["intrinsics.di", "intrinsics.d"])
+        {
+            const path = dir.buildPath("ldc", name);
+            if (!path.exists)
+                continue;
+            auto majors = path.readText
+                .matchAll(ctRegex!`version\s*\(\s*LDC_LLVM_(\d+)\s*\)`)
+                .map!(m => m[1].to!uint);
+            return majors.empty ? null : "LDC_LLVM_" ~ majors.maxElement.to!string;
+        }
+    return null;
+}
+
+@("dmd_lsp.init_.ldcLlvmVersionIdent")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    auto tmp = TmpFS.create("sparkles-dmd-lsp");
+    assert(ldcLlvmVersionIdent([tmp.dir]) is null);
+
+    tmp.writeFileAt("ldc/intrinsics.di", q{
+        version (LDC_LLVM_18) enum LLVM_major = 18;
+        else version (LDC_LLVM_24) enum LLVM_major = 24;
+        else version (LDC_LLVM_9) enum LLVM_major = 9;
+    });
+    assert(ldcLlvmVersionIdent(["/nonexistent", tmp.dir]) == "LDC_LLVM_24");
 }
 
 /**
@@ -209,7 +278,6 @@ out-of-range year is ignored like any other unsupported flag.
 void applyDflags(scope const string[] dflags) @system
 {
     import dmd.astenums : Edition;
-    import dmd.cond : VersionCondition;
     import dmd.globals : FeatureState, global;
     import std.algorithm.searching : startsWith;
     import std.conv : ConvException, to;
@@ -270,14 +338,13 @@ void applyDflags(scope const string[] dflags) @system
                 global.params.useGC = false;
                 break;
             case "-unittest":
-                // The driver does both (`mars.d`): analyze unittest bodies
-                // *and* predefine the `unittest` version identifier. Setting
-                // only the parameter analyzes bodies whose
-                // `version (unittest)` imports never came in — a file that
-                // guards its test-only imports that way (the repo idiom) then
-                // reports every one of them as an undefined identifier.
+                // Analyze unittest bodies. The `unittest` version identifier
+                // follows from the parameter, because `initAnalyzer` applies
+                // dflags before the frontend derives its predefined set —
+                // without it, bodies whose `version (unittest)` imports never
+                // came in (the repo idiom) report every one of them as an
+                // undefined identifier.
                 global.params.useUnitTests = true;
-                VersionCondition.addPredefinedGlobalIdent("unittest");
                 break;
             case "-debug":
                 global.params.debugEnabled = true;
