@@ -53,9 +53,9 @@ now, so `D_BetterC` is predefined and `D_ModuleInfo` is not — the fork's
   DMD host code (`--side=host`), 0 under the default.
 - Every module of the `effects` unit analyzes clean under both sides.
 - A string literal seeded into a `hostAndDevice` module is reported as
-  `[device] string literals not allowed in \`@compute\` code`on the same line
-where`ldc-vulkan`reports`string literals not allowed in \`@compute\`
-  code`.
+  ``[device] string literals not allowed in `@compute` code`` on the same
+  line where `ldc-vulkan` reports ``string literals not allowed in `@compute`
+code``.
 - `shader-compile --verify` is byte-identical (bar the provenance header)
   with the unit taken from `sparkles:ui`'s `shaders` configuration instead
   of a hand-kept table.
