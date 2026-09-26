@@ -32,7 +32,7 @@ module sparkles.ui_tui.session;
 
 import sparkles.tui : Grid, ImagePlacement, PosixEvents, Terminal, TerminalOptions;
 import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSize;
-import sparkles.base.term_replies : applyReplies, TerminalReplies;
+import sparkles.base.term_replies : applyReplies, available, TerminalReplies;
 import sparkles.ui.geometry : Size;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
@@ -125,6 +125,14 @@ struct TerminalSession
             caps.images = s.term.imageProtocol;
             const px = s.term.cellPixels();
             caps.cellPixelSize = px.width != 0 && px.height != 0;
+            // An input mode the terminal answered for is negotiated here, and
+            // only then declared (D35): focus reports. Bracketed paste waits
+            // on a paste event in the input vocabulary (OQ8).
+            if (s.replies.focus.available)
+            {
+                s.term.enableFocusReporting();
+                caps.focusReporting = s.term.focusReporting;
+            }
             s.typedAhead = s.term.takeTypedAhead();
         }
         s.target = sessionCapabilities(caps);

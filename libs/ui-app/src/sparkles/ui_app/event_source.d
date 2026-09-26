@@ -401,3 +401,15 @@ unittest
     a.flush((Event e) { got ~= e; });
     assert(got == [charEvent('P', Mods(alt: true))]);
 }
+
+@("ui_app.assembler.focusReports")
+@safe
+unittest
+{
+    import sparkles.input : FocusEvent;
+
+    // Mode 1004's reports through the ring pump's assembler, as the
+    // blocking reader decodes them.
+    const got = feedChunks("\x1b[O", "\x1b[I");
+    assert(got == [Event(FocusEvent(false)), Event(FocusEvent(true))]);
+}

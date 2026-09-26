@@ -26,7 +26,7 @@ import expected : Expected, ok, err;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.tui.cell : Cell, CellStyle, Color, Grid;
-import sparkles.tui.input : charEvent, Event, Key, keyEvent, Mods, NoEvent, Point,
+import sparkles.tui.input : charEvent, Event, FocusEvent, Key, keyEvent, Mods, NoEvent, Point,
     PointerAction, PointerButton, PointerEvent, PosixEvents;
 import sparkles.tui.terminal : Terminal, TerminalOptions;
 
@@ -430,4 +430,38 @@ unittest
         e = events.next();
     while (e == Event(NoEvent()));
     assert(e == charEvent('q'), "the key after the replies, and nothing before it");
+}
+
+@("integration.pty.focusReportsAreNegotiatedAndDecoded")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    assert(term.active);
+    char[] rb;
+    drain(pty.master, rb);
+
+    // Not asked for, not on: nothing is written until the session negotiates.
+    assert(!term.focusReporting);
+    term.enableFocusReporting();
+    assert(term.focusReporting);
+    assert(drain(pty.master, rb).canFind("\x1b[?1004h"));
+
+    // The terminal's reports decode as focus changes.
+    auto events = PosixEvents.start(pty.slave);
+    feed(pty.master, "\x1b[O\x1b[I");
+    assert(events.next() == Event(FocusEvent(false)));
+    assert(events.next() == Event(FocusEvent(true)));
+
+    // And closing turns them off again.
+    term.close();
+    assert(drain(pty.master, rb).canFind("\x1b[?1004l"));
 }
