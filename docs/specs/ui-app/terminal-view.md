@@ -8,6 +8,11 @@ paint hook). Executes [PLAN phase 2, P2.A](./PLAN.md#phase-2)._
 
 ## Why a library
 
+OSC 66 reception is a separate, unimplemented extension owned by
+[TSZ16](../ui/text-sizing.md#tsz16-independent-receiver-delivery), with
+[receiver delivery gates](../ui/text-sizing-plan.md). The shipped TVW status above
+does not imply sized-text execution in the pinned VT dependency.
+
 "The core of `apps/terminal` should be a widget itself, embeddable in other
 apps." A sub-package under `apps/` cannot be depended on, so embeddability
 forces the split: the core moves to `libs/terminal-view` as

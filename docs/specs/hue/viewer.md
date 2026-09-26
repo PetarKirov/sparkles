@@ -8,6 +8,11 @@ that happens to paint it._
 
 ## Why this file exists
 
+Planned heading-size activation and cross-sink behavior are owned by
+[TSZ15](../ui/text-sizing.md#tsz15-hue-heading-activation). This is automatic on
+capable targets, with explicit enable/disable and footprint-preserving fallback;
+the [delivery plan](../ui/text-sizing-plan.md) tracks implementation separately.
+
 Requirements used to be filed **by backend**, and that produced defects rather
 than merely reading oddly. hue's in-document search was specified once in
 `gui.md` and nowhere in `tui.md`, and the two implementations silently diverged

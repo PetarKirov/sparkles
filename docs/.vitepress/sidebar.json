@@ -842,6 +842,10 @@
                 "link": "/specs/base/text/"
               },
               {
+                "text": "OSC 66 Sizing (planned)",
+                "link": "/specs/base/text/sizing"
+              },
+              {
                 "text": "Conformance test cases",
                 "link": "/specs/base/text/test-cases"
               },
@@ -1380,6 +1384,21 @@
           {
             "text": "Layout (decision)",
             "link": "/specs/ui/layout"
+          },
+          {
+            "text": "Text Sizing (planned)",
+            "link": "/specs/ui/text-sizing",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Delivery Plan",
+                "link": "/specs/ui/text-sizing-plan"
+              },
+              {
+                "text": "Verification",
+                "link": "/specs/ui/text-sizing-testing"
+              }
+            ]
           },
           {
             "text": "Theme (planned)",
