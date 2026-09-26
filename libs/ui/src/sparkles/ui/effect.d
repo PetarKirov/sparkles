@@ -577,8 +577,9 @@ alias dimTier0 = tier0Adapter!(sparkles.ui.effect_shaders.dim);
 alias spectrumTier0 = tier0Adapter!(sparkles.ui.effect_shaders.spectrum);
 
 // The generated fragment shaders (`libs/ui/src/sparkles/ui/shaders/`), in the
-// dialect this build's GL speaks. Regenerate with `nix run .#shader-compile`;
-// `--verify` is the guard that they still come from the D source.
+// dialect this build's GL speaks. Regenerate with `nix run .#shader-compile --
+// --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders`; `--verify` is the
+// guard that they still come from the D source.
 version (Android)
     private enum string glslDialect = ".es.frag";
 else
