@@ -12,6 +12,14 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:android" path="../.."
 dependency "sparkles:ui" path="../.."
+// This backend runs the built-in effects' GPU halves, which sparkles:ui builds
+// only in its `gpu-effects` configuration (generating them takes the
+// dcompute-enabled LDC, `ldc2-vulkan`). Every configuration that adds this
+// package must select it beside the dependency — `effect_gpu.d` refuses to
+// compile otherwise. Not here at top level: dub applies a dependency's
+// top-level (or library-configuration) `subConfiguration` even through a
+// parent configuration that is not selected, so `sparkles:ui-app`'s `tui`
+// would demand the shader compiler for a build with no GPU in it.
 dependency "sparkles:input" path="../.."
 // Pulls raylib-d and the system raylib transitively.
 dependency "sparkles:raylib-text" path="../.."
@@ -21,6 +29,7 @@ configuration "library" {
 }
 
 configuration "unittest" {
+    subConfiguration "sparkles:ui" "gpu-effects"
     dependency "sparkles:test-runner" path="../.."
     dflags "-checkaction=context" "-allinst"
 }
