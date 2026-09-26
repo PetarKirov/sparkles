@@ -1,7 +1,7 @@
 /**
 The attributes and opaque handles a shader module is written against.
 
-Under `-d-version=SparklesShaderDevice` these are LDC's `ldc.dcompute`
+In a dcompute build (`LDC_DCompute`) these are LDC's `ldc.dcompute`
 symbols, which the compiler recognises: `@compute` on a module makes it
 device code, `@fragment` on a function makes it a fragment-shader entry
 point, and the parameter markers and `Sampler2D` describe the interface the
@@ -11,7 +11,7 @@ any compiler.
 */
 module sparkles.shader.attributes;
 
-version (SparklesShaderDevice)
+version (LDC_DCompute)
 {
     public import ldc.dcompute : compute, CompileFor, fragment, input, uniform,
         Sampler, Sampler2D, sample;

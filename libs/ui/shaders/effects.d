@@ -3,8 +3,8 @@ The GPU half of the built-in effects: one `@fragment` entry point per effect,
 each a thin wrapper around the transform in `sparkles.ui.effect_shaders`.
 
 Device-only, and outside `sparkles:ui`'s source paths on purpose: only
-`shader-compile` ever compiles this module, with LDC's Vulkan target and
-`-d-version=SparklesShaderDevice`, and what it produces is the GLSL under
+`shader-compile` ever compiles this module, with LDC's Vulkan target (which
+predefines `LDC_DCompute`), and what it produces is the GLSL under
 `generated/` that `sparkles.ui.effect` string-imports. An ordinary build never
 sees it — its `Sampler2D.sample` names a SPIR-V intrinsic no CPU has.
 

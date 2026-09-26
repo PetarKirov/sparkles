@@ -14,7 +14,6 @@ for a guess at it.
 ```json
 {
     "target": "vulkan-130",
-    "deviceVersions": ["SparklesShaderDevice"],
     "dflags": ["-preview=in", "-preview=dip1000"],
     "units": [{
         "name": "effects",

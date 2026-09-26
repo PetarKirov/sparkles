@@ -1,7 +1,7 @@
 /**
 The vocabulary's tests, kept out of the modules they exercise.
 
-Under `-d-version=SparklesShaderDevice` a `@compute` module is subject to
+In a dcompute build (`LDC_DCompute`) a `@compute` module is subject to
 LDC's device rules — no string literals, among others — and a test name is a
 string literal. So the modules a shader is written against carry no tests of
 their own, and this host-only module carries them instead.
