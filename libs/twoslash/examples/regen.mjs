@@ -5,7 +5,8 @@
 // This is the ONE place node is allowed: the sparkles build and `dub test` are
 // hermetic and never invoke it. The outputs are committed so consumers
 // (`dub test :twoslash`, `hue --twoslash`) need no node dependency. Run it via
-// `./regen.sh` (which installs deps first) or `npm run regen`.
+// `./regen.sh` (which installs deps first) or `yarn regen`. A bare `node`
+// cannot resolve the packages: the install is Plug'n'Play.
 //
 // The overlay treats `nodes` as opaque input, so any twoslash-compatible source
 // (twoslash today, the future sparkles:dmd-lsp backend) produces the same shape.

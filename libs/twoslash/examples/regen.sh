@@ -9,7 +9,8 @@
 # twoslash-compatible source (twoslash today, sparkles:dmd-lsp in the future)
 # yields the same `{ code, nodes }` shape.
 #
-# Requires node + npm (already on the docs-site toolchain). Usage:
+# Requires node + Yarn Berry (already on the docs-site toolchain; Node's
+# Corepack is the fallback when `yarn` itself is not on PATH). Usage:
 #
 #   ./regen.sh                 # install deps (if needed) and regenerate
 #
@@ -17,9 +18,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [[ ! -d node_modules/twoslash ]]; then
-    echo "Installing fixture-generator deps (twoslash + typescript)…"
-    npm install --no-audit --no-fund
+yarn_cmd=(yarn)
+if ! command -v yarn >/dev/null 2>&1; then
+    yarn_cmd=(corepack yarn)
 fi
 
-node regen.mjs
+# Plug'n'Play has no node_modules tree. .pnp.cjs is the install marker.
+if [[ ! -f .pnp.cjs ]]; then
+    echo "Installing fixture-generator deps (twoslash + typescript)…"
+    "${yarn_cmd[@]}" install
+fi
+
+# `yarn node` loads the PnP resolver. A bare `node` cannot see the packages.
+"${yarn_cmd[@]}" node regen.mjs

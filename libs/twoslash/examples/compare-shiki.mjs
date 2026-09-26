@@ -4,7 +4,7 @@
 // HTML renderer or the ported stylesheet:
 //
 //   ./regen.sh                 # (once) install deps
-//   node compare-shiki.mjs     # or: npm run compare
+//   yarn compare               # bare `node` cannot see the PnP install
 //
 // Two comparisons (see cryptic-weaving-pizza.md):
 //   (a) HTML class-vocabulary coverage — every `.twoslash-*` class shiki emits

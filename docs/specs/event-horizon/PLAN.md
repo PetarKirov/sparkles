@@ -16,7 +16,7 @@ with `<!-- md-example-skip -->` directives; the implementation milestones
 unpark them and make them pass under `nix run .#ci -- --verify`.
 
 Gate: `nix run .#ci -- --verify --files docs/specs/event-horizon/SPEC.md` and
-`npm run docs:build` are green.
+`yarn docs:build` are green.
 
 ## M2 — Scaffold + ring substrate
 

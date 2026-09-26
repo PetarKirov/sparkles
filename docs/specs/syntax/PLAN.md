@@ -160,7 +160,7 @@ TOML front-matter), depth-capped recursion. Deferred (seams kept):
 - **Idiom conformance:** attributes explicit on non-templates / inferred on templates;
   `Expected` on all fallible engine paths; `@nogc` proofs for the stream fold and both
   renderers; tests in feature modules with `@("name")` UDAs.
-- **Docs:** `npm run docs:build` green; README examples via
+- **Docs:** `yarn docs:build` green; README examples via
   `nix run .#ci -- --verify --files README.md`; this spec pair becomes the library's
   design-history reference next to `docs/libs/syntax/`.
 

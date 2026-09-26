@@ -198,7 +198,7 @@ Enforced partly by the pre-commit hooks and the VitePress build, partly by conve
 
 ## VitePress integration
 
-The site build is the gate for link and markup correctness — **`npm run docs:build`
+The site build is the gate for link and markup correctness — **`yarn docs:build`
 must be green** before you commit a tree, and it is the fastest way to catch the
 gotchas below.
 
@@ -349,7 +349,7 @@ commits `docs` or `research`.
 ## Authoring checklist
 
 - [ ] Tree registered in the VitePress sidebar, grouped by category.
-- [ ] `npm run docs:build` is green (no dead links, no Vue/mustache compile errors).
+- [ ] `yarn docs:build` is green (no dead links, no Vue/mustache compile errors).
 - [ ] Every deep-dive follows the skeleton and the tree's fixed analysis spine.
 - [ ] At least one verbatim, cited primary-source quote per deep-dive.
 - [ ] Umbrella + synthesis docs carry a `**Last reviewed:**` date.
