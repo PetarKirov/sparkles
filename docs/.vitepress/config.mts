@@ -75,6 +75,7 @@ export default withMermaid(
     title: 'Sparkles',
     description: 'D library for building CLI applications',
     base: '/',
+    cleanUrls: true,
 
     // Ignore links to .d/.c/.nix/.sdl source files and to sample/ workspace directories
     // (source artifacts under research/monorepo-tooling/<tool>/sample/ and the
