@@ -10,15 +10,16 @@
 #     backend — under the name the tool looks for. Stock LDC has neither.
 #   * spirv-tools (spirv-val, spirv-opt, spirv-dis), spirv-cross, glslang.
 #     Their versions shape the output (an spirv-opt upgrade rewrites a branch),
-#     so the pinned ones are what the committed GLSL comes from.
+#     so a build's GLSL is only as reproducible as their pins.
 #   * dub, which the tool asks for the package's device configuration.
 #
 # The wrapper carries all of it, so
 #
-#     nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders
+#     nix run .#shader-compile -- --package=libs/ui --out=libs/ui/generated/shaders
 #
-# regenerates (or, with `--verify`, checks) the effect GLSL with no devshell
-# and no local compiler build. Linux only: that is where dlang.nix defines
+# generates the effect GLSL with no devshell and no local compiler build. A
+# build does the same by itself (sparkles:ui's `gpu-effects` pre-generate step),
+# and Nix builds it once as `.#ui-shaders` (./ui-shaders.nix). Linux only: that is where dlang.nix defines
 # `ldc-vulkan`.
 { lib, ... }:
 {

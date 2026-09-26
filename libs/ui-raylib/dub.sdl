@@ -11,6 +11,10 @@ sourcePaths "src"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:ui" path="../.."
+// A GPU backend runs the built-in effects' GPU halves, which sparkles:ui builds
+// only in its `gpu-effects` configuration — generating them takes the
+// dcompute-enabled LDC (`ldc2-vulkan`), so every build with this backend does.
+subConfiguration "sparkles:ui" "gpu-effects"
 dependency "sparkles:input" path="../.."
 // Pulls raylib-d and the system raylib transitively.
 dependency "sparkles:raylib-text" path="../.."

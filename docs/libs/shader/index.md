@@ -91,18 +91,24 @@ registration anywhere: mark it `@compute` and both the build and the editor
 follow. See
 [Target profiles & device code](../../specs/dmd-lsp/targets.md).
 
-## Regenerating the GLSL
+## How the GLSL is built
+
+Nothing generated is committed. `sparkles:ui`'s default configuration carries
+the tier-0 transforms only and needs no shader compiler, so `sparkles:core-cli`
+and every terminal-only consumer build with a stock D compiler. Its
+`gpu-effects` configuration — which `sparkles:ui-raylib` selects, so every GUI
+build gets it — adds the GPU halves, and runs `shader-compile --if-stale` as a
+pre-generate step into the git-ignored `libs/ui/generated/shaders/`. A stamp
+there records the SHA-256 of every input, so a build whose shaders are current
+pays a hash check, and one whose inputs changed regenerates them.
+
+That step needs the dcompute-enabled LDC as `ldc2-vulkan` on `PATH` —
+dlang.nix's `ldc-vulkan` (dcompute's Vulkan target and the `@fragment` stage,
+built against LLVM main with the SPIR-V backend) — plus spirv-tools,
+spirv-cross and glslang; the dev shell carries all of them. Nix builds the
+shaders once (`nix build .#ui-shaders`) and copies them into each app's tree.
+To run the tool by hand:
 
 ```bash
-nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders
-nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders --verify
+nix run .#shader-compile -- --package=libs/ui --out=libs/ui/generated/shaders
 ```
-
-On Linux; `--package` names the dub package whose `shaders` configuration it
-compiles (the dev shell has the same tools, and `dub run :shader-compile --
-…` works there too). The package carries its own
-compiler — dlang.nix's `ldc-vulkan`, LDC with dcompute's Vulkan target and the
-`@fragment` stage, built against LLVM main with the SPIR-V backend — plus
-spirv-tools, spirv-cross and glslang, so neither the devshell nor a local
-compiler build is needed. The generated GLSL is committed, so building
-`sparkles:ui` or hue never needs any of this.

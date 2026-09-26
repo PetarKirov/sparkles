@@ -490,3 +490,66 @@ void scissorInTarget(int x, int y, int w, int h, int targetHeight) @system
     rlEnableScissorTest();
     rlScissor(x, targetHeight - (y + h), w, h);
 }
+
+// ── The built-ins' GPU half ──────────────────────────────────────────────
+// sparkles:ui builds its GPU halves only in the `gpu-effects` configuration,
+// which this backend selects; so this is where `EFX13`'s GPU side is tested.
+
+@("ui_raylib.effect_gpu.builtinsCarryTheirGpuHalf")
+@safe pure nothrow unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.effect : Builtin, hasGpuEffects;
+
+    static assert(hasGpuEffects, "ui-raylib must select sparkles:ui's gpu-effects configuration");
+
+    // `EFX13`: every built-in must ship the GPU artifact beside the D
+    // function, or the GPU target silently degrades on an effect the
+    // terminal honours — which is the inversion this gate exists to end.
+    EffectRegistry reg;
+    alias b = Builtin;
+    foreach (EffectId id; [b.scanlines, b.phosphor, b.dim, b.spectrum])
+    {
+        const rec = reg.lookup(id);
+        assert(rec.tier0 !is null, "the CPU half");
+        const impl = rec.implFor(glslBackend);
+        assert(impl !is null, "the GPU half");
+        // A complete shader against raylib's interface, generated at build
+        // time from the same function `tier0` points at.
+        assert(impl.source.canFind("#version"), "a complete shader, not a body");
+        assert(impl.source.canFind("void main()"));
+        assert(impl.source.canFind("texture0") && impl.source.canFind("fragTexCoord"));
+    }
+    // A transform that reads its position needs the bracket's extent; one
+    // that does not (phosphor, dim) has it optimised away, and the backend
+    // treats the missing uniform as exactly that.
+    assert(reg.lookup(b.scanlines).implFor(glslBackend).source.canFind("uExtentCells"));
+    assert(reg.lookup(b.spectrum).implFor(glslBackend).source.canFind("uExtentCells"));
+    assert(reg.lookup(b.curvature).implFor(glslBackend).source.canFind("uAmount"),
+        "the tier-1 shader reads its EffectParam");
+    assert(reg.lookup(b.dim).implFor("spirv") is null,
+        "an unknown backend key resolves to nothing, not to the wrong blob");
+}
+
+@("ui_raylib.effect_gpu.bloomIsAMultiPassChain")
+@safe pure nothrow unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.effect : Builtin;
+
+    EffectRegistry reg;
+    const impl = reg.lookup(Builtin.bloom).implFor(glslBackend);
+    assert(impl !is null && impl.source is null && impl.passes.length == 4);
+    // The chain as data: half-size extract from the bracket, two blurs of
+    // what came before, and a full-size composite of the bracket with the
+    // blurred glow as `texture1`.
+    assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
+    assert(impl.passes[1].from == previousImage && impl.passes[2].downscale == 2);
+    assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
+    foreach (i, ref p; impl.passes)
+    {
+        assert(p.source.canFind("#version"), "each pass is a complete shader");
+        assert(p.source.canFind("BLOOM_PASS"));
+    }
+    assert(impl.passes[3].source.canFind("uBloomIntensity"));
+}

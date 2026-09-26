@@ -152,8 +152,8 @@ $(B Why a string beside a D function, and why that is not duplication.) The
 built-ins' GLSL is $(I generated) from the same D function the `tier0`
 pointer calls (`EFX20`): `shader-compile` compiles
 $(MREF sparkles,ui,effect_shaders) through LDC's Vulkan target to SPIR-V and
-spirv-cross to the GLSL under `libs/ui/src/sparkles/ui/shaders/`, which this module
-string-imports. Nothing here is written twice; the string is an artifact of
+spirv-cross to GLSL, at build time, into `libs/ui/generated/shaders/`, which this
+module string-imports in the `gpu-effects` configuration ($(LREF hasGpuEffects)). Nothing here is written twice; the string is an artifact of
 the function, the way an object file is.
 */
 struct EffectImpl
@@ -500,13 +500,13 @@ EffectRecord[] builtinRecords() @safe pure nothrow
 {
     return [
         EffectRecord(name: "scanlines", tier: EffectTier.color,
-            tier0: &scanlinesTier0, impls: [EffectImpl(glslBackend, scanlinesGlsl)]),
+            tier0: &scanlinesTier0, impls: glslImpl(scanlinesGlsl)),
         EffectRecord(name: "phosphor", tier: EffectTier.color,
-            tier0: &phosphorTier0, impls: [EffectImpl(glslBackend, phosphorGlsl)]),
+            tier0: &phosphorTier0, impls: glslImpl(phosphorGlsl)),
         EffectRecord(name: "dim", tier: EffectTier.color,
-            tier0: &dimTier0, impls: [EffectImpl(glslBackend, dimGlsl)]),
+            tier0: &dimTier0, impls: glslImpl(dimGlsl)),
         EffectRecord(name: "spectrum", tier: EffectTier.color,
-            tier0: &spectrumTier0, impls: [EffectImpl(glslBackend, spectrumGlsl)]),
+            tier0: &spectrumTier0, impls: glslImpl(spectrumGlsl)),
         EffectRecord(
             name: "curvature",
             tier: EffectTier.distortion,
@@ -514,14 +514,14 @@ EffectRecord[] builtinRecords() @safe pure nothrow
             // grid can approximate, and claiming otherwise is what `EFX12`
             // exists to stop. A terminal states the degradation instead.
             degradation: Degradation.unaffected,
-            impls: [EffectImpl(glslBackend, curvatureGlsl)],
+            impls: glslImpl(curvatureGlsl),
             params: [EffectParam("uAmount", [0.18f, 0, 0, 0], 1)],
         ),
         EffectRecord(
             name: "bloom",
             tier: EffectTier.layer,
             degradation: Degradation.unaffected,
-            impls: [EffectImpl(glslBackend, passes: bloomPasses)],
+            impls: hasGpuEffects ? [EffectImpl(glslBackend, passes: bloomPasses)] : null,
             // The CRT's defaults (`CRT3`).
             params: [
                 EffectParam("uBloomThreshold", [0.65f, 0, 0, 0], 1),
@@ -533,27 +533,54 @@ EffectRecord[] builtinRecords() @safe pure nothrow
 }
 
 /**
+Whether this build carries the built-ins' GPU halves: the fragment shaders
+generated from their D transforms, and the tier-2 passes.
+
+Only the `gpu-effects` configuration does (`SparklesUiGpuEffects`), because
+only it can produce them: the generated shaders come from the
+dcompute-enabled LDC at build time, and an ordinary `sparkles:ui` build — the
+one `sparkles:core-cli` and every terminal-only consumer takes — must need
+no compiler but its own. There the records carry their tier-0 transforms
+alone, and a GPU backend, which selects the configuration, never sees them.
+*/
+version (SparklesUiGpuEffects)
+    enum bool hasGpuEffects = true;
+else
+    enum bool hasGpuEffects = false; /// ditto
+
+/// A record's GLSL implementation, or none when the build carries no GPU half.
+private EffectImpl[] glslImpl(string source) @safe pure nothrow
+    => source is null ? null : [EffectImpl(glslBackend, source)];
+
+/**
 The `bloom` built-in's four passes: extract the bright part at half size,
 blur it horizontally, then vertically, then add it back over the bracket.
 
 Hand-written GLSL (`shaders/tier2/bloom.frag`), one body compiled four ways by
 a `BLOOM_PASS` define. Public because a larger tier-2 effect — the CRT —
 reuses them as its own first three passes rather than keeping a second copy.
+Empty when the build carries no GPU half ($(LREF hasGpuEffects)).
 */
 EffectPass[] bloomPasses() @safe pure nothrow
 {
-    return [
-        EffectPass(bloomPassSource!0, downscale: 2, from: 0),
-        EffectPass(bloomPassSource!1, downscale: 2),
-        EffectPass(bloomPassSource!2, downscale: 2),
-        EffectPass(bloomPassSource!3, from: 0, inputs: [3]),
-    ];
+    version (SparklesUiGpuEffects)
+        return [
+            EffectPass(bloomPassSource!0, downscale: 2, from: 0),
+            EffectPass(bloomPassSource!1, downscale: 2),
+            EffectPass(bloomPassSource!2, downscale: 2),
+            EffectPass(bloomPassSource!3, from: 0, inputs: [3]),
+        ];
+    else
+        return null;
 }
 
-/// One pass of `bloom`, in this build's GLSL dialect.
-enum string bloomPassSource(int pass) = activePrologue
-    ~ "#define BLOOM_PASS " ~ cast(char)('0' + pass) ~ "\n"
-    ~ import("tier2/bloom.frag");
+version (SparklesUiGpuEffects)
+{
+    /// One pass of `bloom`, in this build's GLSL dialect.
+    enum string bloomPassSource(int pass) = activePrologue
+        ~ "#define BLOOM_PASS " ~ cast(char)('0' + pass) ~ "\n"
+        ~ import("tier2/bloom.frag");
+}
 
 // The unseeded registry's view: the same records, evaluated at compile time.
 private static immutable EffectRecord[] builtinTable = builtinRecords();
@@ -576,56 +603,60 @@ alias dimTier0 = tier0Adapter!(sparkles.ui.effect_shaders.dim);
 /// ditto
 alias spectrumTier0 = tier0Adapter!(sparkles.ui.effect_shaders.spectrum);
 
-// The generated fragment shaders (`libs/ui/src/sparkles/ui/shaders/`), in the
-// dialect this build's GL speaks. Regenerate with `nix run .#shader-compile --
-// --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders`; `--verify` is the
-// guard that they still come from the D source.
-version (Android)
-    private enum string glslDialect = ".es.frag";
+version (SparklesUiGpuEffects)
+{
+    // The generated fragment shaders, in the dialect this build's GL speaks.
+    // They are not in the repository: the configuration's pre-generate step
+    // (`shader-compile`) derives them from `shaders/effects.d` into
+    // `generated/shaders/`, and re-derives them whenever their sources change.
+    version (Android)
+        private enum string glslDialect = ".es.frag";
+    else
+        private enum string glslDialect = ".frag";
+
+    /// The built-ins' fragment shaders, generated from their D transforms.
+    enum string scanlinesGlsl = import("scanlines" ~ glslDialect);
+    /// ditto
+    enum string phosphorGlsl = import("phosphor" ~ glslDialect);
+    /// ditto
+    enum string dimGlsl = import("dim" ~ glslDialect);
+    /// ditto
+    enum string spectrumGlsl = import("spectrum" ~ glslDialect);
+    /// ditto — the tier-1 warp, sampling at what `effect_shaders.curvature` returns.
+    enum string curvatureGlsl = import("curvature" ~ glslDialect);
+}
 else
-    private enum string glslDialect = ".frag";
+{
+    /// The built-ins' fragment shaders: none, in a build without the GPU half
+    /// ($(LREF hasGpuEffects)).
+    enum string scanlinesGlsl = null;
+    enum string phosphorGlsl = null; /// ditto
+    enum string dimGlsl = null; /// ditto
+    enum string spectrumGlsl = null; /// ditto
+    enum string curvatureGlsl = null; /// ditto
+}
 
-/// The built-ins' fragment shaders, generated from their D transforms.
-enum string scanlinesGlsl = import("scanlines" ~ glslDialect);
-/// ditto
-enum string phosphorGlsl = import("phosphor" ~ glslDialect);
-/// ditto
-enum string dimGlsl = import("dim" ~ glslDialect);
-/// ditto
-enum string spectrumGlsl = import("spectrum" ~ glslDialect);
-/// ditto — the tier-1 warp, sampling at what `effect_shaders.curvature` returns.
-enum string curvatureGlsl = import("curvature" ~ glslDialect);
-
-@("ui.effect.builtins.eachCarriesBothHalvesOfItsTwin")
+version (SparklesUiGpuEffects) {} else
+@("ui.effect.builtins.carryOnlyTheirCpuHalfWithoutGpuEffects")
 @safe pure nothrow unittest
 {
-    // `EFX13`: every built-in must ship the GPU artifact beside the D
-    // function, or the GPU target silently degrades on an effect the
-    // terminal honours — which is the inversion this gate exists to end.
+    // The default configuration needs no shader compiler, so it carries no
+    // GPU half at all — every record is its tier-0 transform (or its stated
+    // degradation) and nothing a GPU backend could mistake for a shader. The
+    // other half of `EFX13` — every built-in carries both halves where a GPU
+    // backend exists — is tested by the backend that selects them
+    // (`ui_raylib.effect_gpu.builtinsCarryTheirGpuHalf`).
     EffectRegistry reg;
     alias b = Builtin;
+    static assert(!hasGpuEffects);
     foreach (EffectId id; [b.scanlines, b.phosphor, b.dim, b.spectrum])
     {
-        const rec = reg.lookup(id);
-        assert(rec.tier0 !is null, "the CPU half");
-        const impl = rec.implFor(glslBackend);
-        assert(impl !is null, "the GPU half");
-        // A complete shader against raylib's interface, generated from the
-        // same function `tier0` points at — `shader-compile --verify` is what
-        // proves the "same function" part; this proves it is the whole shader.
-        assert(impl.source.canFind("#version"), "a complete shader, not a body");
-        assert(impl.source.canFind("void main()"));
-        assert(impl.source.canFind("texture0") && impl.source.canFind("fragTexCoord"));
+        assert(reg.lookup(id).tier0 !is null, "the CPU half");
+        assert(reg.lookup(id).implFor(glslBackend) is null, "no GPU half");
     }
-    // A transform that reads its position needs the bracket's extent; one
-    // that does not (phosphor, dim) has it optimised away, and the backend
-    // treats the missing uniform as exactly that.
-    assert(reg.lookup(b.scanlines).implFor(glslBackend).source.canFind("uExtentCells"));
-    assert(reg.lookup(b.spectrum).implFor(glslBackend).source.canFind("uExtentCells"));
-    assert(reg.lookup(b.curvature).implFor(glslBackend).source.canFind("uAmount"),
-        "the tier-1 shader reads its EffectParam");
-    assert(reg.lookup(b.dim).implFor("spirv") is null,
-        "an unknown backend key resolves to nothing, not to the wrong blob");
+    assert(reg.lookup(b.curvature).implFor(glslBackend) is null);
+    assert(reg.lookup(b.bloom).implFor(glslBackend) is null);
+    assert(bloomPasses().length == 0);
 }
 
 @("ui.effect.registry.resolvesAndNeverReusesAnId")
@@ -703,19 +734,10 @@ enum string curvatureGlsl = import("curvature" ~ glslDialect);
     assert(!rec.honouredByCells && rec.degradation == Degradation.unaffected);
 
     const impl = rec.implFor(glslBackend);
-    assert(impl.source is null && impl.passes.length == 4);
-    // The chain as data: half-size extract from the bracket, two blurs of
-    // what came before, and a full-size composite of the bracket with the
-    // blurred glow as `texture1`.
-    assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
-    assert(impl.passes[1].from == previousImage && impl.passes[2].downscale == 2);
-    assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
-    foreach (i, ref p; impl.passes)
-    {
-        assert(p.source.canFind("#version"), "each pass is a complete shader");
-        assert(p.source.canFind("BLOOM_PASS"));
-    }
-    assert(impl.passes[3].source.canFind("uBloomIntensity"));
+    // Its passes are the GPU half, tested where one exists
+    // (`ui_raylib.effect_gpu.bloomIsAMultiPassChain`).
+    static if (!hasGpuEffects)
+        assert(impl is null, "a build without the GPU half carries no passes");
 }
 
 @("ui.effect.builtins.areHonouredByACellGrid")
@@ -896,7 +918,10 @@ void applyThemeEffects(ref EffectRegistry reg, ThemeEffects bindings)
         glsl: dimGlsl);
     applyThemeEffects(reg, swap);
     assert(reg.tier0Of(b.phosphor) is &dimTier0);
-    assert(reg.lookup(b.phosphor).implFor(glslBackend).source == dimGlsl);
+    static if (hasGpuEffects)
+        assert(reg.lookup(b.phosphor).implFor(glslBackend).source == dimGlsl);
+    else
+        assert(reg.lookup(b.phosphor).implFor(glslBackend) is null);
 
     // A swap that names only the CPU half keeps the built-in's GPU half, so
     // a partial binding cannot silently desynchronise the two.
@@ -906,5 +931,6 @@ void applyThemeEffects(ref EffectRegistry reg, ThemeEffects bindings)
     half.dim = EffectBinding(bound: true, tier0: &scanlinesTier0);
     applyThemeEffects(reg2, half);
     assert(reg2.tier0Of(b2.dim) is &scanlinesTier0);
-    assert(reg2.lookup(b2.dim).implFor(glslBackend).source == dimGlsl);
+    static if (hasGpuEffects)
+        assert(reg2.lookup(b2.dim).implFor(glslBackend).source == dimGlsl);
 }

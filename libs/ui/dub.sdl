@@ -15,10 +15,6 @@ targetPath "build"
 // `../test-runner/src` is here for the same reason: see the unittest
 // configuration below. This is the recipe `sparkles:core-cli` documents.
 importPaths "src" "../test-runner/src" "../math/src"
-// The built-in effects' fragment shaders, generated from `effect_shaders.d`
-// by `dub run :shader-compile` and string-imported by `effect.d`.
-stringImportPaths "src/sparkles/ui/shaders"
-
 // sparkles:base supplies the color/style vocabulary (RgbColor/Color/toRgb — the
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
 // sparkles:ui, never the reverse.
@@ -63,6 +59,23 @@ configuration "library" {
     // `isCanvas` capability concept, the attribute-inferring `paint`
     // interpreter) still instantiate in the consumer, as templates must.
     targetType "library"
+}
+
+// The library plus the built-in effects' GPU halves (`SparklesUiGpuEffects`):
+// the fragment shaders generated from `effect_shaders.d`, and the hand-written
+// tier-2 passes. Opt-in, because generating them takes the dcompute-enabled
+// LDC (`ldc2-vulkan`), and the default build — the one `sparkles:core-cli` and
+// every terminal-only consumer takes — must need no compiler but its own. A GPU
+// backend selects it (`sparkles:ui-raylib`: `subConfiguration`).
+//
+// The pre-generate step compiles the `shaders` configuration below to GLSL in
+// `generated/shaders/` (git-ignored) and is a no-op while its stamp is fresh.
+// `--temp-build` keeps concurrent dependents from racing on the tool's build.
+configuration "gpu-effects" {
+    targetType "library"
+    versions "SparklesUiGpuEffects"
+    stringImportPaths "generated/shaders" "src/sparkles/ui/shaders"
+    preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
 }
 
 configuration "unittest" {
