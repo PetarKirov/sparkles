@@ -1,0 +1,6 @@
+terminal: foot 1.25.0 (Linux, headless cage)
+TERM: foot
+COLORTERM: truecolor
+TMUX:
+ZELLIJ:
+replies: ESC[?13uESC[?2004;2$yESC[?2026;2$yESC[?2027;1$yESC[?2031;2$yESC[?1004;2$yESCP1+r524742=38ESC\ESCP1+r5463ESC\ESC[6;13;6tESC[?62;4;22;28;52c

@@ -1,0 +1,6 @@
+terminal: kitty 0.44.0 (Linux, xvfb)
+TERM: xterm-kitty
+COLORTERM: truecolor
+TMUX:
+ZELLIJ:
+replies: ESC_Gi=31;OKESC\ESC[?13uESC[?2004;2$yESC[?2026;2$yESC[?2027;0$yESC[?2031;2$yESC[?1004;2$yESCP0+r524742ESC\ESCP1+r5463ESC\ESC[6;18;9tESC[?62;52;c

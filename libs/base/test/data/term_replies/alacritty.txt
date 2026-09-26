@@ -1,0 +1,6 @@
+terminal: Alacritty 0.16.1 (Linux, xvfb, software GL)
+TERM: alacritty
+COLORTERM: truecolor
+TMUX:
+ZELLIJ:
+replies: ESC[?13uESC[?2004;2$yESC[?2026;2$yESC[?2027;0$yESC[?2031;0$yESC[?1004;2$yESC[?6c

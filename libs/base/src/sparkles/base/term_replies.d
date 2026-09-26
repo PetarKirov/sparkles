@@ -381,3 +381,122 @@ unittest
     assert(r.rgb == TcapReply.invalid && !r.kittyGraphics && !r.fenced);
     assert(rest == cast(const(ubyte)[]) "\x1b[?62;2");
 }
+
+@("term_replies.transcripts.corpus")
+@system unittest
+{
+    import std.array : replace;
+    import std.conv : to;
+    import std.file : readText;
+    import std.path : buildNormalizedPath, dirName;
+    import std.string : lineSplitter, startsWith;
+    import sparkles.base.term_color : classifyColorDepth;
+
+    // `O5`: the battery's replies as real terminals sent them — captured
+    // with `queryBattery` itself, headless (kitty, Ghostty, XTerm and
+    // Alacritty under xvfb; foot under `cage`; tmux and zellij under each of
+    // foot, Ghostty and a bare pty), checked in under
+    // `libs/base/test/data/term_replies/` — through the parser a live probe
+    // uses, row by row, then through the mapping.
+    static struct Transcript { TerminalReplies replies; string terminal; }
+    static Transcript load(string file)
+    {
+        const path = __FILE_FULL_PATH__.dirName
+            .buildNormalizedPath("../../../test/data/term_replies", file);
+        Transcript t;
+        foreach (line; readText(path).lineSplitter)
+        {
+            if (line.startsWith("terminal: "))
+                t.terminal = line["terminal: ".length .. $];
+            else if (line.startsWith("TERM: "))
+                t.replies.term = line["TERM: ".length .. $];
+            else if (line.startsWith("COLORTERM: "))
+                t.replies.colorterm = line["COLORTERM: ".length .. $];
+            else if (line.startsWith("TMUX: set") || line.startsWith("ZELLIJ: set"))
+                t.replies.multiplexer = true;
+            else if (line.startsWith("replies: "))
+            {
+                // The capture spells control bytes out.
+                string bytes = line["replies: ".length .. $].replace("ESC", "\x1b").replace("BEL", "\x07");
+                ubyte[] rest;
+                parseReplies(cast(const(ubyte)[]) bytes, t.replies, rest);
+                assert(rest.length == 0, file ~ ": every byte is a reply");
+            }
+        }
+        return t;
+    }
+
+    alias M = ModeReply;
+    alias X = TcapReply;
+    alias P = ImageProtocol;
+    static struct Row
+    {
+        string file;
+        bool graphics, keyboard;
+        M paste, sync, graphemes, scheme, focus;
+        X rgb, tc;
+        ushort cellWidth, cellHeight;
+        P images;
+    }
+    static immutable Row[] rows = [
+        Row("kitty.txt",     true,  true,  M.reset, M.reset, M.notRecognized, M.reset, M.reset,
+            X.invalid, X.valid, 9, 18, P.kitty),
+        Row("ghostty.txt",   true,  true,  M.reset, M.reset, M.set, M.reset, M.reset,
+            X.valid, X.valid, 10, 21, P.kitty),
+        Row("foot.txt",      false, true,  M.reset, M.reset, M.set, M.reset, M.reset,
+            X.valid, X.valid, 6, 13, P.sixel),
+        Row("xterm.txt",     false, false, M.reset, M.notRecognized, M.notRecognized,
+            M.notRecognized, M.reset, X.valid, X.invalid, 6, 13, P.none),
+        Row("alacritty.txt", false, true,  M.reset, M.reset, M.notRecognized, M.notRecognized,
+            M.reset, X.none, X.none, 0, 0, P.none),
+        // tmux answers for itself, under any host: no graphics or keyboard
+        // reply relayed, DA1's sixel not believed under a multiplexer
+        // (`CAP7`), and a cell size of its own on a bare pty.
+        Row("tmux-foot.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
+            X.none, X.none, 6, 13, P.none),
+        Row("tmux-ghostty.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
+            X.none, X.none, 10, 21, P.none),
+        Row("tmux-bare.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
+            X.none, X.none, 16, 32, P.none),
+        // zellij's graphics answer follows its host; it answers neither
+        // paste nor focus, and refuses `XTGETTCAP` without naming what.
+        Row("zellij-bare.txt", true, true, M.none, M.reset, M.none, M.reset, M.none,
+            X.invalid, X.invalid, 0, 0, P.kitty),
+        Row("zellij-foot.txt", false, true, M.none, M.reset, M.none, M.reset, M.none,
+            X.invalid, X.invalid, 6, 13, P.none),
+        Row("zellij-ghostty.txt", true, true, M.none, M.reset, M.none, M.reset, M.none,
+            X.invalid, X.invalid, 10, 21, P.kitty),
+    ];
+    foreach (row; rows)
+    {
+        const t = load(row.file);
+        const r = t.replies;
+        assert(r.fenced, row.file);
+        assert(r.kittyGraphics == row.graphics && r.kittyKeyboard == row.keyboard, row.file);
+        assert(r.paste == row.paste && r.sync == row.sync && r.graphemes == row.graphemes
+            && r.scheme == row.scheme && r.focus == row.focus, row.file);
+        assert(r.rgb == row.rgb && r.tc == row.tc, row.file);
+        assert(r.cellWidth == row.cellWidth && r.cellHeight == row.cellHeight, row.file);
+
+        // And what the answers declare, over the environment's snapshot.
+        TermCaps caps;
+        caps.colorDepth = classifyColorDepth(r.colorterm, r.term);
+        applyReplies(caps, r);
+        assert(caps.images == row.images, row.file);
+        assert(caps.syncOutput == row.sync.available, row.file);
+        assert(caps.cellPixelSize == (row.cellWidth != 0), row.file);
+        // Every one of these can show 24-bit colour: from `$COLORTERM`, or —
+        // XTerm, whose `$TERM` says 16 — from its `RGB` answer.
+        assert(caps.colorDepth == ColorDepth.trueColor, row.file);
+    }
+    // And the corpus is exactly these rows.
+    {
+        import std.algorithm.iteration : filter;
+        import std.algorithm.searching : count;
+        import std.file : dirEntries, SpanMode;
+
+        const dir = __FILE_FULL_PATH__.dirName
+            .buildNormalizedPath("../../../test/data/term_replies");
+        assert(dirEntries(dir, "*.txt", SpanMode.shallow).count == rows.length);
+    }
+}
