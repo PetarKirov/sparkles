@@ -305,6 +305,15 @@ private string parseCodeText(ParseErrorCode code) @safe pure nothrow @nogc
         return "non-canonical trailing bits";
     case paddingMismatch:
         return "padding mismatch";
+    // Checksum/canonicality codes (`sparkles.crypto`'s strict-canonical
+    // base64/bech32 decoders): part of the shared vocabulary, never
+    // produced by the JSON reader — named so this stays a `final switch`.
+    case checksumMismatch:
+        return "checksum mismatch";
+    case nonCanonicalEncoding:
+        return "non-canonical encoding";
+    case invalidPadding:
+        return "invalid padding";
     case invalidEscape:
         return "invalid string escape";
     case invalidSurrogate:

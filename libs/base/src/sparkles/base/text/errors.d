@@ -26,6 +26,9 @@ enum ParseErrorCode
     widthMismatch,       /// a fixed-width field did not meet its width
     nonCanonicalTrailing,/// unused trailing bits in a final encoded group were not zero
     paddingMismatch,     /// padding count did not match the final encoded group's length
+    checksumMismatch,    /// a checksummed encoding (e.g. Bech32) failed its checksum
+    nonCanonicalEncoding,/// a value had a valid but non-canonical encoding (e.g. mixed-case Bech32)
+    invalidPadding,      /// an encoding had unexpected or malformed padding (e.g. a `=` in unpadded base64)
     invalidEscape,       /// a string escape sequence was malformed
     invalidSurrogate,    /// a UTF-16 surrogate escape was lone or mispaired
     invalidUtf8,         /// a byte sequence was not well-formed UTF-8
