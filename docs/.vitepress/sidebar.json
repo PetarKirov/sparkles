@@ -808,6 +808,33 @@
       {
         "text": "wired",
         "link": "/libs/wired/"
+      },
+      {
+        "text": "markdown",
+        "link": "/libs/markdown/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "API And Types",
+            "link": "/libs/markdown/api-and-types"
+          },
+          {
+            "text": "Implementation Status",
+            "link": "/libs/markdown/implementation-status"
+          },
+          {
+            "text": "Testing Helpers",
+            "link": "/libs/markdown/testing"
+          }
+        ]
+      },
+      {
+        "text": "math",
+        "link": "/libs/math/"
+      },
+      {
+        "text": "test-utils",
+        "link": "/libs/test-utils/"
       }
     ]
   },
@@ -1248,6 +1275,28 @@
           {
             "text": "Open implementation issues",
             "link": "/specs/hue/open-issues"
+          }
+        ]
+      },
+      {
+        "text": "Markdown",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/specs/markdown/"
+          },
+          {
+            "text": "Parser Spec",
+            "link": "/specs/markdown/SPEC"
+          },
+          {
+            "text": "Testing Spec",
+            "link": "/specs/markdown/TESTING"
+          },
+          {
+            "text": "Example: Inspect Tree",
+            "link": "/specs/markdown/examples/inspect_tree"
           }
         ]
       },
