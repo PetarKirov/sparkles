@@ -14,7 +14,7 @@
 { lib, ... }:
 {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     let
       fs = lib.fileset;
       root = ../..;
@@ -110,9 +110,9 @@
                 # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
                 # `.css`/`.svg` string-import view assets (e.g. sparkles:twoslash's
                 # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`)
-                # and `.frag` shaders (sparkles:ui's effect GLSL, which `effect.d`
-                # string-imports from `src/sparkles/ui/shaders/` — the generated
-                # tier-0/1 files, and the hand-written tier-2 bodies under `tier2/`).
+                # and `.frag` shaders (sparkles:ui's hand-written tier-2 effect
+                # bodies under `src/sparkles/ui/shaders/tier2/`, string-imported
+                # by `effect.d`; the generated ones come from `ui-shaders`).
                 file:
                 file.hasExt "d"
                 || file.hasExt "c"
@@ -124,6 +124,24 @@
             ) sourceDirs
           );
         };
+      # sparkles:ui's `gpu-effects` configuration generates its effect GLSL in a
+      # pre-generate step that takes the dcompute-enabled LDC. Nix runs that
+      # once (`ui-shaders`) and copies the output, with its `prebuilt` stamp,
+      # into the tree of every build that reaches the configuration — through
+      # `sparkles:ui-raylib`, which selects it — so the step finds it fresh and
+      # no app build needs LLVM. The step still builds the tool to read the
+      # stamp, hence its sources. (The closure is read from the manifests, so
+      # it can over-approximate — an unused copy, nothing more.)
+      needsUiShaders = srcDirs: builtins.elem "libs/ui-raylib/src" srcDirs;
+      uiShaderDirs = srcDirs: lib.optional (needsUiShaders srcDirs) "apps/shader-compile/src";
+      placeUiShaders =
+        rootDir:
+        lib.optionalString (config.packages ? ui-shaders) ''
+          chmod -R u+w "${rootDir}"
+          install -d "${rootDir}/libs/ui/generated/shaders"
+          cp ${config.packages.ui-shaders}/*.frag ${config.packages.ui-shaders}/.stamp \
+            "${rootDir}/libs/ui/generated/shaders/"
+        '';
     in
     {
       # The source-closure machinery, exported for builders that bypass dub
@@ -142,6 +160,7 @@
         libsClosure = names: map (n: "libs/${n}/src") (grow [ ] names);
         refsIn = refsOf;
         inherit sourceFor manifestFileset;
+        inherit needsUiShaders uiShaderDirs placeUiShaders;
       };
 
       legacyPackages.buildSparklesApp = lib.extendMkDerivation {
@@ -222,13 +241,18 @@
             # `-checkaction=halt` on that code — not deleting the check.
             dubBuildType = args.dubBuildType or "checked";
 
-            src = args.src or (sourceFor srcDirs);
+            src = args.src or (sourceFor (srcDirs ++ uiShaderDirs srcDirs));
             sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
 
             nativeBuildInputs = (args.nativeBuildInputs or [ ]) ++ [ pkgs.makeWrapper ];
 
             # dub writes into the unpacked (read-only) source tree.
-            preBuild = args.preBuild or ''chmod -R u+w "$NIX_BUILD_TOP"'';
+            preBuild =
+              (args.preBuild or ''chmod -R u+w "$NIX_BUILD_TOP"'')
+              + "\n"
+              + lib.optionalString (needsUiShaders srcDirs) (
+                placeUiShaders "$NIX_BUILD_TOP/${finalAttrs.src.name}"
+              );
 
             installPhase =
               args.installPhase or ''

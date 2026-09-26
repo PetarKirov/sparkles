@@ -59,6 +59,10 @@
         # `UiAppTui`: APP3 keeps the terminal out of an Android closure, and the
         # host's terminal arm has no business being compiled for a phone.
         "UiAppGui"
+        # The built-in effects' GPU halves (sparkles:ui's `gpu-effects`
+        # configuration, which dub would select through ui-raylib): the GLSL
+        # comes prebuilt from `ui-shaders`, on the `-J` path below.
+        "SparklesUiGpuEffects"
         "Have_sparkles_hue"
         "Have_sparkles_ghostty"
         "Have_sparkles_syntax"
@@ -112,7 +116,7 @@
             ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
               -preview=in -preview=dip1000 \
               ${toString (map (v: "-d-version=${v}") versions)} \
-              -J=apps/hue/src -J=libs/twoslash/src/sparkles/twoslash/views -J=libs/ui/src/sparkles/ui/shaders \
+              -J=apps/hue/src -J=libs/twoslash/src/sparkles/twoslash/views -J=libs/ui/src/sparkles/ui/shaders -J=${config.packages.ui-shaders} \
               ${toString (map (dir: "-I=${dir}") srcDirs)} \
               ${toString (map (d: ''-I="$(echo dub-imports/${d.name}/*/source)"'') dubDeps)} \
               -P-U__SIZEOF_INT128__ \

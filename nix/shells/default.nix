@@ -141,6 +141,21 @@
         # Used by :test-utils for diff output on a failing assertion.
         pkgs.delta
 
+        # `shader-compile`, which sparkles:ui's `gpu-effects` configuration runs
+        # as a pre-generate step — so every build on `ui-raylib`, `ci --test`
+        # included, needs it: the dcompute-enabled LDC compiles a package's
+        # `@compute` modules to SPIR-V, spirv-tools validate and optimise it,
+        # spirv-cross turns it into GLSL and glslang proves each file. (glslang
+        # also regenerates the committed `.spv` under `libs/vulkan-wsi/src/shaders/`.)
+        pkgs.glslang
+        pkgs.spirv-tools
+        pkgs.spirv-cross
+      ]
+      # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
+      # `shader-compile` looks for, and one that cannot shadow the shell's own
+      # `ldc2`. Wherever dlang.nix defines it (Linux, macOS).
+      ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
+      ++ [
         # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
         # built without -link-internally, so the wasm32 link needs an
         # external linker. Without it the mode skips rather than runs
@@ -276,26 +291,6 @@
         pkgs.prek
         pkgs.lychee
 
-        # GLSL → SPIR-V, for regenerating the shaders under
-        # `libs/vulkan-wsi/src/shaders/` (each `.vert`/`.frag` carries its
-        # own `glslangValidator` line). Deliberately *not* in `ciPackages`:
-        # the compiled `.spv` is committed beside its source, so no CI job
-        # needs a shader compiler to build an example that uses one.
-        pkgs.glslang
-
-        # SPIR-V → GLSL, for `shader-compile`: a package's `@compute` modules
-        # (its `shaders` dub configuration) compile to SPIR-V through the
-        # dcompute-enabled LDC, and spirv-cross turns that into the GLSL
-        # `sparkles:ui-raylib` loads. Committed like the `.spv` above, so CI
-        # needs neither.
-        pkgs.spirv-tools
-        pkgs.spirv-cross
-      ]
-      # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
-      # `shader-compile` looks for, and one that cannot shadow the shell's own
-      # `ldc2`. Linux only, where dlang.nix defines it.
-      ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
-      ++ [
         # Vulkan's validation layers, including synchronization validation —
         # the semaphore/fence reuse rules in `sparkles.ui_sdl3.frame` are the
         # kind that only a layer catches, and `--validation` is a no-op
