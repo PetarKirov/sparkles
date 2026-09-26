@@ -20,6 +20,7 @@ module sparkles.input.events;
 
 import std.sumtype : SumType;
 
+import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.meta : isVersion;
 import sparkles.math : ScreenPosition, ScreenSize;
 public import sparkles.metadata : Aliases, Label, Name;
@@ -859,6 +860,57 @@ struct FocusEvent
     bool focused;
 }
 
+/// The bytes one $(LREF PasteEvent) carries at most: enough to keep an
+/// `Event` within 64 bytes, one cache line.
+enum size_t pasteChunkBytes = 40;
+
+/**
+Text pasted into the surface (`INP21`), verbatim — newlines included — so an
+input can insert it instead of reading a newline as "submit".
+
+A paste of any length arrives as a $(B run of chunks), the last one marked
+`last`: each chunk is at most $(LREF pasteChunkBytes) of UTF-8, split only
+between code points, so a consumer may insert chunk by chunk without ever
+holding half a character. The text is inline, as the native window layer
+carries committed text: the event stays pointer-free, so it is still a
+Regular value that `@safe` code copies, compares, records and replays — which
+a `string` or a reference-counted buffer here would not allow (`SumType`
+assignment turns `@system` for any member with a pointer).
+
+A terminal delivers pastes only with bracketed paste negotiated (mode 2004);
+a target that cannot says so (`InputCapabilities.pasteEvents`).
+*/
+struct PasteEvent
+{
+    InlineBuffer!(char, pasteChunkBytes) text; /// this chunk's bytes
+    bool last; /// the paste ends with this chunk
+}
+
+/**
+`text` as a paste: $(LREF PasteEvent) chunks to `sink`, split between code
+points, the final one `last` — one empty chunk for an empty paste.
+*/
+void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink)
+{
+    import std.range.primitives : put;
+
+    size_t at;
+    do
+    {
+        size_t end = at + pasteChunkBytes < text.length ? at + pasteChunkBytes : text.length;
+        // Back off to a code point boundary: never split a UTF-8 sequence.
+        while (end < text.length && end > at && (text[end] & 0xC0) == 0x80)
+            --end;
+        PasteEvent chunk;
+        const piece = text[at .. end];
+        cast(void) chunk.text.tryWrite((ref s) { put(s, piece); });
+        chunk.last = end == text.length;
+        sink(Event(chunk));
+        at = end;
+    }
+    while (at < text.length);
+}
+
 /// The surface was resized. A zero size means "re-query" (a terminal resize
 /// signal carries no dimensions; the reader re-asks the terminal).
 struct ResizeEvent
@@ -915,7 +967,7 @@ struct EndOfInput
 /// `event.match!((in KeyEvent k) => …, …)`. `Event.init` is `NoEvent`.
 alias Event = SumType!(
     NoEvent, KeyEvent, PointerEvent, WheelEvent, FocusEvent, ResizeEvent,
-    GestureEvent, EndOfInput);
+    GestureEvent, EndOfInput, PasteEvent);
 
 /// A named-key event.
 Event keyEvent(Key k, Mods m = Mods(), KeyAction a = KeyAction.press) pure nothrow @nogc
@@ -1146,4 +1198,49 @@ unittest
     assert(formatSymbolChord(sampleChord) == "⌃⌥⇧⌘q");
     assert(formatSymbolChord(Chord(key: Key.escape)) == "⎋");
     assert(formatSymbolChord(Chord(key: Key.char_, ch: 'c', super_: true)) == "⌘c");
+}
+
+@("input.events.pasteChunks")
+@safe pure nothrow @nogc
+unittest
+{
+    // A paste longer than a chunk: split between code points, in order, the
+    // last one marked — and a multi-byte character is never cut in half.
+    static immutable string text = "0123456789012345678901234567890123456789é tail";
+    size_t chunks;
+    char[64] joined;
+    size_t n;
+    bool sawLast;
+    pasteChunks(text, (Event e) {
+        const p = e.match!((in PasteEvent p) => p, _ => PasteEvent.init);
+        assert(!sawLast, "nothing follows the last chunk");
+        foreach (c; p.text[])
+            joined[n++] = c;
+        sawLast = p.last;
+        ++chunks;
+    });
+    assert(chunks == 2 && sawLast);
+    assert(joined[0 .. n] == text);
+
+    // An empty paste is one empty, last chunk.
+    size_t empties;
+    pasteChunks("", (Event e) {
+        assert(e.match!((in PasteEvent p) => p.last && p.text.length == 0, _ => false));
+        ++empties;
+    });
+    assert(empties == 1);
+}
+
+@("input.events.pasteEventIsRegular")
+@safe pure nothrow @nogc
+unittest
+{
+    // Copyable, comparable, assignable in `@safe` code — and one cache line.
+    static assert(Event.sizeof <= 64);
+    Event a, b;
+    pasteChunks("same", (Event e) { a = e; });
+    pasteChunks("same", (Event e) { b = e; });
+    assert(a == b);
+    Event c = a;
+    assert(c == a);
 }

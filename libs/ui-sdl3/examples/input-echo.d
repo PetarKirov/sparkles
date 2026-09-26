@@ -183,6 +183,7 @@ string describe(in Event e) @safe
             w.dx, w.dy, w.pos.x, w.pos.y, modsOf(w.mods),
             w.precise ? " precise" : ""),
         (FocusEvent f) => format("focus  %s", f.focused ? "gained" : "lost"),
+        (PasteEvent p) => format("paste  %(%s%)%s", [p.text[]], p.last ? " (last)" : ""),
         (ResizeEvent r) => "resize (re-query the window)",
         // Not produced by this backend yet: `GestureEvent` needs the touch arm
         // (`SDL_EVENT_FINGER_*` fed to `sparkles:input`'s recogniser), and
