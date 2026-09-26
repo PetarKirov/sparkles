@@ -57,7 +57,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_sources : PickerTarget;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
-import settings : HueConfig, searchPolicy;
+import settings : DubBuildSettings, HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, hueApplyRules, SettingsPane;
@@ -927,6 +927,11 @@ struct WorkspaceTui
 
     // ── Live D types ────────────────────────────────────────────────────────
 
+    /// The dub build live types describe (`PRJ3`), read from the settings as
+    /// they stand now, so a settings-pane edit reaches the next file opened.
+    private const(DubBuildSettings) liveBuild() const @safe pure nothrow
+        => cfg is null ? DubBuildSettings.init : cfg.resolved.dub;
+
     /// Starts the oracle for a freshly opened `.d` document (`PRJ12`: on open,
     /// off the render path). A document that already carries a payload — a
     /// `*.twoslash.json` target — needs none.
@@ -940,7 +945,8 @@ struct WorkspaceTui
         string reason;
         // The child's stderr goes to /dev/null: the analyzer's warnings and
         // dub's own chatter would otherwise land on the alt screen.
-        live = LiveTypesSession.start(path, reason, silenceChildStderr: true);
+        live = LiveTypesSession.start(path, reason, silenceChildStderr: true,
+            build: liveBuild);
         if (live is null && !liveNotice.length)
             liveNotice = reason;
     }
@@ -993,7 +999,7 @@ struct WorkspaceTui
         {
             string reason;
             diffLive[i] = LiveTypesSession.start(p, reason,
-                silenceChildStderr: true);
+                silenceChildStderr: true, build: liveBuild);
             if (diffLive[i] is null && !liveNotice.length)
                 liveNotice = reason;
         }

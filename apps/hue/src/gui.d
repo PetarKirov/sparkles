@@ -144,7 +144,7 @@ import live_types : applyTip, LiveTypesSession;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
 import crt_config : applyCrtCapture, applyCrtConfig;
-import settings : HueConfig, PointerMode, searchPolicy;
+import settings : DubBuildSettings, HueConfig, PointerMode, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, hueApplyRules, SettingsPane;
@@ -762,6 +762,11 @@ int runGui(GuiArgs guiArgs) @system
     LiveTypesSession*[2] diffLive;
     bool liveNoticeShown;
 
+    // The dub build live types describe (`PRJ3`), read from the settings as they
+    // stand now, so a settings-pane edit reaches the next file opened.
+    DubBuildSettings liveBuild()
+        => configStore is null ? DubBuildSettings.init : configStore.resolved.dub;
+
     void noteLive(string why)
     {
         if (liveNoticeShown)
@@ -821,7 +826,7 @@ int runGui(GuiArgs guiArgs) @system
         foreach (i, p; paths)
         {
             string reason;
-            diffLive[i] = LiveTypesSession.start(p, reason);
+            diffLive[i] = LiveTypesSession.start(p, reason, build: liveBuild);
             if (diffLive[i] is null)
                 noteLive(reason);
         }
@@ -836,7 +841,7 @@ int runGui(GuiArgs guiArgs) @system
         if (!liveTypes || alreadyHasPayload || !path.endsWith(".d"))
             return;
         string reason;
-        liveSession = LiveTypesSession.start(path, reason);
+        liveSession = LiveTypesSession.start(path, reason, build: liveBuild);
         if (liveSession is null)
             noteLive(reason);
     }
