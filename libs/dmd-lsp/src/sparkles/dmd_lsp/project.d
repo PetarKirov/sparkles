@@ -576,94 +576,20 @@ private ptrdiff_t pathAffinity(const SubpackageRef cand, string wanted) @safe
 /**
 The subpackage $(B names) a recipe declares — the one piece `dub describe`
 cannot report (there is no subpackage listing in its `--data` vocabulary, and
-`dub list` only covers globally registered checkouts). Both `dub.sdl` forms
-are handled — inline `subPackage { name "x" … }` blocks and path references
-`subPackage "libs/x"` (whose real name comes from the referenced directory's
-own recipe) — plus `dub.json`'s `subPackages` array of strings or objects.
-Settings never come from here (`PRJ2`).
+`dub list` only covers globally registered checkouts). Read by
+$(MREF sparkles,dmd_lsp,recipe): inline `subPackage { name "x" … }` blocks by
+their name, path references `subPackage "libs/x"` by the referenced
+directory's own recipe `name`. Settings never come from here (`PRJ2`).
 */
 private SubpackageRef[] subpackageNames(string recipePath) @safe
 {
-    import std.algorithm.searching : endsWith;
-    import std.file : exists, readText;
-    import std.path : buildNormalizedPath, buildPath, dirName;
+    import std.path : dirName;
+    import sparkles.dmd_lsp.recipe : readDubRecipe;
 
     SubpackageRef[] refs;
-    string text;
-    try
-        text = readText(recipePath);
-    catch (Exception)
-        return refs;
     const dir = recipePath.dirName;
-
-    if (recipePath.endsWith(".json"))
-    {
-        import std.json : JSONType, parseJSON;
-
-        try
-        {
-            auto doc = parseJSON(text);
-            if (auto subs = "subPackages" in doc)
-                foreach (e; (() @trusted => subs.array)())
-                {
-                    if (e.type == JSONType.string)
-                        refs ~= pathSubpackage(dir, e.str);
-                    else if (auto n = "name" in e)
-                        refs ~= SubpackageRef(n.str);
-                }
-        }
-        catch (Exception)
-        {
-        }
-        return refs;
-    }
-
-    // dub.sdl: line-oriented scan; recipes are simple enough that brace
-    // tracking per subPackage block suffices.
-    import std.algorithm.iteration : splitter;
-    import std.string : strip, stripLeft;
-
-    bool inBlock;
-    int depth;
-    foreach (rawLine; text.splitter('\n'))
-    {
-        const line = rawLine.strip;
-        if (inBlock)
-        {
-            import std.algorithm.searching : startsWith;
-
-            if (line.startsWith("name") && depth == 1)
-            {
-                const q = quotedValue(line["name".length .. $]);
-                if (q.length)
-                    refs ~= SubpackageRef(q.idup);
-            }
-            foreach (c; line)
-            {
-                if (c == '{')
-                    depth++;
-                else if (c == '}')
-                    depth--;
-            }
-            if (depth <= 0)
-                inBlock = false;
-            continue;
-        }
-        import std.algorithm.searching : startsWith;
-
-        if (!line.startsWith("subPackage"))
-            continue;
-        const rest = line["subPackage".length .. $].stripLeft;
-        if (rest.startsWith("{") || rest.length == 0)
-        {
-            inBlock = true;
-            depth = 1;
-            continue;
-        }
-        const q = quotedValue(rest);
-        if (q.length)
-            refs ~= pathSubpackage(dir, q.idup);
-    }
+    foreach (sub; readDubRecipe(recipePath).subPackages)
+        refs ~= sub.path.length ? pathSubpackage(dir, sub.path) : SubpackageRef(sub.name);
     return refs;
 }
 
@@ -671,8 +597,9 @@ private SubpackageRef[] subpackageNames(string recipePath) @safe
 /// recipe `name`, falling back to the directory's base name.
 private SubpackageRef pathSubpackage(string rootDir, string refPath) @safe
 {
-    import std.file : exists, isDir, readText;
+    import std.file : exists;
     import std.path : baseName, buildNormalizedPath, buildPath;
+    import sparkles.dmd_lsp.recipe : readDubRecipe;
 
     const dir = rootDir.buildPath(refPath).buildNormalizedPath;
     string name = dir.baseName;
@@ -681,52 +608,12 @@ private SubpackageRef pathSubpackage(string rootDir, string refPath) @safe
         const rp = dir.buildPath(recipeName);
         if (!rp.exists)
             continue;
-        try
-        {
-            import std.algorithm.iteration : splitter;
-            import std.algorithm.searching : startsWith;
-            import std.string : strip;
-
-            if (recipeName == "dub.json")
-            {
-                import std.json : parseJSON;
-
-                if (auto n = "name" in parseJSON(readText(rp)))
-                    name = n.str;
-            }
-            else
-                foreach (rawLine; readText(rp).splitter('\n'))
-                {
-                    const line = rawLine.strip;
-                    if (line.startsWith("name"))
-                    {
-                        const q = quotedValue(line["name".length .. $]);
-                        if (q.length)
-                        {
-                            name = q.idup;
-                            break;
-                        }
-                    }
-                }
-        }
-        catch (Exception)
-        {
-        }
+        const recipe = readDubRecipe(rp);
+        if (recipe.name.length)
+            name = recipe.name;
         break;
     }
     return SubpackageRef(name, dir ~ "/");
-}
-
-/// The first double-quoted value in `s`, or empty.
-private const(char)[] quotedValue(const(char)[] s) @safe pure
-{
-    const open = firstIndexOf(s, '"');
-    if (open < 0)
-        return null;
-    const close = firstIndexOf(s[open + 1 .. $], '"');
-    if (close < 0)
-        return null;
-    return s[open + 1 .. open + 1 + close];
 }
 
 private ptrdiff_t firstIndexOf(const(char)[] s, char c) @safe pure nothrow @nogc

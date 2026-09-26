@@ -38,8 +38,9 @@ enum defaultDcomputeTarget = "vulkan-130";
 
 /**
 The names of the device configurations `recipePath` declares — those whose
-`dflags` carry `-mdcompute-targets=` — in declaration order. Both recipe
-formats are read; an unreadable recipe declares none.
+`dflags` carry `-mdcompute-targets=` — in declaration order. Every recipe
+form is read (100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998MREF sparkles,dmd_lsp,recipe)); an unreadable recipe declares
+none.
 
 The recipe is read, not described: finding the configuration is what decides
 which `dub describe` to run, and asking dub for every configuration to learn
@@ -47,72 +48,15 @@ which one it is would cost a describe each.
 */
 string[] deviceConfigurations(string recipePath) @safe
 {
-    import std.algorithm.searching : endsWith;
-    import std.file : readText;
+    import std.algorithm.iteration : filter, map;
+    import std.algorithm.searching : any, startsWith;
+    import std.array : array;
+    import sparkles.dmd_lsp.recipe : readDubRecipe;
 
-    string text;
-    try
-        text = readText(recipePath);
-    catch (Exception)
-        return null;
-    return recipePath.endsWith(".json")
-        ? deviceConfigurationsJson(text)
-        : deviceConfigurationsSdl(text);
-}
-
-private string[] deviceConfigurationsSdl(string text) @safe
-{
-    import std.algorithm.searching : startsWith;
-    import sparkles.wired.sdl : parseSdlDocument, SdlQualifiedName, SdlScalarKind;
-
-    string[] names;
-    auto parsed = parseSdlDocument(text);
-    if (parsed.hasError)
-        return null;
-    foreach (config; parsed.document.root.byChild(SdlQualifiedName(null, "configuration")))
-    {
-        if (!config.valueCount || config.byValue.front.kind != SdlScalarKind.string_)
-            continue;
-        bool device;
-        foreach (dflags; config.byChild(SdlQualifiedName(null, "dflags")))
-            foreach (value; dflags.byValue)
-                if (value.kind == SdlScalarKind.string_
-                    && value.stringValue.startsWith(dcomputeTargetFlag))
-                    device = true;
-        if (device)
-            names ~= config.byValue.front.stringValue.idup;
-    }
-    return names;
-}
-
-private string[] deviceConfigurationsJson(string text) @safe
-{
-    import std.algorithm.searching : startsWith;
-    import std.json : JSONType, parseJSON;
-
-    string[] names;
-    try
-    {
-        auto doc = parseJSON(text);
-        if (auto configs = "configurations" in doc)
-            foreach (config; (() @trusted => configs.array)())
-            {
-                const name = "name" in config;
-                const dflags = "dflags" in config;
-                if (name is null || dflags is null)
-                    continue;
-                foreach (flag; (() @trusted => dflags.array)())
-                    if (flag.type == JSONType.string && flag.str.startsWith(dcomputeTargetFlag))
-                    {
-                        names ~= name.str;
-                        break;
-                    }
-            }
-    }
-    catch (Exception)
-    {
-    }
-    return names;
+    return readDubRecipe(recipePath).configurations
+        .filter!(c => c.dflags.any!(f => f.startsWith(dcomputeTargetFlag)))
+        .map!(c => c.name)
+        .array;
 }
 
 @("dmd_lsp.device.deviceConfigurations.bothRecipeFormats")
