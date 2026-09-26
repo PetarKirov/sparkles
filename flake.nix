@@ -35,11 +35,13 @@
       # download route that `importCargoLock` uses at dlang.nix's nixpkgs, so
       # an uncached build of `wasm-component-ld` — and with it every wasm
       # module here — failed in CI. Fold back into `feat/ldc-wasm` upstream.
-      # `feat/ldc-vulkan` is that plus `ldc-vulkan` (Linux only): LDC with
+      # `feat/ldc-vulkan` is that plus `ldc-vulkan` (Linux and macOS): LDC with
       # dcompute's Vulkan target and the `@fragment` shader stage
       # (PetarKirov/ldc `sparkles/vulkan-shaders`, over ldc-developers/ldc#5132)
       # against LLVM main with llvm/llvm-project#216919, which
-      # `nix/packages/shader-compile.nix` wraps. Fold back once both upstream
+      # `nix/packages/shader-compile.nix` wraps and `ui-shaders` runs; every GUI
+      # build needs it, so any pin change is pushed to sparkles.cachix.org by
+      # hand for each system CI covers, or CI builds LLVM. Fold back once both upstream
       # PRs and the fork's shader-stage commits land.
       url = "github:PetarKirov/dlang.nix/feat/ldc-vulkan";
       inputs = {

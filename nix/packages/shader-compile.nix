@@ -19,8 +19,8 @@
 #
 # generates the effect GLSL with no devshell and no local compiler build. A
 # build does the same by itself (sparkles:ui's `gpu-effects` pre-generate step),
-# and Nix builds it once as `.#ui-shaders` (./ui-shaders.nix). Linux only: that is where dlang.nix defines
-# `ldc-vulkan`.
+# and Nix builds it once as `.#ui-shaders` (./ui-shaders.nix). Linux and macOS:
+# that is where dlang.nix defines `ldc-vulkan`.
 { lib, ... }:
 {
   perSystem =
@@ -67,7 +67,7 @@
           meta = {
             description = "Compile a dub package's single-source D shaders to the GLSL sparkles:ui-raylib loads";
             mainProgram = finalAttrs.pname;
-            platforms = lib.platforms.linux;
+            platforms = lib.platforms.linux ++ lib.platforms.darwin;
           };
         });
       };
