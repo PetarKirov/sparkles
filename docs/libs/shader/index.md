@@ -83,21 +83,24 @@ error and a string literal in device code is:
   both sides report shows as it is; one only a single side reports carries a
   `[host]` or `[device]` tag.
 
-The device side's settings come from `shader-units.json` at the repository
-root: each unit's sources, import roots, device versions and dcompute target.
-`shader-compile` reads the same file, so a new shader module is added there
-once and both the build and the editor follow. See
+The device side's settings come from the package's **device configuration**:
+a dub configuration whose dflags name a dcompute target (`shaders` by
+convention). Its `@compute` modules — the package's and its dependencies' —
+are the unit `shader-compile` compiles, so a new shader module needs no
+registration anywhere: mark it `@compute` and both the build and the editor
+follow. See
 [Target profiles & device code](../../specs/dmd-lsp/targets.md).
 
 ## Regenerating the GLSL
 
 ```bash
-nix run .#shader-compile            # regenerate libs/ui/src/sparkles/ui/shaders/
-nix run .#shader-compile -- --verify
+nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders
+nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders --verify
 ```
 
-Run it from the repository root, on Linux; the units it compiles are listed
-in `shader-units.json`. The package carries its own
+On Linux; `--package` names the dub package whose `shaders` configuration it
+compiles (the dev shell has the same tools, and `dub run :shader-compile --
+…` works there too). The package carries its own
 compiler — dlang.nix's `ldc-vulkan`, LDC with dcompute's Vulkan target and the
 `@fragment` stage, built against LLVM main with the SPIR-V backend — plus
 spirv-tools, spirv-cross and glslang, so neither the devshell nor a local

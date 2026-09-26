@@ -97,7 +97,7 @@ the pipeline behavior. v1 markers: `^?`, the `---cut---` family, `@errors:` /
 ## Target profiles (`TGT`)
 
 Analyzing as LDC, and as the dcompute LDC's device compile of `@compute`
-shader modules — the profile, the runtime, the `shader-units.json` device
+shader modules — the profile, the runtime, the package's dub device
 configuration, LDC's device-code rules and the host/device diagnostic merge —
 is specified on its own page: [Target profiles & device code](./targets.md)
 (`TGT1`–`TGT9`).
