@@ -24,6 +24,7 @@ flag, never by its name.
 module sparkles.dmd_lsp.device;
 
 import sparkles.dmd_lsp.options : AnalyzerConfig, TargetProfile;
+import sparkles.dmd_lsp.project : DubQuery;
 
 // The `@compute` scanner is shared with `shader-compile`, which picks a
 // package's device unit with it; it lives in the dependency-free vocabulary.
@@ -99,25 +100,28 @@ other configuration.
 
 $(LIST
     * When the recipe governing `file` declares a device configuration, the
-        answer is what `dub describe` reports for it (memoized with every
+        answer is what `dub describe` reports for it under `query` — the
+        user's build selection with the configuration swapped for the
+        device one; `-unittest` is dropped, as a device build never compiles
+        tests (memoized with every
         other project context, `PRJ8`) — the settings `shader-compile`
         compiles the module with. `host` is ignored.
     * Otherwise (no recipe, no device configuration, or a describe that
-        fails) `host` — its dub project's paths — is retargeted: `-unittest`
-        dropped (a device build never compiles tests), the default dcompute
-        target added, and the device profile.
+        fails) `host` — its dub project's paths — is retargeted
+        (100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF retargetToDevice)).
 )
 */
-AnalyzerConfig deviceConfigFor(string file, const AnalyzerConfig host) @safe
+AnalyzerConfig deviceConfigFor(string file, const AnalyzerConfig host,
+    const DubQuery query = DubQuery.init) @safe
 {
     import std.algorithm.iteration : filter;
     import std.array : array;
-    import sparkles.dmd_lsp.project : DubQuery, dubProjectFor, dubRecipeFor;
+    import sparkles.dmd_lsp.project : dubProjectFor, dubRecipeFor;
 
     if (const recipe = dubRecipeFor(file))
         foreach (config; deviceConfigurations(recipe))
         {
-            const proj = dubProjectFor(file, DubQuery(config: config));
+            const proj = dubProjectFor(file, query.withConfig(config));
             if (!proj.usable)
                 continue;
             return AnalyzerConfig(
@@ -125,9 +129,19 @@ AnalyzerConfig deviceConfigFor(string file, const AnalyzerConfig host) @safe
                 stringImportPaths: proj.analyzer.stringImportPaths.dup,
                 versionIds: proj.analyzer.versionIds.dup,
                 debugIds: proj.analyzer.debugIds.dup,
-                dflags: proj.analyzer.dflags.dup,
+                dflags: proj.analyzer.dflags.filter!(f => f != "-unittest").array.dup,
                 profile: TargetProfile.ldcDevice);
         }
+    return retargetToDevice(host);
+}
+
+/// `host` retargeted to the device: `-unittest` dropped (a device build never
+/// compiles tests), the default dcompute target added, and the device
+/// profile. For a `@compute` module analyzed without its project (`TGT6`).
+AnalyzerConfig retargetToDevice(const AnalyzerConfig host) @safe
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
 
     return AnalyzerConfig(
         importPaths: host.importPaths.dup,

@@ -32,8 +32,15 @@ module sparkles.dmd_lsp.project;
 
 import sparkles.dmd_lsp.options : AnalyzerConfig, runtimeImportPaths;
 
-/// Which view of the project to describe. An empty field means "dub's own
-/// default" — the same settings a plain `dub build` would use (`PRJ3`).
+/**
+Which build of the project to describe: everything that, on a `dub build`
+command line or in its environment, changes what the compiler is handed
+(`PRJ3`). An empty field means "dub's own default" — the same settings a plain
+`dub build` would use.
+
+Every field is part of the memo key (`PRJ8`), so two views of one project
+never share an entry.
+*/
 struct DubQuery
 {
     /// `--config=`: dub's default configuration when empty.
@@ -42,10 +49,98 @@ struct DubQuery
     /// `--build=`: dub's default build type (`debug`) when empty.
     string buildType;
 
-    /// `--compiler=`: dub's configured default when empty. Only the flag
-    /// $(I spelling) changes with it (`-version=` for dmd, `-d-version=` for
-    /// ldc); both spellings are parsed, so leaving this empty is safe.
+    /// `--compiler=`: dub's configured default when empty. Besides the flag
+    /// $(I spelling) (`-version=` for dmd, `-d-version=` for ldc; both are
+    /// parsed), it selects `platform=` settings and a compiler's own flags.
     string compiler;
+
+    /// `--arch=`: e.g. `x86`, or a target triple for LDC.
+    string arch;
+
+    /// `--override-config=<package>/<configuration>`, one per dependency.
+    string[] overrideConfigs;
+
+    /// `--d-version=`: extra version identifiers.
+    string[] versionIds;
+
+    /// `--debug=`: extra debug identifiers.
+    string[] debugIds;
+
+    /// `$DFLAGS` for dub, which replaces the build type's own flags. Empty:
+    /// whatever the environment holds.
+    string dflags;
+
+    /// The dub arguments this query adds after the package locator.
+    string[] dubArgs() const @safe pure nothrow
+    {
+        string[] args;
+        if (config.length)
+            args ~= "--config=" ~ config;
+        if (buildType.length)
+            args ~= "--build=" ~ buildType;
+        if (compiler.length)
+            args ~= "--compiler=" ~ compiler;
+        if (arch.length)
+            args ~= "--arch=" ~ arch;
+        foreach (o; overrideConfigs)
+            args ~= "--override-config=" ~ o;
+        foreach (v; versionIds)
+            args ~= "--d-version=" ~ v;
+        foreach (d; debugIds)
+            args ~= "--debug=" ~ d;
+        return args;
+    }
+
+    /// The environment dub runs under: the inherited one, plus `DFLAGS`
+    /// when the query sets it.
+    const(string[string]) dubEnv() const @safe pure nothrow
+        => dflags.length ? ["DFLAGS": dflags] : null;
+
+    /// This query with `config` swapped: the same build of another
+    /// configuration (a package's device build, `TGT6`).
+    DubQuery withConfig(string config) const @safe pure nothrow
+        => DubQuery(config: config, buildType: buildType, compiler: compiler, arch: arch,
+            overrideConfigs: overrideConfigs.dup, versionIds: versionIds.dup,
+            debugIds: debugIds.dup, dflags: dflags);
+
+    /// The memo key's share of this query.
+    string key() const scope @safe pure nothrow
+    {
+        import std.array : join;
+
+        return [config, buildType, compiler, arch, overrideConfigs.join("\x01"),
+            versionIds.join("\x01"), debugIds.join("\x01"), dflags].join("\0");
+    }
+}
+
+@("dmd_lsp.project.DubQuery.argsEnvAndKey")
+@safe pure unittest
+{
+    assert(DubQuery.init.dubArgs.length == 0);
+    assert(DubQuery.init.dubEnv is null);
+
+    const q = DubQuery(config: "gpu", buildType: "unittest", compiler: "ldc2", arch: "x86",
+        overrideConfigs: ["sparkles:ui/gpu-effects"], versionIds: ["A", "B"],
+        debugIds: ["Trace"], dflags: "-g -O0");
+    assert(q.dubArgs == ["--config=gpu", "--build=unittest", "--compiler=ldc2", "--arch=x86",
+        "--override-config=sparkles:ui/gpu-effects", "--d-version=A", "--d-version=B",
+        "--debug=Trace"]);
+    assert(q.dubEnv["DFLAGS"] == "-g -O0" && q.dubEnv.length == 1);
+
+    // Every field separates memo entries: a query differing in any one of
+    // them is a different view of the project.
+    assert(DubQuery(arch: "x86").key != DubQuery.init.key);
+    assert(DubQuery(versionIds: ["A", "B"]).key != DubQuery(versionIds: ["AB"]).key);
+    assert(DubQuery(dflags: "-g").key != DubQuery.init.key);
+}
+
+/// Runs dub under `query`'s environment; its own progress and diagnostics
+/// stay on stderr, where a CLI shows them and a GUI ignores them.
+private auto runDub(const string[] argv, const DubQuery query) @safe
+{
+    import std.process : Config, execute;
+
+    return execute(argv, query.dubEnv, Config.stderrPassThrough);
 }
 
 /// A discovered project and the analysis configuration it implies.
@@ -245,7 +340,7 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
 {
     import std.conv : text;
     import std.path : dirName;
-    import std.process : Config, execute;
+
 
     DubProject proj;
     proj.query = query;
@@ -259,12 +354,7 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
     auto locator = proj.singleFile
         ? ["--single", proj.recipe]
         : ["--root=" ~ proj.root];
-    if (query.config.length)
-        locator ~= "--config=" ~ query.config;
-    if (query.buildType.length)
-        locator ~= "--build=" ~ query.buildType;
-    if (query.compiler.length)
-        locator ~= "--compiler=" ~ query.compiler;
+    locator ~= query.dubArgs;
 
     auto argv = ["dub", "describe"] ~ locator
         ~ "--data=import-paths,string-import-paths,versions,debug-versions,dflags";
@@ -273,7 +363,7 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
     {
         // dub's own progress/diagnostics stay on stderr, where a CLI shows
         // them and a GUI ignores them; only the settings line is captured.
-        auto res = execute(argv, null, Config.stderrPassThrough);
+        auto res = runDub(argv, query);
 
         // One retry, because a failure here is not always a property of the
         // project: the pinned dmd fork declares the same `preGenerateCommand`
@@ -285,7 +375,7 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
         // outside any of our code. A root that genuinely has nothing to
         // describe fails the retry too and falls through unchanged.
         if (res.status != 0)
-            res = execute(argv, null, Config.stderrPassThrough);
+            res = runDub(argv, query);
 
         if (res.status != 0)
         {
@@ -318,19 +408,19 @@ DubProject describeDubProject(string startPath, DubQuery query = DubQuery.init) 
             if (query.config.length == 0 && query.buildType.length == 0)
             {
                 auto asTest = argv ~ ["--config=unittest", "--build=unittest"];
-                const test = execute(asTest, null, Config.stderrPassThrough);
+                const test = runDub(asTest, query);
                 if (test.status == 0)
                 {
                     proj.analyzer = parseDubBuildSettings(lastNonBlankLine(test.output));
                     proj.analyzer.dflags ~= describedPkgConfigFlags(
-                        locator ~ ["--config=unittest", "--build=unittest"]);
+                        locator ~ ["--config=unittest", "--build=unittest"], query);
                     return proj; // no `error` set ⇒ usable
                 }
             }
             return scanned;
         }
         proj.analyzer = parseDubBuildSettings(lastNonBlankLine(res.output));
-        proj.analyzer.dflags ~= describedPkgConfigFlags(locator);
+        proj.analyzer.dflags ~= describedPkgConfigFlags(locator, query);
     }
     catch (Exception e)
         proj.error = "cannot run `dub describe`: " ~ e.msg;
@@ -354,15 +444,13 @@ Costs a second `dub describe` (`PRJ9`'s figure again), which is why it is
 memoized with the rest of the project context (`PRJ8`) and skipped outright
 when there is no `pkg-config` to ask.
 */
-private string[] describedPkgConfigFlags(scope const string[] locator) @safe
+private string[] describedPkgConfigFlags(scope const string[] locator, const DubQuery query) @safe
 {
-    import std.process : Config, execute;
 
     if (!toolOnPath("pkg-config"))
         return null;
 
-    const res = execute(["dub", "describe"] ~ locator.dup
-        ~ ["--data=libs", "--data-list"], null, Config.stderrPassThrough);
+    const res = runDub(["dub", "describe"] ~ locator.dup ~ ["--data=libs", "--data-list"], query);
     return res.status == 0 ? pkgConfigPreprocessorFlags(nonBlankLines(res.output)) : null;
 }
 
@@ -460,7 +548,7 @@ private DubProject describeSubpackage(const DubProject root, string name,
     DubQuery query) @safe
 {
     import std.conv : text;
-    import std.process : Config, execute;
+
 
     DubProject sub;
     sub.recipe = root.recipe;
@@ -469,16 +557,11 @@ private DubProject describeSubpackage(const DubProject root, string name,
     sub.subpackage = name;
 
     auto argv = ["dub", "describe", "--root=" ~ root.root, ":" ~ name];
-    if (query.config.length)
-        argv ~= "--config=" ~ query.config;
-    if (query.buildType.length)
-        argv ~= "--build=" ~ query.buildType;
-    if (query.compiler.length)
-        argv ~= "--compiler=" ~ query.compiler;
+    argv ~= query.dubArgs;
 
     try
     {
-        const res = execute(argv, null, Config.stderrPassThrough);
+        const res = runDub(argv, query);
         if (res.status != 0)
         {
             sub.error = text("`dub describe :", name, "` failed (exit ",
@@ -673,8 +756,7 @@ private DubProject[string] _cache;
 
 private string cacheKey(scope const(char)[] recipe, scope const(char)[] subpackage,
     in DubQuery q) @safe pure
-    => recipe.idup ~ "\0" ~ subpackage ~ "\0" ~ q.config ~ "\0" ~ q.buildType
-        ~ "\0" ~ q.compiler;
+    => recipe.idup ~ "\0" ~ subpackage ~ "\0" ~ q.key;
 
 /// The settings line: `dub describe --data=…` prints exactly one, but a
 /// dependency resolution can put chatter above it. (No `scope` on the
@@ -1169,4 +1251,39 @@ version (unittest)
     assert(jrefs.length == 2);
     assert(jrefs[0].name == "alpha-real");
     assert(jrefs[1].name == "gamma");
+}
+
+@("project.DubQuery.everyFieldReachesTheDescribedSettings")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.path : buildPath;
+
+    requireDub();
+    auto t = tempProject("query");
+    t.writeFileAt("dub.sdl", "name \"q\"\ntargetType \"library\"\n"
+        ~ "configuration \"plain\" {\n}\nconfiguration \"fancy\" {\n    versions \"Fancy\"\n}\n");
+    t.writeFileAt("src/m.d", "module m;\n");
+
+    const file = t.dir.buildPath("src", "m.d");
+    DubProject plain, fancy;
+    synchronized (dubTestSync)
+    {
+        clearDubProjectCache();
+        scope (exit) clearDubProjectCache();
+        plain = dubProjectFor(file);
+        fancy = dubProjectFor(file, DubQuery(config: "fancy", versionIds: ["Extra"],
+            debugIds: ["Trace"], dflags: "-version=FromDflags"));
+    }
+    assert(plain.usable, plain.error);
+    assert(!plain.analyzer.versionIds.canFind("Fancy"));
+    assert(fancy.usable, fancy.error);
+
+    // The configuration, `--d-version`, `--debug` and `$DFLAGS` each land in
+    // what the analysis is handed — and in the memo key, or the second
+    // lookup would have returned the first.
+    assert(fancy.analyzer.versionIds.canFind("Fancy"), fancy.analyzer.versionIds.toDebug);
+    assert(fancy.analyzer.versionIds.canFind("Extra"), fancy.analyzer.versionIds.toDebug);
+    assert(fancy.analyzer.debugIds.canFind("Trace"), fancy.analyzer.debugIds.toDebug);
+    assert(fancy.analyzer.versionIds.canFind("FromDflags"), fancy.analyzer.versionIds.toDebug);
 }
