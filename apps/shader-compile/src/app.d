@@ -18,6 +18,13 @@ to declare per unit and nothing to keep in step. `sparkles:dmd-lsp` analyzes
 the same modules under the same configuration, so an editor sees a shader the
 way this tool compiles it (`TGT6`).
 
+$(B It runs as a build step.) `sparkles:ui`'s `gpu-effects` configuration
+runs it with `--if-stale` before every build, into a git-ignored directory: a
+stamp there records the SHA-256 of every input (the unit's modules and their
+packages' recipes), so a build whose shaders are current pays a hash check
+and needs neither dub nor the compiler. A packager that builds the output
+elsewhere (Nix) writes a `prebuilt` stamp.
+
 $(B The compiler) is `ldc2-vulkan` on `PATH` — dlang.nix's `ldc-vulkan` (LDC's
 `sparkles/vulkan-shaders` branch: stock LDC has no Vulkan target and no
 `@fragment`), which the dev shell and `nix run .#shader-compile` both provide
@@ -32,7 +39,7 @@ module app;
 import std.algorithm : canFind, filter, map, sort, startsWith, uniq;
 import std.array : array, join, replace;
 import std.conv : text;
-import std.file : dirEntries, exists, isFile, mkdirRecurse, readText, rmdirRecurse,
+import std.file : dirEntries, exists, isFile, mkdirRecurse, readText, remove, rmdirRecurse,
     SpanMode, tempDir, write;
 import std.format : format;
 import std.json : JSONValue, parseJSON;
@@ -55,6 +62,7 @@ struct DeviceBuild
     string[] versions;    /// version identifiers dub defines
     string[] dflags;      /// the remaining flags, target flag excluded
     string[] sources;     /// every source file of the package and its dependencies
+    string[] packageDirs; /// the directories of the package and its dependencies
 }
 
 /**
@@ -76,8 +84,11 @@ DeviceBuild parseDescribe(string json)
     DeviceBuild build;
     build.packageName = rootName;
     foreach (p; doc["packages"].array)
+    {
+        build.packageDirs ~= p["path"].str.buildNormalizedPath;
         if (p["name"].str == rootName)
             build.packageDir = p["path"].str.buildNormalizedPath;
+    }
 
     foreach (t; doc["targets"].array)
     {
@@ -144,6 +155,7 @@ private string[] dedup(string[] items)
     const b = parseDescribe(json);
     assert(b.packageName == "sparkles:ui");
     assert(b.packageDir == "/r/libs/ui");
+    assert(b.packageDirs == ["/r/libs/ui", "/r/libs/shader"]);
     assert(b.target == "vulkan-130");
     assert(b.importPaths == ["/r/libs/ui/src/", "/r/libs/shader/src/"]);
     assert(b.versions == ["Have_sparkles_ui"]);
@@ -195,14 +207,14 @@ int main(string[] args)
     string configuration = "shaders";
     string outDir;
     string ldc = "ldc2-vulkan";
-    bool verify, keep, quiet;
+    bool ifStale, keep, quiet;
 
     auto help = getopt(args, config.passThrough,
         "package", "The dub package whose device configuration to compile (default: the current directory).", &packageDir,
         "config", "Its device configuration: the one whose dflags name a dcompute target (default: shaders).", &configuration,
         "out", "Where `<entry>.frag` and `<entry>.es.frag` land (required).", &outDir,
         "ldc", "The dcompute-enabled LDC (default: `ldc2-vulkan` on PATH).", &ldc,
-        "verify", "Regenerate into a scratch directory and diff against `--out`; exit 1 on drift.", &verify,
+        "if-stale", "Do nothing while `--out`'s stamp says its inputs are unchanged — the build step's mode.", &ifStale,
         "keep", "Keep the scratch directory (SPIR-V, disassembly) and print its path.", &keep,
         "quiet", "Only report problems.", &quiet);
     if (help.helpWanted)
@@ -221,6 +233,11 @@ int main(string[] args)
         stderr.writeln("shader-compile: --out is required; see --help");
         return 2;
     }
+
+    // Fresh output needs neither dub nor a compiler: this is the path every
+    // build of a dependent takes once the shaders exist.
+    if (ifStale && isFresh(outDir, packageDir))
+        return 0;
 
     if (tryExecute([ldc, "--version"]).status == 127)
     {
@@ -253,15 +270,20 @@ int main(string[] args)
             "module, so there is no entry point to compile", build.packageName, configuration);
         return 1;
     }
-    return run(build, unit, outDir, ldc, verify, keep, quiet);
+    return run(build, unit, outDir, ldc, keep, quiet);
 }
 
-/// The outcome: 0 ok, 1 drift or failure, 3 toolchain unusable.
-int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool verify,
-    bool keep, bool quiet)
+/// The outcome: 0 ok, 1 failure, 3 toolchain unusable.
+int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep, bool quiet)
 {
+    import std.conv : to;
+    import std.process : thisProcessID;
+
+    // Per process: concurrent builds of several dependents each run this step,
+    // and a shared scratch directory would be deleted under a sibling.
     const name = build.packageName.replace(":", "-");
-    const scratch = buildPath(tempDir, "sparkles-shader-compile-" ~ name);
+    const scratch = buildPath(tempDir,
+        "sparkles-shader-compile-" ~ name ~ "-" ~ thisProcessID.to!string);
     if (scratch.exists)
         scratch.rmdirRecurse;
     scratch.mkdirRecurse;
@@ -336,9 +358,7 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool veri
                 stderr.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
                 return 1;
             }
-            // One trailing newline, exactly: the repository's end-of-file
-            // hook would otherwise rewrite the file and `--verify` would
-            // call its own output drift.
+            // One trailing newline, exactly, as every text file here has.
             const glsl = format(origin, entry)
                 ~ renameCombinedSamplers(cross.output).stripRight ~ "\n";
             const file = entry ~ dialect.suffix;
@@ -350,48 +370,175 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool veri
         }
     }
 
-    // 6. Write, or compare.
-    int drift = 0;
+    // 6. Write. Each file lands by rename, so a concurrent build reading the
+    //    directory sees an old file or a new one, never half of one; the
+    //    stamp goes last, so it never vouches for output not yet written.
+    outDir.mkdirRecurse;
     foreach (file; produced.keys.sort)
     {
-        const target = buildPath(outDir, file);
-        if (verify)
-        {
-            if (!target.exists)
-            {
-                stderr.writefln("shader-compile: %s: missing (not generated yet)", target);
-                drift = 1;
-            }
-            else if (target.readText != produced[file])
-            {
-                stderr.writefln("shader-compile: %s: DRIFT — regenerate it", target);
-                drift = 1;
-            }
-        }
-        else
-        {
-            outDir.mkdirRecurse;
-            target.write(produced[file]);
-            if (!quiet)
-                writefln("shader-compile: wrote %s", target);
-        }
+        writeAtomically(buildPath(outDir, file), produced[file]);
+        if (!quiet)
+            writefln("shader-compile: wrote %s", buildPath(outDir, file));
     }
-    if (verify)
-    {
-        // Stale files: a renamed entry point leaves its old GLSL behind.
-        if (outDir.exists)
-            foreach (e; dirEntries(outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile))
-                if (e.name.baseName !in produced)
-                {
-                    stderr.writefln("shader-compile: %s: stale — no entry point produces it", e.name);
-                    drift = 1;
-                }
-        if (!drift && !quiet)
-            writefln("shader-compile: %s: %s entry points verified", build.packageName, entries.length);
-    }
+    // A renamed entry point leaves its old GLSL behind; the directory is
+    // this tool's, so it goes.
+    foreach (e; dirEntries(outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile).array)
+        if (e.name.baseName !in produced)
+            e.name.remove;
+    writeAtomically(buildPath(outDir, stampName), stampFor(build, unit, produced.keys.sort.array));
     if (keep)
         writefln("shader-compile: scratch kept at %s", scratch);
-    return drift;
+    return 0;
+}
+
+/// Writes `path` through a sibling temporary and a rename.
+private void writeAtomically(string path, string contents)
+{
+    import std.conv : to;
+    import std.file : rename;
+    import std.process : thisProcessID;
+
+    const tmp = path ~ ".tmp-" ~ thisProcessID.to!string;
+    tmp.write(contents);
+    tmp.rename(path);
+}
+
+/// The stamp file in `--out`: what the output was generated from.
+enum stampName = ".stamp";
+
+/// Bump when the output changes for a reason no input records (this tool's
+/// own pipeline), so every existing stamp goes stale.
+enum stampVersion = "shader-compile stamp 1";
+
+/**
+The stamp for output generated from `unit`: every input the output depends
+on, with its SHA-256 — the unit's modules, and the recipe of each package
+that contributes one (flags, versions and the device target live there) —
+plus the files produced. Paths are relative to the package, so a checkout
+moved elsewhere stays fresh.
+
+A packager that supplies the output prebuilt (a Nix derivation) writes the
+single line `prebuilt` instead, which is always fresh.
+*/
+string stampFor(in DeviceBuild build, in Unit unit, in string[] outputs)
+{
+    string s = stampVersion ~ "\n";
+    foreach (input; stampInputs(build, unit))
+        s ~= "input " ~ sha256Of(input) ~ " " ~ input.relativePath(build.packageDir) ~ "\n";
+    foreach (output; outputs)
+        s ~= "output " ~ output ~ "\n";
+    return s;
+}
+
+/// The unit's modules, then the recipes of the packages they come from.
+private string[] stampInputs(in DeviceBuild build, in Unit unit)
+{
+    string[] inputs = unit.sources.dup;
+    foreach (dir; build.packageDirs)
+    {
+        if (!unit.sources.canFind!(s => s.startsWith(dir ~ "/")))
+            continue;
+        foreach (recipe; ["dub.sdl", "dub.json"])
+            if (dir.buildPath(recipe).exists)
+            {
+                inputs ~= dir.buildPath(recipe);
+                break;
+            }
+    }
+    return inputs;
+}
+
+private string sha256Of(string path)
+{
+    import std.digest : toHexString;
+    import std.digest.sha : sha256Of;
+    import std.file : read;
+
+    return sha256Of(cast(const(ubyte)[]) path.read).toHexString.idup;
+}
+
+/**
+Whether `outDir` holds output its stamp still vouches for: every recorded
+input unchanged and every recorded output present. Needs no dub and no
+compiler, which is what makes the build step cheap.
+
+A module added to the unit that no recorded input changed for is not seen
+until one does — in practice the entry module that imports it.
+*/
+bool isFresh(string outDir, string packageDir)
+{
+    import std.algorithm.searching : findSplit;
+    import std.path : absolutePath, buildNormalizedPath;
+
+    const stampPath = buildPath(outDir, stampName);
+    if (!stampPath.exists)
+        return false;
+    const lines = stampPath.readText.lineSplitter.array;
+    if (lines.length == 1 && lines[0] == "prebuilt")
+        return true;
+    if (!lines.length || lines[0] != stampVersion)
+        return false;
+    const pkg = packageDir.absolutePath.buildNormalizedPath;
+    foreach (line; lines[1 .. $])
+    {
+        if (auto input = line.findSplit(" ")[2].findSplit(" "))
+            if (line.startsWith("input "))
+            {
+                const path = pkg.buildPath(input[2]).buildNormalizedPath;
+                if (!path.exists || sha256Of(path) != input[0])
+                    return false;
+                continue;
+            }
+        if (line.startsWith("output ") && !buildPath(outDir, line["output ".length .. $]).exists)
+            return false;
+    }
+    return true;
+}
+
+@("shaderCompile.stamp.freshUntilAnInputChanges")
+@system unittest
+{
+    import std.file : mkdirRecurse, remove, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+
+    const root = buildPath(tempDir, "sparkles-shader-compile-stamp-test");
+    if (root.exists)
+        root.rmdirRecurse;
+    scope (exit) root.rmdirRecurse;
+    const pkg = root.buildPath("ui"), out_ = pkg.buildPath("generated");
+    const dep = root.buildPath("shader");
+    foreach (d; [pkg.buildPath("shaders"), dep.buildPath("src"), out_])
+        d.mkdirRecurse;
+    pkg.buildPath("dub.sdl").write(`name "ui"`);
+    dep.buildPath("dub.sdl").write(`name "shader"`);
+    pkg.buildPath("shaders", "fx.d").write("@compute module fx;");
+    dep.buildPath("src", "types.d").write("@compute(CompileFor.hostAndDevice) module types;");
+
+    const build = DeviceBuild(packageName: "ui", packageDir: pkg, packageDirs: [pkg, dep, root.buildPath("other")]);
+    const unit = Unit(sources: [pkg.buildPath("shaders", "fx.d"), dep.buildPath("src", "types.d")]);
+    assert(!isFresh(out_, pkg), "no stamp yet");
+
+    out_.buildPath("fx.frag").write("glsl");
+    out_.buildPath(stampName).write(stampFor(build, unit, ["fx.frag"]));
+    assert(isFresh(out_, pkg));
+
+    // A dependency's module, and a contributing package's recipe, are inputs.
+    dep.buildPath("src", "types.d").write("@compute(CompileFor.hostAndDevice) module types; // edit");
+    assert(!isFresh(out_, pkg), "a module of the unit changed");
+    dep.buildPath("src", "types.d").write("@compute(CompileFor.hostAndDevice) module types;");
+    assert(isFresh(out_, pkg));
+    pkg.buildPath("dub.sdl").write(`name "ui" // new flags`);
+    assert(!isFresh(out_, pkg), "the recipe changed");
+    pkg.buildPath("dub.sdl").write(`name "ui"`);
+
+    out_.buildPath("fx.frag").remove;
+    assert(!isFresh(out_, pkg), "an output is missing");
+
+    // Output a packager built elsewhere is taken as it is.
+    out_.buildPath(stampName).write("prebuilt\n");
+    assert(isFresh(out_, pkg));
+    out_.buildPath(stampName).write("shader-compile stamp 0\n");
+    assert(!isFresh(out_, pkg), "another tool version's stamp");
 }
 
 private enum Dialect
@@ -417,7 +564,7 @@ string header(in DeviceBuild build, in Unit unit)
         .join(", ");
     return "// Generated by shader-compile from " ~ build.packageName ~ "'s " ~ modules
         ~ " (entry point `%s`).\n"
-        ~ "// Do not edit: change the D source and regenerate; `--verify` guards this file.\n";
+        ~ "// Do not edit: it is regenerated from the D source whenever that changes.\n";
 }
 
 ///
@@ -428,7 +575,7 @@ string header(in DeviceBuild build, in Unit unit)
     const unit = Unit(deviceOnly: ["/r/libs/ui/shaders/effects.d"]);
     assert(format(header(build, unit), "dim") ==
         "// Generated by shader-compile from sparkles:ui's shaders/effects.d (entry point `dim`).\n" ~
-        "// Do not edit: change the D source and regenerate; `--verify` guards this file.\n");
+        "// Do not edit: it is regenerated from the D source whenever that changes.\n");
 }
 
 /// `OpEntryPoint Fragment %name "name"` lines, in order.
