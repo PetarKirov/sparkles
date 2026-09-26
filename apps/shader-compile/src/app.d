@@ -3,28 +3,29 @@
 
 One D function per effect serves both the terminal (called per cell) and the
 window (compiled to a fragment shader). This tool is the second half of that
-claim: it compiles the repository's `@fragment` modules with the
-dcompute-enabled LDC to SPIR-V, validates it, optimises it, cross-compiles
-every entry point to the two GLSL dialects `sparkles:ui-raylib` loads
-(desktop 330, ES 100 for Android), proves each with glslang, and writes them
-where `sparkles.ui.effect` string-imports them.
+claim: it compiles a package's `@compute` modules with the dcompute-enabled
+LDC to SPIR-V, validates it, optimises it, cross-compiles every `@fragment`
+entry point to the two GLSL dialects `sparkles:ui-raylib` loads (desktop 330,
+ES 100 for Android), proves each with glslang, and writes them to `--out`.
 
-$(B The output is committed.) A build of `sparkles:ui` needs only the GLSL,
-never the custom compiler; `--verify` re-derives it and diffs, and skips —
-loudly, exit 0 — when that compiler is not on the machine. The compiler is
-dlang.nix's `ldc-vulkan` (LDC's `sparkles/vulkan-shaders` branch: stock LDC has
-no Vulkan target and no `@fragment`), and `nix run .#shader-compile` is this
-tool wrapped with it and the SPIR-V tools — the one command to run. A caller
-who built that LDC some other way points `$SPARKLES_SHADER_LDC` (or `--ldc`)
-at it and runs `dub run :shader-compile` instead.
+$(B Dub is the unit table.) What gets compiled, against which import paths,
+with which flags, is the package's $(I device configuration) — a dub
+configuration whose dflags name a dcompute target (`-mdcompute-targets=`),
+`shaders` by convention. The tool asks `dub describe` for it and compiles the
+modules among its source files (the package's and its dependencies') whose
+declaration carries `@compute`: that set $(I is) the unit, so there is nothing
+to declare per unit and nothing to keep in step. `sparkles:dmd-lsp` analyzes
+the same modules under the same configuration, so an editor sees a shader the
+way this tool compiles it (`TGT6`).
 
-$(B Why a manifest of units rather than arguments.) The shader sources, their
-import roots, their output directory and the flags the device build passes
-are facts about this repository, and a generator that had to be told them on
-every run would be told wrong eventually. They live in `shader-units.json` at
-the repository root, which `sparkles:dmd-lsp` also reads, so an editor
-analyzes a shader the way this tool compiles it (`TGT6`). Run it from the
-repository root.
+$(B The compiler) is `ldc2-vulkan` on `PATH` — dlang.nix's `ldc-vulkan` (LDC's
+`sparkles/vulkan-shaders` branch: stock LDC has no Vulkan target and no
+`@fragment`), which the dev shell and `nix run .#shader-compile` both provide
+under that name — or whatever `--ldc` names.
+
+$(B Dependency-free on purpose.) It uses Phobos and `sparkles:shader` alone:
+`sparkles:core-cli` depends on `sparkles:ui`, whose build runs this tool, so
+depending on it would make the tool a prerequisite of itself.
 */
 module app;
 
@@ -34,72 +35,153 @@ import std.conv : text;
 import std.file : dirEntries, exists, isFile, mkdirRecurse, readText, rmdirRecurse,
     SpanMode, tempDir, write;
 import std.format : format;
-import std.path : baseName, buildPath, stripExtension;
-import std.process : environment, execute;
+import std.json : JSONValue, parseJSON;
+import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relativePath;
+import std.process : execute;
 import std.regex : ctRegex, matchAll, replaceAll;
 import std.stdio : stderr, writefln, writeln;
-import std.string : lineSplitter, strip, stripRight;
+import std.string : indexOf, lineSplitter, strip, stripRight;
 
-import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
+import sparkles.shader.compute_mode : ComputeMode, computeModeOf;
 
-/// One set of shader sources and where their GLSL goes.
+/// A package's device build, as `dub describe` reports its device
+/// configuration.
+struct DeviceBuild
+{
+    string packageName;   /// the described package, e.g. `sparkles:ui`
+    string packageDir;    /// its directory (absolute)
+    string target;        /// the dcompute target, e.g. `vulkan-130`
+    string[] importPaths; /// `-I` roots: the package's and its dependencies'
+    string[] versions;    /// version identifiers dub defines
+    string[] dflags;      /// the remaining flags, target flag excluded
+    string[] sources;     /// every source file of the package and its dependencies
+}
+
+/**
+Reads a `dub describe` JSON document into a `DeviceBuild`.
+
+Settings come from the root target, which dub reports with its dependencies'
+import paths and flags merged in (so flags repeat — they are deduplicated here,
+first occurrence kept). Sources come from every target: a `@compute` module of
+a dependency (`sparkles:shader`'s vocabulary) belongs to the unit as much as
+one of the package's own, because a SPIR-V module has no linker to find it.
+*/
+DeviceBuild parseDescribe(string json)
+{
+    // dub may print resolution chatter before the JSON document.
+    const at = json.indexOf('{');
+    auto doc = parseJSON(at < 0 ? json : json[at .. $]);
+    const rootName = doc["rootPackage"].str;
+
+    DeviceBuild build;
+    build.packageName = rootName;
+    foreach (p; doc["packages"].array)
+        if (p["name"].str == rootName)
+            build.packageDir = p["path"].str.buildNormalizedPath;
+
+    foreach (t; doc["targets"].array)
+    {
+        auto bs = t["buildSettings"];
+        build.sources ~= strings(bs, "sourceFiles");
+        if (t["rootPackage"].str != rootName)
+            continue;
+        build.importPaths = strings(bs, "importPaths").dedup;
+        build.versions = strings(bs, "versions").dedup;
+        foreach (flag; strings(bs, "dflags").dedup)
+        {
+            enum targetFlag = "-mdcompute-targets=";
+            if (flag.startsWith(targetFlag))
+                build.target = flag[targetFlag.length .. $];
+            else
+                build.dflags ~= flag;
+        }
+    }
+    build.sources = build.sources.dedup;
+    return build;
+}
+
+private string[] strings(JSONValue v, string key)
+{
+    string[] items;
+    if (auto member = key in v)
+        foreach (e; member.array)
+            items ~= e.str;
+    return items;
+}
+
+/// `items` without repeats, in first-occurrence order.
+private string[] dedup(string[] items)
+{
+    bool[string] seen;
+    string[] result;
+    foreach (item; items)
+        if (item !in seen)
+        {
+            seen[item] = true;
+            result ~= item;
+        }
+    return result;
+}
+
+///
+@("shaderCompile.parseDescribe.rootSettingsAndEverySource")
+@system unittest
+{
+    const json = `resolution chatter
+    {"rootPackage": "sparkles:ui",
+        "packages": [{"name": "sparkles:ui", "path": "/r/libs/ui/"},
+            {"name": "sparkles:shader", "path": "/r/libs/shader/"}],
+        "targets": [
+        {"rootPackage": "sparkles:ui", "buildSettings": {
+            "importPaths": ["/r/libs/ui/src/", "/r/libs/shader/src/", "/r/libs/ui/src/"],
+            "versions": ["Have_sparkles_ui"],
+            "dflags": ["-preview=in", "-mdcompute-targets=vulkan-130", "-preview=in"],
+            "sourceFiles": ["/r/libs/ui/shaders/effects.d", "/r/libs/ui/src/a.d"]}},
+        {"rootPackage": "sparkles:shader", "buildSettings": {
+            "dflags": ["-something-else"],
+            "sourceFiles": ["/r/libs/shader/src/types.d"]}}]}`;
+
+    const b = parseDescribe(json);
+    assert(b.packageName == "sparkles:ui");
+    assert(b.packageDir == "/r/libs/ui");
+    assert(b.target == "vulkan-130");
+    assert(b.importPaths == ["/r/libs/ui/src/", "/r/libs/shader/src/"]);
+    assert(b.versions == ["Have_sparkles_ui"]);
+    assert(b.dflags == ["-preview=in"]); // the root's, deduplicated, target split off
+    assert(b.sources == ["/r/libs/ui/shaders/effects.d", "/r/libs/ui/src/a.d",
+        "/r/libs/shader/src/types.d"]);
+}
+
+/// The `@compute` modules among `sources`, and which of them are
+/// device-only — the entry-point modules the generated files name.
 struct Unit
 {
-    string name;          /// how the command line names it
-    string[] sources;     /// D modules, compiled together (a device module is self-contained)
-    string[] importPaths; /// `-I` roots
-    string outDir;        /// where `<entry>.frag` and `<entry>.es.frag` land
+    string[] sources;     ///
+    string[] deviceOnly;  ///
 }
 
-/// `shader-units.json`: the repository's shader units and the device build's
-/// flags. Paths are repository-relative.
-struct Manifest
+/// Picks the unit out of a build's sources by reading each module's head.
+Unit unitOf(in DeviceBuild build)
 {
-    string target;           /// `-mdcompute-targets=`
-    string[] deviceVersions; /// `-d-version=`, on every unit
-    string[] dflags;         /// further flags, on every unit
-    Unit[] units;            ///
-}
-
-/// Parses the manifest at `path`.
-Manifest loadManifest(string path = "shader-units.json")
-{
-    import std.json : JSONValue, parseJSON;
-
-    static string[] strings(JSONValue v, string key)
+    Unit unit;
+    foreach (source; build.sources)
     {
-        string[] items;
-        if (auto member = key in v)
-            foreach (e; member.array)
-                items ~= e.str;
-        return items;
+        if (!source.exists)
+            continue;
+        final switch (computeModeOf(source.readText))
+        {
+            case ComputeMode.none:
+                break;
+            case ComputeMode.deviceOnly:
+                unit.deviceOnly ~= source;
+                unit.sources ~= source;
+                break;
+            case ComputeMode.hostAndDevice:
+                unit.sources ~= source;
+                break;
+        }
     }
-
-    auto doc = parseJSON(path.readText);
-    auto manifest = Manifest(doc["target"].str, strings(doc, "deviceVersions"),
-        strings(doc, "dflags"));
-    foreach (u; doc["units"].array)
-        manifest.units ~= Unit(u["name"].str, strings(u, "sources"),
-            strings(u, "importPaths"), u["outDir"].str);
-    return manifest;
-}
-
-struct CliParams
-{
-    @(Argument("unit", description: "Which units to build (default: all). Known: effects.", optional: true))
-    string[] unitNames;
-
-    @(Option("ldc", description: "The dcompute-enabled LDC (`sparkles/vulkan-shaders`); default `$SPARKLES_SHADER_LDC`, else `ldc2` on PATH."))
-    string ldc;
-
-    @(Option("verify", description: "Regenerate into a scratch directory and diff against the committed GLSL; exit 1 on drift. Exits 0 with a notice when the compiler is unavailable, so a CI job without it neither fails nor pretends."))
-    bool verify;
-
-    @(Option("keep", description: "Keep the scratch directory (SPIR-V, disassembly) and print its path."))
-    bool keep;
-
-    @(Option("quiet", description: "Only report problems."))
-    bool quiet;
+    return unit;
 }
 
 // `dub test` builds this package as a library and takes its `main` from the
@@ -107,43 +189,79 @@ struct CliParams
 version (unittest) {} else
 int main(string[] args)
 {
-    auto parsed = parseCli!CliParams(args, HelpInfo("shader-compile",
-        "Compile the repository's single-source D shaders to the GLSL sparkles:ui-raylib loads.", null));
-    if (!parsed)
-        return reportCliError(parsed.error);
-    const cli = parsed.value;
+    import std.getopt : config, defaultGetoptPrinter, getopt;
 
-    const ldc = cli.ldc.length ? cli.ldc : environment.get("SPARKLES_SHADER_LDC", "ldc2");
-    if (!"shader-units.json".exists)
+    string packageDir = ".";
+    string configuration = "shaders";
+    string outDir;
+    string ldc = "ldc2-vulkan";
+    bool verify, keep, quiet;
+
+    auto help = getopt(args, config.passThrough,
+        "package", "The dub package whose device configuration to compile (default: the current directory).", &packageDir,
+        "config", "Its device configuration: the one whose dflags name a dcompute target (default: shaders).", &configuration,
+        "out", "Where `<entry>.frag` and `<entry>.es.frag` land (required).", &outDir,
+        "ldc", "The dcompute-enabled LDC (default: `ldc2-vulkan` on PATH).", &ldc,
+        "verify", "Regenerate into a scratch directory and diff against `--out`; exit 1 on drift.", &verify,
+        "keep", "Keep the scratch directory (SPIR-V, disassembly) and print its path.", &keep,
+        "quiet", "Only report problems.", &quiet);
+    if (help.helpWanted)
     {
-        stderr.writeln("shader-compile: no shader-units.json here; run it from the repository root");
+        defaultGetoptPrinter("shader-compile: compile a dub package's single-source D shaders " ~
+            "to the GLSL sparkles:ui-raylib loads.", help.options);
+        return 0;
+    }
+    if (args.length > 1)
+    {
+        stderr.writeln("shader-compile: unexpected argument `", args[1], "`; see --help");
         return 2;
     }
-    const manifest = loadManifest();
-    const units = manifest.units;
-    const(Unit)[] selected = cli.unitNames.length
-        ? units.filter!(u => cli.unitNames.canFind(u.name)).array
-        : units[];
-    if (selected.length != (cli.unitNames.length ? cli.unitNames.length : units.length))
+    if (!outDir.length)
     {
-        stderr.writeln("shader-compile: unknown unit; known: ", units.map!(u => u.name).join(", "));
+        stderr.writeln("shader-compile: --out is required; see --help");
         return 2;
     }
 
-    int worst = 0;
-    foreach (unit; selected)
+    if (tryExecute([ldc, "--version"]).status == 127)
     {
-        const r = run(unit, manifest, ldc, cli.verify, cli.keep, cli.quiet);
-        if (r > worst)
-            worst = r;
+        stderr.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
+            "(`nix develop`), use `nix run .#shader-compile`, or pass --ldc a " ~
+            "`sparkles/vulkan-shaders` build.", ldc);
+        return 3;
     }
-    return worst;
+
+    const described = tryExecute(["dub", "describe", "--root=" ~ packageDir,
+        "--config=" ~ configuration, "--compiler=" ~ ldc], captureStderr: false);
+    if (described.status != 0)
+    {
+        stderr.writeln(described.output);
+        stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s",
+            configuration, packageDir);
+        return 1;
+    }
+    const build = parseDescribe(described.output);
+    if (!build.target.length)
+    {
+        stderr.writefln("shader-compile: %s's configuration `%s` names no dcompute target " ~
+            "(`-mdcompute-targets=`), so it is not a device build", build.packageName, configuration);
+        return 2;
+    }
+    const unit = unitOf(build);
+    if (!unit.deviceOnly.length)
+    {
+        stderr.writefln("shader-compile: %s (`%s`) has no `@compute(CompileFor.deviceOnly)` " ~
+            "module, so there is no entry point to compile", build.packageName, configuration);
+        return 1;
+    }
+    return run(build, unit, outDir, ldc, verify, keep, quiet);
 }
 
-/// The outcome of one unit: 0 ok, 1 drift or failure, 3 toolchain absent.
-int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, bool quiet)
+/// The outcome: 0 ok, 1 drift or failure, 3 toolchain unusable.
+int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool verify,
+    bool keep, bool quiet)
 {
-    const scratch = buildPath(tempDir, "sparkles-shader-compile-" ~ unit.name);
+    const name = build.packageName.replace(":", "-");
+    const scratch = buildPath(tempDir, "sparkles-shader-compile-" ~ name);
     if (scratch.exists)
         scratch.rmdirRecurse;
     scratch.mkdirRecurse;
@@ -154,42 +272,38 @@ int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, 
     // 1. D -> SPIR-V. One invocation for the whole unit: the device module is
     //    one SPIR-V module, and it has no linker to find an import.
     // LDC names the module `<prefix>_<target without dashes>_64.spv`.
-    const spv = buildPath(scratch, unit.name ~ "_" ~ manifest.target.replace("-", "") ~ "_64.spv");
-    auto cmd = [ldc, "-O2", "-c", "-m64", "-mdcompute-targets=" ~ manifest.target,
-        "-mdcompute-file-prefix=" ~ unit.name, "-od=" ~ scratch]
-        ~ manifest.deviceVersions.map!(v => "-d-version=" ~ v).array
-        ~ manifest.dflags
-        ~ unit.importPaths.map!(d => "-I" ~ d).array ~ unit.sources;
+    const prefix = "unit";
+    const spv = buildPath(scratch, prefix ~ "_" ~ build.target.replace("-", "") ~ "_64.spv");
+    auto cmd = [ldc, "-O2", "-c", "-m64", "-mdcompute-targets=" ~ build.target,
+        "-mdcompute-file-prefix=" ~ prefix, "-od=" ~ scratch]
+        ~ build.versions.map!(v => "-d-version=" ~ v).array
+        ~ build.dflags
+        ~ build.importPaths.map!(d => "-I" ~ d).array ~ unit.sources;
     const compiled = tryExecute(cmd);
     if (compiled.status != 0)
     {
-        if (isToolchainAbsent(compiled))
-        {
-            stderr.writefln("shader-compile: %s: skipped — no dcompute-enabled LDC (`%s`); " ~
-                "use `nix run .#shader-compile`, or set $SPARKLES_SHADER_LDC to a " ~
-                "`sparkles/vulkan-shaders` build. %s",
-                unit.name, ldc, verify ? "The committed GLSL stands unverified." : "");
-            return verify ? 0 : 3;
-        }
         stderr.writeln(compiled.output);
-        stderr.writefln("shader-compile: %s: LDC failed (%s)", unit.name, compiled.status);
-        return 1;
+        if (isStockLdc(compiled))
+            stderr.writefln("shader-compile: `%s` is not a dcompute-enabled LDC with the " ~
+                "`@fragment` stage (`sparkles/vulkan-shaders`)", ldc);
+        stderr.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
+        return isStockLdc(compiled) ? 3 : 1;
     }
     if (!spv.exists)
     {
-        stderr.writefln("shader-compile: %s: LDC produced no %s", unit.name, spv);
+        stderr.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
         return 1;
     }
 
     // 2. Validate what the compiler emitted, before anything rewrites it.
     //    Universal rules: the plain uniforms are GL's shape, not Vulkan's.
-    if (!step(["spirv-val", "--target-env", "spv1.4", spv], unit.name ~ ": spirv-val"))
+    if (!step(["spirv-val", "--target-env", "spv1.4", spv], name ~ ": spirv-val"))
         return 1;
 
     // 3. Optimise: folds the name-string constants and dead helpers away, so
     //    the GLSL carries no `uint8_t` arrays and no Int8 extension request.
-    const opt = buildPath(scratch, unit.name ~ ".opt.spv");
-    if (!step(["spirv-opt", "-O", spv, "-o", opt], unit.name ~ ": spirv-opt"))
+    const opt = buildPath(scratch, prefix ~ ".opt.spv");
+    if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ ": spirv-opt"))
         return 1;
 
     // 4. The entry points, from the disassembly — one shader file per entry.
@@ -202,12 +316,13 @@ int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, 
     const entries = entryPoints(dis.output);
     if (entries.length == 0)
     {
-        stderr.writefln("shader-compile: %s: no fragment entry points in %s", unit.name, spv);
+        stderr.writefln("shader-compile: %s: no fragment entry points in %s", name, spv);
         return 1;
     }
 
     // 5. Cross-compile each entry to both dialects, name the sampler what
     //    raylib binds, and prove the result with glslang.
+    const origin = header(build, unit);
     string[string] produced; // relative file name -> contents
     foreach (entry; entries)
     {
@@ -218,28 +333,28 @@ int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, 
             if (cross.status != 0)
             {
                 stderr.writeln(cross.output);
-                stderr.writefln("shader-compile: %s/%s: spirv-cross failed", unit.name, entry);
+                stderr.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
                 return 1;
             }
             // One trailing newline, exactly: the repository's end-of-file
             // hook would otherwise rewrite the file and `--verify` would
             // call its own output drift.
-            const glsl = header(unit, entry)
+            const glsl = format(origin, entry)
                 ~ renameCombinedSamplers(cross.output).stripRight ~ "\n";
-            const name = entry ~ dialect.suffix;
-            const path = buildPath(scratch, name);
+            const file = entry ~ dialect.suffix;
+            const path = buildPath(scratch, file);
             path.write(glsl);
-            if (!step(["glslangValidator", path], unit.name ~ "/" ~ name ~ ": glslang"))
+            if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang"))
                 return 1;
-            produced[name] = glsl;
+            produced[file] = glsl;
         }
     }
 
     // 6. Write, or compare.
     int drift = 0;
-    foreach (name; produced.keys.sort)
+    foreach (file; produced.keys.sort)
     {
-        const target = buildPath(unit.outDir, name);
+        const target = buildPath(outDir, file);
         if (verify)
         {
             if (!target.exists)
@@ -247,16 +362,16 @@ int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, 
                 stderr.writefln("shader-compile: %s: missing (not generated yet)", target);
                 drift = 1;
             }
-            else if (target.readText != produced[name])
+            else if (target.readText != produced[file])
             {
-                stderr.writefln("shader-compile: %s: DRIFT — regenerate with `nix run .#shader-compile`", target);
+                stderr.writefln("shader-compile: %s: DRIFT — regenerate it", target);
                 drift = 1;
             }
         }
         else
         {
-            unit.outDir.mkdirRecurse;
-            target.write(produced[name]);
+            outDir.mkdirRecurse;
+            target.write(produced[file]);
             if (!quiet)
                 writefln("shader-compile: wrote %s", target);
         }
@@ -264,14 +379,15 @@ int run(in Unit unit, in Manifest manifest, string ldc, bool verify, bool keep, 
     if (verify)
     {
         // Stale files: a renamed entry point leaves its old GLSL behind.
-        foreach (e; dirEntries(unit.outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile))
-            if (e.name.baseName !in produced)
-            {
-                stderr.writefln("shader-compile: %s: stale — no entry point produces it", e.name);
-                drift = 1;
-            }
+        if (outDir.exists)
+            foreach (e; dirEntries(outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile))
+                if (e.name.baseName !in produced)
+                {
+                    stderr.writefln("shader-compile: %s: stale — no entry point produces it", e.name);
+                    drift = 1;
+                }
         if (!drift && !quiet)
-            writefln("shader-compile: %s: %s entry points verified", unit.name, entries.length);
+            writefln("shader-compile: %s: %s entry points verified", build.packageName, entries.length);
     }
     if (keep)
         writefln("shader-compile: scratch kept at %s", scratch);
@@ -289,11 +405,31 @@ private string[] flags(Dialect d)
 
 private string suffix(Dialect d) => d == Dialect.desktop ? ".frag" : ".es.frag";
 
-/// The provenance comment. GLSL allows comments before `#version`.
-private string header(in Unit unit, string entry)
-    => format("// Generated by `nix run .#shader-compile` from %s (entry point `%s`).\n" ~
-            "// Do not edit: change the D source and regenerate; `--verify` guards this file.\n",
-        unit.sources[$ - 1], entry);
+/**
+The provenance comment, a format string taking the entry point. GLSL allows
+comments before `#version`. It names the entry modules relative to their
+package, so the bytes do not depend on where the tool ran from.
+*/
+string header(in DeviceBuild build, in Unit unit)
+{
+    const modules = unit.deviceOnly
+        .map!(m => m.absolutePath.relativePath(build.packageDir.absolutePath))
+        .join(", ");
+    return "// Generated by shader-compile from " ~ build.packageName ~ "'s " ~ modules
+        ~ " (entry point `%s`).\n"
+        ~ "// Do not edit: change the D source and regenerate; `--verify` guards this file.\n";
+}
+
+///
+@("shaderCompile.header.namesTheEntryModulesRelativeToTheirPackage")
+@system unittest
+{
+    const build = DeviceBuild(packageName: "sparkles:ui", packageDir: "/r/libs/ui");
+    const unit = Unit(deviceOnly: ["/r/libs/ui/shaders/effects.d"]);
+    assert(format(header(build, unit), "dim") ==
+        "// Generated by shader-compile from sparkles:ui's shaders/effects.d (entry point `dim`).\n" ~
+        "// Do not edit: change the D source and regenerate; `--verify` guards this file.\n");
+}
 
 /// `OpEntryPoint Fragment %name "name"` lines, in order.
 string[] entryPoints(string disassembly)
@@ -345,11 +481,13 @@ private struct Run
     string output;
 }
 
-private Run tryExecute(string[] cmd)
+private Run tryExecute(string[] cmd, bool captureStderr = true)
 {
+    import std.process : Config;
+
     try
     {
-        const r = execute(cmd);
+        const r = execute(cmd, null, captureStderr ? Config.none : Config.stderrPassThrough);
         return Run(r.status, r.output);
     }
     catch (Exception e)
@@ -366,25 +504,36 @@ private bool step(string[] cmd, string what)
     return false;
 }
 
-/// A missing binary, or a stock LDC (no Vulkan target, no `@fragment`).
-private bool isToolchainAbsent(in Run r)
-    => r.status == 127
-    || r.output.canFind("not built with Vulkan DCompute support")
+/// A stock LDC: no Vulkan target, or no `@fragment`.
+private bool isStockLdc(in Run r)
+    => r.output.canFind("not built with Vulkan DCompute support")
     || r.output.canFind("Unrecognised or invalid DCompute targets")
     || r.output.canFind("undefined identifier `fragment`");
 
-@("shader-compile.manifest.repository")
+@("shaderCompile.unitOf.repositoryUi")
 @system unittest
 {
     import std.path : dirName;
 
-    // The repository's own manifest, whichever directory `dub test` runs in:
-    // every path it names must exist.
-    const root = __FILE_FULL_PATH__.dirName.buildPath("..", "..", "..");
-    const manifest = loadManifest(root.buildPath("shader-units.json"));
-    assert(manifest.target == "vulkan-130");
-    assert(manifest.units.length);
-    foreach (unit; manifest.units)
-        foreach (path; unit.sources ~ unit.importPaths ~ [unit.outDir])
-            assert(root.buildPath(path).exists, path);
+    // The repository's own device build, as dub would describe it — the
+    // sources listed by hand here are exactly what the unit must pick out:
+    // every `@compute` module, of the package and of its dependencies, and no
+    // other. `attributes.d` is not one: on the device it only re-exports
+    // `ldc.dcompute`, so it is imported, never compiled.
+    const root = __FILE_FULL_PATH__.dirName.buildPath("..", "..", "..").buildNormalizedPath;
+    string p(string rel) => root.buildPath(rel);
+    const build = DeviceBuild(packageName: "sparkles:ui", packageDir: p("libs/ui"),
+        sources: [p("libs/ui/shaders/effects.d"), p("libs/ui/src/sparkles/ui/effect.d"),
+            p("libs/ui/src/sparkles/ui/effect_shaders.d"),
+            p("libs/shader/src/sparkles/shader/attributes.d"),
+            p("libs/shader/src/sparkles/shader/compute_mode.d"),
+            p("libs/shader/src/sparkles/shader/math.d"),
+            p("libs/shader/src/sparkles/shader/testing.d"),
+            p("libs/shader/src/sparkles/shader/types.d")]);
+    const unit = unitOf(build);
+    assert(unit.deviceOnly == [p("libs/ui/shaders/effects.d")], unit.deviceOnly.text);
+    assert(unit.sources == [p("libs/ui/shaders/effects.d"),
+        p("libs/ui/src/sparkles/ui/effect_shaders.d"),
+        p("libs/shader/src/sparkles/shader/math.d"),
+        p("libs/shader/src/sparkles/shader/types.d")], unit.sources.text);
 }

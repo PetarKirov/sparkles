@@ -39,10 +39,11 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
 Outside a dcompute build (no `-mdcompute-targets`, so no `LDC_DCompute`), the
 attributes — `@compute` on a module, `@fragment` on a function,
 `@input`/`@uniform` on its parameters, `Sampler2D` — are inert stand-ins: an
-ordinary `dub build` sees plain D on any compiler. In one they are LDC's `ldc.dcompute` symbols, every `@compute`
-module is subject to LDC's device rules (no string literals, among others —
-which is why this library's tests live in a separate, host-only module) and is
-emitted to SPIR-V. Only `shader-compile` passes the flag.
+ordinary `dub build` sees plain D on any compiler. In one they are LDC's
+`ldc.dcompute` symbols, every `@compute` module is subject to LDC's device
+rules (no string literals, among others — which is why this library's tests
+live in a separate, host-only module) and is emitted to SPIR-V. Only a device
+configuration passes the flag.
 
 ## Writing a fragment shader
 

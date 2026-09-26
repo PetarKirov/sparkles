@@ -91,7 +91,19 @@ configuration "unittest" {
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
-// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// The device build: what LDC's dcompute target compiles for the GPU. Never
+// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// `@compute` modules among its sources (with `sparkles:shader`'s), and
+// `sparkles:dmd-lsp` analyzes those modules under it (`TGT6`). It adds
+// `shaders/`, the device-only entry points: `@compute(CompileFor.deviceOnly)`
+// modules no host build may see, since they sample through SPIR-V intrinsics.
+// A configuration is the device build because its dflags name a dcompute
+// target, not because of its name.
+configuration "shaders" {
+    targetType "library"
+    sourcePaths "src" "shaders"
+    dflags "-mdcompute-targets=vulkan-130"
+}
 // artifact uses. Neither `debug` (which compiles those blocks in) nor
 // `release` (which deletes assert *expressions*, side effects included).
 buildType "checked" {
