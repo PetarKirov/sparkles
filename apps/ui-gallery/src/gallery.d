@@ -17,7 +17,7 @@ import core.time : Duration, msecs;
 import std.conv : text;
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match,
+import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match, PasteEvent,
     PointerAction, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.terminal_view.cell_paint : paintCells;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
@@ -463,8 +463,20 @@ struct Gallery
             (in PointerEvent p) { onPointer(h, p); },
             (in WheelEvent w) { onWheel(h, w); },
             (in ResizeEvent r) { s.surface = r.size; },
+            (in PasteEvent p) { onPaste(p); },
             (in _) {},
         );
+    }
+
+    /// A paste belongs where the keys go: into the focused shell, which the
+    /// pane hands to the program in it as a paste (`INP21`). The gallery has
+    /// no text field of its own, so anywhere else it is dropped.
+    private void onPaste(in PasteEvent p) @safe
+    {
+        if (!terminalCaptures)
+            return;
+        if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
+            (() @trusted => tv.onPaste(p))();
     }
 
     /**
