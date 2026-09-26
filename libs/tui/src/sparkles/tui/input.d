@@ -78,6 +78,10 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
     if (i >= s.length)
         return Event(NoEvent()); // incomplete
     const f = s[i];
+    // Focus reports (mode 1004): a bare `CSI I` / `CSI O`, no parameters —
+    // distinct from SS3 (`ESC O …`), which never reaches here with `[`.
+    if (s[0] == '[' && i == 1 && (f == 'I' || f == 'O'))
+        return Event(FocusEvent(f == 'I'));
     // The modifier param (`[1;<m><final>`), 1-based: m-1 is the modifier bitset.
     const mods = np >= 2 ? modsFromParam(p[1]) : Mods();
 
@@ -592,4 +596,16 @@ unittest
     assert(classifyByte(0x7f) == keyEvent(Key.backspace));
     assert(classifyByte('a') == charEvent('a'));
     assert(classifyByte(0x01) == charEvent('a', Mods(ctrl: true))); // Ctrl-A
+}
+
+@("tui.input.focusReports")
+@safe pure nothrow @nogc
+unittest
+{
+    // Mode 1004's two reports, bare: focus in, focus out.
+    assert(decodeEscape("[I") == Event(FocusEvent(true)));
+    assert(decodeEscape("[O") == Event(FocusEvent(false)));
+    // With parameters it is something else, and SS3 stays a function key.
+    assert(decodeEscape("[1;5O") != Event(FocusEvent(false)));
+    assert(decodeEscape("OP") == keyEvent(Key.f1));
 }

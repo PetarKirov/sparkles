@@ -59,6 +59,7 @@ struct Terminal
         KittyImages _images;
         SixelImages _sixel;
         ImageProtocol _protocol; // what the probe found, and draw speaks
+        bool _focusReporting;    // mode 1004 negotiated, to reset on close
         CellPixels _answeredCell; // the terminal's own answer to `CSI 16 t`
         ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
@@ -132,6 +133,8 @@ struct Terminal
         if (_opts.hideCursor)
             writeEscapeSeq!(CtlSeq.showCursor)(s);
         writeEscapeSeq!(CtlSeq.popKeyboardMode)(s);
+        if (_focusReporting)
+            writeEscapeSeq!(DecMode.focusReporting, false)(s);
         _images.clear(s); // the terminal need not keep our pixels
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
@@ -292,6 +295,28 @@ struct Terminal
         _protocol = p;
         return r;
     }
+
+    /**
+    Turns on focus reports (mode 1004): the terminal sends `CSI I` / `CSI O`
+    as its window gains and loses focus, which the input decoders read as
+    `FocusEvent`s. $(LREF close) turns them off again.
+
+    Negotiation, not detection: call it for a terminal that answered for the
+    mode ($(LREF probe)'s `focus`), and then — and only then — may the target
+    declare focus events.
+    */
+    void enableFocusReporting() @trusted
+    {
+        if (!_active || _focusReporting)
+            return;
+        SharedBuffer!char s;
+        writeEscapeSeq!(DecMode.focusReporting, true)(s);
+        writeAll(_outFd, s[]);
+        _focusReporting = true;
+    }
+
+    /// Whether focus reports were turned on ($(LREF enableFocusReporting)).
+    bool focusReporting() const @safe pure @nogc => _focusReporting;
 
     /// The image protocol $(LREF draw) speaks: what $(LREF probe) found and
     /// this terminal can draw, `none` before a probe.

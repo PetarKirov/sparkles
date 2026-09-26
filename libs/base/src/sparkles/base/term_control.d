@@ -46,6 +46,7 @@ enum DecMode : ushort
     mouseButtons   = 1000, /// Mouse button press/release reporting.
     mouseDrag      = 1002, /// Mouse motion reporting while a button is held.
     mouseAnyMotion = 1003, /// Mouse motion reporting regardless of buttons (hover).
+    focusReporting = 1004, /// Focus in/out reports (`CSI I` / `CSI O`).
     mouseSgr       = 1006, /// SGR extended mouse coordinate encoding.
     altScreen      = 1049, /// Alternate screen buffer.
     bracketedPaste = 2004, /// Bracketed paste.
