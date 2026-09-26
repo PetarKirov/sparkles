@@ -14,6 +14,7 @@ import std.stdio : stderr, writeln;
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.dmd_lsp.api : AnalyzerConfig;
+import sparkles.dmd_lsp.project : DubQuery;
 import sparkles.twoslash.protocol : TwoslashReturn;
 
 struct CliParams
@@ -41,6 +42,56 @@ struct CliParams
 
     @(Option("dub-build", description: "With --dub: the dub build type to describe, e.g. unittest (default: dub's own default, debug)."))
     string dubBuild;
+
+    @(Option("dub-compiler", description: "With --dub: the compiler dub describes for (`--compiler`): its `platform=` settings and flag spellings (default: dub's own)."))
+    string dubCompiler;
+
+    @(Option("dub-arch", description: "With --dub: the architecture dub describes for (`--arch`), e.g. x86 or an LDC triple."))
+    string dubArch;
+
+    @(Option("dub-override-config", description: "With --dub: a dependency's configuration, as `<package>/<configuration>` (`--override-config`; repeatable)."))
+    string[] dubOverrideConfigs;
+
+    @(Option("dub-d-version", description: "With --dub: an extra version identifier dub defines (`--d-version`; repeatable)."))
+    string[] dubVersions;
+
+    @(Option("dub-debug", description: "With --dub: an extra debug identifier dub defines (`--debug`; repeatable)."))
+    string[] dubDebugs;
+
+    @(Option("dub-dflags", description: "With --dub: the `$DFLAGS` dub runs under, which replaces the build type's own flags."))
+    string dubDflags;
+
+    /// The dub build `--dub` describes: every `--dub-*` option (`PRJ3`).
+    DubQuery dubQuery() const @safe pure nothrow
+        => DubQuery(config: dubConfig, buildType: dubBuild, compiler: dubCompiler,
+            arch: dubArch, overrideConfigs: dubOverrideConfigs.dup, versionIds: dubVersions.dup,
+            debugIds: dubDebugs.dup, dflags: dubDflags);
+
+    /// The `--dub*` options again, for a child that must describe the same
+    /// build. Inline `=` forms: a value may start with `-`.
+    string[] dubFlags() const @safe pure nothrow
+    {
+        string[] flags;
+        if (dub)
+            flags ~= "--dub";
+        if (dubConfig.length)
+            flags ~= "--dub-config=" ~ dubConfig;
+        if (dubBuild.length)
+            flags ~= "--dub-build=" ~ dubBuild;
+        if (dubCompiler.length)
+            flags ~= "--dub-compiler=" ~ dubCompiler;
+        if (dubArch.length)
+            flags ~= "--dub-arch=" ~ dubArch;
+        foreach (o; dubOverrideConfigs)
+            flags ~= "--dub-override-config=" ~ o;
+        foreach (v; dubVersions)
+            flags ~= "--dub-d-version=" ~ v;
+        foreach (d; dubDebugs)
+            flags ~= "--dub-debug=" ~ d;
+        if (dubDflags.length)
+            flags ~= "--dub-dflags=" ~ dubDflags;
+        return flags;
+    }
 
     @(Option("verify", description: "Re-extract and diff against the existing payload instead of writing; exit 1 on drift (the golden-fixture guard)."))
     bool verify;
@@ -247,12 +298,7 @@ private int runDirectory(in CliParams cli, string dir)
         // space-separated form would read as the next option.
         if (cli.dflags.length)
             child ~= "--dflags=" ~ cli.dflags;
-        if (cli.dub)
-            child ~= "--dub";
-        if (cli.dubConfig.length)
-            child ~= ["--dub-config", cli.dubConfig];
-        if (cli.dubBuild.length)
-            child ~= ["--dub-build", cli.dubBuild];
+        child ~= cli.dubFlags;
         if (cli.side != "auto")
             child ~= "--side=" ~ cli.side;
         if (cli.verify)
@@ -372,12 +418,7 @@ private size_t[] mergeDeviceSide(in CliParams cli, string samplePath,
         child ~= ["--import", p];
     if (cli.dflags.length)
         child ~= "--dflags=" ~ cli.dflags;
-    if (cli.dub)
-        child ~= "--dub";
-    if (cli.dubConfig.length)
-        child ~= ["--dub-config", cli.dubConfig];
-    if (cli.dubBuild.length)
-        child ~= ["--dub-build", cli.dubBuild];
+    child ~= cli.dubFlags;
 
     enum hostOnly = ": the device side could not be analyzed; showing the host side only";
     const r = execute(child, null, Config.stderrPassThrough);
@@ -405,7 +446,7 @@ private bool buildConfig(in CliParams cli, string samplePath, Side side,
 {
     import std.algorithm.searching : canFind;
 
-    import sparkles.dmd_lsp.device : deviceConfigFor;
+    import sparkles.dmd_lsp.device : deviceConfigFor, retargetToDevice;
     import sparkles.dmd_lsp.options : runtimeImportPaths;
 
     import std.algorithm.iteration : filter, splitter;
@@ -427,10 +468,13 @@ private bool buildConfig(in CliParams cli, string samplePath, Side side,
 
     // The device side is the package's device configuration — what
     // `shader-compile` compiles — not the host build (`TGT6`); explicit
-    // `--import`s still come first.
+    // `--import`s still come first. Without `--dub` the project is not
+    // consulted on this side either: the host settings are retargeted.
     if (side == Side.device)
     {
-        auto device = deviceConfigFor(samplePath, config);
+        auto device = cli.dub
+            ? deviceConfigFor(samplePath, config, cli.dubQuery)
+            : retargetToDevice(config);
         device.importPaths = cli.importPaths
             ~ device.importPaths.filter!(p => !cli.importPaths.canFind(p)).array;
         config = device;
@@ -469,10 +513,9 @@ but cannot be honored — a silent fallback would produce a payload full of
 private bool applyDubContext(in CliParams cli, string samplePath,
     ref AnalyzerConfig config)
 {
-    import sparkles.dmd_lsp.project : DubQuery, dubProjectFor;
+    import sparkles.dmd_lsp.project : dubProjectFor;
 
-    const proj = dubProjectFor(samplePath,
-        DubQuery(config: cli.dubConfig, buildType: cli.dubBuild));
+    const proj = dubProjectFor(samplePath, cli.dubQuery);
 
     if (!proj.found)
     {
