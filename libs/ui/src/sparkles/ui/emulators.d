@@ -6,11 +6,13 @@ previewing and testing what an application looks like there.
 A preset is two things, kept apart so each can be checked on its own:
 
 $(LIST
-    * the emulator's $(B recorded replies) — a row of the empirical response
-        matrix (the capability-detection case study's §16, collected with its
-        `query-probe.d`; research branch `research/term-capabilities` at
-        `9ee7df44`), transcribed verbatim onto the member as a $(LREF replies)
-        UDA;
+    * the emulator's $(B recorded replies), onto the member as a
+        $(LREF replies) UDA: the battery's own replies from the design
+        system's `O5` corpus (`libs/base/test/data/term_replies/`), where it
+        reaches, else a row of the capability-detection case study's
+        empirical response matrix (§16, collected with its `query-probe.d`,
+        an earlier battery; research branch `research/term-capabilities` at
+        `9ee7df44`);
     * $(LREF fromReplies), which reads answers, never a name, through the one
         mapping a live probe feeds too
         ($(REF applyReplies, sparkles,base,term_replies); `CAP3`: capabilities
@@ -19,10 +21,12 @@ $(LIST
 
 Only what the battery asks is claimed from it: color depth, synchronized
 output (2026), grapheme clustering (2027), color-scheme reports (2031),
-bracketed paste (2004), the kitty keyboard and graphics protocols and the DA1
-sixel attribute. The facts no query reaches — links, clipboard,
-notifications, styled underlines, and every font fact past the half blocks —
-are left off (D32): a preset may show less than its emulator can, never more.
+bracketed paste (2004), focus reports (1004), the cell's pixel size
+(`CSI 16 t`), the kitty keyboard and graphics protocols and the DA1 sixel
+attribute — the last three only for rows recorded with them. The facts no
+query reaches — links, clipboard, notifications, styled underlines, and
+every font fact past the half blocks — are left off (D32): a preset may show
+less than its emulator can, never more.
 
 Presets are a partial order, not a ladder: kitty and Ghostty are each missing
 something the other has. `CAP9`'s monotone chain is the three profiles';
@@ -54,22 +58,26 @@ struct replies
 /**
 The measured emulators. Each member carries every row recorded for it — a
 multiplexer one per host it was attached to, since what it answers can
-follow the host — and its declaration is $(LREF capabilitiesOf). Rows the
-matrix holds but no preset takes: the bare pty (no emulator at all —
-`baseline`) and GNU screen 4.00.03, a 2006 build below every glyph
-assumption the presets share.
+follow the host — and its declaration is $(LREF capabilitiesOf).
 
-Rows not in the case study's matrix were collected with its probe
-(`query-probe.d --raw`) and are checked in whole under
-`libs/ui/test/data/emulators/`.
+Where the design system's `O5` corpus reaches (kitty, Ghostty, foot, XTerm,
+Alacritty, and tmux and zellij under a bare pty, foot and Ghostty), a row is
+the battery's own replies as that terminal sent them, named by its file in
+`libs/base/test/data/term_replies/` and re-read against it by test — so the
+preset is what a live probe declares there, its focus, paste and cell-size
+rows included. iTerm2, Apple Terminal and WezTerm keep their rows from the
+capability case study's matrix (`query-probe.d`, an earlier battery), which
+the corpus does not reach yet.
 */
 @WireCase(CaseStyle.kebabCase)
 enum Emulator : ubyte
 {
-    @replies("XTerm 403 (Linux)", TerminalReplies(term: "xterm", da1: "64;1;2;6;9;15;16;17;18;21;22;28;29",
-        paste: ModeReply.reset, sync: ModeReply.notRecognized,
-        graphemes: ModeReply.notRecognized, scheme: ModeReply.notRecognized,
-        rgb: TcapReply.valid, tc: TcapReply.invalid))
+    // xterm.txt
+    @replies("XTerm 403 (Linux, xvfb)", TerminalReplies(term: "xterm",
+        da1: "64;1;2;6;9;15;16;17;18;21;22;28;29", paste: ModeReply.reset,
+        sync: ModeReply.notRecognized, graphemes: ModeReply.notRecognized,
+        scheme: ModeReply.notRecognized, focus: ModeReply.reset, rgb: TcapReply.valid,
+        tc: TcapReply.invalid, cellWidth: 6, cellHeight: 13))
     xterm,
 
     @replies("Apple Terminal (macOS 26.3)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -83,18 +91,19 @@ enum Emulator : ubyte
         rgb: TcapReply.valid, tc: TcapReply.invalid, kittyGraphics: true))
     iterm2,
 
-    @replies("Alacritty 0.16.1 (Linux)", TerminalReplies(term: "alacritty", colorterm: "truecolor",
-        da1: "6", kittyKeyboard: true,
-        paste: ModeReply.reset, sync: ModeReply.reset,
-        graphemes: ModeReply.notRecognized, scheme: ModeReply.notRecognized))
+    // alacritty.txt
+    @replies("Alacritty 0.16.1 (Linux, xvfb, software GL)", TerminalReplies(
+        term: "alacritty", colorterm: "truecolor", da1: "6", kittyKeyboard: true,
+        paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.notRecognized,
+        scheme: ModeReply.notRecognized, focus: ModeReply.reset))
     alacritty,
 
     // foot.txt
-    @replies("foot 1.25.0 (Linux, headless cage)", TerminalReplies(term: "foot", colorterm: "truecolor",
-        da1: "62;4;22;28;52", kittyKeyboard: true,
-        paste: ModeReply.reset, sync: ModeReply.reset,
-        graphemes: ModeReply.set, scheme: ModeReply.reset,
-        rgb: TcapReply.valid, tc: TcapReply.valid))
+    @replies("foot 1.25.0 (Linux, headless cage)", TerminalReplies(term: "foot",
+        colorterm: "truecolor", da1: "62;4;22;28;52", kittyKeyboard: true,
+        paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
+        scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
+        tc: TcapReply.valid, cellWidth: 6, cellHeight: 13))
     foot,
 
     @replies("WezTerm 2025-10-14 (Linux)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -104,54 +113,54 @@ enum Emulator : ubyte
         rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true))
     wezterm,
 
-    @replies("kitty 0.44.0 (Linux)", TerminalReplies(term: "xterm-kitty", colorterm: "truecolor",
-        da1: "62;52;", kittyKeyboard: true,
-        paste: ModeReply.reset, sync: ModeReply.reset,
-        graphemes: ModeReply.notRecognized, scheme: ModeReply.reset,
-        rgb: TcapReply.invalid, tc: TcapReply.valid, kittyGraphics: true))
+    // kitty.txt
+    @replies("kitty 0.44.0 (Linux, xvfb)", TerminalReplies(term: "xterm-kitty",
+        colorterm: "truecolor", da1: "62;52;", kittyKeyboard: true, paste: ModeReply.reset,
+        sync: ModeReply.reset, graphemes: ModeReply.notRecognized, scheme: ModeReply.reset,
+        focus: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.valid,
+        kittyGraphics: true, cellWidth: 9, cellHeight: 18))
     kitty,
 
-    @replies("Ghostty 1.3.1 (Linux, macOS 26.3)", TerminalReplies(term: "xterm-ghostty",
+    // ghostty.txt
+    @replies("Ghostty 1.3.1 (Linux, xvfb)", TerminalReplies(term: "xterm-ghostty",
         colorterm: "truecolor", da1: "62;22;52", kittyKeyboard: true,
-        paste: ModeReply.reset, sync: ModeReply.reset,
-        graphemes: ModeReply.set, scheme: ModeReply.reset,
-        rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true))
+        paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
+        scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
+        tc: TcapReply.valid, kittyGraphics: true, cellWidth: 10, cellHeight: 21))
     ghostty,
 
-    // The matrix row, then tmux-foot.txt and tmux-ghostty.txt: tmux answers
-    // alike under every host, sixel attribute included — even in Ghostty,
-    // which draws no sixel.
-    @replies("tmux 3.6a (detached, or on a bare pty)", TerminalReplies(term: "tmux-256color",
-        colorterm: "truecolor", da1: "1;2;4",
-        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true))
+    // tmux-bare.txt, tmux-foot.txt, tmux-ghostty.txt: tmux answers for
+    // itself under every host, its DA1 sixel attribute included — even inside
+    // Ghostty, which draws no sixel.
+    @replies("tmux 3.6a on a bare pty", TerminalReplies(term: "tmux-256color",
+        colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
+        scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
+        cellWidth: 16, cellHeight: 32))
     @replies("tmux 3.6a in foot 1.25.0", TerminalReplies(term: "tmux-256color",
-        colorterm: "truecolor", da1: "1;2;4",
-        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true))
+        colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
+        scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
+        cellWidth: 6, cellHeight: 13))
     @replies("tmux 3.6a in Ghostty 1.3.1", TerminalReplies(term: "tmux-256color",
-        colorterm: "truecolor", da1: "1;2;4",
-        paste: ModeReply.reset, scheme: ModeReply.reset, multiplexer: true))
+        colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
+        scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
+        cellWidth: 10, cellHeight: 21))
     tmux,
 
-    // zellij-bare.txt, zellij-foot.txt, zellij-ghostty.txt: zellij's image
-    // answers follow its host — kitty graphics in Ghostty, refused in foot,
-    // and both protocols claimed with no host at all.
-    @replies("zellij 0.45.1 on a bare pty", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
-        da1: "62;4;52", kittyKeyboard: true,
-        paste: ModeReply.none, sync: ModeReply.reset,
-        graphemes: ModeReply.none, scheme: ModeReply.reset,
-        rgb: TcapReply.invalid, tc: TcapReply.invalid, kittyGraphics: true,
-        multiplexer: true))
-    @replies("zellij 0.45.1 in foot 1.25.0", TerminalReplies(term: "foot", colorterm: "truecolor",
-        da1: "62;4;52", kittyKeyboard: true,
-        paste: ModeReply.none, sync: ModeReply.reset,
-        graphemes: ModeReply.none, scheme: ModeReply.reset,
-        rgb: TcapReply.invalid, tc: TcapReply.invalid, multiplexer: true))
-    @replies("zellij 0.45.1 in Ghostty 1.3.1", TerminalReplies(term: "xterm-ghostty", colorterm: "truecolor",
-        da1: "62;52", kittyKeyboard: true,
-        paste: ModeReply.none, sync: ModeReply.reset,
-        graphemes: ModeReply.none, scheme: ModeReply.reset,
-        rgb: TcapReply.invalid, tc: TcapReply.invalid, kittyGraphics: true,
-        multiplexer: true))
+    // zellij-bare.txt, zellij-foot.txt, zellij-ghostty.txt: zellij's graphics
+    // answer follows its host — `OK` in Ghostty and with no host at all,
+    // refused in foot.
+    @replies("zellij 0.45.1 on a bare pty", TerminalReplies(term: "xterm-256color",
+        colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
+        scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
+        kittyGraphics: true, multiplexer: true))
+    @replies("zellij 0.45.1 in foot 1.25.0", TerminalReplies(term: "foot",
+        colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
+        scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
+        multiplexer: true, cellWidth: 6, cellHeight: 13))
+    @replies("zellij 0.45.1 in Ghostty 1.3.1", TerminalReplies(term: "xterm-ghostty",
+        colorterm: "truecolor", da1: "62;52", kittyKeyboard: true, sync: ModeReply.reset,
+        scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
+        kittyGraphics: true, multiplexer: true, cellWidth: 10, cellHeight: 21))
     zellij,
 }
 
@@ -292,9 +301,9 @@ unittest
         sansImages.images = ImageProtocol.none;
         assert(subsetOf(sansImages, full));
         assert(!c.hyperlinks && !c.clipboard && !c.notifications && !c.pointerShape
-            && !c.textSizing && !c.progress && !c.extendedUnderline && !c.cellPixelSize);
+            && !c.textSizing && !c.progress && !c.extendedUnderline);
         assert(!c.braille && !c.nerdFont && c.blocks == BlockTier.half && c.unicode);
-        assert(!c.input.focusEvents && !c.input.precisePointer);
+        assert(!c.input.precisePointer);
         assert(!c.subCellScroll && !c.radius && !c.shadow && !c.alpha);
     }}
 }
@@ -355,7 +364,7 @@ unittest
 {
     assert(emulatorNames[Emulator.appleTerminal] == "apple-terminal");
     assert(emulatorNames[Emulator.iterm2] == "iterm2");
-    assert(emulatorReplies[Emulator.kitty][0].measured == "kitty 0.44.0 (Linux)");
+    assert(emulatorReplies[Emulator.kitty][0].measured == "kitty 0.44.0 (Linux, xvfb)");
 }
 
 @("ui.emulators.multiplexerImagesNeedAConfirmedRoundTrip")
@@ -399,44 +408,32 @@ unittest
 @("ui.emulators.rowsAreTheirTranscripts")
 @system unittest
 {
-    import std.algorithm.searching : findSplit, startsWith;
     import std.array : replace;
-    import std.string : lineSplitter, strip;
+    import std.file : readText;
+    import std.path : buildNormalizedPath, dirName;
+    import std.string : lineSplitter, startsWith;
     import sparkles.base.term_replies : parseReplies;
-    import sparkles.ui.test_utils : readFromTestDir;
 
-    // `O5`: the rows collected for this module are the probe reports checked
-    // in beside it — and each report's raw reply bytes are fed here through
-    // the parser a live probe uses, so a row can drift neither from its
-    // evidence nor from what the probe would make of the same bytes.
-    static TerminalReplies parse(string report)
+    // `O5`: a corpus-backed row is its recording — the battery's own replies
+    // from that terminal, in `sparkles:base`'s capture corpus — fed through
+    // the parser a live probe uses. A row can drift neither from its evidence
+    // nor from what the probe would make of the same bytes.
+    static TerminalReplies parse(string file)
     {
+        const path = __FILE_FULL_PATH__.dirName
+            .buildNormalizedPath("../../../../base/test/data/term_replies", file);
         TerminalReplies r;
-        bool raw;
-        foreach (line; report.lineSplitter)
+        foreach (line; readText(path).lineSplitter)
         {
-            if (raw)
+            if (line.startsWith("TERM: ")) r.term = line["TERM: ".length .. $];
+            if (line.startsWith("COLORTERM: ")) r.colorterm = line["COLORTERM: ".length .. $];
+            if (line.startsWith("TMUX: set") || line.startsWith("ZELLIJ: set"))
+                r.multiplexer = true;
+            if (line.startsWith("replies: "))
             {
-                // The report spells the control bytes out.
-                const bytes = line.replace("ESC", "\x1b").replace("BEL", "\x07");
                 ubyte[] rest;
-                parseReplies(cast(const(ubyte)[]) bytes, r, rest);
-                break;
-            }
-            if (line.startsWith("== Raw response buffer =="))
-            {
-                raw = true;
-                continue;
-            }
-            const env = line.findSplit(" = ");
-            if (env[1].length && !line.startsWith(" "))
-            {
-                const key = env[0].strip, value = env[2].strip;
-                const set = value != "(unset)";
-                if (key == "TERM") r.term = value;
-                if (key == "COLORTERM" && set) r.colorterm = value;
-                if ((key == "TMUX" || key == "STY" || key == "ZELLIJ") && set)
-                    r.multiplexer = true;
+                parseReplies(cast(const(ubyte)[]) line["replies: ".length .. $]
+                    .replace("ESC", "\x1b").replace("BEL", "\x07"), r, rest);
             }
         }
         return r;
@@ -444,7 +441,12 @@ unittest
 
     static struct Evidence { Emulator e; size_t row; string file; }
     static immutable Evidence[] evidence = [
+        Evidence(Emulator.xterm, 0, "xterm.txt"),
+        Evidence(Emulator.alacritty, 0, "alacritty.txt"),
         Evidence(Emulator.foot, 0, "foot.txt"),
+        Evidence(Emulator.kitty, 0, "kitty.txt"),
+        Evidence(Emulator.ghostty, 0, "ghostty.txt"),
+        Evidence(Emulator.tmux, 0, "tmux-bare.txt"),
         Evidence(Emulator.tmux, 1, "tmux-foot.txt"),
         Evidence(Emulator.tmux, 2, "tmux-ghostty.txt"),
         Evidence(Emulator.zellij, 0, "zellij-bare.txt"),
@@ -453,10 +455,42 @@ unittest
     ];
     foreach (ev; evidence)
     {
-        auto parsed = parse(readFromTestDir(ev.file));
+        auto parsed = parse(ev.file);
         const row = emulatorReplies[ev.e][ev.row].answers;
         assert(parsed.fenced, ev.file ~ ": the DA1 fence is in the bytes");
-        parsed.fenced = row.fenced; // a transcribed row does not record the fence
+        parsed.fenced = row.fenced; // a row does not record the fence
         assert(parsed == row, ev.file);
     }
+}
+
+@("ui.emulators.cellSizeAndFocusWhereEveryRowAnswered")
+@safe pure nothrow @nogc
+unittest
+{
+    // The rows the `O5` corpus added: a preset claims the cell's pixel size
+    // and focus events exactly where every row recorded for it answered —
+    // `CSI 16 t`, and mode 1004 as available.
+    static foreach (e; EnumMembers!Emulator)
+    {{
+        bool cell = true, focus = true;
+        foreach (r; emulatorReplies[e])
+        {
+            cell &= r.answers.cellWidth != 0;
+            focus &= r.answers.focus.available;
+        }
+        const c = capabilitiesOf(e);
+        assert(c.cellPixelSize == cell);
+        assert(c.input.focusEvents == focus);
+    }}
+    // Measured facts, spelled out: Alacritty answers focus but not its cell
+    // size; zellij neither, and on a bare pty not even the size.
+    assert(capabilitiesOf(Emulator.kitty).cellPixelSize
+        && capabilitiesOf(Emulator.kitty).input.focusEvents);
+    assert(!capabilitiesOf(Emulator.alacritty).cellPixelSize
+        && capabilitiesOf(Emulator.alacritty).input.focusEvents);
+    assert(!capabilitiesOf(Emulator.zellij).cellPixelSize
+        && !capabilitiesOf(Emulator.zellij).input.focusEvents);
+    // The case-study rows never asked: no claim.
+    assert(!capabilitiesOf(Emulator.iterm2).cellPixelSize
+        && !capabilitiesOf(Emulator.iterm2).input.focusEvents);
 }
