@@ -465,3 +465,49 @@ unittest
     term.close();
     assert(drain(pty.master, rb).canFind("\x1b[?1004l"));
 }
+
+@("integration.pty.bracketedPasteIsOnePaste")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.input : match, PasteEvent;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    assert(term.active);
+    scope (exit) term.close();
+    char[] rb;
+    drain(pty.master, rb);
+
+    // A paste longer than a chunk, with a newline: chunks in order, the
+    // text verbatim, then the key typed after it.
+    // Negotiated: `CSI ?2004h`, and reset on close.
+    assert(!term.bracketedPaste);
+    term.enableBracketedPaste();
+    assert(term.bracketedPaste);
+    assert(drain(pty.master, rb).canFind("\x1b[?2004h"));
+
+    auto events = PosixEvents.start(pty.slave);
+    enum text = "first line of a longer paste\nsecond line, which overflows a chunk";
+    feed(pty.master, "\x1b[200~" ~ text ~ "\x1b[201~q");
+    string got;
+    bool last;
+    while (!last)
+    {
+        const e = events.next();
+        const p = e.match!((in PasteEvent p) => p, _ => PasteEvent.init);
+        got ~= p.text[];
+        last = p.last;
+    }
+    assert(got == text);
+    assert(events.next() == charEvent('q'));
+
+    term.close();
+    assert(drain(pty.master, rb).canFind("\x1b[?2004l"));
+}

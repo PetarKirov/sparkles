@@ -60,6 +60,7 @@ struct Terminal
         SixelImages _sixel;
         ImageProtocol _protocol; // what the probe found, and draw speaks
         bool _focusReporting;    // mode 1004 negotiated, to reset on close
+        bool _bracketedPaste;    // mode 2004 negotiated, to reset on close
         CellPixels _answeredCell; // the terminal's own answer to `CSI 16 t`
         ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
@@ -135,6 +136,8 @@ struct Terminal
         writeEscapeSeq!(CtlSeq.popKeyboardMode)(s);
         if (_focusReporting)
             writeEscapeSeq!(DecMode.focusReporting, false)(s);
+        if (_bracketedPaste)
+            writeEscapeSeq!(DecMode.bracketedPaste, false)(s);
         _images.clear(s); // the terminal need not keep our pixels
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
@@ -314,6 +317,27 @@ struct Terminal
         writeAll(_outFd, s[]);
         _focusReporting = true;
     }
+
+    /**
+    Turns on bracketed paste (mode 2004): the terminal wraps a paste in
+    `CSI 200~` … `CSI 201~`, which the input decoders deliver as
+    `PasteEvent`s — the text verbatim, not keys. $(LREF close) turns it off.
+
+    Negotiation, as $(LREF enableFocusReporting) is: for a terminal that
+    answered for the mode, and only then may the target declare pastes.
+    */
+    void enableBracketedPaste() @trusted
+    {
+        if (!_active || _bracketedPaste)
+            return;
+        SharedBuffer!char s;
+        writeEscapeSeq!(DecMode.bracketedPaste, true)(s);
+        writeAll(_outFd, s[]);
+        _bracketedPaste = true;
+    }
+
+    /// Whether bracketed paste was turned on ($(LREF enableBracketedPaste)).
+    bool bracketedPaste() const @safe pure @nogc => _bracketedPaste;
 
     /// Whether focus reports were turned on ($(LREF enableFocusReporting)).
     bool focusReporting() const @safe pure @nogc => _focusReporting;
