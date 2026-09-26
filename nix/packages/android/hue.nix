@@ -63,6 +63,10 @@ in
         # `UiAppTui`: APP3 keeps the terminal out of an Android closure, and the
         # host's terminal arm has no business being compiled for a phone.
         "UiAppGui"
+        # The built-in effects' GPU halves (sparkles:ui's `gpu-effects`
+        # configuration, which dub would select through ui-raylib): the GLSL
+        # comes prebuilt from `ui-shaders`, on the `-J` path below.
+        "SparklesUiGpuEffects"
         "Have_sparkles_hue"
         "Have_sparkles_ghostty"
         "Have_sparkles_syntax"
@@ -106,6 +110,7 @@ in
           "apps/hue/src"
           "libs/twoslash/src/sparkles/twoslash/views"
           "libs/ui/src/sparkles/ui/shaders"
+          "${config.packages.ui-shaders}"
         ];
         cIncludes = [
           "${config.packages.tree-sitter-android}/include"

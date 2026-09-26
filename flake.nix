@@ -219,6 +219,7 @@
         ./nix/packages/libghostty-vt.nix
         ./nix/packages/shader-compile.nix
         ./nix/packages/android-dev-env-probe.nix
+        ./nix/packages/ui-shaders.nix
         ./nix/packages/skia.nix
         ./nix/packages/text-wasm.nix
         ./nix/packages/table-wasm.nix
