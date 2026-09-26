@@ -25,5 +25,5 @@ unittest
 {
     enum table = collectSchema!Event();
     assert(table.paths.length >= 40);
-    assert(table.categories.length == 8);
+    assert(table.categories.length == 9); // one per `Event` variant, `PasteEvent` included
 }
