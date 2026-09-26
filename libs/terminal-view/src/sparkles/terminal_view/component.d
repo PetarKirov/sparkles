@@ -35,7 +35,7 @@ import raylib;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
-import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction,
+import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction, PasteEvent,
     KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent;
 import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
@@ -193,6 +193,7 @@ struct TerminalView
 
     private bool opened;
     private bool prevFocused = true;
+    private char[] pasteBuf; // a paste's chunks so far, until the last one
     private bool prevOverlayActive;
     private bool prevChildExited;
     // Frames painted unconditionally at startup, before dirty-tracking is
@@ -663,6 +664,7 @@ struct TerminalView
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
             (in FocusEvent f) { notifyFocus(f.focused); },
+            (in PasteEvent p) { onPaste(p); },
             (in EndOfInput _) { h.quit(); },
             (in _) {},
         );
@@ -1183,7 +1185,7 @@ struct TerminalView
                 {
                     import core.stdc.string : strlen;
 
-                    pty_write(s.pty_fd, clip, strlen(clip));
+                    sendPaste(clip[0 .. strlen(clip)]);
                 }
                 return;
             }
@@ -1202,6 +1204,40 @@ struct TerminalView
 
         // The encoder seam (its drain-once no-ops — this method drained above).
         sendKey(k);
+    }
+
+    /**
+    A paste reaching the pane (`INP21`): its chunks are collected until the
+    last one, then the whole of it goes to the shell by $(LREF sendPaste).
+    */
+    void onPaste(in PasteEvent p) @system
+    {
+        if (s.childExited)
+            return;
+        pasteBuf ~= p.text[];
+        if (!p.last)
+            return;
+        sendPaste(pasteBuf);
+        pasteBuf.length = 0;
+    }
+
+    /**
+    Writes pasted `text` to the shell the way a terminal does: through
+    libghostty's paste encoder, which replaces unsafe control bytes and —
+    when the program in the pane turned bracketed paste on (DECSET 2004) —
+    wraps it in `CSI 200~` … `CSI 201~`, else turns newlines into carriage
+    returns. A multi-line paste into a shell is then text, not a run of
+    commands.
+    */
+    void sendPaste(in char[] text) @system
+    {
+        if (text.length == 0)
+            return;
+        bool bracketed = false;
+        ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 2004, &bracketed);
+        const encoded = encodedPaste(text, bracketed);
+        if (encoded.length)
+            pty_write(s.pty_fd, encoded.ptr, encoded.length);
     }
 
     /// Reports a focus edge to the pty when DECSET 1004 is on — the
@@ -1342,4 +1378,34 @@ struct TerminalView
                 s.childStatus = 128 + WTERMSIG(wstatus);
         }
     }
+}
+
+/**
+`text` as a pane writes it to its shell: libghostty's paste encoding —
+unsafe control bytes replaced, wrapped in `CSI 200~` … `CSI 201~` when
+`bracketed`, else newlines turned into carriage returns.
+*/
+char[] encodedPaste(in char[] text, bool bracketed) @trusted
+{
+    auto data = text.dup; // the encoder rewrites its input in place
+    size_t needed = 0;
+    ghostty_paste_encode(data.ptr, data.length, bracketed, null, 0, &needed);
+    auto encoded = new char[](needed);
+    size_t written = 0;
+    if (ghostty_paste_encode(data.ptr, data.length, bracketed,
+            encoded.ptr, encoded.length, &written) != GHOSTTY_SUCCESS)
+        return null;
+    return encoded[0 .. written];
+}
+
+@("terminal_view.component.pasteIsTextForTheShell")
+@safe unittest
+{
+    // With bracketed paste on, a multi-line paste is one bracketed text —
+    // not a run of commands — and an escape inside it cannot end the
+    // bracket early.
+    assert(encodedPaste("ls\nrm -rf x\x1b[201~", true)
+        == "\x1b[200~ls\nrm -rf x [201~\x1b[201~");
+    // Without it, newlines become carriage returns, as a keyboard sends.
+    assert(encodedPaste("a\nb", false) == "a\rb");
 }
