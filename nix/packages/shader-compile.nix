@@ -1,20 +1,25 @@
-# `shader-compile` (`EFX20`, `EFX25`): turns the repository's single-source D
+# `shader-compile` (`EFX20`, `EFX25`): turns a dub package's single-source D
 # shaders into the GLSL `sparkles:ui-raylib` loads. See apps/shader-compile.
 #
 # Its toolchain is invisible in its dub manifest, because the tool shells out
 # to it:
 #
-#   * `ldc-vulkan` from dlang.nix — LDC with dcompute's Vulkan target and the
-#     `@fragment` graphics stage (PetarKirov/ldc `sparkles/vulkan-shaders`),
-#     built against LLVM main with the SPIR-V backend. Stock LDC has neither,
-#     which is exactly what the tool reports and skips on.
+#   * `ldc2-vulkan`: dlang.nix's `ldc-vulkan` — LDC with dcompute's Vulkan
+#     target and the `@fragment` graphics stage (PetarKirov/ldc
+#     `sparkles/vulkan-shaders`), built against LLVM main with the SPIR-V
+#     backend — under the name the tool looks for. Stock LDC has neither.
 #   * spirv-tools (spirv-val, spirv-opt, spirv-dis), spirv-cross, glslang.
+#     Their versions shape the output (an spirv-opt upgrade rewrites a branch),
+#     so the pinned ones are what the committed GLSL comes from.
+#   * dub, which the tool asks for the package's device configuration.
 #
-# The wrapper carries all of it, so `nix run .#shader-compile` (from the
-# repository root — the unit table is repo-relative) regenerates or
-# `--verify`s `libs/ui/src/sparkles/ui/shaders/` with no devshell and no local
-# compiler build; a caller who exports their own `$SPARKLES_SHADER_LDC` still
-# wins. Linux only: that is where dlang.nix defines `ldc-vulkan`.
+# The wrapper carries all of it, so
+#
+#     nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders
+#
+# regenerates (or, with `--verify`, checks) the effect GLSL with no devshell
+# and no local compiler build. Linux only: that is where dlang.nix defines
+# `ldc-vulkan`.
 { lib, ... }:
 {
   perSystem =
@@ -31,6 +36,13 @@
     in
     {
       packages = lib.optionalAttrs available {
+        # A symlink, not a wrapper script: LDC finds its `ldc2.conf` (and so
+        # the dcompute druntime) from its resolved executable path.
+        ldc2-vulkan = pkgs.runCommand "ldc2-vulkan" { meta.mainProgram = "ldc2-vulkan"; } ''
+          mkdir -p $out/bin
+          ln -s ${lib.getExe' inputs'.dlang-nix.packages.ldc-vulkan "ldc2"} $out/bin/ldc2-vulkan
+        '';
+
         shader-compile = config.legacyPackages.buildSparklesApp (finalAttrs: {
           pname = "shader-compile";
           version = "0.1.0";
@@ -40,9 +52,10 @@
 
           postFixup = ''
             wrapProgram $out/bin/${finalAttrs.pname} \
-              --set-default SPARKLES_SHADER_LDC ${lib.getExe' inputs'.dlang-nix.packages.ldc-vulkan "ldc2"} \
               --prefix PATH : ${
                 lib.makeBinPath [
+                  config.packages.ldc2-vulkan
+                  pkgs.dub
                   pkgs.spirv-tools
                   pkgs.spirv-cross
                   pkgs.glslang
@@ -51,7 +64,7 @@
           '';
 
           meta = {
-            description = "Compile the repository's single-source D shaders to the GLSL sparkles:ui-raylib loads";
+            description = "Compile a dub package's single-source D shaders to the GLSL sparkles:ui-raylib loads";
             mainProgram = finalAttrs.pname;
             platforms = lib.platforms.linux;
           };

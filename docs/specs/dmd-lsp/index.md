@@ -121,7 +121,7 @@ DMD dependency; Track B needs the fork pin.
 | L27       | —     | Tooltip markdown defects: ddoc indentation read as code, unterminated fence                                                             | full                                                                   |
 | L28       | B     | GFM tables + numbered lists; `ditto`; documented unittests as labelled examples; fork `+ls.4` (unittest bodies outside the root module) | full                                                                   |
 | L29       | B     | Target profiles: LDC predefines + LLVM vector model (fork `+ls.5`), LDC runtime (`TGT1`–`TGT4`)                                         | full                                                                   |
-| L30       | B     | `@compute` detection + `shader-units.json` device configuration (`TGT5`, `TGT6`)                                                        | full                                                                   |
+| L30       | B     | `@compute` detection + the dub device configuration (`TGT5`, `TGT6`)                                                                    | full                                                                   |
 | L31       | B     | LDC's device-code rules + `@fragment` interface checks (`TGT7`, `TGT8`)                                                                 | full                                                                   |
 | L32       | —     | Host + device diagnostics merged in one payload; `twoslash-extract --side` (`TGT9`)                                                     | full                                                                   |
 

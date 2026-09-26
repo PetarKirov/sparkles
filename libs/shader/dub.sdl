@@ -28,6 +28,16 @@ configuration "unittest" {
     importPaths "src" "../test-runner/src" "../test-runner-impl/src"
     dflags "-checkaction=context" "-allinst"
 }
+// The device build: what LDC's dcompute target compiles for the GPU. Never
+// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// `@compute` modules among its sources, and `sparkles:dmd-lsp` analyzes those
+// modules under it (`TGT6`). A configuration is the device build because its
+// dflags name a dcompute target, not because of its name.
+configuration "shaders" {
+    targetType "library"
+    dflags "-mdcompute-targets=vulkan-130"
+}
+
 // Optimised, assertions live, `debug {}` blocks out — the build every nix
 // artifact uses. Neither `debug` (which compiles those blocks in) nor
 // `release` (which deletes assert *expressions*, side effects included).

@@ -57,7 +57,7 @@ struct CliParams
     @(Option("stdout", description: "Write the payload as one compact JSON line on stdout instead of a file."))
     bool toStdout;
 
-    @(Option("side", description: "Which compilation of a dcompute module to analyze (spec TGT5-TGT9). `auto` (the default) follows the module's `@compute` attribute: a deviceOnly module is analyzed as the dcompute LDC compiles it (`shader-units.json`); a hostAndDevice module as host code, with the device side's errors merged in and every error only one side reports tagged `[host]`/`[device]`. `host` or `device` analyzes that side alone."))
+    @(Option("side", description: "Which compilation of a dcompute module to analyze (spec TGT5-TGT9). `auto` (the default) follows the module's `@compute` attribute: a deviceOnly module is analyzed as the dcompute LDC compiles it (its package's dub device configuration); a hostAndDevice module as host code, with the device side's errors merged in and every error only one side reports tagged `[host]`/`[device]`. `host` or `device` analyzes that side alone."))
     string side = "auto";
 
     @(Option("serve", description: "Oracle mode: analyze once, print the lazy payload as line 1 on stdout, then answer `{tip: <nodeIndex>}` JSON-line requests on stdin with the node's resolved content until EOF (spec EXT7)."))
@@ -425,8 +425,9 @@ private bool buildConfig(in CliParams cli, string samplePath, Side side,
     if (cli.unittests)
         config.dflags ~= "-unittest";
 
-    // The device side is the compile `shader-units.json` describes, not the
-    // dub build (`TGT6`); explicit `--import`s still come first.
+    // The device side is the package's device configuration — what
+    // `shader-compile` compiles — not the host build (`TGT6`); explicit
+    // `--import`s still come first.
     if (side == Side.device)
     {
         auto device = deviceConfigFor(samplePath, config);

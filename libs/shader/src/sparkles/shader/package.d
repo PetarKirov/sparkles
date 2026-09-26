@@ -10,8 +10,8 @@ the constructors are `v2`/`v3`/`v4` because a `__vector` alias cannot be
 called. A function written against this module reads like the shader it
 becomes, and the CPU path calls the very same function.
 
-$(B Device compilation is opt-in by version.) Under `-d-version=SparklesShaderDevice`
-the module attributes ($(REF compute, sparkles,shader,attributes),
+$(B Device compilation is opt-in by target.) Under `-mdcompute-targets=…`
+(which predefines `LDC_DCompute`) the module attributes ($(REF compute, sparkles,shader,attributes),
 $(REF fragment, sparkles,shader,attributes), `@input`, `@uniform`,
 `Sampler2D`) are LDC's real `ldc.dcompute` symbols, and every module marked
 `@compute` is subject to LDC's device rules and emitted to SPIR-V. Without

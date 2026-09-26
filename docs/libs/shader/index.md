@@ -36,13 +36,14 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
 
 ## Device compilation is opt-in
 
-Without `-d-version=SparklesShaderDevice` the attributes — `@compute` on a
-module, `@fragment` on a function, `@input`/`@uniform` on its parameters,
-`Sampler2D` — are inert stand-ins: an ordinary `dub build` sees plain D on any
-compiler. With it they are LDC's `ldc.dcompute` symbols, every `@compute`
-module is subject to LDC's device rules (no string literals, among others —
-which is why this library's tests live in a separate, host-only module) and is
-emitted to SPIR-V. Only `shader-compile` passes the flag.
+Outside a dcompute build (no `-mdcompute-targets`, so no `LDC_DCompute`), the
+attributes — `@compute` on a module, `@fragment` on a function,
+`@input`/`@uniform` on its parameters, `Sampler2D` — are inert stand-ins: an
+ordinary `dub build` sees plain D on any compiler. In one they are LDC's
+`ldc.dcompute` symbols, every `@compute` module is subject to LDC's device
+rules (no string literals, among others — which is why this library's tests
+live in a separate, host-only module) and is emitted to SPIR-V. Only a device
+configuration passes the flag.
 
 ## Writing a fragment shader
 
@@ -76,27 +77,30 @@ error and a string literal in device code is:
 
 - A `@compute(CompileFor.deviceOnly)` module is analyzed only as device code:
   the dcompute LDC's druntime (`$SPARKLES_LDC_IMPORT_PATH`, which the devshell
-  exports on Linux), `-d-version=SparklesShaderDevice`, and LDC's rules for
+  exports on Linux), `LDC_DCompute`, and LDC's rules for
   device code, with LDC's own messages.
 - A `@compute(CompileFor.hostAndDevice)` module is analyzed both ways. An error
   both sides report shows as it is; one only a single side reports carries a
   `[host]` or `[device]` tag.
 
-The device side's settings come from `shader-units.json` at the repository
-root: each unit's sources, import roots, device versions and dcompute target.
-`shader-compile` reads the same file, so a new shader module is added there
-once and both the build and the editor follow. See
+The device side's settings come from the package's **device configuration**:
+a dub configuration whose dflags name a dcompute target (`shaders` by
+convention). Its `@compute` modules — the package's and its dependencies' —
+are the unit `shader-compile` compiles, so a new shader module needs no
+registration anywhere: mark it `@compute` and both the build and the editor
+follow. See
 [Target profiles & device code](../../specs/dmd-lsp/targets.md).
 
 ## Regenerating the GLSL
 
 ```bash
-nix run .#shader-compile            # regenerate libs/ui/src/sparkles/ui/shaders/
-nix run .#shader-compile -- --verify
+nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders
+nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders --verify
 ```
 
-Run it from the repository root, on Linux; the units it compiles are listed
-in `shader-units.json`. The package carries its own
+On Linux; `--package` names the dub package whose `shaders` configuration it
+compiles (the dev shell has the same tools, and `dub run :shader-compile --
+…` works there too). The package carries its own
 compiler — dlang.nix's `ldc-vulkan`, LDC with dcompute's Vulkan target and the
 `@fragment` stage, built against LLVM main with the SPIR-V backend — plus
 spirv-tools, spirv-cross and glslang, so neither the devshell nor a local

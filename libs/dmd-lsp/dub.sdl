@@ -17,6 +17,15 @@ importPaths "src"
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
     version="6bae6e58e6110933db4e92649fe32521dfb47e1a"
 
+// `computeModeOf` (which side of a shader module to analyze, `TGT5`) is shared
+// with `shader-compile`. The vocabulary is dependency-free, so the edge costs
+// nothing — and its public API takes no `in` parameters, which matters here:
+// this package is built without `-preview=in` and would mangle them apart.
+dependency "sparkles:shader" path="../.."
+// Device configurations are found by reading the recipe (`TGT6`), and dub.sdl
+// is SDLang.
+dependency "sparkles:wired" path="../.."
+
 // (An `lflags "--undefined=_D3dmd8astenums7Edition6__initZ"` workaround for
 // linux-dmd used to live here: astenums.o sat in frontend.a while dmd:lexer
 // referenced it, an archive-order hazard. The fork's dub packaging now

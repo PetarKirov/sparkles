@@ -1132,7 +1132,7 @@ version (unittest)
     /// Concurrent `dub` child processes contend on dub's own lock files and
     /// fail transiently under the parallel test runner — every dub-invoking
     /// test serializes on this.
-    private __gshared Object dubTestSync;
+    package __gshared Object dubTestSync;
 
     shared static this()
     {

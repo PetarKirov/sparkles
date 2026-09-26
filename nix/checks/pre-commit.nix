@@ -37,9 +37,6 @@ let
     # committed copies only seed the first one.
     "docs/public/badges/merged-prs.json"
     "docs/public/badges/merged-green.json"
-    # Hand-edited and read top-down (the target and device flags, then the
-    # units), with short string arrays prettier keeps inline — the same fight.
-    "shader-units.json"
   ];
 
   filesToExcludeRegex =

@@ -9,7 +9,7 @@ DMD compiles it for the host. That is wrong for one class of code the
 repository ships: single-source shaders ([`EFX20`](../ui/effects.md)). A
 `@compute(CompileFor.deviceOnly)` module such as `libs/ui/shaders/effects.d`
 is only ever compiled by the dcompute LDC, for a GPU, with
-`-d-version=SparklesShaderDevice` and LDC's own druntime — and analyzed as
+`-mdcompute-targets=vulkan-130` (so `LDC_DCompute`) and LDC's own druntime — and analyzed as
 DMD host code, every one of its `texture0.sample(uv)` calls was an error. A
 `@compute(CompileFor.hostAndDevice)` module is compiled both ways, and an
 error can exist on either side alone.
@@ -29,10 +29,10 @@ now, so `D_BetterC` is predefined and `D_ModuleInfo` is not — the fork's
 
 ## Which side, and how it is compiled (`TGT5`-`TGT6`)
 
-| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                       | Status | Traces to                                                                                                     |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| TGT5 | A module's side is read from its declaration: `@compute` / `@compute(CompileFor.deviceOnly)` is device code, `@compute(CompileFor.hostAndDevice)` both, anything else host code. The read is lexical (the attributes before `module`), so it needs no frontend and costs a scan of the file's head.                                                               | full   | `computeModeOf`; test `device.computeModeOf`                                                                  |
-| TGT6 | The device side is analyzed as **the device build compiles it**, not as dub builds the package: the repository's `shader-units.json` names each unit's sources, import roots, device versions, flags and dcompute target, and `apps/shader-compile` reads the same file. A `@compute` module in no unit gets its dub project's settings retargeted to the device. | full   | `deviceConfigFor`; `loadShaderManifest`; tests `device.deviceConfigFor`, `shader-compile.manifest.repository` |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Status | Traces to                                                                                                                                                         |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TGT5 | A module's side is read from its declaration: `@compute` / `@compute(CompileFor.deviceOnly)` is device code, `@compute(CompileFor.hostAndDevice)` both, anything else host code. The read is lexical (the attributes before `module`), so it needs no frontend and costs a scan of the file's head.                                                                                                                                                                                                      | full   | `computeModeOf`; test `device.computeModeOf`                                                                                                                      |
+| TGT6 | The device side is analyzed as **the device build compiles it**, not as dub builds the package: the package's **device configuration** — a dub configuration whose dflags name a dcompute target (`-mdcompute-targets=`), found by reading the recipe — is described with `dub describe`, and `apps/shader-compile` compiles the `@compute` modules of that same configuration. A `@compute` module whose package declares none gets its dub project's settings retargeted to the device (`vulkan-130`). | full   | `deviceConfigFor`; `deviceConfigurations`; tests `device.deviceConfigFor.*`, `device.deviceConfigurations.bothRecipeFormats`, `shaderCompile.unitOf.repositoryUi` |
 
 ## The device build's rules (`TGT7`-`TGT8`)
 
@@ -53,11 +53,12 @@ now, so `D_BetterC` is predefined and `D_ModuleInfo` is not — the fork's
   DMD host code (`--side=host`), 0 under the default.
 - Every module of the `effects` unit analyzes clean under both sides.
 - A string literal seeded into a `hostAndDevice` module is reported as
-  `[device] string literals not allowed in \`@compute\` code`on the same line
-where`ldc-vulkan`reports`string literals not allowed in \`@compute\`
-  code`.
-- `nix run .#shader-compile -- --verify` is byte-identical with the unit
-  table moved into `shader-units.json`.
+  ``[device] string literals not allowed in `@compute` code`` on the same
+  line where `ldc-vulkan` reports ``string literals not allowed in `@compute`
+code``.
+- `shader-compile --verify` is byte-identical (bar the provenance header)
+  with the unit taken from `sparkles:ui`'s `shaders` configuration instead
+  of a hand-kept table.
 
 → [Overview](./index.md) · [Feature requirements](./feature-requirements.md) ·
 [Effects spec](../ui/effects.md)

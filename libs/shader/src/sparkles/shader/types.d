@@ -37,7 +37,7 @@ else
     alias vec4 = Vec!4; ///
 }
 
-version (SparklesShaderDevice)
+version (LDC_DCompute)
 {
     // On the device a `vec3` must be a native vector too: a struct is an
     // aggregate the SPIR-V backend would have to keep in memory (an `in`

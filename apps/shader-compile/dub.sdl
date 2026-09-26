@@ -1,5 +1,5 @@
 name "shader-compile"
-description "Turns the repository's single-source D shaders into the GLSL sparkles:ui-raylib loads: LDC's Vulkan target to SPIR-V, spirv-cross to GLSL 330 and ES 100, glslang to prove it"
+description "Compiles a dub package's single-source D shaders — the @compute modules of its device configuration — to the GLSL sparkles:ui-raylib loads: LDC's Vulkan target to SPIR-V, spirv-cross to GLSL 330 and ES 100, glslang to prove it"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
@@ -10,7 +10,9 @@ targetName "shader-compile"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "sparkles:core-cli" path="../.."
+// Phobos and the dependency-free shader vocabulary alone (for `computeModeOf`):
+// sparkles:ui's build runs this tool, and `core-cli` depends on sparkles:ui.
+dependency "sparkles:shader" path="../.."
 
 // Optimised, assertions live, `debug {}` blocks out — the build every nix
 // artifact uses. Neither `debug` (which compiles those blocks in) nor
